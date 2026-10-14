@@ -55,10 +55,11 @@ function cells(
   let rootName = "worksheet";
   let data = "";
   let dataName = "sheetData";
-  let rowStart = -1;
+  let rowContentStart = -1;
+  let rowOpen = "";
   let actualRow: number | undefined;
   let firstRow = Infinity;
-  const spans = new Map<number, { start: number; end: number }>();
+  const spans = new Map<number, { open: string; start: number; end: number }>();
   sax.on("opentag", (tag) => {
     if (!root) {
       root = opening(tag);
@@ -74,7 +75,8 @@ function cells(
       row = tag.attributes.r ? Number(tag.attributes.r.value) - 1 : row + 1;
       column = -1;
       actualRow = undefined;
-      rowStart = xml.lastIndexOf("<", sax.position - 1);
+      rowContentStart = sax.position;
+      rowOpen = opening(tag).replace(/\sr="[^"]*"/, "");
     }
     if (tag.local !== "c") return;
     const reference = tag.attributes.r?.value;
@@ -91,6 +93,7 @@ function cells(
       return invalid();
     if (actualRow !== undefined && actualRow !== coord.r) return invalid();
     actualRow = coord.r;
+    row = coord.r;
     if (coord.r < firstRow) {
       firstRow = coord.r;
       for (const retained of spans.keys())
@@ -105,13 +108,18 @@ function cells(
       actualRow !== undefined &&
       actualRow < firstRow + SPREADSHEET_PREVIEW_ROWS
     )
-      spans.set(actualRow, { start: rowStart, end: sax.position });
+      spans.set(actualRow, {
+        open: `${rowOpen.slice(0, -1)} r="${actualRow + 1}">`,
+        start: rowContentStart,
+        end: sax.position,
+      });
     if (tag.local === "sheetData") inData = false;
   });
   sax.write(xml).close();
   // The second pass sees only the bounded row window, rather than scanning every cell twice.
   return `${root}${data || "<sheetData>"}${Array.from(spans.values())
-    .map((span) => xml.slice(span.start, span.end))
+    // Resolve implicit row positions before removing empty or out-of-window rows.
+    .map((span) => span.open + xml.slice(span.start, span.end))
     .join("")}</${dataName}></${rootName}>`;
 }
 

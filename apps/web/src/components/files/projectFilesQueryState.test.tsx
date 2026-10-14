@@ -34,7 +34,11 @@ const projectMocks = vi.hoisted(() => ({
   listEntries: vi.fn(),
   optimisticFile: vi.fn(),
   readFile: vi.fn(),
+  fileMetadata: vi.fn(),
+  invalidateFileMetadata: vi.fn(),
 }));
+
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 
 const atomHooks = vi.hoisted(() => ({
   registry: null as {
@@ -100,7 +104,11 @@ vi.mock("~/state/queries", () => ({
 
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { useT3ProjectFileState } from "~/hooks/useT3ProjectFileScripts";
-import { useProjectEntriesQuery, useProjectFileQuery } from "./projectFilesQueryState";
+import {
+  useProjectEntriesQuery,
+  useProjectFileQuery,
+  useProjectFileMetadataQuery,
+} from "./projectFilesQueryState";
 
 const environmentId = EnvironmentId.make("environment-1");
 const decodeReadError = Schema.decodeSync(ProjectReadFileError);
@@ -144,7 +152,39 @@ describe("project query refresh", () => {
     projectMocks.listEntries.mockReset();
     projectMocks.optimisticFile.mockReset();
     projectMocks.readFile.mockReset();
+    projectMocks.fileMetadata.mockReset();
+    projectMocks.invalidateFileMetadata.mockReset();
     reactHooks.reset();
+  });
+
+  it("resolves Office-looking folders and refreshes their type without reading contents", () => {
+    const registry = AtomRegistry.make();
+    atomHooks.registry = registry;
+    const metadata = Atom.make(AsyncResult.success({ kind: "directory" as "directory" | "file" }));
+    projectMocks.fileMetadata.mockReturnValue(metadata);
+    try {
+      const folder = useProjectFileMetadataQuery(environmentId, "/repo/reports.xlsx");
+      expect(folder.data?.kind).toBe("directory");
+      folder.refresh();
+      expect(projectMocks.invalidateFileMetadata).toHaveBeenCalledWith({
+        environmentId,
+        input: { paths: ["/repo/reports.xlsx"] },
+      });
+      registry.set(metadata, AsyncResult.success({ kind: "file" }));
+      expect(useProjectFileMetadataQuery(environmentId, "/repo/reports.xlsx").data?.kind).toBe(
+        "file",
+      );
+      expect(projectMocks.readFile).not.toHaveBeenCalled();
+      authorizationMocks.sessionAtom = Atom.make(
+        AsyncResult.success({ authenticated: true, scopes: [] }),
+      );
+      projectMocks.fileMetadata.mockClear();
+      expect(useProjectFileMetadataQuery(environmentId, "/repo/reports.xlsx").data).toBeNull();
+      expect(projectMocks.fileMetadata).not.toHaveBeenCalled();
+    } finally {
+      registry.dispose();
+      atomHooks.registry = null;
+    }
   });
 
   it("does not query or expose optimistic file contents without read permission", () => {

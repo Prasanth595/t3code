@@ -19,6 +19,39 @@ const table = (workbook: WorkBook, name: string, page = 0) =>
   spreadsheetTable(spreadsheetWindow(workbook, name), page);
 
 describe("read-only Excel preview", () => {
+  it.each([
+    [
+      '<row r="8999"></row><row><c t="inlineStr"><is><t>Sparse</t></is></c></row>',
+      "A9000",
+      "Sparse",
+    ],
+    [
+      '<row><c><v>1</v></c></row><row></row><row><c t="inlineStr"><is><t>Third</t></is></c></row>',
+      "A3",
+      "Third",
+    ],
+    [
+      '<row r="8999"/><row><c r="C9000" t="inlineStr"><is><t>Mixed</t></is></c><c><v>2</v></c></row><row><c><v>3</v></c></row>',
+      "A9001",
+      3,
+    ],
+  ])(
+    "preserves absolute coordinates before filtering empty rows: %s",
+    async (rows, address, value) => {
+      const wb = utils.book_new();
+      utils.book_append_sheet(wb, utils.aoa_to_sheet([[1]]), "Sparse");
+      const zip = await JSZip.loadAsync(write(wb, { type: "array", bookType: "xlsx" }));
+      zip.file(
+        "xl/worksheets/sheet1.xml",
+        `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rows}</sheetData></worksheet>`,
+      );
+      const doc = await openSpreadsheetDocument(await zip.generateAsync({ type: "uint8array" }));
+      const { workbook } = await doc.readSheet("Sparse");
+      expect(workbook.Sheets.Sparse![address as string]?.v).toBe(value);
+      expect(workbook.Sheets.Sparse!["!ref"]).toBe(workbook.Sheets.Sparse!["!fullref"]);
+      if (address === "A9001") expect(workbook.Sheets.Sparse!.D9000?.v).toBe(2);
+    },
+  );
   it("offers a complexity fallback instead of claiming an oversized first cell is empty", async () => {
     const wb = utils.book_new();
     utils.book_append_sheet(wb, utils.aoa_to_sheet([["x".repeat(20000)]]), "Oversized cell");
@@ -64,16 +97,36 @@ describe("read-only Excel preview", () => {
       "1904-01-02",
     ]);
   });
-  it("rejects worksheet XML over the parse budget before constructing cells", async () => {
-    const wb = utils.book_new();
-    utils.book_append_sheet(wb, utils.aoa_to_sheet([["Small"]]), "Large XML");
-    const zip = await JSZip.loadAsync(write(wb, { type: "array", bookType: "xlsx" }));
-    zip.file("xl/worksheets/sheet1.xml", " ".repeat(24 * 1024 * 1024 + 1));
-    const doc = await openSpreadsheetDocument(
-      await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" }),
-    );
-    await expect(doc.readSheet("Large XML")).rejects.toThrow("too complex");
-  });
+  it.each([false, true])(
+    "rejects worksheet XML over the parse budget before constructing cells (Unicode alias: %s)",
+    async (alias) => {
+      const wb = utils.book_new();
+      utils.book_append_sheet(wb, utils.aoa_to_sheet([["Small"]]), "Large XML");
+      const zip = await JSZip.loadAsync(write(wb, { type: "array", bookType: "xlsx" }));
+      const sheetPath = alias ? "xl/worksheets/shéet1.xml" : "xl/worksheets/sheet1.xml";
+      if (alias) {
+        zip.remove("xl/worksheets/sheet1.xml");
+        const relationships = await zip.file("xl/_rels/workbook.xml.rels")!.async("string");
+        zip.file(
+          "xl/_rels/workbook.xml.rels",
+          relationships.replace("worksheets/sheet1.xml", "worksheets/shéet1.xml"),
+        );
+      }
+      zip.file(sheetPath, " ".repeat(24 * 1024 * 1024 + 1));
+      const doc = await openSpreadsheetDocument(
+        await zip.generateAsync({
+          type: "uint8array",
+          compression: "DEFLATE",
+          ...(alias
+            ? {
+                encodeFileName: (name: string) => (name === sheetPath ? "payload.xml" : name),
+              }
+            : {}),
+        }),
+      );
+      await expect(doc.readSheet("Large XML")).rejects.toThrow("too complex");
+    },
+  );
   it("keeps prefixed worksheet tags and implicit cell coordinates", async () => {
     const wb = utils.book_new();
     utils.book_append_sheet(wb, utils.aoa_to_sheet([["😀 Łódź", "Second"]]), "Prefix");

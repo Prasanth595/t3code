@@ -117,6 +117,7 @@ import {
   getProjectFileContents,
   setProjectFileQueryData,
   useProjectFileQuery,
+  useProjectFileMetadataQuery,
 } from "./projectFilesQueryState";
 
 interface FilePreviewPanelProps {
@@ -1125,6 +1126,12 @@ export default function FilePreviewPanel({
   const fileAccess = useFilesystemReadAccess(environmentId);
   const { canReadFiles } = fileAccess;
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
+  const absolutePath =
+    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
+  const officeMetadata = useProjectFileMetadataQuery(
+    environmentId,
+    officeKind === null ? null : absolutePath,
+  );
   // Media and PDFs render from their absolute path, so their contents are never
   // shown. The read still runs: a folder named `assets.png` is only knowable as a
   // folder from the read failure, and the server stats before reading, so a folder
@@ -1141,7 +1148,7 @@ export default function FilePreviewPanel({
   // pane, and let the tree fill the surface with the folder revealed. Mutation
   // refresh stays on so the surface notices if the path becomes a file. A host
   // path cannot be revealed in the workspace tree, so it keeps the read error.
-  const isDirectory = file.isNotFile && !isHostFile;
+  const isDirectory = (file.isNotFile || officeMetadata.data?.kind === "directory") && !isHostFile;
   // Everything preview-related keys off previewPath; a folder has no preview.
   const previewPath = isDirectory ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
@@ -1216,8 +1223,6 @@ export default function FilePreviewPanel({
     !isVideo &&
     previewAvailable &&
     isBrowserPreviewFile(previewPath);
-  const absolutePath =
-    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
     enabled:
@@ -1229,7 +1234,7 @@ export default function FilePreviewPanel({
       (isDirectory || (!isMedia && !isPdf)) &&
       !selectedFilePending,
     mutationId: workspaceMutationId,
-    refresh: file.refresh,
+    refresh: officeKind === null ? file.refresh : officeMetadata.refresh,
     resourceKey: `file:${environmentId}:${cwd}:${relativePath ?? ""}`,
   });
 
@@ -1355,7 +1360,7 @@ export default function FilePreviewPanel({
               />
             </FileSurfaceAction>
           ) : null}
-          {officeKind !== null && absolutePath ? (
+          {officeKind !== null && absolutePath && !isDirectory ? (
             <WorkspaceOfficeDownload
               environmentId={environmentId}
               threadRef={threadRef}
@@ -1419,6 +1424,8 @@ export default function FilePreviewPanel({
               htmlRender={attachment.htmlRender === true}
               threadRef={threadRef}
             />
+          ) : officeKind !== null && officeMetadata.isPending && !officeMetadata.data ? (
+            <FileSurfaceLoading />
           ) : relativePath && officeKind !== null && absolutePath ? (
             <WorkspaceOfficePreview
               key={`${environmentId}:${absolutePath}`}
@@ -1574,12 +1581,15 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
-              {...(previewPath && !isMedia && !isPdf
+              {...((previewPath || officeKind !== null) && !isMedia && !isPdf
                 ? {
                     onRefreshSelectedFile:
                       officeKind === null
                         ? file.refresh
-                        : () => setOfficeRefreshRevision((value) => value + 1),
+                        : () => {
+                            officeMetadata.refresh();
+                            setOfficeRefreshRevision((value) => value + 1);
+                          },
                   }
                 : {})}
             />

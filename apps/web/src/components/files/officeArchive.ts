@@ -3,6 +3,16 @@ import type { filePreviewKind } from "@t3tools/shared/filePreview";
 export type OfficePreviewKind = Extract<ReturnType<typeof filePreviewKind>, "docx" | "xlsx">;
 export const OFFICE_ARCHIVE_MAX_EXPANDED_BYTES = 64 * 1024 * 1024;
 
+const crcTable = Uint32Array.from({ length: 256 }, (_, value) => {
+  for (let bit = 0; bit < 8; bit++) value = (value >>> 1) ^ (value & 1 ? 0xedb88320 : 0);
+  return value;
+});
+function filenameCrc(bytes: Uint8Array) {
+  let crc = -1;
+  for (const byte of bytes) crc = (crc >>> 8) ^ crcTable[(crc ^ byte) & 255]!;
+  return (crc ^ -1) >>> 0;
+}
+
 export function invalidOfficeArchive(): never {
   throw new Error(
     "This file cannot be previewed. It may be damaged, encrypted, or use an unsupported Office format. Save it to open it in another app.",
@@ -44,18 +54,42 @@ export function validateOfficeArchive(bytes: Uint8Array, kind: OfficePreviewKind
     localEnd: number;
   }[] = [];
   const names = new Set<string>();
-  const decoder = new TextDecoder();
+  // JSZip's browser decoder tolerates overlong encodings. Reject those rather than
+  // budgeting a replacement-character name that the renderer interprets as a path.
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const decodeName = (value: Uint8Array) => {
+    try {
+      return decoder.decode(value);
+    } catch {
+      return invalidOfficeArchive();
+    }
+  };
   let expanded = 0;
   let pos = directory;
-  const inspectExtra = (start: number, length: number) => {
+  const inspectExtra = (start: number, length: number, rawName: Uint8Array) => {
     const stop = start + length;
+    let unicodeName: Uint8Array | undefined;
+    let seenUnicode = false;
     while (start < stop) {
       if (start + 4 > stop) return invalidOfficeArchive();
+      const id = view.getUint16(start, true);
+      const size = view.getUint16(start + 2, true);
+      const next = start + 4 + size;
+      if (next > stop) return invalidOfficeArchive();
       // ZIP64 changes the meaning of the 32-bit sizes and is outside the preview budget.
-      if (view.getUint16(start, true) === 1) return invalidOfficeArchive();
-      start += 4 + view.getUint16(start + 2, true);
-      if (start > stop) return invalidOfficeArchive();
+      if (id === 1) return invalidOfficeArchive();
+      if (id === 0x7075) {
+        if (seenUnicode || size < 1) return invalidOfficeArchive();
+        seenUnicode = true;
+        if (bytes[start + 4] === 1) {
+          if (size < 5) return invalidOfficeArchive();
+          if (view.getUint32(start + 5, true) === filenameCrc(rawName))
+            unicodeName = bytes.subarray(start + 9, next);
+        }
+      }
+      start = next;
     }
+    return unicodeName;
   };
   for (let index = 0; index < count; index++) {
     if (pos + 46 > end || view.getUint32(pos, true) !== 0x02014b50) return invalidOfficeArchive();
@@ -80,17 +114,21 @@ export function validateOfficeArchive(bytes: Uint8Array, kind: OfficePreviewKind
     if (expanded > OFFICE_ARCHIVE_MAX_EXPANDED_BYTES)
       throw new Error("This document is too large to preview. Save it to open it in another app.");
     const rawName = bytes.subarray(pos + 46, pos + 46 + nameLength);
-    const name = decoder.decode(rawName);
+    const unicodeName = inspectExtra(pos + 46 + nameLength, extraLength, rawName);
+    // JSZip uses the central Unicode Path field only when the UTF-8 flag is clear.
+    // Budget and deduplicate that effective name, including legacy-codepage ZIPs.
+    const name = decodeName((flags & 0x800) === 0 && unicodeName ? unicodeName : rawName);
     if (
       !name ||
       names.has(name) ||
       name.startsWith("/") ||
       name.includes("\\") ||
+      name.includes("//") ||
+      name.includes("\0") ||
       name.split("/").some((part) => part === "." || part === "..")
     )
       return invalidOfficeArchive();
     names.add(name);
-    inspectExtra(pos + 46 + nameLength, extraLength);
     if (
       view.getUint32(local, true) !== 0x04034b50 ||
       view.getUint16(local + 6, true) !== flags ||
@@ -104,7 +142,8 @@ export function validateOfficeArchive(bytes: Uint8Array, kind: OfficePreviewKind
     if (dataEnd > directory || (method === 0 && compressed !== size)) return invalidOfficeArchive();
     for (let n = 0; n < nameLength; n++)
       if (bytes[local + 30 + n] !== rawName[n]) return invalidOfficeArchive();
-    inspectExtra(local + 30 + nameLength, localExtra);
+    // JSZip skips local Unicode names; only the central directory can rename an entry.
+    inspectExtra(local + 30 + nameLength, localExtra, rawName);
     const descriptor = (flags & 8) !== 0;
     for (const [offset, expected] of [
       [14, crc],

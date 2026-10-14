@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { zipSync } from "fflate";
 import { describe, expect, it } from "vite-plus/test";
 import { validateOfficeArchive } from "./officeArchive";
 import { validateOfficeArchiveContents } from "./officeArchiveContents";
@@ -26,7 +27,159 @@ function directoryOffsets(bytes: Uint8Array) {
   return result;
 }
 
+function unicodePath(raw: string, effective: string) {
+  const encoder = new TextEncoder();
+  let crc = -1;
+  for (const byte of encoder.encode(raw)) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  const result = new Uint8Array(5 + encoder.encode(effective).length);
+  result[0] = 1;
+  new DataView(result.buffer).setUint32(1, (crc ^ -1) >>> 0, true);
+  result.set(encoder.encode(effective), 5);
+  return result;
+}
+
+function aliasedArchive(effective: string, contents = "<document />", duplicate = false) {
+  const encoder = new TextEncoder();
+  return zipSync({
+    "[Content_Types].xml": encoder.encode("<Types />"),
+    ...(duplicate ? { "word/document.xml": encoder.encode("<document />") } : {}),
+    "payload.xml": [
+      encoder.encode(contents),
+      { extra: { 0x7075: unicodePath("payload.xml", effective) } },
+    ],
+  });
+}
+
 describe("Office archive validation", () => {
+  it.each(["custom.data", "payload.rels"])(
+    "budgets Word content selected through relationships at %s",
+    async (target) => {
+      const zip = new JSZip();
+      zip.file("[Content_Types].xml", "<Types />");
+      zip.file("word/document.xml", "<document />");
+      zip.file(target, `<document>${"<p><r><t>Text</t></r></p>".repeat(5000)}</document>`);
+      zip.file(
+        "_rels/.rels",
+        `<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="${target}"/></Relationships>`,
+      );
+      const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+      expect(() => validateOfficeArchiveContents(bytes, "docx")).toThrow("too complex");
+    },
+  );
+  it("budgets images reached through relative Word relationships outside word/media", async () => {
+    const zip = new JSZip();
+    zip.file("[Content_Types].xml", "<Types />");
+    zip.file("word/document.xml", "<document />");
+    zip.file(
+      "word/_rels/document.xml.rels",
+      '<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../picture.bin"/></Relationships>',
+    );
+    const png = new Uint8Array(24);
+    png.set([0x89, 0x50, 0x4e, 0x47], 0);
+    png.set([0x49, 0x48, 0x44, 0x52], 12);
+    const view = new DataView(png.buffer);
+    view.setUint32(16, 100000);
+    view.setUint32(20, 100000);
+    zip.file("picture.bin", png);
+    const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+    expect(() => validateOfficeArchiveContents(bytes, "docx")).toThrow("too complex");
+  });
+  it("budgets the effective Unicode part name used by the renderer", async () => {
+    const bytes = aliasedArchive(
+      "word/document.xml",
+      `<document>${"<p><r><t>Text</t></r></p>".repeat(5000)}</document>`,
+    );
+    expect(validateOfficeArchive(bytes, "docx").at(-1)?.name).toBe("word/document.xml");
+    expect((await JSZip.loadAsync(bytes)).file("word/document.xml")).not.toBeNull();
+    expect(() => validateOfficeArchiveContents(bytes, "docx")).toThrow("too complex");
+    expect(() =>
+      validateOfficeArchiveContents(
+        aliasedArchive("word/document.xml", "x".repeat(2 * 1024 * 1024 + 1)),
+        "docx",
+      ),
+    ).toThrow("too complex");
+  });
+  it("rejects effective-name collisions before a parser can replace a budgeted part", () => {
+    expect(() =>
+      validateOfficeArchive(aliasedArchive("word/document.xml", "<document />", true), "docx"),
+    ).toThrow("cannot be previewed");
+  });
+  it.each([
+    "word//document.xml",
+    "word/../word/document.xml",
+    "/word/document.xml",
+    "word\\document.xml",
+    "word/\0document.xml",
+  ])("rejects unsafe effective names: %s", (name) => {
+    expect(() => validateOfficeArchive(aliasedArchive(name), "docx")).toThrow(
+      "cannot be previewed",
+    );
+  });
+  it("preserves Unicode legacy names and central-only Unicode metadata", async () => {
+    const zip = new JSZip();
+    zip.file("[Content_Types].xml", "<Types />");
+    zip.file("word/document.xml", "<document />");
+    zip.file("word/café.xml", "<custom />");
+    const bytes = await zip.generateAsync({
+      type: "uint8array",
+      encodeFileName: (name) => name.replaceAll("é", "\x82"),
+    });
+    expect(
+      validateOfficeArchive(bytes, "docx").some((entry) => entry.name === "word/café.xml"),
+    ).toBe(true);
+    expect((await JSZip.loadAsync(bytes)).file("word/café.xml")).not.toBeNull();
+    const alias = aliasedArchive("word/document.xml");
+    const view = new DataView(alias.buffer);
+    const central = directoryOffsets(alias).at(-1)!;
+    const local = view.getUint32(central + 42, true);
+    view.setUint16(local + 30 + view.getUint16(local + 26, true), 0x9999, true);
+    expect(() => validateOfficeArchiveContents(alias, "docx")).not.toThrow();
+    expect((await JSZip.loadAsync(alias)).file("word/document.xml")).not.toBeNull();
+  });
+  it.each(["crc", "version", "utf8"])(
+    "matches JSZip when Unicode metadata is ignored: %s",
+    async (mode) => {
+      const bytes = aliasedArchive("word/document.xml", "<custom />", true);
+      const view = new DataView(bytes.buffer);
+      const central = directoryOffsets(bytes).at(-1)!;
+      const local = view.getUint32(central + 42, true);
+      const extra = central + 46 + view.getUint16(central + 28, true);
+      if (mode === "crc") bytes[extra + 5]! ^= 1;
+      if (mode === "version") bytes[extra + 4] = 2;
+      if (mode === "utf8") {
+        view.setUint16(central + 8, 0x800, true);
+        view.setUint16(local + 6, 0x800, true);
+      }
+      expect(validateOfficeArchive(bytes, "docx").at(-1)?.name).toBe("payload.xml");
+      expect((await JSZip.loadAsync(bytes)).file("payload.xml")).not.toBeNull();
+    },
+  );
+  it.each([
+    [0xc0, 0xaf],
+    [0xe0, 0x80],
+    [0xff, 0xff],
+  ])(
+    "rejects malformed name bytes even when a browser decoder would accept them: %j",
+    async (...malformed) => {
+      const zip = await JSZip.loadAsync(await archive("word/document.xml"));
+      zip.file("wordXXdocument.xml", "<document />");
+      const bytes = await zip.generateAsync({ type: "uint8array" });
+      const view = new DataView(bytes.buffer);
+      const central = directoryOffsets(bytes).at(-1)!;
+      const local = view.getUint32(central + 42, true);
+      bytes.set(malformed, central + 46 + 4);
+      bytes.set(malformed, local + 30 + 4);
+      expect(() => validateOfficeArchive(bytes, "docx")).toThrow("cannot be previewed");
+    },
+  );
+  it("does not strip a filename BOM that JSZip preserves", () => {
+    expect(() => validateOfficeArchive(aliasedArchive("\ufeffword/document.xml"), "docx")).toThrow(
+      "cannot be previewed",
+    );
+  });
   it.each([
     ["docx", "word/document.xml"],
     ["xlsx", "xl/workbook.xml"],

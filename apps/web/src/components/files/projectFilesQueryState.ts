@@ -15,6 +15,8 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
+import { useEnvironmentQuery } from "~/state/query";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 
 const EMPTY_PROJECT_FILE_PATH = "";
@@ -286,4 +288,21 @@ export function useProjectFileQuery(
     isNotFile: readError?.failure === "path_not_file",
     refresh,
   };
+}
+
+/** Resolve Office-looking folders without loading a binary file into the text cache. */
+export function useProjectFileMetadataQuery(environmentId: EnvironmentId, path: string | null) {
+  const { canReadFiles } = useFilesystemReadAccess(environmentId);
+  const query = useEnvironmentQuery(
+    path && canReadFiles
+      ? projectEnvironment.fileMetadata({ environmentId, input: { path } })
+      : null,
+  );
+  const invalidate = useAtomCommand(projectEnvironment.invalidateFileMetadata, {
+    reportFailure: false,
+  });
+  const refresh = useCallback(() => {
+    if (path && canReadFiles) void invalidate({ environmentId, input: { paths: [path] } });
+  }, [environmentId, path, canReadFiles, invalidate]);
+  return { ...query, refresh };
 }
