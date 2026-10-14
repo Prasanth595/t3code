@@ -1071,7 +1071,7 @@ describe("what to say when an action fails", () => {
     expect(readableFailure(undefined, hint)).toBe(hint);
   });
 
-  it("explains a failed checkout with the server's reason, never its project path", () => {
+  it("explains a failed checkout with the server's reason, without a git command's cwd wrapper", () => {
     const reason = "This PR branch is already checked out in the main repo. Use Local.";
     expect(
       checkoutFailureDescription(
