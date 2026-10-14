@@ -375,9 +375,7 @@ describe("mission wire schemas", () => {
       mailboxAcked: false,
       quarantined: Array.from({ length: MAX_QUARANTINE_ENTRIES + 1 }, () => ({ ...entry })),
     };
-    expect(() =>
-      decodeExecution({ ...emptyMissionExecution(), results: [record] }),
-    ).toThrow();
+    expect(() => decodeExecution({ ...emptyMissionExecution(), results: [record] })).toThrow();
   });
 
   it("round-trips bounded retro checkpoint descriptors as empty by default", () => {
@@ -525,4 +523,57 @@ describe("mission wire schemas", () => {
       expect(event.payload.commandId).toBe("cmd-11");
     }
   });
+});
+
+it("retains analysis state as execution evidence and bounds its leaf array", () => {
+  const queued = {
+    checkpointId: "retro-one",
+    teamId: "team-1",
+    environmentId: "env-1",
+    missionId: "mission-1",
+    sourceThreadId: "origin",
+    sourceRoot: "thread://origin",
+    snapshotFingerprint: "a".repeat(64),
+    coveredFromInclusive: 1,
+    coveredToExclusive: 2,
+    managerThreadId: "retro-manager",
+    managerEpoch: 4,
+    status: "queued_capacity",
+    queueReason: "capacity",
+    fence: 0,
+    attemptNumber: 0,
+    lease: null,
+    settlement: null,
+  };
+  const execution = decodeExecution({ ...emptyMissionExecution(), retroAnalyses: [queued] });
+  expect(isEmptyMissionExecution(execution)).toBe(false);
+  expect(encodeExecution(execution)).toMatchObject({ retroAnalyses: [queued] });
+  expect(() =>
+    decodeExecution({
+      ...emptyMissionExecution(),
+      retroAnalyses: Array.from({ length: 65 }, (_, index) => ({
+        ...queued,
+        checkpointId: `retro-${index}`,
+      })),
+    }),
+  ).toThrow();
+});
+
+it("round-trips the full retro analysis update event", () => {
+  const event = decodeEvent({
+    sequence: 1,
+    eventId: "analysis-event",
+    aggregateKind: "mission",
+    aggregateId: "mission-1",
+    occurredAt: OCCURRED_AT,
+    commandId: "analysis-cmd",
+    metadata: {},
+    type: "mission.retro-analysis-updated",
+    payload: {
+      mission: { ...missionFixture(), execution: emptyMissionExecution() },
+      checkpointId: "retro-one",
+      operation: "claim",
+    },
+  });
+  expect(event.type).toBe("mission.retro-analysis-updated");
 });

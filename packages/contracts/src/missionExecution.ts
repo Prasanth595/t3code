@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { MissionRetroCheckpoints, type MissionRetroCheckpoint } from "./missionRetro.ts";
+import { MissionRetroAnalyses } from "./missionRetroAnalysis.ts";
 import { MissionResultRecord } from "./missionResult.ts";
 
 /**
@@ -12,7 +13,8 @@ import { MissionResultRecord } from "./missionResult.ts";
  * Only the dedicated admission-reserved event may append admissions,
  * only the dedicated result-reconciled event may append results, and only
  * the dedicated retro-checkpoint-captured event may append retro
- * checkpoints; generic create/replace cannot forge or erase any of them.
+ * checkpoints. The analysis-updated event changes retro ownership; generic
+ * create/replace cannot forge or erase any of them.
  * Arrays stay small (no transcripts); when a bound is reached the owning
  * store denies further writes rather than dropping history.
  */
@@ -26,7 +28,11 @@ export const MAX_MISSION_EXECUTION_CONSUMED_EXCEPTIONS = 64;
 /** Maximum rejected routes carried on one persisted admission receipt. */
 export const MAX_MISSION_EXECUTION_REJECTED_ROUTES = 32;
 
-const ObservedMillis = Schema.Number.check(Schema.makeFilter((v) => Number.isFinite(v) && v >= 0, { expected: "finite nonnegative milliseconds" }));
+const ObservedMillis = Schema.Number.check(
+  Schema.makeFilter((v) => Number.isFinite(v) && v >= 0, {
+    expected: "finite nonnegative milliseconds",
+  }),
+);
 
 const atMost =
   (limit: number) =>
@@ -138,6 +144,8 @@ export const MissionExecution = Schema.Struct({
    * Only the retro-checkpoint-captured event appends here.
    */
   retroCheckpoints: Schema.optional(MissionRetroCheckpoints),
+  /** Only the analysis store may change ownership; generic replacements preserve it. */
+  retroAnalyses: Schema.optional(MissionRetroAnalyses),
 });
 export type MissionExecution = typeof MissionExecution.Type;
 
@@ -148,15 +156,17 @@ export const emptyMissionExecution = (): MissionExecution => ({
   consumedExceptionIds: [],
   results: [],
   retroCheckpoints: [],
+  retroAnalyses: [],
 });
 
-/** True when no admission, claim, consumption, result, or checkpoint is recorded. */
+/** True when no admission, claim, consumption, result, checkpoint, or analysis is recorded. */
 export const isEmptyMissionExecution = (execution: MissionExecution): boolean =>
   execution.admissions.length === 0 &&
   execution.writerClaims.length === 0 &&
   execution.consumedExceptionIds.length === 0 &&
   (execution.results ?? []).length === 0 &&
-  (execution.retroCheckpoints ?? []).length === 0;
+  (execution.retroCheckpoints ?? []).length === 0 &&
+  (execution.retroAnalyses ?? []).length === 0;
 
 /** Dedicated result records, treating an omitted array as empty. */
 export const missionExecutionResults = (

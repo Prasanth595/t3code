@@ -251,8 +251,19 @@ export const MissionRetroCheckpointCapturedEvent = Schema.Struct({
     checkpointId: TrimmedNonEmptyString,
   }),
 });
-export type MissionRetroCheckpointCapturedEvent =
-  typeof MissionRetroCheckpointCapturedEvent.Type;
+export type MissionRetroCheckpointCapturedEvent = typeof MissionRetroCheckpointCapturedEvent.Type;
+
+/** Full durable analysis outcome, recoverable from its receipt sequence. */
+export const MissionRetroAnalysisUpdatedEvent = Schema.Struct({
+  ...MissionEventBaseFields,
+  type: Schema.Literal("mission.retro-analysis-updated"),
+  payload: Schema.Struct({
+    mission: Mission,
+    checkpointId: TrimmedNonEmptyString,
+    operation: Schema.Literals(["claim", "settle"]),
+  }),
+});
+export type MissionRetroAnalysisUpdatedEvent = typeof MissionRetroAnalysisUpdatedEvent.Type;
 
 export const MissionResultReconciledEvent = Schema.Struct({
   ...MissionEventBaseFields,
@@ -280,5 +291,6 @@ export const MissionEvent = Schema.Union([
   MissionAdmissionReservedEvent,
   MissionResultReconciledEvent,
   MissionRetroCheckpointCapturedEvent,
+  MissionRetroAnalysisUpdatedEvent,
 ]);
 export type MissionEvent = typeof MissionEvent.Type;
