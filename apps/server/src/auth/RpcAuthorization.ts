@@ -219,6 +219,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.forkChangelogSyncStatus]: AuthOrchestrationReadScope,
   // Fork: machine map state for this server's clients. Only the desktop gets the token.
   [WS_METHODS.machineMapSubscribe]: AuthOrchestrationReadScope,
+  // Fork: MM-1701. The same data that an agent with read access gets from `machines_read`.
+  [WS_METHODS.machineMapRead]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

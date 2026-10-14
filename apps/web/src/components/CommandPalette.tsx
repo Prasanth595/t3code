@@ -77,6 +77,7 @@ import {
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
+  NetworkIcon,
 } from "lucide-react";
 import { requestThreadFindOpen } from "./chat/threadFindActionBus";
 import {
@@ -1966,6 +1967,19 @@ function OpenCommandPaletteDialog(props: {
 
   if (activeThread !== null) {
     const thread = activeThread;
+    // Fork: MM-1701.
+    actionItems.push({
+      kind: "action",
+      value: "action:open-machines",
+      searchTerms: ["show machines", "machine map", "portal", "presence", "access"],
+      title: "Show machines",
+      icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore
+          .getState()
+          .open(scopeThreadRef(thread.environmentId, thread.id), "machines");
+      },
+    });
     actionItems.push({
       kind: "action",
       value: "action:restart-agent-session",

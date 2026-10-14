@@ -310,6 +310,7 @@ The server setting `machineMap` connects this server to the machine map portal. 
 
 - Agents use the machine map through the `machines_*` and `machine_tool_call` tools. See [fork-agents.md](fork-agents.md).
 - Join: in the portal, "Add machine" shows a one-time join code. A machine without the fork installs it first with the step 0 command of the dialog, see "Install the fork". On the machine, enter it in Settings > Machines, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
+- The Machines panel in the right panel of a thread shows the map from `machines_read`, read only. Open it from the "+" menu of the panel or with "Show machines" in the command palette.
 - Settings > Machines shows the connection status, the last error, the portal link, this machine's name, and the machines that it can use with their levels. "Leave" forgets the token and turns `machineMap` off. Join and leave need the `settings:write` scope.
 - The server keeps one outbound WebSocket to the portal. It applies its desired state (settings and arrows) live, and saves it, so a restart applies it before other machines can connect.
 - The desktop app reads the machine map state of its own server. It acts only while that server is joined, because only then does the server send it the token headers.

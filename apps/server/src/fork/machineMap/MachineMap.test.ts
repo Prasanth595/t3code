@@ -441,6 +441,73 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
     ),
   );
 
+  it.effect("the Machines panel reads the map, or says why it cannot (MM-1701)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const portal = yield* startFakePortal;
+        const ran = yield* Ref.make<ReadonlyArray<string>>([]);
+        yield* Effect.gen(function* () {
+          const machineMap = yield* MachineMap.MachineMap;
+          const state = yield* MachineMapState.MachineMapState;
+          expect(yield* machineMap.readPanel).toMatchObject({ _tag: "unavailable", reason: "off" });
+
+          yield* machineMap.join({ code: "good" });
+          const { socket } = yield* Queue.take(portal.sockets);
+          yield* nextOf(portal.received, "hello");
+          const answer = (result: unknown) =>
+            Effect.gen(function* () {
+              const read = yield* machineMap.readPanel.pipe(Effect.forkChild);
+              const toolCall = yield* nextOf(portal.received, "toolCall");
+              expect(toolCall).toMatchObject({ tool: "machines_read", threadId: null });
+              socket.send(
+                encodePortalMessage({
+                  _tag: "toolResult",
+                  requestId: toolCall.requestId,
+                  ok: true,
+                  result,
+                  error: null,
+                }),
+              );
+              return yield* Fiber.join(read);
+            });
+          const desired = desiredState({});
+          const panel = yield* answer({
+            _tag: "read",
+            map: {
+              revision: 3,
+              machines: [desired.self],
+              arrows: [],
+              settings: { managed: [], shared: { server: {}, client: {} }, overrides: {} },
+              presets: [],
+            },
+            presence: {},
+            commands: [],
+            history: [{ dropped: true }],
+            proposals: [],
+            resources: { latest: {}, alerts: [], thresholds: {} },
+          });
+          expect(panel).toMatchObject({ _tag: "read", map: { revision: 3 } });
+          // The panel does not need the history, so it does not cross the socket.
+          expect(panel).not.toHaveProperty("history");
+          expect(yield* answer({ _tag: "read", map: null })).toMatchObject({
+            _tag: "unavailable",
+            reason: "unreadable",
+          });
+
+          // MM-711: the portal refuses machines_read while paused, so the panel does not ask.
+          yield* state.updateSaved((saved) => ({
+            ...saved,
+            desired: { ...desired, paused: true },
+          }));
+          expect(yield* machineMap.readPanel).toMatchObject({
+            _tag: "unavailable",
+            reason: "paused",
+          });
+        }).pipe(Effect.provide(layerMachineMap({ portalUrl: portal.url, ran })));
+      }),
+    ),
+  );
+
   it.effect("a removed machine forgets its token and its arrows, and says why (MM-208)", () =>
     Effect.scoped(
       Effect.gen(function* () {
