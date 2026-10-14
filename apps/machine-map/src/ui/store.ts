@@ -10,7 +10,7 @@ import {
   HealthEvent,
   PauseEvent,
   ResourceSampleEvent,
-  type PauseState,
+  type PauseView,
   type PendingRotation,
   type RotationsEvent,
 } from "../api.ts";
@@ -19,7 +19,7 @@ export interface PortalState {
   readonly snapshot: PortalSnapshot | null;
   readonly rotations: ReadonlyArray<PendingRotation>;
   /** MM-713: null when nothing is paused. */
-  readonly pause: PauseState | null;
+  readonly pause: PauseView | null;
   /** MM-1506: the latest samples, thresholds and alerts. */
   readonly health: ResourcesOverview;
 }

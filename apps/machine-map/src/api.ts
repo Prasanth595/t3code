@@ -10,6 +10,7 @@ import {
   MachineCommandInput,
   MachineId,
   MachineKind,
+  MachineLevel,
   MapActor,
   MapChange,
   MapPosition,
@@ -179,8 +180,16 @@ export const PauseState = Schema.Struct({
 });
 export type PauseState = typeof PauseState.Type;
 
+/** MM-717: an arrow that the pause set to `none`, with its level from before the pause. */
+export const CutArrow = Schema.Struct({ from: MachineId, to: MachineId, level: MachineLevel });
+export type CutArrow = typeof CutArrow.Type;
+
+/** The pause as pages see it: the stored state plus the arrows it cut (MM-717). */
+export const PauseView = Schema.Struct({ ...PauseState.fields, cut: Schema.Array(CutArrow) });
+export type PauseView = typeof PauseView.Type;
+
 /** Page event: the pause began (`pause` set) or ended (`pause` null). */
-export const PauseEvent = Schema.TaggedStruct("pause", { pause: Schema.NullOr(PauseState) });
+export const PauseEvent = Schema.TaggedStruct("pause", { pause: Schema.NullOr(PauseView) });
 export type PauseEvent = typeof PauseEvent.Type;
 
 /** POST /api/pause (MM-708 to MM-710). */

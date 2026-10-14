@@ -23,7 +23,15 @@ import { NO_SELECTION } from "./route.ts";
 import { usePortalContext } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
-import { arrowEndWait, arrowEnds, connectMachines, machineQueue, pairShows } from "./derive.ts";
+import {
+  arrowEndWait,
+  arrowEnds,
+  connectMachines,
+  cutLevel,
+  machineQueue,
+  pairCut,
+  pairShows,
+} from "./derive.ts";
 import {
   LEVEL_LABEL,
   PRESENCE_STICKER,
@@ -208,13 +216,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const focus = selection._tag === "machine" ? selection.id : null;
   const focusMachine = machines.find((m) => m.id === focus);
   // MM-1103: a pair with no access either way has no line and no card. The Table view and the
-  // command palette still list its arrows.
+  // command palette still list its arrows. MM-717: while paused, a pair that the pause cut stays.
   const pairs: Array<[MachineRecord, MachineRecord]> = [];
   for (let i = 0; i < machines.length; i++) {
     for (let j = i + 1; j < machines.length; j++) {
       const a = machines[i];
       const b = machines[j];
-      if (a && b && pairShows(map, a.id, b.id)) pairs.push([a, b]);
+      if (a && b && (pairShows(map, a.id, b.id) || pairCut(portal.pause, a.id, b.id)))
+        pairs.push([a, b]);
     }
   }
 
@@ -635,6 +644,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   /** MM-1103: "Mac uses Windows ↓": the text gives the direction, the glyph shows the map. */
   const dirRow = (from: MachineRecord, to: MachineRecord, waits: ReadonlyArray<string>) => {
     const arrow = findArrow(map, from.id, to.id);
+    const was = arrow.level === "none" ? cutLevel(portal.pause, from.id, to.id) : null;
     const toward = towardGlyph(centerOf(from), centerOf(to));
     const on = selection._tag === "arrow" && selection.from === from.id && selection.to === to.id;
     const wait = waits.map(sentence).join(". ");
@@ -642,7 +652,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       <button
         type="button"
         className={`dir${on ? " on" : ""}`}
-        aria-label={`${usesText(from.name, to.name)}: ${LEVEL_LABEL[arrow.level]}${wait ? `. ${wait}` : ""}`}
+        aria-label={`${usesText(from.name, to.name)}: ${was ? `cut by the pause, was ${LEVEL_LABEL[was]}` : LEVEL_LABEL[arrow.level]}${wait ? `. ${wait}` : ""}`}
         onClick={() => portal.select({ _tag: "arrow", from: from.id, to: to.id })}
       >
         <span className="who">
@@ -657,7 +667,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           {wait && <ClockIcon label={wait} />}
           {arrow.expiresAt && <span className="sticker warn flat">temp</span>}
           {arrow.agentTools && <span className="sticker accent flat">tools</span>}
-          <span className={`sticker lvl-${arrow.level}`}>{LEVEL_LABEL[arrow.level]}</span>
+          {was ? (
+            <>
+              <span className={`sticker lvl-${was} was`}>{LEVEL_LABEL[was]}</span>
+              <span className="sticker cut-sticker">cut</span>
+            </>
+          ) : (
+            <span className={`sticker lvl-${arrow.level}`}>{LEVEL_LABEL[arrow.level]}</span>
+          )}
         </span>
       </button>
     );
@@ -719,12 +736,13 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             const empty =
               findArrow(map, a.id, b.id).level === "none" &&
               findArrow(map, b.id, a.id).level === "none";
+            const cut = empty && pairCut(portal.pause, a.id, b.id);
             return (
               <path
                 key={pairKey(a, b)}
                 data-pair={pairKey(a, b)}
                 d={pairPath(pa, pb, offsetOf(a, b) && spot ? spot : null)}
-                className={[empty && "empty", focus && (touches ? "hot" : "dim")]
+                className={[empty && "empty", cut && "cut", focus && (touches ? "hot" : "dim")]
                   .filter(Boolean)
                   .join(" ")}
               />
@@ -756,6 +774,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             const spot = shown.spots[i] ?? { x: 0, y: 0 };
             const dim = focus !== null && focus !== a.id && focus !== b.id;
             const placed = offsetOf(a, b) !== null;
+            const cut = pairCut(portal.pause, a.id, b.id);
             const waitsAB = waitOf(a, b);
             const waitsBA = waitOf(b, a);
             // Each machine that did not apply a direction, named once under the rows.
@@ -765,7 +784,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                 key={`pair:${pairKey(a, b)}`}
                 data-pair={pairKey(a, b)}
                 data-size-key={`pair:${pairKey(a, b)}`}
-                className={`card pair${dim ? " dim" : ""}${placed ? " placed" : ""}${readOnly ? " readonly" : ""}`}
+                className={`card pair${dim ? " dim" : ""}${placed ? " placed" : ""}${cut ? " cut" : ""}${readOnly ? " readonly" : ""}`}
                 style={{ left: spot.x, top: spot.y }}
                 onPointerDown={(event) => startDrag(event, { _tag: "pair", a, b }, spot)}
               >

@@ -1013,6 +1013,14 @@ details.more[open] summary {
   stroke-dasharray: 7 7;
   stroke-width: 2;
 }
+/* MM-717: while paused, a line that the pause cut stays as a red broken line. */
+.map path.cut,
+.map path.hot.cut {
+  stroke: var(--panic);
+  stroke-width: 4;
+  stroke-dasharray: 2 12;
+  stroke-linecap: round;
+}
 /* Focus (MM-1103): the lines of the chosen machine turn purple, the rest step back. */
 .map path.hot {
   stroke: var(--accent);
@@ -2304,6 +2312,25 @@ dialog.palette .dialog-body {
   min-width: 260px;
 }
 .sticker.paused-sticker {
+  background: var(--panic);
+  color: #ffffff;
+}
+/* MM-717: a pair card and an arrow row that the pause cut. */
+.pair.cut {
+  border-style: dashed;
+  border-color: var(--panic);
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--surface) 0 10px,
+    var(--error-surface) 10px 20px
+  );
+}
+.sticker.was {
+  opacity: 0.55;
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+}
+.sticker.cut-sticker {
   background: var(--panic);
   color: #ffffff;
 }

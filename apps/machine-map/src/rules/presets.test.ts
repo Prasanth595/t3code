@@ -4,6 +4,7 @@ import { MachineId, type MachineMapDocument } from "@t3tools/contracts/machineMa
 import { applyChanges, findArrow } from "./map.ts";
 import {
   applyPresetChanges,
+  cutArrows,
   lockdownChanges,
   pausedAccess,
   restoreChanges,
@@ -150,5 +151,18 @@ describe("emergency pause and resume (MM-710, MM-712)", () => {
     expect(findArrow(resumed, WIN, MAC)).toEqual(findArrow(map, WIN, MAC));
     expect(findArrow(resumed, NEW, MAC).level).toBe("none");
     expect(resumed.arrows.some((a) => a.from === VPS || a.to === VPS)).toBe(false);
+  });
+
+  it("lists the arrows that the pause cut, with their old level, for the map (MM-717)", () => {
+    const map = busyMap();
+    const before = pausedAccess(map);
+    const paused = applyChanges(map, lockdownChanges(map)).map;
+    expect(cutArrows(paused, before)).toEqual([
+      { from: MAC, to: VPS, level: "admin" },
+      { from: WIN, to: MAC, level: "standard" },
+    ]);
+    const vpsLeft = applyChanges(paused, [{ _tag: "removeMachine", machineId: VPS }]).map;
+    expect(cutArrows(vpsLeft, before)).toEqual([{ from: WIN, to: MAC, level: "standard" }]);
+    expect(cutArrows(map, before)).toEqual([]);
   });
 });
