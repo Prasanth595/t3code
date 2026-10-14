@@ -242,9 +242,10 @@ const decodeCursorPluginManifest = Schema.decodeUnknownOption(
 /**
  * Cursor reads a manifest `skills` string (default `skills`) as a directory of
  * skill folders, and each `skills` array entry as one skill folder, its
- * SKILL.md, or such a directory. It reads no deeper and never through a symlink
- * that leaves the plugin. It asks its account API which cached plugins are
- * enabled, so this also lists plugins the user disabled.
+ * SKILL.md, or such a directory. It reads no deeper, skips symlinked manifests,
+ * and never reads a file through a symlink that leaves the plugin. It asks its
+ * account API which cached plugins are enabled, so this also lists plugins the
+ * user disabled.
  */
 const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkillDirectories")(
   function* (userHome: string, budget: CursorSkillScanBudget) {
@@ -275,6 +276,7 @@ const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkil
         const info = yield* orUndefined(fileSystem.stat(manifestPath));
         if (info?.type !== "File" || info.size > MAX_SKILL_BYTES) continue;
         if (info.size > budget.remainingBytes) continue;
+        if ((yield* orUndefined(fileSystem.readLink(manifestPath))) !== undefined) continue;
         const contents = yield* orUndefined(fileSystem.readFileString(manifestPath));
         if (contents === undefined) continue;
         budget.remainingBytes -= info.size;
@@ -309,6 +311,10 @@ const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkil
       if (budget.exhausted) break;
       const realRoot = yield* orUndefined(fileSystem.realPath(root));
       if (!realRoot) continue;
+      const insideRoot = (file: string) =>
+        orUndefined(fileSystem.realPath(file)).pipe(
+          Effect.map((realFile) => realFile?.startsWith(`${realRoot}${path.sep}`) === true),
+        );
       const skills = (yield* readManifest(root))?.skills ?? "skills";
       const folders: string[] = [];
       for (const entry of typeof skills === "string" ? [skills] : skills) {
@@ -323,8 +329,9 @@ const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkil
         }
       }
       for (const folder of folders) {
-        const realFolder = yield* orUndefined(fileSystem.realPath(folder));
-        if (realFolder?.startsWith(`${realRoot}${path.sep}`)) directories.push(folder);
+        if ((yield* insideRoot(folder)) && (yield* insideRoot(path.join(folder, "SKILL.md")))) {
+          directories.push(folder);
+        }
       }
     }
     return directories;
