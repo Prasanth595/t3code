@@ -440,7 +440,9 @@ export function extractXAiKilledBackgroundTasks(toolCall: AcpToolCallState): Rea
     : singleResult === undefined
       ? []
       : [singleResult];
-  if (results.length > 0) {
+  // An empty structured envelope confirms nothing; fall back to the request
+  // only when Grok sent no result envelope at all.
+  if (Array.isArray(multiResults) || singleResult !== undefined) {
     for (const result of results) {
       const outcome = nonEmptyString(result.outcome)?.toLowerCase();
       if (outcome === "killed" || outcome === "already_exited") push(result.task_id);

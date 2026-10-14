@@ -3214,12 +3214,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               target !== undefined &&
               target.toolCallId !== toolCall.toolCallId &&
               targetEnded &&
+              backgroundCompletion.status !== "running" &&
               backgroundCompletion.appendOutput.length > 0 &&
               toolOutputText(target).trim() !== backgroundCompletion.appendOutput.trim()
             ) {
               // `task_completed` already ended the row without its final output
-              // (only the start ACK or partial stdout). The poll's result is the
-              // full output: replace, never append.
+              // (only the start ACK or partial stdout). A terminal poll's result
+              // is the full output: replace, never append. A running poll's
+              // partial output never replaces an ended row.
               yield* emitTool(
                 context,
                 setToolOutputText(target, backgroundCompletion.appendOutput),

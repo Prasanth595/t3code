@@ -905,6 +905,10 @@ describe("XAiAcpExtension", () => {
       { taskId: "call-bg-6", status: "completed", appendOutput: "" },
       { taskId: "call-bg-8", status: "completed", appendOutput: "" },
     ]);
+    // An empty result envelope confirms no kill, whatever the request named.
+    expect(
+      extractXAiKilledBackgroundTasks(killTask({ type: "KillTask", MultiResult: { results: [] } })),
+    ).toEqual([]);
     // The final update is parsed alone and carries no rawInput.
     expect(
       extractXAiKilledBackgroundTasks({
