@@ -121,6 +121,13 @@ export interface AcpPatchedProtocol {
   readonly incoming: Stream.Stream<AcpIncomingNotification>;
   readonly request: (method: string, payload: unknown) => Effect.Effect<unknown, AcpError.AcpError>;
   readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
+  /**
+   * Allocates the next outbound request id. Pass it to `RpcClient.make` as
+   * `generateRequestId` so typed calls and `request` share one counter: ids
+   * never collide, and stay in the signed 32-bit range that peers built on the
+   * Kotlin ACP SDK (Junie) can decode.
+   */
+  readonly nextRequestId: () => number;
 }
 
 interface AcpPendingRequest {
@@ -222,7 +229,8 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     intentionalEnd: false,
     outstandingAcknowledgements: new Set(),
   });
-  const nextRequestId = yield* Ref.make(1);
+  let lastRequestId = 0;
+  const nextRequestId = () => ++lastRequestId;
   const terminationHandled = yield* Ref.make(false);
   const terminationFailure = yield* Deferred.make<never, AcpError.AcpError>();
   const extPending = yield* Ref.make(new Map<string, AcpPendingRequest>());
@@ -946,10 +954,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
 
   const sendRequest = Effect.fn("sendRequest")(function* (method: string, payload: unknown) {
     yield* ensureActive;
-    const requestId = yield* Ref.modify(
-      nextRequestId,
-      (current) => [current, current + 1] as const,
-    );
+    const requestId = nextRequestId();
     const deferred = yield* Deferred.make<unknown, AcpError.AcpError>();
     yield* Ref.update(extPending, (pending) =>
       new Map(pending).set(acpRequestIdentity(requestId), { deferred, method }),
@@ -974,6 +979,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     },
     request: sendRequest,
     notify: sendNotification,
+    nextRequestId,
   } satisfies AcpPatchedProtocol;
 });
 
