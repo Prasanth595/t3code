@@ -7,7 +7,8 @@
  * Each sample stays cheap: CPU and memory come from `HostResources`, the T3 process tree from the
  * native resource monitor that already runs, and the rest from small file reads, `statfs`, and on
  * macOS and Linux at most four short commands (`ps`, plus `vm_stat`, `sysctl` and `netstat` on
- * macOS).
+ * macOS). CPU pressure (MM-1504) comes from the `cpu.pressure` file of the cgroup of the server,
+ * which holds its agents, so niced work in other units does not count.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -27,6 +28,10 @@ import * as HostResources from "../../resourceTelemetry/HostResources.ts";
 import * as ResourceTelemetry from "../../resourceTelemetry/ResourceTelemetry.ts";
 import {
   buildSample,
+  type CpuTicks,
+  parseCgroupPath,
+  parseCpuPressure,
+  parseLinuxCpuTicks,
   parseDarwinNet,
   parseDarwinSwap,
   parseDarwinSwapTraffic,
@@ -118,6 +123,38 @@ const make = Effect.gen(function* () {
       )
     : Effect.succeed(null);
 
+  /** CPU time since boot: `/proc/stat` on Linux for steal, else the Node CPU times. */
+  const cpuTicks: Effect.Effect<CpuTicks | null> =
+    platform === "linux"
+      ? file("/proc/stat").pipe(Effect.map((text) => orNull(text, parseLinuxCpuTicks)))
+      : Effect.sync(() => {
+          const cpus = NodeOS.cpus();
+          if (cpus.length === 0) return null;
+          return cpus.reduce<CpuTicks>(
+            (sum, { times }) => ({
+              busy: sum.busy + times.user + times.sys + times.irq,
+              total: sum.total + times.user + times.nice + times.sys + times.idle + times.irq,
+              steal: null,
+            }),
+            { busy: 0, total: 0, steal: null },
+          );
+        });
+
+  /**
+   * MM-1504: CPU pressure of the cgroup of this server, else of the whole machine. Only Linux
+   * kernels with pressure stall information have the files; elsewhere it is null.
+   */
+  const cpuPressure: Effect.Effect<number | null> =
+    platform === "linux"
+      ? Effect.gen(function* () {
+          const path = orNull(yield* file("/proc/self/cgroup"), parseCgroupPath);
+          const own =
+            path === null || path === "/" ? "" : yield* file(`/sys/fs/cgroup${path}/cpu.pressure`);
+          const text = own.length > 0 ? own : yield* file("/proc/pressure/cpu");
+          return orNull(text, parseCpuPressure);
+        })
+      : Effect.succeed(null);
+
   /** The processes that the T3 server started, from the native resource monitor. */
   const agents = telemetry.refresh.pipe(
     Effect.catch(() => telemetry.latest),
@@ -134,15 +171,18 @@ const make = Effect.gen(function* () {
   );
 
   const readRaw = Effect.gen(function* () {
-    const [host, diskUse, swapUse, netUse, processList, agentUse] = yield* Effect.all(
-      [hostResources.read, disk, swap, net, processes, agents],
-      { concurrency: "unbounded" },
-    );
+    const [host, diskUse, swapUse, netUse, processList, agentUse, ticks, pressure] =
+      yield* Effect.all(
+        [hostResources.read, disk, swap, net, processes, agents, cpuTicks, cpuPressure],
+        { concurrency: "unbounded" },
+      );
     const cpu = process.cpuUsage();
     const load = NodeOS.loadavg();
     return {
       atMs: yield* Clock.currentTimeMillis,
       cpuPercent: host.cpuUtilization === null ? null : host.cpuUtilization * 100,
+      cpuTicks: ticks,
+      cpuPressure: pressure,
       cpuCount: host.cpuCount > 0 ? host.cpuCount : null,
       memory:
         host.totalMemoryBytes > 0

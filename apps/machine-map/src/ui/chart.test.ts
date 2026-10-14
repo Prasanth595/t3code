@@ -17,6 +17,9 @@ const at = (minutes: ReadonlyArray<number>) => minutes.map((m) => T0 + m * MINUT
 const point = (cpu: number): ResourcePoint => ({
   cpu,
   cpuMax: cpu,
+  busy: null,
+  pressure: null,
+  steal: null,
   memory: null,
   disk: null,
   swap: null,

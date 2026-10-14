@@ -39,6 +39,11 @@ export const RESOURCE_ALERT_KINDS: ReadonlyArray<HealthAlertKind> = [
 export interface ResourcePoint {
   readonly cpu: number | null;
   readonly cpuMax: number | null;
+  /** CPU work without nice time, idle, I/O wait and steal. */
+  readonly busy: number | null;
+  /** CPU pressure, `some avg300`. */
+  readonly pressure: number | null;
+  readonly steal: number | null;
   readonly memory: number | null;
   readonly disk: number | null;
   readonly swap: number | null;
@@ -63,6 +68,9 @@ export function pointOf(sample: ResourceSample): ResourcePoint {
   return {
     cpu: sample.cpuPercent,
     cpuMax: sample.cpuPercent,
+    busy: sample.cpuBusyPercent,
+    pressure: sample.cpuPressurePercent,
+    steal: sample.cpuStealPercent,
     memory: percentOf(sample.memoryUsedBytes, sample.memoryTotalBytes),
     disk: percentOf(sample.diskUsedBytes, sample.diskTotalBytes),
     swap: sample.swapBytesPerSecond === null ? null : round1(sample.swapBytesPerSecond / 1_000_000),
@@ -71,7 +79,17 @@ export function pointOf(sample: ResourceSample): ResourcePoint {
   };
 }
 
-const POINT_KEYS = ["cpu", "memory", "disk", "swap", "agents", "agentCpu"] as const;
+const POINT_KEYS = [
+  "cpu",
+  "busy",
+  "pressure",
+  "steal",
+  "memory",
+  "disk",
+  "swap",
+  "agents",
+  "agentCpu",
+] as const;
 
 /** MM-1503: the hour point is the average of its minute points; `cpuMax` keeps the peak. */
 export function averagePoints(points: ReadonlyArray<ResourcePoint>): ResourcePoint {
@@ -85,6 +103,9 @@ export function averagePoints(points: ReadonlyArray<ResourcePoint>): ResourcePoi
   return {
     cpu: mean("cpu"),
     cpuMax: peaks.length === 0 ? null : Math.max(...peaks),
+    busy: mean("busy"),
+    pressure: mean("pressure"),
+    steal: mean("steal"),
     memory: mean("memory"),
     disk: mean("disk"),
     swap: mean("swap"),
@@ -137,12 +158,15 @@ export function resourceConditions(
   const add = (kind: HealthAlertKind, value: number | null, threshold: number | null) => {
     if (value !== null && threshold !== null) conditions[kind] = { value, threshold };
   };
-  if (thresholds.cpuPercent !== null) {
-    add(
-      "cpu",
-      sustained(points, (p) => p.cpu, thresholds.cpuPercent, thresholds.cpuMinutes),
-      thresholds.cpuPercent,
-    );
+  // MM-1504: "starved" is CPU pressure where the machine reports it. Elsewhere it is CPU work
+  // without nice time, so low priority builds never count. A point without the signal of the
+  // newest point breaks the run.
+  const cpu =
+    newest.pressure !== null
+      ? { pick: (p: ResourcePoint) => p.pressure, threshold: thresholds.cpuPressurePercent }
+      : { pick: (p: ResourcePoint) => p.busy, threshold: thresholds.cpuPercent };
+  if (cpu.threshold !== null) {
+    add("cpu", sustained(points, cpu.pick, cpu.threshold, thresholds.cpuMinutes), cpu.threshold);
   }
   const instant = (value: number | null, threshold: number | null) =>
     value !== null && threshold !== null && value > threshold ? value : null;
@@ -233,5 +257,7 @@ export function historyOf(
     swap: points.map((p) => p.point.swap),
     agents: points.map((p) => p.point.agents),
     agentCpu: points.map((p) => p.point.agentCpu),
+    pressure: points.map((p) => p.point.pressure),
+    steal: points.map((p) => p.point.steal),
   };
 }
