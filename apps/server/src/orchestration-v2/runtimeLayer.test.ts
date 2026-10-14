@@ -4111,6 +4111,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const outbox = yield* EffectOutbox.EffectOutboxV2;
         const parentId = ThreadId.make(`runtime-subagent-preparing-${operation}`);
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
         yield* orchestrator.dispatch({
           type: "thread.create",
           createdBy: "user",
@@ -4163,6 +4164,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         assert.isDefined(childRun);
         assert.equal(childRun.status, "preparing");
         assert.isNull(before.thread.worktreePath);
+        const preparationItem = before.turnItems.find(
+          (item) => item.type === "command_execution" && item.input === "Preparing workspace",
+        );
+        assert.isDefined(preparationItem);
+        assert.equal(preparationItem.status, "running");
         // The parent's provider execution is outside this preparation regression.
         yield* outbox.cancelUnsettled({
           threadId: parentId,
@@ -4188,6 +4194,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           child.nodes.find((node) => node.id === childRun.rootNodeId)?.status,
           "cancelled",
         );
+        if (operation === "archive") {
+          const assertPreparationCancelled = Effect.fnUntraced(function* () {
+            const records = yield* projections.getThreadRecords(childId, ["turnItems"], {
+              turnItemRunId: childRun.id,
+            });
+            const item = records.turnItems.find((item) => item.id === preparationItem.id);
+            assert.isDefined(item);
+            assert.equal(item.status, "cancelled");
+            assert.isNotNull(item.completedAt);
+            const shell = yield* projections.getThreadShell(childId);
+            assert.isNotNull(shell);
+            assert.isEmpty(shell.pendingBackgroundTasks);
+          });
+          yield* assertPreparationCancelled();
+          yield* orchestrator.dispatch({
+            type: "thread.unarchive",
+            commandId: CommandId.make(`${parentId}:unarchive`),
+            threadId: parentId,
+          });
+          yield* worker.drain();
+          assert.isNull((yield* projections.getThread(childId)).archivedAt);
+          yield* assertPreparationCancelled();
+        }
         const release = yield* orchestrator
           .dispatch({
             type: "prepared-run.release",
