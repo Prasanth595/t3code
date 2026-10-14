@@ -4,6 +4,7 @@ import {
   MessageId,
   EventId,
   NodeId,
+  type OrchestrationV2DomainEvent,
   PlanId,
   ProjectId,
   ProviderDriverKind,
@@ -23,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -623,4 +625,100 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     assert.deepEqual(parentAfterChildLink.thread.linkedPullRequest, parentPullRequest);
     assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("wakes the parent once when its delegated task asks a question", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const reactor = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
+    const parentThreadId = ThreadId.make("thread:question-parent");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-question-parent"),
+      threadId: parentThreadId,
+      projectId: ProjectId.make("project:question"),
+      title: "Parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-question-parent"),
+      threadId: parentThreadId,
+      messageId: MessageId.make("message:question-parent"),
+      text: "Delegate the research",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parentRun = (yield* projections.getThreadProjection(parentThreadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("delegate-question-task"),
+      parentThreadId,
+      parentRunId: parentRun.id,
+      parentNodeId: parentRun.rootNodeId!,
+      task: "Research the sources",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
+    const now = yield* DateTime.now;
+    const question: OrchestrationV2DomainEvent = {
+      id: EventId.make("event:question"),
+      type: "runtime-request.updated",
+      threadId: task.childThreadId!,
+      occurredAt: now,
+      payload: {
+        id: RuntimeRequestId.make("request:question"),
+        nodeId: NodeId.make("node:question"),
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    };
+
+    yield* reactor.handle(question);
+    yield* reactor.handle(question);
+    yield* reactor.handle({
+      ...question,
+      payload: {
+        ...question.payload,
+        id: RuntimeRequestId.make("request:approval"),
+        kind: "command",
+      },
+    });
+
+    const wakes = (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
+      (message) => message.notification !== undefined,
+    );
+    assert.deepEqual(
+      wakes.map((message) => message.notification),
+      [
+        {
+          source: {
+            kind: "delegated_task",
+            taskIds: [task.id],
+            childThreadId: task.childThreadId!,
+          },
+          outcome: "updated",
+          summary: 'Delegated task "Research the sources" has a question',
+        },
+      ],
+    );
+  }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
