@@ -5,6 +5,7 @@ import { Sparkline } from "@nofun/ui/sparkline";
 import { Kpi, KpiFooter, KpiHeader, KpiLabel, KpiMain, KpiTrend, KpiValue } from "@nofun/ui/kpi";
 import { cn } from "@nofun/source/lib/utils";
 import type { NumberValueFormat } from "@nofun/ui/number-value/format";
+import { ArtifactLoading } from "./states.tsx";
 
 export type StatusTone = "neutral" | "info" | "success" | "warning" | "danger" | "primary";
 
@@ -34,12 +35,21 @@ export function Status({
   className,
 }: StatusProps) {
   return (
-    <span data-slot="status" className={cn("inline-flex min-w-0 items-center gap-2", className)}>
-      <Badge variant={BADGE_VARIANT[tone]} size={size}>
+    <span
+      data-slot="status"
+      className={cn("inline-flex max-w-full min-w-0 flex-wrap items-center gap-2", className)}
+    >
+      <Badge
+        variant={BADGE_VARIANT[tone]}
+        size={size}
+        className="h-auto max-w-full min-h-6 shrink whitespace-normal text-start"
+      >
         <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current" />
         {label}
       </Badge>
-      {detail ? <span className="truncate text-xs text-muted-foreground">{detail}</span> : null}
+      {detail ? (
+        <span className="min-w-0 text-xs wrap-break-word text-muted-foreground">{detail}</span>
+      ) : null}
     </span>
   );
 }
@@ -61,6 +71,8 @@ export type MetricProps = {
   trend?: number[] | undefined;
   /** Footer line, e.g. "vs last week" or the data source. */
   footer?: string | undefined;
+  /** Static skeleton in place of the reading. The label stays so the card is identifiable. */
+  loading?: boolean | undefined;
   status?: { label: string; tone?: StatusTone | undefined } | undefined;
   className?: string | undefined;
 };
@@ -76,20 +88,26 @@ export function Metric({
   invert,
   trend,
   footer,
+  loading = false,
   status,
   className,
 }: MetricProps) {
   return (
     <Kpi className={className}>
-      <KpiHeader>
-        <KpiLabel>{label}</KpiLabel>
-        {status ? (
-          <span className="ms-auto">
+      <KpiHeader className="h-auto min-h-6 items-start">
+        <KpiLabel className="whitespace-normal overflow-visible text-clip">{label}</KpiLabel>
+        {status && !loading ? (
+          <span className="ms-auto max-w-full">
             <Status label={status.label} tone={status.tone} size="sm" />
           </span>
         ) : null}
       </KpiHeader>
-      <KpiMain>
+      {loading ? (
+        <div className="px-(--card-spacing) pb-1">
+          <ArtifactLoading label={`Loading ${label}`} lines={2} />
+        </div>
+      ) : (
+        <KpiMain>
         <KpiValue
           value={value}
           format={format}
@@ -102,13 +120,16 @@ export function Metric({
           suffix={unit}
         />
         <KpiTrend value={change ?? null} invert={invert ?? false} size="sm" />
-      </KpiMain>
-      {trend && trend.length > 1 ? (
+        </KpiMain>
+      )}
+      {!loading && trend && trend.length > 1 ? (
         <div className="px-(--card-spacing)">
           <Sparkline data={trend} tone={trendTone(trend, invert)} label={`${label} trend`} />
         </div>
       ) : null}
-      {footer ? <KpiFooter>{footer}</KpiFooter> : null}
+      {footer ? (
+        <KpiFooter className="h-auto min-h-10 whitespace-normal wrap-break-word">{footer}</KpiFooter>
+      ) : null}
     </Kpi>
   );
 }

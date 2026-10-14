@@ -1,0 +1,556 @@
+{
+  "title": "Edge cases (example data)",
+  "root": {
+    "component": "Stack",
+    "props": {
+      "gap": "lg"
+    },
+    "children": [
+      {
+        "component": "Stack",
+        "props": {
+          "gap": "sm"
+        },
+        "children": [
+          {
+            "component": "Text",
+            "props": {
+              "variant": "micro",
+              "text": "Example data · week 40"
+            }
+          },
+          {
+            "component": "Text",
+            "props": {
+              "variant": "title",
+              "text": "Refund rate held at 2.5% while six colorways all grew"
+            }
+          },
+          {
+            "component": "Text",
+            "props": {
+              "variant": "muted",
+              "text": "Edge cases for the spec lane: long labels, an empty chart, a loading metric, six series, a twenty-row table, and a percent stored as a ratio. Fixture numbers."
+            }
+          }
+        ]
+      },
+      {
+        "component": "Stack",
+        "props": {
+          "direction": "horizontal",
+          "gap": "sm",
+          "align": "center"
+        },
+        "children": [
+          {
+            "component": "Text",
+            "props": {
+              "variant": "heading",
+              "text": "Checkout monitoring across the international storefront"
+            }
+          },
+          {
+            "component": "Status",
+            "props": {
+              "label": "Watching the international checkout",
+              "tone": "warning",
+              "detail": "since Tuesday, no page clipped"
+            }
+          }
+        ]
+      },
+      {
+        "component": "Grid",
+        "props": {
+          "columns": 4,
+          "minColumnWidth": 200
+        },
+        "children": [
+          {
+            "component": "Metric",
+            "props": {
+              "label": "Share of orders that used a discount code",
+              "value": 0.25,
+              "format": "percent",
+              "maximumFractionDigits": 0,
+              "footer": "ratio 0.25, week 40, n=1,284"
+            }
+          },
+          {
+            "component": "Metric",
+            "props": {
+              "label": "Median time to first byte on the international product page",
+              "value": 842,
+              "unit": "ms",
+              "change": 3.2,
+              "invert": true,
+              "footer": "lower is better"
+            }
+          },
+          {
+            "component": "Metric",
+            "props": {
+              "label": "Wholesale revenue",
+              "value": null,
+              "footer": "no reading this week"
+            }
+          },
+          {
+            "component": "Metric",
+            "props": {
+              "label": "Loading revenue",
+              "value": 1200,
+              "format": "currency",
+              "loading": true,
+              "footer": "should show a skeleton"
+            }
+          }
+        ]
+      },
+      {
+        "component": "Chart",
+        "props": {
+          "type": "bar",
+          "title": "All six colorways grew, and none of the axis labels should collide",
+          "description": "Units per colorway, weeks 35 to 40, n=6 weeks, example data",
+          "valueFormat": "decimal",
+          "xKey": "week",
+          "series": [
+            {
+              "key": "ink",
+              "label": "Ink units"
+            },
+            {
+              "key": "ash",
+              "label": "Ash comparison, previous period"
+            },
+            {
+              "key": "bone",
+              "label": "Bone units",
+              "color": "chart-1"
+            },
+            {
+              "key": "lime",
+              "label": "Lime units",
+              "color": "success"
+            },
+            {
+              "key": "navy",
+              "label": "Navy units"
+            },
+            {
+              "key": "sand",
+              "label": "Sand units"
+            }
+          ],
+          "data": [
+            {
+              "week": "W35",
+              "ink": 40,
+              "ash": 51,
+              "bone": 62,
+              "lime": 73,
+              "navy": 84,
+              "sand": 95
+            },
+            {
+              "week": "W36",
+              "ink": 48,
+              "ash": 59,
+              "bone": 70,
+              "lime": 81,
+              "navy": 92,
+              "sand": 103
+            },
+            {
+              "week": "W37",
+              "ink": 56,
+              "ash": 67,
+              "bone": 78,
+              "lime": 89,
+              "navy": 100,
+              "sand": 111
+            },
+            {
+              "week": "W38",
+              "ink": 64,
+              "ash": 75,
+              "bone": 86,
+              "lime": 97,
+              "navy": 108,
+              "sand": 119
+            },
+            {
+              "week": "W39",
+              "ink": 72,
+              "ash": 83,
+              "bone": 94,
+              "lime": 105,
+              "navy": 116,
+              "sand": 127
+            },
+            {
+              "week": "W40",
+              "ink": 80,
+              "ash": 91,
+              "bone": 102,
+              "lime": 113,
+              "navy": 124,
+              "sand": 135
+            }
+          ]
+        }
+      },
+      {
+        "component": "Chart",
+        "props": {
+          "type": "line",
+          "title": "Nothing to plot yet",
+          "description": "Orders, this week, n=0",
+          "xKey": "week",
+          "series": [
+            {
+              "key": "orders",
+              "label": "Orders"
+            }
+          ],
+          "data": [],
+          "emptyText": "No orders recorded for this week."
+        }
+      },
+      {
+        "component": "DataTable",
+        "props": {
+          "caption": "Top products, 20 of 20, example data",
+          "filterable": true,
+          "maxRows": 8,
+          "columns": [
+            {
+              "key": "product",
+              "label": "Product"
+            },
+            {
+              "key": "units",
+              "label": "Units",
+              "format": "number"
+            },
+            {
+              "key": "revenue",
+              "label": "Revenue",
+              "format": "currency"
+            },
+            {
+              "key": "margin",
+              "label": "Margin",
+              "format": "percent"
+            },
+            {
+              "key": "stock",
+              "label": "Stock",
+              "format": "status",
+              "tones": {
+                "Healthy": "success",
+                "Low": "warning",
+                "Out": "danger"
+              }
+            }
+          ],
+          "rows": [
+            {
+              "product": "Heavyweight tee, colorway 1",
+              "units": 20,
+              "revenue": 800,
+              "margin": 0.25,
+              "stock": "Healthy"
+            },
+            {
+              "product": "Heavyweight tee, colorway 2",
+              "units": 27,
+              "revenue": 930,
+              "margin": 0.34,
+              "stock": "Low"
+            },
+            {
+              "product": "Heavyweight tee, colorway 3",
+              "units": 34,
+              "revenue": 1060,
+              "margin": 0.38,
+              "stock": "Out"
+            },
+            {
+              "product": "Superlongunbrokenproductname-heavyweight-tee-bone-edition",
+              "units": 41,
+              "revenue": 1190,
+              "margin": 0.42,
+              "stock": "Healthy"
+            },
+            {
+              "product": "Heavyweight tee, colorway 5",
+              "units": 48,
+              "revenue": 1320,
+              "margin": 0.46,
+              "stock": "Low"
+            },
+            {
+              "product": "Heavyweight tee, colorway 6",
+              "units": 55,
+              "revenue": 1450,
+              "margin": 0.3,
+              "stock": "Out"
+            },
+            {
+              "product": "Heavyweight tee, colorway 7",
+              "units": 62,
+              "revenue": 1580,
+              "margin": 0.34,
+              "stock": "Healthy"
+            },
+            {
+              "product": "Heavyweight tee, colorway 8",
+              "units": 69,
+              "revenue": 1710,
+              "margin": 0.38,
+              "stock": "Low"
+            },
+            {
+              "product": "Heavyweight tee, colorway 9",
+              "units": 76,
+              "revenue": 1840,
+              "margin": 0.42,
+              "stock": "Out"
+            },
+            {
+              "product": "Heavyweight tee, colorway 10",
+              "units": 83,
+              "revenue": 1970,
+              "margin": 0.46,
+              "stock": "Healthy"
+            },
+            {
+              "product": "Heavyweight tee, colorway 11",
+              "units": 90,
+              "revenue": 2100,
+              "margin": 0.3,
+              "stock": "Low"
+            },
+            {
+              "product": "Heavyweight tee, colorway 12",
+              "units": 97,
+              "revenue": 2230,
+              "margin": 0.34,
+              "stock": "Out"
+            },
+            {
+              "product": "Heavyweight tee, colorway 13",
+              "units": 104,
+              "revenue": 2360,
+              "margin": 0.38,
+              "stock": "Healthy"
+            },
+            {
+              "product": "Heavyweight tee, colorway 14",
+              "units": 111,
+              "revenue": 2490,
+              "margin": 0.42,
+              "stock": "Low"
+            },
+            {
+              "product": "Heavyweight tee, colorway 15",
+              "units": 118,
+              "revenue": 2620,
+              "margin": 0.46,
+              "stock": "Out"
+            },
+            {
+              "product": "Heavyweight tee, colorway 16",
+              "units": 125,
+              "revenue": 2750,
+              "margin": 0.3,
+              "stock": "Healthy"
+            },
+            {
+              "product": "Heavyweight tee, colorway 17",
+              "units": 132,
+              "revenue": 2880,
+              "margin": 0.34,
+              "stock": "Low"
+            },
+            {
+              "product": "Heavyweight tee, colorway 18",
+              "units": 139,
+              "revenue": 3010,
+              "margin": 0.38,
+              "stock": "Out"
+            },
+            {
+              "product": "Heavyweight tee, colorway 19",
+              "units": 146,
+              "revenue": 3140,
+              "margin": 0.42,
+              "stock": "Healthy"
+            },
+            {
+              "product": "Heavyweight tee, colorway 20",
+              "units": 153,
+              "revenue": 3270,
+              "margin": 0.46,
+              "stock": "Low"
+            }
+          ],
+          "emptyText": "No products match."
+        }
+      },
+      {
+        "component": "Gallery",
+        "props": {
+          "columns": 3,
+          "aspect": "square",
+          "items": [
+            {
+              "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Crect width='64' height='64' fill='%23e7e5e4'/%3E%3C/svg%3E",
+              "alt": "Bone tee on a warm ground",
+              "caption": "A warm ground caption that wraps instead of being cut off"
+            },
+            {
+              "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Crect width='64' height='64' fill='%23171717'/%3E%3C/svg%3E",
+              "alt": "Ink tee on a dark ground",
+              "caption": "B: ink"
+            },
+            {
+              "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Crect width='64' height='64' fill='%23c8f54a'/%3E%3C/svg%3E",
+              "alt": "Lime tee",
+              "caption": "C: lime"
+            }
+          ]
+        }
+      },
+      {
+        "component": "Comparison",
+        "props": {
+          "caption": "Print methods, example data",
+          "columns": [
+            {
+              "title": "Screen print",
+              "subtitle": "Northside Ink, a longer shop name"
+            },
+            {
+              "title": "Direct to garment",
+              "subtitle": "Pixel Press",
+              "badge": "Recommended",
+              "highlight": true
+            },
+            {
+              "title": "Embroidery",
+              "subtitle": "Thread Theory",
+              "highlight": true
+            }
+          ],
+          "rows": [
+            {
+              "label": "Unit cost at fifty pieces",
+              "values": [
+                "$6.40",
+                "$11.20",
+                "$9.80"
+              ]
+            },
+            {
+              "label": "International express surcharge",
+              "values": [
+                "$18",
+                "$0",
+                "$22"
+              ]
+            },
+            {
+              "label": "Photo-real art",
+              "values": [
+                false,
+                true,
+                false
+              ]
+            },
+            {
+              "label": "Minimum order",
+              "values": [
+                48,
+                1,
+                24
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "component": "Timeline",
+        "props": {
+          "orientation": "horizontal",
+          "items": [
+            {
+              "time": "13:02",
+              "title": "Error rate spiked on the international checkout",
+              "body": "Checkout 5xx at 4%.",
+              "tone": "error"
+            },
+            {
+              "time": "13:40",
+              "title": "A migration held a long lock",
+              "body": "Writes queued behind it.",
+              "tone": "warning"
+            },
+            {
+              "time": "14:05",
+              "title": "Fix deployed",
+              "tone": "success"
+            },
+            {
+              "time": "14:20",
+              "title": "Monitoring",
+              "tone": "info",
+              "current": true
+            },
+            {
+              "time": "Thu",
+              "title": "Postmortem",
+              "pending": true
+            }
+          ]
+        }
+      },
+      {
+        "component": "Stack",
+        "props": { "gap": "md" },
+        "children": [
+          { "component": "Text", "props": { "variant": "heading", "text": "Empty states" } },
+          {
+            "component": "Gallery",
+            "props": { "items": [], "emptyText": "No photos from this shoot." }
+          },
+          {
+            "component": "Comparison",
+            "props": {
+              "caption": "Empty comparison",
+              "columns": [{ "title": "Screen print" }, { "title": "Direct to garment" }],
+              "rows": [],
+              "emptyText": "No attributes to compare."
+            }
+          },
+          {
+            "component": "Timeline",
+            "props": { "items": [], "emptyText": "No events recorded." }
+          },
+          {
+            "component": "DataTable",
+            "props": {
+              "caption": "Empty product list",
+              "columns": [{ "key": "product", "label": "Product" }],
+              "rows": [],
+              "emptyText": "No products match."
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

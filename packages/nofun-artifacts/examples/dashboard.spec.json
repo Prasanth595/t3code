@@ -12,12 +12,12 @@
             "component": "Text",
             "props": { "variant": "micro", "text": "Example data · week 40" }
           },
-          { "component": "Text", "props": { "variant": "title", "text": "Studio pulse" } },
+          { "component": "Text", "props": { "variant": "title", "text": "Revenue up 12% on week 40" } },
           {
             "component": "Text",
             "props": {
               "variant": "muted",
-              "text": "Orders and storefront health for the last eight weeks. Fixture numbers, shown to exercise the catalog."
+              "text": "USD and order counts, weeks 33 to 40, n=8 weeks. Fixture numbers, shown to exercise the catalog."
             }
           }
         ]
@@ -79,8 +79,8 @@
         "component": "Chart",
         "props": {
           "type": "bar",
-          "title": "Weekly revenue",
-          "description": "Storefront and wholesale, last eight weeks",
+          "title": "Storefront led week 40",
+          "description": "USD, weeks 33 to 40, n=8, example data",
           "value": "$48.2K",
           "xKey": "week",
           "valueFormat": "currency",
