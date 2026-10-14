@@ -514,8 +514,14 @@ export default function DiffPanel({
 
   const isRefreshingDiff = branchDiffPreview.isPending || areFilePatchesPending;
   const renderableFileEntries = useMemo(
-    () => renderableFiles.map(getCachedFileEntry),
-    [renderableFiles],
+    () =>
+      renderableFiles.map((fileDiff) => {
+        const entry = getCachedFileEntry(fileDiff);
+        return lazySource
+          ? { ...entry, fileKey: buildFileDiffIdentityKey(fileDiff, "file") }
+          : entry;
+      }),
+    [renderableFiles, lazySource],
   );
   const defaultCollapsedDiffFiles = useMemo<DiffFilesCollapseState>(
     () => ({

@@ -7,6 +7,7 @@ import {
   toggleAllDiffFiles,
   type DiffFilesCollapseState,
 } from "./diffCollapse";
+import { buildFileDiffIdentityKey, getRenderablePatch } from "./diffRendering";
 
 const FILE_KEYS = ["src/app.ts", "src/index.ts"];
 const FIRST_FILE_KEY = FILE_KEYS[0]!;
@@ -63,6 +64,28 @@ describe("diff collapse controls", () => {
 
     const foldedAgain = setDiffFileCollapsed(FIRST_FILE_KEY, revealed, true);
     expect(areAllDiffFilesCollapsed(nextPage, collapsedKeys(nextPage, foldedAgain))).toBe(true);
+  });
+
+  it("keeps a revealed lazy file expanded when its pending patch becomes a new file", () => {
+    const patch = getRenderablePatch(
+      [
+        "diff --git a/new.ts b/new.ts",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/new.ts",
+        "@@ -0,0 +1 @@",
+        "+export const value = 1;",
+      ].join("\n"),
+    );
+    if (patch?.kind !== "files" || !patch.files[0]) throw new Error("Expected a new file diff");
+    const loaded = patch.files[0];
+    const pending = { ...loaded, type: "change" as const };
+    const pendingKey = buildFileDiffIdentityKey(pending, "file");
+    const loadedKey = buildFileDiffIdentityKey(loaded, "file");
+    const collapsed = toggleAllDiffFiles([FIRST_FILE_KEY, pendingKey], EXPANDED);
+    const revealed = setDiffFileCollapsed(pendingKey, collapsed, false);
+
+    expect(collapsedKeys([FIRST_FILE_KEY, loadedKey], revealed)).toEqual(new Set([FIRST_FILE_KEY]));
   });
 
   it("keeps repeated file reveals expanded and clears exceptions on the next bulk collapse", () => {

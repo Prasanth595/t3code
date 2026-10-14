@@ -292,7 +292,9 @@ describe("diff file reconciliation", () => {
     if (!deleted || !added) return;
 
     expect(buildFileDiffIdentityKey(deleted)).not.toBe(buildFileDiffIdentityKey(added));
-    expect(new Set(parsed.files.map(buildFileDiffIdentityKey)).size).toBe(parsed.files.length);
+    expect(new Set(parsed.files.map((file) => buildFileDiffIdentityKey(file))).size).toBe(
+      parsed.files.length,
+    );
   });
 
   it("keeps identities stable and versions local to the changed file", () => {
