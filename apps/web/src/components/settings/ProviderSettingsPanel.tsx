@@ -106,6 +106,7 @@ import {
   durationToSeconds,
   normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
+  rebaseProviderInstanceEdit,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -614,6 +615,15 @@ export function EnvironmentProviderSettings({
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
+  // The newest edit sent for each instance, kept while its save is in flight
+  // and until the card renders fresh server state, so the next edit builds on
+  // it rather than on the instance the card last rendered.
+  const pendingInstanceEditsRef = useRef(
+    new Map<
+      ProviderInstanceId,
+      { instance: ProviderInstanceConfig; rendered: ProviderInstanceConfig; saving: number }
+    >(),
+  );
 
   const acceptUrlAuthentication = useCallback(
     (instanceId: ProviderInstanceId, action: AcpRegistryUrlAuthAction) => {
@@ -837,16 +847,34 @@ export function EnvironmentProviderSettings({
       >[0]["textGenerationModelSelection"];
     },
   ) => {
+    const pendingEdits = pendingInstanceEditsRef.current;
+    const pending = pendingEdits.get(row.instanceId);
+    const instance =
+      pending !== undefined && (pending.saving > 0 || pending.rendered === row.instance)
+        ? rebaseProviderInstanceEdit({
+            rendered: row.instance,
+            edited: next,
+            pending: pending.instance,
+          })
+        : next;
+    const edit = { instance, rendered: row.instance, saving: (pending?.saving ?? 0) + 1 };
+    pendingEdits.set(row.instanceId, edit);
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
       instanceId: row.instanceId,
-      instance: next,
+      instance,
       textGenerationModelSelection: options?.textGenerationModelSelection,
     });
     const result = await persistProviderInstance(
-      { operation: "upsert", instanceId: row.instanceId, instance: next },
+      { operation: "upsert", instanceId: row.instanceId, instance },
       patch,
     );
+    const latest = pendingEdits.get(row.instanceId);
+    if (latest !== undefined) latest.saving -= 1;
+    if (result._tag === "Failure") {
+      // The server kept its own state; the next edit starts from what it renders.
+      if (latest !== undefined && latest.saving === 0) pendingEdits.delete(row.instanceId);
+    }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({

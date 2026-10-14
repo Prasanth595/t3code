@@ -4,9 +4,12 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderInstanceConfig,
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { visitElements } from "../../test/reactElementTree";
@@ -331,6 +334,64 @@ describe("EnvironmentProviderSettings routing", () => {
       environmentId,
       input: { provider: ProviderDriverKind.make("codex"), instanceId: codexId },
     });
+  });
+
+  it("keeps a badge label still being saved when an icon is picked before it returns", async () => {
+    atoms.providers = [provider()];
+    let finishFirstSave!: () => void;
+    settingsState.mutateProviderInstance.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirstSave = () => resolve({ _tag: "Success", value: {} });
+        }),
+    );
+    const panel = renderPanel();
+    const providerCard = visitElements(
+      panel,
+      (element) =>
+        element.props.instanceId === codexId && typeof element.props.onUpdate === "function",
+    );
+    const rendered = providerCard?.props.instance as ProviderInstanceConfig;
+    const onUpdate = providerCard?.props.onUpdate as (next: ProviderInstanceConfig) => void;
+
+    // Both edits are built from the same render, as the card's two controls build them.
+    onUpdate({ ...rendered, badgeLabel: "PX" });
+    onUpdate({ ...rendered, icon: "openai" });
+    finishFirstSave();
+    await flushPromises();
+
+    expect(settingsState.mutateProviderInstance).toHaveBeenCalledTimes(2);
+    expect(settingsState.mutateProviderInstance.mock.calls[1]?.[0]).toMatchObject({
+      operation: "upsert",
+      instanceId: codexId,
+      instance: { badgeLabel: "PX", icon: "openai" },
+    });
+  });
+
+  it("starts the next edit from the server's state after a save fails", async () => {
+    atoms.providers = [provider()];
+    settingsState.mutateProviderInstance.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("settings write failed"))),
+    );
+    const panel = renderPanel();
+    const providerCard = visitElements(
+      panel,
+      (element) =>
+        element.props.instanceId === codexId && typeof element.props.onUpdate === "function",
+    );
+    const rendered = providerCard?.props.instance as ProviderInstanceConfig;
+    const onUpdate = providerCard?.props.onUpdate as (next: ProviderInstanceConfig) => void;
+
+    onUpdate({ ...rendered, badgeLabel: "PX" });
+    await flushPromises();
+    onUpdate({ ...rendered, icon: "openai" });
+    await flushPromises();
+
+    const retried = settingsState.mutateProviderInstance.mock.calls[1]?.[0] as {
+      readonly instance: ProviderInstanceConfig;
+    };
+    expect(retried.instance).toMatchObject({ icon: "openai" });
+    expect(retried.instance).not.toHaveProperty("badgeLabel");
   });
 
   it("opens the requested provider instance instead of the first provider", () => {
