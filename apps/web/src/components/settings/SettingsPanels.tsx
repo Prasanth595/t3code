@@ -62,6 +62,7 @@ import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../..
 import { IS_NIGHTLY_BUILD, NightlyMobileBetaRow } from "../NightlyMobileBeta";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
+import { InstalledAppSettingsRow } from "./InstalledAppSettingsRow";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
 import { SnoozeQuickOptionsSettingsRow } from "./SnoozeQuickOptionsSettingsRow";
@@ -704,6 +705,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.forkChangelogEnabled !== DEFAULT_UNIFIED_SETTINGS.forkChangelogEnabled
         ? ["Fork changelog"]
         : []),
+      ...(settings.installedAppEnabled !== DEFAULT_UNIFIED_SETTINGS.installedAppEnabled
+        ? ["Installed app"]
+        : []),
       ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
       ...getChangedBrowserSettingLabels(settings),
@@ -734,6 +738,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.terminalAppShortcutsFirst,
       settings.backgroundWorkDetails,
       settings.forkChangelogEnabled,
+      settings.installedAppEnabled,
       settings.composerCollapseOnScroll,
       settings.composerRichTextEnabled,
       settings.sendShortcut,
@@ -898,6 +903,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       terminalAppShortcutsFirst: DEFAULT_UNIFIED_SETTINGS.terminalAppShortcutsFirst,
       backgroundWorkDetails: DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails,
       forkChangelogEnabled: DEFAULT_UNIFIED_SETTINGS.forkChangelogEnabled,
+      installedAppEnabled: DEFAULT_UNIFIED_SETTINGS.installedAppEnabled,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
@@ -2564,6 +2570,7 @@ export function GeneralSettingsPanel() {
 
       <SettingsSection id="behavior" title="Behavior">
         <NotificationSettings />
+        <InstalledAppSettingsRow />
         <SettingsRow
           {...searchableSetting("in-app-notifications")}
           description="Show a toast when another thread finishes, fails, or needs input or approval while this app has focus."
