@@ -60,10 +60,20 @@ export function enrichedSkillDisplayName(skill: SelectableMarkdownSkill) {
   );
 }
 
+/**
+ * The skill a link shows: `$name` from skill recognition, or the SKILL.md path
+ * of a linked mention, `[$name](…/SKILL.md)`, which picks one of same-name skills.
+ */
 export function enrichedSkillReference(
   url: string,
   skills?: ReadonlyArray<SelectableMarkdownSkill>,
 ) {
   const match = /^\p{Sc}(.+)$/u.exec(url);
-  return match ? skills?.find((skill) => skill.name === match[1]) : undefined;
+  if (match) return skills?.find((skill) => skill.name === match[1]);
+  if (!/[\\/]SKILL\.md$/i.test(url)) return undefined;
+  let path = url;
+  try {
+    path = decodeURIComponent(url);
+  } catch {}
+  return skills?.find((skill) => skill.path === url || skill.path === path);
 }

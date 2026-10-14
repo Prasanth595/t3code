@@ -54,6 +54,15 @@ describe("Enriched link presentation", () => {
       expect(regex.test(`${sigil}${sigil}check`)).toBe(false);
     },
   );
+  it("resolves a linked skill mention to the skill at its path, not its same-name twin", () => {
+    const skills = [
+      { name: "review", displayName: "User Review", path: "/home/me/skills/review/SKILL.md" },
+      { name: "review", displayName: "App Review", path: "/repo/my skills/review/SKILL.md" },
+    ];
+    expect(enrichedSkillReference("/repo/my%20skills/review/SKILL.md", skills)).toBe(skills[1]);
+    expect(enrichedSkillReference("/repo/my skills/review/SKILL.md", skills)).toBe(skills[1]);
+    expect(enrichedSkillReference("/repo/other/SKILL.md", skills)).toBeUndefined();
+  });
   it("matches only the complete URL, including literal regex metacharacters", () => {
     const url = "file:///workspace/app[1].tsx?line=3+4";
     const pattern = new RegExp(enrichedLinkVariantPattern(url));
