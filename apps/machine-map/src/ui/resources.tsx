@@ -33,7 +33,7 @@ import {
   timeAgo,
 } from "./format.ts";
 import { KindIcon } from "./icons.tsx";
-import { StickerLink } from "./StickerLink.tsx";
+import { MachineLink, RouteLink, StickerLink } from "./StickerLink.tsx";
 
 const RANGE_LABEL: Record<ResourceRange, string> = {
   hour: "1 hour",
@@ -405,7 +405,7 @@ function AlertList({
   alerts: ReadonlyArray<HealthAlert>;
   showMachine: boolean;
 }) {
-  const { map, now, select } = usePortalContext();
+  const { map, now } = usePortalContext();
   return (
     <ul className="alerts">
       {alerts.map((alert) => (
@@ -415,13 +415,9 @@ function AlertList({
           </span>
           <span className="grow">
             {showMachine && (
-              <button
-                type="button"
-                className="link"
-                onClick={() => select({ _tag: "machine", id: alert.machineId })}
-              >
+              <MachineLink id={alert.machineId}>
                 {map.machines.find((m) => m.id === alert.machineId)?.name ?? alert.machineId}
-              </button>
+              </MachineLink>
             )}
             {showMachine && " · "}
             {ALERT_TEXT[alert.kind]}: {alertValue(alert.kind, alert.value, alert.threshold)}
@@ -598,13 +594,12 @@ export function ResourcesSection({ machine }: { machine: MachineRecord }) {
           </button>
         )}
         {lastBundle && (
-          <button
-            type="button"
+          <RouteLink
             className="btn small"
-            onClick={() => portal.select({ _tag: "command", id: lastBundle.id })}
+            route={{ view: portal.route.view, selection: { _tag: "command", id: lastBundle.id } }}
           >
             Last bundle
-          </button>
+          </RouteLink>
         )}
       </div>
 

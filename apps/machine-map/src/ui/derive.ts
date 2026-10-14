@@ -19,6 +19,7 @@ import { changesPublicFacts, findArrow, findMachine, findNote, hasJoined } from 
 import { lockdownChanges } from "../rules/presets.ts";
 import { pendingRevisions } from "../rules/queue.ts";
 import type { Portal } from "./context.ts";
+import type { Route } from "./route.ts";
 import { LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
 
 export interface MachineQueue {
@@ -103,6 +104,15 @@ export function arrowEndWait(end: ArrowEnd, machine: MachineRecord): string | nu
       return `waiting for ${machine.name} to join`;
   }
 }
+
+/**
+ * MM-602: where the wait of an arrow end opens. A queued end opens the Queue of its machine. A
+ * machine that never connected has no queue yet, so its end opens the machine.
+ */
+export const arrowEndRoute = (end: Exclude<ArrowEnd, "applied">, machineId: MachineId): Route => ({
+  view: end === "queued" ? "queue" : "map",
+  selection: { _tag: "machine", id: machineId },
+});
 
 /** MM-717: the level before the pause of an arrow that the pause cut, or null. */
 export const cutLevel = (

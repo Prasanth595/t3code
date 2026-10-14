@@ -2818,3 +2818,8 @@ ul.alerts li.ended {
     gap: 14px;
   }
 }
+
+/* MM-602: a wait under a pair card opens the Queue of its machine, in the warning colour. */
+.pair-wait a {
+  color: inherit;
+}
