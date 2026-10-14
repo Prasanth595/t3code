@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vp build && wrangler dev --local --port 8787 --local-upstream localhost:8787 --var DEV_FAKE_ACCESS:1",
     "build": "vp build",
-    "typecheck": "tsc-rs --noEmit -p tsconfig.json && tsc-rs --noEmit -p tsconfig.ui.json",
+    "typecheck": "tsc-rs --noEmit -p tsconfig.json && tsc-rs --noEmit -p tsconfig.ui.json && tsc-rs --noEmit -p tsconfig.sw.json",
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "deploy": "vp build && wrangler deploy"
   },

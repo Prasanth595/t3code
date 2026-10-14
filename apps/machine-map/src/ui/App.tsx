@@ -83,7 +83,35 @@ const CONNECTION_STICKER: Record<Connection, string> = {
   live: "ok",
   connecting: "wait",
   offline: "",
+  "signed-out": "",
 };
+
+/** MM-1804: a new navigation meets Cloudflare Access, which signs in and returns to the page. */
+function SignInAgain() {
+  return (
+    <button type="button" className="btn primary" onClick={() => location.reload()}>
+      Sign in again
+    </button>
+  );
+}
+
+/** MM-1805: the app icon counts what needs the owner: Inbox proposals and active health alerts. */
+function useAppBadge(count: number) {
+  useEffect(() => {
+    if (!("setAppBadge" in navigator)) return;
+    const done = count > 0 ? navigator.setAppBadge(count) : navigator.clearAppBadge();
+    // A browser tab without an installed app refuses the badge. Nothing else depends on it.
+    done.catch(() => undefined);
+  }, [count]);
+}
+
+/** MM-1806: an app shortcut opens a dialog with `?open=`, for example the big red button. */
+function takeLaunchDialog(): Dialog | null {
+  const params = new URLSearchParams(location.search);
+  if (params.get("open") !== "emergency") return null;
+  history.replaceState(null, "", `${location.pathname}${location.hash}`);
+  return { _tag: "emergency" };
+}
 
 function Brand({ connection, revision }: { connection: Connection; revision: number | null }) {
   return (
@@ -108,7 +136,7 @@ export function App() {
   const [now, setNow] = useState(() => Date.now());
   const [draft, setDraft] = useState<ReadonlyArray<DraftChange> | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [dialog, setDialog] = useState<Dialog | null>(takeLaunchDialog);
   const [palette, setPalette] = useState(false);
   const [older, setOlder] = useState<ReadonlyArray<MapRevision>>([]);
 
@@ -146,6 +174,7 @@ export function App() {
 
   const snapshot = state.snapshot;
   const proposals = snapshot?.proposals.length ?? 0;
+  useAppBadge(proposals + state.health.alerts.filter((alert) => alert.endedAt === null).length);
   useEffect(() => {
     const parts = [VIEW_LABEL[route.view], "T3 machines"];
     if (state.pause) parts.unshift("Paused");
@@ -177,12 +206,21 @@ export function App() {
           <Brand connection={connection} revision={null} />
         </header>
         <div className="card view empty" role="status">
-          <h2>{connection === "offline" ? "The portal does not answer" : "Connecting"}</h2>
+          <h2>
+            {connection === "signed-out"
+              ? "Your sign-in ended"
+              : connection === "offline"
+                ? "The portal does not answer"
+                : "Connecting"}
+          </h2>
           <p>
-            {connection === "offline"
-              ? "The page tries again on its own. If this stays, the sign-in may have ended."
-              : "Opening a live connection to the portal."}
+            {connection === "signed-out"
+              ? "Cloudflare Access asks you to sign in again. Then the map opens."
+              : connection === "offline"
+                ? "The page tries again on its own."
+                : "Opening a live connection to the portal."}
           </p>
+          {connection === "signed-out" && <SignInAgain />}
           {connection === "offline" && (
             <button type="button" className="btn" onClick={() => location.reload()}>
               Reload the page
@@ -391,10 +429,19 @@ export function App() {
         {connection !== "live" && (
           <div className="card offline-note" role="status">
             <span className="sticker">{connection}</span>
-            <span>
-              The live connection dropped. You see the last known map, and changes may fail until
-              the page reconnects on its own.
-            </span>
+            {connection === "signed-out" ? (
+              <>
+                <span className="grow">
+                  Your sign-in ended. You see the last known map. Sign in again to make changes.
+                </span>
+                <SignInAgain />
+              </>
+            ) : (
+              <span>
+                The live connection dropped. You see the last known map, and changes may fail until
+                the page reconnects on its own.
+              </span>
+            )}
           </div>
         )}
 

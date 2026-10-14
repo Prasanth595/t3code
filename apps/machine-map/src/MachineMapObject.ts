@@ -54,6 +54,10 @@ import type {
   PauseResponse,
   PendingRotation,
   PortalSignIn,
+  PushEndpointRequest,
+  PushKeyResponse,
+  PushMessage,
+  PushSubscribeRequest,
   RemoveMachineResponse,
   ResumeResponse,
   RotationResponse,
@@ -68,6 +72,7 @@ import type {
 import { PauseState } from "./api.ts";
 import { configured, ownerEmails } from "./access.ts";
 import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
+import { sendPush, vapidKey, type PushTarget, type VapidKey } from "./push.ts";
 import { CloudflareApi, tunnelTarget } from "./cloudflare.ts";
 import type { Env } from "./env.ts";
 import {
@@ -236,6 +241,14 @@ const SAMPLE_REQUEST_GAP_MS = 10_000;
 const PAGE_ENDED_ALERTS = 50;
 /** MM-1503: the alarm prunes old resource points and alerts this often. */
 const PRUNE_EVERY_MS = HOUR_MS;
+/** MM-1808: the push words of each alert kind. */
+const ALERT_PUSH: Record<HealthAlertKind, { readonly title: string; readonly unit: string }> = {
+  cpu: { title: "CPU is high", unit: "%" },
+  memory: { title: "memory is full", unit: "%" },
+  disk: { title: "disk is full", unit: "%" },
+  swap: { title: "swap traffic is high", unit: " MB/s" },
+  offline: { title: "is down", unit: " minutes offline" },
+};
 
 const nowIso = () => new Date().toISOString();
 
@@ -301,6 +314,8 @@ export class MachineMapObject extends DurableObject<Env> {
   /** MM-1501: when the portal last asked each machine for a sample. Lost on hibernation. */
   readonly #sampleRequests = new Map<MachineId, number>();
   readonly #health: HealthStore;
+  /** MM-1807: read once from `VAPID_JWK`. */
+  #vapid: Promise<VapidKey | null> | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -345,6 +360,7 @@ export class MachineMapObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS enroll_attempts (ip TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sign_ins (id TEXT PRIMARY KEY, device TEXT NOT NULL, browser TEXT NOT NULL, place TEXT NOT NULL, first_seen TEXT NOT NULL, last_used TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS machine_tunnels (machine_id TEXT PRIMARY KEY, tunnel_id TEXT NOT NULL, hostname TEXT NOT NULL, created_tunnel INTEGER NOT NULL, dns_record_id TEXT, access_host_added INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, sign_in_id TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
     // MM-213: the sealed tunnel grant of a join code. Null for a code without a tunnel.
     const joinColumns = this.#sql<{ name: string }>("PRAGMA table_info(join_codes)");
@@ -833,7 +849,15 @@ export class MachineMapObject extends DurableObject<Env> {
     if (changes.start.length === 0 && changes.end.length === 0) return;
     const at = new Date(nowMs).toISOString();
     for (const alert of changes.end) this.#health.saveAlert({ ...alert, endedAt: at });
+    const name = findMachine(this.#map, machineId)?.name ?? machineId;
     for (const start of changes.start) {
+      const words = ALERT_PUSH[start.kind];
+      this.#notify({
+        title: `${name} ${words.title}`,
+        body: `${Math.round(start.value)}${words.unit}. The limit is ${start.threshold}${words.unit}.`,
+        url: "/#/health",
+        tag: `alert:${machineId}:${start.kind}`,
+      });
       this.#health.saveAlert({
         id: crypto.randomUUID(),
         machineId,
@@ -855,6 +879,51 @@ export class MachineMapObject extends DurableObject<Env> {
 
   #healthEvent(): HealthEvent {
     return { _tag: "health", health: this.#overview("page") };
+  }
+
+  // ---------------------------------------------------------------- push
+
+  #vapidKey(): Promise<VapidKey | null> {
+    this.#vapid ??= vapidKey(this.env.VAPID_JWK);
+    return this.#vapid;
+  }
+
+  #pushTargets(skipSignIn: string | null): Array<PushTarget> {
+    return this.#sql<{ endpoint: string; p256dh: string; auth: string }>(
+      "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE sign_in_id IS NOT ?",
+      skipSignIn,
+    );
+  }
+
+  /**
+   * MM-1807, MM-1808: sends one message to every subscribed device, with the badge count of
+   * MM-1805. `skipSignIn` leaves out the device that caused it. A gone subscription is deleted.
+   */
+  #notify(message: Omit<PushMessage, "badge">, skipSignIn: string | null = null): void {
+    const targets = this.#pushTargets(skipSignIn);
+    if (targets.length === 0) return;
+    const badge = this.#proposals().length + this.#alerts("active").length;
+    this.ctx.waitUntil(this.#deliver(targets, { ...message, badge }));
+  }
+
+  async #deliver(targets: ReadonlyArray<PushTarget>, message: PushMessage): Promise<void> {
+    const key = await this.#vapidKey().catch((error: unknown) => {
+      console.error("VAPID_JWK is invalid", errorMessage(error));
+      return null;
+    });
+    if (!key) return;
+    const subject = `mailto:${ownerEmails(this.env)[0] ?? "owner@invalid"}`;
+    await Promise.all(
+      targets.map(async (target) => {
+        try {
+          if ((await sendPush(target, message, key, subject)) === "gone") {
+            this.#sql("DELETE FROM push_subscriptions WHERE endpoint = ?", target.endpoint);
+          }
+        } catch (error) {
+          console.error("push failed", errorMessage(error));
+        }
+      }),
+    );
   }
 
   #resourceHistory(machineId: MachineId, range: ResourceRange) {
@@ -956,6 +1025,14 @@ export class MachineMapObject extends DurableObject<Env> {
       JSON.stringify(proposal),
     );
     this.#broadcast({ _tag: "proposals", proposals: this.#proposals() });
+    const from =
+      actor._tag === "agent" ? (findMachine(this.#map, actor.machineId)?.name ?? "an agent") : null;
+    this.#notify({
+      title: from ? `${from} proposes a change` : "A change waits in the Inbox",
+      body: summary,
+      url: `/#/inbox/proposal/${encodeURIComponent(proposal.id)}`,
+      tag: `proposal:${proposal.id}`,
+    });
     return proposal;
   }
 
@@ -1870,6 +1947,15 @@ export class MachineMapObject extends DurableObject<Env> {
           PAUSE_STOP_MINUTES,
         );
       }
+      this.#notify(
+        {
+          title: "Everything is paused",
+          body: `${owner.device} pressed the emergency pause. Agents stop on ${joined.length} ${joined.length === 1 ? "machine" : "machines"}.`,
+          url: "/#/map",
+          tag: "pause",
+        },
+        owner.signInId,
+      );
       return { pause: record.state, stopCommands: joined.length };
     });
   }
@@ -1886,6 +1972,68 @@ export class MachineMapObject extends DurableObject<Env> {
           : null;
       this.#savePause(null);
       return { revision };
+    });
+  }
+
+  /** MM-1807: the public VAPID key that a browser subscribes with. */
+  pushKey(owner: OwnerContext) {
+    return this.#run(owner, async (): Promise<PushKeyResponse> => {
+      const key = await this.#vapidKey().catch((error: unknown) => {
+        throw new PortalError(500, `VAPID_JWK is invalid: ${errorMessage(error)}`);
+      });
+      return { publicKey: key?.publicKey ?? null };
+    });
+  }
+
+  /** MM-1807: one subscription per device. A new subscription of the same endpoint replaces it. */
+  subscribePush(owner: OwnerContext, request: PushSubscribeRequest) {
+    return this.#run(owner, () => {
+      this.#sql(
+        `INSERT INTO push_subscriptions (endpoint, p256dh, auth, sign_in_id, created_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, sign_in_id = excluded.sign_in_id`,
+        request.endpoint,
+        request.keys.p256dh,
+        request.keys.auth,
+        owner.signInId,
+        nowIso(),
+      );
+      return { subscribed: true };
+    });
+  }
+
+  unsubscribePush(owner: OwnerContext, request: PushEndpointRequest) {
+    return this.#run(owner, () => {
+      this.#sql("DELETE FROM push_subscriptions WHERE endpoint = ?", request.endpoint);
+      return { subscribed: false };
+    });
+  }
+
+  /** MM-1809: sends a test message to one device and reports the answer of its push service. */
+  testPush(owner: OwnerContext, request: PushEndpointRequest) {
+    return this.#run(owner, async () => {
+      const target = this.#sql<{ endpoint: string; p256dh: string; auth: string }>(
+        "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE endpoint = ?",
+        request.endpoint,
+      )[0];
+      if (!target) throw new PortalError(404, "This device has no subscription. Turn it on again.");
+      const key = await this.#vapidKey();
+      if (!key) throw new PortalError(409, "The portal has no VAPID_JWK secret.");
+      const message: PushMessage = {
+        title: "Notifications work",
+        body: "Health alerts, proposals and the emergency pause show here.",
+        url: "/#/clients",
+        tag: "test",
+        badge: this.#proposals().length + this.#alerts("active").length,
+      };
+      const subject = `mailto:${ownerEmails(this.env)[0] ?? "owner@invalid"}`;
+      const result = await sendPush(target, message, key, subject).catch((error: unknown) => {
+        throw new PortalError(502, errorMessage(error));
+      });
+      if (result === "gone") {
+        this.#sql("DELETE FROM push_subscriptions WHERE endpoint = ?", target.endpoint);
+        throw new PortalError(410, "The push service forgot this device. Turn it on again.");
+      }
+      return "Test sent. It shows in a few seconds.";
     });
   }
 

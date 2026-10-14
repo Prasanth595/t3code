@@ -56,6 +56,7 @@ import {
 } from "./history.ts";
 import { ClockIcon, RobotIcon, UndoIcon } from "./icons.tsx";
 import { MapView } from "./MapView.tsx";
+import { PushSettings } from "./PushSettings.tsx";
 import { NO_SELECTION } from "./route.ts";
 
 /** An empty list: a short title, what fills it, and a stamp when the empty state is good news. */
@@ -1150,6 +1151,7 @@ export function ClientsView() {
         </div>
       </div>
       {error && <p className="error-text">{error}</p>}
+      <PushSettings />
       <h3>Portal sign-ins</h3>
       {devices === null ? (
         <p className="small muted">

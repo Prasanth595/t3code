@@ -225,12 +225,24 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 - **MM-1701** T3 Code has a Machines panel, opened like the pull requests panel. It shows the machine map natively from the data of `machines_read`: the machines, their presence and work, the arrows, the queue and the tasks. It works in the web and desktop clients. It is read only and links to the portal. Without a portal connection or while paused, it says why it has no map.
 
+## 18. Installed app
+
+- **MM-1801** The portal is an installable web app on desktop Chrome and Edge, on Android and on iOS Safari. The manifest has an id, a scope, the `standalone` display, a maskable icon and the shortcuts of MM-1806. The page registers the service worker `/sw.js` for the whole portal.
+- **MM-1802** The service worker caches only the files of the current build and the offline page. Each build makes a new worker, which drops the files of older builds. It never caches the page HTML, API answers or socket data, so the portal never shows old machine state.
+- **MM-1803** A page load always goes to the network. Only when the network fails, the worker shows the offline page: "Offline. The portal needs the network."
+- **MM-1804** The worker passes the Cloudflare Access redirect of a page load to the browser unchanged. When the Access session ends, the open page shows "Your sign-in ended" with "Sign in again" and stops reconnecting. "Sign in again" loads the page again, so Access signs in and returns to the portal.
+- **MM-1805** The app icon shows a badge with the count of Inbox proposals plus active health alerts, where the browser has the Badging API. Each push message (MM-1807) holds the count, so the badge stays current while the app is closed.
+- **MM-1806** The app shortcuts are "Emergency pause", which opens the big red button (MM-708), Inbox, Health, Queue and Tasks. A shortcut or a notification opens in the open portal window when there is one.
+- **MM-1807** The portal sends Web Push with the Web Crypto API of Workers and no push library. It signs with the Worker secret `VAPID_JWK`. Without the secret, push is off. Each device has its own subscription, stored in the Durable Object with its sign-in. The portal deletes a subscription that the push service reports as gone.
+- **MM-1808** The portal sends a push when a health alert starts (MM-1505), when a new proposal waits in the Inbox, and on the emergency pause. The pause push skips the device that pressed the button. The DOWN alert is the push for a machine that went offline, after the offline threshold of MM-1504. Alert ends and Resume send no push. A tap on a notification opens its view.
+- **MM-1809** The Clients view has "Notifications on this device" with "Turn on", "Turn off" and "Send a test". On iOS, push works only in the app on the Home Screen, and the section says so in Safari. A blocked permission and a missing `VAPID_JWK` show why push is off. A new VAPID key turns the old subscription of the device off.
+
 ## Later
 
 These ideas are not in scope yet:
 
 - Wake an offline laptop or desktop through another machine on the same network.
 - Scheduled presets, for example "at night, Windows cannot use Mac".
-- Push notifications from the portal to the phone: a machine went offline, a proposal waits, a command failed.
+- A push notification when a command fails (MM-1808 covers alerts, proposals and the pause).
 - Groups on the map, for example "home" and "cloud".
 - The Machines panel (MM-1701) in the mobile app.

@@ -277,3 +277,35 @@ export interface ForkRelease {
   readonly macUrl: string | null;
   readonly windowsUrl: string | null;
 }
+
+const Base64Url = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256));
+
+/** POST /api/push/subscribe: the `toJSON()` of a browser push subscription (MM-1807). */
+export const PushSubscribeRequest = Schema.Struct({
+  endpoint: Schema.String.check(Schema.isStartingWith("https://"), Schema.isMaxLength(2048)),
+  keys: Schema.Struct({ p256dh: Base64Url, auth: Base64Url }),
+});
+export type PushSubscribeRequest = typeof PushSubscribeRequest.Type;
+
+/** POST /api/push/unsubscribe and POST /api/push/test: one subscription of this device. */
+export const PushEndpointRequest = Schema.Struct({
+  endpoint: PushSubscribeRequest.fields.endpoint,
+});
+export type PushEndpointRequest = typeof PushEndpointRequest.Type;
+
+/** GET /api/push: null when the portal has no `VAPID_JWK` secret. */
+export interface PushKeyResponse {
+  readonly publicKey: string | null;
+}
+
+/** The encrypted body of one push message. The service worker shows it (MM-1808). */
+export interface PushMessage {
+  readonly title: string;
+  readonly body: string;
+  /** A portal path with its hash route, for example `/#/inbox`. */
+  readonly url: string;
+  /** A newer message with the same tag replaces the older one on the device. */
+  readonly tag: string;
+  /** MM-1805: the count for the app icon. */
+  readonly badge: number;
+}
