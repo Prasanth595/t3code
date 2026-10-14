@@ -31,13 +31,19 @@ export function composerModelOptionSummary(input: {
     input.selection,
     input.reportedSelection,
   );
-  const reasoningLabel = reasoning
-    ? getProviderOptionCurrentLabel(reasoning, input.selection, input.reportedSelection)
-    : typeof thinkingValue === "boolean"
-      ? thinkingValue
-        ? "Thinking"
-        : "No thinking"
-      : undefined;
+  const reasoningValue = getProviderOptionCurrentValue(
+    reasoning,
+    input.selection,
+    input.reportedSelection,
+  );
+  const reasoningLabel =
+    reasoning && reasoningValue !== undefined
+      ? getProviderOptionCurrentLabel(reasoning, input.selection, input.reportedSelection)
+      : typeof thinkingValue === "boolean"
+        ? thinkingValue
+          ? "Thinking"
+          : "No thinking"
+        : undefined;
   const speed = input.descriptors.find(
     (descriptor) =>
       (descriptor.id === "fastMode" && descriptor.type === "boolean") ||

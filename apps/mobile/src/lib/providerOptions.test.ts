@@ -96,6 +96,65 @@ describe("composer model option summary", () => {
     expect(summary()).toEqual({ reasoningLabel: "Medium", speedLabel: undefined });
   });
 
+  const openCodeCapabilities: ModelCapabilities = {
+    optionDescriptors: [
+      {
+        id: "variant",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium", isDefault: true },
+          { id: "high", label: "High" },
+        ],
+        currentValue: "medium",
+      },
+    ],
+  };
+
+  it("omits an unselected OpenCode variant even when the catalog has a default", () => {
+    const reported: ModelSelection = {
+      ...selection,
+      options: [{ id: "variant", value: "high" }],
+    };
+    for (const report of [
+      undefined,
+      { ...reported, model: "other-model" },
+      { ...reported, instanceId: ProviderInstanceId.make("other-provider") },
+    ]) {
+      expect(summary(openCodeCapabilities, selection, report, "opencode")).toEqual({
+        reasoningLabel: undefined,
+        speedLabel: undefined,
+      });
+    }
+  });
+
+  it("preserves explicit and matching reported OpenCode variant labels", () => {
+    const reported: ModelSelection = {
+      ...selection,
+      options: [{ id: "variant", value: "low" }],
+    };
+    expect(summary(openCodeCapabilities, selection, reported, "opencode").reasoningLabel).toBe(
+      "Low",
+    );
+    expect(
+      summary(
+        openCodeCapabilities,
+        { ...selection, options: [{ id: "variant", value: "high" }] },
+        reported,
+        "opencode",
+      ).reasoningLabel,
+    ).toBe("High");
+    expect(
+      summary(
+        openCodeCapabilities,
+        selection,
+        { ...selection, options: [{ id: "variant", value: "default" }] },
+        "opencode",
+      ).reasoningLabel,
+    ).toBe("Default");
+  });
+
   it("shows a selected reasoning label and Codex fast tier", () => {
     expect(
       summary(CODEX_CAPABILITIES, {
