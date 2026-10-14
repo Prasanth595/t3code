@@ -1,7 +1,7 @@
 /**
  * Fork: machine map (`apps/machine-map/SPEC.md`). The local state of this machine: the last
  * desired state (MM-1304), the machine token (MM-1302), and the two auth decisions that the
- * upstream auth hooks call (MM-1305, MM-1307). The `machineMap` setting gates both decisions,
+ * upstream auth hooks call (MM-1305, MM-1307), and the pause lock (MM-718). The `machineMap` setting gates both decisions,
  * so with the setting off, auth is unchanged (MM-1301).
  *
  * It depends on no auth service, because `EnvironmentAuth` reads it.
@@ -31,7 +31,12 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { type MachineGrant, machineGrantFor, machineMcpAccessFor } from "./machineAccess.ts";
+import {
+  type MachineGrant,
+  isLocalDesktopSubject,
+  machineGrantFor,
+  machineMcpAccessFor,
+} from "./machineAccess.ts";
 
 /** The secret store entry of the machine token. Never `settings.json` (MM-1302). */
 const TOKEN_SECRET_NAME = "machine-map-token";
@@ -105,6 +110,13 @@ export class MachineMapState extends Context.Service<
     readonly changes: Stream.Stream<LocalState>;
     /** The desired state while the machine map is on; null when it is off or before the first. */
     readonly activeDesired: Effect.Effect<MachineDesiredState | null>;
+    /**
+     * MM-718: true while the pause locks the sessions of `subject`. The pause locks every subject
+     * except the desktop app of this machine.
+     */
+    readonly lockedFor: (subject: string) => Effect.Effect<boolean>;
+    /** MM-718: completes when the pause locks `subject`, at once when it is locked now. */
+    readonly awaitLockFor: (subject: string) => Effect.Effect<void>;
     readonly updateSaved: (
       update: (saved: SavedState) => SavedState,
     ) => Effect.Effect<SavedState, MachineMapStateError>;
@@ -132,22 +144,26 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const statePath = path.join(config.stateDir, "machine-map.json");
 
-  // A broken file or token must not stop the server. It starts empty and logs why.
-  const savedOnDisk = yield* fileSystem.readFileString(statePath).pipe(
-    Effect.flatMap(decodeSavedState),
-    Effect.catch((cause) =>
-      Effect.gen(function* () {
-        if (!(yield* fileSystem.exists(statePath).pipe(Effect.orElseSucceed(() => false)))) {
-          return EMPTY_SAVED_STATE;
-        }
-        yield* Effect.logWarning("Machine map state file is unreadable; starting empty.", {
-          path: statePath,
-          cause: String(cause),
-        });
-        return EMPTY_SAVED_STATE;
-      }),
-    ),
-  );
+  // A broken file or token must not stop the server. It starts empty and logs why. A broken
+  // file can hide a pause, so the lock holds until the portal sends a desired state (MM-718).
+  const { saved: savedOnDisk, unreadable: savedUnreadable } = yield* fileSystem
+    .readFileString(statePath)
+    .pipe(
+      Effect.flatMap(decodeSavedState),
+      Effect.map((saved) => ({ saved, unreadable: false })),
+      Effect.catch((cause) =>
+        Effect.gen(function* () {
+          if (!(yield* fileSystem.exists(statePath).pipe(Effect.orElseSucceed(() => false)))) {
+            return { saved: EMPTY_SAVED_STATE, unreadable: false };
+          }
+          yield* Effect.logWarning("Machine map state file is unreadable; starting empty.", {
+            path: statePath,
+            cause: String(cause),
+          });
+          return { saved: EMPTY_SAVED_STATE, unreadable: true };
+        }),
+      ),
+    );
   const tokenOnDisk = yield* secrets.get(TOKEN_SECRET_NAME).pipe(
     Effect.flatMap(
       Option.match({
@@ -230,10 +246,25 @@ const make = Effect.gen(function* () {
     Effect.map((local) => (local.enabled ? local.saved.desired : null)),
   );
 
+  // MM-718: only `paused: false` or an absent flag in a readable desired state unlocks.
+  const isPaused = (local: LocalState) =>
+    local.enabled &&
+    (local.saved.desired === null ? savedUnreadable : local.saved.desired.paused === true);
+  const lockedFor: MachineMapState["Service"]["lockedFor"] = (subject) =>
+    isLocalDesktopSubject(subject)
+      ? Effect.succeed(false)
+      : SubscriptionRef.get(state).pipe(Effect.map(isPaused));
+  const awaitLockFor: MachineMapState["Service"]["awaitLockFor"] = (subject) =>
+    isLocalDesktopSubject(subject)
+      ? Effect.never
+      : SubscriptionRef.changes(state).pipe(Stream.filter(isPaused), Stream.runHead, Effect.asVoid);
+
   return MachineMapState.of({
     snapshot: SubscriptionRef.get(state),
     changes: SubscriptionRef.changes(state),
     activeDesired,
+    lockedFor,
+    awaitLockFor,
     updateSaved,
     rememberCommand: (commandId) =>
       updateSaved((saved) => ({

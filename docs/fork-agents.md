@@ -23,7 +23,7 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 
 - The map role of the machine that runs the agent decides what the agent can do: `read` reads, `propose` sends changes to the owner Inbox, `edit` applies changes. `machines_command` and `machines_queue_cancel` need `edit`.
 - A change that raises access of the agent's own machine always waits for the owner.
-- While the owner's emergency pause is on, the portal refuses every agent call. Only the owner can resume, in the portal.
+- While the owner's emergency pause is on, the portal refuses every agent call. Each machine also locks T3 Code for every client except its own desktop app (MM-718). Only the owner can resume, in the portal.
 - The owner HTTP API (`apps/machine-map/src/worker.ts`, `/api/*`) needs the owner's Cloudflare Access login. Agents do not use it. Use the MCP tools.
 
 | Task                                    | Do this                                                                                                                                                                                               |
