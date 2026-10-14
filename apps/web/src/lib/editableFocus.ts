@@ -26,9 +26,12 @@ function focusedEditable(target: EventTarget | null): Element | null {
 
 const editableUndoHistory = new WeakMap<Element, () => boolean>();
 
-/** Lets an editor report its actual undo stack; native fields keep their keyboard. */
-export function registerEditableUndoHistory(element: Element, canUndo: () => boolean) {
-  editableUndoHistory.set(element, canUndo);
+/**
+ * Lets an editor report whether it owns the undo shortcut, from its actual
+ * undo stack and document; native fields keep their keyboard.
+ */
+export function registerEditableUndoHistory(element: Element, ownsUndo: () => boolean) {
+  editableUndoHistory.set(element, ownsUndo);
   return () => {
     editableUndoHistory.delete(element);
   };
@@ -38,8 +41,7 @@ export function registerEditableUndoHistory(element: Element, canUndo: () => boo
 export function editableOwnsUndo(target: EventTarget | null = document.activeElement): boolean {
   const element = focusedEditable(target);
   if (!element) return false;
-  const canUndo = editableUndoHistory.get(element);
+  const ownsUndo = editableUndoHistory.get(element);
   // Native fields do not expose their undo stack, so preserve their shortcut.
-  if (!canUndo) return true;
-  return canUndo() || (element.textContent ?? "").length > 0;
+  return ownsUndo ? ownsUndo() : true;
 }

@@ -31,7 +31,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function ControlledComposer() {
+function ControlledComposer(props: { richTextEnabled?: boolean }) {
   const [draft, updateDraft] = useState({ value: "", thread: "a" });
   useImperativeHandle(
     controls,
@@ -53,6 +53,7 @@ function ControlledComposer() {
       onChange={(value) => updateDraft((current) => ({ ...current, value }))}
       onPaste={() => {}}
       editorRef={editorRef}
+      richTextEnabled={props.richTextEnabled ?? false}
     />
   );
 }
@@ -64,8 +65,8 @@ function editor() {
   return (element as HTMLElement & { editor: Editor }).editor;
 }
 
-async function mount() {
-  await act(async () => root.render(<ControlledComposer />));
+async function mount(props: { richTextEnabled?: boolean } = {}) {
+  await act(async () => root.render(<ControlledComposer {...props} />));
   // jsdom has no layout; keep focus/selection real without measuring its caret.
   editor().setOptions({
     editorProps: { ...editor().options.editorProps, handleScrollToSelection: () => true },
@@ -140,6 +141,15 @@ describe("controlled composer undo ownership", () => {
     expect(ownsUndo()).toBe(false);
     expect(editor().commands.undo()).toBe(false);
     expect(editorRef.current?.readSnapshot().value).toBe("");
+  });
+
+  it("keeps the shortcut on a textless rich draft switched in without history", async () => {
+    await mount({ richTextEnabled: true });
+    await act(async () => setDraft("---", "b"));
+    expect(editor().state.doc.firstChild?.type.name).toBe("horizontalRule");
+    expect(editor().view.dom.textContent).toBe("");
+    expect(editor().commands.undo()).toBe(false);
+    expect(ownsUndo()).toBe(true);
   });
 
   it("restores a chip-only draft after its editor deletion", async () => {

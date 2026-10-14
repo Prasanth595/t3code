@@ -31,7 +31,12 @@ describe("isEditableFocused", () => {
 function composer() {
   const editor = new Editor({ extensions: [StarterKit], content: "" });
   cleanups.push(() => editor.destroy());
-  cleanups.push(registerEditableUndoHistory(editor.view.dom, () => undoDepth(editor.state) > 0));
+  cleanups.push(
+    registerEditableUndoHistory(
+      editor.view.dom,
+      () => undoDepth(editor.state) > 0 || !editor.isEmpty,
+    ),
+  );
   return editor;
 }
 

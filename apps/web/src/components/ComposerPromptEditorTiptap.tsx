@@ -1505,7 +1505,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   useEffect(() => {
     if (!editor) return;
-    return registerEditableUndoHistory(editor.view.dom, () => undoDepth(editor.state) > 0);
+    // Any content (text, chips, rules) keeps the shortcut on the draft.
+    return registerEditableUndoHistory(
+      editor.view.dom,
+      () => undoDepth(editor.state) > 0 || !editor.isEmpty,
+    );
   }, [editor]);
 
   useEffect(() => {
