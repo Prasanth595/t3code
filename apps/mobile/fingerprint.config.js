@@ -13,8 +13,22 @@ if (!majorVersion) {
   throw new Error("fingerprint.config.js could not read the app version from app.config.ts");
 }
 
+// Reanimated compiles its static feature flags from package.json into native
+// code, but Expo only hashes package.json's scripts. Without this, flipping a
+// flag would ship as an OTA that never reaches the binary.
+const reanimatedConfig = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "package.json"), "utf8"),
+).reanimated;
+
 module.exports = {
   // Hash the pinned Screens fork's native source, rather than only its version.
   nativeModuleSourceType: "files",
-  extraSources: [{ type: "contents", id: "appMajorVersion", contents: majorVersion }],
+  extraSources: [
+    { type: "contents", id: "appMajorVersion", contents: majorVersion },
+    {
+      type: "contents",
+      id: "reanimatedStaticFeatureFlags",
+      contents: JSON.stringify(reanimatedConfig ?? {}),
+    },
+  ],
 };
