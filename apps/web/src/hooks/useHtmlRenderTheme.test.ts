@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   getStandardThemeColors,
   setEnvironmentThemes,
-  themeColorToHex,
   type ThemeAppearance,
   type ThemeHalves,
   type ThemePreference,
@@ -17,14 +16,10 @@ import { useHtmlRenderTheme } from "./useHtmlRenderTheme";
 const selection = vi.hoisted(() => ({
   theme: "ocean" as ThemePreference,
   resolvedTheme: "dark" as ThemeAppearance,
-  renderedAppearance: "dark" as ThemeAppearance,
   themeHalves: null as ThemeHalves | null,
 }));
 
-vi.mock("./useTheme", () => ({
-  useTheme: () => selection,
-  useRenderedAppearance: () => selection.renderedAppearance,
-}));
+vi.mock("./useTheme", () => ({ useTheme: () => selection }));
 vi.mock("./useSettings", () => ({
   useClientSettings: (
     select: (settings: { fontFamilySans: string; fontFamilyCode: string }) => string,
@@ -70,7 +65,6 @@ describe("useHtmlRenderTheme", () => {
       (preference) => {
         selection.theme = preference;
         selection.resolvedTheme = appearance;
-        selection.renderedAppearance = appearance;
 
         const theme = readRenderTheme();
 
@@ -97,36 +91,10 @@ describe("useHtmlRenderTheme", () => {
     ]);
     selection.theme = "transparent";
     selection.resolvedTheme = "dark";
-    selection.renderedAppearance = "dark";
 
     const theme = readRenderTheme();
 
     expect(theme.variables["--accent"]).toBe("#63636380");
     expect(theme.variables["--chart-1"]).toBe("#63636380");
   });
-
-  it.each(["light", "dark"] as const)(
-    "keeps HTML render colors consistent with a %s draft over a single-appearance theme",
-    (draftAppearance) => {
-      const savedAppearance = draftAppearance === "light" ? "dark" : "light";
-      setEnvironmentThemes([
-        {
-          id: "single-appearance",
-          label: "Single appearance",
-          appearance: savedAppearance,
-          colors: getStandardThemeColors(savedAppearance),
-        },
-      ]);
-      selection.theme = "single-appearance";
-      selection.resolvedTheme = savedAppearance;
-      selection.renderedAppearance = draftAppearance;
-
-      const theme = readRenderTheme();
-
-      expect(theme.appearance).toBe(draftAppearance);
-      expect(theme.variables["--background"]).toBe(
-        themeColorToHex(getStandardThemeColors(draftAppearance).canvas),
-      );
-    },
-  );
 });

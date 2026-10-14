@@ -492,8 +492,6 @@ function subscribe(listener: () => void): () => void {
   // The system-preference and cross-tab listeners are shared by all
   // subscribers; each event applies the theme once and notifies everyone.
   if (!removeWindowListeners) {
-    // Storage may have changed while no subscribers were listening.
-    snapshotStale = true;
     const mq = typeof window.matchMedia === "function" ? window.matchMedia(MEDIA_QUERY) : null;
     mq?.addEventListener("change", handleSystemAppearanceChange);
     window.addEventListener("storage", handleStorageChange);

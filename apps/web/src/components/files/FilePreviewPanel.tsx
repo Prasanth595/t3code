@@ -50,7 +50,7 @@ import { MediaActions, type MediaActionSource } from "~/components/media/MediaAc
 import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
-import { useRenderedAppearance } from "~/hooks/useTheme";
+import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -1046,7 +1046,7 @@ export default function FilePreviewPanel({
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   // A draft's composer target is its draft id; a thread the server knows is a ref.
   const draft = typeof composerDraftTarget === "string";
-  const resolvedTheme = useRenderedAppearance();
+  const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1462,7 +1462,7 @@ export default function FilePreviewPanel({
             ) : (
               <DiffWorkerPoolProvider>
                 <EditableFileSurface
-                  key={relativePath}
+                  key={`${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}

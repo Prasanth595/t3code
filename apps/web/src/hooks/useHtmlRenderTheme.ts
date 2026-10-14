@@ -14,9 +14,9 @@ import {
   type ThemePreference,
 } from "../themePalette";
 import { useClientSettings } from "./useSettings";
-import { useRenderedAppearance, useTheme } from "./useTheme";
+import { useTheme } from "./useTheme";
 
-/** Saved palette colors for the rendered appearance, falling back to stock colors for a missing half. */
+/** The palette `applyTheme` paints for a preference, or the stock look when no theme applies. */
 function resolveActiveThemeColors(
   theme: ThemePreference,
   halves: ThemeHalves | null,
@@ -25,18 +25,17 @@ function resolveActiveThemeColors(
   const definition = getThemeDefinition(resolveThemeHalf(theme, halves, appearance));
   return definition === null
     ? getStandardThemeColors(appearance)
-    : (getThemeColorsForMode(definition, appearance) ?? getStandardThemeColors(appearance));
+    : (getThemeColorsForMode(definition, appearance) ?? definition.colors);
 }
 
 /** The app's active theme and fonts, as handed to agent HTML renders. Stable until one changes. */
 export function useHtmlRenderTheme() {
-  const { theme, themeHalves } = useTheme();
-  const renderedAppearance = useRenderedAppearance();
+  const { theme, resolvedTheme, themeHalves } = useTheme();
   // Custom and published palettes can be edited in place, under an unchanged preference.
   const colors = useSyncExternalStore(
     subscribeToCustomThemes,
-    () => resolveActiveThemeColors(theme, themeHalves, renderedAppearance),
-    () => getStandardThemeColors(renderedAppearance),
+    () => resolveActiveThemeColors(theme, themeHalves, resolvedTheme),
+    () => getStandardThemeColors(resolvedTheme),
   );
   const sans = useClientSettings((settings) => settings.fontFamilySans);
   const mono = useClientSettings((settings) => settings.fontFamilyCode);
@@ -46,12 +45,12 @@ export function useHtmlRenderTheme() {
         Object.fromEntries(
           Object.entries(colors).map(([role, color]) => [role, themeColorToHex(color) ?? color]),
         ) as typeof colors,
-        renderedAppearance,
+        resolvedTheme,
         {
           sans: appearanceFontStack(sans, HTML_RENDER_DEFAULT_FONTS.sans),
           mono: appearanceFontStack(mono, HTML_RENDER_DEFAULT_FONTS.mono),
         },
       ),
-    [colors, renderedAppearance, sans, mono],
+    [colors, resolvedTheme, sans, mono],
   );
 }
