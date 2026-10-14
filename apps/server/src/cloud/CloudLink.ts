@@ -85,6 +85,7 @@ import * as CliTokenManager from "./CliTokenManager.ts";
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   decodeConfirmedOrigin,
@@ -431,8 +432,10 @@ type CloudLinkBackgroundError =
   | Schema.SchemaError
   | PlatformError.PlatformError;
 
+// "revoked" means the relay rejected this environment's credential, as after
+// the environment is deregistered from T3 Connect.
 type ManagedTunnelRegistration =
-  | { readonly status: "not_linked" | "superseded" }
+  | { readonly status: "not_linked" | "superseded" | "revoked" }
   | { readonly status: "recovery_required"; readonly config: RelayManagedEndpointRuntimeConfig }
   | {
       readonly status: "ready";
@@ -838,6 +841,7 @@ const make = Effect.gen(function* () {
         RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
         stringToBytes(payload.environmentCredential),
       );
+      yield* secrets.remove(CLOUD_LINK_REVOKED);
       yield* secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
       yield* awarenessRelay.requestCatchUp();
       if (endpointRuntimeJson !== null) {
@@ -1069,7 +1073,29 @@ const make = Effect.gen(function* () {
         proof,
       },
       schema: RelayManagedEndpointRecoveryRegistrationResponse,
-    });
+    }).pipe(
+      // A 401 here means the relay no longer accepts this link, usually because
+      // the environment was deregistered. Retrying cannot fix that, and relinking
+      // is the user's call, so only mark it. Nothing stored is removed: the relay
+      // also answers 401 for a skewed clock, and the next accepted registration
+      // clears the mark.
+      Effect.catchTags({
+        RelayRequestError: (error) =>
+          error.rejection === "unauthorized"
+            ? Effect.logWarning(
+                "T3 Connect no longer accepts this environment's link. Link it again to restore remote access.",
+                { cause: error },
+              ).pipe(
+                Effect.andThen(secrets.set(CLOUD_LINK_REVOKED, stringToBytes("true"))),
+                Effect.as(null),
+              )
+            : Effect.fail(error),
+      }),
+    );
+    if (registered === null) {
+      return { status: "revoked" as const };
+    }
+    yield* secrets.remove(CLOUD_LINK_REVOKED);
     if (registered.status === "recovery_required") {
       return { status: registered.status, config };
     }
@@ -1315,6 +1341,7 @@ const make = Effect.gen(function* () {
       endpointRuntimeConfig,
       publishAgentActivity,
       holdWebhooks,
+      revoked,
     ] = yield* Effect.all(
       [
         secrets.get(CLOUD_LINKED_USER_ID),
@@ -1323,11 +1350,13 @@ const make = Effect.gen(function* () {
         secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
         secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
         secrets.get(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET),
+        secrets.get(CLOUD_LINK_REVOKED),
       ],
-      { concurrency: 6 },
+      { concurrency: 7 },
     );
     return {
       linked: Option.isSome(cloudUserId),
+      linkRevoked: Option.isSome(cloudUserId) && Option.isSome(revoked),
       cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
       relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
       relayIssuer: Option.isSome(relayIssuer) ? bytesToString(relayIssuer.value) : null,
@@ -1365,8 +1394,9 @@ const make = Effect.gen(function* () {
               secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
               secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
               secrets.remove(HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET),
+              secrets.remove(CLOUD_LINK_REVOKED),
             ],
-            { concurrency: 9 },
+            { concurrency: 10 },
           );
           yield* setCliDesiredCloudLink(false).pipe(withSecrets);
           return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
