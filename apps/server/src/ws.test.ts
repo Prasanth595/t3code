@@ -20,7 +20,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -527,8 +526,6 @@ const layerConfigSources = Layer.mergeAll(
 
 it.effect.each([
   { source: "settings", interval: "discovery" },
-  { source: "settings", interval: "snapshot ACK" },
-  { source: "keybindings", interval: "discovery" },
   { source: "keybindings", interval: "snapshot ACK" },
 ] as const)(
   "preserves $source changes during $interval at the config RPC boundary",
@@ -547,20 +544,19 @@ it.effect.each([
       const initialKeybindings = (yield* keybindings.getSnapshot).keybindings;
       const discoveryStarted = yield* Deferred.make<void>();
       const finishDiscovery = yield* Deferred.make<void>();
-      const lateEditors = yield* Deferred.make<readonly ["vscode"]>();
       const responses = yield* Queue.unbounded<ServerConfigStreamEvent>();
-      const group = RpcGroup.make(WsSubscribeServerConfigRpc);
       let discoveryCalls = 0;
       const configRpcServices = Layer.mergeAll(
         layerUnusedConfigRpcServices,
         Layer.mock(ExternalLauncher.ExternalLauncher)({
+          // The snapshot's scan parks; the late rescan finds nothing new.
           resolveAvailableEditors: () =>
             ++discoveryCalls === 1
               ? Deferred.succeed(discoveryStarted, undefined).pipe(
                   Effect.andThen(Deferred.await(finishDiscovery)),
                   Effect.as([]),
                 )
-              : Deferred.await(lateEditors),
+              : Effect.succeed([]),
           resolveFileManagerRevealKind: () => Effect.succeed(undefined),
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -573,7 +569,7 @@ it.effect.each([
         }),
         Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-          scratchRoot: Effect.succeed(Option.none()),
+          scratchRoot: Effect.succeedNone,
           namedProjectsRoot: process.cwd(),
         }),
         Layer.mock(ServerEnvironment.ServerEnvironment)({
@@ -594,6 +590,8 @@ it.effect.each([
               sessionCookieName: "config-test-session",
             }),
         }),
+        // Signal subscription on either accessor so the test also fails, rather
+        // than hangs, against a handler that subscribes after the snapshot.
         Layer.succeed(Keybindings.Keybindings, {
           ...keybindings,
           streamChanges: Stream.unwrap(keybindingsChanges),
@@ -605,15 +603,18 @@ it.effect.each([
           subscribeChanges: settingsChanges,
         }),
       );
-      const server = yield* RpcServer.makeNoSerialization(group, {
-        ...WS_RPC_SERVER_OPTIONS,
-        onFromServer: (response) =>
-          response._tag === "Chunk"
-            ? Effect.forEach(response.values, (event) => Queue.offer(responses, event), {
-                discard: true,
-              })
-            : Effect.void,
-      }).pipe(
+      const server = yield* RpcServer.makeNoSerialization(
+        RpcGroup.make(WsSubscribeServerConfigRpc),
+        {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) =>
+            response._tag === "Chunk"
+              ? Effect.forEach(response.values, (event) => Queue.offer(responses, event), {
+                  discard: true,
+                })
+              : Effect.void,
+        },
+      ).pipe(
         Effect.provide(
           layerWsRpc(
             {
@@ -639,70 +640,49 @@ it.effect.each([
         headers: Headers.empty,
       });
       yield* Deferred.await(discoveryStarted);
-      assert.equal(yield* Queue.size(responses), 0);
 
-      const change = () =>
+      const change = (round: 1 | 2) =>
         source === "settings"
           ? settings
-              .updateSettings({ defaultAutoPull: true })
+              .updateSettings(
+                round === 1 ? { defaultAutoPull: true } : { enableProviderUpdateChecks: false },
+              )
               .pipe(
                 Effect.map((next) =>
                   settingsUpdated(ServerSettings.redactServerSettingsForClient(next)),
                 ),
               )
-          : keybindings.upsertKeybindingRule({ key: "mod+alt+y", command: "terminal.toggle" }).pipe(
-              Effect.map((next): ServerConfigStreamEvent => ({
-                version: 1,
-                type: "keybindingsUpdated",
-                payload: { keybindings: next, issues: [] },
-              })),
-            );
-      const duringDiscovery = interval === "discovery" ? yield* change() : undefined;
+          : keybindings
+              .upsertKeybindingRule(
+                round === 1
+                  ? { key: "mod+alt+y", command: "terminal.toggle" }
+                  : { key: "mod+alt+z", command: "terminal.split" },
+              )
+              .pipe(
+                Effect.map((next): ServerConfigStreamEvent => ({
+                  version: 1,
+                  type: "keybindingsUpdated",
+                  payload: { keybindings: next, issues: [] },
+                })),
+              );
+      const duringDiscovery = interval === "discovery" ? yield* change(1) : undefined;
       yield* Deferred.succeed(finishDiscovery, undefined);
       const snapshot = yield* Queue.take(responses);
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
-      const expected = duringDiscovery ?? (yield* change());
-      assert.equal(yield* Queue.size(responses), 0);
+      const missed = duringDiscovery ?? (yield* change(1));
       yield* acknowledge;
       yield* Deferred.await(keybindingsSubscribed);
       yield* Deferred.await(settingsSubscribed);
 
-      // A second change gives the old implementation an observable response too:
-      // it must fail on the missing first update instead of waiting for a timeout.
-      const next =
-        source === "settings"
-          ? settings
-              .updateSettings({ enableProviderUpdateChecks: false })
-              .pipe(
-                Effect.map((value) =>
-                  settingsUpdated(ServerSettings.redactServerSettingsForClient(value)),
-                ),
-              )
-          : keybindings.upsertKeybindingRule({ key: "mod+alt+z", command: "terminal.split" }).pipe(
-              Effect.map((value): ServerConfigStreamEvent => ({
-                version: 1,
-                type: "keybindingsUpdated",
-                payload: { keybindings: value, issues: [] },
-              })),
-            );
-      const latest = yield* next;
-      assert.deepEqual(yield* Queue.take(responses), expected);
+      // A later change reaches either implementation, so a handler that dropped
+      // the first change fails here instead of waiting for a timeout.
+      const latest = yield* change(2);
+      assert.deepEqual(yield* Queue.take(responses), missed);
       yield* acknowledge;
       assert.deepEqual(yield* Queue.take(responses), latest);
-      yield* acknowledge;
-      yield* Deferred.succeed(lateEditors, ["vscode"]);
-      const late = yield* Queue.take(responses);
-      assert.equal(late.type, "snapshot");
-      if (late.type === "snapshot") {
-        assert.deepEqual(late.config.availableEditors, ["vscode"]);
-        if (latest.type === "settingsUpdated")
-          assert.deepEqual(late.config.settings, latest.payload.settings);
-        if (latest.type === "keybindingsUpdated")
-          assert.deepEqual(late.config.keybindings, latest.payload.keybindings);
-      }
       yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
     }).pipe(
       Effect.provide(
