@@ -79,7 +79,9 @@ export function useSidebarGroups(input: {
   const { threads, projectGroups, routeThreadKey, searching } = input;
   // The groups live in the shared server settings, so every device and machine sees the same
   // groups. The hosted app has no primary server to hold them, so it shows none.
-  const enabled = useClientSettings((s) => s.sidebarGroupsEnabled) && usePrimarySettingsAvailable();
+  const enabledOnDevice = useClientSettings((s) => s.sidebarGroupsEnabled);
+  const primaryAvailable = usePrimarySettingsAvailable();
+  const enabled = enabledOnDevice && primaryAvailable;
   const savedSettings = usePrimarySettings((s) => s.sidebarGroups);
   const singleThreadOpens = useClientSettings((s) => s.sidebarGroupSingleThreadOpens);
   const settings = enabled ? savedSettings : EMPTY_SETTINGS;
