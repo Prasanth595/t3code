@@ -686,6 +686,8 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
         assert.equal((yield* updates.getState).notAppliedVersion, "1.2.4");
+        // Kept, so the next start on 1.2.3 still knows 1.2.4 did not apply.
+        assert.isDefined(harness.previousInstallRecord());
 
         harness.emit("update-available", { version: "1.2.4" });
         yield* flushCallbacks;
@@ -706,6 +708,7 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
         assert.isUndefined((yield* updates.getState).notAppliedVersion);
+        assert.isUndefined(harness.previousInstallRecord());
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

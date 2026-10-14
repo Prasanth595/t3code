@@ -160,7 +160,8 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
             const runs = await providers.updateAll({ quiet: true });
             const outcomes = runs.map((run) => {
               const runOutcome = getProviderUpdateRunOutcome(run);
-              if (runOutcome.status === "failed") failedProviderMachines.add(run.environmentId);
+              // An interrupted update did not finish either, so its row is not "done".
+              if (runOutcome.status !== "updated") failedProviderMachines.add(run.environmentId);
               return runOutcome;
             });
             for (const machine of machinesById.values()) {

@@ -627,16 +627,20 @@ export const make = Effect.gen(function* () {
     .remove(installRecordPath, { force: true })
     .pipe(Effect.ignore);
 
-  // Consumes the record of the last install. Returns the version it did not
-  // apply, when the app came back on the version it installed from.
-  const takeNotAppliedInstallVersion = fileSystem.readFileString(installRecordPath).pipe(
+  // Reads the record of the last install. Returns the version it did not
+  // apply, when the app came back on the version it installed from. That
+  // record stays through later starts, until the version changes or a new
+  // install replaces it, so no restart forgets the failed version.
+  const readNotAppliedInstallVersion = fileSystem.readFileString(installRecordPath).pipe(
     Effect.flatMap(decodeInstallRecord),
     Effect.option,
-    Effect.tap(() => removeInstallRecord),
     Effect.map((record) =>
       Option.flatMap(record, (value) =>
         Option.fromNullishOr(resolveNotAppliedInstallVersion(value, environment.appVersion)),
       ),
+    ),
+    Effect.tap((notAppliedVersion) =>
+      Option.isNone(notAppliedVersion) ? removeInstallRecord : Effect.void,
     ),
   );
 
@@ -1040,7 +1044,7 @@ export const make = Effect.gen(function* () {
       const appUpdateYmlConfig = yield* readAppUpdateYml;
       yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
 
-      const notAppliedVersion = yield* takeNotAppliedInstallVersion;
+      const notAppliedVersion = yield* readNotAppliedInstallVersion;
       yield* Ref.set(notAppliedVersionRef, notAppliedVersion);
       if (Option.isSome(notAppliedVersion)) {
         yield* logUpdaterWarning("the last update install did not apply", {
