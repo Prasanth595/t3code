@@ -23,6 +23,9 @@ import * as GitHubClient from "../client/definition.ts";
 const TOKEN_TTL = Duration.minutes(5);
 /** No credential is retried sooner, so a fresh `gh auth login` takes effect on the next read. */
 const MISSING_TTL = Duration.seconds(10);
+const FAILURE_RETRY_BASE_MS = 5_000;
+const FAILURE_RETRY_MAX_MS = 60_000;
+const CACHE_CAPACITY = 32;
 
 export const GitHubCredentialSource = Schema.Literals(["settings", "env", "gh"]);
 export type GitHubCredentialSource = typeof GitHubCredentialSource.Type;
@@ -204,6 +207,8 @@ export const make = Effect.gen(function* () {
   const cacheKey = (host: string, account: string | undefined) =>
     account === undefined ? host : `${host}\u0000${account}`;
 
+  const transientFailures = new Map<string, number>();
+
   const lookup = Effect.fn("GitHubCredentials.lookup")(function* (key: string) {
     const [host = key, choice] = key.split("\u0000");
     // An environment token wins over a pinned account, exactly as it does in gh.
@@ -217,7 +222,23 @@ export const make = Effect.gen(function* () {
           GitHubNotSignedInError: (error) =>
             choice === undefined ? Effect.fail(error) : fromGh(host, undefined),
         }),
+        Effect.tapError((error) =>
+          Effect.sync(() => {
+            if (error._tag !== "GitHubCliFailedError") {
+              transientFailures.delete(key);
+              return;
+            }
+            const count = Math.min((transientFailures.get(key) ?? 0) + 1, 5);
+            transientFailures.delete(key);
+            if (transientFailures.size >= CACHE_CAPACITY) {
+              const oldest = transientFailures.keys().next().value;
+              if (oldest !== undefined) transientFailures.delete(oldest);
+            }
+            transientFailures.set(key, count);
+          }),
+        ),
       ));
+    transientFailures.delete(key);
     return {
       host,
       token: Redacted.make(token),
@@ -227,15 +248,21 @@ export const make = Effect.gen(function* () {
   });
 
   const cache = yield* Cache.makeWith(lookup, {
-    capacity: 32,
-    // A transient gh failure (a timeout, a locked keyring) is asked again on the next read.
-    timeToLive: (exit) =>
+    capacity: CACHE_CAPACITY,
+    // A slow or locked gh/keyring must not be relaunched by every PR reader.
+    // Explicit invalidation and a changed account still retry immediately.
+    timeToLive: (exit, key) =>
       Exit.isSuccess(exit)
         ? TOKEN_TTL
         : Exit.findErrorOption(exit).pipe(
               Option.exists((error) => error._tag === "GitHubCliFailedError"),
             )
-          ? Duration.zero
+          ? Duration.millis(
+              Math.min(
+                FAILURE_RETRY_BASE_MS * 2 ** ((transientFailures.get(key) ?? 1) - 1),
+                FAILURE_RETRY_MAX_MS,
+              ),
+            )
           : MISSING_TTL,
   });
 
@@ -262,7 +289,12 @@ export const make = Effect.gen(function* () {
     invalidate: (rawHost) => {
       const host = normalizeHost(rawHost);
       return hostChoice(host).pipe(
-        Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
+        Effect.flatMap((choice) => {
+          const key = cacheKey(host, choice?.account);
+          return Effect.sync(() => transientFailures.delete(key)).pipe(
+            Effect.andThen(Cache.invalidate(cache, key)),
+          );
+        }),
       );
     },
   });
