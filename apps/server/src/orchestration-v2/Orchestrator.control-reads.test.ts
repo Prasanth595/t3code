@@ -698,6 +698,15 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       id: EventId.make("event:answered"),
       payload: { ...question.payload, id: RuntimeRequestId.make("request:answered") },
     };
+    const approval = {
+      ...question,
+      id: EventId.make("event:approval"),
+      payload: {
+        ...question.payload,
+        id: RuntimeRequestId.make("request:approval"),
+        kind: "command",
+      },
+    } satisfies OrchestrationV2DomainEvent;
     const eventSink = yield* EventSink.EventSinkV2;
     yield* eventSink.write({
       events: [
@@ -708,20 +717,14 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
           id: EventId.make("event:answered-resolved"),
           payload: { ...answered.payload, status: "resolved", resolvedAt: now },
         },
+        approval,
       ],
     });
 
     yield* reactor.handle(question);
     yield* reactor.handle(question);
     yield* reactor.handle(answered);
-    yield* reactor.handle({
-      ...question,
-      payload: {
-        ...question.payload,
-        id: RuntimeRequestId.make("request:approval"),
-        kind: "command",
-      },
-    });
+    yield* reactor.handle(approval);
 
     const wakes = (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
       (message) => message.notification !== undefined,
