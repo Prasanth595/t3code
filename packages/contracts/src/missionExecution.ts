@@ -1,15 +1,18 @@
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MissionResultRecord } from "./missionResult.ts";
 
 /**
  * Bounded optional execution state for the canonical mission aggregate.
  *
- * Holds admission/reservation receipts, normalized writer scope claims, and
- * consumed one-use exception IDs. Only the dedicated admission-reserved
- * event may append here; generic create/replace cannot forge or erase it.
- * Arrays stay small (no transcripts); when a bound is reached the admission
- * store denies further admissions rather than dropping history.
+ * Holds admission/reservation receipts, normalized writer scope claims,
+ * consumed one-use exception IDs, and dedicated per-task result records.
+ * Only the dedicated admission-reserved event may append admissions, and
+ * only the dedicated result-reconciled event may append results; generic
+ * create/replace cannot forge or erase either. Arrays stay small (no
+ * transcripts); when a bound is reached the owning store denies further
+ * writes rather than dropping history.
  */
 
 /** Maximum persisted admission receipts per mission snapshot. */
@@ -93,6 +96,17 @@ export const MissionExecutionScopeClaim = Schema.Struct({
 });
 export type MissionExecutionScopeClaim = typeof MissionExecutionScopeClaim.Type;
 
+/** Maximum persisted per-task result records per mission snapshot. */
+export const MAX_MISSION_EXECUTION_RESULTS = 64;
+
+/** Bounded dedicated result records. Only the result-reconciled event appends here. */
+export const MissionExecutionResults = Schema.Array(MissionResultRecord).check(
+  Schema.makeFilter(atMost(MAX_MISSION_EXECUTION_RESULTS), {
+    expected: `at most ${MAX_MISSION_EXECUTION_RESULTS} result records`,
+  }),
+);
+export type MissionExecutionResults = typeof MissionExecutionResults.Type;
+
 export const MissionExecution = Schema.Struct({
   admissions: Schema.Array(MissionExecutionAdmission).check(
     Schema.makeFilter(atMost(MAX_MISSION_EXECUTION_ADMISSIONS), {
@@ -109,6 +123,13 @@ export const MissionExecution = Schema.Struct({
       expected: `at most ${MAX_MISSION_EXECUTION_CONSUMED_EXCEPTIONS} consumed exception ids`,
     }),
   ),
+  /**
+   * Optional bounded result records. Omitted on older snapshots and decoded
+   * as empty; generic create/replace cannot forge it because creation
+   * rejects non-empty execution and replacement carries canonical execution
+   * forward untouched.
+   */
+  results: Schema.optional(MissionExecutionResults),
 });
 export type MissionExecution = typeof MissionExecution.Type;
 
@@ -117,10 +138,17 @@ export const emptyMissionExecution = (): MissionExecution => ({
   admissions: [],
   writerClaims: [],
   consumedExceptionIds: [],
+  results: [],
 });
 
-/** True when no admission, claim, or consumption is recorded. */
+/** True when no admission, claim, consumption, or result is recorded. */
 export const isEmptyMissionExecution = (execution: MissionExecution): boolean =>
   execution.admissions.length === 0 &&
   execution.writerClaims.length === 0 &&
-  execution.consumedExceptionIds.length === 0;
+  execution.consumedExceptionIds.length === 0 &&
+  (execution.results ?? []).length === 0;
+
+/** Dedicated result records, treating an omitted array as empty. */
+export const missionExecutionResults = (
+  execution: MissionExecution,
+): ReadonlyArray<MissionResultRecord> => execution.results ?? [];

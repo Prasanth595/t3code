@@ -4,9 +4,13 @@ import * as Schema from "effect/Schema";
 import { Mission, MissionCommand, MissionEvent } from "./mission.ts";
 import {
   MAX_MISSION_EXECUTION_ADMISSIONS,
+  MAX_MISSION_EXECUTION_RESULTS,
   MissionExecution,
   emptyMissionExecution,
+  isEmptyMissionExecution,
+  missionExecutionResults,
 } from "./missionExecution.ts";
+import { MAX_QUARANTINE_ENTRIES } from "./missionResult.ts";
 
 const decodeCommand = Schema.decodeUnknownSync(MissionCommand);
 
@@ -245,6 +249,151 @@ describe("mission wire schemas", () => {
     expect(event.type).toBe("mission.admission-reserved");
     if (event.type === "mission.admission-reserved") {
       expect(event.payload.mission.revision).toBe(1);
+    }
+  });
+
+  it("decodes an omitted results array as empty", () => {
+    const decoded = decodeExecution({
+      admissions: [],
+      writerClaims: [],
+      consumedExceptionIds: [],
+    });
+    expect(missionExecutionResults(decoded)).toEqual([]);
+    expect(isEmptyMissionExecution(decoded)).toBe(true);
+    expect(missionExecutionResults(decodeExecution(emptyMissionExecution()))).toEqual([]);
+  });
+
+  it("treats result records as execution state that cannot be forged at create", () => {
+    const record = {
+      taskId: "task-a",
+      attemptNumber: 1,
+      state: "produced",
+      outcome: "completed",
+      digests: {
+        inputDigest: "input:1",
+        dependencyDigest: "deps:1",
+        acceptanceDigest: "accept:1",
+      },
+      provenance: {
+        childTaskId: "task-a",
+        childThreadId: "thread-1",
+        childRunId: "run-1",
+        commitSet: ["commit:aaa"],
+        requiredAncestry: ["commit:base"],
+        ancestry: ["commit:base", "commit:aaa"],
+        source: "subagent-run",
+        sourceRef: "run-1",
+        resultRevision: 0,
+      },
+      summaryText: "Done.",
+      cancellationRequested: false,
+      pendingChildRuns: false,
+      mailboxAcked: false,
+      quarantined: [],
+    };
+    const withResult = decodeExecution({ ...emptyMissionExecution(), results: [record] });
+    expect(missionExecutionResults(withResult)).toHaveLength(1);
+    expect(isEmptyMissionExecution(withResult)).toBe(false);
+  });
+
+  it("rejects result records beyond the bound at decode", () => {
+    const record = {
+      taskId: "task-a",
+      attemptNumber: 1,
+      state: "produced",
+      outcome: "completed",
+      digests: {
+        inputDigest: "input:1",
+        dependencyDigest: "deps:1",
+        acceptanceDigest: "accept:1",
+      },
+      provenance: {
+        childTaskId: "task-a",
+        childThreadId: "thread-1",
+        childRunId: "run-1",
+        commitSet: ["commit:aaa"],
+        requiredAncestry: ["commit:base"],
+        ancestry: ["commit:base", "commit:aaa"],
+        source: "subagent-run",
+        sourceRef: "run-1",
+        resultRevision: 0,
+      },
+      summaryText: "Done.",
+      cancellationRequested: false,
+      pendingChildRuns: false,
+      mailboxAcked: false,
+      quarantined: [],
+    };
+    expect(() =>
+      decodeExecution({
+        ...emptyMissionExecution(),
+        results: Array.from({ length: MAX_MISSION_EXECUTION_RESULTS + 1 }, () => ({ ...record })),
+      }),
+    ).toThrow();
+  });
+
+  it("rejects quarantine beyond its bound at decode", () => {
+    const decoded = decodeExecution(emptyMissionExecution());
+    expect(missionExecutionResults(decoded)).toEqual([]);
+    const entry = { resultRevision: 0, summaryText: "Held.", reason: "stale: test" };
+    const record = {
+      taskId: "task-a",
+      attemptNumber: 1,
+      state: "produced",
+      outcome: "completed",
+      digests: {
+        inputDigest: "input:1",
+        dependencyDigest: "deps:1",
+        acceptanceDigest: "accept:1",
+      },
+      provenance: {
+        childTaskId: "task-a",
+        childThreadId: "thread-1",
+        childRunId: "run-1",
+        commitSet: ["commit:aaa"],
+        requiredAncestry: ["commit:base"],
+        ancestry: ["commit:base", "commit:aaa"],
+        source: "subagent-run",
+        sourceRef: "run-1",
+        resultRevision: 0,
+      },
+      summaryText: "Done.",
+      cancellationRequested: false,
+      pendingChildRuns: false,
+      mailboxAcked: false,
+      quarantined: Array.from({ length: MAX_QUARANTINE_ENTRIES + 1 }, () => ({ ...entry })),
+    };
+    expect(() =>
+      decodeExecution({ ...emptyMissionExecution(), results: [record] }),
+    ).toThrow();
+  });
+
+  it("round-trips a mission.result-reconciled event with the full mission", () => {
+    const event = decodeEvent({
+      sequence: 11,
+      eventId: "event-11",
+      aggregateKind: "mission",
+      aggregateId: "mission-1",
+      occurredAt: OCCURRED_AT,
+      commandId: "cmd-11",
+      metadata: {},
+      type: "mission.result-reconciled",
+      payload: {
+        mission: { ...missionFixture(), revision: 2, execution: emptyMissionExecution() },
+        taskId: "task-a",
+        dispatchKey: '["mission-admission","team-1","env-1","mission-1","task-a",1,"write"]',
+        operation: "accept",
+        resultRevision: 3,
+        commandId: "cmd-11",
+        disposition: "advanced",
+      },
+    });
+    expect(event.type).toBe("mission.result-reconciled");
+    if (event.type === "mission.result-reconciled") {
+      expect(event.payload.mission.revision).toBe(2);
+      expect(event.payload.operation).toBe("accept");
+      expect(event.payload.resultRevision).toBe(3);
+      expect(event.payload.commandId).toBe("cmd-11");
     }
   });
 });

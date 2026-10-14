@@ -241,9 +241,30 @@ export const MissionAdmissionReservedEvent = Schema.Struct({
 });
 export type MissionAdmissionReservedEvent = typeof MissionAdmissionReservedEvent.Type;
 
+export const MissionResultReconciledEvent = Schema.Struct({
+  ...MissionEventBaseFields,
+  type: Schema.Literal("mission.result-reconciled"),
+  payload: Schema.Struct({
+    /** Full updated mission snapshot, dedicated result records included. */
+    mission: Mission,
+    taskId: TrimmedNonEmptyString,
+    dispatchKey: TrimmedNonEmptyString,
+    /** Stable reconciled operation tag (initialize, arrive, observe, ...). */
+    operation: TrimmedNonEmptyString,
+    /** Canonical producing revision the reconciled record now carries. */
+    resultRevision: NonNegativeInt,
+    /** Stable idempotency key of the committed result command. */
+    commandId: CommandId,
+    /** Policy disposition the committed command produced. */
+    disposition: TrimmedNonEmptyString,
+  }),
+});
+export type MissionResultReconciledEvent = typeof MissionResultReconciledEvent.Type;
+
 export const MissionEvent = Schema.Union([
   MissionCreatedEvent,
   MissionRevisedEvent,
   MissionAdmissionReservedEvent,
+  MissionResultReconciledEvent,
 ]);
 export type MissionEvent = typeof MissionEvent.Type;

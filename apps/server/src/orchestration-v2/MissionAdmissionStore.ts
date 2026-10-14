@@ -487,6 +487,7 @@ const make = Effect.gen(function* () {
     }
 
     const nextExecution: MissionExecution = {
+      ...execution,
       admissions: [...execution.admissions, toRecord(admitted.receipt)],
       writerClaims,
       consumedExceptionIds,
