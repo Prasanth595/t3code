@@ -89,10 +89,10 @@ const measuredApi = Layer.effect(
     });
   }),
 ).pipe(
-  Layer.provide(GitHubCredentials.layer),
-  Layer.provide(GitHubQuota.layer),
-  Layer.provide(SourceControlRateLimit.layer),
-  Layer.provide(FetchHttpClient.layer),
+  Layer.provideMerge(GitHubCredentials.layer),
+  Layer.provideMerge(GitHubQuota.layer),
+  Layer.provideMerge(SourceControlRateLimit.layer),
+  Layer.provideMerge(FetchHttpClient.layer),
 );
 
 const services = GitHubPullRequestApi.layer.pipe(

@@ -16,11 +16,12 @@ import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
-const DEFAULT_TIMEOUT = Duration.seconds(30);
+export const DEFAULT_TIMEOUT = Duration.seconds(30);
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 /** Polite to GitHub's secondary limits, which punish bursts of concurrent requests. */
 const CONCURRENCY = 8;
-const API_VERSION = "2022-11-28";
+/** The headers every GitHub request carries besides its token. */
+export const REQUEST_HEADERS = { "x-github-api-version": "2022-11-28", "user-agent": "t3code" };
 
 /**
  * A credential already verified for one host. Every request made under it must target that
@@ -139,12 +140,6 @@ export interface GitHubGraphQlInput {
   readonly variables?: Readonly<Record<string, unknown>>;
   readonly allowReserve?: boolean;
   readonly maxResponseBytes?: number;
-  /**
-   * Hands back an answer whose `errors` name only some fields, such as one pull request of an
-   * aliased batch that does not exist, for the caller to settle field by field. A rate limit, a
-   * refused credential and an HTTP failure still fail the read.
-   */
-  readonly partial?: boolean;
 }
 
 export class GitHubApi extends Context.Service<
@@ -153,6 +148,11 @@ export class GitHubApi extends Context.Service<
     /** The raw JSON body of a successful GraphQL answer, with `rateLimit` recorded. */
     readonly graphql: (input: GitHubGraphQlInput) => Effect.Effect<string, GitHubApiError>;
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
+    /**
+     * Runs `effect` in one of the slots every GitHub request shares, REST and GraphQL alike, so a
+     * burst stays polite to GitHub's secondary limits.
+     */
+    readonly withRequestSlot: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
     /** The credential a request to `host` would carry right now. */
     readonly credential: (
       host: string,
@@ -163,7 +163,7 @@ export class GitHubApi extends Context.Service<
   }
 >()("@t3tools/source-control-github/server/GitHubApi") {}
 
-function normalizeHost(host: string): string {
+export function normalizeHost(host: string): string {
   return host.trim().toLowerCase();
 }
 
@@ -189,7 +189,7 @@ export function gitHubApiUrls(host: string): { readonly rest: string; readonly g
 const TRACED_QUERY_MAX_CHARS = 4_000;
 
 /** A stable short id for a GraphQL document, so traces group by query without its text. */
-function queryHash(query: string): string {
+export function queryHash(query: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < query.length; index++) {
     hash ^= query.charCodeAt(index);
@@ -199,7 +199,7 @@ function queryHash(query: string): string {
 }
 
 /** The numeric rate-limit headers GitHub sends, as span attributes. */
-function rateLimitAttributes(
+export function rateLimitAttributes(
   headers: Readonly<Record<string, string | undefined>>,
 ): Record<string, number | string> {
   const attributes: Record<string, number | string> = {};
@@ -218,7 +218,7 @@ function rateLimitAttributes(
 }
 
 /** The pause GitHub asked for, from `retry-after` or the primary limit's reset. */
-function retryAtFrom(
+export function retryAtFrom(
   headers: Readonly<Record<string, string | undefined>>,
   now: number,
 ): number | undefined {
@@ -292,6 +292,36 @@ type Answer = Data.TaggedEnum<{
 const Answer = Data.taggedEnum<Answer>();
 
 /**
+ * Whether GitHub refused a request for its rate limit. A GraphQL answer can say so with HTTP 200:
+ * a `RATE_LIMITED` error, or an exhausted quota that answers an untyped "API rate limit already
+ * exceeded" error, which the headers confirm.
+ */
+export function isRateLimited(input: {
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string | undefined>>;
+  /** The GraphQL `errors` list, when the answer is a GraphQL one and has any. */
+  readonly graphqlErrors?: ReadonlyArray<{ readonly type?: unknown; readonly message?: unknown }>;
+  readonly body?: string;
+}): boolean {
+  const { status, headers, graphqlErrors: errors } = input;
+  return (
+    status === 429 ||
+    (errors !== undefined &&
+      (headers["x-ratelimit-remaining"] === "0" ||
+        errors.some(
+          (error) =>
+            error.type === "RATE_LIMITED" ||
+            (typeof error.message === "string" &&
+              /rate limit (already )?exceeded/i.test(error.message)),
+        ))) ||
+    (status === 403 &&
+      (headers["x-ratelimit-remaining"] === "0" ||
+        headers["retry-after"] !== undefined ||
+        /rate limit/i.test(input.body ?? "")))
+  );
+}
+
+/**
  * GitHub reports a failed GraphQL document with HTTP 200 and an `errors` list, so a GraphQL body
  * is read for its error types as well as its status. `gh api graphql` failed those too, and
  * callers rely on that to fall back to narrower reads.
@@ -301,36 +331,24 @@ function classify(input: {
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly body: string;
   readonly graphql: boolean;
-  /** A GraphQL `errors` list that is not a rate limit is the caller's to read, field by field. */
-  readonly partial?: boolean;
   readonly acceptNotModified: boolean;
 }): Answer {
   const { status, headers, body } = input;
   const errors = input.graphql
     ? Option.getOrUndefined(decodeGraphQlErrors(body))?.errors
     : undefined;
-  const types = errors?.flatMap((error) => (error.type === undefined ? [] : [error.type])) ?? [];
   const messages = errors?.flatMap((error) => (error.message === undefined ? [] : [error.message]));
   if (
-    status === 429 ||
-    types.includes("RATE_LIMITED") ||
-    // An exhausted GraphQL quota can answer HTTP 200 with an untyped "API rate limit already
-    // exceeded" error; the headers say the same thing.
-    (input.graphql && errors !== undefined && headers["x-ratelimit-remaining"] === "0") ||
-    (input.graphql &&
-      messages !== undefined &&
-      messages.some((message) => /rate limit (already )?exceeded/i.test(message))) ||
-    (status === 403 &&
-      (headers["x-ratelimit-remaining"] === "0" ||
-        headers["retry-after"] !== undefined ||
-        /rate limit/i.test(body)))
+    isRateLimited({
+      status,
+      headers,
+      body,
+      ...(errors === undefined ? {} : { graphqlErrors: errors }),
+    })
   ) {
     return Answer.RateLimited();
   }
   if (status === 401) return Answer.Unauthorized();
-  if (input.partial === true && errors !== undefined && status >= 200 && status < 300) {
-    return Answer.Ok();
-  }
   if (
     status === 404 ||
     (errors !== undefined && errors.every((error) => error.type === "NOT_FOUND"))
@@ -385,7 +403,6 @@ export const make = Effect.gen(function* () {
     readonly acceptNotModified: boolean;
     /** Reads the body for GraphQL `errors`, which GitHub sends with HTTP 200. */
     readonly graphql?: boolean;
-    readonly partial?: boolean;
   }) {
     const host = normalizeHost(input.host);
     // Only the path: a query string can carry a SHA or a branch, and never needs to be in a trace.
@@ -424,10 +441,7 @@ export const make = Effect.gen(function* () {
           .execute(
             input.request.pipe(
               HttpClientRequest.bearerToken(Redacted.value(token)),
-              HttpClientRequest.setHeaders({
-                "x-github-api-version": API_VERSION,
-                "user-agent": "t3code",
-              }),
+              HttpClientRequest.setHeaders(REQUEST_HEADERS),
             ),
           )
           .pipe(
@@ -466,7 +480,6 @@ export const make = Effect.gen(function* () {
           headers,
           body: collected.text,
           graphql: input.graphql === true,
-          partial: input.partial === true,
           acceptNotModified: input.acceptNotModified,
         }),
         {
@@ -571,7 +584,6 @@ export const make = Effect.gen(function* () {
         allowReserve,
         acceptNotModified: false,
         graphql: true,
-        partial: input.partial === true,
       });
       // A body cut at the byte cap hides any `errors` past the cut and cannot be decoded.
       if (response.truncated) {
@@ -585,7 +597,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return GitHubApi.of({ graphql, rest, credential });
+  return GitHubApi.of({ graphql, rest, credential, withRequestSlot: gate.withPermit });
 });
 
 export const layer = Layer.effect(GitHubApi, make);

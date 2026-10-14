@@ -56,7 +56,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
 
 /** One request the CLI made, as the transport received it. */
 type ApiCall =
-  | ({ readonly kind: "graphql" } & GitHubApi.GitHubGraphQlInput)
+  | ({ readonly kind: "graphql"; readonly partial?: boolean } & GitHubApi.GitHubGraphQlInput)
   | ({ readonly kind: "rest" } & GitHubApi.GitHubRestInput);
 
 type ApiAnswer = Effect.Effect<GitHubApi.GitHubRestResponse, GitHubApi.GitHubApiError>;
@@ -95,14 +95,72 @@ const mockApi = Layer.effect(
         ),
       rest: (input) => mockedExecute({ kind: "rest", ...input }),
       credential: (host) => mockedCredential(host),
+      withRequestSlot: (effect) => effect,
     });
   }),
+);
+
+/**
+ * The HTTP side of the generated GraphQL reads, answered from the same mocks: a request to a
+ * host's GraphQL endpoint is recorded as a `graphql` call, carrying the `partial` flag the batches
+ * read with, and answered with the mocked body, status and headers.
+ */
+const mockHttp = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.gen(function* () {
+      const host = new URL(request.url).hostname.replace(/^api\./, "");
+      const sent =
+        request.body._tag === "Uint8Array"
+          ? (JSON.parse(new TextDecoder().decode(request.body.body)) as {
+              readonly query: string;
+              readonly variables: Readonly<Record<string, unknown>>;
+            })
+          : { query: "", variables: {} };
+      const call: ApiCall = {
+        kind: "graphql",
+        host,
+        operation: "batch",
+        query: sent.query,
+        variables: sent.variables,
+        partial: true,
+      };
+      // A mocked `GitHubApi` failure with a status is what GitHub would have answered with it.
+      const answer = yield* (
+        sent.query.startsWith("query PullRequestStackMembership(")
+          ? mockedStackMemberships
+          : mockedExecute
+      )(call).pipe(
+        Effect.catchTags({
+          GitHubApiResponseError: (error) =>
+            Effect.succeed(output('{"message":"Bad gateway"}', false, false, {}, error.status)),
+        }),
+        Effect.orDie,
+      );
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(answer.body, {
+          status: answer.status,
+          headers: { "content-type": "application/json", ...answer.headers },
+        }),
+      );
+    }),
+  ),
 );
 
 const layer = it.layer(
   GitHubPullRequestApi.layer.pipe(
     Layer.provideMerge(mockApi),
     Layer.provideMerge(GitHubQuota.layer),
+    Layer.provideMerge(SourceControlRateLimit.layer),
+    Layer.provideMerge(mockHttp),
+    Layer.provideMerge(
+      Layer.succeed(GitHubCredentials.GitHubCredentials, {
+        get: (host) =>
+          Effect.map(mockedCredential(host), (held) => ({ ...held, host, source: "gh" as const })),
+        invalidate: () => Effect.void,
+      }),
+    ),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(TestSourceControlHost.layer()),
     Layer.provide(NodeServices.layer),
@@ -115,8 +173,9 @@ function output(
   truncated = false,
   invalidUtf8 = false,
   headers: Readonly<Record<string, string>> = {},
+  status = 200,
 ): GitHubApi.GitHubRestResponse {
-  return { status: 200, headers, body, truncated, invalidUtf8 };
+  return { status, headers, body, truncated, invalidUtf8 };
 }
 
 /** GitHub's GraphQL quota headers, leaving `remaining` of 5,000 until `resetAt`. */
@@ -508,9 +567,9 @@ it.effect(
       const cli = yield* GitHubPullRequestApi.make.pipe(
         Effect.provide(
           GitHubApi.layer.pipe(
-            Layer.provide(Layer.mergeAll(credentials, http)),
-            Layer.provide(GitHubQuota.layer),
-            Layer.provide(SourceControlRateLimit.layer),
+            Layer.provideMerge(Layer.mergeAll(credentials, http)),
+            Layer.provideMerge(GitHubQuota.layer),
+            Layer.provideMerge(SourceControlRateLimit.layer),
             Layer.merge(TestSourceControlHost.layer()),
             Layer.provideMerge(NodeServices.layer),
           ),

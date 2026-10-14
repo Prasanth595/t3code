@@ -1785,7 +1785,7 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map(([, runs]) => runs));
 
   const batches = yield* GraphQLClient.make(
-    PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlTransport),
+    PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
   ).pipe(Effect.provide(GitHubGraphQlClient.layer));
 
   /**
