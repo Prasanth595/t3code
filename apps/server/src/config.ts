@@ -207,7 +207,9 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
   const baseDir =
     typeof baseDirOrPrefix === "string"
       ? baseDirOrPrefix
-      : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
+      : // Canonicalize generated temp roots (macOS /var -> /private/var) so storage
+        // cleanup's symlink protection accepts them.
+        yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix }));
   const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
   yield* ensureServerDirectories(derivedPaths);
 
