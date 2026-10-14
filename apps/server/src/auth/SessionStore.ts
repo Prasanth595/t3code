@@ -408,8 +408,9 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
+    /** Acquire before reading a snapshot to buffer changes until the stream starts. */
     readonly subscribeChanges: Effect.Effect<
-      PubSub.Subscription<SessionCredentialChange>,
+      Stream.Stream<SessionCredentialChange>,
       never,
       Scope.Scope
     >;
@@ -1097,7 +1098,9 @@ export const make = Effect.gen(function* () {
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
-    subscribeChanges: PubSub.subscribe(changesPubSub),
+    get subscribeChanges() {
+      return PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription));
+    },
     revoke,
     revokeAllExcept,
     markConnected,

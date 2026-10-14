@@ -24,10 +24,13 @@ import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AcpRegistryOperationError,
   CommandId,
+  authScopeResponse,
   AuthAccessStreamError,
+  type AuthAccessStreamEvent,
   AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
   type ScheduledTaskListResult,
+  AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
   ClientOs,
@@ -238,6 +241,7 @@ import * as SourceControlProviderRegistry from "./sourceControl/SourceControlPro
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
+import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -555,6 +559,47 @@ const SHELL_RESUME_MAX_GAP = 1_000;
 // payloads can decode to gigabytes. Before replaying, sum the serialized
 // payload bytes of the range in SQL and reset with a snapshot past this budget.
 const ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES = 8 * 1024 * 1024;
+
+function toAuthAccessStreamEvent(
+  change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
+  revision: number,
+  currentSessionId: AuthSessionId,
+): AuthAccessStreamEvent {
+  switch (change.type) {
+    case "pairingLinkUpserted":
+      return {
+        version: 1,
+        revision,
+        type: "pairingLinkUpserted",
+        payload: { ...change.pairingLink, ...authScopeResponse(change.pairingLink.scopes) },
+      };
+    case "pairingLinkRemoved":
+      return {
+        version: 1,
+        revision,
+        type: "pairingLinkRemoved",
+        payload: { id: change.id },
+      };
+    case "clientUpserted":
+      return {
+        version: 1,
+        revision,
+        type: "clientUpserted",
+        payload: {
+          ...change.clientSession,
+          ...authScopeResponse(change.clientSession.scopes),
+          current: change.clientSession.sessionId === currentSessionId,
+        },
+      };
+    case "clientRemoved":
+      return {
+        version: 1,
+        revision,
+        type: "clientRemoved",
+        payload: { sessionId: change.sessionId },
+      };
+  }
+}
 
 const isClientSurface = Schema.is(ClientSurface);
 const isClientConnectionMethod = Schema.is(ClientConnectionMethod);
@@ -1152,7 +1197,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
-const layerWsRpc = (
+export const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
@@ -1291,6 +1336,8 @@ const layerWsRpc = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
@@ -1635,6 +1682,19 @@ const layerWsRpc = (
         yield* providerRegistry.refreshInstance(input.instanceId);
         return { disabled: true } as const;
       });
+      const loadAuthAccessSnapshot = () =>
+        Effect.all({
+          pairingLinks: serverAuth.listPairingLinks(),
+          clientSessions: serverAuth.listClientSessions(currentSessionId),
+        }).pipe(
+          Effect.mapError(
+            (error) =>
+              new AuthAccessStreamError({
+                message: error.message,
+              }),
+          ),
+        );
+
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
         Effect.gen(function* () {
           const keybindingsConfig = yield* keybindings.loadConfigState;
@@ -3046,12 +3106,38 @@ const layerWsRpc = (
           ),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
           Stream.unwrap(
-            serverAuth.streamAccess(currentSessionId).pipe(
-              Effect.map(({ snapshot, changes }) =>
-                Stream.concat(rpcInitialItems([snapshot]), changes),
-              ),
-              Effect.mapError((error) => new AuthAccessStreamError({ message: error.message })),
-            ),
+            Effect.gen(function* () {
+              // Buffer changes through the snapshot reads and its RPC ACK wait.
+              const pairingLinkChanges = yield* bootstrapCredentials.subscribeChanges;
+              const clientChanges = yield* sessions.subscribeChanges;
+              const initialSnapshot = yield* loadAuthAccessSnapshot();
+              const revisionRef = yield* Ref.make(1);
+              const accessChanges: Stream.Stream<
+                PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
+              > = Stream.merge(pairingLinkChanges, clientChanges);
+
+              const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
+                Stream.mapEffect((change) =>
+                  Ref.updateAndGet(revisionRef, (revision) => revision + 1).pipe(
+                    Effect.map((revision) =>
+                      toAuthAccessStreamEvent(change, revision, currentSessionId),
+                    ),
+                  ),
+                ),
+              );
+
+              return Stream.concat(
+                rpcInitialItems([
+                  {
+                    version: 1 as const,
+                    revision: 1,
+                    type: "snapshot" as const,
+                    payload: initialSnapshot,
+                  },
+                ]),
+                liveEvents,
+              );
+            }),
           ),
         [WS_METHODS.subscribeBackgroundPolicy]: (_input) =>
           Stream.unwrap(
