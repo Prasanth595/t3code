@@ -250,12 +250,15 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     val fontHeight = textPaint.fontMetrics.run { descent - ascent }
     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
     val highlightTop = (top + bottom - highlightHeight) / 2f
+    val clip = canvas.clipBounds
+    val visibleLines = lines.visibleLines(highlightTop, clip.top, clip.bottom)
     row.wordDiffRanges.forEach { range ->
       // A wrapped row splits the highlight at each visual line boundary.
-      lines.starts.forEachIndexed { line, lineStart ->
+      for (line in visibleLines) {
+        val lineStart = lines.starts[line]
         val start = max(range.start, lineStart)
         val end = min(range.end, lines.end(line, Int.MAX_VALUE))
-        if (end <= start) return@forEachIndexed
+        if (end <= start) continue
         val left = codeX + (start - lineStart) * characterWidth
         val right = max(left + 2f * density, left + (end - start) * characterWidth)
         val lineTop = highlightTop + line * lines.height
@@ -270,7 +273,7 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   }
 
   /** Draws a code row's text, or its syntax [tokens] when present, one visual line per start. */
-  @Suppress("LongParameterList")
+  @Suppress("LongParameterList", "LoopWithTooManyJumpStatements")
   fun drawCode(
     canvas: Canvas,
     content: String,
@@ -278,7 +281,8 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     codeX: Float,
     baseline: Float,
     style: DiffStyle,
-    lines: CodeLines
+    lines: CodeLines,
+    fixedPitch: Boolean = false
   ) {
     val nativeLayout = lines.nativeLayout
     if (nativeLayout != null) {
@@ -289,29 +293,73 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       return
     }
     val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(content, null, 0)) else tokens
-    var line = 0
+    // A single minified line can wrap into thousands of visual lines. Jump to
+    // the clipped band instead of walking all preceding and following lines.
+    val clip = canvas.clipBounds
+    val visibleLines = lines.visibleLines(baseline, clip.top, clip.bottom)
+    val firstLine = visibleLines.first
+    val lastLine = visibleLines.last
+    val visibleStart = lines.starts[firstLine]
+    val visibleEnd = lines.end(lastLine, content.length)
+    var line = firstLine
     var x = codeX
     var column = 0
-    runs.forEach { run ->
+    for (run in runs) {
+      if (column >= visibleEnd) break
+      if (column + run.content.length <= visibleStart) {
+        column += run.content.length
+        continue
+      }
       configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
-      var start = 0
-      while (start < run.content.length) {
+      val metrics = textPaint.fontMetrics
+      var start = max(0, visibleStart - column)
+      val runEnd = min(run.content.length, visibleEnd - column)
+      while (start < runEnd) {
         while (line + 1 < lines.starts.size && lines.starts[line + 1] <= column + start) {
           line += 1
           x = codeX
         }
-        val end = min(run.content.length, lines.end(line, Int.MAX_VALUE) - column)
+        val end = min(runEnd, lines.end(line, Int.MAX_VALUE) - column)
         val lineBaseline = baseline + line * lines.height
-        if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
-          lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
+        if (lineBaseline + metrics.descent >= clip.top &&
+          lineBaseline + metrics.ascent <= clip.bottom
         ) {
-          canvas.drawText(run.content, start, end, x, lineBaseline, textPaint)
-          x += textPaint.measureText(run.content, start, end)
+          x += drawCodeSpan(canvas, run.content, start, end, x, lineBaseline, fixedPitch)
         }
         start = end
       }
       column += run.content.length
     }
+  }
+
+  /** Return the whole span's advance, while shaping only its visible ASCII columns. */
+  @Suppress("LongParameterList")
+  private fun drawCodeSpan(
+    canvas: Canvas,
+    content: String,
+    start: Int,
+    end: Int,
+    x: Float,
+    baseline: Float,
+    fixedPitch: Boolean
+  ): Float {
+    val characterWidth = if (fixedPitch) textPaint.measureText("M") else 0f
+    if (characterWidth <= 0f) {
+      canvas.drawText(content, start, end, x, baseline, textPaint)
+      return textPaint.measureText(content, start, end)
+    }
+    // Unwrapped minified ASCII can be megabytes long. Shaping the entire line
+    // during each scroll is expensive even when the canvas clips its pixels.
+    val clip = canvas.clipBounds
+    val drawStart = max(start, start + ((clip.left - x) / characterWidth).toInt() - 1).coerceAtMost(end)
+    val drawEnd = min(end, start + ((clip.right - x) / characterWidth).toInt() + 2).coerceAtLeast(start)
+    if (drawEnd > drawStart) {
+      canvas.drawText(
+        content, drawStart, drawEnd,
+        x + (drawStart - start) * characterWidth, baseline, textPaint,
+      )
+    }
+    return (end - start) * characterWidth
   }
 
   fun drawFileHeaderPathScrollFades(
@@ -390,6 +438,18 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
 
   private fun withAlpha(color: Int, alpha: Int): Int =
     Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
+}
+
+/** Measure the fitting prefix once rather than reshaping successively shorter long comments. */
+internal fun ellipsizeDiffText(value: String, paint: Paint, width: Float): String {
+  if (paint.measureText(value) <= width) return value
+  val suffix = "..."
+  val available = max(0f, width - paint.measureText(suffix))
+  var end = paint.breakText(value, true, available, null)
+  // Keep the exact prefix-width check for fonts whose shaping changes at the cut.
+  while (end > 0 && paint.measureText(value, 0, end) > available) end -= 1
+  if (end in 1 until value.length && Character.isLowSurrogate(value[end])) end -= 1
+  return value.substring(0, end) + suffix
 }
 
 private object ReviewDiffTypefaces {

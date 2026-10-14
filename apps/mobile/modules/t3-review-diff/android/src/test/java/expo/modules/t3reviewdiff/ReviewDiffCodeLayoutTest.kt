@@ -126,6 +126,29 @@ class ReviewDiffCodeLayoutTest {
   }
 
   @Test
+  fun wrappedLineTraversalIsBoundedByTheViewport() {
+    val lines = CodeLines(IntArray(100_000) { it * 20 }, 24)
+    val visible = lines.visibleLines(-12_000f, 0, 240)
+    assertTrue(500 in visible)
+    assertTrue(510 in visible)
+    assertTrue(visible.count() <= 14)
+    assertEquals(0..0, CodeLines(intArrayOf(0), 0).visibleLines(20f, 0, 240))
+  }
+
+  @Test
+  fun asciiSyntaxArrivalReusesWrappedGeometry() {
+    val cache = CodeLayoutCache()
+    val row = row("const value = 123; ".repeat(100))
+    val style = DiffStyle.defaults(1f).copy(wordWrap = true)
+    val theme = DiffTheme.fallback("light")
+    val first = cache.layout(listOf(row), emptyMap(), paint, style, theme, 180).lines(row.id)
+    val tokens = mapOf(row.id to listOf(DiffToken(row.content, Color.RED, 2)))
+    val highlighted = cache.layout(listOf(row), tokens, paint, style, theme, 180).lines(row.id)
+    assertSame(first, highlighted)
+    assertTrue(highlighted.starts.size > 1)
+  }
+
+  @Test
   fun highlightsUseNativeTextRangesAndSurviveSyntaxArrival() {
     val cache = CodeLayoutCache()
     val row = row("漢字".repeat(30)).copy(wordDiffRanges = listOf(DiffWordDiffRange(3, 21)))

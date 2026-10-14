@@ -13,6 +13,7 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 
 /** Text layout is independent of comment heights and vertical row offsets. */
@@ -31,6 +32,14 @@ internal class CodeLines(
 
   val extraHeight: Int
     get() = nativeLayout?.let { it.height - it.getLineBottom(0) } ?: ((starts.size - 1) * height)
+
+  /** Include neighboring lines for glyph overhang, while bounding work by the viewport. */
+  fun visibleLines(top: Float, clipTop: Int, clipBottom: Int): IntRange {
+    if (height <= 0) return 0..0
+    val first = (floor((clipTop - top) / height).toInt() - 1).coerceIn(0, starts.lastIndex)
+    val last = (ceil((clipBottom - top) / height).toInt() + 1).coerceIn(0, starts.lastIndex)
+    return first..last
+  }
 }
 
 internal class CodeWrapLayout(
@@ -54,7 +63,7 @@ internal class CodeWrapLayout(
 internal fun createCodeLines(text: CharSequence, paint: TextPaint, width: Int): CodeLines {
   val characterWidth = paint.measureText("M")
   val lineHeight = ceil(paint.fontMetrics.run { descent - ascent }).toInt()
-  if (text.all { it in ' '..'~' }) {
+  if (isFixedPitchCode(text)) {
     val columns = max(1, (width / characterWidth).toInt())
     return CodeLines(
       IntArray(max(1, (text.length + columns - 1) / columns)) {
@@ -110,8 +119,10 @@ internal class CodeLayoutCache {
     val layouts = HashMap<String, CodeLines>()
     for (row in rows) {
       if (row.kind != "line") continue
-      val rowTokens = tokens[row.id]
       val cached = entries[row.id]
+      // ASCII draws syntax runs separately; syntax arrival cannot change its fixed-pitch geometry.
+      val styled = !row.fixedPitchCode
+      val rowTokens = if (styled) tokens[row.id] else null
       val entry = if (cached?.row == row && cached.tokens == rowTokens) {
         cached
       } else {
@@ -127,7 +138,7 @@ internal class CodeLayoutCache {
 
   private fun styledCode(row: DiffRow, tokens: List<DiffToken>?, theme: DiffTheme): CharSequence {
     // The ASCII path uses the existing token drawing and rounded highlight rectangles.
-    if (row.content.all { it in ' '..'~' }) return row.content
+    if (row.fixedPitchCode) return row.content
     val text = SpannableString(row.content)
     var offset = 0
     for (token in tokens.orEmpty()) {
@@ -167,3 +178,5 @@ internal class CodeLayoutCache {
     return text
   }
 }
+
+internal fun isFixedPitchCode(text: CharSequence): Boolean = text.all { it in ' '..'~' }

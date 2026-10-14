@@ -480,6 +480,8 @@ internal data class DiffRow(
   val commentSectionTitle: String
 ) {
   val resolvedFileId: String get() = fileId.ifEmpty { id }
+  // Row construction runs in the decode worker; visible-row rebuilds only read this flag.
+  val fixedPitchCode: Boolean = kind == "line" && isFixedPitchCode(content)
 }
 
 internal data class DiffWordDiffRange(
@@ -714,6 +716,8 @@ private class DiffCanvasView(context: Context) : View(context) {
     },
   )
   private var rowOffsets = intArrayOf(0)
+  private var fileHeaders = FileHeaderIndex(intArrayOf())
+  private var styledCodeRowIds: Set<String> = emptySet()
 
   private var codeWrap = CodeWrapLayout.NONE
   private var verticalOffset = 0
@@ -723,6 +727,10 @@ private class DiffCanvasView(context: Context) : View(context) {
   var rows: List<DiffRow> = emptyList()
     set(value) {
       field = value
+      fileHeaders = FileHeaderIndex(value.indices.filter { value[it].kind == "file" }.toIntArray())
+      styledCodeRowIds = value.asSequence()
+        .filter { it.kind == "line" && !it.fixedPitchCode }
+        .map { it.id }.toSet()
       headerPathOffsetsByFileId.keys.retainAll(
         value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
       )
@@ -730,8 +738,9 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
   var tokensByRowId: Map<String, List<DiffToken>> = emptyMap()
     set(value) {
+      val previous = field
       field = value
-      if (style.wordWrap) rebuildOffsets()
+      if (style.wordWrap && styledCodeRowIds.any { previous[it] != value[it] }) rebuildOffsets()
       invalidate()
     }
   var viewedFileIds: Set<String> = emptySet()
@@ -1136,7 +1145,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     )
     val textX = iconRect.right + 10f * density
     canvas.drawText(
-      ellipsize(row.text, textPaint, width - textX - style.fileHeaderHorizontalPaddingPx),
+      ellipsizeDiffText(row.text, textPaint, width - textX - style.fileHeaderHorizontalPaddingPx),
       textX,
       centeredBaseline(top, bottom, textPaint),
       textPaint,
@@ -1176,7 +1185,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     )
     val title = "Comment on ${row.commentRangeLabel.ifEmpty { "line" }}"
     canvas.drawText(
-      ellipsize(title, textPaint, cardRect.right - chevronRect.right - 20f * density),
+      ellipsizeDiffText(title, textPaint, cardRect.right - chevronRect.right - 20f * density),
       chevronRect.right + 10f * density,
       cardRect.top + 22f * density,
       textPaint,
@@ -1185,7 +1194,7 @@ private class DiffCanvasView(context: Context) : View(context) {
       textPaint.color = theme.text
       val bodyX = cardRect.left + 18f * density
       canvas.drawText(
-        ellipsize(
+        ellipsizeDiffText(
           row.commentText.ifEmpty { "Comment" },
           textPaint,
           cardRect.right - bodyX - 18f * density
@@ -1244,7 +1253,10 @@ private class DiffCanvasView(context: Context) : View(context) {
       drawing.configureCodePaint(theme.text, 0, style)
       drawing.drawWordDiffRanges(canvas, row, codeX, top, firstLineBottom, lines)
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
-      drawing.drawCode(canvas, row.content, tokensByRowId[row.id], codeX, baseline, style, lines)
+      drawing.drawCode(
+        canvas, row.content, tokensByRowId[row.id], codeX, baseline, style, lines,
+        fixedPitch = row.id !in styledCodeRowIds,
+      )
     }
 
     drawLineNumber(canvas, row, top, firstLineBottom)
@@ -1290,11 +1302,10 @@ private class DiffCanvasView(context: Context) : View(context) {
   @Suppress("ReturnCount")
   private fun stickyFileHeader(firstVisibleIndex: Int): StickyFileHeader? {
     if (rows.isEmpty()) return null
-    val fileIndex = (firstVisibleIndex.coerceIn(0, rows.lastIndex) downTo 0)
-      .firstOrNull { rows[it].kind == "file" }
-      ?: return null
+    val fileIndex = fileHeaders.atOrBefore(firstVisibleIndex.coerceIn(0, rows.lastIndex))
+    if (fileIndex < 0) return null
     val headerHeight = rowHeight(rows[fileIndex])
-    val nextFileIndex = ((fileIndex + 1)..rows.lastIndex).firstOrNull { rows[it].kind == "file" }
+    val nextFileIndex = fileHeaders.after(fileIndex).takeIf { it >= 0 }
     val top = nextFileIndex
       ?.let { min(0, rowOffsets[it] - verticalOffset - headerHeight) }
       ?: 0
@@ -1340,15 +1351,6 @@ private class DiffCanvasView(context: Context) : View(context) {
   private fun centeredBaseline(top: Int, bottom: Int, paint: Paint): Float {
     val metrics = paint.fontMetrics
     return (top + bottom) / 2f - (metrics.ascent + metrics.descent) / 2f
-  }
-
-  private fun ellipsize(value: String, paint: Paint, width: Float): String {
-    if (paint.measureText(value) <= width) return value
-    val suffix = "..."
-    val available = max(0f, width - paint.measureText(suffix))
-    var end = value.length
-    while (end > 0 && paint.measureText(value, 0, end) > available) end -= 1
-    return value.substring(0, end) + suffix
   }
 
   private data class StickyFileHeader(
