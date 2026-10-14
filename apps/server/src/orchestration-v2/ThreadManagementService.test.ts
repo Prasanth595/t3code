@@ -4,6 +4,7 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2Command,
+  ProviderDriverKind,
   type OrchestrationV2Run,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
@@ -21,6 +22,11 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import type { MissionAdmissionRequest } from "./MissionAdmission.ts";
+import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -472,4 +478,52 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
     // The first read plus one for this run's update. The other run caused none.
     expect(reads).toBe(2);
   }),
+);
+
+it.effect(
+  "optional mission dispatch fails closed on a real unconfigured service and preserves legacy dispatch",
+  () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const adapter = {
+      instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+      planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+      openSession: () => Effect.die("No provider process is permitted"),
+    } as ProviderAdapterV2Shape;
+    const infra = ProviderReplayHarness.layerWithRegistry(
+      { name: "thread-management-mission-option" },
+      ProviderAdapterRegistry.layerFromAdapters([adapter]),
+      { runEffectWorker: false },
+    );
+    return Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      const threadId = ThreadId.make("thread:mission-unconfigured");
+      const command: OrchestrationV2Command = {
+        type: "thread.create",
+        commandId: CommandId.make("create:mission-unconfigured"),
+        threadId,
+        projectId: ProjectId.make("project:mission-unconfigured"),
+        title: "Legacy still works",
+        modelSelection: { instanceId, model: "gpt-6.1-sol" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      };
+      // Configuration denial precedes inspecting a mission proposal or hydrating a thread.
+      const unavailableRequest = {} as MissionAdmissionRequest;
+      const denied = yield* Effect.flip(
+        service.dispatch(command, { missionAdmissionRequest: unavailableRequest }),
+      );
+      expect(denied).toBeInstanceOf(Orchestrator.OrchestratorDispatchError);
+      expect((yield* service.getShellSnapshot()).threads).toHaveLength(0);
+      yield* service.dispatch(command);
+      expect((yield* service.getThreadProjection(threadId)).thread.title).toBe(
+        "Legacy still works",
+      );
+    }).pipe(Effect.provide(ThreadManagementService.layer.pipe(Layer.provide(infra))));
+  },
 );

@@ -1,3 +1,4 @@
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
@@ -9,7 +10,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2Actor,
-  type OrchestrationV2Command,
+  OrchestrationV2Command,
   type OrchestrationV2GetTurnItemResult,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ConversationMessage,
@@ -35,8 +36,20 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "./Orchestrator.ts";
+import * as MissionAdmissionStore from "./MissionAdmissionStore.ts";
+import { dispatchKeyFor, type MissionAdmissionRequest } from "./MissionAdmission.ts";
+import { missionBoundCommandId } from "./EventSink.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { encodeMissionCommand, encodeMissionRuntime, missionCommandHashes } from "./MissionCommandBinding.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+
+// Keep dispatch assignable for legacy service adapters that forward it directly.
+// Proposals and prepared admissions are distinct stages, and each service rejects
+// the other's stage rather than silently dispatching a nongated command.
+export type ThreadManagementDispatchOptions = Orchestrator.OrchestratorDispatchOptions;
+
+const decodeMissionCommand = Schema.decodeEffect(OrchestrationV2Command);
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -276,6 +289,7 @@ export interface ThreadManagementServiceShape {
   ) => Effect.Effect<void, LegacyV1ThreadImporter.LegacyV1ThreadImportError>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
+    options?: ThreadManagementDispatchOptions,
   ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, Orchestrator.OrchestratorV2Error>;
   readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
   readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
@@ -399,6 +413,8 @@ function latestSteerableRun(
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+  const missionStore = yield* Effect.serviceOption(MissionAdmissionStore.MissionAdmissionStore);
+  const runtimePolicy = yield* Effect.serviceOption(RuntimePolicy.RuntimePolicyV2);
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
@@ -465,8 +481,138 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
     );
 
-  const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    ensureCommandTranscripts(command).pipe(Effect.andThen(orchestrator.dispatch(command)));
+  const dispatch: ThreadManagementServiceShape["dispatch"] = Effect.fn(
+    "orchestrationV2.threadManagement.dispatch",
+  )(function* (command, options) {
+    if (options?.missionAdmission !== undefined || options?.missionContext !== undefined) {
+      return yield* new Orchestrator.OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "ThreadManagement requires an unprepared mission proposal.",
+      });
+    }
+    if (options?.missionAdmissionRequest === undefined) {
+      yield* ensureCommandTranscripts(command);
+      return yield* orchestrator.dispatch(command);
+    }
+    const rejected = (cause: unknown) =>
+      new Orchestrator.OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    // Check configuration and shape before legacy hydration or any mutation.
+    if (Option.isNone(missionStore) || Option.isNone(runtimePolicy)) {
+      return yield* rejected("Mission admission/runtime authority is not configured.");
+    }
+    if (command.type !== "delegated_task.request" && command.type !== "message.dispatch") {
+      return yield* rejected("Unsupported mission command.");
+    }
+    // Encode and decode rather than retaining mutable command objects or hashing
+    // unchecked JSON. Unknown fields cannot silently disappear into an admitted command.
+    const wire = yield* encodeMissionCommand(command, { onExcessProperty: "error" }).pipe(
+      Effect.mapError(rejected),
+    );
+    const actual = yield* decodeMissionCommand(wire, { onExcessProperty: "error" }).pipe(
+      Effect.mapError(rejected),
+    );
+    if (actual.type !== "delegated_task.request" && actual.type !== "message.dispatch") {
+      return yield* rejected("Unsupported mission command.");
+    }
+    if (
+      actual.type === "message.dispatch" &&
+      (actual.dispatchMode.type !== "start_immediately" ||
+        actual.deliveryIntent !== undefined ||
+        actual.notification !== undefined ||
+        actual.delegatedCompletion !== undefined ||
+        actual.sourcePlanRef !== undefined ||
+        actual.restartContinuationOfRunId !== undefined ||
+        actual.usageLimitContinuationOfRunId !== undefined ||
+        actual.manualContinuationOfRunId !== undefined ||
+        actual.usageLimitRecoveryRequestId !== undefined)
+    )
+      return yield* rejected("Unsupported mission message shape.");
+    const request = structuredClone(options.missionAdmissionRequest);
+    const targetThreadId =
+      actual.type === "delegated_task.request" ? actual.parentThreadId : actual.threadId;
+    const { thread } = yield* orchestrator.getThreadRecords(targetThreadId, []);
+    const modelSelection = actual.modelSelection ?? thread.modelSelection;
+    const effectiveThread =
+      actual.type === "delegated_task.request"
+        ? {
+            ...thread,
+            runtimeMode: actual.runtimeMode,
+            interactionMode: actual.interactionMode,
+            worktreePath: actual.workspaceBinding?.worktreePath ?? thread.worktreePath,
+          }
+        : thread;
+    const runtime = yield* runtimePolicy.value
+      .resolve({ thread: effectiveThread, modelSelection })
+      .pipe(Effect.mapError(rejected));
+    const selectors = modelSelection.options?.filter((option) => option.id === "profile") ?? [];
+    if (selectors.length > 1 || (selectors.length === 1 && (typeof selectors[0]!.value !== "string" || selectors[0]!.value.trim().length === 0))) {
+      return yield* rejected("Selected worker profile is ambiguous or invalid.");
+    }
+    // A selector is an actual command option; the facts port verifies its route
+    // and capability. Native selections without one use the configured default.
+    const selectedProfile = selectors.length === 0 ? "default" : String(selectors[0]!.value);
+    if (
+      request.proposedProviderInstanceId !== modelSelection.instanceId ||
+      request.modelId !== modelSelection.model ||
+      request.profile !== selectedProfile ||
+      runtime.runtimeMode !== effectiveThread.runtimeMode ||
+      runtime.interactionMode !== effectiveThread.interactionMode ||
+      request.privilege !== runtime.runtimeMode ||
+      runtime.cwd == null ||
+      request.workspaceRoot !== runtime.cwd ||
+      request.mission.tasks.find((task) => task.id === request.taskId)?.projectId !==
+        thread.projectId
+    )
+      return yield* rejected(
+        "Mission proposal does not match the actual command route, runtime or workspace.",
+      );
+    const dispatchKey = dispatchKeyFor({
+      teamId: request.mission.teamId,
+      environmentId: request.mission.authorityEnvironmentId,
+      missionId: request.mission.id,
+      taskId: request.taskId,
+      attemptNumber: request.attempt.attemptNumber,
+      operation: request.attempt.operation,
+    });
+    const normalized = {
+      ...actual,
+      modelSelection,
+      commandId: missionBoundCommandId({
+        dispatchKey,
+        threadId: targetThreadId,
+        commandType: actual.type,
+      }),
+    };
+    const encoded = yield* encodeMissionCommand(normalized).pipe(Effect.mapError(rejected));
+    const encodedRuntime = yield* encodeMissionRuntime(runtime).pipe(Effect.mapError(rejected));
+    const runtimeBytes = stableStringify(encodedRuntime);
+    const hashes = missionCommandHashes(encoded, thread.projectId, encodedRuntime);
+    if (hashes === undefined) return yield* rejected("Unsupported encoded mission command.");
+    const boundRequest: MissionAdmissionRequest = {
+      ...request,
+      proposedProviderInstanceId: modelSelection.instanceId,
+      modelId: modelSelection.model,
+      profile: selectedProfile,
+      privilege: runtime.runtimeMode,
+      workspaceRoot: runtime.cwd,
+      ...hashes,
+    };
+    // Preparation reads facts only; reserving here would orphan the admission.
+    // MCP currently prepares worktrees before dispatch; that path remains unguarded.
+    // This internal binding neither creates worktrees nor activates public admission.
+    const prepared = yield* missionStore.value
+      .prepare(boundRequest)
+      .pipe(Effect.mapError(rejected));
+    return yield* orchestrator.dispatch(normalized, {
+      missionAdmission: prepared,
+      missionContext: { projectId: thread.projectId, runtime: runtimeBytes },
+    });
+  });
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(

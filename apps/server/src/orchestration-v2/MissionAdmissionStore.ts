@@ -124,6 +124,7 @@ const preparedAdmission: unique symbol = Symbol("PreparedMissionAdmission");
 export interface PreparedMissionAdmission {
   readonly [preparedAdmission]: true;
   readonly sqlClient: SqlClient.SqlClient;
+  readonly commandHashes: Readonly<{ promptHash: string; optionsHash: string }>;
   readonly reserve: Effect.Effect<MissionAdmissionReserveResult, MissionAdmissionStoreError>;
 }
 
@@ -630,7 +631,7 @@ const make = Effect.gen(function* () {
       }
       return first.success;
     });
-    return { [preparedAdmission]: true, sqlClient: sql, reserve };
+    return { [preparedAdmission]: true, sqlClient: sql, commandHashes: Object.freeze({ promptHash: boundRequest.promptHash, optionsHash: boundRequest.optionsHash }), reserve };
   });
 
   const reserve = Effect.fn("MissionAdmissionStore.reserve")(function* (

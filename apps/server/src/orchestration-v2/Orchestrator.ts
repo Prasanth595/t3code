@@ -52,6 +52,7 @@ import {
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
   derivePendingBackgroundWork,
@@ -82,6 +83,9 @@ import { notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import type { PreparedMissionAdmission } from "./MissionAdmissionStore.ts";
+import type { MissionAdmissionRequest } from "./MissionAdmission.ts";
+import { encodeMissionCommand, encodeMissionRuntime, missionCommandHashes } from "./MissionCommandBinding.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -119,6 +123,19 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+
+/** Internal opt-in only; application composition does not register mission authority yet. */
+export interface OrchestratorDispatchOptions {
+  readonly missionAdmission?: PreparedMissionAdmission;
+  /** Only ThreadManagement may bind a proposal; direct Orchestrator calls fail closed. */
+  readonly missionAdmissionRequest?: MissionAdmissionRequest;
+  /** Runtime captured with the command bytes before facts preparation; rechecked under the lock. */
+  readonly missionContext?: {
+    readonly projectId: string;
+    readonly runtime: string;
+  };
+}
+
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -259,6 +276,7 @@ export interface OrchestratorV2Shape {
   ) => Effect.Effect<boolean, OrchestratorProjectionError>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
+    options?: OrchestratorDispatchOptions,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly getTimelinePage: (
     threadId: ThreadId,
@@ -10350,7 +10368,79 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
+    options?: OrchestratorDispatchOptions,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
+    if (options?.missionAdmissionRequest !== undefined || (options?.missionContext !== undefined && options?.missionAdmission === undefined)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Mission proposals require authoritative ThreadManagement binding.",
+      });
+    }
+    const missionAdmission = options?.missionAdmission;
+    if (missionAdmission !== undefined) {
+      if (options?.missionContext === undefined) return yield* new OrchestratorDispatchError({ commandId: command.commandId, commandType: command.type, cause: "Prepared mission dispatch requires its bound runtime context." });
+      if (command.type !== "delegated_task.request" && command.type !== "message.dispatch") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Unsupported mission command.",
+        });
+      }
+      if (
+        command.type === "message.dispatch" &&
+        (command.dispatchMode.type !== "start_immediately" ||
+          command.deliveryIntent !== undefined ||
+          command.notification !== undefined ||
+          command.delegatedCompletion !== undefined ||
+          command.sourcePlanRef !== undefined ||
+          command.restartContinuationOfRunId !== undefined ||
+          command.usageLimitContinuationOfRunId !== undefined ||
+          command.manualContinuationOfRunId !== undefined ||
+          command.usageLimitRecoveryRequestId !== undefined ||
+          command.modelSelection === undefined)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Unsupported mission message shape.",
+        });
+      }
+      if (options?.missionContext !== undefined) {
+        const thread = yield* mapDispatchError(command)(
+          projectionStore.getThread(commandThreadId(command)),
+        );
+        const effectiveThread =
+          command.type === "delegated_task.request"
+            ? {
+                ...thread,
+                runtimeMode: command.runtimeMode,
+                interactionMode: command.interactionMode,
+                worktreePath: command.workspaceBinding?.worktreePath ?? thread.worktreePath,
+              }
+            : thread;
+        const selection = command.modelSelection ?? thread.modelSelection;
+        const runtime = yield* mapDispatchError(command)(
+          runtimePolicy.resolve({ thread: effectiveThread, modelSelection: selection }),
+        );
+        const encoded = yield* mapDispatchError(command)(encodeMissionRuntime(runtime));
+        const encodedCommand = yield* mapDispatchError(command)(encodeMissionCommand(command, { onExcessProperty: "error" }));
+        const hashes = missionCommandHashes(encodedCommand, thread.projectId, encoded);
+        if (hashes === undefined || hashes.promptHash !== missionAdmission.commandHashes.promptHash || hashes.optionsHash !== missionAdmission.commandHashes.optionsHash) {
+          return yield* new OrchestratorDispatchError({ commandId: command.commandId, commandType: command.type, cause: "Prepared admission does not bind these actual command bytes." });
+        }
+        if (
+          thread.projectId !== options.missionContext.projectId ||
+          stableStringify(encoded) !== options.missionContext.runtime
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Mission runtime changed after preparation.",
+          });
+        }
+      }
+    }
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
       "orchestration_v2.command_type": command.type,
@@ -10370,6 +10460,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (Option.isSome(existingReceipt)) {
       const receipt = existingReceipt.value;
+      if (missionAdmission !== undefined) {
+        // Even accepted/rejected generic receipts must pass canonical mission scope,
+        // digest and manager epoch checks. Replay never replans or relaunches.
+        const committed = yield* mapDispatchError(command)(
+          eventSink.commitCommand({
+            commandId: command.commandId,
+            threadId: commandThreadId(command),
+            commandType: command.type,
+            acceptedAt: receipt.acceptedAt,
+            events: [],
+            effects: [],
+            missionAdmission,
+          }),
+        );
+        return { sequence: committed.receipt.resultSequence, storedEvents: committed.storedEvents };
+      }
       if (receipt.status === "rejected") {
         return yield* new OrchestratorCommandPreviouslyRejectedError({
           commandId: command.commandId,
@@ -10429,6 +10535,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
       Effect.catch((cause) =>
         Effect.gen(function* () {
+          // A failed opt-in plan has no paired admission; do not persist a
+          // generic rejection that could bypass or poison the mission key.
+          if (missionAdmission !== undefined) return yield* cause;
           const rejectedAt = yield* DateTime.now;
           const receipt = yield* eventSink
             .commitRejectedCommand({
@@ -10465,6 +10574,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
     if (plan.events.length === 0) {
+      if (missionAdmission !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Mission commands require an owning event commit.",
+        });
+      }
       // A settle that ended nothing still records its receipt: a replayed Stop
       // effect then finds it instead of settling work that appeared since.
       const resultSequence = yield* Effect.gen(function* () {
@@ -10500,6 +10616,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         acceptedAt,
         events: plan.events,
         effects: plan.effects,
+        ...(missionAdmission === undefined ? {} : { missionAdmission }),
         ...(plan.cancelUnsettledEffects === undefined
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
@@ -10538,8 +10655,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
-  const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+  const dispatchWithReceipt = (
+    command: OrchestrationV2ServerCommand,
+    options?: OrchestratorDispatchOptions,
+  ) =>
+    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command, options));
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
