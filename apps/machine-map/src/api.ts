@@ -16,6 +16,7 @@ import {
   MapPosition,
   type MachineCommand,
   type MachineMapDocument,
+  type MachineTunnelGrant,
   type MachinePresence,
   type MapProposal,
   type MapRevision,
@@ -80,12 +81,21 @@ export interface EnrollResponse {
   readonly kind: MachineKind;
   readonly tokenClientId: string;
   readonly tokenSecret: string;
+  /** MM-213: null for a machine without a portal tunnel. */
+  readonly tunnel: MachineTunnelGrant | null;
 }
+
+/** MM-213: what the portal did about the tunnel of a machine. */
+export type TunnelSetup =
+  | { readonly status: "ready"; readonly hostname: string }
+  | { readonly status: "skipped"; readonly reason: string };
 
 export interface JoinCodeResponse {
   readonly machineId: MachineId;
   readonly code: string;
   readonly expiresAt: string;
+  /** Null when the code carries no tunnel, for example a new code of a machine without one. */
+  readonly tunnel: TunnelSetup | null;
 }
 
 /** The result of a write: applied as a revision, or waiting in the Inbox (MM-804). */

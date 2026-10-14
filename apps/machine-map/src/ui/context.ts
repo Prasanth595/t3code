@@ -11,7 +11,7 @@ import type {
 } from "@t3tools/contracts/machineMap";
 import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
-import type { PauseView, PendingRotation, WriteResult } from "../api.ts";
+import type { PauseView, PendingRotation, TunnelSetup, WriteResult } from "../api.ts";
 import type { Route, Selection, View } from "./route.ts";
 
 /** One held change of a draft (MM-707). */
@@ -37,6 +37,7 @@ export type Dialog =
       readonly machineName: string;
       readonly code: string;
       readonly expiresAt: string;
+      readonly tunnel: TunnelSetup | null;
     }
   | { readonly _tag: "newJoinCode"; readonly machineId: MachineId; readonly machineName: string }
   | { readonly _tag: "savePreset" }

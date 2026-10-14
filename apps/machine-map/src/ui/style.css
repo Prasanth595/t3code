@@ -2000,53 +2000,26 @@ dialog.palette .dialog-body {
 .install-step p {
   margin: 0;
 }
-.install-actions {
-  display: flex;
-  flex-wrap: wrap;
+/* One row per system: the name, the command with the code, and Copy. */
+.install-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
-/* A split button: the main action and an arrow that opens its menu, joined into one box. */
-.split {
-  display: inline-flex;
-  anchor-name: --install-split;
-}
-.split .btn:first-child {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-.split .btn + .btn {
-  margin-left: calc(-1 * var(--bw));
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-}
-.install-menu {
-  position-anchor: --install-split;
-  position-area: block-end span-inline-end;
-  position-try-fallbacks: flip-block;
-  margin: 6px 0;
-  padding: 4px;
-  min-width: 15rem;
-  color: var(--ink);
-}
-.install-menu [role="menuitem"] {
-  display: block;
-  width: 100%;
-  padding: 9px 12px;
-  font: inherit;
-  font-size: 0.95rem;
+.install-os {
   font-weight: 700;
-  text-align: left;
-  text-decoration: none;
-  color: var(--ink);
-  background: none;
-  border: 0;
-  border-radius: var(--radius);
-  cursor: pointer;
+  font-size: 0.9rem;
 }
-.install-menu [role="menuitem"]:is(:hover, :focus-visible) {
-  background: var(--select);
-  color: var(--select-fg);
+.install-cmd {
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  background: var(--surface);
+  border: var(--bw) solid var(--border);
+  border-radius: var(--radius);
+  user-select: all;
 }
 /* The big red button (MM-708): a mushroom in a hazard frame under a flip-up cover. */
 .panic {

@@ -411,6 +411,21 @@ export const PeerMachine = Schema.Struct({
 });
 export type PeerMachine = typeof PeerMachine.Type;
 
+/**
+ * MM-213: the tunnel that "Add machine" made for a machine. `/enroll` delivers it once. The token
+ * runs `cloudflared` (MM-1309). The Access values are the Cloudflare Access login of the server.
+ */
+export const MachineTunnelGrant = Schema.Struct({
+  hostname: TrimmedNonEmptyString,
+  token: TrimmedNonEmptyString,
+  access: Schema.Struct({
+    teamDomain: TrimmedNonEmptyString,
+    aud: TrimmedNonEmptyString,
+    subjects: Schema.NonEmptyArray(TrimmedNonEmptyString),
+  }),
+});
+export type MachineTunnelGrant = typeof MachineTunnelGrant.Type;
+
 /** What one machine must apply (MM-603, MM-1202). */
 export const MachineDesiredState = Schema.Struct({
   revision: NonNegativeInt,

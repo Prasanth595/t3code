@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type {
   MachineId,
   MachineKind,
@@ -12,6 +12,7 @@ import {
   type ForkRelease,
   type JoinCodeResponse,
   type WriteResult,
+  type TunnelSetup,
 } from "../api.ts";
 import { usesText } from "../rules/access.ts";
 import { findArrow } from "../rules/map.ts";
@@ -20,9 +21,14 @@ import { callApi } from "./apiClient.ts";
 import { usePortalContext, type Dialog } from "./context.ts";
 import { confirmResume, EmergencyButton } from "./emergency.tsx";
 import { COMMAND_LABEL, LEVEL_LABEL, timeUntil } from "./format.ts";
-import { ChevronDownIcon, CopyIcon, KindIcon } from "./icons.tsx";
+import { CopyIcon, KindIcon } from "./icons.tsx";
 import { playJoinSound, showJoinEffects } from "./panicEffects.ts";
-import { INSTALL_TARGET_LABEL, installCommand, type InstallTarget } from "./install.ts";
+import {
+  INSTALL_TARGET_LABEL,
+  INSTALL_TARGETS,
+  installCommand,
+  type InstallTarget,
+} from "./install.ts";
 import { VIEW_LABEL, VIEWS } from "./route.ts";
 import { knownKeys } from "./settingControls.ts";
 
@@ -147,6 +153,7 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
           machineName={dialog.machineName}
           code={dialog.code}
           expiresAt={dialog.expiresAt}
+          tunnel={dialog.tunnel}
           close={close}
         />
       );
@@ -224,6 +231,7 @@ function AddMachineDialog({
               machineName: trimmed,
               code: result.code,
               expiresAt: result.expiresAt,
+              tunnel: result.tunnel,
             });
           });
         }}
@@ -294,7 +302,8 @@ function AddMachineDialog({
         ) : (
           <p className="small muted">
             The portal creates the token <code>t3-machine-{name.trim() || "name"}</code> and adds it
-            to the Access policies of the machine hostnames and of <code>/connect</code>.
+            to the Access policies of the machine hostnames and of <code>/connect</code>. It also
+            makes the tunnel of the machine.
           </p>
         )}
         <ErrorLine error={action.error} />
@@ -320,6 +329,7 @@ function JoinCodeDialog(props: {
   machineName: string;
   code: string;
   expiresAt: string;
+  tunnel: TunnelSetup | null;
   close: () => void;
 }) {
   const portal = usePortalContext();
@@ -426,9 +436,17 @@ function JoinCodeDialog(props: {
         </button>
       </div>
       <InstallStep code={props.code} />
+      {props.tunnel?.status === "ready" && (
+        <p className="small muted">
+          Tunnel: <code>{props.tunnel.hostname}</code>. The machine starts it when it joins.
+        </p>
+      )}
+      {props.tunnel?.status === "skipped" && (
+        <p className="small error-text">{props.tunnel.reason}</p>
+      )}
       <p className="small muted">
-        It works once and expires {timeUntil(props.expiresAt, portal.now)}. On {props.machineName},
-        use it in one of these ways:
+        It works once and expires {timeUntil(props.expiresAt, portal.now)}. On a machine that runs
+        T3 already, use it in one of these ways:
       </p>
       <ol className="small steps">
         <li>In T3, open Settings &gt; Machines and paste the code.</li>
@@ -456,15 +474,12 @@ function JoinCodeDialog(props: {
 }
 
 /**
- * MM-211: step 0 of a join, for a machine without the fork. A split button copies the install
- * command; its menu holds the Mac and Windows commands and installers.
+ * MM-211: the one-step path. Each command installs the fork and joins with the code. A server
+ * joins at once; the app joins when it starts.
  */
 function InstallStep({ code }: { code: string }) {
   const [release, setRelease] = useState<ForkRelease | null>(null);
   const [copied, setCopied] = useState<InstallTarget | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuId = useId();
-  const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let live = true;
     callApi<ForkRelease>("GET", "/api/fork-release").then(
@@ -475,90 +490,39 @@ function InstallStep({ code }: { code: string }) {
       live = false;
     };
   }, []);
-  const copy = (target: InstallTarget) => {
-    menu.current?.hidePopover();
+  const copy = (target: InstallTarget) =>
     navigator.clipboard.writeText(installCommand(target, code)).then(
       () => setCopied(target),
       () => setCopied(null),
     );
-  };
-  const items = () => [...(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
-  // Arrow keys, Home and End move between menu items. The popover closes itself on Escape.
-  const onMenuKey = (e: KeyboardEvent) => {
-    const all = items();
-    const at = all.indexOf(document.activeElement as HTMLElement);
-    const next =
-      e.key === "ArrowDown"
-        ? (at + 1) % all.length
-        : e.key === "ArrowUp"
-          ? (at - 1 + all.length) % all.length
-          : e.key === "Home"
-            ? 0
-            : e.key === "End"
-              ? all.length - 1
-              : null;
-    if (next === null) return;
-    e.preventDefault();
-    all[next]?.focus();
-  };
-  const download = (label: string, url: string | null) =>
-    url && (
-      <a role="menuitem" href={url} onClick={() => menu.current?.hidePopover()}>
-        {label}
-      </a>
-    );
   return (
     <div className="install-step">
       <p className="small">
-        <strong>0. Install T3 Code (Yarden-zamir's fork)</strong> if the machine does not run it:{" "}
+        <strong>Install and join in one step.</strong> Run the command of its system on the new
+        machine. It installs T3 Code (Yarden-zamir's fork,{" "}
         <a href={release?.pageUrl ?? FORK_RELEASES_PAGE} target="_blank" rel="noreferrer">
           {release?.version ?? "fork releases"}
         </a>
+        ) and joins with this code.
       </p>
-      <div className="install-actions">
-        <div className="split">
-          <button type="button" className="btn small" onClick={() => copy("linux")}>
+      {INSTALL_TARGETS.map((target) => (
+        <div key={target} className="install-row">
+          <span className="install-os">{INSTALL_TARGET_LABEL[target]}</span>
+          <code className="install-cmd">{installCommand(target, code)}</code>
+          <button type="button" className="btn small" onClick={() => copy(target)}>
             <CopyIcon />
-            {copied === "linux" ? "Copied" : "Copy curl"}
-          </button>
-          <button
-            type="button"
-            className="btn small icon-only"
-            popoverTarget={menuId}
-            aria-haspopup="menu"
-            aria-controls={menuId}
-            aria-expanded={menuOpen}
-            aria-label="Mac and Windows install"
-          >
-            <ChevronDownIcon />
+            {copied === target ? "Copied" : "Copy"}
           </button>
         </div>
-        <div
-          ref={menu}
-          id={menuId}
-          popover="auto"
-          role="menu"
-          aria-label="Install on Mac or Windows"
-          className="card install-menu"
-          onKeyDown={onMenuKey}
-          onToggle={(e) => {
-            setMenuOpen(e.newState === "open");
-            if (e.newState === "open") items()[0]?.focus();
-          }}
-        >
-          <button type="button" role="menuitem" onClick={() => copy("mac")}>
-            Copy Mac command
-          </button>
-          {download("Download Mac app (.dmg)", release?.macUrl ?? null)}
-          <button type="button" role="menuitem" onClick={() => copy("windows")}>
-            Copy Windows command
-          </button>
-          {download("Download Windows installer (.exe)", release?.windowsUrl ?? null)}
-        </div>
-        <span className="small muted" role="status">
-          {copied && `${INSTALL_TARGET_LABEL[copied]} command copied.`}
-        </span>
-      </div>
+      ))}
+      {(release?.macUrl || release?.windowsUrl) && (
+        <p className="small muted">
+          Or download the app: {release.macUrl && <a href={release.macUrl}>Mac (.dmg)</a>}
+          {release.macUrl && release.windowsUrl && " · "}
+          {release.windowsUrl && <a href={release.windowsUrl}>Windows (.exe)</a>}. Then paste the
+          code in Settings &gt; Machines.
+        </p>
+      )}
     </div>
   );
 }
@@ -590,6 +554,7 @@ function NewJoinCodeDialog(props: {
               machineName: props.machineName,
               code: result.code,
               expiresAt: result.expiresAt,
+              tunnel: result.tunnel,
             });
           });
         }}

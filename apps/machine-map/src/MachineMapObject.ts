@@ -14,6 +14,7 @@ import {
   MachineMapDocument,
   MachinePresence,
   MachineToPortal,
+  MachineTunnelGrant,
   MapProposal,
   MapRevision,
   MapToolInputs,
@@ -58,15 +59,16 @@ import type {
   RotationResponse,
   RotationsEvent,
   SampleResponse,
+  TunnelSetup,
   SignOutEverywhereResponse,
   WriteResult,
   HealthEvent,
   ResourceSampleEvent,
 } from "./api.ts";
 import { PauseState } from "./api.ts";
-import { configured } from "./access.ts";
+import { configured, ownerEmails } from "./access.ts";
 import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
-import { CloudflareApi } from "./cloudflare.ts";
+import { CloudflareApi, tunnelTarget } from "./cloudflare.ts";
 import type { Env } from "./env.ts";
 import {
   arrowChange,
@@ -180,6 +182,8 @@ type MachineMessage = typeof MachineMessage.Type;
 const decodeMachineMessage = decodeJson(MachineMessage);
 const decodeThresholds = decodeJson(Schema.Record(Schema.String, HealthThresholds));
 const decodeAttachment = Schema.decodeUnknownSync(Attachment);
+const decodeTunnelGrant = decodeJson(MachineTunnelGrant);
+const encodeTunnelGrant = (grant: MachineTunnelGrant): string => JSON.stringify(grant);
 
 /** MM-713: the stored pause. Pages get `state` only. */
 const PauseRecord = Schema.Struct({ state: PauseState, before: PausedAccess });
@@ -250,6 +254,30 @@ const slug = (name: string): string => {
   return trimmed.length > 0 ? trimmed : "machine";
 };
 
+/**
+ * MM-213: the T3 server of a machine listens here, behind its tunnel. Limit: a desktop app that
+ * finds 3773 busy picks the next port, and then the tunnel misses it. Revisit when a machine
+ * reports its port in its status.
+ */
+const MACHINE_SERVICE = "http://127.0.0.1:3773";
+
+/** MM-213: the tunnel of one machine. The flags say what "Add machine" made, so removal undoes only that. */
+type MachineTunnelRow = {
+  machine_id: string;
+  tunnel_id: string;
+  hostname: string;
+  created_tunnel: number;
+  dns_record_id: string | null;
+  access_host_added: number;
+};
+
+type TunnelSetUpResult = {
+  readonly row: Omit<MachineTunnelRow, "machine_id"> | null;
+  readonly setup: TunnelSetup;
+};
+
+const skippedTunnel = (reason: string): TunnelSetup => ({ status: "skipped", reason });
+
 const randomHex = (bytes: number): string =>
   [...crypto.getRandomValues(new Uint8Array(bytes))]
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -316,7 +344,13 @@ export class MachineMapObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS machine_tokens (machine_id TEXT PRIMARY KEY, token_id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS enroll_attempts (ip TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sign_ins (id TEXT PRIMARY KEY, device TEXT NOT NULL, browser TEXT NOT NULL, place TEXT NOT NULL, first_seen TEXT NOT NULL, last_used TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS machine_tunnels (machine_id TEXT PRIMARY KEY, tunnel_id TEXT NOT NULL, hostname TEXT NOT NULL, created_tunnel INTEGER NOT NULL, dns_record_id TEXT, access_host_added INTEGER NOT NULL);
     `);
+    // MM-213: the sealed tunnel grant of a join code. Null for a code without a tunnel.
+    const joinColumns = this.#sql<{ name: string }>("PRAGMA table_info(join_codes)");
+    if (!joinColumns.some((column) => column.name === "sealed_tunnel")) {
+      this.ctx.storage.sql.exec("ALTER TABLE join_codes ADD COLUMN sealed_tunnel TEXT");
+    }
     this.ctx.storage.sql.exec(HEALTH_TABLES);
   }
 
@@ -1180,22 +1214,179 @@ export class MachineMapObject extends DurableObject<Env> {
     return ids;
   }
 
-  async #issueJoinCode(machineId: MachineId, secret: string): Promise<JoinCodeResponse> {
+  /** MM-1201: the secret and the tunnel grant wait for the machine encrypted. */
+  async #issueJoinCode(
+    machineId: MachineId,
+    secret: string,
+    tunnel: { readonly grant: MachineTunnelGrant | null; readonly setup: TunnelSetup | null },
+  ): Promise<JoinCodeResponse> {
     const code = newJoinCode();
     const codeHash = await sha256Hex(normalizeJoinCode(code));
     const sealed = await seal(this.env.SECRET_KEY, secret);
+    const sealedTunnel =
+      tunnel.grant === null
+        ? null
+        : await seal(this.env.SECRET_KEY, encodeTunnelGrant(tunnel.grant));
     const expiresAt = addMinutes(Date.now(), JOIN_CODE_MINUTES);
     this.ctx.storage.transactionSync(() => {
       this.#sql("DELETE FROM join_codes WHERE machine_id = ?", machineId);
       this.#sql(
-        "INSERT INTO join_codes (code_hash, machine_id, sealed_secret, expires_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO join_codes (code_hash, machine_id, sealed_secret, expires_at, sealed_tunnel) VALUES (?, ?, ?, ?, ?)",
         codeHash,
         machineId,
         sealed,
         expiresAt,
+        sealedTunnel,
       );
     });
-    return { machineId, code, expiresAt };
+    return { machineId, code, expiresAt, tunnel: tunnel.setup };
+  }
+
+  // ---------------------------------------------------------------- MM-213: machine tunnels
+
+  #tunnelRow(machineId: MachineId): MachineTunnelRow | undefined {
+    return this.#sql<MachineTunnelRow>(
+      "SELECT * FROM machine_tunnels WHERE machine_id = ?",
+      machineId,
+    )[0];
+  }
+
+  /**
+   * Makes or reuses the tunnel `t3-<slug>`, its ingress, its DNS name and its place in the
+   * machine Access app. A failure undoes what this call made and skips the tunnel, so "Add
+   * machine" still works as before MM-213.
+   */
+  async #setUpTunnel(api: CloudflareApi, machineName: string): Promise<TunnelSetUpResult> {
+    const domain = this.env.MACHINE_DOMAIN;
+    const zoneId = this.env.MACHINE_ZONE_ID;
+    if (!configured(domain) || !configured(zoneId)) {
+      return {
+        row: null,
+        setup: skippedTunnel(
+          "Set MACHINE_DOMAIN and MACHINE_ZONE_ID in wrangler.jsonc for tunnels.",
+        ),
+      };
+    }
+    const name = `t3-${slug(machineName)}`;
+    const hostname = `${name}.${domain}`;
+    const made = {
+      tunnelId: null as string | null,
+      dnsRecordId: null as string | null,
+      hostAdded: false,
+    };
+    try {
+      const record = await api.findDnsRecord(zoneId, hostname);
+      let tunnel;
+      if (record) {
+        // Reuse the tunnel that the name points at. Any other record belongs to something else.
+        const suffix = tunnelTarget("");
+        const tunnelId =
+          record.type === "CNAME" && record.content.endsWith(suffix)
+            ? record.content.slice(0, -suffix.length)
+            : null;
+        tunnel = tunnelId === null ? null : await api.findTunnelById(tunnelId);
+        if (!tunnel) {
+          return {
+            row: null,
+            setup: skippedTunnel(
+              `${hostname} points at something else. Set up its tunnel by hand.`,
+            ),
+          };
+        }
+      } else {
+        tunnel = await api.findTunnelByName(name);
+        if (!tunnel) {
+          tunnel = await api.createTunnel(name);
+          made.tunnelId = tunnel.id;
+        }
+      }
+      if (tunnel.config_src !== "cloudflare") {
+        return {
+          row: null,
+          setup: skippedTunnel(
+            `The tunnel ${name} is managed on its machine. The machine keeps it.`,
+          ),
+        };
+      }
+      await api.ensureIngress(tunnel.id, hostname, MACHINE_SERVICE);
+      if (!record) made.dnsRecordId = (await api.createTunnelCname(zoneId, hostname, tunnel.id)).id;
+      made.hostAdded = await api.addAppHostname(this.env.MACHINE_ACCESS_APP_ID, hostname);
+      return {
+        row: {
+          tunnel_id: tunnel.id,
+          hostname,
+          created_tunnel: made.tunnelId === null ? 0 : 1,
+          dns_record_id: made.dnsRecordId,
+          access_host_added: made.hostAdded ? 1 : 0,
+        },
+        setup: { status: "ready", hostname },
+      };
+    } catch (error) {
+      const message = errorMessage(error);
+      console.error("machine tunnel setup failed", hostname, message);
+      await this.#tearDownTunnel(api, {
+        tunnel_id: made.tunnelId ?? "",
+        hostname,
+        created_tunnel: made.tunnelId === null ? 0 : 1,
+        dns_record_id: made.dnsRecordId,
+        access_host_added: made.hostAdded ? 1 : 0,
+      });
+      return {
+        row: null,
+        setup: skippedTunnel(
+          `No tunnel: ${message}. The Cloudflare API token needs "Cloudflare Tunnel: Edit" and "DNS: Edit". Set up the tunnel by hand.`,
+        ),
+      };
+    }
+  }
+
+  /**
+   * Deletes only what `#setUpTunnel` made. Each step logs its failure and the next step runs.
+   * Limit: an ingress rule added to a reused tunnel stays. Revisit when reused tunnels are common.
+   */
+  async #tearDownTunnel(
+    api: CloudflareApi,
+    row: Omit<MachineTunnelRow, "machine_id">,
+  ): Promise<void> {
+    const step = (what: string, run: () => Promise<unknown>) =>
+      run().catch((error: unknown) => {
+        console.error(`could not ${what}`, row.hostname, errorMessage(error));
+      });
+    if (row.access_host_added === 1) {
+      await step("remove the Access hostname", () =>
+        api.removeAppHostname(this.env.MACHINE_ACCESS_APP_ID, row.hostname),
+      );
+    }
+    const zoneId = this.env.MACHINE_ZONE_ID;
+    if (row.dns_record_id !== null && configured(zoneId)) {
+      const recordId = row.dns_record_id;
+      await step("delete the DNS record", () => api.deleteDnsRecord(zoneId, recordId));
+    }
+    if (row.created_tunnel === 1) {
+      await step("delete the tunnel", () => api.deleteTunnel(row.tunnel_id));
+    }
+  }
+
+  /** The tunnel token and the Access login of a machine. It holds a secret: never log it. */
+  async #tunnelGrant(api: CloudflareApi, row: MachineTunnelRow): Promise<MachineTunnelGrant> {
+    const [token, aud] = await Promise.all([
+      api.tunnelToken(row.tunnel_id),
+      api.accessAppAud(this.env.MACHINE_ACCESS_APP_ID),
+    ]);
+    const [first, ...rest] = [
+      ...ownerEmails(this.env),
+      ...(this.env.MACHINE_ACCESS_SUBJECTS ?? "")
+        .split(",")
+        .map((subject) => subject.trim())
+        .filter((subject) => subject.length > 0),
+    ];
+    if (first === undefined)
+      throw new PortalError(503, "Set OWNER_EMAILS in wrangler.jsonc first.");
+    return {
+      hostname: row.hostname,
+      token,
+      access: { teamDomain: this.env.TEAM_DOMAIN, aud, subjects: [first, ...rest] },
+    };
   }
 
   // ---------------------------------------------------------------- alarms
@@ -1453,6 +1644,7 @@ export class MachineMapObject extends DurableObject<Env> {
       }
       const api = this.#cloudflare();
       let token: { clientId: string; secret: string; id: string | null };
+      let tunnel: TunnelSetUpResult | null = null;
       if (existing) {
         if (this.#map.machines.some((m) => m.tokenClientId === existing.clientId)) {
           throw new PortalError(409, "Another machine already uses this machine token.");
@@ -1468,6 +1660,7 @@ export class MachineMapObject extends DurableObject<Env> {
           throw error;
         }
         token = { clientId: created.client_id, secret: created.client_secret, id: created.id };
+        tunnel = await this.#setUpTunnel(api, request.name);
       } else {
         throw new PortalError(
           400,
@@ -1492,7 +1685,35 @@ export class MachineMapObject extends DurableObject<Env> {
           token.id,
         );
       }
-      return this.#issueJoinCode(machine.id, token.secret);
+      const tunnelRow = tunnel?.row ? { machine_id: machine.id, ...tunnel.row } : null;
+      if (tunnelRow) {
+        this.#sql(
+          "INSERT OR REPLACE INTO machine_tunnels (machine_id, tunnel_id, hostname, created_tunnel, dns_record_id, access_host_added) VALUES (?, ?, ?, ?, ?, ?)",
+          tunnelRow.machine_id,
+          tunnelRow.tunnel_id,
+          tunnelRow.hostname,
+          tunnelRow.created_tunnel,
+          tunnelRow.dns_record_id,
+          tunnelRow.access_host_added,
+        );
+      }
+      // A grant that fails now still leaves the tunnel for a new join code.
+      const grant =
+        api && tunnelRow
+          ? await this.#tunnelGrant(api, tunnelRow).catch((error: unknown) => {
+              console.error("could not read the tunnel grant", machine.id, errorMessage(error));
+              return null;
+            })
+          : null;
+      const setup =
+        tunnel === null
+          ? null
+          : tunnelRow && grant === null
+            ? skippedTunnel(
+                "The tunnel exists, but its token could not be read. Make a new join code.",
+              )
+            : tunnel.setup;
+      return this.#issueJoinCode(machine.id, token.secret, { grant, setup });
     });
   }
 
@@ -1505,9 +1726,17 @@ export class MachineMapObject extends DurableObject<Env> {
       if (!this.env.SECRET_KEY) throw new PortalError(503, "Set the SECRET_KEY secret first.");
       const machine = findMachine(this.#map, machineId);
       if (!machine) throw new PortalError(404, `Unknown machine ${machineId}.`);
-      if (request.tokenSecret !== undefined)
-        return this.#issueJoinCode(machine.id, request.tokenSecret);
       const api = this.#cloudflare();
+      const tunnelRow = this.#tunnelRow(machine.id);
+      const tunnel =
+        api && tunnelRow
+          ? {
+              grant: await this.#tunnelGrant(api, tunnelRow),
+              setup: { status: "ready", hostname: tunnelRow.hostname } as const,
+            }
+          : { grant: null, setup: null };
+      if (request.tokenSecret !== undefined)
+        return this.#issueJoinCode(machine.id, request.tokenSecret, tunnel);
       if (!api)
         throw new PortalError(
           400,
@@ -1517,7 +1746,7 @@ export class MachineMapObject extends DurableObject<Env> {
       if (!tokenId)
         throw new PortalError(409, "Cloudflare has no service token with this client id.");
       const secret = await api.rotateServiceToken(tokenId, nowIso());
-      return this.#issueJoinCode(machine.id, secret);
+      return this.#issueJoinCode(machine.id, secret, tunnel);
     });
   }
 
@@ -1565,6 +1794,8 @@ export class MachineMapObject extends DurableObject<Env> {
           await api.deleteServiceToken(tokenId);
           tokenDeleted = true;
         }
+        const tunnelRow = this.#tunnelRow(machineId);
+        if (tunnelRow) await this.#tearDownTunnel(api, tunnelRow);
       }
       this.#commit(ownerActor(owner), `Removed ${machine.name}`, [
         { _tag: "removeMachine", machineId },
@@ -1585,6 +1816,7 @@ export class MachineMapObject extends DurableObject<Env> {
           "join_codes",
           "rotations",
           "machine_tokens",
+          "machine_tunnels",
         ]) {
           this.#sql(`DELETE FROM ${table} WHERE machine_id = ?`, machineId);
         }
@@ -1798,8 +2030,13 @@ export class MachineMapObject extends DurableObject<Env> {
       );
       const codeHash = await sha256Hex(normalizeJoinCode(code));
       // Read and delete in one step, so two requests cannot both use the code.
-      const row = this.#sql<{ machine_id: string; sealed_secret: string; expires_at: string }>(
-        "DELETE FROM join_codes WHERE code_hash = ? RETURNING machine_id, sealed_secret, expires_at",
+      const row = this.#sql<{
+        machine_id: string;
+        sealed_secret: string;
+        expires_at: string;
+        sealed_tunnel: string | null;
+      }>(
+        "DELETE FROM join_codes WHERE code_hash = ? RETURNING machine_id, sealed_secret, expires_at, sealed_tunnel",
         codeHash,
       )[0];
       const machine = row ? findMachine(this.#map, MachineId.make(row.machine_id)) : undefined;
@@ -1813,6 +2050,10 @@ export class MachineMapObject extends DurableObject<Env> {
         kind: machine.kind,
         tokenClientId: machine.tokenClientId,
         tokenSecret: await unseal(this.env.SECRET_KEY, row.sealed_secret),
+        tunnel:
+          row.sealed_tunnel === null
+            ? null
+            : decodeTunnelGrant(await unseal(this.env.SECRET_KEY, row.sealed_tunnel)),
       };
     });
   }

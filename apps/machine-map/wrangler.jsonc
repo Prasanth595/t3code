@@ -27,6 +27,10 @@
     "PAGE_AUD": "7b996f4459cde10da806d3c60d5b498a08bcd655323dda1521e2c8fc631db0da",
     "CONNECT_AUD": "4fb6adb125d42e929f534ac373e5de3b0306176bbe02ef3029bb9fa478ceb0ee",
     "CONNECT_ACCESS_APP_ID": "6cfe30ed-8abe-41d7-9f36-ef3e2a509b97",
+    // MM-213: the tunnel of a new machine is `t3-<slug>.<MACHINE_DOMAIN>` in this zone.
+    "MACHINE_DOMAIN": "yarden-zamir.com",
+    "MACHINE_ZONE_ID": "29b67e3ab7b83f4fc3728c67d3082a83",
   },
-  // Secrets (`wrangler secret put`): SECRET_KEY (required for joins), CF_API_TOKEN (optional).
+  // Secrets (`wrangler secret put`): SECRET_KEY (required for joins), CF_API_TOKEN (optional),
+  // MACHINE_ACCESS_SUBJECTS (optional, MM-213).
 }

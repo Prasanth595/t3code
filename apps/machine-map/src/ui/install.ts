@@ -3,6 +3,9 @@ const SCRIPTS = "https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scri
 
 export type InstallTarget = "linux" | "mac" | "windows";
 
+/** The order of the commands in the join dialog. */
+export const INSTALL_TARGETS: ReadonlyArray<InstallTarget> = ["mac", "linux", "windows"];
+
 export const INSTALL_TARGET_LABEL: Record<InstallTarget, string> = {
   linux: "Linux",
   mac: "Mac",
