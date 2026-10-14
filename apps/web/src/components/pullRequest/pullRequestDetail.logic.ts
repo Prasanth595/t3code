@@ -2,6 +2,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import * as Schema from "effect/Schema";
 
 import {
+  GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
   pullRequestHostOf,
@@ -1285,6 +1286,20 @@ export function readableFailure(failure: unknown, hint: string): string {
   // The host's words alone: the hint is a guess about why, and a guess printed under a reason
   // that contradicts it is worse than no guess at all.
   return bounded;
+}
+
+const isGitCommandError = Schema.is(GitCommandError);
+
+/**
+ * What a failed pull request checkout says. The server's reason (the branch is already checked
+ * out in the main repository, say) is the only way out of the failure. A failed git command's
+ * message also names the server's project directory, so only its detail is shown.
+ */
+export function checkoutFailureDescription(failure: unknown): string {
+  return readableFailure(
+    isGitCommandError(failure) ? failure.detail : failure,
+    "Check that the branch still exists and is not checked out elsewhere, then try again.",
+  );
 }
 
 /**

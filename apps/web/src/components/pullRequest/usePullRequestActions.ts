@@ -7,16 +7,14 @@ import { useAtomCommand } from "~/state/use-atom-command";
  */
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  GitCommandError,
-  type EnvironmentId,
-  type ProjectId,
-  type PullRequestAction,
-  type PullRequestDetail,
-  type PullRequestMergeMethod,
-  type PullRequestRef,
+import type {
+  EnvironmentId,
+  ProjectId,
+  PullRequestAction,
+  PullRequestDetail,
+  PullRequestMergeMethod,
+  PullRequestRef,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import { useCallback, useRef, useState } from "react";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
@@ -36,12 +34,15 @@ import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { toastManager } from "../ui/toast";
-import { handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
+import {
+  checkoutFailureDescription,
+  handoffPrompt,
+  handoffReviewComments,
+  readableFailure,
+} from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
 /** Resolve on demand so hidden quick actions do not rebuild the legacy project grouping. */
-const isGitCommandError = Schema.is(GitCommandError);
-
 export function usePullRequestDefaultMergeMethodResolver(
   environmentId: EnvironmentId,
   projectId: ProjectId,
@@ -397,17 +398,10 @@ export function usePullRequestHandoffs({
     });
     if (prepared._tag === "Failure") {
       setHandoff(null);
-      // The server says what to do about it — that the branch is already checked out in the main
-      // repository, say — and that sentence is the only way out of the failure. A failed git
-      // command's message also names the server's project directory, so only its detail is shown.
-      const failure = squashAtomCommandFailure(prepared);
       toastManager.update(toastId, {
         type: "error",
         title: "Could not prepare the pull request checkout",
-        description: readableFailure(
-          isGitCommandError(failure) ? failure.detail : failure,
-          "Check that the branch still exists and is not checked out elsewhere, then try again.",
-        ),
+        description: checkoutFailureDescription(squashAtomCommandFailure(prepared)),
       });
       return;
     }
