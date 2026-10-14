@@ -97,9 +97,12 @@ function parseCgroupCounter(text: string, key: string): number | undefined {
   return match === null ? undefined : Number(match[1]);
 }
 
+// A stop sends SIGTERM, then SIGKILL after this long. systemd's 90 s default
+// would outlast the wait for a previous server's agents below.
+const STOP_TIMEOUT_OPTION = "--property=TimeoutStopSec=10s";
 const STOPPING_POLL_INTERVAL = "100 millis";
 const STOPPING_POLL_ATTEMPTS = 20;
-// A stopping scope can wait out TimeoutStopSec (90 s by default) for a stuck process.
+// A stopping scope can wait out its TimeoutStopSec for a stuck process.
 const CLEAR_FAILED_INTERVAL = "1 second";
 const CLEAR_FAILED_ATTEMPTS = 120;
 const MAX_TRACKED_THREADS = 500;
@@ -150,7 +153,7 @@ export const make = Effect.gen(function* () {
       const events = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
       if (parseCgroupCounter(events, "populated") === 0) return;
       yield* Effect.logWarning("Stopping agents left by a previous server", { slice: ownedSlice });
-      // Agents get SIGTERM and then SIGKILL, so the stop can take a moment.
+      // Agents get SIGTERM, then SIGKILL after their stop timeout.
       const stopped = yield* runner
         .run({ command: systemctl, args: ["--user", "stop", ownedSlice], timeout: "30 seconds" })
         .pipe(Effect.option);
@@ -186,12 +189,13 @@ export const make = Effect.gen(function* () {
         ]).pipe(Effect.map((result) => result._tag === "Some" && result.value.code === 0));
       // Stop the whole scope when the kernel kills one of its processes, and
       // record the result as oom-kill. Scopes take OOMPolicy from systemd 253;
-      // older user managers still get plain scopes, without the OOM label.
-      const oomOptions = ["--property=OOMPolicy=stop"];
+      // older user managers still get scopes, without the OOM label.
+      const stopOptions = [STOP_TIMEOUT_OPTION];
+      const oomOptions = [...stopOptions, "--property=OOMPolicy=stop"];
       const scopeOptions = (yield* probe(oomOptions))
         ? oomOptions
-        : (yield* probe([]))
-          ? []
+        : (yield* probe(stopOptions))
+          ? stopOptions
           : undefined;
       if (scopeOptions === undefined) {
         yield* Effect.logInfo("Agent scopes are off: no systemd user manager");

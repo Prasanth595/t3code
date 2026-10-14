@@ -176,6 +176,8 @@ describe("AgentScope service", () => {
         expect(stops).toEqual([["--user", "stop", ownedAgentSlice(stateDir)]]);
         // Agents run in this server's own slice; terminals stay outside it.
         expect(sliceOf(agent)).toBe(ownedAgentSlice(stateDir));
+        // An agent that ignores SIGTERM is killed well inside the stop's wait.
+        expect(agent.args).toContain("--property=TimeoutStopSec=10s");
         const terminal = yield* scope.wrap({
           command: "agent",
           args: [],
