@@ -145,6 +145,45 @@ interface SessionControl {
   readonly closed: Deferred.Deferred<never, ConnectionTransientError>;
 }
 
+const discoveredDescriptor = (
+  environmentId: EnvironmentId,
+  orchestrationProtocolVersion = ORCHESTRATION_PROTOCOL_VERSION,
+): ExecutionEnvironmentDescriptor => ({
+  environmentId,
+  label: "Server",
+  platform: { os: "linux", arch: "x64" },
+  serverVersion: "1.0.0",
+  orchestrationProtocolVersion,
+  capabilities: { repositoryIdentity: true },
+});
+
+/** A relay discovery entry whose health check reported `value`. */
+const discovered = (value: ExecutionEnvironmentDescriptor, checkedAt = "2026-09-15T00:00:00Z") => {
+  const environment = {
+    environmentId: value.environmentId,
+    label: value.label,
+    endpoint: {
+      httpBaseUrl: "https://relay.example.test",
+      wsBaseUrl: "wss://relay.example.test",
+      providerKind: "manual" as const,
+    },
+    linkedAt: "2026-09-15T00:00:00Z",
+  };
+  const status: RelayEnvironmentStatusResponse = {
+    environmentId: value.environmentId,
+    endpoint: environment.endpoint,
+    status: "online",
+    checkedAt,
+    descriptor: value,
+  };
+  return {
+    environment,
+    availability: "online" as const,
+    status: Option.some(status),
+    error: Option.none(),
+  };
+};
+
 const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   initialTargets: ReadonlyArray<ConnectionTarget>,
   initialProfiles: ReadonlyArray<ConnectionProfile> = [],
@@ -755,43 +794,7 @@ describe("EnvironmentRegistry", () => {
       const harness = yield* makeHarness([RELAY_TARGET, SECOND_RELAY_TARGET], [], [], {
         initialDisabled: [RELAY_TARGET.environmentId],
       });
-      const descriptor = (environmentId: EnvironmentId): ExecutionEnvironmentDescriptor => ({
-        environmentId,
-        label: "Server",
-        platform: { os: "linux", arch: "x64" },
-        serverVersion: "1.0.0",
-        orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-        capabilities: { repositoryIdentity: true },
-      });
-      const discovered = (
-        value: ExecutionEnvironmentDescriptor,
-        checkedAt = "2026-09-15T00:00:00Z",
-      ) => {
-        const environment = {
-          environmentId: value.environmentId,
-          label: value.label,
-          endpoint: {
-            httpBaseUrl: "https://relay.example.test",
-            wsBaseUrl: "wss://relay.example.test",
-            providerKind: "manual" as const,
-          },
-          linkedAt: "2026-09-15T00:00:00Z",
-        };
-        const status: RelayEnvironmentStatusResponse = {
-          environmentId: value.environmentId,
-          endpoint: environment.endpoint,
-          status: "online",
-          checkedAt,
-          descriptor: value,
-        };
-        return {
-          environment,
-          availability: "online" as const,
-          status: Option.some(status),
-          error: Option.none(),
-        };
-      };
-      const original = discovered(descriptor(RELAY_TARGET.environmentId));
+      const original = discovered(discoveredDescriptor(RELAY_TARGET.environmentId));
       const discoveryState =
         yield* SubscriptionRef.make<RelayEnvironmentDiscovery.RelayEnvironmentDiscoveryState>({
           ...RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
@@ -848,7 +851,7 @@ describe("EnvironmentRegistry", () => {
           ...state,
           environments: new Map(state.environments).set(
             SECOND_RELAY_TARGET.environmentId,
-            discovered(descriptor(SECOND_RELAY_TARGET.environmentId)),
+            discovered(discoveredDescriptor(SECOND_RELAY_TARGET.environmentId)),
           ),
         }));
         yield* Deferred.await(unrelated);
@@ -865,10 +868,16 @@ describe("EnvironmentRegistry", () => {
           ...state,
           refreshing: false,
           environments: new Map([
-            [RELAY_TARGET.environmentId, discovered(descriptor(RELAY_TARGET.environmentId))],
+            [
+              RELAY_TARGET.environmentId,
+              discovered(discoveredDescriptor(RELAY_TARGET.environmentId)),
+            ],
             [
               SECOND_RELAY_TARGET.environmentId,
-              discovered(descriptor(SECOND_RELAY_TARGET.environmentId), "2026-09-15T00:01:00Z"),
+              discovered(
+                discoveredDescriptor(SECOND_RELAY_TARGET.environmentId),
+                "2026-09-15T00:01:00Z",
+              ),
             ],
           ]),
         }));
@@ -881,7 +890,7 @@ describe("EnvironmentRegistry", () => {
           ...state,
           environments: new Map(state.environments).set(
             RELAY_TARGET.environmentId,
-            discovered(descriptor(RELAY_TARGET.environmentId), "2026-09-15T00:02:00Z"),
+            discovered(discoveredDescriptor(RELAY_TARGET.environmentId), "2026-09-15T00:02:00Z"),
           ),
         }));
         yield* Deferred.await(refreshed);
@@ -892,6 +901,90 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)
             ?.unsupportedReason,
         ).toBeUndefined();
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a replayed incompatible health check does not re-block a host a retry reached", () =>
+    Effect.gen(function* () {
+      const error = new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: "Use a compatible client.",
+      });
+      let compatible = false;
+      const harness = yield* makeHarness([RELAY_TARGET, SECOND_RELAY_TARGET], [], [], {
+        prepareRoute: (target) =>
+          target.environmentId === RELAY_TARGET.environmentId && !compatible ? error : undefined,
+      });
+      const discoveryState =
+        yield* SubscriptionRef.make<RelayEnvironmentDiscovery.RelayEnvironmentDiscoveryState>({
+          ...RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
+          environments: new Map([
+            [
+              RELAY_TARGET.environmentId,
+              discovered(
+                discoveredDescriptor(
+                  RELAY_TARGET.environmentId,
+                  ORCHESTRATION_PROTOCOL_VERSION + 1,
+                ),
+              ),
+            ],
+          ]),
+        });
+      const blocked = yield* Deferred.make<void>();
+      const unrelated = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* watchDiscoveredCompatibility().pipe(
+          Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, {
+            ...registry,
+            setCompatibility: (environmentId, compatibilityError) =>
+              registry
+                .setCompatibility(environmentId, compatibilityError)
+                .pipe(
+                  Effect.andThen(
+                    Deferred.succeed(
+                      environmentId === RELAY_TARGET.environmentId ? blocked : unrelated,
+                      undefined,
+                    ),
+                  ),
+                ),
+          }),
+          Effect.provideService(
+            RelayEnvironmentDiscovery.RelayEnvironmentDiscovery,
+            RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.of({
+              state: discoveryState,
+              refresh: Effect.void,
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(blocked);
+        yield* registry.start;
+
+        // The host updated: a retry reaches it before discovery checks it again.
+        compatible = true;
+        yield* registry.retryNow(RELAY_TARGET.environmentId);
+        yield* awaitConnectionState(
+          registry,
+          RELAY_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        // Discovery emits again, still holding the old incompatible result.
+        yield* SubscriptionRef.update(discoveryState, (state) => ({
+          ...state,
+          environments: new Map(state.environments).set(
+            SECOND_RELAY_TARGET.environmentId,
+            discovered(discoveredDescriptor(SECOND_RELAY_TARGET.environmentId)),
+          ),
+        }));
+        yield* Deferred.await(unrelated);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)
+            ?.unsupportedReason,
+        ).toBeUndefined();
+        expect((yield* registry.state(RELAY_TARGET.environmentId)).phase).toBe("connected");
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );

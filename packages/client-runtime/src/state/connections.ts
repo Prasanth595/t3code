@@ -44,7 +44,8 @@ export function* enabledEnvironmentIds(
  * Saved environments switched off on this device. Older builds also
  * switched environments off when their host ran an incompatible version, and
  * nothing records which ones, so clients ask about these once instead of
- * switching anything back on themselves.
+ * switching anything back on themselves. Remove it with both notices once no
+ * client in use predates that fix.
  */
 export function switchedOffSavedEnvironments(
   catalog: EnvironmentCatalogState,
