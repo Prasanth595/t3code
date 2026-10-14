@@ -946,7 +946,9 @@ const make = Effect.gen(function* () {
       Effect.catchTags({
         MachineMapToolError: (error) => Effect.succeed(unavailable(error.reason, error.detail)),
         SchemaError: (error) =>
-          Effect.logWarning("Machine map read result is unreadable.", { cause: String(error) }).pipe(
+          Effect.logWarning("Machine map read result is unreadable.", {
+            cause: String(error),
+          }).pipe(
             Effect.as(unavailable("unreadable", "The portal answered with an unknown format.")),
           ),
       }),
