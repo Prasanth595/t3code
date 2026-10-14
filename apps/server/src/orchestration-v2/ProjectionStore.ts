@@ -304,6 +304,9 @@ export interface ProjectionRecordFilter {
   readonly runIds?: ReadonlyArray<RunId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
+  // Skips finished tool call, assistant message and reasoning nodes of finished
+  // runs. Command decisions only read root, subagent and active-run nodes.
+  readonly omitSettledLeafNodes?: boolean;
 }
 export type ProjectionRecordField = Exclude<
   keyof OrchestrationV2ThreadProjection,
@@ -3069,9 +3072,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
-            FROM orchestration_v2_projection_nodes
-            WHERE thread_id = ${threadId}
-            ORDER BY COALESCE(started_at, ''), node_id ASC
+            FROM orchestration_v2_projection_nodes AS node
+            WHERE node.thread_id = ${threadId}
+              ${
+                filter?.omitSettledLeafNodes === true
+                  ? sql`AND NOT (
+                      node.kind IN ('tool_call', 'assistant_message', 'reasoning')
+                      AND node.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                      AND node.run_id IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1 FROM orchestration_v2_projection_runs AS run
+                        WHERE run.run_id = node.run_id
+                          AND run.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                      )
+                    )`
+                  : sql``
+              }
+            ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
               `
               : sql<PayloadRow & { readonly position: number }>`
             -- Keep retained IDs outermost so SQLite looks up each node by its
