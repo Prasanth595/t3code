@@ -5384,12 +5384,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "interrupt unanswered",
     "interrupt failed",
     "sibling interrupt failed",
+    "prior background command",
   ] as const)("contains live descendants after a root failure (%s)", (termination) =>
     Effect.gen(function* () {
       const childInterruptIndex = interruptSubagentCommandTranscript.entries.findIndex(
         (entry) => entry.type === "expect_outbound" && entry.label === "turn/interrupt/root",
       );
+      const turnStartIndex = interruptSubagentCommandTranscript.entries.findIndex(
+        (entry) => entry.type === "expect_outbound" && entry.label === "turn/start",
+      );
       const failureMessage = "Codex refused the request.";
+      const priorBackground = termination === "prior background command";
+      const cleanupRequestId = priorBackground ? 5 : 4;
       const children = [
         {
           threadId: INTERRUPT_CHILD_NATIVE_THREAD,
@@ -5488,7 +5494,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const transcript = makeCodexReplayTranscript({
         scenario: `codex-failed-root-descendants-${termination}`,
         entries: [
-          ...interruptSubagentCommandTranscript.entries.slice(0, childInterruptIndex),
+          ...(priorBackground
+            ? [
+                ...codexReplayPreamble({
+                  nativeThreadId: INTERRUPT_NATIVE_THREAD,
+                  nativeTurnId: BG_NATIVE_TURN,
+                  prompt: BG_PROMPT,
+                }),
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "item/started",
+                    params: {
+                      threadId: INTERRUPT_NATIVE_THREAD,
+                      turnId: BG_NATIVE_TURN,
+                      item: { ...backgroundCommandItem("inProgress"), command: "vp run dev" },
+                    },
+                  },
+                } as const,
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: INTERRUPT_NATIVE_THREAD,
+                      turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "completed" }),
+                    },
+                  },
+                } as const,
+                ...interruptSubagentCommandTranscript.entries
+                  .slice(turnStartIndex, childInterruptIndex)
+                  .map((entry) =>
+                    (entry.type === "expect_outbound" || entry.type === "emit_inbound") &&
+                    entry.label === "turn/start"
+                      ? withReplayRequestId(entry, 4)
+                      : entry,
+                  ),
+              ]
+            : interruptSubagentCommandTranscript.entries.slice(0, childInterruptIndex)),
           ...children.slice(1).flatMap((child): Array<CodexReplay.CodexAppServerReplayEntry> => [
             {
               type: "emit_inbound",
@@ -5557,7 +5600,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               type: "expect_outbound",
               label: "turn/interrupt/child",
               frame: {
-                id: 4 + index,
+                id: cleanupRequestId + index,
                 method: "turn/interrupt",
                 params: { threadId: child.threadId, turnId: child.turnId },
               },
@@ -5570,10 +5613,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   frame:
                     index === 0 && interruptFailed
                       ? {
-                          id: 4 + index,
+                          id: cleanupRequestId + index,
                           error: { code: -32_000, message: "child interrupt failed" },
                         }
-                      : { id: 4 + index, result: {} },
+                      : { id: cleanupRequestId + index, result: {} },
                 },
           ]),
           ...children.flatMap((child, index): Array<CodexReplay.CodexAppServerReplayEntry> => [
@@ -5581,7 +5624,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               type: "expect_outbound",
               label: "thread/backgroundTerminals/terminate/child",
               frame: {
-                id: 4 + children.length + index,
+                id: cleanupRequestId + children.length + index,
                 method: "thread/backgroundTerminals/terminate",
                 params: { threadId: child.threadId, processId: child.processId },
               },
@@ -5589,7 +5632,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               type: "emit_inbound",
               label: "thread/backgroundTerminals/terminate/child",
-              frame: { id: 4 + children.length + index, result: { terminated: true } },
+              frame: {
+                id: cleanupRequestId + children.length + index,
+                result: { terminated: true },
+              },
             },
           ]),
           ...(termination === "timed out"
@@ -5615,14 +5661,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ],
       });
       const failurePublished = yield* Deferred.make<void>();
+      const failedRootTerminal = yield* Deferred.make<void>();
       const childTimeoutBoundary = yield* Deferred.make<void>();
       const containmentOrder: Array<unknown> = [];
       const nativeInterrupts: Array<unknown> = [];
       const harness = yield* makeCodexReplayHarness(
         transcript,
         (event) => {
-          if (event.type === "turn.terminal") {
+          if (event.type === "turn.terminal" && event.status === "failed") {
             containmentOrder.push("root terminal");
+            return Deferred.succeed(failedRootTerminal, undefined);
           }
           if (event.type !== "turn_item.updated") return Effect.void;
           if (event.turnItem.type === "error" && event.turnItem.failure.code === "cyberPolicy") {
@@ -5643,22 +5691,37 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             containmentOrder.push(params);
           }),
       );
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
+      if (priorBackground) {
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("prior-background-server"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* harness.firstTerminal;
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }
+      const failedRunEventStart = harness.events.length;
+      yield* harness.runtime.startTurn({
+        ...makeCodexTestTurnInput({
           threadId: harness.threadId,
           providerThread: harness.providerThread,
           now: yield* DateTime.now,
           attemptId: RunAttemptId.make(`attempt-failed-root-${termination}`),
           text: INTERRUPT_PROMPT,
         }),
-      );
+        ...(priorBackground ? { runOrdinal: 2, providerTurnOrdinal: 2 } : {}),
+      });
       yield* Deferred.await(failurePublished);
       if (termination === "timed out" || termination === "interrupt unanswered") {
         yield* Deferred.await(childTimeoutBoundary);
         assert.lengthOf(harness.terminalEvents(), 0);
         yield* TestClock.adjust("10 seconds");
       }
-      yield* harness.firstTerminal;
+      yield* Deferred.await(failedRootTerminal);
 
       assert.deepEqual(
         nativeInterrupts,
@@ -5669,12 +5732,28 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         "root terminal",
       ]);
       const terminals = harness.terminalEvents();
-      assert.lengthOf(terminals, 1);
-      const terminal = terminals[0];
+      assert.lengthOf(terminals, priorBackground ? 2 : 1);
+      const terminal = terminals.at(-1);
       assert.equal(terminal?.status, "failed");
       assert.equal(terminal?.failure?.message, failureMessage);
       assert.equal(terminal?.failure?.code, "cyberPolicy");
-      assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
+      assertChildProviderTerminalBeforeRoot(
+        harness.events.slice(failedRunEventStart),
+        harness.threadId,
+      );
+      if (priorBackground) {
+        assert.equal(terminals[0]?.status, "completed");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        const serverCommand = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === BG_COMMAND_ITEM,
+        );
+        assert.equal(
+          serverCommand?.type === "turn_item.updated" ? serverCommand.turnItem.status : undefined,
+          "running",
+        );
+      }
       assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
       const childCommand = harness.events.findLast(
         (event) =>

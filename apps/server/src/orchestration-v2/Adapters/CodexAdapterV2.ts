@@ -6048,7 +6048,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 .interruptTurn({
                   providerThread: context.providerThread,
                   providerTurnId: context.providerTurnId,
-                  requestRuntimeRestart: true,
                 })
                 .pipe(
                   Effect.catchCause((cause) =>

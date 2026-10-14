@@ -203,8 +203,8 @@ to a steer, or remove it.
 
 If a turn ends before its remaining work settles, a steer or restart message waits
 in the queue. Promoting a queued message to a steer during cleanup leaves it queued.
-A provider failure holds the queue; use **Resume** or **Resume queue** when you are
-ready to continue.
+If a provider failure holds the queue, use **Resume** or **Resume queue** when you
+are ready to continue.
 
 If the server restarts, saved queued messages keep their order and are held. Press
 **Resume** in an empty composer on web or desktop, or **Resume queue** in the queue
