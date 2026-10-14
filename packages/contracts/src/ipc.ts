@@ -1238,6 +1238,17 @@ export interface DesktopBridge {
    * them.
    */
   onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
+  /**
+   * Closing the window or quitting stops the work of every desktop-owned
+   * environment. The renderer reports how many threads would stop, and while
+   * that is nonzero the desktop asks it to confirm before closing or quitting.
+   * The confirm listener resolves true to proceed. Optional: older desktop
+   * builds close without asking.
+   */
+  closeGuard?: {
+    setBusyThreadCount: (count: number) => void;
+    onConfirmRequest: (listener: () => Promise<boolean>) => () => void;
+  };
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;

@@ -51,6 +51,8 @@ import {
   pickFolder,
   pickProjectFavicon,
   pickThemeFiles,
+  resolveCloseConfirm,
+  setBusyThreadCount,
   setTheme,
   showContextMenu,
 } from "./methods/window.ts";
@@ -150,6 +152,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(checkSystemPermission);
   yield* ipc.handle(pasteAsText);
+  yield* ipc.handle(setBusyThreadCount);
+  yield* ipc.handle(resolveCloseConfirm);
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

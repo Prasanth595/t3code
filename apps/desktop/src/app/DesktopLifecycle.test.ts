@@ -80,6 +80,8 @@ function layerDesktopWindow(
   input: {
     readonly activate?: Effect.Effect<void>;
     readonly flushMainWindowBounds?: Effect.Effect<void>;
+    readonly canExitWithoutConfirmation?: Effect.Effect<boolean>;
+    readonly confirmExit?: Effect.Effect<boolean>;
   } = {},
 ) {
   return Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -98,6 +100,10 @@ function layerDesktopWindow(
     zoomMain: () => Effect.void,
     runMainContentsCommand: () => Effect.void,
     syncAppearance: Effect.void,
+    setBusyThreadCount: () => Effect.void,
+    resolveCloseConfirmation: () => Effect.void,
+    canExitWithoutConfirmation: input.canExitWithoutConfirmation ?? Effect.succeed(true),
+    confirmExit: input.confirmExit ?? Effect.succeed(true),
   });
 }
 
@@ -215,6 +221,74 @@ describe("DesktopLifecycle", () => {
 
           assert.deepEqual(eventsBeforeCleanup, ["flush", "destroy", "request"]);
           assert.deepEqual(events, ["flush", "destroy", "request", "quit"]);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("asks before quitting while threads are busy and quits once confirmed", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const answer = yield* Deferred.make<boolean>();
+      const asked = yield* Deferred.make<void>();
+      const quitRequested = yield* Deferred.make<void>();
+      let prevented = false;
+      let shutdownRequested = false;
+
+      const layerDesktopShutdown = Layer.succeed(DesktopShutdown.DesktopShutdown, {
+        request: Effect.sync(() => {
+          shutdownRequested = true;
+        }),
+        awaitRequest: Effect.void,
+        markComplete: Effect.void,
+        awaitComplete: Effect.void,
+        isComplete: Effect.succeed(false),
+      });
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "linux",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          layerElectronApp(
+            appListeners,
+            Deferred.succeed(quitRequested, undefined).pipe(Effect.asVoid),
+          ),
+        ),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(
+          layerDesktopWindow({
+            canExitWithoutConfirmation: Effect.succeed(false),
+            confirmExit: Deferred.succeed(asked, undefined).pipe(
+              Effect.andThen(Deferred.await(answer)),
+            ),
+          }),
+        ),
+        Layer.provideMerge(layerEnvironment),
+        Layer.provideMerge(layerDesktopShutdown),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.register;
+
+          const event = {
+            preventDefault: () => {
+              prevented = true;
+            },
+          } as Electron.Event;
+          appListeners.get("before-quit")?.(event);
+          yield* Deferred.await(asked);
+
+          assert.isTrue(prevented);
+          assert.isFalse(shutdownRequested);
+          assert.isFalse(yield* Deferred.isDone(quitRequested));
+
+          yield* Deferred.succeed(answer, true);
+          yield* Deferred.await(quitRequested);
         }),
       ).pipe(Effect.provide(layer));
     }),

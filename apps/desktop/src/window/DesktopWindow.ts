@@ -19,6 +19,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
+  CLOSE_CONFIRM_REQUEST_CHANNEL,
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
@@ -32,6 +33,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
+import { makeCloseGuard } from "./CloseGuard.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
@@ -146,6 +148,12 @@ export class DesktopWindow extends Context.Service<
     // which is a preview guest whenever a browser page has focus.
     readonly runMainContentsCommand: (command: MainWindowContentsCommand) => Effect.Effect<void>;
     readonly syncAppearance: Effect.Effect<void>;
+    // Closing the window or quitting asks first while the renderer reports
+    // busy desktop-owned threads. See CloseGuard.
+    readonly setBusyThreadCount: (count: number) => Effect.Effect<void>;
+    readonly resolveCloseConfirmation: (confirmed: boolean) => Effect.Effect<void>;
+    readonly canExitWithoutConfirmation: Effect.Effect<boolean>;
+    readonly confirmExit: Effect.Effect<boolean>;
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
 
@@ -347,6 +355,19 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  // The main window whose renderer answers close confirmations.
+  let closeGuardWindow: Electron.BrowserWindow | null = null;
+  const closeGuard = makeCloseGuard({
+    requestConfirmation: () => {
+      const window = closeGuardWindow;
+      if (window === null || window.isDestroyed() || window.webContents.isCrashed()) return false;
+      // A held quit shortcut may have hidden the window before the prompt.
+      window.setOpacity(1);
+      void runPromise(electronWindow.reveal(window));
+      window.webContents.send(CLOSE_CONFIRM_REQUEST_CHANNEL);
+      return true;
+    },
+  });
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -678,7 +699,10 @@ export const make = Effect.gen(function* () {
       },
       // Keep the transparent window focused until the physical shortcut is
       // released so its remaining repeats cannot reach the next app.
-      concealWindow: () => concealPendingQuitWindow(window),
+      // A quit that has to ask first keeps the window visible for the prompt.
+      concealWindow: () => {
+        if (closeGuard.canExit()) concealPendingQuitWindow(window);
+      },
       quit: () => {
         void runPromise(electronApp.quit);
       },
@@ -703,7 +727,15 @@ export const make = Effect.gen(function* () {
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
     window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
+    window.on("close", (event) => {
+      // Everywhere but macOS, closing the only window quits the app.
+      if (environment.platform !== "darwin" && !closeGuard.canExit()) {
+        event.preventDefault();
+        void closeGuard.confirm().then((confirmed) => {
+          if (confirmed && !window.isDestroyed()) window.close();
+        });
+        return;
+      }
       runFork(flushBoundsPersist);
     });
 
@@ -801,7 +833,11 @@ export const make = Effect.gen(function* () {
         );
       },
     );
+    // A reloaded or dead renderer no longer reports busy threads or answers
+    // a pending prompt.
+    window.webContents.on("did-navigate", () => closeGuard.reset());
     window.webContents.on("render-process-gone", (_event, details) => {
+      closeGuard.reset();
       const recoverable =
         details.reason === "crashed" ||
         details.reason === "oom" ||
@@ -862,7 +898,9 @@ export const make = Effect.gen(function* () {
       window.webContents.openDevTools({ mode: "detach" });
     }
 
+    closeGuardWindow = window;
     window.on("closed", () => {
+      if (closeGuardWindow === window) closeGuardWindow = null;
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
       void runPromise(electronWindow.clearMain(Option.some(window)));
@@ -1068,6 +1106,12 @@ export const make = Effect.gen(function* () {
         syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
+    setBusyThreadCount: (count) => Effect.sync(() => closeGuard.setBusyThreadCount(count)),
+    resolveCloseConfirmation: (confirmed) => Effect.sync(() => closeGuard.resolve(confirmed)),
+    canExitWithoutConfirmation: Effect.sync(() => closeGuard.canExit()),
+    confirmExit: Effect.promise(() => closeGuard.confirm()).pipe(
+      Effect.withSpan("desktop.window.confirmExit"),
+    ),
   });
 });
 

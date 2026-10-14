@@ -5,6 +5,7 @@ import {
   DesktopThemeSchema,
   EDITORS,
   EditorId,
+  NonNegativeInt,
   PickedThemeFileSchema,
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -37,6 +38,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -378,6 +380,41 @@ export const pasteAsText = DesktopIpc.makeIpcMethod({
     ) {
       focused.paste();
     }
+  }),
+});
+
+const isMainWindowSender = Effect.fn("desktop.ipc.window.isMainWindowSender")(function* (
+  event: DesktopIpc.DesktopIpcInvokeEvent | undefined,
+) {
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const window = yield* electronWindow.main;
+  return (
+    event !== undefined &&
+    Option.isSome(window) &&
+    !window.value.isDestroyed() &&
+    window.value.webContents.id === event.sender.id
+  );
+});
+
+export const setBusyThreadCount = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_BUSY_THREAD_COUNT_CHANNEL,
+  payload: NonNegativeInt,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.setBusyThreadCount")(function* (count, event) {
+    if (!(yield* isMainWindowSender(event))) return;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.setBusyThreadCount(count);
+  }),
+});
+
+export const resolveCloseConfirm = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RESOLVE_CLOSE_CONFIRM_CHANNEL,
+  payload: Schema.Boolean,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.resolveCloseConfirm")(function* (confirmed, event) {
+    if (!(yield* isMainWindowSender(event))) return;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.resolveCloseConfirmation(confirmed);
   }),
 });
 

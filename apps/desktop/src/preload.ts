@@ -250,6 +250,26 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
   },
+  closeGuard: {
+    setBusyThreadCount: (count) => {
+      void ipcRenderer.invoke(IpcChannels.SET_BUSY_THREAD_COUNT_CHANNEL, count);
+    },
+    onConfirmRequest: (listener) => {
+      const wrappedListener = () => {
+        // A failed prompt must not leave the window unclosable.
+        void listener()
+          .catch(() => true)
+          .then((confirmed) =>
+            ipcRenderer.invoke(IpcChannels.RESOLVE_CLOSE_CONFIRM_CHANNEL, confirmed),
+          );
+      };
+
+      ipcRenderer.on(IpcChannels.CLOSE_CONFIRM_REQUEST_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(IpcChannels.CLOSE_CONFIRM_REQUEST_CHANNEL, wrappedListener);
+      };
+    },
+  },
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   onWindowFullscreenStateChange: (listener) => {

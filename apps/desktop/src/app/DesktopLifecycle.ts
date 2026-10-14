@@ -223,6 +223,30 @@ export const make = DesktopLifecycle.of({
       );
     });
     yield* electronApp.on("before-quit", (event: Electron.Event) => {
+      // Every user quit path (menu, quit shortcut, dock, last window closed)
+      // asks first while desktop-owned threads are busy. Signal and relaunch
+      // quits are already quitting; updater quits own their sequence.
+      if (
+        !quitAllowed &&
+        !updaterQuitAllowed &&
+        !Effect.runSyncWith(context)(
+          Effect.gen(function* () {
+            const state = yield* DesktopState.DesktopState;
+            return (
+              (yield* Ref.get(state.quitting)) || (yield* desktopWindow.canExitWithoutConfirmation)
+            );
+          }),
+        )
+      ) {
+        event.preventDefault();
+        void runEffect(
+          desktopWindow.confirmExit.pipe(
+            Effect.flatMap((confirmed) => (confirmed ? electronApp.quit : Effect.void)),
+            Effect.withSpan("desktop.lifecycle.confirmQuit"),
+          ),
+        );
+        return;
+      }
       handleBeforeQuit(
         event,
         runEffect,
