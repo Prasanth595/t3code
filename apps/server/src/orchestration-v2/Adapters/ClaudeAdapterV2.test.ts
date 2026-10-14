@@ -34,6 +34,7 @@ import {
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2RuntimeRequest,
   ProjectId,
   ProviderInstanceId,
   type ProviderInstanceEnvironment,
@@ -1083,14 +1084,22 @@ const openClaudePermissionTurn = Effect.fn("openClaudePermissionTurn")(function*
 
 // Sends a Bash command through the permission callback and reports whichever
 // comes first: an approval request raised to the user, or the callback's own
-// answer.
+// answer. A raised request also carries the prompt from its turn item.
 const requestClaudeCommandPermission = Effect.fn("requestClaudeCommandPermission")(function* (
   turn: Effect.Success<ReturnType<typeof openClaudePermissionTurn>>,
   command: string,
+  callbackOptions: { readonly title?: string; readonly decisionReason?: string } = {},
 ) {
-  const requestEvent = yield* turn.runtime.events.pipe(
-    Stream.filter((event) => event.type === "runtime_request.updated"),
-    Stream.runHead,
+  // The runtime's events come off one queue, so a single subscriber collects
+  // both the request and the approval turn item emitted right after it.
+  const requestEvents = yield* turn.runtime.events.pipe(
+    Stream.filter(
+      (event) =>
+        event.type === "runtime_request.updated" ||
+        (event.type === "turn_item.updated" && event.turnItem.type === "approval_request"),
+    ),
+    Stream.take(2),
+    Stream.runCollect,
     Effect.forkScoped,
   );
   const decision = yield* Effect.promise(() =>
@@ -1101,16 +1110,25 @@ const requestClaudeCommandPermission = Effect.fn("requestClaudeCommandPermission
         signal: new AbortController().signal,
         toolUseID: `tool-bash-${command}`,
         requestId: `request-bash-${command}`,
+        ...callbackOptions,
       },
     ),
   ).pipe(Effect.forkScoped);
   const first = yield* Effect.raceFirst(
-    Fiber.join(requestEvent).pipe(
-      Effect.map((event) =>
-        Option.isSome(event) && event.value.type === "runtime_request.updated"
-          ? ({ type: "request", runtimeRequest: event.value.runtimeRequest } as const)
-          : ({ type: "none" } as const),
-      ),
+    Fiber.join(requestEvents).pipe(
+      Effect.map((events) => {
+        let runtimeRequest: OrchestrationV2RuntimeRequest | undefined;
+        let prompt: string | undefined;
+        for (const event of events) {
+          if (event.type === "runtime_request.updated") runtimeRequest = event.runtimeRequest;
+          if (event.type === "turn_item.updated" && event.turnItem.type === "approval_request") {
+            prompt = event.turnItem.prompt;
+          }
+        }
+        return runtimeRequest === undefined
+          ? ({ type: "none" } as const)
+          : ({ type: "request", runtimeRequest, prompt } as const);
+      }),
     ),
     Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
   );
@@ -1163,6 +1181,28 @@ describe("ClaudeAdapterV2 permission callback", () => {
           decision: "accept",
         });
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  // A PreToolUse hook that returns `ask` explains itself in `decisionReason`;
+  // the SDK's title alone would hide why the request was raised.
+  it.effect("shows a hook's escalation reason alongside the request title in Auto", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const turn = yield* openClaudePermissionTurn("auto");
+
+        const { first } = yield* requestClaudeCommandPermission(turn, "git push", {
+          title: "Claude wants to run git push",
+          decisionReason: "\u001b[33mPushing needs confirmation\u001b[0m",
+        });
+        assert.equal(first.type, "request", "the escalated command ran without asking");
+        if (first.type !== "request") return;
+        assert.equal(first.prompt, "Claude wants to run git push\nPushing needs confirmation");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

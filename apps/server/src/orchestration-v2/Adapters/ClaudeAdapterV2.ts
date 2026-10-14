@@ -49,6 +49,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -2322,6 +2323,26 @@ function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInp
   return serialized.length <= 400
     ? `${toolName}: ${serialized}`
     : `${toolName}: ${serialized.slice(0, 397)}...`;
+}
+
+// Builds the approval prompt. The SDK nearly always sets `title`, so the
+// reason the ask escalated (such as a PreToolUse hook's message) is shown
+// on its own line instead of being dropped. It may carry ANSI escapes.
+function claudeApprovalPrompt(
+  options: {
+    readonly title?: string;
+    readonly description?: string;
+    readonly decisionReason?: string;
+  },
+  toolName: string,
+  input: ClaudeNativeToolInput,
+): string {
+  const base = options.title ?? options.description ?? summarizeClaudeToolRequest(toolName, input);
+  const reason =
+    options.decisionReason === undefined
+      ? ""
+      : NodeUtil.stripVTControlCharacters(options.decisionReason).trim();
+  return reason === "" || reason === base ? base : `${base}\n${reason}`;
 }
 
 function outputFromClaudeToolResult(
@@ -8249,11 +8270,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
-          const prompt =
-            callbackOptions.title ??
-            callbackOptions.description ??
-            callbackOptions.decisionReason ??
-            summarizeClaudeToolRequest(toolName, nativeToolInput);
+          const prompt = claudeApprovalPrompt(callbackOptions, toolName, nativeToolInput);
           const artifacts = yield* buildApprovalRequestArtifacts({
             context,
             nativeItemId: nativeRequestId,
