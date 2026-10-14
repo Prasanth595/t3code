@@ -12,9 +12,12 @@ export function resolveLinkedMessageStep(input: {
   /** The thread has caught up with the server, so a message it lacks is older history. */
   readonly synced: boolean;
   readonly historyLoading: boolean;
-  /** Earlier history remains, and the last load through the message changed the feed. */
-  readonly canLoadEarlier: boolean;
-}): "scroll" | "expand" | "wait" | "load" | "missing" {
+  /** Why the last history load failed, when it did. */
+  readonly historyError: string | null;
+  readonly hasMoreHistory: boolean;
+  /** The last load through the message finished without changing the feed. */
+  readonly lastLoadChangedNothing: boolean;
+}): "scroll" | "expand" | "wait" | "load" | "missing" | "failed" {
   // History lands in stages, so a message shown mid-load can still move.
   if (input.historyLoading) return "wait";
   if (input.presented) return "scroll";
@@ -22,5 +25,8 @@ export function resolveLinkedMessageStep(input: {
   // Loaded but hidden by something other than a fold: more history cannot reveal it.
   if (input.inFeed) return "missing";
   if (!input.synced) return "wait";
-  return input.canLoadEarlier ? "load" : "missing";
+  if (input.historyError !== null) return "failed";
+  if (!input.hasMoreHistory) return "missing";
+  // Older history remains, so a load that returned nothing failed rather than ran out.
+  return input.lastLoadChangedNothing ? "failed" : "load";
 }

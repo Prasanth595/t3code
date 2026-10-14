@@ -80,7 +80,8 @@ export function useLinkedMessageTarget({
       progress.revealed = true;
       return;
     }
-    if (historyControls?.error) {
+    // An error from before this link's own load is not about the linked message.
+    if (historyControls?.error && progress.requestedPages.size > 0) {
       fail(historyControls.error);
       return;
     }

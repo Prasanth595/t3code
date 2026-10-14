@@ -8,7 +8,9 @@ const absent = {
   foldedRunId: null,
   synced: true,
   historyLoading: false,
-  canLoadEarlier: true,
+  historyError: null,
+  hasMoreHistory: true,
+  lastLoadChangedNothing: false,
 };
 
 describe("resolveLinkedMessageStep", () => {
@@ -36,6 +38,11 @@ describe("resolveLinkedMessageStep", () => {
 
   it("loads earlier history until it runs out, then reports the message missing", () => {
     expect(resolveLinkedMessageStep(absent)).toBe("load");
-    expect(resolveLinkedMessageStep({ ...absent, canLoadEarlier: false })).toBe("missing");
+    expect(resolveLinkedMessageStep({ ...absent, hasMoreHistory: false })).toBe("missing");
+  });
+
+  it("reports a failed load instead of a missing message", () => {
+    expect(resolveLinkedMessageStep({ ...absent, historyError: "offline" })).toBe("failed");
+    expect(resolveLinkedMessageStep({ ...absent, lastLoadChangedNothing: true })).toBe("failed");
   });
 });

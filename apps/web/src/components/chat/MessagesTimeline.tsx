@@ -3061,6 +3061,7 @@ function MessageTimestamp({
           threadRef ? (
             <button
               type="button"
+              aria-label={`Copy link to message from ${formatChatTimestampTooltip(time, ctx.timestampFormat)}`}
               className="text-muted-foreground text-xs tabular-nums hover:text-foreground hover:underline"
               onClick={() => void copyMessageLink(threadRef, messageId)}
             />

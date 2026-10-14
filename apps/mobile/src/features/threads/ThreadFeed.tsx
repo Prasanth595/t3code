@@ -2347,8 +2347,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       synced: props.threadSynced ?? true,
       historyLoading:
         props.historyControls?.loading === true || linkedMessageLoad?.inFlight === true,
-      canLoadEarlier:
-        props.historyControls?.hasMoreHistory === true && linkedMessageLoad?.feed !== props.feed,
+      // An error from before this link's own load is not about the linked message.
+      historyError: linkedMessageLoad === null ? null : (props.historyControls?.error ?? null),
+      hasMoreHistory: props.historyControls?.hasMoreHistory === true,
+      lastLoadChangedNothing: linkedMessageLoad?.feed === props.feed,
     });
     if (step === "wait") return;
     if (step === "load") {
@@ -2372,6 +2374,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     finishLinkedMessage();
     if (step === "missing") {
       Alert.alert("Message not found", "It may have been deleted from this thread.");
+      return;
+    }
+    if (step === "failed") {
+      Alert.alert(
+        "Could not open the linked message",
+        props.historyControls?.error ?? "Earlier history did not load. Try the link again.",
+      );
       return;
     }
     const listRef = props.listRef;
