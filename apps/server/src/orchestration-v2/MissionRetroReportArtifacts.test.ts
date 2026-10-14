@@ -1349,3 +1349,143 @@ it.effect("source chunk fsync failure preserves immutable bytes and requires dur
     }),
   ),
 );
+
+it.effect("retro-source-read receipts are bounded, hash-bound, private and immutable", () =>
+  scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "retro-source-read-" });
+      const bytes = Buffer.from(
+        stableStringify({ status: "prepared", fragmentHash: HASH_A }),
+        "utf8",
+      );
+      const hash = sha(bytes);
+      const committed = yield* Artifacts.commitArtifactBytes({
+        artifactDirectory: dir,
+        namespace: "retro-source-read",
+        sha: hash,
+        bytes,
+      });
+      assert.isFalse(committed.reused);
+      const duplicate = yield* Artifacts.commitArtifactBytes({
+        artifactDirectory: dir,
+        namespace: "retro-source-read",
+        sha: hash,
+        bytes,
+      });
+      assert.isTrue(duplicate.reused);
+      const stored = yield* Artifacts.readArtifactBytes({
+        artifactDirectory: dir,
+        namespace: "retro-source-read",
+        ref: `retro-source-read:${hash}`,
+        maxBytes: 64 * 1024,
+      });
+      assert.strictEqual(stored.sha, hash);
+      assert.strictEqual(stored.text, bytes.toString("utf8"));
+      const stat = yield* runNode(() =>
+        NodeFSP.stat(NodePath.join(dir, "retro-source-read", `${hash}.json`)),
+      );
+      assert.strictEqual(stat.mode & 0o777, 0o600);
+      // Over-bound and non-canonical refs fail closed.
+      const oversized = Buffer.alloc(Artifacts.MAX_MISSION_RETRO_SOURCE_READ_RECEIPT_BYTES + 1, 97);
+      assert.strictEqual(
+        failCategory(
+          yield* Artifacts.commitArtifactBytes({
+            artifactDirectory: dir,
+            namespace: "retro-source-read",
+            sha: sha(oversized),
+            bytes: oversized,
+          }).pipe(Effect.flip),
+        ),
+        "invalid_command",
+      );
+      assert.strictEqual(Artifacts.parseArtifactRef("../escape", "retro-source-read"), null);
+      assert.strictEqual(
+        Artifacts.parseArtifactRef(`retro-source:${hash}`, "retro-source-read"),
+        null,
+      );
+    }),
+  ),
+);
+
+it.effect("prepared receipt commits reject invalid UTF-8 and incorrect whole-byte hashes", () =>
+  scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "retro-source-read-rejected-" });
+      const utf8Invalid = Buffer.from([0xc3, 0x28]);
+      const bytes = Buffer.from("prepared", "utf8");
+      assert.strictEqual(
+        failCategory(
+          yield* Artifacts.commitArtifactBytes({
+            artifactDirectory: dir,
+            namespace: "retro-source-read",
+            sha: sha(utf8Invalid),
+            bytes: utf8Invalid,
+          }).pipe(Effect.flip),
+        ),
+        "invalid_command",
+      );
+      assert.strictEqual(
+        failCategory(
+          yield* Artifacts.commitArtifactBytes({
+            artifactDirectory: dir,
+            namespace: "retro-source-read",
+            sha: HASH_A,
+            bytes,
+          }).pipe(Effect.flip),
+        ),
+        "invalid_command",
+      );
+      assert.deepStrictEqual(yield* fs.readDirectory(dir), []);
+    }),
+  ),
+);
+
+it.effect(
+  "prepared receipt reads clamp oversized caller limits and reject hash/UTF-8 corruption",
+  () =>
+    scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "retro-source-read-clamp-" });
+        const bytes = Buffer.from("prepared", "utf8");
+        const hash = sha(bytes);
+        yield* Artifacts.commitArtifactBytes({
+          artifactDirectory: dir,
+          namespace: "retro-source-read",
+          sha: hash,
+          bytes,
+        });
+        const directory = NodePath.join(dir, "retro-source-read");
+        const path = NodePath.join(directory, `${hash}.json`);
+        const read = Artifacts.readArtifactBytes({
+          artifactDirectory: dir,
+          namespace: "retro-source-read",
+          ref: `retro-source-read:${hash}`,
+          maxBytes: 1024 * 1024,
+        });
+        const oversized = Buffer.alloc(
+          Artifacts.MAX_MISSION_RETRO_SOURCE_READ_RECEIPT_BYTES + 1,
+          97,
+        );
+        yield* runNode(() => NodeFSP.writeFile(path, oversized, { mode: 0o600 }));
+        assert.strictEqual(failCategory(yield* read.pipe(Effect.flip)), "persistence");
+        yield* runNode(() => NodeFSP.writeFile(path, Buffer.from([0xc3, 0x28]), { mode: 0o600 }));
+        assert.strictEqual(failCategory(yield* read.pipe(Effect.flip)), "persistence");
+        yield* runNode(() =>
+          NodeFSP.writeFile(path, Buffer.from("different", "utf8"), { mode: 0o600 }),
+        );
+        assert.strictEqual(failCategory(yield* read.pipe(Effect.flip)), "persistence");
+        const narrow = Artifacts.readArtifactBytes({
+          artifactDirectory: dir,
+          namespace: "retro-source-read",
+          ref: `retro-source-read:${hash}`,
+          maxBytes: 1,
+        });
+        yield* runNode(() => NodeFSP.writeFile(path, bytes, { mode: 0o600 }));
+        assert.strictEqual(failCategory(yield* narrow.pipe(Effect.flip)), "persistence");
+        assert.strictEqual((yield* read).text, "prepared");
+      }),
+    ),
+);

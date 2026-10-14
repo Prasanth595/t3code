@@ -28,7 +28,7 @@ import {
  *
  * Layout: `<artifactDirectory>/<namespace>/<sha>.json` with namespaces
  * `retro-original`, `retro-normalized`, `retro-coverage`, `retro-source`,
- * and `retro-source-chunk`. Files are
+ * `retro-source-chunk`, and `retro-source-read`. Files are
  * private (`0600`) under a private root (`0700`). Commits are immutable:
  * bytes are written to an exclusive temp file and hard-linked into place,
  * so concurrent retries reuse matching bytes and conflicting bytes fail
@@ -54,7 +54,10 @@ const REF_PATTERNS = {
   "retro-coverage": new RegExp(`^retro-coverage:(${SHA_HEX})$`),
   "retro-source": new RegExp(`^retro-source:(${SHA_HEX})$`),
   "retro-source-chunk": new RegExp(`^retro-source-chunk:(${SHA_HEX})$`),
+  "retro-source-read": new RegExp(`^retro-source-read:(${SHA_HEX})$`),
 } as const;
+/** Byte bound for one private prepared source-read receipt; over-bound input is rejected. */
+export const MAX_MISSION_RETRO_SOURCE_READ_RECEIPT_BYTES = 64 * 1024;
 export type MissionRetroReportArtifactNamespace = keyof typeof REF_PATTERNS;
 
 /** Trusted scope/origin/coverage facts the runtime resolves outside this layer. */
@@ -307,10 +310,12 @@ export const commitArtifactBytes = Effect.fn("MissionRetroReportArtifacts.commit
       !/^[0-9a-f]{64}$/.test(input.sha)
     )
       return yield* storeError("invalid_command", new Error("Artifact directory must be absolute."));
-    if (input.namespace === "retro-source" || input.namespace === "retro-source-chunk") {
-      // A serialized collector chunk can exceed its 64 KiB entry target.
-      // Both source forms fit the collector's complete-export hard ceiling.
-      const maxBytes = 2_097_152;
+    if (input.namespace === "retro-source" || input.namespace === "retro-source-chunk" || input.namespace === "retro-source-read") {
+      // Chunks fit the collector's complete-export ceiling; prepared receipts
+      // use the smaller independent bound and never prove model read/delivery.
+      const maxBytes = input.namespace === "retro-source-read"
+        ? MAX_MISSION_RETRO_SOURCE_READ_RECEIPT_BYTES
+        : 2_097_152;
       if (
         input.bytes.length > maxBytes || sha256Hex(input.bytes) !== input.sha ||
         !strictUtf8(input.bytes.toString("utf8")) ||
@@ -375,7 +380,7 @@ const validateNormalized = (raw: RawBytes): void => {
 
 /**
  * Exact byte read for one canonical ref. For byte-addressed namespaces
- * (`retro-original`, `retro-coverage`, `retro-source`, `retro-source-chunk`) the ref hash must equal the whole-byte
+ * (`retro-original`, `retro-coverage`, `retro-source`, `retro-source-chunk`, `retro-source-read`) the ref hash must equal the whole-byte
  * SHA. For `retro-normalized` the ref hash is the semantic report hash: the
  * decoded report is validated against it and `sha` returns the distinct
  * whole-byte SHA. Missing, oversized, non-UTF-8, or mismatched files fail.
@@ -401,7 +406,10 @@ export const readArtifactBytes = Effect.fn("MissionRetroReportArtifacts.read")(
         ...input,
         maxBytes: Math.min(input.maxBytes,
           (input.namespace === "retro-source" || input.namespace === "retro-source-chunk")
-            ? 2_097_152 : input.maxBytes),
+            ? 2_097_152
+            : input.namespace === "retro-source-read"
+              ? MAX_MISSION_RETRO_SOURCE_READ_RECEIPT_BYTES
+              : input.maxBytes),
       }),
       catch: (cause) => storeError("persistence", cause),
     });
