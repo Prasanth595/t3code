@@ -13,6 +13,7 @@ import {
   type MissionRepositoryBinding,
   type MissionTaskSpec,
 } from "../../../../packages/contracts/src/mission.ts";
+import { isEmptyMissionExecution } from "../../../../packages/contracts/src/missionExecution.ts";
 
 /**
  * Pure CAS command planner for the mission aggregate. No I/O, no clock reads:
@@ -44,6 +45,7 @@ export const MissionPlanErrorCode = Schema.Literals([
   "unknown_acceptance",
   "unknown_task_project",
   "forged_admission_ref",
+  "forged_execution_state",
 ]);
 export type MissionPlanErrorCode = typeof MissionPlanErrorCode.Type;
 
@@ -249,6 +251,27 @@ const planCreate = (
       "A created mission must start at revision 0.",
     );
   }
+  // Execution state is root-owned: a created mission starts empty, and task
+  // attempt pointers are only written by the dedicated reservation event.
+  if (
+    command.mission.execution !== undefined &&
+    !isEmptyMissionExecution(command.mission.execution)
+  ) {
+    return err(
+      command.commandId,
+      "forged_execution_state",
+      "A created mission cannot supply execution admissions, claims, or consumed exceptions.",
+    );
+  }
+  for (const task of command.mission.tasks) {
+    if (task.attempt !== undefined) {
+      return err(
+        command.commandId,
+        "forged_admission_ref",
+        `Task '${task.id}' carries an admission/attempt not owned by root dispatch.`,
+      );
+    }
+  }
   const bindingCheck = checkBindings(command.mission.bindings);
   if (bindingCheck !== null) return err(command.commandId, bindingCheck.code, bindingCheck.message);
   const taskCheck = checkTasks(command.mission);
@@ -394,9 +417,14 @@ const planReplace = (
     }
     return rest;
   });
+  // Canonical operational history survives every generic replacement:
+  // proposed execution is ignored and the current execution carries forward,
+  // even when spec/dependency edits invalidate planning refs. Only the
+  // dedicated admission-reserved event appends here.
   const committed: Mission = {
     ...command.mission,
     managers: current.managers,
+    execution: current.execution,
     tasks: committedTasks,
   };
 

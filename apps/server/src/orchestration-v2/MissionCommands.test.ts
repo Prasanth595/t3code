@@ -101,10 +101,15 @@ const code = (result: ReturnType<typeof planMissionCommand>) => {
 };
 
 describe("planMissionCommand", () => {
+  // Generic create starts root-owned state empty: no execution, no attempts.
+  const createFixture = () => {
+    const mission = missionFixture();
+    return { ...mission, tasks: mission.tasks.map(({ attempt: _a, ...task }) => task) };
+  };
   it("plans a create with a mission.created event", () => {
     const result = ok(
       planMissionCommand(
-        decodeCreate({ type: "mission.create", commandId: "cmd-1", mission: missionFixture() }),
+        decodeCreate({ type: "mission.create", commandId: "cmd-1", mission: createFixture() }),
         null,
         ctx,
       ),
@@ -119,12 +124,36 @@ describe("planMissionCommand", () => {
     assert.equal(
       code(
         planMissionCommand(
-          decodeCreate({ type: "mission.create", commandId: "cmd-1", mission: missionFixture() }),
+          decodeCreate({ type: "mission.create", commandId: "cmd-1", mission: createFixture() }),
           current,
           ctx,
         ),
       ),
       "already_exists",
+    );
+  });
+
+  it("rejects a create supplying task attempt refs", () => {
+    assert.equal(
+      code(
+        planMissionCommand(
+          decodeCreate({ type: "mission.create", commandId: "cmd-1", mission: missionFixture() }),
+          null,
+          ctx,
+        ),
+      ),
+      "forged_admission_ref",
+    );
+  });
+
+  it("rejects a create supplying nonempty execution state", () => {
+    const mission = {
+      ...createFixture(),
+      execution: { admissions: [], writerClaims: [], consumedExceptionIds: ["ex-1"] },
+    };
+    assert.equal(
+      code(planMissionCommand(decodeCreate({ type: "mission.create", commandId: "cmd-1", mission }), null, ctx)),
+      "forged_execution_state",
     );
   });
 
@@ -281,7 +310,7 @@ describe("planMissionCommand", () => {
   });
 
   it("rejects duplicate task ids", () => {
-    const base = missionFixture();
+    const base = createFixture();
     assert.equal(
       code(
         planMissionCommand(
@@ -395,16 +424,58 @@ describe("planMissionCommand", () => {
     assert.equal(code(planMissionCommand(replace(forged), current, ctx)), "forged_admission_ref");
   });
 
+  it("preserves canonical execution when a replacement drops or overwrites it", () => {
+    const execution = { admissions: [], writerClaims: [], consumedExceptionIds: ["ex-1"] };
+    const current = decodeMission({ ...missionFixture(), execution });
+    const dropped = ok(
+      planMissionCommand(replace({ ...missionFixture(), revision: 1 }), current, ctx),
+    );
+    assert.deepEqual(dropped.mission.execution, execution);
+    const overwritten = ok(
+      planMissionCommand(
+        replace({
+          ...missionFixture(),
+          revision: 1,
+          execution: { admissions: [], writerClaims: [], consumedExceptionIds: [] },
+        }),
+        current,
+        ctx,
+      ),
+    );
+    assert.deepEqual(overwritten.mission.execution, execution);
+    if (overwritten.event.type === "mission.revised")
+      assert.deepEqual(overwritten.event.payload.mission.execution, execution);
+  });
+
+  it("preserves execution across spec edits that invalidate planning refs", () => {
+    const execution = { admissions: [], writerClaims: [], consumedExceptionIds: ["ex-1"] };
+    const current = decodeMission({ ...missionFixture(), execution });
+    const base = missionFixture();
+    const result = ok(
+      planMissionCommand(
+        replace({
+          ...base,
+          revision: 1,
+          tasks: [base.tasks[0]!, { ...base.tasks[1]!, dependencyHashes: ["changed-input"] }],
+        }),
+        current,
+        ctx,
+      ),
+    );
+    assert.deepEqual(result.invalidatedAdmissionRefs, ["receipt-b"]);
+    assert.deepEqual(result.mission.execution, execution);
+  });
+
   it("accepts two repository bindings and rejects a task routed to an unbound project", () => {
     const created = ok(
       planMissionCommand(
-        decodeCreate({ type: "mission.create", commandId: "cmd-11", mission: missionFixture() }),
+        decodeCreate({ type: "mission.create", commandId: "cmd-11", mission: createFixture() }),
         null,
         ctx,
       ),
     );
     assert.equal(created.mission.bindings.length, 2);
-    const base = missionFixture();
+    const base = createFixture();
     const wrong = {
       ...base,
       tasks: [{ ...base.tasks[0]!, projectId: "project-404" }, base.tasks[1]!],

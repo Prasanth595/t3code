@@ -598,7 +598,7 @@ export const decideMissionAdmission = (
       ex !== undefined &&
       ((ex.remainingAssignments !== undefined &&
         Number.isInteger(ex.remainingAssignments) &&
-        ex.remainingAssignments >= 1) ||
+        ex.remainingAssignments === 1) ||
         (ex.remainingAssignments === undefined && ex.unused === true));
     const bounded =
       ex !== undefined &&

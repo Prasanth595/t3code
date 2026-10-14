@@ -11,6 +11,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { MissionExecution } from "./missionExecution.ts";
 
 /**
  * Canonical opt-in mission aggregate wire schemas. A mission is a small
@@ -168,6 +169,12 @@ export const Mission = Schema.Struct({
   managers: MissionManagers,
   status: MissionStatus,
   tasks: Schema.Array(MissionTaskSpec),
+  /**
+   * Optional bounded execution state (admissions, writer claims, consumed
+   * exception IDs). Omitted on older snapshots; only the dedicated
+   * admission-reserved event appends here.
+   */
+  execution: Schema.optional(MissionExecution),
   updatedAt: IsoDateTime,
 });
 export type Mission = typeof Mission.Type;
@@ -222,5 +229,21 @@ export const MissionRevisedEvent = Schema.Struct({
 });
 export type MissionRevisedEvent = typeof MissionRevisedEvent.Type;
 
-export const MissionEvent = Schema.Union([MissionCreatedEvent, MissionRevisedEvent]);
+export const MissionAdmissionReservedEvent = Schema.Struct({
+  ...MissionEventBaseFields,
+  type: Schema.Literal("mission.admission-reserved"),
+  payload: Schema.Struct({
+    /** Full updated mission snapshot, execution state included. */
+    mission: Mission,
+    dispatchKey: TrimmedNonEmptyString,
+    requestDigest: TrimmedNonEmptyString,
+  }),
+});
+export type MissionAdmissionReservedEvent = typeof MissionAdmissionReservedEvent.Type;
+
+export const MissionEvent = Schema.Union([
+  MissionCreatedEvent,
+  MissionRevisedEvent,
+  MissionAdmissionReservedEvent,
+]);
 export type MissionEvent = typeof MissionEvent.Type;
