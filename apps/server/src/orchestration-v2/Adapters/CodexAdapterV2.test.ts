@@ -1961,6 +1961,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    onRawRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1988,6 +1989,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
+                      raw: {
+                        ...client.raw,
+                        request: (method, params) =>
+                          onRawRequest(method, params).pipe(
+                            Effect.andThen(client.raw.request(method, params)),
+                          ),
+                      },
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
@@ -5369,163 +5377,253 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
   };
 
-  it.effect.each(["notified", "timed out", "prior goal turn"] as const)(
-    "contains live descendants after a root failure (%s)",
-    (termination) =>
-      Effect.gen(function* () {
-        const childInterruptIndex = interruptSubagentCommandTranscript.entries.findIndex(
-          (entry) => entry.type === "expect_outbound" && entry.label === "turn/interrupt/root",
-        );
-        const failureMessage = "Codex refused the request.";
-        const failingTurnId =
-          termination === "prior goal turn" ? "failed-goal-continuation" : INTERRUPT_NATIVE_TURN;
-        const goal = (status: "active" | "blocked") => ({
-          threadId: INTERRUPT_NATIVE_THREAD,
-          objective: "Finish the audit",
-          status,
-          tokenBudget: null,
-          tokensUsed: 10,
-          timeUsedSeconds: 3,
-          createdAt: 1782622440,
-          updatedAt: 1782622450,
-        });
-        const continuation: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> =
-          termination === "prior goal turn"
-            ? [
-                {
-                  type: "emit_inbound",
-                  frame: {
-                    method: "thread/goal/updated",
-                    params: {
-                      threadId: INTERRUPT_NATIVE_THREAD,
-                      turnId: INTERRUPT_NATIVE_TURN,
-                      goal: goal("active"),
-                    },
+  it.effect.each([
+    "notified",
+    "timed out",
+    "prior goal turn",
+    "interrupt unanswered",
+    "interrupt failed",
+    "sibling interrupt failed",
+  ] as const)("contains live descendants after a root failure (%s)", (termination) =>
+    Effect.gen(function* () {
+      const childInterruptIndex = interruptSubagentCommandTranscript.entries.findIndex(
+        (entry) => entry.type === "expect_outbound" && entry.label === "turn/interrupt/root",
+      );
+      const failureMessage = "Codex refused the request.";
+      const children = [
+        {
+          threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+          turnId: INTERRUPT_CHILD_NATIVE_TURN,
+          processId: "57682",
+          commandItemId: INTERRUPT_CHILD_COMMAND_ITEM,
+        },
+        ...(termination === "sibling interrupt failed"
+          ? [
+              {
+                threadId: "sibling-thread",
+                turnId: "sibling-turn",
+                processId: "57683",
+                commandItemId: "sibling-command",
+              },
+            ]
+          : []),
+      ];
+      const interruptFailed =
+        termination === "interrupt failed" || termination === "sibling interrupt failed";
+      const timeoutBoundary: CodexReplay.CodexAppServerReplayEntry = {
+        type: "emit_inbound",
+        label: "item/started/timeout-boundary",
+        frame: {
+          method: "item/started",
+          params: {
+            threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+            turnId: INTERRUPT_CHILD_NATIVE_TURN,
+            item: {
+              ...interruptCommandItem("inProgress"),
+              id: INTERRUPT_CHILD_TIMEOUT_BOUNDARY_ITEM,
+              processId: null,
+            },
+          },
+        },
+      };
+      const failingTurnId =
+        termination === "prior goal turn" ? "failed-goal-continuation" : INTERRUPT_NATIVE_TURN;
+      const goal = (status: "active" | "blocked") => ({
+        threadId: INTERRUPT_NATIVE_THREAD,
+        objective: "Finish the audit",
+        status,
+        tokenBudget: null,
+        tokensUsed: 10,
+        timeUsedSeconds: 3,
+        createdAt: 1782622440,
+        updatedAt: 1782622450,
+      });
+      const continuation: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> =
+        termination === "prior goal turn"
+          ? [
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "thread/goal/updated",
+                  params: {
+                    threadId: INTERRUPT_NATIVE_THREAD,
+                    turnId: INTERRUPT_NATIVE_TURN,
+                    goal: goal("active"),
                   },
                 },
-                {
-                  type: "emit_inbound",
-                  frame: {
-                    method: "turn/completed",
-                    params: {
-                      threadId: INTERRUPT_NATIVE_THREAD,
-                      turn: makeCodexReplayTurn({ id: INTERRUPT_NATIVE_TURN, status: "completed" }),
-                    },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: INTERRUPT_NATIVE_THREAD,
+                    turn: makeCodexReplayTurn({ id: INTERRUPT_NATIVE_TURN, status: "completed" }),
                   },
                 },
-                {
-                  type: "emit_inbound",
-                  frame: {
-                    method: "turn/started",
-                    params: {
-                      threadId: INTERRUPT_NATIVE_THREAD,
-                      turn: makeCodexReplayTurn({ id: failingTurnId, status: "inProgress" }),
-                    },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: INTERRUPT_NATIVE_THREAD,
+                    turn: makeCodexReplayTurn({ id: failingTurnId, status: "inProgress" }),
                   },
                 },
-                {
-                  type: "emit_inbound",
-                  frame: {
-                    method: "thread/goal/updated",
-                    params: {
-                      threadId: INTERRUPT_NATIVE_THREAD,
-                      turnId: failingTurnId,
-                      goal: goal("blocked"),
-                    },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "thread/goal/updated",
+                  params: {
+                    threadId: INTERRUPT_NATIVE_THREAD,
+                    turnId: failingTurnId,
+                    goal: goal("blocked"),
                   },
                 },
-              ]
-            : [];
-        const transcript = makeCodexReplayTranscript({
-          scenario: `codex-failed-root-descendants-${termination}`,
-          entries: [
-            ...interruptSubagentCommandTranscript.entries.slice(0, childInterruptIndex),
-            ...continuation,
+              },
+            ]
+          : [];
+      const transcript = makeCodexReplayTranscript({
+        scenario: `codex-failed-root-descendants-${termination}`,
+        entries: [
+          ...interruptSubagentCommandTranscript.entries.slice(0, childInterruptIndex),
+          ...children.slice(1).flatMap((child): Array<CodexReplay.CodexAppServerReplayEntry> => [
             {
               type: "emit_inbound",
-              label: "turn/completed/failed-root",
               frame: {
-                method: "turn/completed",
+                method: "item/completed",
                 params: {
                   threadId: INTERRUPT_NATIVE_THREAD,
-                  turn: {
-                    ...makeCodexReplayTurn({ id: failingTurnId, status: "failed" }),
-                    error: {
-                      message: failureMessage,
-                      codexErrorInfo: "cyberPolicy",
-                      additionalDetails: null,
-                    },
+                  turnId: INTERRUPT_NATIVE_TURN,
+                  item: {
+                    type: "subAgentActivity",
+                    id: "sibling-spawn",
+                    kind: "started",
+                    agentThreadId: child.threadId,
+                    agentPath: "/root/sibling",
                   },
                 },
               },
             },
             {
-              type: "expect_outbound",
-              label: "turn/interrupt/child",
+              type: "emit_inbound",
               frame: {
-                id: 4,
-                method: "turn/interrupt",
+                method: "turn/started",
                 params: {
-                  threadId: INTERRUPT_CHILD_NATIVE_THREAD,
-                  turnId: INTERRUPT_CHILD_NATIVE_TURN,
+                  threadId: child.threadId,
+                  turn: makeCodexReplayTurn({ id: child.turnId, status: "inProgress" }),
                 },
               },
             },
             {
               type: "emit_inbound",
-              label: "turn/interrupt/child",
-              frame: { id: 4, result: {} },
-            },
-            {
-              type: "expect_outbound",
-              label: "thread/backgroundTerminals/terminate/child",
               frame: {
-                id: 5,
-                method: "thread/backgroundTerminals/terminate",
-                params: { threadId: INTERRUPT_CHILD_NATIVE_THREAD, processId: "57682" },
+                method: "item/started",
+                params: {
+                  threadId: child.threadId,
+                  turnId: child.turnId,
+                  item: {
+                    ...interruptCommandItem("inProgress"),
+                    id: child.commandItemId,
+                    processId: child.processId,
+                  },
+                },
               },
             },
-            {
-              type: "emit_inbound",
-              label: "thread/backgroundTerminals/terminate/child",
-              frame: { id: 5, result: { terminated: true } },
-            },
-            termination !== "timed out"
-              ? {
-                  type: "emit_inbound",
-                  label: "turn/completed/child",
-                  frame: {
-                    method: "turn/completed",
-                    params: {
-                      threadId: INTERRUPT_CHILD_NATIVE_THREAD,
-                      turn: makeCodexReplayTurn({
-                        id: INTERRUPT_CHILD_NATIVE_TURN,
-                        status: "completed",
-                      }),
-                    },
+          ]),
+          ...continuation,
+          {
+            type: "emit_inbound",
+            label: "turn/completed/failed-root",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: INTERRUPT_NATIVE_THREAD,
+                turn: {
+                  ...makeCodexReplayTurn({ id: failingTurnId, status: "failed" }),
+                  error: {
+                    message: failureMessage,
+                    codexErrorInfo: "cyberPolicy",
+                    additionalDetails: null,
                   },
-                }
+                },
+              },
+            },
+          },
+          ...children.flatMap((child, index): Array<CodexReplay.CodexAppServerReplayEntry> => [
+            {
+              type: "expect_outbound",
+              label: "turn/interrupt/child",
+              frame: {
+                id: 4 + index,
+                method: "turn/interrupt",
+                params: { threadId: child.threadId, turnId: child.turnId },
+              },
+            },
+            termination === "interrupt unanswered"
+              ? timeoutBoundary
               : {
                   type: "emit_inbound",
-                  label: "item/started/timeout-boundary",
-                  frame: {
-                    method: "item/started",
-                    params: {
-                      threadId: INTERRUPT_CHILD_NATIVE_THREAD,
-                      turnId: INTERRUPT_CHILD_NATIVE_TURN,
-                      item: {
-                        ...interruptCommandItem("inProgress"),
-                        id: INTERRUPT_CHILD_TIMEOUT_BOUNDARY_ITEM,
-                        processId: null,
+                  label: "turn/interrupt/child",
+                  frame:
+                    index === 0 && interruptFailed
+                      ? {
+                          id: 4 + index,
+                          error: { code: -32_000, message: "child interrupt failed" },
+                        }
+                      : { id: 4 + index, result: {} },
+                },
+          ]),
+          ...children.flatMap((child, index): Array<CodexReplay.CodexAppServerReplayEntry> => [
+            {
+              type: "expect_outbound",
+              label: "thread/backgroundTerminals/terminate/child",
+              frame: {
+                id: 4 + children.length + index,
+                method: "thread/backgroundTerminals/terminate",
+                params: { threadId: child.threadId, processId: child.processId },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/backgroundTerminals/terminate/child",
+              frame: { id: 4 + children.length + index, result: { terminated: true } },
+            },
+          ]),
+          ...(termination === "timed out"
+            ? [timeoutBoundary]
+            : termination === "interrupt unanswered" || interruptFailed
+              ? []
+              : [
+                  {
+                    type: "emit_inbound",
+                    label: "turn/completed/child",
+                    frame: {
+                      method: "turn/completed",
+                      params: {
+                        threadId: INTERRUPT_CHILD_NATIVE_THREAD,
+                        turn: makeCodexReplayTurn({
+                          id: INTERRUPT_CHILD_NATIVE_TURN,
+                          status: "completed",
+                        }),
                       },
                     },
-                  },
-                },
-          ],
-        });
-        const failurePublished = yield* Deferred.make<void>();
-        const childTimeoutBoundary = yield* Deferred.make<void>();
-        const harness = yield* makeCodexReplayHarness(transcript, (event) => {
+                  } as const,
+                ]),
+        ],
+      });
+      const failurePublished = yield* Deferred.make<void>();
+      const childTimeoutBoundary = yield* Deferred.make<void>();
+      const containmentOrder: Array<unknown> = [];
+      const nativeInterrupts: Array<unknown> = [];
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        (event) => {
+          if (event.type === "turn.terminal") {
+            containmentOrder.push("root terminal");
+          }
           if (event.type !== "turn_item.updated") return Effect.void;
           if (event.turnItem.type === "error" && event.turnItem.failure.code === "cyberPolicy") {
             return Deferred.succeed(failurePublished, undefined);
@@ -5533,47 +5631,66 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           return event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_TIMEOUT_BOUNDARY_ITEM
             ? Deferred.succeed(childTimeoutBoundary, undefined)
             : Effect.void;
-        });
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`attempt-failed-root-${termination}`),
-            text: INTERRUPT_PROMPT,
+        },
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "turn/interrupt") nativeInterrupts.push(params);
           }),
-        );
-        yield* Deferred.await(failurePublished);
-        if (termination === "timed out") {
-          yield* Deferred.await(childTimeoutBoundary);
-          assert.lengthOf(harness.terminalEvents(), 0);
-          yield* TestClock.adjust("10 seconds");
-        }
-        yield* harness.firstTerminal;
+        undefined,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method !== "thread/backgroundTerminals/terminate") return;
+            containmentOrder.push(params);
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-failed-root-${termination}`),
+          text: INTERRUPT_PROMPT,
+        }),
+      );
+      yield* Deferred.await(failurePublished);
+      if (termination === "timed out" || termination === "interrupt unanswered") {
+        yield* Deferred.await(childTimeoutBoundary);
+        assert.lengthOf(harness.terminalEvents(), 0);
+        yield* TestClock.adjust("10 seconds");
+      }
+      yield* harness.firstTerminal;
 
-        const terminals = harness.terminalEvents();
-        assert.lengthOf(terminals, 1);
-        const terminal = terminals[0];
-        assert.equal(terminal?.status, "failed");
-        assert.equal(terminal?.failure?.message, failureMessage);
-        assert.equal(terminal?.failure?.code, "cyberPolicy");
-        assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
-        assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
-        const childCommand = harness.events.findLast(
-          (event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM,
-        );
-        assert.equal(
-          childCommand?.type === "turn_item.updated" ? childCommand.turnItem.status : undefined,
-          "interrupted",
-        );
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
+      assert.deepEqual(
+        nativeInterrupts,
+        children.map(({ threadId, turnId }) => ({ threadId, turnId })),
+      );
+      assert.deepEqual(containmentOrder, [
+        ...children.map(({ threadId, processId }) => ({ threadId, processId })),
+        "root terminal",
+      ]);
+      const terminals = harness.terminalEvents();
+      assert.lengthOf(terminals, 1);
+      const terminal = terminals[0];
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.message, failureMessage);
+      assert.equal(terminal?.failure?.code, "cyberPolicy");
+      assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
+      assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
+      const childCommand = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM,
+      );
+      assert.equal(
+        childCommand?.type === "turn_item.updated" ? childCommand.turnItem.status : undefined,
+        "interrupted",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
+    ),
   );
 
   it.effect("contains descendant commands and keeps Stop authoritative", () =>
@@ -5675,6 +5792,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           error: { code: -32_000, message: "child interrupt request failed" },
         },
       },
+      ...interruptSubagentCommandTranscript.entries.slice(
+        childInterruptResponseIndex + 1,
+        childInterruptResponseIndex + 3,
+      ),
       { type: "runtime_exit", status: "success" },
     ],
   });

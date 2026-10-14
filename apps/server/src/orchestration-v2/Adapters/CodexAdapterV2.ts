@@ -79,6 +79,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -6196,6 +6197,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* client
                 .request("thread/goal/set", { threadId: goalThreadId, status: "paused" })
                 .pipe(
+                  Effect.timeout("10 seconds"),
                   Effect.tap(({ goal }) =>
                     Effect.sync(() =>
                       goalsByNativeThread.set(goalThreadId, providerGoalFromCodex(goal)),
@@ -7003,28 +7005,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
 
               yield* Effect.gen(function* () {
-                for (const target of interruptTargets) {
-                  const context = target.context;
-                  // A null start timestamp acknowledges a queued turn; Codex cannot interrupt it
-                  // until turn/started confirms that the native task exists.
-                  if (context.nativeStartReady !== undefined) {
-                    const ready = yield* Deferred.await(context.nativeStartReady).pipe(
-                      Effect.timeoutOption("10 seconds"),
-                    );
-                    if (Option.isNone(ready)) {
-                      return yield* toProtocolError(
-                        "Codex did not start the queued turn within 10 seconds; Stop could not be delivered.",
-                      );
-                    }
-                  }
-                  if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
-                    continue;
-                  }
-                  yield* client.request("turn/interrupt", {
-                    threadId: yield* getNativeThreadId(context.providerThread),
-                    turnId: context.nativeTurnId,
-                  });
-                }
                 const containedTerminalKeys = new Set<string>();
                 const attemptedTerminalKeys = new Set<string>();
                 const collectTrackedTerminals = (targets: typeof interruptTargets) =>
@@ -7075,6 +7055,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         ),
                     );
                   });
+
+                yield* Effect.gen(function* () {
+                  const results = yield* Effect.forEach(interruptTargets, (target) =>
+                    Effect.gen(function* () {
+                      const context = target.context;
+                      // A null start timestamp acknowledges a queued turn; Codex cannot interrupt it
+                      // until turn/started confirms that the native task exists.
+                      if (context.nativeStartReady !== undefined) {
+                        const ready = yield* Deferred.await(context.nativeStartReady).pipe(
+                          Effect.timeoutOption("10 seconds"),
+                        );
+                        if (Option.isNone(ready)) {
+                          return yield* toProtocolError(
+                            "Codex did not start the queued turn within 10 seconds; Stop could not be delivered.",
+                          );
+                        }
+                      }
+                      if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
+                        return;
+                      }
+                      yield* client
+                        .request("turn/interrupt", {
+                          threadId: yield* getNativeThreadId(context.providerThread),
+                          turnId: context.nativeTurnId,
+                        })
+                        .pipe(Effect.timeout("10 seconds"));
+                    }).pipe(Effect.exit),
+                  );
+                  const failure = results.find(Exit.isFailure);
+                  if (failure !== undefined) return yield* Effect.failCause(failure.cause);
+                }).pipe(
+                  Effect.onError(() =>
+                    terminateTrackedTerminals(interruptTargets).pipe(Effect.ignore),
+                  ),
+                );
 
                 const [, completed] = yield* Effect.all(
                   [
