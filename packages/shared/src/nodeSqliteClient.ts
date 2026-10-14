@@ -367,8 +367,10 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
             },
           });
           if (pending.size === 1) worker.ref();
+          // The worker's statement cache would pin large parameters the same way.
+          const cached = input.cached && !hasLargeBinding(input.params);
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-          worker.postMessage({ id, safeIntegers, ...input });
+          worker.postMessage({ id, safeIntegers, ...input, cached });
         });
       });
 

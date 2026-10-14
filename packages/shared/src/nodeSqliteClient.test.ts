@@ -396,6 +396,38 @@ it.effect("keeps read-only work inside a write transaction on the writer", () =>
   ),
 );
 
+it.effect("keeps large parameters off the reader worker's cached statements", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const read = (value: string) =>
+        sql<{ size: number }>`SELECT length(${value}) AS size`.pipe(
+          Effect.map((rows) => rows[0]?.size),
+        );
+      // Start the worker so its requests can be recorded.
+      yield* countEntries(sql).pipe(SqliteClient.readOnly);
+      const worker = startedWorkers.at(-1)!;
+      const cached: Array<boolean> = [];
+      const postMessage = worker.postMessage;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(worker, "postMessage").mockImplementation(function (
+            this: NodeWorkerThreads.Worker,
+            message: { readonly cached: boolean },
+          ) {
+            cached.push(message.cached);
+            return postMessage.call(this, message);
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+
+      assert.equal(yield* read("small").pipe(SqliteClient.readOnly), 5);
+      assert.equal(yield* read(largeText).pipe(SqliteClient.readOnly), largeText.length);
+      assert.deepEqual(cached, [true, false]);
+    }).pipe(Effect.scoped),
+  ),
+);
+
 it.effect("fails a read-only transaction whose reader stops, then starts a new reader", () =>
   withReaderClient((sql) =>
     Effect.gen(function* () {
