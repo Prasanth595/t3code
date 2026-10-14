@@ -83,9 +83,15 @@ import { notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import * as MissionRetroDispatchBinding from "./MissionRetroDispatchBinding.ts";
+import * as MissionRetroAnalysisStore from "./MissionRetroAnalysisStore.ts";
 import type { PreparedMissionAdmission } from "./MissionAdmissionStore.ts";
 import type { MissionAdmissionRequest } from "./MissionAdmission.ts";
-import { encodeMissionCommand, encodeMissionRuntime, missionCommandHashes } from "./MissionCommandBinding.ts";
+import {
+  encodeMissionCommand,
+  encodeMissionRuntime,
+  missionCommandHashes,
+} from "./MissionCommandBinding.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -126,6 +132,8 @@ import { planThreadDeletion } from "./ThreadDeletion.ts";
 
 /** Internal opt-in only; application composition does not register mission authority yet. */
 export interface OrchestratorDispatchOptions {
+  readonly retroAnalysisRequest?: MissionRetroAnalysisStore.MissionRetroAnalysisClaimCommand;
+  readonly preparedRetroDispatch?: MissionRetroDispatchBinding.PreparedMissionRetroDispatch;
   readonly missionAdmission?: PreparedMissionAdmission;
   /** Only ThreadManagement may bind a proposal; direct Orchestrator calls fail closed. */
   readonly missionAdmissionRequest?: MissionAdmissionRequest;
@@ -135,7 +143,6 @@ export interface OrchestratorDispatchOptions {
     readonly runtime: string;
   };
 }
-
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -802,6 +809,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const runtimePolicy = yield* RuntimePolicyV2;
+  const retroBinding = yield* Effect.serviceOption(
+    MissionRetroDispatchBinding.MissionRetroDispatchBinding,
+  );
+  const retroStore = yield* Effect.serviceOption(
+    MissionRetroAnalysisStore.MissionRetroAnalysisStore,
+  );
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
@@ -10366,11 +10379,137 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  const dispatchRetroAnalysis = Effect.fn("orchestrationV2.dispatch.retroAnalysis")(function* (
+    command: OrchestrationV2ServerCommand,
+    prepared: MissionRetroDispatchBinding.PreparedMissionRetroDispatch,
+  ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorDispatchError> {
+    yield* mapDispatchError(command)(
+      MissionRetroDispatchBinding.authenticateRetroDispatch(prepared),
+    );
+    if (
+      command.type !== "delegated_task.request" ||
+      Option.isNone(retroBinding) ||
+      Option.isNone(retroStore)
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Retro dispatch authority is not configured.",
+      });
+    const recheck = Effect.gen(function* () {
+      const thread = yield* mapDispatchError(command)(
+        projectionStore.getThread(command.parentThreadId),
+      );
+      yield* mapDispatchError(command)(retroBinding.value.recheck(prepared, command, thread));
+    });
+    yield* recheck;
+    const recovering = yield* mapDispatchError(command)(
+      retroStore.value.checkDispatchReplay(prepared),
+    );
+    const pairCommandId = MissionRetroAnalysisStore.retroBoundCommandId({
+      teamId: prepared.teamId,
+      environmentId: prepared.environmentId,
+      missionId: prepared.claim.missionId,
+      checkpointId: prepared.claim.checkpointId,
+      retroEpoch: prepared.claim.retroEpoch,
+      claimCommandId: prepared.claim.commandId,
+      threadId: command.parentThreadId,
+      reporterChildThreadId: prepared.reporterChildThreadId,
+      reporterRunId: prepared.reporterRunId,
+      commandType: command.type,
+    });
+    const receipt = yield* mapDispatchError(command)(commandReceipts.getByCommandId(pairCommandId));
+    if (recovering !== Option.isSome(receipt))
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Retro claim and dispatch receipt must recover together.",
+      });
+    let intent: MissionRetroAnalysisStore.RetroAnalysisDispatchIntent;
+    if (Option.isSome(receipt)) {
+      // No replan: persisted immutable events and retained outbox requests are
+      // the only available original batch. Missing/pruned rows fail its digest.
+      const stored = yield* mapDispatchError(command)(
+        eventSink.readByCommandId({ commandId: pairCommandId }).pipe(Stream.runCollect),
+      );
+      const rows = yield* mapDispatchError(command)(effectOutbox.listByCommandId(pairCommandId));
+      intent = {
+        commandId: pairCommandId,
+        threadId: command.parentThreadId,
+        commandType: command.type,
+        acceptedAt: receipt.value.acceptedAt,
+        events: Array.from(stored, (entry) => entry.event),
+        effects: rows.map((row) => ({
+          id: row.id,
+          commandId: row.commandId,
+          threadId: row.threadId,
+          request: row.request,
+          availableAt: receipt.value.acceptedAt,
+        })),
+      };
+    } else {
+      const plan = yield* mapDispatchError(command)(dispatchOnce(prepared.command));
+      if (plan.cancelUnsettledEffects !== undefined)
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Unsupported Retro cancellation plan.",
+        });
+      const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
+      // The fresh child has run ordinal 1. Match the existing sink's durable
+      // position allocation without reserving positions outside its transaction.
+      let childOrdinal = 1_000_000;
+      const events = plan.events.map((event): OrchestrationV2DomainEvent => {
+        return event.type === "turn-item.updated" &&
+          event.threadId === prepared.reporterChildThreadId
+          ? { ...event, payload: { ...event.payload, ordinal: ++childOrdinal } }
+          : event;
+      });
+      intent = {
+        commandId: pairCommandId,
+        threadId: command.parentThreadId,
+        commandType: command.type,
+        acceptedAt,
+        events,
+        effects: plan.effects
+          .map((effect) => ({ ...effect, commandId: pairCommandId, availableAt: acceptedAt }))
+          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+      };
+    }
+    const claim = yield* mapDispatchError(command)(
+      retroStore.value.prepareClaim(prepared.claim, intent, prepared),
+    );
+    // Live route/profile can change while facts are collected, even while the
+    // thread lock is held. Re-resolve immediately before the owning SQL commit.
+    yield* recheck;
+    const committed = yield* mapDispatchError(command)(
+      eventSink.commitCommand({ ...intent, preparedRetroAnalysisClaim: claim }),
+    );
+    return { sequence: committed.receipt.resultSequence, storedEvents: committed.storedEvents };
+  });
+
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
     options?: OrchestratorDispatchOptions,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
-    if (options?.missionAdmissionRequest !== undefined || (options?.missionContext !== undefined && options?.missionAdmission === undefined)) {
+    if (
+      options?.retroAnalysisRequest !== undefined ||
+      (options?.preparedRetroDispatch !== undefined &&
+        (options.missionAdmission !== undefined ||
+          options.missionAdmissionRequest !== undefined ||
+          options.missionContext !== undefined))
+    )
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Retro requires a sole sealed ThreadManagement preparation.",
+      });
+    if (options?.preparedRetroDispatch !== undefined)
+      return yield* dispatchRetroAnalysis(command, options.preparedRetroDispatch);
+    if (
+      options?.missionAdmissionRequest !== undefined ||
+      (options?.missionContext !== undefined && options?.missionAdmission === undefined)
+    ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -10379,7 +10518,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const missionAdmission = options?.missionAdmission;
     if (missionAdmission !== undefined) {
-      if (options?.missionContext === undefined) return yield* new OrchestratorDispatchError({ commandId: command.commandId, commandType: command.type, cause: "Prepared mission dispatch requires its bound runtime context." });
+      if (options?.missionContext === undefined)
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Prepared mission dispatch requires its bound runtime context.",
+        });
       if (command.type !== "delegated_task.request" && command.type !== "message.dispatch") {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -10424,10 +10568,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           runtimePolicy.resolve({ thread: effectiveThread, modelSelection: selection }),
         );
         const encoded = yield* mapDispatchError(command)(encodeMissionRuntime(runtime));
-        const encodedCommand = yield* mapDispatchError(command)(encodeMissionCommand(command, { onExcessProperty: "error" }));
+        const encodedCommand = yield* mapDispatchError(command)(
+          encodeMissionCommand(command, { onExcessProperty: "error" }),
+        );
         const hashes = missionCommandHashes(encodedCommand, thread.projectId, encoded);
-        if (hashes === undefined || hashes.promptHash !== missionAdmission.commandHashes.promptHash || hashes.optionsHash !== missionAdmission.commandHashes.optionsHash) {
-          return yield* new OrchestratorDispatchError({ commandId: command.commandId, commandType: command.type, cause: "Prepared admission does not bind these actual command bytes." });
+        if (
+          hashes === undefined ||
+          hashes.promptHash !== missionAdmission.commandHashes.promptHash ||
+          hashes.optionsHash !== missionAdmission.commandHashes.optionsHash
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Prepared admission does not bind these actual command bytes.",
+          });
         }
         if (
           thread.projectId !== options.missionContext.projectId ||

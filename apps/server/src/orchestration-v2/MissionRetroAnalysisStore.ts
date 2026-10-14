@@ -39,6 +39,11 @@ import * as EventStore from "../persistence/OrchestrationEventStore.ts";
 import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import { MissionAuthority } from "./MissionService.ts";
 
+import {
+  authenticateRetroDispatch,
+  type PreparedMissionRetroDispatch,
+} from "./MissionRetroDispatchBinding.ts";
+
 export class MissionRetroAnalysisStoreError extends Schema.TaggedError<MissionRetroAnalysisStoreError>()(
   "MissionRetroAnalysisStoreError",
   {
@@ -292,9 +297,14 @@ export const bindPreparedRetroAnalysisDispatch = Effect.fn(
 export class MissionRetroAnalysisStore extends Context.Service<
   MissionRetroAnalysisStore,
   {
+    /** Current role first; existing claim identity forbids replanning an absent pair. */
+    readonly checkDispatchReplay: (
+      binding: PreparedMissionRetroDispatch,
+    ) => Effect.Effect<boolean, MissionRetroAnalysisStoreError>;
     readonly prepareClaim: (
       command: MissionRetroAnalysisClaimCommand,
       dispatchIntent: RetroAnalysisDispatchIntent,
+      sourceBinding?: PreparedMissionRetroDispatch,
     ) => Effect.Effect<PreparedRetroAnalysisClaim, MissionRetroAnalysisStoreError>;
     readonly claim: (
       command: MissionRetroAnalysisClaimCommand,
@@ -844,7 +854,19 @@ const make = Effect.gen(function* () {
   const prepareClaim = Effect.fn("MissionRetroAnalysisStore.prepareClaim")(function* (
     input: MissionRetroAnalysisClaimCommand,
     dispatchIntent: RetroAnalysisDispatchIntent,
+    sourceBinding?: PreparedMissionRetroDispatch,
   ): Effect.fn.Return<PreparedRetroAnalysisClaim, MissionRetroAnalysisStoreError> {
+    if (sourceBinding !== undefined)
+      yield* authenticateRetroDispatch(sourceBinding).pipe(
+        Effect.mapError(
+          (cause) =>
+            new MissionRetroAnalysisStoreError({
+              operation: "claim",
+              category: "invalid_command",
+              cause,
+            }),
+        ),
+      );
     if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
       return yield* new MissionRetroAnalysisStoreError({
         operation: "claim",
@@ -886,6 +908,25 @@ const make = Effect.gen(function* () {
       });
     const intent = bound.intent;
     const identity = trusted.prepared;
+    if (
+      sourceBinding !== undefined &&
+      (stableStringify(command) !== stableStringify(sourceBinding.claim) ||
+        authority.teamId !== sourceBinding.teamId ||
+        authority.environmentId !== sourceBinding.environmentId ||
+        authority.controllerThreadId !== sourceBinding.controllerThreadId ||
+        intent.commandType !== "delegated_task.request" ||
+        identity.reporterChildThreadId !== sourceBinding.reporterChildThreadId ||
+        identity.reporterRunId !== sourceBinding.reporterRunId ||
+        trusted.capacity.providerInstanceId !== sourceBinding.route.providerInstanceId ||
+        trusted.capacity.modelId !== sourceBinding.route.modelId ||
+        trusted.capacity.profile !== sourceBinding.route.profile ||
+        trusted.capacity.accountId !== sourceBinding.route.accountId ||
+        trusted.capacity.company !== sourceBinding.route.company)
+    )
+      return yield* new MissionRetroAnalysisStoreError({
+        operation: "claim",
+        category: "invalid_command",
+      });
     const pairCommandId = retroBoundCommandId({
       teamId: authority.teamId,
       environmentId: authority.environmentId,
@@ -927,6 +968,26 @@ const make = Effect.gen(function* () {
           operation: "claim",
           category: "invalid_command",
         });
+      if (sourceBinding !== undefined) {
+        const actual = sourceBinding.command;
+        if (
+          (event.type === "thread.created" &&
+            (event.payload.projectId !== sourceBinding.projectId ||
+              event.payload.runtimeMode !== "full-access" ||
+              event.payload.interactionMode !== "default" ||
+              stableStringify(event.payload.modelSelection) !==
+                stableStringify(actual.modelSelection))) ||
+          (event.type === "message.updated" && event.payload.text !== actual.task) ||
+          (event.type === "subagent.updated" && event.payload.prompt !== actual.task) ||
+          (event.type === "run.created" &&
+            stableStringify(event.payload.modelSelection) !==
+              stableStringify(actual.modelSelection))
+        )
+          return yield* new MissionRetroAnalysisStoreError({
+            operation: "claim",
+            category: "invalid_command",
+          });
+      }
       const payload = event.payload;
       // A parent frame/subagent can describe the reporter without belonging to
       // the reporter's own thread. Its parent run/provider are not the reporter's.
@@ -995,6 +1056,18 @@ const make = Effect.gen(function* () {
       command,
       pairCommandId,
       dispatchDigest: bound.digest,
+      ...(sourceBinding === undefined
+        ? {}
+        : {
+            sourceCommand: {
+              digest: sourceBinding.sourceCommandDigest,
+              projectId: sourceBinding.projectId,
+              promptHash: sourceBinding.promptHash,
+              optionsHash: sourceBinding.optionsHash,
+              runtime: sourceBinding.runtimeBytes,
+              route: sourceBinding.routeBytes,
+            },
+          }),
     });
     const prepared: PreparedRetroAnalysisClaim = Object.freeze({
       [preparedClaim]: true as const,
@@ -1008,7 +1081,83 @@ const make = Effect.gen(function* () {
     preparedClaims.add(prepared);
     return prepared;
   });
+  const checkDispatchReplay = Effect.fn("MissionRetroAnalysisStore.checkDispatchReplay")(function* (
+    binding: PreparedMissionRetroDispatch,
+  ) {
+    yield* authenticateRetroDispatch(binding).pipe(
+      Effect.mapError(
+        (cause) =>
+          new MissionRetroAnalysisStoreError({
+            operation: "claim",
+            category: "invalid_command",
+            cause,
+          }),
+      ),
+    );
+    if (
+      binding.teamId !== authority.teamId ||
+      binding.environmentId !== authority.environmentId ||
+      binding.controllerThreadId !== authority.controllerThreadId
+    )
+      return yield* new MissionRetroAnalysisStoreError({
+        operation: "claim",
+        category: "scope_denied",
+      });
+    const canonical = yield* load("claim", binding.claim).pipe(Effect.mapError(mapError("claim")));
+    if (!canonical.bindings.some((project) => project.projectId === binding.projectId))
+      return yield* new MissionRetroAnalysisStoreError({
+        operation: "claim",
+        category: "scope_denied",
+      });
+    const pairCommandId = retroBoundCommandId({
+      teamId: authority.teamId,
+      environmentId: authority.environmentId,
+      missionId: binding.claim.missionId,
+      checkpointId: binding.claim.checkpointId,
+      retroEpoch: binding.claim.retroEpoch,
+      claimCommandId: binding.claim.commandId,
+      threadId: binding.controllerThreadId,
+      reporterChildThreadId: binding.reporterChildThreadId,
+      reporterRunId: binding.reporterRunId,
+      commandType: binding.command.type,
+    });
+    const source = yield* receipts
+      .getByCommandId({ commandId: binding.command.commandId })
+      .pipe(Effect.mapError(mapError("claim")));
+    const claim = yield* receipts
+      .getByCommandId({ commandId: binding.claim.commandId })
+      .pipe(Effect.mapError(mapError("claim")));
+    const pair = yield* receipts
+      .getByCommandId({ commandId: pairCommandId })
+      .pipe(Effect.mapError(mapError("claim")));
+    if (
+      (!Option.isSome(claim) &&
+        !Option.isSome(pair) &&
+        canonical.execution?.retroAnalyses?.some(
+          (analysis) =>
+            analysis.checkpointId === binding.claim.checkpointId && analysis.lease !== null,
+        )) ||
+      Option.isSome(source) ||
+      Option.isSome(claim) !== Option.isSome(pair) ||
+      (Option.isSome(claim) &&
+        (claim.value.aggregateKind !== "mission" ||
+          claim.value.aggregateId !== binding.claim.missionId ||
+          claim.value.commandType !== "mission.retro-analysis-claim" ||
+          claim.value.status !== "accepted")) ||
+      (Option.isSome(pair) &&
+        (pair.value.aggregateKind !== "thread" ||
+          pair.value.aggregateId !== binding.controllerThreadId ||
+          pair.value.commandType !== binding.command.type ||
+          pair.value.status !== "accepted"))
+    )
+      return yield* new MissionRetroAnalysisStoreError({
+        operation: "claim",
+        category: "request_conflict",
+      });
+    return Option.isSome(pair);
+  });
   return MissionRetroAnalysisStore.of({
+    checkDispatchReplay,
     prepareClaim,
     claim: (command) => execute("claim", command).pipe(Effect.mapError(mapError("claim"))),
     settle: (command) => execute("settle", command).pipe(Effect.mapError(mapError("settle"))),

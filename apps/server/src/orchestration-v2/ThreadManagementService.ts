@@ -36,11 +36,16 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "./Orchestrator.ts";
+import * as MissionRetroDispatchBinding from "./MissionRetroDispatchBinding.ts";
 import * as MissionAdmissionStore from "./MissionAdmissionStore.ts";
 import { dispatchKeyFor, type MissionAdmissionRequest } from "./MissionAdmission.ts";
 import { missionBoundCommandId } from "./EventSink.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
-import { encodeMissionCommand, encodeMissionRuntime, missionCommandHashes } from "./MissionCommandBinding.ts";
+import {
+  encodeMissionCommand,
+  encodeMissionRuntime,
+  missionCommandHashes,
+} from "./MissionCommandBinding.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 
@@ -413,6 +418,9 @@ function latestSteerableRun(
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+  const retroBinding = yield* Effect.serviceOption(
+    MissionRetroDispatchBinding.MissionRetroDispatchBinding,
+  );
   const missionStore = yield* Effect.serviceOption(MissionAdmissionStore.MissionAdmissionStore);
   const runtimePolicy = yield* Effect.serviceOption(RuntimePolicy.RuntimePolicyV2);
 
@@ -484,12 +492,35 @@ const make = Effect.gen(function* () {
   const dispatch: ThreadManagementServiceShape["dispatch"] = Effect.fn(
     "orchestrationV2.threadManagement.dispatch",
   )(function* (command, options) {
-    if (options?.missionAdmission !== undefined || options?.missionContext !== undefined) {
+    if (
+      options?.preparedRetroDispatch !== undefined ||
+      options?.missionAdmission !== undefined ||
+      options?.missionContext !== undefined
+    ) {
       return yield* new Orchestrator.OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
         cause: "ThreadManagement requires an unprepared mission proposal.",
       });
+    }
+    if (options?.retroAnalysisRequest !== undefined) {
+      const rejected = (cause: unknown) =>
+        new Orchestrator.OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      if (
+        options.missionAdmissionRequest !== undefined ||
+        Option.isNone(retroBinding) ||
+        command.type !== "delegated_task.request"
+      )
+        return yield* rejected("Retro requires its sole configured delegated-request binding.");
+      const { thread } = yield* orchestrator.getThreadRecords(command.parentThreadId, []);
+      const prepared = yield* retroBinding.value
+        .prepare(command, options.retroAnalysisRequest, thread)
+        .pipe(Effect.mapError(rejected));
+      return yield* orchestrator.dispatch(prepared.command, { preparedRetroDispatch: prepared });
     }
     if (options?.missionAdmissionRequest === undefined) {
       yield* ensureCommandTranscripts(command);
@@ -550,7 +581,11 @@ const make = Effect.gen(function* () {
       .resolve({ thread: effectiveThread, modelSelection })
       .pipe(Effect.mapError(rejected));
     const selectors = modelSelection.options?.filter((option) => option.id === "profile") ?? [];
-    if (selectors.length > 1 || (selectors.length === 1 && (typeof selectors[0]!.value !== "string" || selectors[0]!.value.trim().length === 0))) {
+    if (
+      selectors.length > 1 ||
+      (selectors.length === 1 &&
+        (typeof selectors[0]!.value !== "string" || selectors[0]!.value.trim().length === 0))
+    ) {
       return yield* rejected("Selected worker profile is ambiguous or invalid.");
     }
     // A selector is an actual command option; the facts port verifies its route

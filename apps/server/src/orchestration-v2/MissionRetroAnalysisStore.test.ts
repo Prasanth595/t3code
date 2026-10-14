@@ -1063,3 +1063,33 @@ it.effect(
     }).pipe(Effect.provide(memory(h)));
   },
 );
+
+it.effect("rejects a structurally forged source binding before facts or lease preparation", () =>
+  Effect.gen(function* () {
+    const h = harness();
+    yield* Effect.gen(function* () {
+      const checkpointId = yield* seed();
+      const store = yield* Store.MissionRetroAnalysisStore;
+      const before = yield* logged();
+      const forged = {} as NonNullable<Parameters<typeof store.prepareClaim>[2]>;
+      const result = yield* store
+        .prepareClaim(
+          claim("mission", checkpointId),
+          {
+            commandId: CommandId.make("forged-pair"),
+            threadId: retro.controllerThreadId,
+            commandType: "delegated_task.request",
+            acceptedAt: yield* DateTime.now,
+            events: [],
+            effects: [],
+          },
+          forged,
+        )
+        .pipe(Effect.result);
+      assert.equal(category(result), "invalid_command");
+      assert.equal(h.calls.claim, 0);
+      assert.deepEqual(yield* logged(), before);
+      assert.lengthOf((yield* current()).execution!.retroAnalyses ?? [], 0);
+    }).pipe(Effect.provide(memory(h)));
+  }),
+);
