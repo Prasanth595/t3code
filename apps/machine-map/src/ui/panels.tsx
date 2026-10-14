@@ -31,6 +31,7 @@ import { usePortalContext, type CommandOptions } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import {
+  arrowEndRoute,
   arrowEndWait,
   arrowEnds,
   connectMachines,
@@ -60,6 +61,7 @@ import {
 } from "./format.ts";
 import { CloseIcon, KindIcon, UndoIcon } from "./icons.tsx";
 import { MachineStickers } from "./MachineStickers.tsx";
+import { MachineLink, RouteLink } from "./StickerLink.tsx";
 import { ResourcesSection } from "./resources.tsx";
 import { formatRoute, NO_SELECTION, type Selection } from "./route.ts";
 import { settingControl, settingProblem } from "./settingControls.ts";
@@ -184,7 +186,21 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
     return end === "queued" && !snapshot.presence[machine.id]?.online ? `${wait} (offline)` : wait;
   };
   const applied = ends.from === "applied" && ends.to === "applied";
-  const appliedText = [endText(ends.to, target), endText(ends.from, source)].join(", ");
+  /** MM-602: each end opens its machine, or the Queue of its machine while the arrow waits. */
+  const endLink = (end: ArrowEnd, machine: MachineRecord, first: boolean) => {
+    const text = endText(end, machine);
+    return (
+      <RouteLink
+        route={
+          end === "applied"
+            ? { view: portal.route.view, selection: { _tag: "machine", id: machine.id } }
+            : arrowEndRoute(end, machine.id)
+        }
+      >
+        {first ? text.charAt(0).toUpperCase() + text.slice(1) : text}
+      </RouteLink>
+    );
+  };
   const lastTest = snapshot.commands.find(
     (c) => c.machineId === source.id && c.input._tag === "testArrow" && c.input.to === target.id,
   );
@@ -193,7 +209,8 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
   return (
     <>
       <h2>
-        {f} <span className="verb">uses</span> {t}
+        <MachineLink id={source.id}>{f}</MachineLink> <span className="verb">uses</span>{" "}
+        <MachineLink id={target.id}>{t}</MachineLink>
       </h2>
       <p className="desc">
         What {f} can do on {t}.
@@ -318,7 +335,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
         ) : (
           <span className="sticker wait flat">pending</span>
         )}{" "}
-        {appliedText.charAt(0).toUpperCase() + appliedText.slice(1)}.
+        {endLink(ends.to, target, true)}, {endLink(ends.from, source, false)}.
       </p>
       <div className="actions spaced">
         <button
@@ -511,8 +528,25 @@ function MachinePanel({ id }: { id: string }) {
         {machine.name}
       </h2>
       <p className="desc">
-        {presenceText(presence, now)} · applied rev {presence?.appliedRevision ?? "none"} of{" "}
-        {map.revision}
+        {presenceText(presence, now)} · applied rev{" "}
+        {presence?.appliedRevision == null ? (
+          "none"
+        ) : (
+          <RouteLink
+            route={{
+              view: "history",
+              selection: { _tag: "revision", revision: presence.appliedRevision },
+            }}
+          >
+            {presence.appliedRevision}
+          </RouteLink>
+        )}{" "}
+        of{" "}
+        <RouteLink
+          route={{ view: "history", selection: { _tag: "revision", revision: map.revision } }}
+        >
+          {map.revision}
+        </RouteLink>
       </p>
       <div className="stickers-row">
         <span className={`sticker ${PRESENCE_STICKER[state]}`}>{state}</span>
@@ -773,14 +807,16 @@ function MachineAccess({ machine }: { machine: MachineRecord }) {
           const was = arrow.level === "none" ? cutLevel(portal.pause, from.id, to.id) : null;
           return (
             <div className="row" key={`${from.id}>${to.id}`}>
-              <button
-                type="button"
+              <RouteLink
                 className="link grow left"
-                onClick={() => portal.select({ _tag: "arrow", from: from.id, to: to.id })}
+                route={{
+                  view: portal.route.view,
+                  selection: { _tag: "arrow", from: from.id, to: to.id },
+                }}
               >
                 <span className="t">{usesText(from.name, to.name)}</span>
                 {arrow.expiresAt && <span className="v">Until {shortTime(arrow.expiresAt)}</span>}
-              </button>
+              </RouteLink>
               {arrow.agentTools && <span className="sticker accent flat">tools</span>}
               {was ? (
                 <>
@@ -888,14 +924,13 @@ function MachineSettings({ machine }: { machine: MachineRecord }) {
         };
         return (
           <div className="row" key={`${scope}.${key}`}>
-            <button
-              type="button"
+            <RouteLink
               className="link grow left"
-              onClick={() => portal.select({ _tag: "setting", scope, key }, "settings")}
+              route={{ view: "settings", selection: { _tag: "setting", scope, key } }}
             >
               <span className="t">{key}</span>
               <span className="v">{valueText(settings[scope][key])}</span>
-            </button>
+            </RouteLink>
             <div className="seg tiny" role="group" aria-label={`${key} value`}>
               <button type="button" aria-pressed={!mine} onClick={() => follow(false)}>
                 Shared
@@ -1439,7 +1474,10 @@ function CommandPanel({ id }: { id: string }) {
   return (
     <>
       <h2>
-        {COMMAND_LABEL[command.input._tag]} on {machineName(portal.map, command.machineId)}
+        {COMMAND_LABEL[command.input._tag]} on{" "}
+        <MachineLink id={command.machineId}>
+          {machineName(portal.map, command.machineId)}
+        </MachineLink>
       </h2>
       <p className="desc">
         {actorText(command.actor, portal.map)} · {shortTime(command.createdAt)}

@@ -58,6 +58,7 @@ import { ClockIcon, RobotIcon, UndoIcon } from "./icons.tsx";
 import { MapView } from "./MapView.tsx";
 import { PushSettings } from "./PushSettings.tsx";
 import { NO_SELECTION } from "./route.ts";
+import { MachineLink } from "./StickerLink.tsx";
 
 /** An empty list: a short title, what fills it, and a stamp when the empty state is good news. */
 function Empty({
@@ -135,7 +136,7 @@ export function TableView() {
               </th>
               {map.machines.map((m) => (
                 <th key={m.id} scope="col">
-                  {m.name}
+                  <MachineLink id={m.id}>{m.name}</MachineLink>
                 </th>
               ))}
             </tr>
@@ -143,7 +144,9 @@ export function TableView() {
           <tbody>
             {map.machines.map((from) => (
               <tr key={from.id}>
-                <th scope="row">{from.name}</th>
+                <th scope="row">
+                  <MachineLink id={from.id}>{from.name}</MachineLink>
+                </th>
                 {map.machines.map((to) => {
                   if (from.id === to.id)
                     return <td key={to.id} className="self" aria-label="Same machine" />;
@@ -318,7 +321,7 @@ export function SettingsView() {
                   <th scope="col">Shared</th>
                   {map.machines.map((m) => (
                     <th key={m.id} scope="col">
-                      {m.name}
+                      <MachineLink id={m.id}>{m.name}</MachineLink>
                     </th>
                   ))}
                 </tr>
@@ -610,7 +613,8 @@ export function TasksView() {
         return (
           <div key={machine.id} className="stack tight">
             <div className="section">
-              {machine.name} · {presenceText(presence, now)}
+              <MachineLink id={machine.id}>{machine.name}</MachineLink> ·{" "}
+              {presenceText(presence, now)}
             </div>
             {status === null ? (
               <p className="small muted">No status yet. Tasks show after the first connection.</p>
@@ -1253,7 +1257,8 @@ export function ClientsView() {
         return (
           <div key={machine.id} className="stack tight">
             <div className="section">
-              {machine.name} · {presenceText(presence, now)}
+              <MachineLink id={machine.id}>{machine.name}</MachineLink> ·{" "}
+              {presenceText(presence, now)}
               {presence?.status && (
                 <>
                   {" · "}

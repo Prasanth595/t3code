@@ -19,11 +19,12 @@ import type {
 
 import { usesText } from "../rules/access.ts";
 import { findArrow, findNote, pairOffset } from "../rules/map.ts";
-import { NO_SELECTION } from "./route.ts";
+import { NO_SELECTION, type Route } from "./route.ts";
 import { usePortalContext } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import {
+  arrowEndRoute,
   arrowEndWait,
   arrowEnds,
   connectMachines,
@@ -53,6 +54,7 @@ import { NoteCard } from "./NoteCard.tsx";
 import { settleHeld, type Held } from "./store.ts";
 import { MachineStickers } from "./MachineStickers.tsx";
 import { CardMeters } from "./resources.tsx";
+import { RouteLink } from "./StickerLink.tsx";
 
 /** The area machines live in: the map height, and at most 1500 pixels wide, centered. */
 const MAX_WIDTH = 1500;
@@ -136,6 +138,12 @@ const onPressKey = (press: () => void) => (event: KeyboardEvent) => {
 /** The map itself or its line layer, not a card on it. */
 const isEmptySpot = (target: EventTarget, map: EventTarget) =>
   target === map || (target instanceof Element && target.tagName === "svg");
+
+/** MM-602: one arrow end that did not apply the arrow, in words, and where it opens. */
+interface Wait {
+  readonly text: string;
+  readonly route: Route;
+}
 
 /** A note that the page shows: a saved one, or a new one that is not saved yet. */
 interface EditingNote {
@@ -648,23 +656,25 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     void portal.submit(saved ? "Edited a note" : "Added a note", [{ _tag: "putNote", note }]);
   };
 
-  /** The wait of each arrow end in words, or null when both ends applied it (MM-602, MM-604). */
-  const waitOf = (from: MachineRecord, to: MachineRecord): Array<string> => {
+  /** The wait of each arrow end that did not apply the arrow (MM-602, MM-604). */
+  const waitOf = (from: MachineRecord, to: MachineRecord): Array<Wait> => {
     if (readOnly) return [];
     const ends = arrowEnds(snapshot, from.id, to.id);
     return [[ends.from, from] as const, [ends.to, to] as const].flatMap(([end, machine]) => {
       const text = arrowEndWait(end, machine);
-      return text === null ? [] : [text];
+      return text === null || end === "applied"
+        ? []
+        : [{ text, route: arrowEndRoute(end, machine.id) }];
     });
   };
 
   /** MM-1103: "Mac uses Windows ↓": the text gives the direction, the glyph shows the map. */
-  const dirRow = (from: MachineRecord, to: MachineRecord, waits: ReadonlyArray<string>) => {
+  const dirRow = (from: MachineRecord, to: MachineRecord, waits: ReadonlyArray<Wait>) => {
     const arrow = findArrow(map, from.id, to.id);
     const was = arrow.level === "none" ? cutLevel(portal.pause, from.id, to.id) : null;
     const toward = towardGlyph(centerOf(from), centerOf(to));
     const on = selection._tag === "arrow" && selection.from === from.id && selection.to === to.id;
-    const wait = waits.map(sentence).join(". ");
+    const wait = waits.map((w) => sentence(w.text)).join(". ");
     return (
       <button
         type="button"
@@ -804,7 +814,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             const waitsAB = waitOf(a, b);
             const waitsBA = waitOf(b, a);
             // Each machine that did not apply a direction, named once under the rows.
-            const waits = [...new Set([...waitsAB, ...waitsBA])];
+            const waits = [...new Map([...waitsAB, ...waitsBA].map((w) => [w.text, w])).values()];
             return (
               <div
                 key={`pair:${pairKey(a, b)}`}
@@ -817,7 +827,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                 {dirRow(a, b, waitsAB)}
                 {dirRow(b, a, waitsBA)}
                 {waits.length > 0 && (
-                  <div className="pair-wait">{waits.map(sentence).join(" · ")}</div>
+                  <div className="pair-wait">
+                    {waits.map((w, i) => (
+                      <span key={w.text}>
+                        {i > 0 && " · "}
+                        <RouteLink route={w.route}>{sentence(w.text)}</RouteLink>
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
             );
