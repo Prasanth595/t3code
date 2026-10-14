@@ -23,7 +23,6 @@ import { MAC, machine, threeMachines, VPS, WIN } from "./testMap.ts";
 
 const managed = (map: MachineMapDocument): MachineMapDocument =>
   applyChanges(map, [
-    { _tag: "manageSetting", scope: "server", key: "theme", managed: true },
     {
       _tag: "setSetting",
       machineId: null,
@@ -72,14 +71,12 @@ describe("applyChanges", () => {
       present: false,
       value: null,
     },
-    { _tag: "manageSetting", scope: "client", key: "font", managed: true },
     { _tag: "putMachine", machine: { ...machine(MAC), name: "Mac", position: { x: 0.1, y: 0.2 } } },
     {
       _tag: "putPreset",
       preset: { name: "day", arrows: map.arrows, createdAt: "2026-10-02T00:00:00.000Z" },
     },
     { _tag: "removeMachine", machineId: VPS },
-    { _tag: "manageSetting", scope: "server", key: "theme", managed: false },
   ];
 
   it("undoes every change kind with its inverse", () => {
@@ -92,9 +89,6 @@ describe("applyChanges", () => {
     expect(byId(undone.machines)).toEqual(byId(before.machines));
     expect(undone.settings.shared).toEqual(before.settings.shared);
     expect(undone.settings.overrides).toEqual(before.settings.overrides);
-    expect([...undone.settings.managed].sort((a, b) => a.key.localeCompare(b.key))).toEqual(
-      [...before.settings.managed].sort((a, b) => a.key.localeCompare(b.key)),
-    );
     expect(undone.arrows).toEqual(before.arrows);
     expect(undone.presets).toEqual(before.presets);
   });
@@ -115,9 +109,16 @@ describe("applyChanges", () => {
     expect(() => applyChanges(map, [{ _tag: "setArrow", arrow: self }])).toThrow(MapRuleError);
     expect(() =>
       applyChanges(map, [
-        { _tag: "setSetting", machineId: null, scope: "server", key: "x", present: true, value: 1 },
+        {
+          _tag: "setSetting",
+          machineId: null,
+          scope: "server",
+          key: "machineMap",
+          present: true,
+          value: {},
+        },
       ]),
-    ).toThrow(/not managed/);
+    ).toThrow(/belongs to each machine/);
     expect(() =>
       applyChanges(map, [
         { _tag: "putMachine", machine: machine(WIN, { tokenClientId: "mac.access" }) },

@@ -53,6 +53,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Fork: joining or leaving the machine map turns the `machineMap` setting on or off.
   [WS_METHODS.machineMapJoin]: AuthSettingsWriteScope,
   [WS_METHODS.machineMapLeave]: AuthSettingsWriteScope,
+  // Fork: MM-411. Sets shared values of the map, like a settings change on every machine.
+  [WS_METHODS.machineMapShareSettings]: AuthSettingsWriteScope,
   // Fork: the local desktop app reports desktop command results and its waiting update.
   [WS_METHODS.machineMapReportDesktop]: AuthEnvironmentMaintainScope,
 } as const;

@@ -78,8 +78,15 @@ describe("classifyRevision (MM-715)", () => {
       machine: { ...machine(MAC), hostname: "new.host" },
     } as const;
     expect(classifyRevision(revision(map, [host]))).toBe("join");
-    const manage = { _tag: "manageSetting", scope: "server", key: "theme", managed: true } as const;
-    expect(classifyRevision(revision(map, [manage]))).toBe("settings");
+    const setting = {
+      _tag: "setSetting",
+      machineId: null,
+      scope: "server",
+      key: "theme",
+      present: true,
+      value: 1,
+    } as const;
+    expect(classifyRevision(revision(map, [setting]))).toBe("settings");
     expect(classifyRevision(revision(map, [move(0.2)]))).toBe("move");
     expect(
       classifyRevision(revision(map, [{ _tag: "placePair", a: MAC, b: VPS, offset: null }])),
@@ -159,7 +166,9 @@ describe("matchesFilter (MM-716)", () => {
     [
       revision(map, [arrowTo("admin")], { actor: agent }),
       revision(map, [move(0.4)]),
-      revision(map, [{ _tag: "manageSetting", scope: "server", key: "x", managed: true }]),
+      revision(map, [
+        { _tag: "setSetting", machineId: null, scope: "server", key: "x", present: true, value: 1 },
+      ]),
     ],
     [],
     [],

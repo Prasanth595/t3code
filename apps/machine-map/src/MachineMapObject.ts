@@ -130,6 +130,7 @@ import {
   localSettingChanges,
   PROPOSAL_MINUTES,
   ROTATION_MINUTES,
+  sharedSettingChanges,
   supportsCommand,
 } from "./rules/queue.ts";
 import { newJoinCode, normalizeJoinCode, seal, sha256Hex, unseal } from "./sealedSecret.ts";
@@ -368,6 +369,39 @@ export class MachineMapObject extends DurableObject<Env> {
       this.ctx.storage.sql.exec("ALTER TABLE join_codes ADD COLUMN sealed_tunnel TEXT");
     }
     this.ctx.storage.sql.exec(HEALTH_TABLES);
+    this.#dropManageSetting();
+  }
+
+  /**
+   * MM-406: the change `manageSetting` left the map, because every setting is an entry now. Stored
+   * revisions and proposals lose it once, so they still decode. Their other changes stay.
+   */
+  #dropManageSetting(): void {
+    if (this.#sql("SELECT key FROM meta WHERE key = 'dropped_manage_setting'").length > 0) return;
+    type Stored = {
+      readonly changes: Array<{ _tag: string }>;
+      readonly inverse?: Array<{ _tag: string }>;
+    };
+    const keep = (changes: Array<{ _tag: string }>) =>
+      changes.filter((change) => change._tag !== "manageSetting");
+    this.ctx.storage.transactionSync(() => {
+      for (const table of ["revisions", "proposals"] as const) {
+        const key = table === "revisions" ? "revision" : "id";
+        const rows = this.#sql<{ id: string | number; data: string }>(
+          `SELECT ${key} AS id, data FROM ${table} WHERE data LIKE '%"manageSetting"%'`,
+        );
+        for (const row of rows) {
+          const data = JSON.parse(row.data) as Stored;
+          const next = {
+            ...data,
+            changes: keep(data.changes),
+            ...(data.inverse === undefined ? {} : { inverse: keep(data.inverse) }),
+          };
+          this.#sql(`UPDATE ${table} SET data = ? WHERE ${key} = ?`, JSON.stringify(next), row.id);
+        }
+      }
+      this.#sql("INSERT INTO meta (key, value) VALUES ('dropped_manage_setting', ?)", nowIso());
+    });
   }
 
   #revision(revision: number): MapRevision | undefined {
@@ -681,11 +715,15 @@ export class MachineMapObject extends DurableObject<Env> {
           ...reported,
           [message.scope]: { ...reported[message.scope], ...message.values },
         });
-        const changes = localSettingChanges(this.#map, id, message.scope, message.values);
+        // MM-411: a machine with the map role `edit` may set shared values, like its agents.
+        const shared = message.shared === true && machine.mapRole === "edit";
+        const changes = shared
+          ? sharedSettingChanges(this.#map, message.scope, message.values)
+          : localSettingChanges(this.#map, id, message.scope, message.values);
         if (changes.length > 0) {
           this.#commit(
             { _tag: "agent", machineId: id, threadId: null, threadTitle: null },
-            `changed on ${machine.name}`,
+            shared ? `shared from ${machine.name}` : `changed on ${machine.name}`,
             changes,
           );
         }

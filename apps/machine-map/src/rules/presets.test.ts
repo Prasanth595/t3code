@@ -35,7 +35,6 @@ const busyMap = (): MachineMapDocument =>
           revertLevel: "read",
         },
       },
-      { _tag: "manageSetting", scope: "server", key: "theme", managed: true },
       {
         _tag: "setSetting",
         machineId: null,
@@ -84,8 +83,22 @@ describe("restoreChanges (MM-704)", () => {
         _tag: "putMachine",
         machine: { ...machine(VPS), name: "Cloud", position: { x: 0.1, y: 0.1 } },
       },
-      { _tag: "manageSetting", scope: "server", key: "theme", managed: false },
-      { _tag: "manageSetting", scope: "client", key: "font", managed: true },
+      {
+        _tag: "setSetting",
+        machineId: null,
+        scope: "server",
+        key: "theme",
+        present: false,
+        value: null,
+      },
+      {
+        _tag: "setSetting",
+        machineId: null,
+        scope: "client",
+        key: "font",
+        present: true,
+        value: "x",
+      },
     ]).map;
     const restored = applyChanges(now, restoreChanges(now, old)).map;
     expect(restored.arrows).toEqual(old.arrows);

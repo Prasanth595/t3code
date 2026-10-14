@@ -53,7 +53,7 @@ const mapTool = <const Name extends Exclude<MapToolName, "machines_read" | "mach
 // MCP needs an object root for parameters, so the tool without inputs declares none.
 const MachinesReadTool = Tool.make("machines_read", {
   ...shared,
-  description: `Read the machine map. Call it first to find machine ids, map roles, revision numbers and command ids. Needs the map role \`read\`. Changes nothing. The result is {"_tag":"read", map, presence, commands, history, proposals, resources}: map holds the machines, arrows, managed settings and presets, and the owner's display data: notes (sticky notes with text and a place) and pairPlacements (where the owner put pair cards), which no machine applies; presence.<machineId> holds online, lastSeenAt and status (build, running turns, supported commands, clients); resources holds latest.<machineId> (the newest resource sample), thresholds.<machineId> (health thresholds) and alerts (the active health alerts); history holds the newest 50 revisions and makes most of the size, often more than 50,000 characters. ${PORTAL_NOTE}`,
+  description: `Read the machine map. Call it first to find machine ids, map roles, revision numbers and command ids. Needs the map role \`read\`. Changes nothing. The result is {"_tag":"read", map, presence, commands, history, proposals, resources}: map holds the machines, arrows, shared settings with the overrides of each machine, and presets, and the owner's display data: notes (sticky notes with text and a place) and pairPlacements (where the owner put pair cards), which no machine applies; presence.<machineId> holds online, lastSeenAt and status (build, running turns, supported commands, clients); resources holds latest.<machineId> (the newest resource sample), thresholds.<machineId> (health thresholds) and alerts (the active health alerts); history holds the newest 50 revisions and makes most of the size, often more than 50,000 characters. ${PORTAL_NOTE}`,
   success: Schema.Unknown,
 })
   .annotate(Tool.Readonly, true)
@@ -75,7 +75,7 @@ const MachinesSetAccessTool = mapTool(
 
 const MachinesSetSettingTool = mapTool(
   "machines_set_setting",
-  `Set or clear a managed setting: the shared value of every machine, or the override of one machine when machineId (a machine id from machines_read) is set. \`key\` is a top-level settings key, for example recoverInterruptedTurns. Only settings that the owner added to the map (Manage, in the portal Settings view) work; another key fails. Each machine applies the value live through its settings service. Needs the map role \`propose\` or \`edit\`. ${MAP_WRITE_NOTE}`,
+  `Set or clear a setting: the shared value of every machine, or the override of one machine when machineId (a machine id from machines_read) is set. \`key\` is a top-level settings key, for example recoverInterruptedTurns. Every key works except the machine-local ones (machineMap, paths, secrets, project-keyed maps), which fail. A key without a shared value changes nothing on any machine until a shared value is set. Each machine applies the value live through its settings service. Needs the map role \`propose\` or \`edit\`. ${MAP_WRITE_NOTE}`,
 ).annotate(Tool.Destructive, true);
 
 const MachinesCommandTool = mapTool(
