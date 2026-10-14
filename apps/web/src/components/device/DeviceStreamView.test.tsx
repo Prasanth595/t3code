@@ -46,7 +46,14 @@ class Image extends EventTarget {
 }
 let renderer: ReactTestRenderer | undefined;
 let primes = 0;
+const storedItems = new Map<string, string>();
+const storage = {
+  getItem: (key: string) => storedItems.get(key) ?? null,
+  setItem: (key: string, value: string) => storedItems.set(key, value),
+  removeItem: (key: string) => storedItems.delete(key),
+};
 beforeEach(() => {
+  storedItems.clear();
   primes = 0;
   viewerMounts = 0;
   viewerUnmounts = 0;
@@ -61,6 +68,11 @@ afterEach(async () => {
 async function setup(h264 = false) {
   vi.useFakeTimers();
   vi.stubGlobal("window", globalThis);
+  vi.stubGlobal("localStorage", storage);
+  const windowEvents = new EventTarget();
+  vi.stubGlobal("addEventListener", windowEvents.addEventListener.bind(windowEvents));
+  vi.stubGlobal("removeEventListener", windowEvents.removeEventListener.bind(windowEvents));
+  vi.stubGlobal("dispatchEvent", windowEvents.dispatchEvent.bind(windowEvents));
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let videoBody: ReadableStreamDefaultController<Uint8Array> | undefined;
   let output: VideoFrameOutputCallback | undefined;
@@ -230,4 +242,20 @@ it("keeps the 3D viewer mounted across iOS video recovery and releases it when h
   await act(async () => renderer!.update(view(false)));
   expect(viewerUnmounts).toBe(1);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("remembers the flat view when the device view mounts again", async () => {
+  const first = await setup(true);
+  await act(async () => first.configure());
+  await act(async () => first.frame());
+  expect(viewerMounts).toBe(1);
+  await act(async () => renderer!.root.findByProps({ children: "Flat" }).props.onClick());
+  expect(viewerUnmounts).toBe(1);
+  await act(async () => renderer!.unmount());
+
+  const second = await setup(true);
+  await act(async () => second.configure());
+  await act(async () => second.frame());
+  expect(viewerMounts).toBe(1);
+  expect(renderer!.root.findByProps({ children: "Flat" }).props["aria-pressed"]).toBe(true);
 });
