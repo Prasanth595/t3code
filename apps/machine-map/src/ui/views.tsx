@@ -716,7 +716,7 @@ export function HistoryView() {
       `Undid rev ${revision}.`,
     );
   const when = (at: string) => (
-    <time className="tip" dateTime={at} data-tip={shortTime(at)}>
+    <time dateTime={at} data-tip={shortTime(at)}>
       {timeAgo(at, now)}
     </time>
   );

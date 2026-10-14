@@ -14,7 +14,7 @@ export function StickerLink(props: {
   const external = props.href.startsWith("https://");
   return (
     <a
-      className={`${props.className} sticker-link tip`}
+      className={`${props.className} sticker-link`}
       href={props.href}
       aria-label={props.label}
       data-tip={props.label}

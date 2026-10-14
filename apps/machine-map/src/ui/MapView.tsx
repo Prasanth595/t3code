@@ -659,7 +659,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           <span className="nm">{from.name}</span>
           <span className="verb">uses</span>
           <span className="nm">{to.name}</span>
-          <span className="toward tip" data-tip={`${to.name} is ${TOWARD_TEXT[toward]}`}>
+          <span className="toward" data-tip={`${to.name} is ${TOWARD_TEXT[toward]}`}>
             {toward}
           </span>
         </span>
@@ -839,9 +839,10 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                     // Pointer only: the machine panel has "Connect to" for the keyboard.
                     <span
                       key={side}
-                      className={`handle tip ${side}`}
+                      className={`handle ${side}`}
                       aria-hidden
                       data-tip="Drag onto a machine to connect"
+                      data-tip-side={side}
                       onPointerDown={(event) => {
                         // The handle starts a line, not a move of its machine.
                         event.stopPropagation();
