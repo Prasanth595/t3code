@@ -1268,8 +1268,40 @@ describe("AcpRuntimeModel", () => {
       command: "pnpm test",
       cwd: "/workspace",
       output: "first line\nsecond line\n",
+      outputBytes: 23,
       exitStatus: { exitCode: 0 },
     });
+  });
+
+  it("keeps the newest 16 MiB of ACP terminal output and drops only whole characters", () => {
+    const cap = 16 * 1024 * 1024;
+    // 4 KiB chunks of one- to four-byte characters, like a long build log.
+    const line = "build ok: é € 中 🙂\n";
+    const chunk = line.repeat(Math.ceil(4096 / Buffer.byteLength(line)));
+    const chunkBytes = Buffer.byteLength(chunk);
+    let state = applyAcpAgentTerminalUpdate(undefined, {
+      sessionUpdate: "terminal_update",
+      terminalId: "terminal-long",
+      output: null,
+    });
+    let written = "";
+    for (let index = 0; (index - 1) * chunkBytes <= cap; index += 1) {
+      const text = `${index}:${chunk}`;
+      written += text;
+      state = applyAcpAgentTerminalUpdate(state, {
+        sessionUpdate: "terminal_output_chunk",
+        terminalId: "terminal-long",
+        data: Buffer.from(text).toString("base64"),
+      });
+    }
+
+    const all = Buffer.from(written);
+    let start = all.length - cap;
+    while ((all[start]! & 0xc0) === 0x80) start += 1;
+    expect(state.output === all.subarray(start).toString("utf8")).toBe(true);
+    expect(state.outputBytes).toBe(Buffer.byteLength(state.output));
+    expect(state.outputBytes).toBeLessThanOrEqual(cap);
+    expect(state.outputBytes).toBeGreaterThan(cap - 4);
   });
 
   it("preserves UTF-8 characters split across ACP terminal output chunks", () => {

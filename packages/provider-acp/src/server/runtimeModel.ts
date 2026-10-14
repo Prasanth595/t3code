@@ -51,6 +51,8 @@ export interface AcpAgentTerminalState {
   readonly command?: string;
   readonly cwd?: string;
   readonly output: string;
+  /** UTF-8 size of `output`, kept so a chunk doesn't re-encode everything before it. */
+  readonly outputBytes: number;
   readonly exitStatus?: EffectAcpSchema.TerminalExitStatus;
   /** Incomplete trailing UTF-8 bytes retained until the next output update. */
   readonly pendingOutputBytes?: Uint8Array;
@@ -133,12 +135,35 @@ function decodeTerminalOutputChunk(
     : { text, pendingOutputBytes: Uint8Array.from(bytes.subarray(completeEnd)) };
 }
 
-function truncateTerminalOutput(output: string): string {
-  const bytes = Buffer.from(output, "utf8");
-  if (bytes.length <= MAX_ACP_TERMINAL_OUTPUT_BYTES) return output;
-  let start = bytes.length - MAX_ACP_TERMINAL_OUTPUT_BYTES;
-  while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1;
-  return bytes.subarray(start).toString("utf8");
+/** UTF-8 size of the character at `index`, and how many UTF-16 units it uses. */
+function utf8CharacterAt(text: string, index: number): readonly [bytes: number, units: number] {
+  const code = text.charCodeAt(index);
+  if (code < 0x80) return [1, 1];
+  if (code < 0x800) return [2, 1];
+  const next = text.charCodeAt(index + 1);
+  if (code >= 0xd800 && code <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) return [4, 2];
+  // Other characters, and lone surrogates that encode as U+FFFD, take three bytes.
+  return [3, 1];
+}
+
+/** Appends output, then drops whole characters from the start to stay within the cap. */
+function appendTerminalOutput(
+  current: Pick<AcpAgentTerminalState, "output" | "outputBytes">,
+  text: string,
+): Pick<AcpAgentTerminalState, "output" | "outputBytes"> {
+  const output = `${current.output}${text}`;
+  const outputBytes = current.outputBytes + Buffer.byteLength(text, "utf8");
+  if (outputBytes <= MAX_ACP_TERMINAL_OUTPUT_BYTES) return { output, outputBytes };
+  // Only the dropped prefix is measured, so output at the cap costs each chunk its own size.
+  const excess = outputBytes - MAX_ACP_TERMINAL_OUTPUT_BYTES;
+  let dropped = 0;
+  let start = 0;
+  while (dropped < excess && start < output.length) {
+    const [bytes, units] = utf8CharacterAt(output, start);
+    dropped += bytes;
+    start += units;
+  }
+  return { output: output.slice(start), outputBytes: outputBytes - dropped };
 }
 
 /** Applies an ACP v2 agent-owned terminal snapshot or chunk to display state. */
@@ -146,14 +171,14 @@ export function applyAcpAgentTerminalUpdate(
   previous: AcpAgentTerminalState | undefined,
   update: AcpAgentTerminalUpdate,
 ): AcpAgentTerminalState {
-  const current = previous ?? { output: "" };
+  const current = previous ?? { output: "", outputBytes: 0 };
   if (update.sessionUpdate === "terminal_output_chunk") {
     const decoded = decodeTerminalOutputChunk(current.pendingOutputBytes, update.data);
     if (decoded === undefined) return current;
     const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = current;
     return {
       ...withoutPendingOutputBytes,
-      output: truncateTerminalOutput(`${current.output}${decoded.text}`),
+      ...appendTerminalOutput(current, decoded.text),
       ...(decoded.pendingOutputBytes === undefined
         ? {}
         : { pendingOutputBytes: decoded.pendingOutputBytes }),
@@ -181,7 +206,7 @@ export function applyAcpAgentTerminalUpdate(
       const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = next;
       next = {
         ...withoutPendingOutputBytes,
-        output: truncateTerminalOutput(decoded.text),
+        ...appendTerminalOutput({ output: "", outputBytes: 0 }, decoded.text),
         ...(decoded.pendingOutputBytes === undefined
           ? {}
           : { pendingOutputBytes: decoded.pendingOutputBytes }),
@@ -199,7 +224,7 @@ export function applyAcpAgentTerminalUpdate(
     const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = next;
     next = {
       ...withoutPendingOutputBytes,
-      output: truncateTerminalOutput(`${next.output}${pendingText}`),
+      ...appendTerminalOutput(next, pendingText),
       exitStatus: update.exitStatus,
     };
   }
