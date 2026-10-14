@@ -896,33 +896,12 @@ describe("DesktopWindow", () => {
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        const desktopState = yield* DesktopState.DesktopState;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
 
         assert.equal(createdWindowOptions[0]?.width, 1320);
         assert.equal(createdWindowOptions[0]?.height, 880);
         assert.equal(createdWindowOptions[0]?.x, 120);
         assert.equal(createdWindowOptions[0]?.y, 80);
-        assert.isTrue(yield* Ref.get(desktopState.windowCreated));
-      }).pipe(Effect.provide(layer));
-    }),
-  );
-
-  it.effect("marks the connecting splash as an owned window", () =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        const desktopState = yield* DesktopState.DesktopState;
-
-        yield* desktopWindow.showConnectingSplash;
-
-        assert.isTrue(yield* Ref.get(desktopState.windowCreated));
-        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
       }).pipe(Effect.provide(layer));
     }),
   );

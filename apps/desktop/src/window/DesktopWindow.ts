@@ -440,7 +440,6 @@ export const make = Effect.gen(function* () {
         disableHtmlFullscreenWindowResize: true,
       },
     });
-    yield* Ref.set(desktopState.windowCreated, true);
     // Quit may have begun while the window was being created.
     if (yield* Ref.get(desktopState.quitting)) {
       yield* electronWindow.destroyAll;
@@ -891,10 +890,6 @@ export const make = Effect.gen(function* () {
   const createMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return yield* Effect.interrupt;
     const window = yield* createWindow();
-    if (yield* Ref.get(desktopState.quitting)) {
-      yield* electronWindow.destroyAll;
-      return yield* Effect.interrupt;
-    }
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;
@@ -957,7 +952,6 @@ export const make = Effect.gen(function* () {
         sandbox: true,
       },
     });
-    yield* Ref.set(desktopState.windowCreated, true);
     // Quit may have begun while the splash was being created; destroy it
     // instead of registering a window that outlives shutdown's destroyAll.
     if (yield* Ref.get(desktopState.quitting)) {
