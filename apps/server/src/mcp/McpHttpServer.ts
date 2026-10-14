@@ -22,6 +22,7 @@ import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as MissionMcpToolkit from "./MissionMcpToolkit.ts";
+import * as MissionRetroSourceToolkit from "./MissionRetroSourceToolkit.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
@@ -770,6 +771,7 @@ const isCatchesPersona = readNofunPersonaScope()?.info.id === "catches";
 
 export const layer = Layer.mergeAll(
   MissionMcpToolkit.layerOptionalMissionToolkit,
+  MissionRetroSourceToolkit.layerOptionalMissionRetroSourceToolkit,
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
