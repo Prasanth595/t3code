@@ -1,4 +1,5 @@
-import * as NodeTimersPromises from "node:timers/promises";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - observes the children the launcher spawns with Node built-ins.
+import type * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -7,6 +8,7 @@ import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
 
 import {
   databaseBackupBlocker,
@@ -23,6 +25,18 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
+
+const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeChildProcess>();
+  const spawn = (...args: Parameters<typeof actual.spawn>) => {
+    const child = actual.spawn(...args);
+    spawnedChildren.push(child);
+    return child;
+  };
+  return { ...actual, spawn: spawn as typeof actual.spawn };
+});
 
 const writeSparseFile = (filePath: string, size: number) =>
   Effect.gen(function* () {
@@ -353,18 +367,25 @@ if (context.update?.status === "pending") {
     }),
   );
 
-  it.effect("restores the database when a migrating trial exits", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-db-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      const databasePath = path.join(root, "userdata", "state.sqlite");
-      const original = "database before migration";
-      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
-      yield* fs.writeFileString(databasePath, original);
-      const encodedDatabasePath = JSON.stringify(databasePath);
-      const childSource = `
+  it.effect.each(["file", "symlink"] as const)(
+    "restores the database when a migrating trial exits, with the database a %s",
+    (kind) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-db-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        const databasePath = path.join(root, "userdata", "state.sqlite");
+        // A symlinked database keeps its link: rollback restores the file it points to.
+        const databaseFile =
+          kind === "symlink" ? path.join(root, "elsewhere", "state.sqlite") : databasePath;
+        const original = "database before migration";
+        yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+        yield* fs.makeDirectory(path.dirname(databaseFile), { recursive: true });
+        yield* fs.writeFileString(databaseFile, original);
+        if (kind === "symlink") yield* fs.symlink(databaseFile, databasePath);
+        const encodedDatabasePath = JSON.stringify(databasePath);
+        const childSource = `
 import { writeFileSync } from "node:fs";
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {
@@ -379,39 +400,43 @@ if (context.update?.status === "pending") {
   process.exit(0);
 }
 `;
-      for (const version of ["1.0.0", "1.1.0"]) {
-        yield* writeFakeRuntime(
-          fs,
-          path,
-          path.join(root, "runtime", "versions", version),
-          childSource,
+        for (const version of ["1.0.0", "1.1.0"]) {
+          yield* writeFakeRuntime(
+            fs,
+            path,
+            path.join(root, "runtime", "versions", version),
+            childSource,
+          );
+        }
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+          }),
         );
-      }
-      yield* Effect.promise(() =>
-        writeServiceState(statePath, {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: "1.0.0",
-        }),
-      );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
-      yield* Effect.promise(() =>
-        launcher.run().then(
-          () => Promise.reject(new Error("launcher unexpectedly completed")),
-          () => Promise.resolve(),
-        ),
-      );
+        const launcher = new Launcher(
+          root,
+          yield* Effect.promise(() => readServiceState(statePath)),
+        );
+        yield* Effect.promise(() =>
+          launcher.run().then(
+            () => Promise.reject(new Error("launcher unexpectedly completed")),
+            () => Promise.resolve(),
+          ),
+        );
 
-      const state = yield* Effect.promise(() => readServiceState(statePath));
-      assert.equal(state.activeVersion, "1.0.0");
-      assert.equal(state.update?.status, "rolled-back");
-      assert.equal(yield* fs.readFileString(databasePath), original);
-      assert.isFalse(yield* fs.exists(`${databasePath}-wal`));
-      assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
-      const updateId = state.update?.id;
-      assert.isDefined(updateId);
-      assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
-    }),
+        const state = yield* Effect.promise(() => readServiceState(statePath));
+        assert.equal(state.activeVersion, "1.0.0");
+        assert.equal(state.update?.status, "rolled-back");
+        assert.equal(yield* fs.readFileString(databaseFile), original);
+        if (kind === "symlink") assert.equal(yield* fs.readLink(databasePath), databaseFile);
+        assert.isFalse(yield* fs.exists(`${databasePath}-wal`));
+        assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
+        const updateId = state.update?.id;
+        assert.isDefined(updateId);
+        assert.isFalse(yield* fs.exists(path.join(root, "runtime", "db-backup", updateId)));
+      }),
   );
 
   const requestRejectedUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>) =>
@@ -549,8 +574,14 @@ setInterval(() => {}, 1_000);
         yield* Effect.promise(() => readServiceState(statePath)),
         {
           backupSpaceProbe: {
-            // The child exits right after its request; outlast that.
-            readFreeBytes: () => NodeTimersPromises.setTimeout(500, Number.MAX_SAFE_INTEGER),
+            // Answer only once the server that asked has disconnected.
+            readFreeBytes: () => {
+              const child = spawnedChildren.at(-1)!;
+              return new Promise((resolve) => {
+                if (!child.connected) resolve(Number.MAX_SAFE_INTEGER);
+                else child.once("disconnect", () => resolve(Number.MAX_SAFE_INTEGER));
+              });
+            },
           },
         },
       );
