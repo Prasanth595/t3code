@@ -25,8 +25,9 @@ const layerSetup = Layer.effectDiscard(
     // cannot corrupt the database and an app crash loses nothing; an OS crash
     // or power loss can roll back commits since the last checkpoint.
     yield* sql`PRAGMA synchronous = NORMAL;`;
-    // macOS fsync() does not flush the drive cache. Checkpoint syncs must use
-    // F_FULLFSYNC so a power loss cannot publish page references without the pages.
+    // Checkpoints are now the only sync, and macOS fsync() does not flush the
+    // drive cache. F_FULLFSYNC makes them reach disk; other platforms ignore it.
+    // Per-commit fullfsync stays off.
     yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
     // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
     // largest size until the last connection closes.
