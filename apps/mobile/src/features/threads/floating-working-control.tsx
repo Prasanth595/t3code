@@ -161,9 +161,10 @@ export function FloatingWorkingControl(props: {
     hasAgents ||
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
-  // The queue, agents, questions, and reconnect labels have separate tap targets.
+  // The queue, agents, and any status that carries an action (questions,
+  // preparation details, reconnect) have separate tap targets.
   const statusInteractive =
-    props.status?.kind === "connection" || props.status?.kind === "child-input";
+    props.status !== null && "onPress" in props.status && props.status.onPress !== undefined;
   const capsuleInteractive = statusInteractive || hasQueue || hasAgents || hasPreview;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
