@@ -1,10 +1,11 @@
 // Gallery, Comparison and Timeline.
-// - Gallery follows blocks/gallery/caption-mosaic: tall photo tiles on the brand radius, a slow hover
-//   zoom, and the accent caption tile docked at the foot (bg-accent-brand, micro type).
+// - Gallery follows blocks/gallery/caption-mosaic: photo tiles on the brand radius and the accent
+//   caption under the image so a long caption wraps instead of clipping inside the tile. No hover zoom.
 // - Comparison generalizes blocks/product/compare-table from products to any columns: the Kobra Table
 //   with a micro row header on wide frames, stacked cards on narrow ones, plus a "differences only"
-//   toggle.
-// - Timeline wraps the ported blocks/data/timeline parts.
+//   toggle. Only the first highlighted column takes the accent.
+// - Timeline wraps the ported blocks/data/timeline parts. A horizontal timeline becomes vertical
+//   under 480px so event titles are not cut off at phone width.
 import * as React from "react";
 
 import { Badge } from "@nofun/kobra/badge";
@@ -27,6 +28,7 @@ import {
 } from "@nofun/ui/timeline";
 import { cn } from "@nofun/source/lib/utils";
 import { IconCheck, IconMinus } from "@tabler/icons-react";
+import { ArtifactEmpty, ArtifactLoading } from "./states.tsx";
 
 /* Gallery */
 
@@ -42,6 +44,8 @@ export type GalleryProps = {
   items: GalleryItem[];
   columns?: number | undefined;
   aspect?: "square" | "portrait" | "landscape" | undefined;
+  emptyText?: string | undefined;
+  loading?: boolean | undefined;
   className?: string | undefined;
 };
 
@@ -51,8 +55,17 @@ const ASPECT = {
   landscape: "aspect-[4/3]",
 } as const;
 
-export function Gallery({ items, columns = 3, aspect = "portrait", className }: GalleryProps) {
+export function Gallery({
+  items,
+  columns = 3,
+  aspect = "portrait",
+  emptyText = "No images yet.",
+  loading = false,
+  className,
+}: GalleryProps) {
   const cols = Math.max(1, Math.min(4, Math.round(columns)));
+  if (loading) return <ArtifactLoading label="Loading images" lines={3} />;
+  if (items.length === 0) return <ArtifactEmpty title={emptyText} />;
   return (
     <ul
       data-slot="gallery"
@@ -62,40 +75,43 @@ export function Gallery({ items, columns = 3, aspect = "portrait", className }: 
       }}
     >
       {items.map((item, index) => {
-        const tile = (
-          <>
+        const image = (
+          <div className={cn("relative overflow-hidden", ASPECT[aspect])}>
             <img
               src={item.src}
               alt={item.alt}
               loading="lazy"
               decoding="async"
-              className="absolute inset-0 size-full object-cover transition-transform duration-500 ease-(--ease-out) motion-reduce:transition-none [@media(hover:hover)]:group-hover/photo:scale-[1.04]"
+              className="absolute inset-0 size-full object-cover"
             />
-            {item.caption ? (
-              <span className="micro absolute inset-x-0 bottom-0 flex flex-col justify-between gap-4 bg-accent-brand p-3 text-[0.66rem] text-accent-brand-foreground">
-                <span>{item.caption}</span>
-                <span aria-hidden="true" className="h-px w-8 bg-current" />
-              </span>
-            ) : null}
+          </div>
+        );
+        const caption = item.caption ? (
+          <span className="micro block wrap-break-word bg-accent-brand p-3 text-[0.66rem] text-accent-brand-foreground">
+            <span className="block">{item.caption}</span>
+            <span aria-hidden="true" className="mt-4 block h-px w-8 bg-current" />
+          </span>
+        ) : null;
+        const body = (
+          <>
+            {image}
+            {caption}
           </>
         );
         return (
           <li
             key={`${item.src}-${index}`}
-            className={cn(
-              "group/photo relative overflow-hidden rounded-brand bg-surface-product ring-1 ring-foreground/10",
-              ASPECT[aspect],
-            )}
+            className="grid min-w-0 content-start overflow-hidden rounded-brand bg-surface-product ring-1 ring-foreground/10"
           >
             {item.href ? (
               <a
                 href={item.href}
-                className="absolute inset-0 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                className="grid outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
-                {tile}
+                {body}
               </a>
             ) : (
-              tile
+              body
             )}
           </li>
         );
@@ -124,13 +140,16 @@ export type ComparisonProps = {
   caption?: string | undefined;
   /** Offer a "Differences only" toggle. Default true when there are more than three rows. */
   diffToggle?: boolean | undefined;
+  emptyText?: string | undefined;
+  loading?: boolean | undefined;
   className?: string | undefined;
 };
 
 function ComparisonCell({ value }: { value: ComparisonValue }) {
-  if (value === true) return <IconCheck aria-label="Yes" className="size-4 text-success" />;
+  if (value === true)
+    return <IconCheck aria-label="Yes" stroke={1.5} className="size-4 text-success" />;
   if (value === false)
-    return <IconMinus aria-label="No" className="size-4 text-muted-foreground" />;
+    return <IconMinus aria-label="No" stroke={1.5} className="size-4 text-muted-foreground" />;
   if (value === null || value === "") return <span className="text-muted-foreground">—</span>;
   return <>{typeof value === "number" ? value.toLocaleString("en-US") : value}</>;
 }
@@ -139,7 +158,7 @@ function ColumnHead({ column }: { column: ComparisonColumn }) {
   return (
     <div className="grid gap-1">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-display text-base leading-tight text-foreground [text-transform:var(--nf-display-transform)]">
+        <span className="min-w-0 wrap-break-word font-display text-base leading-tight text-foreground [text-transform:var(--nf-display-transform)]">
           {column.title}
         </span>
         {column.badge ? (
@@ -155,12 +174,36 @@ function ColumnHead({ column }: { column: ComparisonColumn }) {
   );
 }
 
-export function Comparison({ columns, rows, caption, diffToggle, className }: ComparisonProps) {
+export function Comparison({
+  columns,
+  rows,
+  caption,
+  diffToggle,
+  emptyText = "Nothing to compare yet.",
+  loading = false,
+  className,
+}: ComparisonProps) {
   const [diffOnly, setDiffOnly] = React.useState(false);
+  const highlightIndex = columns.findIndex((column) => column.highlight);
+  const marked = columns.map((column, index) => ({
+    ...column,
+    highlight: index === highlightIndex,
+  }));
   const showToggle = diffToggle ?? rows.length > 3;
   const lines = diffOnly
     ? rows.filter((row) => new Set(row.values.map((value) => JSON.stringify(value))).size > 1)
     : rows;
+  if (loading) {
+    return <ArtifactLoading label={caption ? `Loading ${caption}` : "Loading comparison"} lines={4} />;
+  }
+  if (rows.length === 0) {
+    return (
+      <section aria-label={caption ?? "Comparison"} data-slot="comparison" className={className}>
+        {caption ? <p className="micro m-0 mb-3 text-muted-foreground">{caption}</p> : null}
+        <ArtifactEmpty title={emptyText} />
+      </section>
+    );
+  }
   return (
     <section
       aria-label={caption ?? "Comparison"}
@@ -189,7 +232,7 @@ export function Comparison({ columns, rows, caption, diffToggle, className }: Co
               <TableHead className="w-36">
                 <span className="sr-only">Attribute</span>
               </TableHead>
-              {columns.map((column) => (
+              {marked.map((column) => (
                 <TableHead
                   key={column.title}
                   scope="col"
@@ -212,7 +255,7 @@ export function Comparison({ columns, rows, caption, diffToggle, className }: Co
                 >
                   {row.label}
                 </TableHead>
-                {columns.map((column, i) => (
+                {marked.map((column, i) => (
                   <TableCell
                     key={column.title}
                     className={cn(
@@ -229,7 +272,7 @@ export function Comparison({ columns, rows, caption, diffToggle, className }: Co
         </Table>
       </div>
       <ul className="m-0 grid list-none gap-3 p-0 @min-[560px]:hidden">
-        {columns.map((column, i) => (
+        {marked.map((column, i) => (
           <li
             key={column.title}
             className={cn(
@@ -240,8 +283,8 @@ export function Comparison({ columns, rows, caption, diffToggle, className }: Co
             <ColumnHead column={column} />
             <dl className="m-0 grid gap-2 border-t border-border pt-3">
               {lines.map((row) => (
-                <div key={row.label} className="grid grid-cols-[7rem_1fr] gap-3 text-sm">
-                  <dt className="micro text-muted-foreground">{row.label}</dt>
+                <div key={row.label} className="grid grid-cols-[minmax(0,45%)_minmax(0,1fr)] gap-3 text-sm">
+                  <dt className="micro wrap-break-word text-muted-foreground">{row.label}</dt>
                   <dd className="m-0 tabular text-foreground">
                     <ComparisonCell value={row.values[i] ?? null} />
                   </dd>
@@ -275,6 +318,8 @@ export type TimelineProps = {
   /** Put times on the other side of the line (vertical only). */
   opposite?: boolean | undefined;
   size?: "sm" | "default" | "lg" | undefined;
+  emptyText?: string | undefined;
+  loading?: boolean | undefined;
   className?: string | undefined;
 };
 
@@ -283,33 +328,52 @@ export function Timeline({
   orientation = "vertical",
   opposite = false,
   size = "default",
+  emptyText = "No events yet.",
+  loading = false,
   className,
 }: TimelineProps) {
-  const useOpposite = opposite && orientation === "vertical";
+  const frame = React.useRef<HTMLDivElement>(null);
+  const [width, setWidth] = React.useState(0);
+  React.useLayoutEffect(() => {
+    const node = frame.current;
+    if (!node) return;
+    const measure = () => setWidth(node.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const resolved =
+    orientation === "horizontal" && width > 0 && width < 480 ? "vertical" : orientation;
+  const useOpposite = opposite && resolved === "vertical";
+  if (loading) return <ArtifactLoading label="Loading events" lines={4} />;
+  if (items.length === 0) return <ArtifactEmpty title={emptyText} />;
   return (
-    <TimelineRoot orientation={orientation} size={size} className={className}>
-      {items.map((item, index) => (
-        <TimelineItem key={`${item.title}-${index}`} current={item.current}>
-          {useOpposite && item.time ? <TimelineOpposite>{item.time}</TimelineOpposite> : null}
-          <TimelineSeparator>
-            <TimelineIndicator tone={item.current ? "primary" : (item.tone ?? "default")} />
-            <TimelineConnector
-              dashed={item.pending}
-              tone={item.pending ? "default" : (item.tone ?? "default")}
-            />
-          </TimelineSeparator>
-          <TimelineContent>
-            <TimelineHeader>
-              <TimelineTitle>{item.title}</TimelineTitle>
-              {item.badge ? (
-                <TimelineBadge tone={item.tone ?? "default"}>{item.badge}</TimelineBadge>
-              ) : null}
-              {!useOpposite && item.time ? <TimelineTime>{item.time}</TimelineTime> : null}
-            </TimelineHeader>
-            {item.body ? <TimelineBody>{item.body}</TimelineBody> : null}
-          </TimelineContent>
-        </TimelineItem>
-      ))}
-    </TimelineRoot>
+    <div ref={frame} data-slot="timeline-frame" className="min-w-0">
+      <TimelineRoot orientation={resolved} size={size} className={cn("min-w-0", className)}>
+        {items.map((item, index) => (
+          <TimelineItem key={`${item.title}-${index}`} current={item.current}>
+            {useOpposite && item.time ? <TimelineOpposite>{item.time}</TimelineOpposite> : null}
+            <TimelineSeparator>
+              <TimelineIndicator tone={item.current ? "primary" : (item.tone ?? "default")} />
+              <TimelineConnector
+                dashed={item.pending}
+                tone={item.pending ? "default" : (item.tone ?? "default")}
+              />
+            </TimelineSeparator>
+            <TimelineContent>
+              <TimelineHeader>
+                <TimelineTitle className="min-w-0 wrap-break-word">{item.title}</TimelineTitle>
+                {item.badge ? (
+                  <TimelineBadge tone={item.tone ?? "default"}>{item.badge}</TimelineBadge>
+                ) : null}
+                {!useOpposite && item.time ? <TimelineTime>{item.time}</TimelineTime> : null}
+              </TimelineHeader>
+              {item.body ? <TimelineBody>{item.body}</TimelineBody> : null}
+            </TimelineContent>
+          </TimelineItem>
+        ))}
+      </TimelineRoot>
+    </div>
   );
 }

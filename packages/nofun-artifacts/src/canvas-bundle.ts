@@ -123,6 +123,17 @@ function writeRegular(file: string, data: string | Buffer): void {
   NodeFs.writeFileSync(file, data);
 }
 
+function bundleAssetPath(bundlePath: string): string {
+  if (!bundlePath.startsWith("assets/") || bundlePath.includes("\\") || bundlePath.includes("\0")) {
+    throw new Error(`bundle asset ${JSON.stringify(bundlePath)} must stay under assets/.`);
+  }
+  const parts = bundlePath.slice("assets/".length).split("/");
+  if (parts.length === 0 || parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error(`bundle asset ${JSON.stringify(bundlePath)} must stay under assets/.`);
+  }
+  return NodePath.join("assets", ...parts);
+}
+
 export interface CanvasBundleInput {
   readonly outDir: string;
   readonly html: string;
@@ -134,6 +145,8 @@ export interface CanvasBundleInput {
   readonly sourceFile: { readonly name: string; readonly bytes: Buffer };
   /** Optional `stamp.json` `linked` value. Omitted when unset. */
   readonly linked?: string;
+  /** Stage images copied under `assets/`. Paths must stay inside that directory. */
+  readonly assets?: ReadonlyArray<{ readonly bundlePath: string; readonly bytes: Buffer }>;
 }
 
 export interface CanvasManifest {
@@ -211,5 +224,8 @@ export function writeCanvasBundle(input: CanvasBundleInput): CanvasManifest {
     `${JSON.stringify(sourceMeta, null, 2)}\n`,
   );
   writeRegular(NodePath.join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  for (const asset of input.assets ?? []) {
+    writeRegular(NodePath.join(outDir, bundleAssetPath(asset.bundlePath)), asset.bytes);
+  }
   return manifest;
 }
