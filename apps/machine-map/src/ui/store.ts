@@ -7,6 +7,7 @@ import { MachineId, PortalEvent, type PortalSnapshot } from "@t3tools/contracts/
 import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
 import {
+  EnrolledEvent,
   HealthEvent,
   PauseEvent,
   ResourceSampleEvent,
@@ -22,6 +23,8 @@ export interface PortalState {
   readonly pause: PauseView | null;
   /** MM-1506: the latest samples, thresholds and alerts. */
   readonly health: ResourcesOverview;
+  /** MM-212: how many times each machine used a join code while this page was open. */
+  readonly joins: Readonly<Record<string, number>>;
 }
 
 export type PageEvent =
@@ -29,7 +32,8 @@ export type PageEvent =
   | RotationsEvent
   | PauseEvent
   | HealthEvent
-  | ResourceSampleEvent;
+  | ResourceSampleEvent
+  | EnrolledEvent;
 
 export const EMPTY_HEALTH: ResourcesOverview = { latest: {}, alerts: [], thresholds: {} };
 
@@ -38,6 +42,7 @@ export const INITIAL_STATE: PortalState = {
   rotations: [],
   pause: null,
   health: EMPTY_HEALTH,
+  joins: {},
 };
 
 export function reduce(state: PortalState, event: PageEvent): PortalState {
@@ -48,6 +53,10 @@ export function reduce(state: PortalState, event: PageEvent): PortalState {
   if (event._tag === "resourceSample") {
     const latest = { ...state.health.latest, [event.machineId]: event.sample };
     return { ...state, health: { ...state.health, latest } };
+  }
+  if (event._tag === "enrolled") {
+    const joins = { ...state.joins, [event.machineId]: (state.joins[event.machineId] ?? 0) + 1 };
+    return { ...state, joins };
   }
   const snapshot = state.snapshot;
   // Events before the first snapshot cannot happen: the portal sends the snapshot first.
@@ -127,7 +136,14 @@ const RotationsEventSchema = Schema.TaggedStruct("rotations", {
   ),
 });
 const decodeEvent = Schema.decodeUnknownSync(
-  Schema.Union([PortalEvent, RotationsEventSchema, PauseEvent, HealthEvent, ResourceSampleEvent]),
+  Schema.Union([
+    PortalEvent,
+    RotationsEventSchema,
+    PauseEvent,
+    HealthEvent,
+    ResourceSampleEvent,
+    EnrolledEvent,
+  ]),
 );
 
 export type Connection = "connecting" | "live" | "offline";

@@ -1,11 +1,16 @@
 /**
- * MM-708: the sounds and the one-shot effects of the big red button. Web Audio makes the sounds,
- * so the portal ships no audio files. The effects use the Web Animations API and remove themselves.
+ * MM-708, MM-212: the sounds and the one-shot effects of the big red button and of a join. Web
+ * Audio makes the sounds, so the portal ships no audio files. The effects use the Web Animations
+ * API and remove themselves.
  */
 
 let audio: AudioContext | undefined;
 
-/** Browsers allow sound only after a user gesture. Every caller runs inside a click. */
+/**
+ * Browsers allow sound only after a user gesture. Every caller runs inside a click, except the
+ * join sound of MM-212: it relies on the click that opened the join dialog. If a browser blocks
+ * it, the join shows without sound.
+ */
 function audioContext(): AudioContext | undefined {
   if (typeof AudioContext === "undefined") return undefined;
   audio ??= new AudioContext();
@@ -83,6 +88,67 @@ export const playResumeSound = (): void =>
       volume: 0.18,
     })),
   );
+
+/** MM-212: two happy blips and a sparkle when a machine uses its join code. */
+export const playJoinSound = (): void =>
+  play([
+    { wave: "triangle", from: 660, to: 990, at: 0, length: 0.12, volume: 0.2 },
+    { wave: "triangle", from: 880, to: 1320, at: 0.13, length: 0.14, volume: 0.2 },
+    { wave: "sine", from: 1760, to: 2093, at: 0.3, length: 0.35, volume: 0.1 },
+  ]);
+
+const CONFETTI = ["var(--accent)", "var(--green)", "var(--stamp)", "var(--panic)"];
+
+/**
+ * MM-212: the code card pops, a "joined" stamp lands on it, and confetti bursts out of it once.
+ * With reduced motion the page shows the joined state and plays the sound only.
+ */
+export function showJoinEffects(card: HTMLElement): void {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  card.animate(
+    [
+      { transform: "scale(1)" },
+      { transform: "scale(1.08) rotate(-1deg)" },
+      { transform: "scale(1)" },
+    ],
+    { duration: 350, easing: "ease-out" },
+  );
+  const stamp = card.querySelector<HTMLElement>(".join-stamp");
+  stamp?.animate(
+    [
+      { opacity: 0, transform: "translate(-50%, -50%) scale(2.5) rotate(-14deg)" },
+      { opacity: 1, transform: "translate(-50%, -50%) scale(1) rotate(-8deg)" },
+    ],
+    { duration: 300, easing: "ease-out", delay: 120, fill: "backwards" },
+  );
+  for (let index = 0; index < 18; index++) {
+    const bit = document.createElement("span");
+    bit.className = "confetti";
+    bit.style.background = CONFETTI[index % CONFETTI.length] ?? "var(--accent)";
+    card.append(bit);
+    const angle = (index / 18) * Math.PI * 2;
+    const distance = 70 + (index % 3) * 30;
+    const x = Math.cos(angle) * distance;
+    const y = Math.sin(angle) * distance;
+    bit
+      .animate(
+        [
+          { opacity: 1, transform: "translate(0, 0) rotate(0deg)" },
+          {
+            opacity: 1,
+            transform: `translate(${x}px, ${y}px) rotate(${index * 30}deg)`,
+            offset: 0.6,
+          },
+          { opacity: 0, transform: `translate(${x}px, ${y + 40}px) rotate(${index * 40}deg)` },
+        ],
+        { duration: 1200, easing: "cubic-bezier(0.2, 0.8, 0.4, 1)" },
+      )
+      .finished.then(
+        () => bit.remove(),
+        () => bit.remove(),
+      );
+  }
+}
 
 /** A red flash over the page, a "STOPPED" stamp that slams down, and one shake of the page. */
 export function showPanicEffects(): void {

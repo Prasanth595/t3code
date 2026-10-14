@@ -21,6 +21,11 @@ describe("reduce (MM-106)", () => {
     ).toBe(INITIAL_STATE);
   });
 
+  it("counts joins per machine, also before the first snapshot (MM-212)", () => {
+    const event = { _tag: "enrolled" as const, machineId: MachineId.make("mac") };
+    expect(reduce(reduce(INITIAL_STATE, event), event).joins).toEqual({ mac: 2 });
+  });
+
   it("puts a new revision first and replaces the map", () => {
     const state = reduce(INITIAL_STATE, { _tag: "snapshot", snapshot });
     const map = { ...emptyMap(), revision: 1 };
