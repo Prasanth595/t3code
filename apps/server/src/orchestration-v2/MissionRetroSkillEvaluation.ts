@@ -22,41 +22,16 @@ import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-/** Bounded deterministic outcome. Never a promotion, install, or authority grant. */
-export const SkillEvaluationDecisionKind = Schema.Literals([
-  "review_ready",
-  "hold",
-  "rejected",
-  "no_change",
-]);
-export type SkillEvaluationDecisionKind = typeof SkillEvaluationDecisionKind.Type;
+/**
+ * Canonical decision/reason codecs live in the contracts leaf; this module
+ * re-exports them unchanged so existing consumers keep working.
+ */
+import {
+  SkillEvaluationDecisionKind,
+  SkillEvaluationReasonCode,
+} from "../../../../packages/contracts/src/missionRetroSkillEvaluation.ts";
 
-/** Finite hold/reject reason codes; unknown/missing evidence always holds. */
-export const SkillEvaluationReasonCode = Schema.Literals([
-  "ready_fix_verified",
-  "no_change_identical",
-  "hold_incomplete_pairs",
-  "hold_missing_class",
-  "hold_unknown_telemetry",
-  "hold_leakage_unknown",
-  "hold_not_independent",
-  "hold_upstream_ownership",
-  "hold_no_failure_reproduced",
-  "hold_no_improvement",
-  "hold_insufficient_samples",
-  "hold_unstable_samples",
-  "rejected_binding_drift",
-  "rejected_snapshot_mismatch",
-  "rejected_forged_receipt",
-  "rejected_duplicate_run",
-  "rejected_shared_context",
-  "rejected_regression",
-  "rejected_false_trigger",
-  "rejected_load_regression",
-  "rejected_leakage",
-  "rejected_retarget",
-]);
-export type SkillEvaluationReasonCode = typeof SkillEvaluationReasonCode.Type;
+export { SkillEvaluationDecisionKind, SkillEvaluationReasonCode };
 
 export const SKILL_EVALUATION_FIXTURE_CLASSES = ["failure", "positive", "negative"] as const;
 export type SkillEvaluationFixtureClass = (typeof SKILL_EVALUATION_FIXTURE_CLASSES)[number];

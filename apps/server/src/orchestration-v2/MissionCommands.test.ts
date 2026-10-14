@@ -554,3 +554,70 @@ describe("canonical manager reservation preservation", () => {
     assert.equal(revised.mission.projectTimezone, "America/Denver");
   });
 });
+
+describe("canonical skill evaluation preservation", () => {
+  const skillEvaluation = {
+    evaluationId: "eval-1",
+    teamId: "team-1",
+    environmentId: "env-1",
+    missionId: "mission-1",
+    candidateId: "candidate-1",
+    targetSkillRef: "skills/my-skill",
+    sourceReportHash: "d".repeat(64),
+    normalizedReportHash: "e".repeat(64),
+    oldSkillSha256: "a".repeat(64),
+    newSkillSha256: "b".repeat(64),
+    kind: "review_ready",
+    reason: "ready_fix_verified",
+    failurePairs: { required: 1, observed: 1, oldPass: 0, newPass: 1 },
+    positivePairs: { required: 1, observed: 1, oldPass: 1, newPass: 1 },
+    negativePairs: { required: 1, observed: 1, oldPass: 1, newPass: 1 },
+    uncertainty: "observed_pairs_only",
+    evidenceArtifactRef: `skill-replay-evidence:${"f".repeat(64)}`,
+    evidenceArtifactSha: "f".repeat(64),
+    reviewerRef: "reviewer-thread-1",
+    recordedByThreadId: "thread-1",
+    retroEpoch: 3,
+    recordedAt: OCCURRED_AT,
+  };
+  const execution = {
+    admissions: [],
+    writerClaims: [],
+    consumedExceptionIds: [],
+    retroSkillEvaluations: [skillEvaluation],
+  };
+  it("denies generic create with forged skill evaluation state", () => {
+    const fixture = missionFixture();
+    const proposed = { ...fixture, tasks: fixture.tasks.map(({ attempt: _attempt, ...task }) => task), execution };
+    assert.equal(code(planMissionCommand(decodeCreate({ type: "mission.create", commandId: "forge-skill-eval", mission: proposed }), null, ctx)), "forged_execution_state");
+  });
+  it("preserves canonical skill evaluations against replacement omission or overwrite", () => {
+    const current = decodeMission({ ...missionFixture(), execution });
+    const dropped = ok(planMissionCommand(replace({ ...missionFixture(), revision: 1 }), current, ctx));
+    assert.deepEqual(dropped.mission.execution, current.execution);
+    const emptied = ok(
+      planMissionCommand(
+        replace({
+          ...missionFixture(),
+          revision: 1,
+          execution: { admissions: [], writerClaims: [], consumedExceptionIds: [] },
+        }),
+        current,
+        ctx,
+      ),
+    );
+    assert.deepEqual(emptied.mission.execution, current.execution);
+    const forged = ok(
+      planMissionCommand(
+        replace({
+          ...missionFixture(),
+          revision: 1,
+          execution: { admissions: [], writerClaims: [], consumedExceptionIds: [], retroSkillEvaluations: [] },
+        }),
+        current,
+        ctx,
+      ),
+    );
+    assert.deepEqual(forged.mission.execution, current.execution);
+  });
+});

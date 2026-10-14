@@ -11,6 +11,10 @@ import {
   MissionManagerReservations,
   type MissionManagerReservation,
 } from "./missionManagerTransfer.ts";
+import {
+  MissionRetroSkillEvaluations,
+  type MissionRetroSkillEvaluation,
+} from "./missionRetroSkillEvaluation.ts";
 import { MissionResultRecord } from "./missionResult.ts";
 
 /**
@@ -163,6 +167,14 @@ export const MissionExecution = Schema.Struct({
    * results. Only the manager-handoff-reserved event appends here.
    */
   managerReservations: Schema.optional(MissionManagerReservations),
+  /**
+   * Optional bounded skill-evaluation receipts. Omitted on older snapshots
+   * and decoded as empty; same forge/preserve rules as results. Only the
+   * future owning store may append guarded records here; generic
+   * create/replace cannot forge them and replacement carries the canonical
+   * execution forward untouched.
+   */
+  retroSkillEvaluations: Schema.optional(MissionRetroSkillEvaluations),
 });
 export type MissionExecution = typeof MissionExecution.Type;
 
@@ -176,9 +188,10 @@ export const emptyMissionExecution = (): MissionExecution => ({
   retroAnalyses: [],
   retroReportReceipts: [],
   managerReservations: [],
+  retroSkillEvaluations: [],
 });
 
-/** True when no admission, claim, consumption, result, checkpoint, analysis, report, or reservation is recorded. */
+/** True when no admission, claim, consumption, result, checkpoint, analysis, report, reservation, or skill evaluation is recorded. */
 export const isEmptyMissionExecution = (execution: MissionExecution): boolean =>
   execution.admissions.length === 0 &&
   execution.writerClaims.length === 0 &&
@@ -187,7 +200,8 @@ export const isEmptyMissionExecution = (execution: MissionExecution): boolean =>
   (execution.retroCheckpoints ?? []).length === 0 &&
   (execution.retroAnalyses ?? []).length === 0 &&
   (execution.retroReportReceipts ?? []).length === 0 &&
-  (execution.managerReservations ?? []).length === 0;
+  (execution.managerReservations ?? []).length === 0 &&
+  (execution.retroSkillEvaluations ?? []).length === 0;
 
 /** Dedicated retro report receipts, treating an omitted array as empty. */
 export const missionRetroReportReceipts = (
@@ -208,3 +222,8 @@ export const missionRetroCheckpoints = (
 export const missionManagerReservations = (
   execution: MissionExecution,
 ): ReadonlyArray<MissionManagerReservation> => execution.managerReservations ?? [];
+
+/** Dedicated skill-evaluation receipts, treating an omitted array as empty. */
+export const missionRetroSkillEvaluations = (
+  execution: MissionExecution,
+): ReadonlyArray<MissionRetroSkillEvaluation> => execution.retroSkillEvaluations ?? [];

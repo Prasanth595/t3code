@@ -11,7 +11,12 @@ import {
   missionExecutionResults,
   missionManagerReservations,
   missionRetroCheckpoints,
+  missionRetroSkillEvaluations,
 } from "./missionExecution.ts";
+import {
+  MAX_MISSION_RETRO_SKILL_EVALUATIONS,
+  MissionRetroSkillEvaluation,
+} from "./missionRetroSkillEvaluation.ts";
 import {
   MAX_MISSION_RETRO_CHECKPOINTS,
   MissionRetroCheckpoint,
@@ -36,6 +41,7 @@ const decodeReceipt = Schema.decodeUnknownSync(MissionRetroReportReceipt);
 const decodeMission = Schema.decodeUnknownSync(Mission);
 
 const decodeRetroCheckpoint = Schema.decodeUnknownSync(MissionRetroCheckpoint);
+const decodeSkillEvaluation = Schema.decodeUnknownSync(MissionRetroSkillEvaluation);
 const decodeRetroCheckpoints = Schema.decodeUnknownSync(MissionRetroCheckpoints);
 const decodeRetroSourceRef = Schema.decodeUnknownSync(MissionRetroSourceRef);
 const encodeExecution = Schema.encodeSync(MissionExecution);
@@ -768,4 +774,144 @@ it("bounds reservation identities, counters, and configured timezone", () => {
   expect(() => decodeReservation({ ...reservationFixture(), currentEpoch: Number.MAX_SAFE_INTEGER + 1 })).toThrow();
   expect(() => decodeReservation({ ...reservationFixture(), reservationId: "x".repeat(513) })).toThrow();
   expect(() => decodeMission({ ...missionFixture(), projectTimezone: "x".repeat(129) })).toThrow();
+});
+
+const skillEvaluationFixture = (overrides: Record<string, unknown> = {}) => ({
+  evaluationId: "eval-1",
+  teamId: "team-1",
+  environmentId: "env-1",
+  missionId: "mission-1",
+  candidateId: "candidate-1",
+  targetSkillRef: "skills/my-skill",
+  sourceReportHash: "d".repeat(64),
+  normalizedReportHash: "e".repeat(64),
+  oldSkillSha256: "a".repeat(64),
+  newSkillSha256: "b".repeat(64),
+  kind: "review_ready",
+  reason: "ready_fix_verified",
+  failurePairs: { required: 1, observed: 1, oldPass: 0, newPass: 1 },
+  positivePairs: { required: 1, observed: 1, oldPass: 1, newPass: 1 },
+  negativePairs: { required: 1, observed: 1, oldPass: 1, newPass: 1 },
+  uncertainty: "observed_pairs_only",
+  evidenceArtifactRef: `skill-replay-evidence:${"f".repeat(64)}`,
+  evidenceArtifactSha: "f".repeat(64),
+  reviewerRef: "reviewer-thread-1",
+  recordedByThreadId: "thread-1",
+  retroEpoch: 3,
+  recordedAt: OCCURRED_AT,
+  ...overrides,
+});
+
+it("decodes an omitted skill evaluation array as empty", () => {
+  const decoded = decodeExecution({
+    admissions: [],
+    writerClaims: [],
+    consumedExceptionIds: [],
+  });
+  expect(missionRetroSkillEvaluations(decoded)).toEqual([]);
+  expect(isEmptyMissionExecution(decoded)).toBe(true);
+  expect(missionRetroSkillEvaluations(decodeExecution(emptyMissionExecution()))).toEqual([]);
+  expect(encodeExecution(emptyMissionExecution()).retroSkillEvaluations).toEqual([]);
+});
+
+it("round-trips a bounded skill evaluation receipt as execution state", () => {
+  const receipt = decodeSkillEvaluation(skillEvaluationFixture());
+  // Opaque provenance refs from either role decode without interpretation.
+  const followUp = decodeSkillEvaluation(
+    skillEvaluationFixture({
+      evaluationId: "eval-2",
+      reviewerRef: "retro-manager",
+      recordedByThreadId: "successor-thread-9",
+    }),
+  );
+  const withEvaluations = decodeExecution({
+    ...emptyMissionExecution(),
+    retroSkillEvaluations: [receipt, followUp],
+  });
+  expect(missionRetroSkillEvaluations(withEvaluations)).toHaveLength(2);
+  expect(isEmptyMissionExecution(withEvaluations)).toBe(false);
+  const roundTripped = decodeMission({
+    ...missionFixture(),
+    execution: encodeExecution(withEvaluations),
+  });
+  expect(missionRetroSkillEvaluations(roundTripped.execution!)).toHaveLength(2);
+});
+
+it("round-trips a no-change skill evaluation receipt", () => {
+  const receipt = decodeSkillEvaluation(
+    skillEvaluationFixture({
+      evaluationId: "eval-nochange",
+      oldSkillSha256: "a".repeat(64),
+      newSkillSha256: "a".repeat(64),
+      kind: "no_change",
+      reason: "no_change_identical",
+      failurePairs: { required: 1, observed: 1, oldPass: 1, newPass: 1 },
+    }),
+  );
+  const withEvaluations = decodeExecution({
+    ...emptyMissionExecution(),
+    retroSkillEvaluations: [receipt],
+  });
+  expect(isEmptyMissionExecution(withEvaluations)).toBe(false);
+  expect(encodeExecution(withEvaluations).retroSkillEvaluations).toHaveLength(1);
+});
+
+it("rejects skill evaluation receipts beyond the bound at decode", () => {
+  expect(MAX_MISSION_RETRO_SKILL_EVALUATIONS).toBe(64);
+  expect(() =>
+    decodeExecution({
+      ...emptyMissionExecution(),
+      retroSkillEvaluations: Array.from(
+        { length: MAX_MISSION_RETRO_SKILL_EVALUATIONS + 1 },
+        (_, index) => ({ ...skillEvaluationFixture(), evaluationId: `eval-${index}` }),
+      ),
+    }),
+  ).toThrow();
+});
+
+it("rejects implausible skill evaluation receipts at decode", () => {
+  const cases: Array<Record<string, unknown>> = [
+    { targetSkillRef: "/absolute/skill" },
+    { targetSkillRef: "../escape" },
+    { targetSkillRef: "skills/./same" },
+    { targetSkillRef: "https://example.com/skill" },
+    { targetSkillRef: "skill%20name" },
+    { targetSkillRef: "x".repeat(257) },
+    { oldSkillSha256: "not-a-hash" },
+    { evidenceArtifactRef: `skill-replay-evidence:${"a".repeat(64)}` },
+    { reviewerRef: "x".repeat(513) },
+    { failurePairs: { required: 0, observed: 1, oldPass: 0, newPass: 1 } },
+    { failurePairs: { required: 1, observed: 65, oldPass: 0, newPass: 1 } },
+    { failurePairs: { required: 1, observed: 1, oldPass: 2, newPass: 1 } },
+    { kind: "hold", reason: "ready_fix_verified" },
+    { kind: "review_ready", reason: "hold_no_improvement" },
+    { kind: "rejected", reason: "no_change_identical" },
+    { kind: "no_change", reason: "rejected_regression" },
+    {
+      kind: "review_ready",
+      reason: "ready_fix_verified",
+      failurePairs: { required: 2, observed: 1, oldPass: 0, newPass: 1 },
+    },
+    {
+      kind: "review_ready",
+      reason: "ready_fix_verified",
+      failurePairs: { required: 1, observed: 1, oldPass: 1, newPass: 1 },
+    },
+    {
+      kind: "no_change",
+      reason: "no_change_identical",
+      oldSkillSha256: "b".repeat(64),
+      newSkillSha256: "b".repeat(64),
+    },
+    {
+      kind: "hold",
+      reason: "hold_insufficient_samples",
+      failurePairs: { required: 1, observed: 30, oldPass: 0, newPass: 0 },
+      positivePairs: { required: 1, observed: 30, oldPass: 30, newPass: 30 },
+      negativePairs: { required: 1, observed: 30, oldPass: 30, newPass: 30 },
+    },
+  ];
+  for (const overrides of cases) {
+    expect(() => decodeSkillEvaluation(skillEvaluationFixture(overrides)), JSON.stringify(overrides)).toThrow();
+  }
 });
