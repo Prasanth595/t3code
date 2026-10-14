@@ -400,8 +400,22 @@ function CloudEnvironmentRowShell(props: {
   const isErrorExpanded = errorCanExpand && props.errorExpanded;
   const StatusContainer = errorCanExpand ? Pressable : View;
   const PressArea = props.onPress || props.onLongPress ? Pressable : View;
+  const accessibilityActions = [
+    ...(errorCanExpand
+      ? [
+          {
+            name: "toggleError",
+            label: isErrorExpanded ? "Collapse error details" : "Expand error details",
+          },
+        ]
+      : []),
+    ...(errorTraceId ? [{ name: "copyTraceId", label: "Copy trace ID" }] : []),
+  ];
   const handleAccessibilityAction = (event: AccessibilityActionEvent) => {
     if (event.nativeEvent.actionName === "toggleError") props.onToggleError();
+    if (event.nativeEvent.actionName === "copyTraceId" && errorTraceId) {
+      copyTextWithHaptic(errorTraceId, { target: "connection-trace-id" });
+    }
   };
   const pressProps =
     props.onPress || props.onLongPress
@@ -409,19 +423,14 @@ function CloudEnvironmentRowShell(props: {
           accessibilityHint: props.accessibilityHint,
           // A label replaces what screen readers would read from the children.
           accessibilityLabel: props.accessibilityLabel
-            ? `${props.accessibilityLabel}, ${statusText}`
+            ? `${props.accessibilityLabel}, ${statusText}${errorTraceId ? `, Trace ID ${errorTraceId}` : ""}`
             : undefined,
           accessibilityRole: props.onPress ? ("button" as const) : undefined,
           onPress: props.onPress,
           onLongPress: props.onLongPress,
-          ...(errorCanExpand
+          ...(accessibilityActions.length > 0
             ? {
-                accessibilityActions: [
-                  {
-                    name: "toggleError",
-                    label: isErrorExpanded ? "Collapse error details" : "Expand error details",
-                  },
-                ],
+                accessibilityActions,
                 onAccessibilityAction: handleAccessibilityAction,
               }
             : {}),
