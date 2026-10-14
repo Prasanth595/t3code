@@ -91,17 +91,14 @@ function parseField(
           : items !== undefined && items.type === undefined
             ? choiceOptions(items.anyOf, titledOption)
             : undefined;
-      return options === undefined
-        ? undefined
-        : {
-            field: {
-              kind: "multiChoice",
-              values: new Set(options.map(optionValue)),
-              minItems: typeof property.minItems === "number" ? property.minItems : 0,
-              maxItems: typeof property.maxItems === "number" ? property.maxItems : Infinity,
-            },
-            options,
-          };
+      if (options === undefined) return undefined;
+      // The schema decode already limits counts to non-negative integers.
+      const values = new Set(options.map(optionValue));
+      const minItems = typeof property.minItems === "number" ? property.minItems : 0;
+      const maxItems = typeof property.maxItems === "number" ? property.maxItems : Infinity;
+      // Counts no selection can meet make a question nobody can answer.
+      if (minItems > maxItems || minItems > values.size) return undefined;
+      return { field: { kind: "multiChoice", values, minItems, maxItems }, options };
     }
     case "boolean":
       return {
@@ -170,7 +167,8 @@ function typedAnswer(
  * string enums or titled `anyOf` items, booleans) allow no custom answer.
  * Multi-select answers are arrays of option values within `minItems` and
  * `maxItems`; other constraints are not checked. Returns undefined when a
- * property has a shape T3 cannot ask for, so the caller declines without asking.
+ * property has a shape T3 cannot ask for, or selection counts no answer can
+ * meet, so the caller declines without asking.
  */
 export function parseElicitationForm(
   requestedSchema: unknown,
@@ -204,13 +202,15 @@ export function parseElicitationForm(
   return {
     questions,
     content: (answers) => {
-      const content: Record<string, EffectAcpSchema.ElicitationContentValue> = {};
+      const entries: Array<[string, EffectAcpSchema.ElicitationContentValue]> = [];
       for (const [id, field] of fields) {
         const typed = Object.hasOwn(answers, id) ? typedAnswer(field, answers[id]) : undefined;
-        if (typed !== undefined) content[id] = typed;
+        if (typed !== undefined) entries.push([id, typed]);
         else if (required.has(id)) return undefined;
       }
-      return content;
+      // Own properties for every field, `__proto__` included; assigning to
+      // `{}` would hit its inherited setter instead.
+      return Object.fromEntries(entries);
     },
   };
 }

@@ -4535,6 +4535,52 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("answers a field named __proto__ like any other field", () =>
+    Effect.gen(function* () {
+      const { questions, response } = yield* runFormElicitation({
+        name: "proto-field",
+        requestedSchema: {
+          type: "object",
+          properties: {
+            ["__proto__"]: { type: "string", enum: ["a", "b"] },
+            name: { type: "string" },
+          },
+          required: ["__proto__", "name"],
+        },
+        answer: () => ({ ["__proto__"]: "b", name: "hi" }),
+      });
+      assert.deepStrictEqual(
+        questions?.map((question) => question.id),
+        ["__proto__", "name"],
+      );
+      assert.deepStrictEqual(response, {
+        action: "accept",
+        content: { ["__proto__"]: "b", name: "hi" },
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("declines a form whose selection counts no answer can meet, without asking", () =>
+    Effect.gen(function* () {
+      const items = { type: "string", enum: ["a", "b"] };
+      for (const [name, bounds] of [
+        ["min-above-max", { minItems: 2, maxItems: 1 }],
+        ["min-above-options", { minItems: 3 }],
+      ] as const) {
+        const { questions, response } = yield* runFormElicitation({
+          name,
+          requestedSchema: {
+            type: "object",
+            properties: { tags: { type: "array", items, ...bounds } },
+          },
+          answer: () => assert.fail("an impossible form must not reach the user"),
+        });
+        assert.isUndefined(questions);
+        assert.deepStrictEqual(response, { action: "decline" });
+      }
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("cancels a form whose required answer does not fit, or that is dismissed", () =>
     Effect.gen(function* () {
       const requestedSchema = {
