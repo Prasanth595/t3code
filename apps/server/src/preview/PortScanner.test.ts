@@ -9,6 +9,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -50,13 +51,14 @@ const layerProbeFailure = (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   fetch: typeof globalThis.fetch = globalThis.fetch,
   fileSystem: Layer.Layer<FileSystem.FileSystem> = layerNoProc,
+  hostPlatform: NodeJS.Platform = "linux",
 ) =>
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         fileSystem,
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
-        Layer.succeed(HostProcess.Platform, "linux"),
+        Layer.succeed(HostProcess.Platform, hostPlatform),
         FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
       ),
     ),
@@ -89,14 +91,16 @@ const layerLsofScanner = (input: {
   readonly pid: () => number;
   readonly fetch: typeof globalThis.fetch;
   readonly stdout?: () => string;
+  readonly onRun?: () => void;
 }) =>
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
-          run: () =>
-            Effect.succeed({
+          run: () => {
+            input.onRun?.();
+            return Effect.succeed({
               stdout: input.stdout?.() ?? `p${input.pid()}\ncnode\nn*:${LSOF_TEST_PORT}\n`,
               stderr: "",
               code: null,
@@ -105,7 +109,8 @@ const layerLsofScanner = (input: {
               stderrTruncated: false,
               stdoutInvalidUtf8: false,
               stderrInvalidUtf8: false,
-            }),
+            });
+          },
         }),
         Layer.succeed(HostProcess.Platform, "linux"),
         FetchHttpClient.layer.pipe(
@@ -656,7 +661,7 @@ effectIt.effect("does not swallow process probe defects", () =>
     const defect = new Error("unexpected process probe defect");
     const layer = layerProbeFailure(() => Effect.die(defect));
 
-    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) => scanner.scan()).pipe(
+    const exit = yield* Effect.flatMap(ownedScanner(), (scanner) => scanner.scan()).pipe(
       Effect.provide(layer),
       Effect.exit,
     );
@@ -767,7 +772,7 @@ effectIt.effect("keeps spawning lsof after a spawn failure that is not a missing
     );
   });
   return Effect.gen(function* () {
-    const scanner = yield* PortScanner.PortDiscovery;
+    const scanner = yield* ownedScanner();
     yield* scanner.scan();
     yield* scanner.scan();
     expect(lsofSpawns).toBe(2);
@@ -778,7 +783,7 @@ effectIt.effect("does not swallow process probe interruption", () =>
   Effect.gen(function* () {
     const layer = layerProbeFailure(() => Effect.interrupt);
 
-    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) => scanner.scan()).pipe(
+    const exit = yield* Effect.flatMap(ownedScanner(), (scanner) => scanner.scan()).pipe(
       Effect.provide(layer),
       Effect.exit,
     );
@@ -788,4 +793,134 @@ effectIt.effect("does not swallow process probe interruption", () =>
       expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     }
   }),
+);
+
+for (const hostPlatform of ["linux", "darwin"] as const) {
+  for (const configuredUrls of [[], ["not a URL", "https://example.com"]]) {
+    effectIt.effect(
+      `skips all ${hostPlatform} discovery I/O for empty normalized inputs ${configuredUrls.length}`,
+      () => {
+        const calls: string[] = [];
+        const fileSystem = FileSystem.layerNoop({
+          readFileString: (path) =>
+            Effect.sync(() => {
+              calls.push(path);
+              return "";
+            }),
+          readDirectory: (path) =>
+            Effect.sync(() => {
+              calls.push(path);
+              return [];
+            }),
+          readLink: (path) =>
+            Effect.sync(() => {
+              calls.push(path);
+              return "";
+            }),
+        });
+        const layer = layerProbeFailure(
+          (input) => {
+            calls.push(input.command);
+            return processProbeFailure(input);
+          },
+          (() => {
+            calls.push("HTTP");
+            return Promise.resolve(
+              new Response("app", { headers: { "content-type": "text/html" } }),
+            );
+          }) as typeof globalThis.fetch,
+          fileSystem,
+          hostPlatform,
+        );
+
+        return Effect.gen(function* () {
+          const scanner = yield* ownedScanner([0, -1, 1.5]);
+          expect(yield* scanner.scan(configuredUrls)).toEqual([]);
+          yield* scanner.subscribe({ configuredUrls, initialSnapshot: [] }, () => Effect.void);
+          yield* scanner.retain;
+          yield* TestClock.adjust(Duration.seconds(9));
+          expect(calls).toEqual([]);
+        }).pipe(Effect.scoped, Effect.provide(layer));
+      },
+    );
+  }
+}
+
+effectIt.effect(
+  "publishes empty results while idle and resumes discovery after terminal registration",
+  () => {
+    let processCalls = 0;
+    let httpCalls = 0;
+    let pollSpans = 0;
+    const layer = layerLsofScanner({
+      pid: () => 1234,
+      onRun: () => {
+        processCalls += 1;
+      },
+      fetch: (() => {
+        httpCalls += 1;
+        return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+      }) as typeof globalThis.fetch,
+    });
+    const tracer = Tracer.make({
+      span: (options) => {
+        if (options.name === "PortDiscovery.pollTick") pollSpans += 1;
+        return new Tracer.NativeSpan(options);
+      },
+    });
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const emptied = yield* Deferred.make<void>();
+      const discovered = yield* Deferred.make<void>();
+      const removed = yield* Deferred.make<void>();
+      const snapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
+      const oldServer: DiscoveredLocalServer = {
+        host: "localhost",
+        port: LSOF_TEST_PORT,
+        url: `http://localhost:${LSOF_TEST_PORT}`,
+        pid: 1234,
+        processName: "node",
+        terminal: null,
+      };
+      yield* scanner.subscribe({ configuredUrls: [], initialSnapshot: [oldServer] }, (servers) =>
+        Effect.gen(function* () {
+          snapshots.push(servers);
+          yield* Deferred.succeed(
+            snapshots.length === 1 ? emptied : servers.length > 0 ? discovered : removed,
+            undefined,
+          );
+        }),
+      );
+      yield* scanner.retain;
+      yield* Deferred.await(emptied);
+      yield* TestClock.adjust(Duration.seconds(9));
+      expect(pollSpans).toBeGreaterThanOrEqual(4);
+      expect(processCalls).toBe(0);
+      expect(httpCalls).toBe(0);
+      expect(snapshots).toEqual([[]]);
+
+      yield* scanner.registerTerminalProcesses({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+        processIds: [1234],
+      });
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* Deferred.await(discovered);
+      expect(snapshots.at(-1)?.[0]?.pid).toBe(1234);
+      expect(httpCalls).toBe(1);
+      const activeCalls = processCalls;
+
+      yield* scanner.unregisterTerminal({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+      });
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* Deferred.await(removed);
+      expect(snapshots.at(-1)).toEqual([]);
+      yield* TestClock.adjust(Duration.seconds(9));
+      expect(processCalls).toBe(activeCalls);
+      expect(httpCalls).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(layer), Effect.withTracer(tracer));
+  },
 );

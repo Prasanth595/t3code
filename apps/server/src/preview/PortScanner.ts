@@ -646,6 +646,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       if (listeners !== null) return yield* probeWebServers(listeners, configuredUrls);
       return yield* probeWebServers([], configuredUrls);
     }
+    // Only terminal-owned listeners and configured URLs can produce a visible server.
+    if (terminalByProcessId.size === 0 && configuredUrls.length === 0) {
+      return { discovered: [], configured: new Map() } satisfies WebProbeSnapshot;
+    }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
     if (yield* Ref.get(lsofMissingRef)) {
       const fromProc = yield* scanProcListeners(terminalByProcessId);
