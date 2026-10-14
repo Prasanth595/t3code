@@ -783,7 +783,7 @@ describe("ChatMarkdown file option chips", () => {
     const nestedLinkText = nestedLinkHtml.replace(/<[^>]+>/g, "");
 
     expect(malformedHtml).toContain(
-      "<li>Bad :codex-file-citation{purpose=&quot;output&quot;}</li>",
+      '<li dir="ltr">Bad :codex-file-citation{purpose=&quot;output&quot;}</li>',
     );
     expect(nestedLinkText).toContain(
       "Bad :codex-file-citation{path=&quot;/tmp/project/report.xlsx&quot;}",
@@ -817,7 +817,7 @@ describe("ChatMarkdown Codex follow-up suggestions", () => {
       />,
     );
 
-    expect(html).toContain("<li>Next :codex-followup[Prepare print version]</li>");
+    expect(html).toContain('<li dir="ltr">Next :codex-followup[Prepare print version]</li>');
   });
 });
 
@@ -902,15 +902,17 @@ describe("ChatMarkdown heading levels", () => {
       />,
     );
 
-    expect(html).toContain('<h1 id="user-content-top" aria-level="4">Top</h1>');
-    expect(html).toContain('<h2 id="user-content-section" aria-level="5">Section</h2>');
-    expect(html).toContain('<h6 id="user-content-fine-print" aria-level="6">Fine print</h6>');
+    expect(html).toContain('<h1 dir="ltr" id="user-content-top" aria-level="4">Top</h1>');
+    expect(html).toContain('<h2 dir="ltr" id="user-content-section" aria-level="5">Section</h2>');
+    expect(html).toContain(
+      '<h6 dir="ltr" id="user-content-fine-print" aria-level="6">Fine print</h6>',
+    );
   });
 
   it("leaves heading levels alone when the markdown is not nested", () => {
     const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="# Top" />);
 
-    expect(html).toContain('<h1 id="user-content-top">Top</h1>');
+    expect(html).toContain('<h1 dir="ltr" id="user-content-top">Top</h1>');
   });
 });
 
@@ -1315,7 +1317,7 @@ describe("ChatMarkdown heading ids", () => {
         }
       />,
     );
-    const ids = [...html.matchAll(/<h2 id="([^"]+)"/g)].map((match) => match[1]);
+    const ids = [...html.matchAll(/<h2\b[^>]*\bid="([^"]+)"/g)].map((match) => match[1]);
     expect(ids).toEqual([
       "user-content-setup",
       "user-content-setup-1",

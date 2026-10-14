@@ -120,6 +120,7 @@ import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
+import { blockDirection } from "../lib/textDirection";
 
 export interface ComposerPromptEditorHandle {
   focus: () => void;
@@ -303,7 +304,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
     </ContextChip>
   );
   return (
-    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+    <NodeViewWrapper as="span" dir="auto" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <Tooltip>
         <TooltipTrigger render={chip} />
         <TooltipPopup side="top">
@@ -350,7 +351,7 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
   const skill = skills.find((candidate) => candidate.name === skillName);
   return (
-    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+    <NodeViewWrapper as="span" dir="auto" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ContextChipPopover
         kind="skill"
         icon={<SkillChipIcon />}
@@ -459,6 +460,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="span"
+      dir="auto"
       className="inline-flex min-w-0 max-w-full select-none"
       contentEditable={false}
       spellCheck={false}
@@ -533,7 +535,7 @@ const ComposerContextReferenceExtension = Node.create({
 
 function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
   return (
-    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+    <NodeViewWrapper as="span" dir="auto" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ComposerContextReferenceChip
         kind={(node.attrs.kind as string) ?? ""}
         contextId={(node.attrs.contextId as string) ?? ""}
@@ -799,6 +801,62 @@ const ComposerMarkersExtension = Extension.create({
   name: "composer-rich-markers",
   addProseMirrorPlugins() {
     return [ComposerMarkerPlugin];
+  },
+});
+
+// Code reads left to right in any language; chips are atoms with no text, so they never count.
+function textblockProse(node: ProseMirrorNode): string {
+  let text = "";
+  node.descendants((child) => {
+    if (child.isText && !child.marks.some((mark) => mark.type.name === "code")) {
+      text += child.text ?? "";
+    }
+    return true;
+  });
+  return text;
+}
+
+function blockDirectionOf(node: ProseMirrorNode): "ltr" | "rtl" | "auto" {
+  if (node.type.spec.code) return "ltr";
+  if (node.isTextblock) return blockDirection(textblockProse(node));
+  // A list item takes its first line's direction, which places its bullet or checkbox.
+  const first = node.firstChild;
+  return first?.isTextblock ? blockDirectionOf(first) : "auto";
+}
+
+/**
+ * `dir` on every line and list item by its dominant script. `dir="auto"` goes by the first
+ * letter, so a Hebrew or Arabic line that opens with an English word would lay out left to right.
+ */
+function directionDecorations(doc: ProseMirrorNode): DecorationSet {
+  const decorations: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (node.isTextblock || node.type.name === "listItem" || node.type.name === "taskItem") {
+      decorations.push(Decoration.node(pos, pos + node.nodeSize, { dir: blockDirectionOf(node) }));
+    }
+    return !node.isTextblock;
+  });
+  return DecorationSet.create(doc, decorations);
+}
+
+const ComposerDirectionPlugin = new Plugin<DecorationSet>({
+  key: new PluginKey("composer-text-direction"),
+  state: {
+    init: (_config, state) => directionDecorations(state.doc),
+    apply: (transaction, decorations) =>
+      transaction.docChanged ? directionDecorations(transaction.doc) : decorations,
+  },
+  props: {
+    decorations(state) {
+      return this.getState(state);
+    },
+  },
+});
+
+const ComposerDirectionExtension = Extension.create({
+  name: "composer-text-direction",
+  addProseMirrorPlugins() {
+    return [ComposerDirectionPlugin];
   },
 });
 
@@ -1097,6 +1155,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         ComposerCitationExtension,
         ComposerContextReferenceExtension,
         ComposerMarkersExtension,
+        ComposerDirectionExtension,
         ...(richText
           ? [
               ComposerCodeExtension,
