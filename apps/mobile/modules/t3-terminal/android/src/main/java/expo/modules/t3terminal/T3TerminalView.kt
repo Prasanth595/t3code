@@ -58,6 +58,15 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private var mutedForegroundColorValue = Color.parseColor("#959DA5")
   private var cursorColorValue = Color.parseColor("#009FFF")
   private var paletteColors = IntArray(0)
+  private val frameScheduler = TerminalFrameScheduler(
+    post = { postOnAnimation(it) },
+    remove = { removeCallbacks(it) },
+    render = {
+      if (terminalHandle != 0L && !isCleanedUp) {
+        TerminalFrame.decode(GhosttyBridge.nativeSnapshot(terminalHandle))?.let(terminalCanvas::setFrame)
+      }
+    },
+  )
 
   var terminalKey: String = ""
     set(value) {
@@ -222,6 +231,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   fun cleanup() {
     if (isCleanedUp) return
     isCleanedUp = true
+    frameScheduler.cancel()
     inputView.setOnEditorActionListener(null)
     terminalCanvas.onScrollRows = null
     terminalCanvas.onRequestKeyboard = null
@@ -395,10 +405,18 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   }
 
   private fun renderSnapshot() {
-    if (terminalHandle == 0L) return
-    TerminalFrame.decode(
-      GhosttyBridge.nativeSnapshot(terminalHandle)
-    )?.let(terminalCanvas::setFrame)
+    if (terminalHandle == 0L || isCleanedUp) return
+    frameScheduler.request()
+  }
+
+  override fun onDetachedFromWindow() {
+    frameScheduler.cancel()
+    super.onDetachedFromWindow()
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    renderSnapshot()
   }
 
   private fun emitResponse(response: ByteArray) {
