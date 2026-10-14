@@ -779,14 +779,21 @@ export const layerWithOptions = (
       // after that, a replacement session with the same id can open and report
       // tasks of its own on the same provider threads. Server shutdown keeps
       // rosters, since startup recovery clears them and records the cancelled
-      // work.
+      // work. Only runtimes whose tasks end with their process opt in (Claude,
+      // Muse). OpenCode's background subagents run on a server shared by its
+      // sessions and can outlive this one, so their roster stays.
       const readReleasedBackgroundTasks = (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
         readonly detachedThreadId?: ThreadId;
       }) =>
         Effect.gen(function* () {
-          if (input.reason === "server_shutdown") return [];
+          if (
+            input.reason === "server_shutdown" ||
+            input.entry.runtime.backgroundTasksEndWithProcess !== true
+          ) {
+            return [];
+          }
           const providerSessionId = input.entry.runtime.providerSessionId;
           // A detach that released the session already removed its thread
           // from the attached set.
@@ -827,7 +834,7 @@ export const layerWithOptions = (
       // rosters. Their process is gone, so nothing will report them ending,
       // and a leftover roster keeps the thread Waiting (#15239). Tasks a
       // replacement session reported since are left in place. The write
-      // commits only if the row did not change after it was read, and is
+      // commits only if the stored row still equals what was read, and is
       // retried a few times when a provider update lands in between.
       const writeReleasedBackgroundWorkEvents = (
         released: ReadonlyArray<ReleasedBackgroundTasks>,
@@ -848,8 +855,7 @@ export const layerWithOptions = (
                 if (providerThread === undefined || remaining.length === tasks.length) return;
                 const now = yield* DateTime.now;
                 const { committed } = yield* eventSink.writeIfProviderThreadUnchanged({
-                  providerThreadId,
-                  expectedUpdatedAt: providerThread.updatedAt,
+                  expected: providerThread,
                   events: [
                     {
                       id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),

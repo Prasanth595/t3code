@@ -2,6 +2,7 @@ import {
   CommandId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
   RunAttemptId,
@@ -120,13 +121,13 @@ export interface EventSinkV2Shape {
     EventSinkV2Error
   >;
   /**
-   * Atomically commit only while the provider thread row still has the
-   * `updatedAt` its writer read, so a read-modify-write of the row cannot
-   * overwrite an update a provider published in between.
+   * Atomically commit only while the stored provider thread still equals
+   * `expected`, the row its writer read, so a read-modify-write of the row
+   * cannot overwrite an update published in between. The whole row is
+   * compared because not every writer moves `updatedAt`.
    */
   readonly writeIfProviderThreadUnchanged: (input: {
-    readonly providerThreadId: ProviderThreadId;
-    readonly expectedUpdatedAt: DateTime.Utc;
+    readonly expected: OrchestrationV2ProviderThread;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<
     {
@@ -530,18 +531,19 @@ const layerBase: Layer.Layer<
     )(function* (input: Parameters<EventSinkV2Shape["writeIfProviderThreadUnchanged"]>[0]) {
       yield* Effect.annotateCurrentSpan({
         "orchestration_v2.event_count": input.events.length,
-        "orchestration_v2.provider_thread_id": input.providerThreadId,
+        "orchestration_v2.provider_thread_id": input.expected.id,
       });
+      const expectedJson = yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
 
       return yield* commitThenPublish(
         Effect.gen(function* () {
-          const rows = yield* sql<{ readonly updated_at: string | null }>`
-            SELECT updated_at
+          const rows = yield* sql<{ readonly payload_json: string }>`
+            SELECT payload_json
             FROM orchestration_v2_projection_provider_threads
-            WHERE provider_thread_id = ${input.providerThreadId}
+            WHERE provider_thread_id = ${input.expected.id}
             LIMIT 1
           `;
-          if (rows[0]?.updated_at !== DateTime.formatIso(input.expectedUpdatedAt)) {
+          if (rows[0]?.payload_json !== expectedJson) {
             return {
               committed: false as const,
               storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,

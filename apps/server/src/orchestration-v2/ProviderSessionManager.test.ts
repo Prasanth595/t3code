@@ -334,6 +334,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+    /** False models a runtime whose background tasks can outlive its process. */
+    readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
@@ -416,6 +418,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                 }),
               )
             : Stream.fromQueue(events),
+          ...(options.backgroundTasksEndWithProcess === false
+            ? {}
+            : { backgroundTasksEndWithProcess: true as const }),
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
@@ -483,6 +488,7 @@ function layerTest(input: {
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
+  readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
@@ -513,6 +519,9 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
+      ...(input.backgroundTasksEndWithProcess === undefined
+        ? {}
+        : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
@@ -2911,6 +2920,29 @@ it.effect("ProviderSessionManagerV2 clears the background roster of an idle-rele
   }),
 );
 
+it.effect("ProviderSessionManagerV2 keeps the roster of a runtime whose tasks can outlive it", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const { providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
+        "provider-session-manager-outliving-roster",
+      );
+
+      // Like OpenCode, whose background subagents run on a shared server.
+      yield* manager.close(providerSessionId);
+
+      assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 60_000, backgroundTasksEndWithProcess: false }),
+      ),
+    );
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 keeps background tasks a replacement reports during release",
   () =>
@@ -2960,7 +2992,8 @@ it.effect("ProviderSessionManagerV2 keeps a provider update that lands while rel
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const { providerSessionId, providerThreads, writeProviderThread, rosters } =
         yield* openSessionWithBackgroundCommand("provider-session-manager-raced-roster");
-      // A replacement reports a task after cleanup read the row, before it writes.
+      // A replacement reports a task after cleanup read the row, before it
+      // writes, without moving updatedAt (not every writer does).
       const seeded = providerThreads[0]!;
       yield* Ref.set(
         beforeUnchangedWrite,
@@ -2970,7 +3003,6 @@ it.effect("ProviderSessionManagerV2 keeps a provider update that lands while rel
             ...seeded.pendingBackgroundTasks,
             { taskId: "replacement-task", kind: "command" },
           ],
-          updatedAt: DateTime.add(seeded.updatedAt, { seconds: 1 }),
         }).pipe(Effect.orDie),
       );
 
