@@ -21,6 +21,7 @@ import {
   ThreadCardLayoutContent,
   ThreadCardProjectLabel,
   ThreadCardStatusBadge,
+  resolveThreadCardStatus,
 } from "./sidebar/threadCardParts";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
 import {
@@ -305,6 +306,12 @@ import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarT
 import { SidebarOwnerFilterMenu, SidebarOwnerFilterNotice } from "./sidebar/SidebarOwnerFilter";
 import { filterSidebarThreadsByOwner } from "./sidebar/ownerFilter.logic";
 import { useSidebarOwnerFilter } from "./sidebar/useSidebarOwnerFilter";
+import {
+  SIDEBAR_GROUP_DROP_NEW,
+  SidebarGroupTabs,
+  sidebarGroupDropTargetAt,
+} from "./sidebar/SidebarGroupTabs";
+import { useSidebarGroups } from "./sidebar/useSidebarGroups";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -1314,64 +1321,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     isActive: props.isActive,
     isSelected,
   });
-  // Status hues follow the system-wide convention set by sidebar v1 and the
-  // mobile Live Activity/widgets (amber approval, indigo input, sky working)
-  // so a thread reads the same color everywhere it surfaces.
-  const topStatus =
-    status === "working"
-      ? {
-          // A native /goal keeps the agent going across turns until it is met.
-          label: thread.goal?.status === "active" ? "Goal" : "Working",
-          icon: "working" as const,
-          // No shimmer: a label that animates forever is noise in a sidebar
-          // full of them (and repaints every vsync on high-refresh displays).
-          className: "text-info",
-        }
-      : status === "waiting"
-        ? {
-            // Waiting is calm background presence (post-settle background
-            // roster), not active progress, so the label keeps full strength.
-            label: "Waiting",
-            icon: null,
-            className: "text-muted-foreground",
-          }
-        : status === "approval"
-          ? {
-              label: "Approval",
-              icon: "approval" as const,
-              className: "text-warning-foreground",
-            }
-          : status === "input"
-            ? {
-                label: "Input",
-                icon: "input" as const,
-                className: "text-indigo-600 dark:text-indigo-300",
-              }
-            : status === "limited"
-              ? {
-                  label: "Limited",
-                  icon: "failed" as const,
-                  className: "text-warning",
-                }
-              : status === "failed"
-                ? {
-                    label: "Failed",
-                    icon: "failed" as const,
-                    className: "text-error",
-                  }
-                : isWoke
-                  ? {
-                      label: "Woke",
-                      icon: "woke" as const,
-                      className: "text-warning",
-                    }
-                  : isUnread
-                    ? {
-                        label: "Done",
-                        icon: "done" as const,
-                        className: "text-success",
-                      }
-                    : null;
+  const topStatus = resolveThreadCardStatus({
+    status,
+    isWoke,
+    isUnread,
+    goalActive: thread.goal?.status === "active",
+  });
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -2896,6 +2851,29 @@ export default function Sidebar() {
         override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const isSearchingThreads = threadSearchQuery.trim().length > 0;
+  // Subagent child threads live in the parent's Agents surface, not the
+  // sidebar roster (v2 models them as real threads with lineage).
+  const filteredThreads = useMemo(
+    () =>
+      filterSidebarV2VisibleThreads(
+        filterSidebarThreadsByOwner(threads, ownerVisibleProjectKeys),
+        scopedProjectKeys,
+      ),
+    [ownerVisibleProjectKeys, scopedProjectKeys, threads],
+  );
+  // Fork: thread groups as tabs. The list shows the threads of the open tab.
+  const sidebarGroups = useSidebarGroups({
+    threads: filteredThreads,
+    projectGroups: unsortedProjectGroups,
+    routeThreadKey,
+    searching: isSearchingThreads,
+  });
+  // A tab switch drops the selection, like a scope flip: hidden rows must not stay selected.
+  useEffect(() => {
+    clearSelection();
+  }, [clearSelection, sidebarGroups.tabId]);
   const {
     pinnedThreads,
     draggableThreadKeys,
@@ -2912,12 +2890,7 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    // Subagent child threads live in the parent's Agents surface, not the
-    // sidebar roster (v2 models them as real threads with lineage).
-    const visible = filterSidebarV2VisibleThreads(
-      filterSidebarThreadsByOwner(threads, ownerVisibleProjectKeys),
-      scopedProjectKeys,
-    );
+    const visible = sidebarGroups.visibleThreads;
     inboxReturns.observe(workingShelfEnabled ? threads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -3020,18 +2993,15 @@ export default function Sidebar() {
   }, [
     nowMinute,
     optimisticDrop,
-    ownerVisibleProjectKeys,
-    scopedProjectKeys,
     serverConfigs,
+    sidebarGroups.visibleThreads,
     snoozeWakeTick,
     threads,
     workingShelfEnabled,
   ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
-  const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
-  const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const searchableThreads = useMemo(
     () => [
       ...pinnedThreads,
@@ -3099,6 +3069,7 @@ export default function Sidebar() {
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
   const settledResetKey = JSON.stringify([
     projectScopeKey,
+    sidebarGroups.tabId,
     ownerFilter ? [ownerFilter.operator, [...ownerFilter.owners]] : null,
   ]);
   const lastSettledResetKeyRef = useRef(settledResetKey);
@@ -3612,9 +3583,14 @@ export default function Sidebar() {
   const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
   const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
   const contextDragKeyRef = useRef<string | null>(null);
+  // Fork: the group tab under a dragged thread, or `new` for the empty end of the tab bar.
+  const [groupDropTarget, setGroupDropTarget] = useState<string | null>(null);
+  const sidebarGroupsRef = useRef(sidebarGroups);
+  sidebarGroupsRef.current = sidebarGroups;
   const finishThreadDrag = useCallback((started: boolean) => {
     dragSensorRef.current = null;
     contextDragKeyRef.current = null;
+    setGroupDropTarget(null);
     endThreadContextDrag();
     if (started) {
       listMotionRef.current?.release();
@@ -3642,9 +3618,22 @@ export default function Sidebar() {
     const bounds = threadListRef.current?.getBoundingClientRect();
     return bounds !== undefined && (point.x < bounds.left || point.x > bounds.right);
   }, []);
+  const groupDropTargetAt = useCallback((point: { x: number; y: number }) => {
+    const groups = sidebarGroupsRef.current;
+    if (!groups.enabled) return null;
+    const target = sidebarGroupDropTargetAt(point);
+    // A view holds no threads, so it takes no drop.
+    return target === SIDEBAR_GROUP_DROP_NEW ||
+      groups.tabs.some((tab) => tab.id === target && !tab.isView)
+      ? target
+      : null;
+  }, []);
   const moveThreadContextDrag = useCallback(
     (point: { x: number; y: number }) => {
-      const contextDrag = pointerOutsideThreadList(point);
+      const groupTarget = groupDropTargetAt(point);
+      setGroupDropTarget(groupTarget);
+      // Over a group tab the list stops sorting and the ghost follows the pointer.
+      const contextDrag = groupTarget !== null || pointerOutsideThreadList(point);
       setDragState((current) =>
         current === null || current.contextDrag === contextDrag
           ? current
@@ -3660,16 +3649,23 @@ export default function Sidebar() {
       moveThreadContextDragGhost(point, { title, count: threads.length });
       return true;
     },
-    [contextDragThreads, pointerOutsideThreadList],
+    [contextDragThreads, groupDropTargetAt, pointerOutsideThreadList],
   );
   const dropThreadContextDrag = useCallback(
     (point: { x: number; y: number }) => {
+      const groupTarget = groupDropTargetAt(point);
+      if (groupTarget !== null) {
+        const keys = contextDragThreads().map((ref) => scopedThreadKey(ref));
+        if (groupTarget === SIDEBAR_GROUP_DROP_NEW) sidebarGroupsRef.current.createGroup(keys);
+        else sidebarGroupsRef.current.assignThreads(keys, groupTarget);
+        return true;
+      }
       if (!pointerOutsideThreadList(point)) return false;
       dropThreadContext(point, contextDragThreads());
       // Releasing outside the list never reorders, whether or not a composer took the drop.
       return true;
     },
-    [contextDragThreads, pointerOutsideThreadList],
+    [contextDragThreads, groupDropTargetAt, pointerOutsideThreadList],
   );
   const dndSensors = useSensors(
     useSensor(SidebarPointerSensor, {
@@ -5303,6 +5299,29 @@ export default function Sidebar() {
                 hiddenProjectCount={ownerHiddenProjectCount}
                 hiddenThreadsNeedingUser={ownerHiddenThreadsNeedingUser}
                 onChange={setOwnerFilter}
+              />
+            ) : null}
+            {sidebarGroups.enabled ? (
+              <SidebarGroupTabs
+                tabs={sidebarGroups.tabs}
+                selectedTabId={sidebarGroups.tabId}
+                dragging={dragState !== null}
+                dropTargetId={groupDropTarget}
+                groups={sidebarGroups.settings.groups}
+                routeThreadKey={routeThreadKey}
+                projectFor={(thread) =>
+                  projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                }
+                ruleOptions={sidebarGroups.ruleOptions}
+                onSelect={sidebarGroups.setTabId}
+                onOpenThread={(thread) =>
+                  navigateToThread(scopeThreadRef(thread.environmentId, thread.id))
+                }
+                onCreateGroup={() => sidebarGroups.createGroup([])}
+                onRenameGroup={sidebarGroups.renameGroup}
+                onSetGroupRules={sidebarGroups.setGroupRules}
+                onDeleteGroup={sidebarGroups.deleteGroup}
+                onMoveGroup={sidebarGroups.moveGroup}
               />
             ) : null}
           </SidebarGroup>

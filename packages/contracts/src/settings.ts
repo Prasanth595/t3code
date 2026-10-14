@@ -84,6 +84,49 @@ export const SidebarOwnerFilter = Schema.Struct({
   ),
 });
 export type SidebarOwnerFilter = typeof SidebarOwnerFilter.Type;
+/** Fork: what a sidebar group rule compares. `group` compares the group that holds the thread. */
+export const SidebarGroupRuleField = Schema.Literals([
+  "group",
+  "project",
+  "owner",
+  "status",
+  "provider",
+  "createdBy",
+  "background",
+  "title",
+]);
+export type SidebarGroupRuleField = typeof SidebarGroupRuleField.Type;
+/**
+ * Fork: one rule of a sidebar group. "is" matches a thread that has one of `values`, and "is_not"
+ * matches a thread that has none of them. A `title` value matches when the title contains it.
+ * Null stands for "none", for example a project without a repository owner.
+ */
+export const SidebarGroupRule = Schema.Struct({
+  field: SidebarGroupRuleField,
+  operator: Schema.Literals(["is", "is_not"]),
+  values: Schema.Array(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type SidebarGroupRule = typeof SidebarGroupRule.Type;
+/** Fork: a sidebar group. A thread matches the group when it matches every rule. */
+export const SidebarGroup = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  rules: Schema.Array(SidebarGroupRule).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type SidebarGroup = typeof SidebarGroup.Type;
+/** Fork: the value of the `sidebarGroups` client setting. */
+export const SidebarGroups = Schema.Struct({
+  /** Groups in tab order. The default tab is not in this list. */
+  groups: Schema.Array(SidebarGroup).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * Thread key (`environmentId:threadId`) to the group that the user dragged the thread into.
+   * The id `default` puts the thread in the default tab, also when a group rule matches it.
+   */
+  assignments: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type SidebarGroups = typeof SidebarGroups.Type;
 /** Fork: a local time of day for a snooze quick option. */
 const SnoozeQuickOptionTime = Schema.Struct({
   hour: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 23 })),
@@ -496,6 +539,17 @@ export const ClientSettingsSchema = Schema.Struct({
    * project. Applies only while `repositoryOwnerFilters` is on.
    */
   sidebarOwnerFilter: SidebarOwnerFilter.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /**
+   * Fork: thread groups as tabs above the sidebar list. A thread lives in the group that the user
+   * dragged it into, else in the first group whose rules match it, else in the default tab.
+   */
+  sidebarGroupsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: a click on the tab of a group with one thread opens that thread. */
+  sidebarGroupSingleThreadOpens: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  /** Fork: the groups and the drag assignments. Applies only while `sidebarGroupsEnabled` is on. */
+  sidebarGroups: SidebarGroups.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * Fork: the quick options of the web and desktop snooze menus, in menu order. Null keeps the
    * built-in options. The mobile app always shows the built-in options.
@@ -1956,6 +2010,9 @@ export const ClientSettingsPatch = Schema.Struct({
   repositoryOwnerFilters: Schema.optionalKey(Schema.Boolean),
   pullRequestFilterChips: Schema.optionalKey(Schema.Boolean),
   sidebarOwnerFilter: Schema.optionalKey(SidebarOwnerFilter),
+  sidebarGroupsEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarGroupSingleThreadOpens: Schema.optionalKey(Schema.Boolean),
+  sidebarGroups: Schema.optionalKey(SidebarGroups),
   snoozeQuickOptions: Schema.optionalKey(SnoozeQuickOptions),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),

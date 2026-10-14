@@ -335,6 +335,23 @@ The client setting `snoozeQuickOptions` holds the choices of the snooze menus. I
 - A blank label shows a label that names the choice, such as "In 3 hours" or "Tomorrow".
 - The setting applies to the snooze button, the thread menu and the menu for selected threads, on web and desktop. The mobile app keeps the built-in choices.
 
+## Sidebar groups
+
+The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the sidebar search. It is off by default. Turn it on in Settings > General > Sidebar groups.
+
+- The first tab, "Threads", holds every thread that is in no group. A thread lives in one group, so the groups act like folders.
+- Drag a thread onto a tab to move it into that group. Drag it onto "Threads" to take it out of every group. Drag it onto the empty end of the tab bar to make a new group.
+- Click + to make an empty group. Right-click a tab, or click the sliders button of the open tab, to rename it, edit its rules, move it or delete it.
+- Rules put threads in a group automatically. A thread matches a group when it matches every rule. Rules compare the project, the repository owner, the status, the provider, who created the thread, its background work and its title.
+- A thread lives in the group that you dragged it into. Otherwise it lives in the first group, from left to right, whose rules match. Otherwise it lives in "Threads". New threads follow the same order.
+- A group without rules holds only the threads that you drag into it.
+- A rule on "Group" makes a view. A view shows the threads of the groups that it names and holds no thread itself. Pick Group > "Any group" to make an "All" tab.
+- A tab shows the status of its most urgent thread, with the icon and color of the thread row. A tab that waits for an approval or an answer, or has a failed thread, plays a short wiggle once and keeps its color.
+- Settled and snoozed threads stay in their group, in its Settled and Snoozed shelves. They do not count in the tab status.
+- Search covers every tab. When you open a thread from a link or a notification, the sidebar shows its tab.
+- The client setting `sidebarGroupSingleThreadOpens` makes a group with one thread show that thread on its tab. A click opens the thread.
+- The groups are saved on this device in the client setting `sidebarGroups`. Other devices and the mobile app do not show them. Revisit this when the groups need to follow the user to other devices or to agents.
+
 ## Thread card layouts
 
 The server setting `threadCardLayouts` holds a custom thread card layout for desktop and web (`desktop`) and for the mobile app (`mobile`). Each value is `null` by default, and the card then keeps its built-in look. Edit it in Settings > Appearance > Thread cards.
