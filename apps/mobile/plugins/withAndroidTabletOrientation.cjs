@@ -9,7 +9,8 @@ const { AndroidConfig, withAndroidManifest, withMainActivity } = require("expo/c
 // The manifest itself must stay unlocked. A tablet launched in landscape against a
 // portrait manifest starts letterboxed in a portrait-shaped window, and lifting the
 // lock in onCreate does not resize it until the user rotates the device. The lock is
-// applied before super.onCreate so phones never draw a landscape frame.
+// applied before super.onCreate so phones request portrait before the activity's
+// content is created.
 // FULL_USER allows all four orientations while still respecting the user's
 // auto-rotate lock, matching iPad behavior. Foldables change
 // smallestScreenWidthDp on fold/unfold without recreating the activity
