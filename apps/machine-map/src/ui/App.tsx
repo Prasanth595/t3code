@@ -280,6 +280,7 @@ export function App() {
     rotations: state.rotations,
     pause: state.pause,
     health: state.health,
+    joins: state.joins,
     draft,
     now,
     route,

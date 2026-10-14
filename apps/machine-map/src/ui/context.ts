@@ -33,6 +33,7 @@ export type Dialog =
   | { readonly _tag: "addMachine"; readonly position?: MapPosition }
   | {
       readonly _tag: "joinCode";
+      readonly machineId: MachineId;
       readonly machineName: string;
       readonly code: string;
       readonly expiresAt: string;
@@ -63,6 +64,8 @@ export interface Portal {
   readonly pause: PauseView | null;
   /** MM-1506: the latest samples, thresholds and alerts. */
   readonly health: ResourcesOverview;
+  /** MM-212: join codes used per machine while this page was open. */
+  readonly joins: Readonly<Record<string, number>>;
   readonly draft: ReadonlyArray<DraftChange> | null;
   readonly now: number;
   readonly route: Route;

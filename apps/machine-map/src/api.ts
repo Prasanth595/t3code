@@ -217,6 +217,10 @@ export const ResourceSampleEvent = Schema.TaggedStruct("resourceSample", {
 });
 export type ResourceSampleEvent = typeof ResourceSampleEvent.Type;
 
+/** MM-212: page event when a machine used its join code. It holds no part of the code. */
+export const EnrolledEvent = Schema.TaggedStruct("enrolled", { machineId: MachineId });
+export type EnrolledEvent = typeof EnrolledEvent.Type;
+
 /** POST /api/machines/:id/thresholds (MM-1504). Null returns the machine to the defaults. */
 export const ThresholdsRequest = Schema.Struct({ thresholds: Schema.NullOr(HealthThresholds) });
 export type ThresholdsRequest = typeof ThresholdsRequest.Type;

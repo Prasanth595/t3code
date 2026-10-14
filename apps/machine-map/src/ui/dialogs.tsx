@@ -1,5 +1,10 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { MachineKind, MapPosition, SettingScope } from "@t3tools/contracts/machineMap";
+import type {
+  MachineId,
+  MachineKind,
+  MapPosition,
+  SettingScope,
+} from "@t3tools/contracts/machineMap";
 
 import {
   FORK_RELEASES_PAGE,
@@ -16,6 +21,7 @@ import { usePortalContext, type Dialog } from "./context.ts";
 import { confirmResume, EmergencyButton } from "./emergency.tsx";
 import { COMMAND_LABEL, LEVEL_LABEL, timeUntil } from "./format.ts";
 import { ChevronDownIcon, CopyIcon, KindIcon } from "./icons.tsx";
+import { playJoinSound, showJoinEffects } from "./panicEffects.ts";
 import { INSTALL_TARGET_LABEL, installCommand, type InstallTarget } from "./install.ts";
 import { VIEW_LABEL, VIEWS } from "./route.ts";
 import { knownKeys } from "./settingControls.ts";
@@ -137,6 +143,7 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
     case "joinCode":
       return (
         <JoinCodeDialog
+          machineId={dialog.machineId}
           machineName={dialog.machineName}
           code={dialog.code}
           expiresAt={dialog.expiresAt}
@@ -213,6 +220,7 @@ function AddMachineDialog({
             const result = await callApi<JoinCodeResponse>("POST", "/api/machines", body);
             portal.open({
               _tag: "joinCode",
+              machineId: result.machineId,
               machineName: trimmed,
               code: result.code,
               expiresAt: result.expiresAt,
@@ -303,8 +311,12 @@ function AddMachineDialog({
   );
 }
 
-/** MM-202, MM-203: the code works once, so the dialog makes it easy to copy. */
+/**
+ * MM-202, MM-203: the code works once, so the dialog makes it easy to copy.
+ * MM-212: the dialog celebrates once when the machine uses the code, or says that it expired.
+ */
 function JoinCodeDialog(props: {
+  machineId: MachineId;
   machineName: string;
   code: string;
   expiresAt: string;
@@ -312,18 +324,97 @@ function JoinCodeDialog(props: {
 }) {
   const portal = usePortalContext();
   const [copied, setCopied] = useState<"code" | "command" | null>(null);
+  const [joinsAtOpen] = useState(() => portal.joins[props.machineId] ?? 0);
+  const joined = (portal.joins[props.machineId] ?? 0) > joinsAtOpen;
+  // The page clock ticks every 30 seconds, so "expired" can show up to 30 seconds late.
+  const expired = !joined && portal.now >= Date.parse(props.expiresAt);
+  const online = portal.snapshot.presence[props.machineId]?.online === true;
+  const card = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!joined) return;
+    playJoinSound();
+    if (card.current) showJoinEffects(card.current);
+  }, [joined]);
   const command = `t3 machine-map join ${props.code}`;
   const copy = (what: "code" | "command", text: string) =>
     navigator.clipboard.writeText(text).then(
       () => setCopied(what),
       () => setCopied(null),
     );
+  const codeCard = (
+    <div
+      ref={card}
+      className={`code${joined ? " used" : ""}${expired ? " expired" : ""}`}
+      aria-label="Join code"
+    >
+      {props.code}
+      {joined && (
+        <span className="stamp join-stamp" aria-hidden>
+          joined
+        </span>
+      )}
+    </div>
+  );
+  if (joined) {
+    return (
+      <Modal title={`Join code for ${props.machineName}`} onClose={props.close}>
+        {codeCard}
+        <p className="join-result" role="status">
+          <b>{props.machineName} joined</b>
+          <span className="muted">{online ? " · Connected" : " · Not connected yet"}</span>
+        </p>
+        <div className="actions end">
+          <button type="button" className="btn" onClick={props.close}>
+            Done
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            data-autofocus
+            onClick={() => {
+              props.close();
+              portal.select({ _tag: "machine", id: props.machineId });
+            }}
+          >
+            Open machine
+          </button>
+        </div>
+      </Modal>
+    );
+  }
+  if (expired) {
+    return (
+      <Modal title={`Join code for ${props.machineName}`} onClose={props.close}>
+        {codeCard}
+        <p className="join-result" role="status">
+          This code expired. Make a new code to join {props.machineName}.
+        </p>
+        <div className="actions end">
+          <button type="button" className="btn" onClick={props.close}>
+            Close
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            data-autofocus
+            onClick={() =>
+              portal.open({
+                _tag: "newJoinCode",
+                machineId: props.machineId,
+                machineName: props.machineName,
+              })
+            }
+          >
+            New code
+          </button>
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal title={`Join code for ${props.machineName}`} onClose={props.close}>
       <div className="code-row">
-        <div className="code" aria-label="Join code">
-          {props.code}
-        </div>
+        {codeCard}
         <button
           type="button"
           className="btn"
@@ -351,7 +442,10 @@ function JoinCodeDialog(props: {
           Ask an agent there to call <code>machines_join</code> with the code.
         </li>
       </ol>
-      <p className="small muted">The machine shows as waiting on the map until it connects.</p>
+      <p className="small muted">
+        The machine shows as waiting on the map until it connects. This dialog tells you when it
+        joins.
+      </p>
       <div className="actions end">
         <button type="button" className="btn primary" onClick={props.close}>
           Done
@@ -469,7 +563,11 @@ function InstallStep({ code }: { code: string }) {
   );
 }
 
-function NewJoinCodeDialog(props: { machineId: string; machineName: string; close: () => void }) {
+function NewJoinCodeDialog(props: {
+  machineId: MachineId;
+  machineName: string;
+  close: () => void;
+}) {
   const portal = usePortalContext();
   const [secret, setSecret] = useState("");
   const action = useAction();
@@ -488,6 +586,7 @@ function NewJoinCodeDialog(props: { machineId: string; machineName: string; clos
             );
             portal.open({
               _tag: "joinCode",
+              machineId: result.machineId,
               machineName: props.machineName,
               code: result.code,
               expiresAt: result.expiresAt,

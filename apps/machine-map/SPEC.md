@@ -43,6 +43,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-209** Each machine reports its tunnel hostname. Arrows out of other machines use it to connect.
 - **MM-210** Without the Cloudflare API token of MM-1205, "Add machine" takes the client id and secret of an existing machine token, instead of creating one. The join code then delivers that secret.
 - **MM-211** The join dialog starts with step 0, "Install T3 Code (Yarden-zamir's fork)". It links to the newest fork nightly from `GET /api/fork-release`, which caches the GitHub answer for 10 minutes and falls back to the releases page. A split button copies `install.sh` with `--join <code>`. Its menu copies the macOS command and the Windows PowerShell command, and links the `.dmg` and the `.exe`.
+- **MM-212** When the machine uses the code, the portal sends every page an `enrolled` event with the machine id and no part of the code. The open join dialog then plays a short sound and a one-shot pop, "joined" stamp and confetti on the code. It says "<name> joined", shows if the machine is connected, and has "Open machine". A code that expires unused shows "This code expired" with "New code". With reduced motion, the dialog keeps the state change and the sound and drops the motion.
 
 ## 3. Arrows
 

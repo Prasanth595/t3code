@@ -44,6 +44,7 @@ import type {
   ChangesRequest,
   CommandRequest,
   DevicesResponse,
+  EnrolledEvent,
   EnrollResponse,
   JoinCodeRequest,
   JoinCodeResponse,
@@ -444,7 +445,13 @@ export class MachineMapObject extends DurableObject<Env> {
   // ---------------------------------------------------------------- sockets
 
   #broadcast(
-    event: PortalEvent | RotationsEvent | PauseEvent | HealthEvent | ResourceSampleEvent,
+    event:
+      | PortalEvent
+      | RotationsEvent
+      | PauseEvent
+      | HealthEvent
+      | ResourceSampleEvent
+      | EnrolledEvent,
   ): void {
     const text = JSON.stringify(event);
     for (const ws of this.ctx.getWebSockets(PAGE_TAG)) {
@@ -1799,6 +1806,7 @@ export class MachineMapObject extends DurableObject<Env> {
       if (!row || !machine || isDue(row.expires_at, now)) {
         throw new PortalError(404, "Unknown, used or expired join code.");
       }
+      this.#broadcast({ _tag: "enrolled", machineId: machine.id });
       return {
         machineId: machine.id,
         name: machine.name,
