@@ -5649,8 +5649,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               activeProviderIconClassName: cn(
                 composerProviderState.modelPickerIconClassName,
                 composerControlsCollapsed &&
-                  // Svg glyphs get opaque fills and one opacity, so overlapping paths don't band.
-                  "fill-muted-foreground/70! text-muted-foreground/70! [&:is(svg)]:fill-muted-foreground! [&:is(svg)]:text-muted-foreground! [&:is(svg)]:opacity-70 [&_path]:fill-muted-foreground! [&_rect]:fill-muted-foreground! [&_[data-icon-detail]]:fill-transparent!",
+                  // A root svg glyph gets opaque fills and one opacity, so overlapping paths don't band.
+                  "fill-muted-foreground/70! text-muted-foreground/70! [&_path]:fill-muted-foreground/70! [&_rect]:fill-muted-foreground/70! [&_[data-icon-detail]]:fill-transparent! [&:is(svg)]:fill-muted-foreground! [&:is(svg)]:text-muted-foreground! [&:is(svg)]:opacity-70 [&:is(svg)_path]:fill-muted-foreground! [&:is(svg)_rect]:fill-muted-foreground!",
               ),
             }
           : {})}
