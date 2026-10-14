@@ -8,6 +8,7 @@
 import * as NodeCrypto from "node:crypto";
 import {
   AuthStandardClientScopes,
+  EnvironmentAuthenticatedPrincipal,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
   type EnvironmentCloudRelayConfigResult,
@@ -444,14 +445,18 @@ export class CloudLink extends Context.Service<
   {
     /**
      * Signs the proof the relay asks for to link this environment. The request
-     * must reach this server directly on the loopback origin it names.
+     * must reach this server directly. Desktop bootstrap sessions may use the
+     * WSL IP; all other sessions must use the loopback origin they name.
      */
     readonly linkProof: (
       request: RelayLinkProofRequest,
       httpRequest: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
       RelayEnvironmentLinkProof,
-      CloudLinkOriginInvalidError | CloudLinkInternalError | EnvironmentAuth.ServerAuthInternalError
+      | CloudLinkOriginInvalidError
+      | CloudLinkInternalError
+      | EnvironmentAuth.ServerAuthInternalError,
+      EnvironmentAuthenticatedPrincipal
     >;
     /** Installs the link the relay returned and, for a managed tunnel, confirms its origin. */
     readonly applyRelayConfig: (
@@ -628,6 +633,7 @@ const make = Effect.gen(function* () {
   const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function* (
     request: RelayLinkProofRequest,
     requestUrl: string,
+    allowNonLoopbackRequestHost = false,
   ) {
     const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
     if (
@@ -635,6 +641,7 @@ const make = Effect.gen(function* () {
       !isAllowedEndpointOrigin({
         origin: request.origin,
         requestUrl,
+        allowNonLoopbackRequestHost,
       })
     ) {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
@@ -678,7 +685,15 @@ const make = Effect.gen(function* () {
       if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
         return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
       }
-      const proof = yield* makeCloudLinkProof(request, requestUrl);
+      const session = yield* EnvironmentAuthenticatedPrincipal;
+      // Windows reaches its WSL backend through the distro IP. Trust the
+      // authenticated bootstrap subject, never a caller-supplied origin flag;
+      // paired and cloud clients receive different subjects.
+      const proof = yield* makeCloudLinkProof(
+        request,
+        requestUrl,
+        session.subject === "desktop-bootstrap",
+      );
       return proof satisfies RelayEnvironmentLinkProof;
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("generate-link-proof")),
