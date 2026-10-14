@@ -364,7 +364,7 @@ function filterUpdateInfoFilesForHostArch(
   const matchingFiles = record.files.filter((_, index) => {
     const url = urls[index] ?? "";
     if (!EXPLICIT_ARCH_FILE_PATTERN.test(url)) {
-      return true;
+      return false;
     }
     return ARM64_ARCH_FILE_PATTERN.test(url) === wantsArm64;
   });

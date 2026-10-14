@@ -953,7 +953,10 @@ describe("DesktopUpdates", () => {
 
           const x64OnlyPayload = {
             version: "1.2.4",
-            files: [{ url: "T3-Code-1.2.4-x64.exe", sha512: "x64sha", size: 100 }],
+            files: [
+              { url: "T3-Code-1.2.4-x64.exe", sha512: "x64sha", size: 100 },
+              { url: "T3-Code-setup.exe", sha512: "unknownsha", size: 100 },
+            ],
           };
           harness.emit("update-available", x64OnlyPayload);
           yield* flushCallbacks;
@@ -963,6 +966,7 @@ describe("DesktopUpdates", () => {
           const multiArchPayload = {
             version: "1.2.4",
             files: [
+              { url: "T3-Code-setup.exe", sha512: "unknownsha", size: 100 },
               { url: "T3-Code-1.2.4-x64.exe", sha512: "x64sha", size: 100 },
               { url: "T3-Code-1.2.4-arm64.exe", sha512: "arm64sha", size: 95 },
             ],
@@ -980,6 +984,25 @@ describe("DesktopUpdates", () => {
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     },
   );
+  it.effect("keeps legacy untagged update manifests usable", () => {
+    const harness = makeHarness({ platform: "win32", processArch: "arm64" });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const payload = {
+          version: "1.2.4",
+          files: [{ url: "T3-Code-setup.exe", sha512: "legacysha", size: 100 }],
+        };
+        harness.emit("update-available", payload);
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).status, "available");
+        assert.deepEqual(payload.files, [
+          { url: "T3-Code-setup.exe", sha512: "legacysha", size: 100 },
+        ]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 });
 
 describe("describeUpdateErrorCause", () => {
