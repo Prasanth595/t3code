@@ -6889,18 +6889,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const itemId = `${message.message.id}:thinking:${index}`;
               yield* ensureReasoningBlock(context, itemId);
               const finalText = block.thinking || context.reasoning.blocks.get(itemId)?.text;
-              yield* reasoningDeltas.complete({
+              const completedText = yield* reasoningDeltas.complete({
                 turnId: context.nativeTurnId,
                 itemId,
                 ...(finalText ? { finalText } : {}),
                 emitEmpty: false,
               });
               const previous = context.reasoning.lastThinking;
-              context.reasoning.lastThinking = finalText
+              context.reasoning.lastThinking = completedText.trim()
                 ? {
                     messageId: message.message.id,
                     itemId,
-                    text: finalText,
+                    text: completedText,
                     followsThinking: previous !== null && previous.messageId === message.message.id,
                   }
                 : null;

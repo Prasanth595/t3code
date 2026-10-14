@@ -2811,15 +2811,27 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   // Summarized display can't mark a progress update, so only the second of two
   // thinking blocks before a tool call becomes text; a lone block is reasoning.
+  const plan = "Planning the check";
+  const update = "Found it: the memory file is the cause.";
   it.effect.each([
-    { model: "claude-opus-5-5", thoughts: 2, expected: ["reasoning", "assistant_message"] },
-    { model: "claude-fable-5-1", thoughts: 2, expected: ["reasoning", "assistant_message"] },
-    { model: "claude-opus-5", thoughts: 2, expected: ["reasoning", "reasoning"] },
-    { model: "claude-sonnet-4-6", thoughts: 2, expected: ["reasoning", "reasoning"] },
-    { model: "claude-opus-5-5", thoughts: 1, expected: ["reasoning"] },
+    {
+      model: "claude-opus-5-5",
+      texts: [plan, update],
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      model: "claude-fable-5-1",
+      texts: [plan, update],
+      expected: ["reasoning", "assistant_message"],
+    },
+    { model: "claude-opus-5", texts: [plan, update], expected: ["reasoning", "reasoning"] },
+    { model: "claude-sonnet-4-6", texts: [plan, update], expected: ["reasoning", "reasoning"] },
+    { model: "claude-opus-5-5", texts: [plan], expected: ["reasoning"] },
+    { model: "claude-opus-5-5", texts: [plan, " \n "], expected: ["reasoning", "reasoning"] },
+    { model: "claude-opus-5-5", texts: [" \n ", update], expected: ["reasoning", "reasoning"] },
   ] as const)(
-    "shows $model thinking before a tool call as $expected",
-    ({ model, thoughts, expected }) =>
+    "shows $model thinking $texts before a tool call as $expected",
+    ({ model, texts, expected }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         yield* harness.runtime.startTurn(
@@ -2840,10 +2852,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             parent_tool_use_id: null,
             message: { id: "reply-message", model, content },
           });
-        const texts = ["Planning the check", "Found it: the memory file is the cause."].slice(
-          0,
-          thoughts,
-        );
         const frames = [
           ...texts.map((thinking, index) =>
             snapshot(`thinking-snapshot-${index}`, [
@@ -2865,9 +2873,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               : [],
           ),
         );
+        const items = [...latest.values()];
         assert.deepEqual(
-          [...latest.values()].map((item) => [item.type, item.text]),
-          texts.map((text, index) => [expected[index], text]),
+          items.map((item) => item.type),
+          [...expected],
+        );
+        assert.deepEqual(
+          items.map((item) => item.text),
+          [...texts],
         );
       }).pipe(
         Effect.scoped,
