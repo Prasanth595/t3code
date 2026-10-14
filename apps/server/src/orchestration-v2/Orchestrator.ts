@@ -4722,21 +4722,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.dispatchMode,
         command.deliveryIntent,
       );
-      if (dispatchMode.type === "steer_active") {
+      if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
         const targetRunId = dispatchMode.targetRunId;
         const target = projection.runs.find((run) => run.id === targetRunId);
         const turn = latestProviderTurnForAttempt(
           projection.providerTurns.filter((candidate) => candidate.nodeId === target?.rootNodeId),
           target?.activeAttemptId,
         );
-        // The client may still show a running turn while its completion is being
-        // projected. Preserve the submission as a new turn when steering is too late.
+        // The root turn can end before its run settles, including while failed
+        // descendants are being stopped. Preserve late input as a new turn; the
+        // normal dispatch path queues it until the blocking run settles.
         if (
           target !== undefined &&
-          (target.status === "completed" ||
+          (["completed", "failed", "interrupted", "cancelled"].includes(target.status) ||
             ((target.status === "running" || target.status === "waiting") &&
               turn !== undefined &&
-              turn.status === "completed"))
+              ["completed", "failed", "interrupted", "cancelled"].includes(turn.status)))
         ) {
           dispatchMode = { type: "start_immediately" };
         }
@@ -7659,6 +7660,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: "Automatic completion deliveries cannot be promoted to Steer.",
         });
+      }
+
+      const targetRun = projection.runs.find((run) => run.id === command.targetRunId);
+      const targetTurn = latestProviderTurnForAttempt(
+        projection.providerTurns.filter((turn) => turn.nodeId === targetRun?.rootNodeId),
+        targetRun?.activeAttemptId,
+      );
+      if (
+        targetRun !== undefined &&
+        (["completed", "failed", "interrupted", "cancelled"].includes(targetRun.status) ||
+          (targetTurn !== undefined &&
+            ["completed", "failed", "interrupted", "cancelled"].includes(targetTurn.status)))
+      ) {
+        // Keep the existing queued message when its steering target has ended.
+        return;
       }
 
       const now = yield* DateTime.now;
@@ -11071,13 +11087,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
-        // A settle that finds the provider already ended everything, or a
-        // stop that finds nothing running, has nothing to record. That is
-        // its expected outcome, not a failure.
+        // Settling ended work, stopping idle work, and leaving a message queued
+        // when its steering target ended are successful without new events.
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
-        command.type === "subagent.stop"
+        command.type === "subagent.stop" ||
+        command.type === "queued-message.promote-to-steer"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({

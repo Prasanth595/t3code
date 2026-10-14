@@ -27,6 +27,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -698,6 +699,136 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
         assert.equal(started[1]?.message.messageId, MessageId.make("message:steer"));
         assert.deepEqual(started[1]?.modelSelection, composerSelection);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect.each(
+  (["failed", "interrupted", "cancelled"] as const).flatMap((status) =>
+    (["steer_active", "restart_active"] as const).map((mode) => ({ status, mode })),
+  ),
+)("retains $mode input while a $status root waits for descendant cleanup", ({ status, mode }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { events, started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+        `steering-terminal-${status}-${mode}`,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = yield* startFirstTurn;
+        const first = started[0]!;
+        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        const now = yield* DateTime.now;
+        // The provider turn ends first; its terminal receipt waits for child cleanup.
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("root-ended"),
+              type: "provider-turn.updated",
+              threadId,
+              runId: first.runId,
+              nodeId: first.rootNodeId,
+              occurredAt: now,
+              payload: { ...turn, status, completedAt: now },
+            },
+          ],
+        });
+        const messageId = MessageId.make("message:late-input");
+        const attachments = [
+          {
+            type: "image" as const,
+            id: "late-input-screenshot",
+            name: "image.png",
+            mimeType: "image/png",
+            sizeBytes: 10,
+          },
+        ];
+        const dispatch = {
+          type: "message.dispatch" as const,
+          commandId: CommandId.make("late-input"),
+          threadId,
+          messageId,
+          text: "keep this correction",
+          attachments,
+          modelSelection: composerSelection,
+          dispatchMode: { type: mode, targetRunId: first.runId },
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        };
+        yield* orchestrator.dispatch(dispatch);
+        yield* orchestrator.dispatch(dispatch);
+        yield* worker.drain();
+        const queued = yield* orchestrator.getThreadProjection(threadId);
+        const queuedRun = queued.runs.find((run) => run.userMessageId === messageId)!;
+        assert.equal(queued.runs[0]?.status, "running");
+        assert.equal(queuedRun.status, "queued");
+        assert.equal(started.length, 1);
+        assert.deepEqual(steered, []);
+        assert.equal(queued.messages.filter((message) => message.id === messageId).length, 1);
+        assert.deepEqual(
+          queued.messages.find((message) => message.id === messageId)?.attachments,
+          attachments,
+        );
+
+        yield* orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote-ended-root"),
+          threadId,
+          queuedRunId: queuedRun.id,
+          targetRunId: first.runId,
+        });
+        const promoted = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(promoted.runs.find((run) => run.id === queuedRun.id)?.status, "queued");
+        assert.equal(
+          promoted.messages.find((message) => message.id === messageId)?.runId,
+          queuedRun.id,
+        );
+
+        const settled = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === first.runId &&
+              event.payload.status === status,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: turn.providerThreadId,
+          providerTurnId: turn.id,
+          runOrdinal: first.runOrdinal,
+          ...(status === "failed"
+            ? {
+                status,
+                failureItemOrdinal: 1,
+                failure: makeProviderFailure({
+                  message: "provider rejected the turn",
+                  code: "cyberPolicy",
+                }),
+              }
+            : { status, failure: null }),
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("resume-late-input"),
+          threadId,
+        });
+        yield* worker.drain();
+        assert.equal(started.length, 2);
+        assert.equal(started[1]?.message.messageId, messageId);
+        assert.equal(started[1]?.message.text, "keep this correction");
+        assert.deepEqual(started[1]?.message.attachments, attachments);
+        assert.deepEqual(started[1]?.modelSelection, composerSelection);
       }).pipe(Effect.provide(layer));
     }),
   ),

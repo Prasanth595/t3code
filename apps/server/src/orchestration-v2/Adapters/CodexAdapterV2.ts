@@ -5633,10 +5633,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly goalHoldTurn?: OrchestrationV2ProviderTurn;
           }) {
             const event = yield* makeRootTerminalEvent(input);
+            const roots = goalRuns.get(input.context.providerTurnId) ?? [input.context];
             const hasActiveDescendants = Array.from((yield* Ref.get(activeTurns)).values()).some(
-              (candidate) => isDescendantCodexTurn(candidate, input.context),
+              (candidate) => roots.some((root) => isDescendantCodexTurn(candidate, root)),
             );
             if (event.status !== "completed" && hasActiveDescendants) {
+              if (event.status === "failed") {
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CODEX_PROVIDER,
+                  turnItem: makeProviderFailureTurnItem({
+                    driver: CODEX_PROVIDER,
+                    threadId: input.context.projectionThreadId,
+                    runId: input.context.projectionRunId,
+                    nodeId: input.context.providerNodeId,
+                    providerThreadId: event.providerThreadId,
+                    providerTurnId: event.providerTurnId,
+                    itemOrdinal: event.failureItemOrdinal,
+                    failure: event.failure,
+                    ...(event.retry === undefined ? {} : { retry: event.retry }),
+                    ...(event.retryStartedAt === undefined
+                      ? {}
+                      : { retryStartedAt: event.retryStartedAt }),
+                    occurredAt: yield* DateTime.now,
+                  }),
+                });
+              }
               yield* Ref.update(deferredRootTerminals, (current) => {
                 const updated = new Map(current);
                 updated.set(input.nativeTurnId, { context: input.context, event });
@@ -5708,9 +5730,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 event: CodexRootTerminalEvent;
               }> = [];
               for (const [nativeTurnId, deferred] of current) {
+                const roots = goalRuns.get(deferred.context.providerTurnId) ?? [deferred.context];
                 if (
                   !activeTurnContexts.some((candidate) =>
-                    isDescendantCodexTurn(candidate, deferred.context),
+                    roots.some((root) => isDescendantCodexTurn(candidate, root)),
                   )
                 ) {
                   updated.delete(nativeTurnId);
@@ -5996,7 +6019,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               (yield* Ref.get(interruptingNativeTurns)).has(payload.turn.id)
                 ? "interrupted"
                 : nativeStatus;
-            yield* finalizeCodexTurn({
+            const finalized = yield* finalizeCodexTurn({
               context,
               nativeTurnId: payload.turn.id,
               status,
@@ -6012,6 +6035,31 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         }),
                   }),
             });
+            if (
+              finalized &&
+              status === "failed" &&
+              context.subagent === null &&
+              (yield* Ref.get(deferredRootTerminals)).has(payload.turn.id)
+            ) {
+              // The failed root cannot take a steer. Contain its descendants
+              // after releasing the permit and let them flush its original failure.
+              yield* runtime
+                .interruptTurn({
+                  providerThread: context.providerThread,
+                  providerTurnId: context.providerTurnId,
+                  requestRuntimeRestart: true,
+                })
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("orchestration-v2.codex-failed-root-cleanup-failed", {
+                      nativeTurnId: payload.turn.id,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                  ),
+                  Effect.forkIn(scope),
+                );
+            }
           }),
         );
 
@@ -6714,12 +6762,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           interruptTurn: (requestedInput) =>
             Effect.gen(function* () {
               const { turnInput, goalTurns } = yield* resolveGoalStopTarget(requestedInput);
-              const [activeTurnContexts, settledTurnContexts] =
+              const [activeTurnContexts, settledTurnContexts, deferredRootContexts] =
                 yield* turnTerminalizationPermit.withPermits(1)(
                   Effect.gen(function* () {
                     return [
                       Array.from((yield* Ref.get(activeTurns)).values()),
                       Array.from((yield* Ref.get(settledTurns)).values()),
+                      Array.from((yield* Ref.get(deferredRootTerminals)).values()).map(
+                        (terminal) => terminal.context,
+                      ),
                     ] as const;
                   }),
                 );
@@ -6735,7 +6786,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // A goal run spans several root turns, and work an earlier one
               // started can outlive it.
               const lineageRoots = Array.from(
-                new Set([...(activeTurn === undefined ? [] : [activeTurn]), ...goalTurns]),
+                new Set([
+                  ...(activeTurn === undefined ? [] : [activeTurn]),
+                  ...goalTurns,
+                  ...deferredRootContexts.filter(
+                    (context) => context.providerTurnId === turnInput.providerTurnId,
+                  ),
+                ]),
               );
               const inLineage = (context: ActiveCodexTurnContext) =>
                 lineageRoots.some(
