@@ -198,6 +198,23 @@ describe("AsyncDebUpdater", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("inherits authentication session variables while filtering relative PATH entries", () =>
+    Effect.gen(function* () {
+      vi.stubEnv("T3_UPDATE_TEST_SESSION", "desktop-session");
+      vi.stubEnv("PATH", `relative-update-bin:${process.env.PATH ?? ""}`);
+      const updater = yield* make;
+      yield* Effect.promise(() =>
+        updater.runInstallCommand(process.execPath, [
+          "-e",
+          "if (process.env.T3_UPDATE_TEST_SESSION !== 'desktop-session' || process.env.PATH.split(':').some(entry => !entry.startsWith('/'))) process.exit(1)",
+        ]),
+      );
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("rejects a real child process that exits unsuccessfully", () =>
     Effect.gen(function* () {
       const updater = yield* make;

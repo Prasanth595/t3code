@@ -25,6 +25,7 @@ const runInstallCommand = (command: string, args: readonly string[]) =>
     const exitCode = yield* spawner.exitCode(
       ChildProcess.make(command, args, {
         env: { PATH: (process.env.PATH ?? "").split(":").filter(path.isAbsolute).join(":") },
+        extendEnv: true,
         stdin: "ignore",
         stdout: "inherit",
         stderr: "inherit",
