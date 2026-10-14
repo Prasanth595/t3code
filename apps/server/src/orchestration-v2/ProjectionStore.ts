@@ -761,10 +761,11 @@ export function applyToProjection(
         ...base,
         thread: event.payload,
       };
-    // Visited tracking is read state, not activity: skip the updatedAt bump so
-    // viewing a thread does not surface it as recently active.
+    // Visited tracking and muting are not activity: skip the updatedAt bump so
+    // they do not surface the thread as recently active.
     case "thread.visited":
     case "thread.marked-unread":
+    case "thread.mute-set":
       return {
         ...projection,
         thread: event.payload,
@@ -1562,6 +1563,7 @@ export function threadShellFromProjection(
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
+    mutedAt: projection.thread.mutedAt ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -1817,6 +1819,7 @@ function shellFromState(input: {
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
+    mutedAt: input.state.thread.mutedAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
@@ -1871,6 +1874,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.active-reordered":
           case "thread.visited":
           case "thread.marked-unread":
+          case "thread.mute-set":
           case "thread.metadata-updated":
           case "thread.pull-request-synced":
           case "thread.runtime-mode-updated":
@@ -2702,6 +2706,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.pin-reordered" &&
           event.type !== "thread.visited" &&
           event.type !== "thread.marked-unread" &&
+          event.type !== "thread.mute-set" &&
           event.type !== "thread.metadata-updated" &&
           event.type !== "thread.runtime-mode-updated" &&
           event.type !== "thread.interaction-mode-updated" &&
