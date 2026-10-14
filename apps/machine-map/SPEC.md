@@ -116,6 +116,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-716** The history filters by machine, by kind, by actor and "important only". Important kinds are access raised or lowered, pause, resume, lockdown, expiries and machines added or removed.
 - **MM-717** While paused, the map keeps the lines and pair cards of the arrows that the pause cut. A cut line is a red broken line. A cut pair card has a dashed red border and red stripes. Each cut row shows its level from before the pause, struck through, and a "cut" sticker. The machine panel and the arrow panel show the same. Resume restores the levels, so the lines return to normal.
 - **MM-718** While paused, the desired state of every machine says `paused`. The machine then locks T3 Code for every client except its own desktop app, which the server knows by its desktop bootstrap session. Browsers, the mobile app and desktop apps of other machines get a lock screen and no data until Resume. This stops an agent that drives a browser. Agent MCP sessions follow the map rules of MM-711.
+- **MM-719** Emergency pause and Resume send the new desired state to every connected machine at once, also when they make no revision. A machine that connects later gets `paused` in its first desired state.
 
 ## 8. Agents
 

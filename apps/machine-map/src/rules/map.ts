@@ -537,10 +537,12 @@ export function effectiveSettings(
 /**
  * MM-603, MM-1202: what one machine applies. It holds the machine itself, the public facts of the
  * other machines and every arrow that touches it, with level `none` for pairs without an arrow.
+ * MM-718: `paused` is true while the emergency pause is on.
  */
 export function desiredState(
   map: MachineMapDocument,
   machineId: MachineId,
+  paused: boolean,
 ): MachineDesiredState | undefined {
   const self = findMachine(map, machineId);
   if (!self) return undefined;
@@ -558,5 +560,6 @@ export function desiredState(
     arrowsIn: others.map((other) => findArrow(map, other.id, machineId)),
     arrowsOut: others.map((other) => findArrow(map, machineId, other.id)),
     settings: effectiveSettings(map, machineId),
+    paused,
   };
 }
