@@ -1668,7 +1668,7 @@ describe("retained v2 feed presentation", () => {
                 ? "Compacting context"
                 : status === "completed"
                   ? "Context compacted 899K → 19K tokens"
-                  : "Context compacted",
+                  : "Context compaction stopped",
           },
         ],
       });

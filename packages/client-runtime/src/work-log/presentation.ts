@@ -49,14 +49,25 @@ export function toolItemForDisplay(item: OrchestrationV2TurnItem): Orchestration
   }
 }
 
+/** Work-log label for a compaction row in web and mobile. Only completed compaction reads as success. */
 export function contextCompactionLabel(
   item: Pick<
     Extract<OrchestrationV2TurnItem, { type: "compaction" }>,
     "status" | "beforeTokenCount" | "afterTokenCount"
   >,
 ): string {
-  if (item.status === "running") return "Compacting context";
-  if (item.beforeTokenCount !== undefined && item.afterTokenCount !== undefined) {
+  if (item.status === "failed") return "Context compaction failed";
+  if (item.status === "interrupted" || item.status === "cancelled") {
+    return "Context compaction stopped";
+  }
+  if (item.status === "pending" || item.status === "running" || item.status === "waiting") {
+    return "Compacting context";
+  }
+  if (
+    item.status === "completed" &&
+    item.beforeTokenCount !== undefined &&
+    item.afterTokenCount !== undefined
+  ) {
     return `Context compacted ${formatTokens(item.beforeTokenCount)} → ${formatTokens(item.afterTokenCount)} tokens`;
   }
   return "Context compacted";
