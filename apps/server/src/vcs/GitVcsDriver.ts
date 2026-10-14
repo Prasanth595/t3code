@@ -219,7 +219,6 @@ export interface GitFetchPullRequestBranchInput {
 
 export interface GitFetchPullRequestHeadCommitInput {
   cwd: string;
-  remoteName: string;
   prNumber: number;
 }
 
@@ -367,11 +366,6 @@ export class GitVcsDriver extends Context.Service<
     readonly fetchPullRequestHeadCommit: (
       input: GitFetchPullRequestHeadCommitInput,
     ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;
-    /**
-     * The host `ssh` really connects to for `host`, so an SSH config alias such as `github-work`
-     * can be matched to its hosted repository. Returns `host` when nothing resolves it.
-     */
-    readonly resolveSshHostName: (host: string) => Effect.Effect<string>;
     readonly resolveCommit: (
       input: GitResolveCommitInput,
     ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;

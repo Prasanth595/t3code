@@ -74,6 +74,7 @@ import {
 } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
+import { OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST } from "./pullRequestCheckoutToast";
 import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
@@ -1360,14 +1361,8 @@ export function PullRequestDetailPanel({
     // this set would spin forever and lock every handoff behind it until a reload.
     setHandoff(null);
     // A worktree that was already there and had been worked in keeps whatever it holds, so the
-    // thread opens on older code than the pull request carries. Said once, in place of the
+    // thread opens on code that differs from the pull request. Said once, in place of the
     // success, because everything else about the handoff did happen.
-    const staleCheckoutToast = {
-      type: "warning",
-      title: "Checked out, but not on the latest commits",
-      description:
-        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
-    } as const;
     if (task === null) {
       toastManager.update(
         toastId,
@@ -1380,7 +1375,7 @@ export function PullRequestDetailPanel({
                   ? "This repository is on the pull request's branch, with a thread open on it."
                   : "The pull request is in its own worktree, with a thread open on it.",
             }
-          : staleCheckoutToast,
+          : OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST,
       );
       return;
     }
@@ -1393,7 +1388,7 @@ export function PullRequestDetailPanel({
             title: "Checkout ready",
             description: "The task is in the composer — read it over, then send.",
           }
-        : staleCheckoutToast,
+        : OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST,
     );
   };
 
