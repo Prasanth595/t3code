@@ -30,9 +30,8 @@ import {
   ConnectionBlockedError,
   PrimaryConnectionTarget,
 } from "./model.ts";
+import * as Onboarding from "./onboarding.ts";
 import {
-  ConnectionOnboarding,
-  layer as onboardingLayer,
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
@@ -182,7 +181,7 @@ function layerPairingOnboarding(options?: Parameters<typeof layerPairingHttp>[1]
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.never }),
     ),
   );
-  return onboardingLayer.pipe(
+  return Onboarding.layer.pipe(
     Layer.provideMerge(EnvironmentRegistry.layer.pipe(Layer.provideMerge(dependencies))),
   );
 }
@@ -275,7 +274,7 @@ describe("connection onboarding", () => {
   it.effect("turns a switched-off environment back on when it is paired again", () =>
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-      const onboarding = yield* ConnectionOnboarding;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
       yield* registerSwitchedOffEnvironment;
 
       const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
@@ -302,7 +301,7 @@ describe("connection onboarding", () => {
     () =>
       Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        const onboarding = yield* ConnectionOnboarding;
+        const onboarding = yield* Onboarding.ConnectionOnboarding;
         yield* registerSwitchedOffEnvironment;
         yield* registry.setCompatibility(
           PAIRED_ENVIRONMENT_ID,
@@ -340,7 +339,7 @@ describe("connection onboarding", () => {
   it.effect("registers an enabled environment on first-time pairing", () =>
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-      const onboarding = yield* ConnectionOnboarding;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
       expect((yield* SubscriptionRef.get(registry.entries)).size).toBe(0);
 
       const environmentId = yield* onboarding.registerPairing(PAIRING_INPUT);
@@ -358,7 +357,7 @@ describe("connection onboarding", () => {
   it.effect("leaves a platform-managed environment untouched when its id is paired", () =>
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-      const onboarding = yield* ConnectionOnboarding;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
       yield* registry.registerPlatform(
         new PrimaryConnectionRegistration({
           target: new PrimaryConnectionTarget({
@@ -385,7 +384,7 @@ describe("connection onboarding", () => {
   it.effect("leaves a switched-off environment unchanged when the pairing exchange fails", () =>
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-      const onboarding = yield* ConnectionOnboarding;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
       const before = yield* registerSwitchedOffEnvironment;
 
       const error = yield* onboarding.registerPairing(PAIRING_INPUT).pipe(Effect.flip);
