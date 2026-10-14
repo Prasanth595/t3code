@@ -5,18 +5,11 @@ import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { reportLabel } from "@t3tools/provider-core/server/notification";
+
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-
-const LABEL_MAX_LENGTH = 80;
-
-function taskLabel(title: string | null | undefined, prompt: string): string {
-  const firstLine = (title?.trim() || prompt).trim().split("\n")[0]?.trim() ?? "";
-  return firstLine.length > LABEL_MAX_LENGTH
-    ? `${firstLine.slice(0, LABEL_MAX_LENGTH - 1)}…`
-    : firstLine;
-}
 
 /**
  * Wakes the parent of an app-owned delegated task when the task asks a question. The question
@@ -72,7 +65,7 @@ export const make = Effect.gen(function* () {
       ) {
         return;
       }
-      const label = taskLabel(task.title, task.prompt);
+      const label = reportLabel(task.title?.trim() || task.prompt);
       // Keyed by the request, so a request updated while still pending wakes the parent once.
       const key = `${parentThreadId}:${event.payload.id}`;
       yield* engine.dispatch({
@@ -80,11 +73,11 @@ export const make = Effect.gen(function* () {
         commandId: CommandId.make(`server:delegated-task-question:${key}`),
         threadId: parentThreadId,
         messageId: MessageId.make(`message:delegated-task-question:${key}`),
-        text: `Delegated task ${taskId} is blocked on a question and cannot continue until it is answered. Read it with t3_pending_request_list and t3_pending_request_read using threadId ${child.id}. Answer it with t3_pending_request_respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it.`,
+        text: `Delegated task ${taskId} is blocked on a question and cannot continue until it is answered. Read it with t3_pending_request_list and t3_pending_request_read using threadId ${child.id}. Answer it with t3_pending_request_respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, someone already answered it.`,
         notification: {
           source: { kind: "delegated_task", taskIds: [taskId], childThreadId: child.id },
           outcome: "updated",
-          summary: `Delegated task${label.length === 0 ? "" : ` "${label}"`} has a question`,
+          summary: `Delegated task${label === undefined ? "" : ` "${label}"`} has a question`,
         },
         attachments: [],
         dispatchMode: { type: "queue_after_active" },
