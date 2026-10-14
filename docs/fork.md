@@ -162,8 +162,63 @@ curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fo
 - To update the server, run `install.sh` again. Do not run `t3 update`, because it installs the newest upstream release. A restart stops the running agent turns of that server.
 - `--from-source` clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS, with the same command and service. On macOS it installs no service.
 - The source build needs git, curl, Node and pnpm at the versions of the root `package.json`. The script prints install hints and installs no system packages.
-- To keep the Linux server running after logout, run `loginctl enable-linger $(id -un)`. To reach it from other machines, publish it with a tunnel, like the VPS.
+- On Linux without a display, `install.sh` turns on lingering, so the server keeps running after logout. If that needs an administrator, it prints `sudo loginctl enable-linger <user>`. Upstream `t3 service install` does the same, see [background-service.md](user/background-service.md#troubleshooting).
+- To reach the server from other machines, publish it with a tunnel. See "Set up a headless Linux machine".
 - Run `install.sh --help` for the options.
+
+## Set up a headless Linux machine
+
+These steps set up a Linux server without a display, for example an Oracle Cloud Ubuntu 24.04 machine on Ampere (arm64). Run them over SSH as the normal user, for example `ubuntu`. Do not run the installer with `sudo` or `su`, because the server runs as a systemd user service.
+
+Before you start:
+
+1. In the portal, click "Add machine" and keep the join code.
+2. In Cloudflare Zero Trust, create a tunnel, for example `t3-oracle`. Give it the public hostname `t3-oracle.yarden-zamir.com` with the service `http://127.0.0.1:3773`. Keep the tunnel token.
+3. Make sure that the Access app "T3 Code servers" covers the new hostname.
+
+Install the server and check it:
+
+```sh
+sudo apt-get update && sudo apt-get install -y curl tar ca-certificates
+curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash
+sudo loginctl enable-linger "$(id -un)"
+systemctl --user status t3code-fork.service
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3773/
+```
+
+The last command prints `200` when the server runs. If not, read the log with `journalctl --user -u t3code-fork.service -n 50`.
+
+Install `cloudflared` and run the tunnel as a system service:
+
+```sh
+curl -fsSLo /tmp/cloudflared.deb "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture).deb"
+sudo dpkg -i /tmp/cloudflared.deb
+sudo cloudflared service install <tunnel-token>
+```
+
+Give the server its tunnel hostname and the Cloudflare Access login. The machine reports this hostname to the map (MM-209). Copy the Access values from the server environment of the VPS. The installer replaces only the unit file, so this drop-in file stays after an update.
+
+```sh
+mkdir -p ~/.config/systemd/user/t3code-fork.service.d
+cat > ~/.config/systemd/user/t3code-fork.service.d/tunnel.conf <<'EOF'
+[Service]
+Environment=T3CODE_TUNNEL_PAIRING_URL=https://t3-oracle.yarden-zamir.com
+Environment=T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
+Environment=T3CODE_CLOUDFLARE_ACCESS_AUD=<audience tag of the Access app>
+Environment=T3CODE_CLOUDFLARE_ACCESS_SUBJECTS=<owner email>
+EOF
+systemctl --user daemon-reload && systemctl --user restart t3code-fork.service
+```
+
+Join the map on this machine:
+
+```sh
+~/.local/bin/t3 machine-map join <code> --portal https://t3.yarden-zamir.com
+```
+
+- The join code expires after 10 minutes. If it expired, get a new one from "Add machine".
+- The tunnel connects outbound, and the server listens only on `127.0.0.1`. Thus the cloud firewall needs no change. On Oracle Cloud, keep the default security list and the `iptables` rules of the image.
+- To update the server, run the `install.sh` command again.
 
 ## Deploy to the VPS
 
