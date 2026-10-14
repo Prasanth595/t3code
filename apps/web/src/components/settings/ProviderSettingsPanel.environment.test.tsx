@@ -446,6 +446,52 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
+  it("keeps a later clear when the server already lacks the cleared value", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    const onUpdate = codexCardUpdate(renderPanel());
+    onUpdate(setField("accentColor", "#ff0000"));
+    onUpdate(clearField("accentColor"));
+    // Neither save has come back; the server still has no color.
+    codexCardUpdate(renderPanel())(setField("icon", "openai"));
+    finishFirstSave();
+    await flushPromises();
+
+    expect(savedInstance(2)).toMatchObject({ icon: "openai" });
+    expect(savedInstance(2)).not.toHaveProperty("accentColor");
+  });
+
+  it("does not replay edits made before the provider was reset", async () => {
+    atoms.providers = [provider()];
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), displayName: "Work" },
+      },
+    };
+    const panel = renderPanel();
+    codexCardUpdate(panel)(setField("badgeLabel", "PX"));
+    await flushPromises();
+    const reset = visitElements(
+      panel,
+      (element) =>
+        typeof element.props.label === "string" &&
+        element.props.label.endsWith("provider settings") &&
+        typeof element.props.onClick === "function",
+    );
+    (reset?.props.onClick as () => void)();
+    await flushPromises();
+    settingsState.value = DEFAULT_UNIFIED_SETTINGS;
+    codexCardUpdate(renderPanel())(setField("icon", "openai"));
+    await flushPromises();
+
+    const afterReset = settingsState.mutateProviderInstance.mock.calls.at(-1)?.[0] as {
+      readonly instance: ProviderInstanceConfig;
+    };
+    expect(afterReset.instance).toMatchObject({ icon: "openai" });
+    expect(afterReset.instance).not.toHaveProperty("badgeLabel");
+  });
+
   it("starts the next edit from the server's state after a save fails", async () => {
     atoms.providers = [provider()];
     settingsState.mutateProviderInstance.mockResolvedValueOnce(

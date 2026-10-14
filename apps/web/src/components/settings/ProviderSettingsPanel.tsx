@@ -615,10 +615,10 @@ export function EnvironmentProviderSettings({
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
-  // Edits per instance that the server's instance does not show yet. Each save
-  // replays them onto the server's latest instance, so quick edits compose and
-  // a change from elsewhere to another field survives. An edit is dropped once
-  // the server's instance already shows it.
+  // Edits per instance, in order, until the server's instance shows their
+  // combined result. Each save replays them onto the server's latest instance,
+  // so quick edits compose and a change from elsewhere to another field
+  // survives. Deleting or resetting the instance discards them.
   const pendingInstanceEditsRef = useRef(
     new Map<
       ProviderInstanceId,
@@ -849,13 +849,13 @@ export function EnvironmentProviderSettings({
     },
   ) => {
     const pendingEdits = pendingInstanceEditsRef.current;
+    const pending = pendingEdits.get(row.instanceId) ?? [];
+    const replay = (updates: typeof pending) =>
+      updates.reduce((current, apply) => apply(current), row.instance);
     // Compared by content: a default slot with no saved instance is a fresh object every render.
-    const server = stableStringify(row.instance);
-    const unreflected = (pendingEdits.get(row.instanceId) ?? []).filter(
-      (apply) => stableStringify(apply(row.instance)) !== server,
-    );
-    const updates = [...unreflected, update];
-    const instance = updates.reduce((current, apply) => apply(current), row.instance);
+    const caughtUp = stableStringify(replay(pending)) === stableStringify(row.instance);
+    const updates = [...(caughtUp ? [] : pending), update];
+    const instance = replay(updates);
     pendingEdits.set(row.instanceId, updates);
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
@@ -885,6 +885,7 @@ export function EnvironmentProviderSettings({
   };
 
   const deleteProviderInstance = async (row: InstanceRow) => {
+    pendingInstanceEditsRef.current.delete(row.instanceId);
     const updateResult = await persistProviderInstance({
       operation: "remove",
       instanceId: row.instanceId,
@@ -922,6 +923,7 @@ export function EnvironmentProviderSettings({
   };
 
   const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
+    pendingInstanceEditsRef.current.delete(defaultInstanceIdForDriver(driverKind));
     const result = await persistProviderInstance({
       operation: "remove",
       instanceId: defaultInstanceIdForDriver(driverKind),
