@@ -132,7 +132,7 @@ export const make = Effect.gen(function* () {
     input: PeerEnvironmentHost,
   ) {
     const queue = yield* Queue.unbounded<PeerEnvironmentStreamEvent, Cause.Done>();
-    const connectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const connectionId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     yield* Queue.offer(queue, { type: "connected", connectionId });
     const { host, replaced } = yield* Ref.modify(state, (current) => {
       const order = current.order + 1;
@@ -154,7 +154,7 @@ export const make = Effect.gen(function* () {
     operation: PeerEnvironmentOperation,
     timeoutMs: number,
   ) {
-    const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     const deferred = yield* Deferred.make<PeerEnvironmentResult, PeerEnvironmentBrokerError>();
     yield* Ref.update(state, (current) => ({
       ...current,
