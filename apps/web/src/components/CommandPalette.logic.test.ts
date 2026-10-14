@@ -988,4 +988,53 @@ describe("returning from file and content search", () => {
     expect(direct.parentSearch).toBeUndefined();
     expect(direct.restoredSearch).toBeUndefined();
   });
+
+  it.each([
+    { _tag: "OpenAddProject" },
+    { _tag: "OpenNewThreadIn" },
+    { _tag: "OpenChangeTheme" },
+    { _tag: "OpenSearch", query: "fresh" },
+  ] as const)("$_tag from a child search forgets the parent query", (action) => {
+    const child = reduceCommandPaletteUiState(root, {
+      _tag: "OpenChildSearch",
+      mode: "content",
+      context,
+    });
+    const direct = reduceCommandPaletteUiState(child, action);
+    expect(direct.mode).toBe("command");
+    expect(direct.parentSearch).toBeUndefined();
+    expect(direct.restoredSearch).toBeUndefined();
+  });
+
+  it("a second Back in the same keypress keeps the restored query", () => {
+    const child = reduceCommandPaletteUiState(root, {
+      _tag: "OpenChildSearch",
+      mode: "files",
+      context,
+    });
+    const returned = reduceCommandPaletteUiState(child, { _tag: "BackToCommand" });
+    expect(reduceCommandPaletteUiState(returned, { _tag: "BackToCommand" })).toBe(returned);
+  });
+
+  it("keeps linked-thread results across repeated trips into search", () => {
+    const linkedContext = {
+      query: "https://github.com/acme/web/pull/7",
+      linkedThreadSearch: {
+        kind: "search" as const,
+        query: "https://github.com/acme/web/pull/7",
+        linkedThreads: { environmentId: EnvironmentId.make("remote"), threads: [] },
+      },
+    };
+    let state = root;
+    for (const mode of ["files", "content", "files"] as const) {
+      // The remounted palette hands its restored context to the next child search.
+      state = reduceCommandPaletteUiState(state, {
+        _tag: "OpenChildSearch",
+        mode,
+        context: state.restoredSearch ?? linkedContext,
+      });
+      state = reduceCommandPaletteUiState(state, { _tag: "BackToCommand" });
+      expect(state.restoredSearch).toEqual(linkedContext);
+    }
+  });
 });
