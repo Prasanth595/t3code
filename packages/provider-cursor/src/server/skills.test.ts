@@ -253,17 +253,12 @@ describe("Cursor skills", () => {
             yield* fileSystem.makeDirectory(directory, { recursive: true });
             yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), "---\n---\n");
           });
-          const plugin = path.join(
-            userHome,
-            ".cursor",
-            "plugins",
-            "cache",
-            "cursor-public",
-            "linked",
-            "5d1c8e2",
-          );
+          const marketplace = path.join(userHome, ".cursor", "plugins", "cache", "cursor-public");
+          const plugin = path.join(marketplace, "linked", "5d1c8e2");
           const pluginSkills = path.join(plugin, "skills");
           const outside = path.join(userHome, "elsewhere", "escaped");
+          const linkedManifest = path.join(marketplace, "manifest", "1b4c7e9");
+          const outsideManifest = path.join(userHome, "elsewhere", "plugin.json");
 
           yield* writeSkill(path.join(userHome, ".cursor", "skills", "review"));
           yield* writeSkill(path.join(pluginSkills, "release"));
@@ -271,8 +266,36 @@ describe("Cursor skills", () => {
           yield* writeSkill(outside);
           yield* fileSystem.symlink("loop", path.join(pluginSkills, "loop"));
           yield* fileSystem.symlink(outside, path.join(pluginSkills, "escaped"));
+          yield* fileSystem.makeDirectory(path.join(pluginSkills, "linked-file"));
+          yield* fileSystem.symlink(
+            path.join(outside, "SKILL.md"),
+            path.join(pluginSkills, "linked-file", "SKILL.md"),
+          );
+          yield* fileSystem.makeDirectory(path.join(pluginSkills, "shared"));
+          yield* fileSystem.symlink(
+            path.join(pluginSkills, "release", "SKILL.md"),
+            path.join(pluginSkills, "shared", "SKILL.md"),
+          );
+          yield* writeSkill(path.join(linkedManifest, "custom", "from-manifest"));
+          yield* writeSkill(path.join(linkedManifest, "skills", "from-default"));
+          yield* fileSystem.writeFileString(path.join(linkedManifest, ".cache-complete"), "");
+          yield* fileSystem.writeFileString(
+            outsideManifest,
+            JSON.stringify({ name: "manifest", skills: "./custom/" }),
+          );
+          yield* fileSystem.makeDirectory(path.join(linkedManifest, ".cursor-plugin"));
+          yield* fileSystem.symlink(
+            outsideManifest,
+            path.join(linkedManifest, ".cursor-plugin", "plugin.json"),
+          );
 
           expect(yield* probeCursorSkills(undefined, { HOME: userHome })).toEqual([
+            {
+              name: "from-default",
+              path: path.join(linkedManifest, "skills", "from-default", "SKILL.md"),
+              scope: "user",
+              enabled: true,
+            },
             {
               name: "release",
               path: path.join(pluginSkills, "release", "SKILL.md"),
@@ -282,6 +305,12 @@ describe("Cursor skills", () => {
             {
               name: "review",
               path: path.join(userHome, ".cursor", "skills", "review", "SKILL.md"),
+              scope: "user",
+              enabled: true,
+            },
+            {
+              name: "shared",
+              path: path.join(pluginSkills, "shared", "SKILL.md"),
               scope: "user",
               enabled: true,
             },
