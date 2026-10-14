@@ -759,6 +759,7 @@ export function MarkdownCodeBlockFrame({
   title,
   actions,
   headerProps,
+  className,
   children,
 }: {
   as?: React.ElementType;
@@ -770,11 +771,15 @@ export function MarkdownCodeBlockFrame({
   title?: React.ReactNode;
   actions?: React.ReactNode;
   headerProps?: React.HTMLAttributes<HTMLDivElement>;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
     <Wrapper
-      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+      className={cn(
+        "chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32",
+        className,
+      )}
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
@@ -849,7 +854,7 @@ function MarkdownCodeBlock({
   theme,
   onRunShellCommand,
   isStreaming,
-  leadingActions,
+  viewToggle,
   canWrap = true,
   diagram = false,
   children,
@@ -860,7 +865,8 @@ function MarkdownCodeBlock({
   theme: "light" | "dark";
   onRunShellCommand?: ((command: string) => void) | undefined;
   isStreaming: boolean;
-  leadingActions?: ReactNode;
+  /** Switches between source and rendered content; stays below the block in both views. */
+  viewToggle?: ReactNode;
   canWrap?: boolean;
   /** Renders content instead of code, with actions below it like tables. */
   diagram?: boolean;
@@ -945,15 +951,16 @@ function MarkdownCodeBlock({
       <div className="my-[0.65rem]" data-language={language}>
         {children}
         <div className="mt-0.5 flex items-center justify-between select-none">
-          {leadingActions}
+          {viewToggle}
           {copyButton}
         </div>
       </div>
     );
   }
 
-  return (
+  const frame = (
     <MarkdownCodeBlockFrame
+      {...(viewToggle ? { className: "my-0" } : {})}
       language={language}
       fenceTitle={fenceTitle}
       theme={theme}
@@ -962,7 +969,6 @@ function MarkdownCodeBlock({
       headerProps={THREAD_FIND_IGNORE_PROPS}
       actions={
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          {leadingActions}
           {canWrap ? (
             <Tooltip>
               <TooltipTrigger
@@ -1007,6 +1013,14 @@ function MarkdownCodeBlock({
       {children}
     </MarkdownCodeBlockFrame>
   );
+  if (!viewToggle) return frame;
+  // The toggle keeps its place under the block so switching views never moves it.
+  return (
+    <div className="my-[0.65rem]">
+      {frame}
+      <div className="mt-0.5 flex items-center select-none">{viewToggle}</div>
+    </div>
+  );
 }
 
 /**
@@ -1043,7 +1057,7 @@ function MarkdownMermaidCodeBlock({
       isStreaming={isStreaming}
       canWrap={!showDiagram}
       diagram={showDiagram}
-      leadingActions={
+      viewToggle={
         isStreaming ? null : (
           <Tooltip>
             <TooltipTrigger
