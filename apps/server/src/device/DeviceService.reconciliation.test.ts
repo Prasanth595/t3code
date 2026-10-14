@@ -25,6 +25,8 @@ it.effect(
   "reconciles settings without publishing no-ops and clears removed or replaced host state",
   () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-reconcile-" });
       const settings = yield* ServerSettings.ServerSettingsService;
       const changes = yield* Queue.unbounded<{ value: Settings; done: Deferred.Deferred<void> }>();
       // Acknowledge only after the downstream reconciliation consumed this settings value.
@@ -101,12 +103,7 @@ it.effect(
             );
           }),
         ),
-        Effect.provide(
-          Layer.mergeAll(
-            ServerConfig.layerTest("/test/device-reconcile", "/test/device-reconcile"),
-            NetService.layer,
-          ),
-        ),
+        Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
       );
       const update = Effect.fnUntraced(function* (deviceHosts: ReadonlyArray<SshDeviceHostConfig>) {
         const value = yield* settings.updateSettings({ deviceHosts: [...deviceHosts] });
