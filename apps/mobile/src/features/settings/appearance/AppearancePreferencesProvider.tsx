@@ -79,8 +79,11 @@ interface AppearancePreferencesContextValue {
    * user-facing message when the file is invalid or the save fails.
    */
   readonly importCustomTheme: (file: unknown) => Promise<MobileThemeId>;
-  /** Removes an installed custom theme and clears any appearance that selected it. */
-  readonly removeCustomTheme: (themeId: MobileThemeId) => void;
+  /**
+   * Removes an installed custom theme and clears any appearance that selected it.
+   * Resolves once saved; rejects with a user-facing message when the save fails.
+   */
+  readonly removeCustomTheme: (themeId: MobileThemeId) => Promise<void>;
   readonly setBaseFontSize: (value: number) => void;
   /** Pass null to clear the override and follow the base font size. */
   readonly setTerminalFontSize: (value: number | null) => void;
@@ -261,7 +264,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
 
   const removeCustomTheme = useCallback(
-    (themeId: MobileThemeId) => {
+    async (themeId: MobileThemeId): Promise<void> => {
+      const previousThemeIds = selectedThemeIdsRef.current;
       const remaining = customThemes.filter((theme) => theme.id !== themeId);
       const selection = resolveMobileThemeIds(storedPreferences ?? {});
       // An appearance that selected the removed theme falls back to the default palette.
@@ -275,9 +279,16 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
             : selection[themeAppearance],
       };
       selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
-      updateThemePreferences(patch);
+      // A failed save rolls the optimistic removal back, so restore the
+      // selection ref and report it rather than letting the theme reappear.
+      try {
+        await savePreferencesAndWait(patch);
+      } catch {
+        selectedThemeIdsRef.current = previousThemeIds;
+        throw new Error("The theme could not be removed on this device.");
+      }
     },
-    [customThemes, storedPreferences, themeAppearance, updateThemePreferences],
+    [customThemes, savePreferencesAndWait, storedPreferences, themeAppearance],
   );
 
   const setThemeMode = useCallback(

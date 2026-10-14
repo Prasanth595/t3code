@@ -355,7 +355,18 @@ export function ThemeAppearanceSection() {
     (themeId: MobileThemeId, label: string) => {
       Alert.alert("Remove theme?", `"${label}" will be deleted from this device.`, [
         { text: "Cancel", style: "cancel" },
-        { text: "Remove", style: "destructive", onPress: () => removeCustomTheme(themeId) },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => {
+            removeCustomTheme(themeId).catch((error: unknown) => {
+              Alert.alert(
+                "Could not remove theme",
+                error instanceof Error ? error.message : "The theme could not be removed.",
+              );
+            });
+          },
+        },
       ]);
     },
     [removeCustomTheme],
