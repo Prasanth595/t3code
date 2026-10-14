@@ -1264,6 +1264,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         stderrTail = (stderrTail + chunk).slice(-TUNNEL_STDERR_TAIL_CHARS);
       }),
     ),
+    // Diagnostics are best-effort: a failed read must not hide the real exit.
+    Effect.ignore,
     Effect.forkIn(scope),
   );
   const exitFailure = Effect.all(

@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
@@ -741,6 +742,61 @@ describe("ssh tunnel scripts", () => {
             assert.equal(result.failure.stderr.length, 16_384);
             assert.isTrue(result.failure.stderr.endsWith(diagnostic));
             assert.equal(result.failure.message, result.failure.stderr.trim());
+          }
+        }
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("reports the real exit when reading tunnel diagnostics fails", () =>
+    Effect.gen(function* () {
+      const diagnostic = "Permission denied (publickey)";
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.succeed(
+          commandArgs(command).includes("-N")
+            ? {
+                ...makeSuccessfulProcess(""),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(255)),
+                stderr: Stream.make(new TextEncoder().encode(diagnostic)).pipe(
+                  Stream.concat(
+                    Stream.fail(
+                      PlatformError.systemError({
+                        _tag: "Unknown",
+                        module: "Stream",
+                        method: "read",
+                        description: "stderr read failed",
+                      }),
+                    ),
+                  ),
+                ),
+              }
+            : makeSuccessfulProcess('{"remotePort":3773}\n'),
+        ),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, hangingHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const result = yield* Effect.result(
+          manager.ensureEnvironment({
+            alias: "devbox",
+            hostname: "devbox",
+            username: null,
+            port: null,
+          }),
+        );
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.instanceOf(result.failure, SshCommandError);
+          if (result.failure instanceof SshCommandError) {
+            assert.equal(result.failure.exitCode, 255);
+            assert.equal(result.failure.stderr, diagnostic);
           }
         }
       }).pipe(Effect.provide(layer), Effect.scoped);
