@@ -1739,9 +1739,18 @@ const layerWsRpc = (
               remoteOpenTargets.resolveTargets(),
             ),
             directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
-            ...(config.trustedBrowserOrigins === undefined
-              ? {}
-              : { trustedBrowserOrigins: config.trustedBrowserOrigins }),
+            // Fork: machine map (MM-1311). Peer machines join the explicit list.
+            ...(yield* Effect.serviceOption(MachineMapState.MachineMapState).pipe(
+              Effect.map((machineMap) => {
+                const origins = [
+                  ...new Set([
+                    ...(config.trustedBrowserOrigins ?? []),
+                    ...(Option.isSome(machineMap) ? machineMap.value.peerOrigins() : []),
+                  ]),
+                ];
+                return origins.length === 0 ? {} : { trustedBrowserOrigins: origins };
+              }),
+            )),
             observability: {
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,

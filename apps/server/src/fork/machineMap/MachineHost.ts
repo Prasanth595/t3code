@@ -180,6 +180,8 @@ export class MachineHost extends Context.Service<
     readonly run: (command: MachineCommand) => Effect.Effect<CommandOutcome>;
     /** Ends this process so that its supervisor starts the server again. */
     readonly restartProcess: Effect.Effect<void>;
+    /** A supervisor starts the server again after `restartProcess`. */
+    readonly supervised: boolean;
   }
 >()("t3/fork/machineMap/MachineHost") {}
 
@@ -507,7 +509,7 @@ const make = Effect.gen(function* () {
     process.kill(process.pid, "SIGTERM");
   });
 
-  return MachineHost.of({ supportedCommands, status, run, restartProcess });
+  return MachineHost.of({ supportedCommands, status, run, restartProcess, supervised });
 });
 
 export const layer = Layer.effect(MachineHost, make);

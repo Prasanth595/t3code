@@ -26,6 +26,7 @@ import {
   MachineMapRequestError,
   type MachineStatus,
   type MachineToPortal,
+  MachineTunnelGrant,
   type MapToolName,
   type OrchestrationV2DomainEvent,
   ServerSettings as ServerSettingsSchema,
@@ -43,7 +44,9 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
@@ -59,12 +62,14 @@ import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerConfig from "../../config.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { isMachineSubject, peersWithChangedLevel, reachablePeers } from "./machineAccess.ts";
 import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachineResources from "./MachineResources.ts";
+import * as MachineTunnel from "./MachineTunnel.ts";
 import {
   PORTAL_CLOSE_CODES,
   type PortalMessage,
@@ -101,12 +106,20 @@ const STATUS_EVENT_TYPES: ReadonlySet<OrchestrationV2DomainEvent["type"]> = new 
 
 /**
  * What `/enroll` returns for a valid join code (MM-204). The portal adds fields at will; the
- * machine needs only the token.
+ * machine needs the token and the tunnel (MM-213).
  */
 const EnrollResponse = Schema.Struct({
   tokenClientId: TrimmedNonEmptyString,
   tokenSecret: TrimmedNonEmptyString,
+  tunnel: Schema.optionalKey(Schema.NullOr(MachineTunnelGrant)),
 });
+/**
+ * MM-211: the installer leaves a join code in `<stateDir>/machine-map-join-code` for the desktop
+ * app. The server joins with it at start.
+ */
+const PENDING_JOIN_FILE = "machine-map-join-code";
+/** Time for the join answer to reach the caller before the restart for the tunnel. */
+const TUNNEL_RESTART_DELAY = Duration.seconds(2);
 const EnrollRefusal = Schema.Struct({ error: Schema.optionalKey(Schema.String) });
 
 const decodePatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
@@ -169,6 +182,10 @@ export class MachineMap extends Context.Service<
 const make = Effect.gen(function* () {
   const state = yield* MachineMapState.MachineMapState;
   const host = yield* MachineHost.MachineHost;
+  const tunnel = yield* MachineTunnel.MachineTunnel;
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const resources = yield* MachineResources.MachineResources;
   const settings = yield* ServerSettings.ServerSettingsService;
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -853,6 +870,17 @@ const make = Effect.gen(function* () {
         .updateSettings({ machineMap: { enabled: true, portalUrl } })
         .pipe(Effect.mapError(settingsFailed));
       yield* Effect.logInfo("Machine map joined.", { portal: new URL(portalUrl).host });
+      // MM-1309: the config reads the tunnel at start, so a new tunnel needs a restart.
+      if (enrolled.tunnel && (yield* tunnel.adopt(enrolled.tunnel)) === "restart") {
+        if (host.supervised) {
+          yield* Effect.sleep(TUNNEL_RESTART_DELAY).pipe(
+            Effect.andThen(host.restartProcess),
+            Effect.forkIn(scope),
+          );
+        } else {
+          yield* Effect.logWarning("Restart the T3 server to start the machine map tunnel.");
+        }
+      }
       return yield* clientState(false);
     });
 
@@ -861,6 +889,7 @@ const make = Effect.gen(function* () {
       .updateSettings({ machineMap: { enabled: false } })
       .pipe(Effect.mapError(settingsFailed));
     yield* forgetMap.pipe(Effect.mapError(storageFailed));
+    yield* tunnel.forget;
     // Return once the portal connection is closed, so no later call goes out on it.
     yield* SubscriptionRef.changes(connection).pipe(
       Stream.filter((current) => !current.online),
@@ -955,6 +984,25 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * MM-211: joins with the code that the installer left. The file goes first, so a bad or used
+   * code does not repeat at each start.
+   */
+  const joinPendingCode = Effect.gen(function* () {
+    const pendingPath = path.join(config.stateDir, PENDING_JOIN_FILE);
+    if (!(yield* fileSystem.exists(pendingPath))) return;
+    const code = (yield* fileSystem.readFileString(pendingPath)).trim();
+    yield* fileSystem.remove(pendingPath);
+    if (code.length === 0) return;
+    yield* join({ code });
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Machine map could not join with the code of the installer.", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
+
   // --- Start ---------------------------------------------------------------------------------
 
   // MM-607: the saved desired state applies before the server accepts requests. The layer
@@ -977,6 +1025,7 @@ const make = Effect.gen(function* () {
   yield* forkParked(superviseConnection);
   yield* forkParked(watchLocalSettings);
   yield* forkParked(statusLoop);
+  yield* forkParked(joinPendingCode);
 
   return MachineMap.of({ join, leave, clientStates, reportDesktop, callMapTool, readPanel });
 });

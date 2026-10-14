@@ -47,6 +47,7 @@ import * as MachineMap from "./MachineMap.ts";
 import { PEER, SELF, arrow, desiredState } from "./MachineMap.testkit.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachineResources from "./MachineResources.ts";
+import * as MachineTunnel from "./MachineTunnel.ts";
 
 const decodeMachineMessage = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Union([MachineToPortal, MachineResourcesMessage])),
@@ -212,6 +213,11 @@ const layerMachineMap = (input: {
               Effect.as({ ok: true, result: { ran: command.id }, error: null }),
             ),
           restartProcess: Effect.void,
+          supervised: false,
+        }),
+        Layer.mock(MachineTunnel.MachineTunnel)({
+          adopt: () => Effect.succeed("unchanged" as const),
+          forget: Effect.void,
         }),
         Layer.mock(MachineResources.MachineResources)({
           sample: (input.sampled === undefined

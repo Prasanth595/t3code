@@ -23,6 +23,7 @@ import * as CliError from "effect/cli/CliError";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
+import { joinedTunnelOrigin, readJoinedTunnel } from "../fork/machineMap/MachineTunnel.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
@@ -497,17 +498,26 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const explicitTunnelUrl = env.tunnelPairingUrl ?? bootstrap?.tunnelPairingUrl;
+    const explicitAccess = {
+      teamDomain: env.cloudflareAccessTeamDomain ?? bootstrap?.cloudflareAccessTeamDomain,
+      aud: env.cloudflareAccessAud ?? bootstrap?.cloudflareAccessAud,
+      subjects: env.cloudflareAccessSubjects ?? bootstrap?.cloudflareAccessSubjects,
+    };
+    // Fork: machine map (MM-1310). The tunnel of a join applies only to a server without its own.
+    const joinedTunnel =
+      explicitTunnelUrl === undefined ? yield* readJoinedTunnel(derivedPaths.stateDir) : undefined;
     const tunnelPairingUrl = yield* resolveTunnelPairingUrl(
-      env.tunnelPairingUrl ?? bootstrap?.tunnelPairingUrl,
+      explicitTunnelUrl ?? (joinedTunnel && joinedTunnelOrigin(joinedTunnel)),
     );
     const trustedBrowserOrigins = yield* resolveTrustedBrowserOrigins(
       env.trustedBrowserOrigins ?? bootstrap?.trustedBrowserOrigins,
     );
-    const cloudflareAccess = yield* resolveCloudflareAccess({
-      teamDomain: env.cloudflareAccessTeamDomain ?? bootstrap?.cloudflareAccessTeamDomain,
-      aud: env.cloudflareAccessAud ?? bootstrap?.cloudflareAccessAud,
-      subjects: env.cloudflareAccessSubjects ?? bootstrap?.cloudflareAccessSubjects,
-    });
+    const cloudflareAccess = yield* resolveCloudflareAccess(
+      joinedTunnel !== undefined && Object.values(explicitAccess).every((v) => v === undefined)
+        ? { ...joinedTunnel.access, subjects: joinedTunnel.access.subjects.join(",") }
+        : explicitAccess,
+    );
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(

@@ -122,6 +122,13 @@ export class MachineMapState extends Context.Service<
     ) => Effect.Effect<SavedState, MachineMapStateError>;
     readonly rememberCommand: (commandId: string) => Effect.Effect<void, MachineMapStateError>;
     readonly setToken: (token: MachineToken | null) => Effect.Effect<void, MachineMapStateError>;
+    /**
+     * MM-1311: true for the origin `https://<hostname>` of a peer in the desired state, while the
+     * map is on. Sync, because the CORS and cookie checks of each request read it.
+     */
+    readonly trustsPeerOrigin: (origin: string) => boolean;
+    /** MM-1311: the peer origins, sorted, for the server config of the clients. */
+    readonly peerOrigins: () => ReadonlyArray<string>;
     /** MM-1305: the grant for a service token that is another machine with an arrow into this one. */
     readonly machineGrant: (tokenClientId: string) => Effect.Effect<MachineGrant | undefined>;
     /** MM-1307: the MCP client of a machine session whose arrow has agent tools. */
@@ -194,6 +201,16 @@ const make = Effect.gen(function* () {
           ? local
           : { ...local, enabled: machineMap.enabled, portalUrl: machineMap.portalUrl },
       ),
+    ),
+    Effect.forkScoped,
+  );
+
+  let peerOrigins: ReadonlySet<string> = new Set();
+  yield* SubscriptionRef.changes(state).pipe(
+    Stream.runForEach((local) =>
+      Effect.sync(() => {
+        peerOrigins = peerOriginsOf(local);
+      }),
     ),
     Effect.forkScoped,
   );
@@ -275,6 +292,8 @@ const make = Effect.gen(function* () {
         ].slice(-HANDLED_COMMANDS_KEPT),
       })).pipe(Effect.asVoid),
     setToken,
+    trustsPeerOrigin: (origin) => peerOrigins.has(origin),
+    peerOrigins: () => [...peerOrigins].toSorted(),
     machineGrant: (tokenClientId) =>
       Effect.all([activeDesired, Clock.currentTimeMillis]).pipe(
         Effect.map(([desired, nowMs]) =>
@@ -298,5 +317,18 @@ const make = Effect.gen(function* () {
       ),
   });
 });
+
+/** MM-1311: only a bare host becomes an origin, so a strange hostname never widens the trust. */
+const peerOriginsOf = (local: LocalState): ReadonlySet<string> => {
+  const desired = local.enabled ? local.saved.desired : null;
+  if (desired === null) return new Set();
+  return new Set(
+    desired.peers.flatMap((peer) => {
+      if (peer.hostname === null) return [];
+      const url = URL.parse(`https://${peer.hostname}`);
+      return url !== null && url.host === peer.hostname.toLowerCase() ? [url.origin] : [];
+    }),
+  );
+};
 
 export const layer = Layer.effect(MachineMapState, make);

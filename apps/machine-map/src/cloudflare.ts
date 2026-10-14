@@ -1,7 +1,8 @@
 /**
- * The Cloudflare API calls of the portal (MM-1205). The token needs only
- * "Access: Service Tokens Edit" and "Access: Apps and Policies Edit".
- * Field names come from the Cloudflare OpenAPI spec of the Access endpoints.
+ * The Cloudflare API calls of the portal (MM-1205). The token needs "Access: Service Tokens Edit"
+ * and "Access: Apps and Policies Edit". The machine tunnels (MM-213) also need "Cloudflare Tunnel:
+ * Edit" on the account and "DNS: Edit" on the zone of the machine hostnames.
+ * Field names come from the Cloudflare OpenAPI spec of the Access, Tunnel and DNS endpoints.
  */
 import * as Schema from "effect/Schema";
 
@@ -60,6 +61,45 @@ const decodeSessions = Schema.decodeUnknownSync(Schema.Array(SessionSummary));
 const decodeSessionDetail = Schema.decodeUnknownSync(SessionDetail);
 const ignoreResult = (): void => undefined;
 
+const Tunnel = Schema.Struct({ id: Schema.String, config_src: Schema.String });
+type Tunnel = typeof Tunnel.Type;
+const IngressRule = Schema.Struct({
+  hostname: Schema.optionalKey(Schema.String),
+  service: Schema.String,
+});
+const DnsRecord = Schema.Struct({ id: Schema.String, type: Schema.String, content: Schema.String });
+export type DnsRecord = typeof DnsRecord.Type;
+
+const decodeTunnel = Schema.decodeUnknownSync(Tunnel);
+const decodeTunnels = Schema.decodeUnknownSync(Schema.Array(Tunnel));
+const decodeTunnelToken = Schema.decodeUnknownSync(Schema.String);
+const decodeTunnelConfig = Schema.decodeUnknownSync(
+  Schema.Struct({
+    config: Schema.NullOr(
+      Schema.Struct({ ingress: Schema.optionalKey(Schema.Array(IngressRule)) }),
+    ).pipe(Schema.optionalKey),
+  }),
+);
+const decodeDnsRecords = Schema.decodeUnknownSync(Schema.Array(DnsRecord));
+const decodeDnsRecord = Schema.decodeUnknownSync(DnsRecord);
+/** The fields of an Access app that the portal reads. A PUT sends back the whole app. */
+const decodeAccessApp = Schema.decodeUnknownSync(
+  Schema.Struct({
+    aud: Schema.String,
+    destinations: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ type: Schema.String, uri: Schema.optionalKey(Schema.String) })),
+    ),
+    policies: Schema.optionalKey(Schema.Array(Schema.Struct({ id: Schema.String }))),
+  }),
+);
+const decodeRecord = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
+/** Read-only fields of an Access app and of its policies. A PUT must not send them. */
+const READ_ONLY_APP_FIELDS = ["id", "uid", "aud", "created_at", "updated_at"];
+const READ_ONLY_POLICY_FIELDS = ["uid", "created_at", "updated_at", "reusable"];
+
+/** The CNAME target of a tunnel. */
+export const tunnelTarget = (tunnelId: string): string => `${tunnelId}.cfargotunnel.com`;
+
 /** The app policy that holds every machine token. The portal edits no other policy. */
 export const MACHINE_POLICY_NAME = "t3 machine map tokens";
 
@@ -83,20 +123,27 @@ export class CloudflareApi {
     this.#accountId = accountId;
   }
 
-  async #call<T>(
+  #call<T>(
     method: string,
     path: string,
     decode: (result: unknown) => T,
     body?: unknown,
   ): Promise<T> {
-    const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${this.#accountId}${path}`,
-      {
-        method,
-        headers: { Authorization: `Bearer ${this.#token}`, "Content-Type": "application/json" },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      },
-    );
+    return this.#request(method, `/accounts/${this.#accountId}${path}`, decode, body);
+  }
+
+  /** `path` starts after `/client/v4`, for example `/zones/<id>/dns_records`. */
+  async #request<T>(
+    method: string,
+    path: string,
+    decode: (result: unknown) => T,
+    body?: unknown,
+  ): Promise<T> {
+    const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${this.#token}`, "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
     const envelope = decodeEnvelope(await response.json());
     if (!response.ok || !envelope.success) {
       const detail = envelope.errors.map((e) => `${e.code} ${e.message}`).join("; ");
@@ -229,6 +276,145 @@ export class CloudflareApi {
   /** MM-903: ends every Access session of the owner. */
   async revokeOwner(email: string): Promise<void> {
     await this.#call("POST", "/access/organizations/revoke_user", ignoreResult, { email });
+  }
+
+  // ---------------------------------------------------------------- MM-213: machine tunnels
+
+  async findTunnelByName(name: string): Promise<Tunnel | null> {
+    const tunnels = await this.#call(
+      "GET",
+      `/cfd_tunnel?is_deleted=false&name=${encodeURIComponent(name)}`,
+      decodeTunnels,
+    );
+    return tunnels[0] ?? null;
+  }
+
+  async findTunnelById(tunnelId: string): Promise<Tunnel | null> {
+    const tunnels = await this.#call(
+      "GET",
+      `/cfd_tunnel?is_deleted=false&uuid=${encodeURIComponent(tunnelId)}`,
+      decodeTunnels,
+    );
+    return tunnels[0] ?? null;
+  }
+
+  /** A remotely managed tunnel: its ingress lives in Cloudflare, so `cloudflared` needs only the token. */
+  createTunnel(name: string): Promise<Tunnel> {
+    return this.#call("POST", "/cfd_tunnel", decodeTunnel, { name, config_src: "cloudflare" });
+  }
+
+  /**
+   * Routes `hostname` to `service` and keeps the other rules of the tunnel. A rule for the
+   * hostname that exists already stays as it is.
+   */
+  async ensureIngress(tunnelId: string, hostname: string, service: string): Promise<void> {
+    const current = await this.#call(
+      "GET",
+      `/cfd_tunnel/${tunnelId}/configurations`,
+      decodeTunnelConfig,
+    );
+    const rules = current.config?.ingress ?? [];
+    if (rules.some((rule) => rule.hostname === hostname)) return;
+    const named = rules.filter((rule) => rule.hostname !== undefined);
+    await this.#call("PUT", `/cfd_tunnel/${tunnelId}/configurations`, ignoreResult, {
+      config: { ingress: [{ hostname, service }, ...named, { service: "http_status:404" }] },
+    });
+  }
+
+  tunnelToken(tunnelId: string): Promise<string> {
+    return this.#call("GET", `/cfd_tunnel/${tunnelId}/token`, decodeTunnelToken);
+  }
+
+  /** Removes the connectors first, because Cloudflare deletes only a tunnel without connections. */
+  async deleteTunnel(tunnelId: string): Promise<void> {
+    await this.#call("DELETE", `/cfd_tunnel/${tunnelId}/connections`, ignoreResult);
+    await this.#call("DELETE", `/cfd_tunnel/${tunnelId}`, ignoreResult);
+  }
+
+  async findDnsRecord(zoneId: string, name: string): Promise<DnsRecord | null> {
+    const records = await this.#request(
+      "GET",
+      `/zones/${zoneId}/dns_records?name=${encodeURIComponent(name)}`,
+      decodeDnsRecords,
+    );
+    return records[0] ?? null;
+  }
+
+  createTunnelCname(zoneId: string, name: string, tunnelId: string): Promise<DnsRecord> {
+    return this.#request("POST", `/zones/${zoneId}/dns_records`, decodeDnsRecord, {
+      type: "CNAME",
+      name,
+      content: tunnelTarget(tunnelId),
+      proxied: true,
+      comment: "T3 machine map",
+    });
+  }
+
+  async deleteDnsRecord(zoneId: string, recordId: string): Promise<void> {
+    await this.#request("DELETE", `/zones/${zoneId}/dns_records/${recordId}`, ignoreResult);
+  }
+
+  /** The audience tag of an Access app: `T3CODE_CLOUDFLARE_ACCESS_AUD` of its hostnames. */
+  async accessAppAud(appId: string): Promise<string> {
+    return (await this.#call("GET", `/access/apps/${appId}`, decodeAccessApp)).aud;
+  }
+
+  /** Adds `hostname` to the public destinations of an Access app. False when it is there already. */
+  addAppHostname(appId: string, hostname: string): Promise<boolean> {
+    return this.#editAppHostnames(appId, (hostnames) =>
+      hostnames.includes(hostname) ? null : [...hostnames, hostname],
+    );
+  }
+
+  /** Removes `hostname` from the public destinations of an Access app. */
+  removeAppHostname(appId: string, hostname: string): Promise<boolean> {
+    return this.#editAppHostnames(appId, (hostnames) =>
+      hostnames.includes(hostname) ? hostnames.filter((h) => h !== hostname) : null,
+    );
+  }
+
+  /**
+   * PUT replaces the whole app, so it sends back every field that GET gave, with the policies of
+   * the app. It checks that the app keeps each policy, because a lost policy locks the owner out.
+   */
+  async #editAppHostnames(
+    appId: string,
+    edit: (hostnames: ReadonlyArray<string>) => ReadonlyArray<string> | null,
+  ): Promise<boolean> {
+    const raw = await this.#call("GET", `/access/apps/${appId}`, decodeRecord);
+    const app = decodeAccessApp(raw);
+    const destinations = app.destinations ?? [];
+    const hostnames = destinations.flatMap((d) =>
+      d.type === "public" && d.uri !== undefined ? [d.uri] : [],
+    );
+    const next = edit(hostnames);
+    if (next === null) return false;
+    if (next.length === 0) throw new Error("An Access app needs at least one hostname.");
+    const body: Record<string, unknown> = { ...raw };
+    for (const field of READ_ONLY_APP_FIELDS) delete body[field];
+    // `self_hosted_domains` is the deprecated twin of the public destinations.
+    delete body.self_hosted_domains;
+    body.domain = next[0];
+    body.destinations = [
+      ...destinations.filter((d) => d.type !== "public"),
+      ...next.map((uri) => ({ type: "public", uri })),
+    ];
+    if (Array.isArray(raw.policies)) {
+      body.policies = raw.policies.map((policy) => {
+        const copy = { ...decodeRecord(policy) };
+        for (const field of READ_ONLY_POLICY_FIELDS) delete copy[field];
+        return copy;
+      });
+    }
+    const updated = await this.#call("PUT", `/access/apps/${appId}`, decodeAccessApp, body);
+    const kept = new Set((updated.policies ?? []).map((policy) => policy.id));
+    const lost = (app.policies ?? []).filter((policy) => !kept.has(policy.id));
+    if (lost.length > 0) {
+      throw new Error(
+        `The Access app ${appId} lost ${lost.length} policies in the hostname update. Check it in the Zero Trust dashboard now.`,
+      );
+    }
+    return true;
   }
 }
 

@@ -47,6 +47,7 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
 import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   browserApiCorsAllowedHeaders,
@@ -263,6 +264,11 @@ export const layerBrowserApiCors = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
     const trustedOrigins = config.trustedBrowserOrigins ?? [];
+    // Fork: machine map (MM-1311). The pages of peer machines are trusted like the list above.
+    const machineMap = yield* Effect.serviceOption(MachineMapState.MachineMapState);
+    const isTrusted = (origin: string) =>
+      trustedOrigins.includes(origin) ||
+      (Option.isSome(machineMap) && machineMap.value.trustsPeerOrigin(origin));
     const shared = {
       allowedMethods: browserApiCorsAllowedMethods,
       allowedHeaders: browserApiCorsAllowedHeaders,
@@ -282,12 +288,13 @@ export const layerBrowserApiCors = Layer.unwrap(
           ...DESKTOP_RENDERER_ORIGINS,
           ...config.devAllowedOrigins,
           ...trustedOrigins,
+          ...(Option.isSome(machineMap) ? machineMap.value.peerOrigins() : []),
         ],
         credentials: true,
         ...shared,
       });
     }
-    if (trustedOrigins.length === 0) {
+    if (trustedOrigins.length === 0 && Option.isNone(machineMap)) {
       return HttpRouter.cors(shared);
     }
     // Fork: T3CODE_TRUSTED_BROWSER_ORIGINS. A trusted origin gets its exact
@@ -295,7 +302,7 @@ export const layerBrowserApiCors = Layer.unwrap(
     // reach this server. Every other origin keeps the wildcard without credentials.
     const wildcard = HttpMiddleware.cors(shared);
     const credentialed = HttpMiddleware.cors({
-      allowedOrigins: trustedOrigins,
+      allowedOrigins: isTrusted,
       credentials: true,
       ...shared,
     });
@@ -303,7 +310,7 @@ export const layerBrowserApiCors = Layer.unwrap(
       (httpApp) =>
         Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
           const origin = request.headers["origin"];
-          return origin !== undefined && trustedOrigins.includes(origin)
+          return origin !== undefined && isTrusted(origin)
             ? credentialed(httpApp)
             : wildcard(httpApp);
         }),

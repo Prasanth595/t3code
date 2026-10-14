@@ -745,7 +745,7 @@ function firstHeaderValue(value: string | undefined): string | undefined {
  */
 function isBrowserOriginAllowed(
   request: HttpServerRequest.HttpServerRequest,
-  trustedOrigins: ReadonlySet<string>,
+  trustedOrigins: Pick<ReadonlySet<string>, "has">,
 ): boolean {
   const origin = request.headers.origin;
   if (origin === undefined) return true;
@@ -843,6 +843,12 @@ export const make = Effect.gen(function* () {
     // Cloudflare Access cookie, so this server's own session cookie arrives with them.
     ...(config.trustedBrowserOrigins ?? []),
   ]);
+  // Fork: machine map (MM-1311). The pages of peer machines are trusted like the list above.
+  const trustedOrigins = {
+    has: (origin: string) =>
+      trustedBrowserOrigins.has(origin) ||
+      (Option.isSome(machineMap) && machineMap.value.trustsPeerOrigin(origin)),
+  };
 
   const authenticateRequest = (
     request: HttpServerRequest.HttpServerRequest,
@@ -854,7 +860,7 @@ export const make = Effect.gen(function* () {
     }
     if (
       isBrowserCookieCredential(credential.source) &&
-      !isBrowserOriginAllowed(request, trustedBrowserOrigins)
+      !isBrowserOriginAllowed(request, trustedOrigins)
     ) {
       return Effect.fail(
         new ServerAuthInvalidCredentialError({

@@ -13,6 +13,14 @@ export interface Env {
   /** Audience of the Access app of `/connect`. */
   readonly CONNECT_AUD: string;
   readonly CONNECT_ACCESS_APP_ID: string;
+  /** MM-213: machine tunnels get the hostname `t3-<slug>.<MACHINE_DOMAIN>` in this DNS zone. */
+  readonly MACHINE_DOMAIN?: string;
+  readonly MACHINE_ZONE_ID?: string;
+  /**
+   * MM-213: Access subjects that a joined machine allows next to the owner emails, comma
+   * separated, for example the client id of the desktop service token.
+   */
+  readonly MACHINE_ACCESS_SUBJECTS?: string;
   /** MM-1205. Optional: without it, "Add machine" takes an existing machine token (MM-210). */
   readonly CF_API_TOKEN?: string;
   /** MM-1201: AES-GCM key for secrets that wait for their machine. */
