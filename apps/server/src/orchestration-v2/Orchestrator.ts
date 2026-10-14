@@ -11210,9 +11210,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandThreadId(command),
         dispatchWithReceiptEffect(command),
       );
+      // Answering a message-mode question also records a follow-up.
       if (
-        command.type !== "message.dispatch" ||
-        (command.createdBy !== "user" && command.creationSource !== "mcp")
+        command.type !== "runtime-request.respond" &&
+        (command.type !== "message.dispatch" ||
+          (command.createdBy !== "user" && command.creationSource !== "mcp"))
       )
         return yield* dispatch;
       const parentThreadId = yield* appOwnedSubagentParentThreadId(command.threadId).pipe(

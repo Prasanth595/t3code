@@ -3801,7 +3801,16 @@ it.effect("ProviderSessionManagerV2 leaves a pending question to restart recover
       yield* eventSink.write({
         events: pendingRequest.events.map((event) =>
           event.type === "turn-item.updated"
-            ? { ...event, payload: { ...event.payload, type: "user_input_request", questions: [] } }
+            ? {
+                ...event,
+                payload: {
+                  ...event.payload,
+                  type: "user_input_request",
+                  questions: [
+                    { id: "color", header: "Color", question: "Which color?", options: [] },
+                  ],
+                },
+              }
             : event.type === "runtime-request.updated"
               ? { ...event, payload: { ...event.payload, kind: "user_input" } }
               : event,
