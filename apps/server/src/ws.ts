@@ -237,7 +237,7 @@ import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
-import { isLocalDesktopSubject } from "./fork/machineMap/machineAccess.ts";
+import { isLocalDesktopSubject, isMachineSubject } from "./fork/machineMap/machineAccess.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -3178,7 +3178,20 @@ const layerWsRpc = (
     Layer.merge(
       ServerWsRpcGroup.toLayerHandler(
         WS_METHODS.machineMapRead,
-        MachineMap.MachineMap.pipe(Effect.map((machineMap) => () => machineMap.readPanel)),
+        MachineMap.MachineMap.pipe(
+          Effect.map(
+            (machineMap) => () =>
+              // MM-1701: another machine reaches this server through an arrow, not a map role.
+              // It must not read the map through the map role of this machine.
+              isMachineSubject(currentSession.subject)
+                ? Effect.succeed({
+                    _tag: "unavailable" as const,
+                    reason: "refused" as const,
+                    detail: "Other machines read the map with their own map role.",
+                  })
+                : machineMap.readPanel,
+          ),
+        ),
       ),
     ),
   );
