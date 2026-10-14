@@ -187,9 +187,9 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/gcp@1.0.0-rc.13"
   - "@distilled.cloud/infisical@1.0.0-rc.13"
   - "@distilled.cloud/zerossl@1.0.0-rc.13"
-  - "@opencode/client@2.0.23"
-  - "@opencode/protocol@2.0.23"
-  - "@opencode/schema@2.0.23"
+  - "@opencode/client@2.0.28"
+  - "@opencode/protocol@2.0.28"
+  - "@opencode/schema@2.0.28"
   - "@muse-code/sdk@1.4.6"
 
 overrides:
@@ -252,13 +252,10 @@ overrides:
   "@tailwindcss/vite": "catalog:"
   "@types/node": "catalog:"
   effect: "catalog:"
-  # OpenCode 2's protocol and schema packages hard-pin an older Effect rc as a
+  # OpenCode 2's protocol and schema packages hard-pin an exact Effect version as a
   # dependency, and their schemas fail to decode under a second Effect copy.
   # The `effect` override above already collapses them; these name the edge so it
   # stays pinned on its own. OpenCode2Client.live.test.ts re-proves it on bumps.
-  # All three still target Effect rc.112 APIs (effect/unstable/*, Encoding,
-  # Schema.isStartsWith) that 4.0 removed; their patches port those call sites
-  # until OpenCode moves to stable Effect.
   "@opencode/protocol>effect": "catalog:"
   "@opencode/schema>effect": "catalog:"
   node-abi: 4.33.0
@@ -299,9 +296,6 @@ patchedDependencies:
   expo-widgets@58.0.11: patches/expo-widgets@58.0.11.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
-  "@opencode/client@2.0.23": patches/@opencode__client@2.0.23.patch
-  "@opencode/protocol@2.0.23": patches/@opencode__protocol@2.0.23.patch
-  "@opencode/schema@2.0.23": patches/@opencode__schema@2.0.23.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, and keeps
   # measured wrapped-row heights above an edit (fileEditorVirtualization.test.ts).
   "@pierre/diffs@1.5.2": patches/@pierre%2Fdiffs@1.5.2.patch
