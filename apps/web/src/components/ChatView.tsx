@@ -5120,8 +5120,10 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       if (overlayUrl !== null) {
+        // A hidden overlay can still hold the page of a server that stopped, for example
+        // after an upgrade. Load it again so the page matches the server that just started.
         if (await waitForPage(overlayUrl)) {
-          useAppOverlayStore.getState().toggle(overlayUrl, script.name);
+          useAppOverlayStore.getState().showFresh(overlayUrl, script.name);
         } else {
           toastManager.add(
             stackedThreadToast({

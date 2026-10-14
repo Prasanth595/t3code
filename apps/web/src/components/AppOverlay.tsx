@@ -1,5 +1,5 @@
 import { RotateCwIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { create } from "zustand";
 
 import { Button } from "./ui/button";
@@ -9,8 +9,13 @@ interface AppOverlayStore {
   readonly url: string | null;
   readonly title: string;
   readonly open: boolean;
+  /** Changes when the page must load again. */
+  readonly loadId: number;
   /** Shows `url`, or hides the overlay when it already shows `url`. */
   readonly toggle: (url: string, title: string) => void;
+  /** Shows `url` and loads it again, for a page whose server just started. */
+  readonly showFresh: (url: string, title: string) => void;
+  readonly reload: () => void;
   readonly hide: () => void;
 }
 
@@ -18,6 +23,7 @@ export const useAppOverlayStore = create<AppOverlayStore>()((set, get) => ({
   url: null,
   title: "",
   open: false,
+  loadId: 0,
   toggle: (url, title) => {
     const current = get();
     if (current.open && current.url === url) {
@@ -26,6 +32,9 @@ export const useAppOverlayStore = create<AppOverlayStore>()((set, get) => ({
     }
     set({ url, title, open: true });
   },
+  showFresh: (url, title) =>
+    set((current) => ({ url, title, open: true, loadId: current.loadId + 1 })),
+  reload: () => set((current) => ({ loadId: current.loadId + 1 })),
   hide: () => set({ open: false }),
 }));
 
@@ -36,9 +45,8 @@ export const useAppOverlayStore = create<AppOverlayStore>()((set, get) => ({
  * let the page post `{ type: "t3:close-overlay" }` to close it.
  */
 export function AppOverlay() {
-  const { url, title, open, hide } = useAppOverlayStore();
+  const { url, title, open, loadId, reload, hide } = useAppOverlayStore();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [reloadCount, setReloadCount] = useState(0);
 
   // The page may ask to close, for example after the user picked something in it. Only the
   // overlay's own page counts, and only this one message: `{ type: "t3:close-overlay" }`.
@@ -84,12 +92,7 @@ export function AppOverlay() {
       <div className="absolute inset-x-[3vw] top-[4vh] bottom-[4vh] flex flex-col overflow-hidden rounded-xl border bg-background shadow-2xl">
         <div className="flex h-9 shrink-0 items-center gap-1 border-b pr-1.5 pl-3">
           <span className="min-w-0 flex-1 truncate font-medium text-sm">{title}</span>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={`Reload ${title}`}
-            onClick={() => setReloadCount((count) => count + 1)}
-          >
+          <Button size="icon-xs" variant="ghost" aria-label={`Reload ${title}`} onClick={reload}>
             <RotateCwIcon className="size-3.5" />
           </Button>
           <Button size="icon-xs" variant="ghost" aria-label={`Close ${title}`} onClick={hide}>
@@ -98,7 +101,7 @@ export function AppOverlay() {
         </div>
         {/* oxlint-disable-next-line react/iframe-missing-sandbox -- The page is the user's own local tool and must call its own server: an opaque sandbox origin gets refused there, and with allow-same-origin a sandbox restricts nothing. */}
         <iframe
-          key={`${url}#${reloadCount}`}
+          key={`${url}#${loadId}`}
           ref={frameRef}
           src={url}
           title={title}
