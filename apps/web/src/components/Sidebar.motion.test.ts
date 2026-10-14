@@ -355,6 +355,34 @@ describe("sidebar list motion", () => {
     );
   });
 
+  it("hides fading rows while the next header slides across them", () => {
+    const header = new TestRow("header", 32);
+    const x = new TestRow("x", 36);
+    const y = new TestRow("y", 36);
+    const settled = new TestRow("settled", 32);
+    const { motion, layout, parent } = fixture([header, settled]);
+    motion.update(true);
+    // The list overflows, so the header stays put and Settled is pushed 74px.
+    layout([header, x, y, settled]);
+    motion.update(true);
+    expectMove(settled, -74);
+    // Each row shows only once Settled has slid past its slot.
+    expect(x.animate.mock.lastCall![0]).toEqual([
+      { opacity: 0, transform: "translateY(0px)" },
+      { offset: 1 - 38 / 74, opacity: 0 },
+      { opacity: 1, transform: "translateY(0px)" },
+    ]);
+    expect(y.animate.mock.lastCall![0][1]).toMatchObject({ offset: 1 - 1 / 74, opacity: 0 });
+    for (const row of [header, x, y, settled]) row.animations.at(-1)?.finish();
+
+    // Collapsing, each clone is gone before Settled slides up into it.
+    layout([header, settled]);
+    motion.update(true);
+    const [xClone, yClone] = parent.children.filter((row) => row.style.position === "absolute");
+    expect(xClone!.animate.mock.lastCall![0][1]).toMatchObject({ offset: 38 / 74, opacity: 0 });
+    expect(yClone!.animate.mock.lastCall![0][1]).toMatchObject({ offset: 1 / 74, opacity: 0 });
+  });
+
   it("rides new rows on a retained header's unfinished travel", () => {
     const header = new TestRow("header", 32);
     const above = new TestRow("above", 39);
