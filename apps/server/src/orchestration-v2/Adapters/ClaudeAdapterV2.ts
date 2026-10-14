@@ -21,6 +21,8 @@ import {
   type EffortLevel,
   type ForkSessionOptions,
   type ForkSessionResult,
+  getSessionInfo,
+  getSessionMessages,
   getSubagentMessages,
   query,
   type Options as ClaudeQueryOptions,
@@ -464,6 +466,10 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly subagentLaunchToolUseId: (
     input: ClaudeAgentSdkSubagentLookupInput,
   ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
+  /** Whether the CLI's session storage holds a transcript with no message to resume. */
+  readonly sessionIsEmpty?: (
+    input: ClaudeAgentSdkSessionLookupInput,
+  ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -477,6 +483,12 @@ export interface ClaudeAgentSdkSessionForkInput {
   readonly options: ForkSessionOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+}
+
+export interface ClaudeAgentSdkSessionLookupInput {
+  readonly sessionId: string;
+  /** The instance's `CLAUDE_CONFIG_DIR`, where the CLI keeps its sessions. */
+  readonly configDir: string | undefined;
 }
 
 export interface ClaudeAgentSdkSubagentLookupInput {
@@ -713,6 +725,7 @@ export const layerQueryRunner: Layer.Layer<
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
     const platform = yield* HostProcess.Platform;
+    const hostEnvironment = yield* HostProcess.Environment;
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto
@@ -1019,6 +1032,26 @@ export const layerQueryRunner: Layer.Layer<
           return toolUseId;
         },
       ),
+      sessionIsEmpty: Effect.fn("ClaudeAgentSdkQueryRunner.sessionIsEmpty")(function* (
+        input: ClaudeAgentSdkSessionLookupInput,
+      ) {
+        // The SDK reads sessions from this process's config dir only.
+        if (input.configDir !== hostEnvironment.CLAUDE_CONFIG_DIR) {
+          return false;
+        }
+        const info = yield* Effect.tryPromise({
+          try: () => getSessionInfo(input.sessionId),
+          catch: (cause) => queryRunnerError(cause, "getSessionInfo"),
+        });
+        if (info === undefined) {
+          return false;
+        }
+        const messages = yield* Effect.tryPromise({
+          try: () => getSessionMessages(input.sessionId, { limit: 1 }),
+          catch: (cause) => queryRunnerError(cause, "getSessionMessages"),
+        });
+        return messages.length === 0;
+      }),
       assertComplete: Effect.void,
     });
   }),
@@ -9182,6 +9215,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ),
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
+              // A CLI stopped before it saved the first prompt can leave a
+              // transcript with no messages. Claude can neither resume that id
+              // nor create it again, so fail and let the caller bind a fresh
+              // native session with a context handoff.
+              const nativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
+              if (
+                nativeThreadId !== undefined &&
+                nativeThreadId !== null &&
+                queryRunner.sessionIsEmpty !== undefined &&
+                (yield* Ref.get(queryContext))?.nativeThreadId !== nativeThreadId &&
+                !(yield* Ref.get(openedNativeThreads)).has(nativeThreadId) &&
+                // An unreadable store leaves the resume to the CLI, as before.
+                (yield* queryRunner
+                  .sessionIsEmpty({
+                    sessionId: nativeThreadId,
+                    configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
+                  })
+                  .pipe(Effect.orElseSucceed(() => false)))
+              ) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude session ${nativeThreadId} has no conversation to resume.`,
+                });
+              }
               const updatedAt = yield* DateTime.now;
               return {
                 ...threadInput.providerThread,
