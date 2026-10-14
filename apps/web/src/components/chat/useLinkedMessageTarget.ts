@@ -139,10 +139,12 @@ export function useLinkedMessageTarget({
   }, [key, listRef, viewport]);
 
   // Scroll the row to the top, then correct for measured row sizes until it holds still.
+  // History lands in stages, so a row shown mid-load can still move: wait for the last stage.
+  const historySettled = !historyLoading && historyControls?.loading !== true;
   useEffect(() => {
     const list = listRef.current;
     const scrollNode = list?.getScrollableNode();
-    if (key === null || rowId === null || !listReady || !list) return;
+    if (key === null || rowId === null || !listReady || !historySettled || !list) return;
     if (!(scrollNode instanceof HTMLElement)) return;
     let stopped = false;
     let frame: number | null = null;
@@ -206,7 +208,7 @@ export function useLinkedMessageTarget({
       stopped = true;
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [key, listReady, listRef, onManualNavigation, rowId]);
+  }, [historySettled, key, listReady, listRef, onManualNavigation, rowId]);
 
   return {
     positioning,

@@ -2386,6 +2386,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const listRef = props.listRef;
     const viewOffset = anchorTopInset + CHAT_LIST_ANCHOR_OFFSET;
     requestAnimationFrame(() => {
+      // A drag that began before this frame keeps the user's position.
+      if (userScrollSessionRef.current) return;
       // Rows can change before the frame, so find the message again.
       const latestIndex = presentedFeedRef.current.findIndex(
         (entry) => entry.type === "message" && entry.id === linkedMessageId,
