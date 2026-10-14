@@ -556,6 +556,12 @@ it.effect.each([
       yield* send(parentThreadId, "first", "start_immediately");
       const childThreadId = yield* delegate(parentThreadId, `question task ${ending}`);
       const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(childThreadId)).nodes.find(
+          (node) => node.id === childRun.rootNodeId,
+        )?.runId,
+        childRun.id,
+      );
       const now = yield* DateTime.now;
       yield* projections.apply({
         id: EventId.make("event:stop-question:request"),

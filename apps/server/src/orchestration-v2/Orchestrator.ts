@@ -10444,6 +10444,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "providerTurns",
           "attempts",
           "runtimeRequests",
+          "nodes",
         ],
         { messageRoles: ["user"] },
       );
@@ -10497,7 +10498,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           request.status === "pending" &&
           request.kind === "user_input" &&
-          request.responseCapability.type === "message"
+          request.responseCapability.type === "message" &&
+          childControls.nodes.some(
+            (node) => node.id === request.nodeId && node.runId === resultRun.id,
+          )
         ) {
           yield* dispatchWithReceipt({
             type: "thread.user-input.dismiss",
