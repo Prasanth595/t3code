@@ -65,7 +65,11 @@ window.globalThis = window;
 const context = NodeVm.createContext(
   new Proxy(window, {
     get: (target, key) =>
-      key in target ? target[key as string] : key in globalThis ? (globalThis as never)[key] : undefined,
+      key in target
+        ? target[key as string]
+        : key in globalThis
+          ? (globalThis as never)[key]
+          : undefined,
     has: () => true,
   }),
 );

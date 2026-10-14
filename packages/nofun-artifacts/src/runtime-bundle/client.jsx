@@ -38,7 +38,11 @@ export function install({ version, modules, components, brands }) {
   /** Renders a component, a module with a default export, or a catalog spec (`{ root }` or a node). */
   function mount(el, input) {
     const root = createRoot(el);
-    const App = isComponent(input) ? input : isComponent(input?.default) ? input.default : undefined;
+    const App = isComponent(input)
+      ? input
+      : isComponent(input?.default)
+        ? input.default
+        : undefined;
     const node = App ? <App /> : <SpecNode node={input?.root ?? input} />;
     root.render(<ArtifactBoundary>{node}</ArtifactBoundary>);
     return { unmount: () => root.unmount() };

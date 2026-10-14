@@ -16,7 +16,13 @@ import {
   inlineAssets,
   type AssetMap,
 } from "./live/assets.ts";
-import { JS_TARGET, PACKAGE_SRC_DIR, USER_PACKAGES, candidatesOf, formatMessages } from "./live/bundle.ts";
+import {
+  JS_TARGET,
+  PACKAGE_SRC_DIR,
+  USER_PACKAGES,
+  candidatesOf,
+  formatMessages,
+} from "./live/bundle.ts";
 import { buildCss } from "./live/css.ts";
 import { brandScheme } from "./live/registry.ts";
 import { assertComponentsDir } from "./live/source.ts";
@@ -67,7 +73,14 @@ const escapeScript = (text: string) => text.replace(/<\/(script)/gi, "<\\/$1");
 function localRuntime(input: LinkedCompileInput) {
   const manifest =
     input.runtimeManifest ??
-    NodePath.join(PACKAGE_SRC_DIR, "..", "dist", "nofun-ui-runtime", input.runtimeSHA, "manifest.json");
+    NodePath.join(
+      PACKAGE_SRC_DIR,
+      "..",
+      "dist",
+      "nofun-ui-runtime",
+      input.runtimeSHA,
+      "manifest.json",
+    );
   const read = (file: string) => {
     try {
       return NodeFs.readFileSync(file, "utf8");
@@ -88,7 +101,12 @@ function cssEscape(name: string) {
   for (let i = 0; i < name.length; i++) {
     const c = name[i]!;
     const code = c.charCodeAt(0);
-    if ((code >= 1 && code <= 31) || code === 127 || (i === 0 && /\d/.test(c)) || (i === 1 && /\d/.test(c) && name[0] === "-")) {
+    if (
+      (code >= 1 && code <= 31) ||
+      code === 127 ||
+      (i === 0 && /\d/.test(c)) ||
+      (i === 1 && /\d/.test(c) && name[0] === "-")
+    ) {
       out += `\\${code.toString(16)} `;
     } else if (code >= 128 || /[\w-]/.test(c)) out += c;
     else out += `\\${c}`;
@@ -98,7 +116,9 @@ function cssEscape(name: string) {
 
 /** Whether runtime.css already has a rule for this class. */
 const runtimeHasClass = (css: string, name: string) =>
-  new RegExp(`\\.${cssEscape(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w\\\\-])`).test(css);
+  new RegExp(`\\.${cssEscape(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w\\\\-])`).test(
+    css,
+  );
 
 function importIssue(path: string, modules: ReadonlySet<string> | undefined): string | undefined {
   const known =
@@ -106,9 +126,15 @@ function importIssue(path: string, modules: ReadonlySet<string> | undefined): st
     path === "@nofun/artifacts" ||
     RUNTIME_PREFIXES.some((prefix) => path.startsWith(prefix));
   if (!known) {
-    return `Import "${path}" is not allowed. Linked artifacts may import "react", "@nofun/ui/<component>", "@nofun/kobra/<primitive>", "@nofun/artifacts", ${USER_PACKAGES.filter((p) => !p.startsWith("react")).map((p) => `"${p}"`).join(", ")}.`;
+    return `Import "${path}" is not allowed. Linked artifacts may import "react", "@nofun/ui/<component>", "@nofun/kobra/<primitive>", "@nofun/artifacts", ${USER_PACKAGES.filter(
+      (p) => !p.startsWith("react"),
+    )
+      .map((p) => `"${p}"`)
+      .join(", ")}.`;
   }
-  const [name, ...rest] = path.startsWith("@nofun/ui/") ? path.slice("@nofun/ui/".length).split("/") : [];
+  const [name, ...rest] = path.startsWith("@nofun/ui/")
+    ? path.slice("@nofun/ui/".length).split("/")
+    : [];
   if (rest.length > 0 && rest.join("/") !== "demo") {
     return `"${path}" is inside a block; linked artifacts import a block ("@nofun/ui/${name}") or its demo ("@nofun/ui/${name}/demo"). Inline anything else.`;
   }
@@ -131,7 +157,10 @@ async function userChunk(tsx: string, modules: ReadonlySet<string> | undefined):
         }
         return { path: args.path, namespace: "nf-runtime" };
       });
-      build.onLoad({ filter: /.*/, namespace: "nf-user" }, () => ({ contents: tsx, loader: "tsx" }));
+      build.onLoad({ filter: /.*/, namespace: "nf-user" }, () => ({
+        contents: tsx,
+        loader: "tsx",
+      }));
       build.onLoad({ filter: /.*/, namespace: "nf-runtime" }, (args) => ({
         contents: `module.exports = window.NoFunUI.require(${JSON.stringify(args.path)});`,
         loader: "js",
@@ -162,7 +191,9 @@ async function userChunk(tsx: string, modules: ReadonlySet<string> | undefined):
     const messages = (error as { errors?: ReadonlyArray<esbuild.Message> }).errors ?? [];
     const noDefault = messages.some((m) => m.text.includes('for import "default"'));
     throw new LinkedCompileError(
-      noDefault ? "The custom TSX must `export default` a React component." : "The custom TSX did not compile.",
+      noDefault
+        ? "The custom TSX must `export default` a React component."
+        : "The custom TSX did not compile.",
       issues.length > 0 ? issues : formatMessages(PACKAGE_SRC_DIR, messages),
     );
   }
@@ -203,7 +234,9 @@ async function userCss(dir: string, tsx: string, runtimeCss: string | undefined)
   if (candidates.length === 0) return "";
   const css = await buildCss(dir, { brand: null, candidates, cssImports: [] });
   return topLevel(css)
-    .filter((rule) => /^@(?:layer (?:theme|utilities|properties)\{|property |keyframes )/.test(rule))
+    .filter((rule) =>
+      /^@(?:layer (?:theme|utilities|properties)\{|property |keyframes )/.test(rule),
+    )
     .join("");
 }
 
@@ -222,7 +255,9 @@ export async function compileLinked(input: LinkedCompileInput): Promise<LinkedAr
   }
   const theme = input.theme ?? DEFAULT_ARTIFACT_THEME;
   if (!isArtifactTheme(theme)) {
-    throw new LinkedCompileError(`Unknown theme "${theme}". Use one of ${artifactThemeIds().join(", ")}.`);
+    throw new LinkedCompileError(
+      `Unknown theme "${theme}". Use one of ${artifactThemeIds().join(", ")}.`,
+    );
   }
   const brand = theme === T3_THEME ? null : theme;
   const base = input.runtimeBase ?? `nofun-ui://runtime/${input.runtimeSHA}/`;
@@ -267,7 +302,9 @@ export async function compileLinked(input: LinkedCompileInput): Promise<LinkedAr
     `<meta name="nofun-artifact" content="${escapeHtml(stamp)}">`,
     `<title>${escapeHtml(title)}</title>`,
     `<link rel="stylesheet" href="${escapeHtml(base)}runtime.css">`,
-    brand ? `<link rel="stylesheet" href="${escapeHtml(base)}brands/${brand}.css" data-nf-brand="${brand}">` : "",
+    brand
+      ? `<link rel="stylesheet" href="${escapeHtml(base)}brands/${brand}.css" data-nf-brand="${brand}">`
+      : "",
     `<style>${(FRAME_CSS + css).replace(/<\/(style)/gi, "<\\/$1")}</style>`,
     `</head><body${bodyFor(dir, theme)}>`,
     `<script>${STORAGE_SCRIPT}</script>`,
@@ -281,5 +318,11 @@ export async function compileLinked(input: LinkedCompileInput): Promise<LinkedAr
     `<script>${escapeScript(code)}</script>`,
     `</body></html>`,
   ].join("");
-  return { html, bytes: Buffer.byteLength(html), lane: input.lane, theme, runtimeSHA: input.runtimeSHA };
+  return {
+    html,
+    bytes: Buffer.byteLength(html),
+    lane: input.lane,
+    theme,
+    runtimeSHA: input.runtimeSHA,
+  };
 }

@@ -78,7 +78,10 @@ function listModules(dir: string, files: ReadonlyMap<string, { file: string }>):
     if (!types.has(item.type) || !file) continue;
     const abs = NodePath.join(dir, file);
     const exports = scanExports(NodeFs.readFileSync(abs, "utf8"));
-    const main = item.type === "registry:lib" ? undefined : mainExport(exports, item.name, mains.get(item.name));
+    const main =
+      item.type === "registry:lib"
+        ? undefined
+        : mainExport(exports, item.name, mains.get(item.name));
     modules.push({
       specifier: `@nofun/ui/${item.name}`,
       owner: item.name,
@@ -92,7 +95,10 @@ function listModules(dir: string, files: ReadonlyMap<string, { file: string }>):
   for (const file of NodeFs.readdirSync(kobraDir).sort()) {
     if (!/\.tsx?$/.test(file)) continue;
     const name = file.replace(/\.tsx?$/, "");
-    const main = mainExport(scanExports(NodeFs.readFileSync(NodePath.join(kobraDir, file), "utf8")), name);
+    const main = mainExport(
+      scanExports(NodeFs.readFileSync(NodePath.join(kobraDir, file), "utf8")),
+      name,
+    );
     modules.push({
       specifier: `@nofun/kobra/${name}`,
       owner: `kobra/${name}`,
@@ -121,12 +127,16 @@ async function failing(
   modules: ReadonlyArray<RuntimeModule>,
 ): Promise<Map<string, string>> {
   const entry = modules
-    .map((m, i) => `import * as m${i} from ${JSON.stringify(m.specifier)}; (globalThis as any).__nf${i} = m${i};`)
+    .map(
+      (m, i) =>
+        `import * as m${i} from ${JSON.stringify(m.specifier)}; (globalThis as any).__nf${i} = m${i};`,
+    )
     .join("\n");
   const issue = await bundle(dir, index, { entry, minify: false }).then(
     () => undefined,
     (error: unknown) =>
-      (error instanceof BundleError ? error.issues[0] : (error as Error).message) ?? "bundle failed",
+      (error instanceof BundleError ? error.issues[0] : (error as Error).message) ??
+      "bundle failed",
   );
   if (issue === undefined) return new Map();
   if (modules.length === 1) return new Map([[modules[0]!.specifier, issue.slice(0, 300)]]);
@@ -173,17 +183,24 @@ function nextFonts(dir: string): NextFonts {
   if (!file) return { vars: new Map(), faces: [] };
   const css = NodeFs.readFileSync(file, "utf8");
   const vars = new Map<string, string>();
-  for (const match of css.matchAll(/\.[\w-]+\{(--font-[\w-]+):([^}]+)\}/g)) vars.set(match[1]!, match[2]!);
+  for (const match of css.matchAll(/\.[\w-]+\{(--font-[\w-]+):([^}]+)\}/g))
+    vars.set(match[1]!, match[2]!);
   const faces: { family: string; block: string }[] = [];
   for (const match of css.matchAll(/@font-face\s*\{[^}]*\}/g)) {
     if (!coversLatin(match[0])) continue;
-    const family = /font-family\s*:\s*([^;}]+)/.exec(match[0])?.[1]?.trim().replace(/^["']|["']$/g, "");
+    const family = /font-family\s*:\s*([^;}]+)/
+      .exec(match[0])?.[1]
+      ?.trim()
+      .replace(/^["']|["']$/g, "");
     if (!family) continue;
-    const block = match[0].replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/g, (whole, _q: string, url: string) => {
-      if (url.startsWith("data:")) return whole;
-      const uri = dataUri(NodePath.resolve(NodePath.dirname(file), url));
-      return uri ? `url("${uri}")` : whole;
-    });
+    const block = match[0].replace(
+      /url\(\s*(["']?)([^"')]+)\1\s*\)/g,
+      (whole, _q: string, url: string) => {
+        if (url.startsWith("data:")) return whole;
+        const uri = dataUri(NodePath.resolve(NodePath.dirname(file), url));
+        return uri ? `url("${uri}")` : whole;
+      },
+    );
     faces.push({ family, block });
   }
   return { vars, faces };
@@ -243,7 +260,9 @@ const configFor = (list: ReadonlyArray<RuntimeModule>) => ({
   version: version.sha,
   brands,
   components: Object.fromEntries(
-    list.flatMap((m) => (m.component ? [[m.component.name, [m.specifier, m.component.export]]] : [])),
+    list.flatMap((m) =>
+      m.component ? [[m.component.name, [m.specifier, m.component.export]]] : [],
+    ),
   ),
 });
 
@@ -260,7 +279,10 @@ try {
 }
 for (const item of index.files.keys()) {
   if (item.startsWith("design-system-")) continue;
-  if (!modules.some((m) => m.owner === item) && !excluded.some((e) => e.name === `@nofun/ui/${item}`)) {
+  if (
+    !modules.some((m) => m.owner === item) &&
+    !excluded.some((e) => e.name === `@nofun/ui/${item}`)
+  ) {
     excluded.push({ name: `@nofun/ui/${item}`, reason: "not a block, component or lib" });
   }
 }
@@ -297,7 +319,9 @@ const manifest = {
   componentsCommit: version.commit,
   dirty: version.dirty,
   builtAt: new Date().toISOString(),
-  itemCount: new Set(modules.filter((m) => m.specifier.startsWith("@nofun/ui/")).map((m) => m.owner)).size,
+  itemCount: new Set(
+    modules.filter((m) => m.specifier.startsWith("@nofun/ui/")).map((m) => m.owner),
+  ).size,
   moduleCount: modules.length + PACKAGES.length,
   componentCount: Object.keys(config.components).length,
   sizes: {

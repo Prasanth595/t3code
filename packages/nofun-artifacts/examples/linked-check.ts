@@ -30,7 +30,12 @@ const pages = [
   { file: NodePath.join(OUT, "index.html"), lane: "tsx", source: tsx },
   { file: NodePath.join(OUT, "spec.html"), lane: "spec", source: spec },
   { file: NodePath.join(HERE, "linked-check.html"), lane: "tsx", source: tsx, base: relative },
-  { file: NodePath.join(OUT, "spec-check.html"), lane: "spec", source: spec, base: `../${relative}` },
+  {
+    file: NodePath.join(OUT, "spec-check.html"),
+    lane: "spec",
+    source: spec,
+    base: `../${relative}`,
+  },
 ] as const;
 
 NodeFs.mkdirSync(OUT, { recursive: true });
@@ -43,19 +48,26 @@ for (const page of pages) {
     runtimeBase: "base" in page ? page.base : undefined,
   });
   NodeFs.writeFileSync(page.file, linked.html);
-  console.log(`${NodePath.relative(HERE, page.file)}: ${(linked.bytes / 1024).toFixed(1)} KiB (${page.lane}, runtime ${sha})`);
+  console.log(
+    `${NodePath.relative(HERE, page.file)}: ${(linked.bytes / 1024).toFixed(1)} KiB (${page.lane}, runtime ${sha})`,
+  );
 }
 
 if (shot) {
   const { chromium } = await import("playwright-core");
   const browser = await chromium.launch({
     executablePath:
-      process.env.NOFUN_ARTIFACT_CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      process.env.NOFUN_ARTIFACT_CHROME ??
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     headless: true,
   });
   try {
     for (const [file, expect, png] of [
-      [NodePath.join(HERE, "linked-check.html"), ["Weekly revenue", "Print queue", "Refund rate"], shot],
+      [
+        NodePath.join(HERE, "linked-check.html"),
+        ["Weekly revenue", "Print queue", "Refund rate"],
+        shot,
+      ],
       [NodePath.join(OUT, "spec-check.html"), [], shot.replace(/\.png$/, "-spec.png")],
     ] as const) {
       const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
@@ -70,7 +82,9 @@ if (shot) {
       const missing = expect.filter((needle) => !text.includes(needle));
       const info = await page.evaluate(() => ({
         brand: document.body.dataset.brand,
-        components: Object.keys((window as unknown as { NoFunUI: { components: object } }).NoFunUI.components).length,
+        components: Object.keys(
+          (window as unknown as { NoFunUI: { components: object } }).NoFunUI.components,
+        ).length,
         blocks: document.querySelectorAll("#nf-root *").length,
       }));
       await page.screenshot({ path: png, fullPage: true });
@@ -78,7 +92,9 @@ if (shot) {
         `${NodePath.basename(file)}: brand ${info.brand}, ${info.components} runtime components, ${info.blocks} elements rendered -> ${png}`,
       );
       if (errors.length > 0 || missing.length > 0 || info.blocks < 20) {
-        console.error(`  failed: errors ${JSON.stringify(errors)} missing ${JSON.stringify(missing)}`);
+        console.error(
+          `  failed: errors ${JSON.stringify(errors)} missing ${JSON.stringify(missing)}`,
+        );
         process.exitCode = 1;
       }
       await page.close();
