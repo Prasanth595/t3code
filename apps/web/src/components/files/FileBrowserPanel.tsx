@@ -18,7 +18,11 @@ import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
-import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
+import {
+  resolveFileContextMenuAbsolutePath,
+  useFileContextMenu,
+  type FileContextMenuAction,
+} from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
@@ -181,10 +185,25 @@ export default function FileBrowserPanel({
       : { x: anchorRect.left, y: anchorRect.bottom };
     const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
     const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+    const absolutePath = resolveFileContextMenuAbsolutePath(fileTarget);
+    const copyWithToast = async (text: string, title: string) => {
+      try {
+        await writeTextToClipboard(text);
+        toastManager.add({ type: "success", title: `${title} copied`, description: text });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: `Failed to copy ${title.toLowerCase()}`,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+    };
     try {
       const clicked = await api.contextMenu.show(
         [
           ...fileMenuItems,
+          ...(absolutePath === null ? [] : [{ id: "copy-full-path", label: "Copy full path" }]),
+          { id: "copy-relative-path", label: "Copy relative path" },
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
         ],
@@ -199,17 +218,16 @@ export default function FileBrowserPanel({
         await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
         return;
       }
+      if (clicked === "copy-full-path" && absolutePath !== null) {
+        await copyWithToast(absolutePath, "Path");
+        return;
+      }
+      if (clicked === "copy-relative-path") {
+        await copyWithToast(relativePath, "Path");
+        return;
+      }
       if (clicked === "copy-mention") {
-        try {
-          await writeTextToClipboard(mention);
-          toastManager.add({ type: "success", title: "Mention copied", description: relativePath });
-        } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to copy mention",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
-        }
+        await copyWithToast(mention, "Mention");
         return;
       }
       if (clicked === "add-to-chat") {
