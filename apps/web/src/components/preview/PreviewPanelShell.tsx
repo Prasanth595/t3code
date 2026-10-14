@@ -76,6 +76,7 @@ function PreviewPanelShellFrame(
   const localHostRef = useRef<HTMLDivElement | null>(null);
   const hostRef = props.hostRef ?? localHostRef;
   const returnedFocus = useRef(false);
+  const wasOpen = useRef(open);
   const { width, handlers } = props.inlineSize;
   // Derive suppression before the layout commits so the browser never creates
   // a width transition for resize or maximize changes.
@@ -118,7 +119,9 @@ function PreviewPanelShellFrame(
     const host = hostRef.current;
     if (!host || !collapsible) return;
     return () => {
-      if (!host.contains(host.ownerDocument.activeElement) && !returnedFocus.current) return;
+      const active = host.ownerDocument.activeElement;
+      const toggleFocused = active?.matches("[data-right-panel-toggle]") ?? false;
+      if (!host.contains(active) && !returnedFocus.current && !toggleFocused) return;
       // The toggle moves when the shell unmounts, after an animation or immediately.
       // Restore focus at its committed location if removal cleared focus to body.
       queueMicrotask(() => {
@@ -132,9 +135,13 @@ function PreviewPanelShellFrame(
     const host = hostRef.current;
     if (!host) return;
     const collapsed = collapsible && !open;
+    const closing = collapsed && wasOpen.current;
+    wasOpen.current = !collapsed;
     if (!collapsed) returnedFocus.current = false;
+    const active = host.ownerDocument.activeElement;
     // Move focus before making its current owner inert, while the toggle is reachable.
-    if (collapsed && host.contains(host.ownerDocument.activeElement)) {
+    // Focus already on body was in a control this close removed, like the add-surface trigger.
+    if (collapsed && (host.contains(active) || (closing && active === host.ownerDocument.body))) {
       const toggle = host.ownerDocument.querySelector<HTMLButtonElement>(
         "[data-right-panel-toggle]",
       );

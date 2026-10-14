@@ -2,6 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import { act } from "react";
+import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -48,6 +49,16 @@ async function renderPanel(
               <PreviewPanelShell mode={mode} {...(open === undefined ? {} : { open })}>
                 <input aria-label="Preview URL" />
                 <button type="button">Reload preview</button>
+                {/* Like the add-surface trigger, removed as soon as the panel closes. */}
+                {open !== false ? (
+                  <button type="button" aria-label="Add panel surface">
+                    +
+                  </button>
+                ) : null}
+                {/* Like the add-surface menu, portaled outside the panel. */}
+                {open !== false
+                  ? createPortal(<button type="button">Add terminal</button>, document.body)
+                  : null}
               </PreviewPanelShell>
             ) : null}
             <button type="button" data-testid="outside">
@@ -142,6 +153,41 @@ describe("right panel keyboard access", () => {
     expect(document.activeElement).toBe(
       document.querySelector('[aria-label="Toggle right panel"]'),
     );
+  });
+
+  it.each([
+    [
+      "control",
+      () => document.querySelector<HTMLButtonElement>('[aria-label="Add panel surface"]'),
+    ],
+    [
+      "portaled menu item",
+      () => [...document.querySelectorAll("button")].find((b) => b.textContent === "Add terminal"),
+    ],
+  ])("returns focus when the close removes a focused %s before the animation", async (_, find) => {
+    await renderPanel(true);
+    await act(async () => find()!.focus());
+    expect(document.activeElement).toBe(find());
+    await renderPanel(false);
+    expect(document.activeElement).toBe(
+      document.querySelector('[aria-label="Toggle right panel"]'),
+    );
+  });
+
+  it.each([
+    ["after the closing animation", true],
+    ["without an animation", false],
+  ])("keeps focus on a toggle that closed the panel and relocates %s", async (_, animated) => {
+    await renderPanel(true);
+    const closingToggle = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Toggle right panel"]',
+    )!;
+    await act(async () => closingToggle.focus());
+    if (animated) await renderPanel(false);
+    await renderPanel(false, "inline", false);
+    const settledToggle = document.querySelector('[aria-label="Toggle right panel"]');
+    expect(settledToggle).not.toBe(closingToggle);
+    expect(document.activeElement).toBe(settledToggle);
   });
 
   it("preserves focus moved outside while the closing animation settles", async () => {
