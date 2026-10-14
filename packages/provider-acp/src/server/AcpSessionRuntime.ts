@@ -1655,14 +1655,18 @@ export const make = (
         catch: (cause) =>
           new EffectAcpErrors.AcpSpawnError({ command: options.spawn.command, cause }),
       });
-      yield* observePosixOwnershipLedgerContinuously({
-        childQueues: posixOwnershipChildQueues,
-        controller: posixController,
-        frontier: posixOwnershipFrontier,
-        ledger: posixOwnershipLedger,
-        root: posixOwnershipRoot,
-        rootPid: Number(child.pid),
-      }).pipe(Effect.forkIn(runtimeScope));
+      // With a cgroup lease, cgroup.kill tears the tree down and only the root
+      // captured above is read, so the ledger would be polled for nothing.
+      if (linuxCgroupLease === undefined) {
+        yield* observePosixOwnershipLedgerContinuously({
+          childQueues: posixOwnershipChildQueues,
+          controller: posixController,
+          frontier: posixOwnershipFrontier,
+          ledger: posixOwnershipLedger,
+          root: posixOwnershipRoot,
+          rootPid: Number(child.pid),
+        }).pipe(Effect.forkIn(runtimeScope));
+      }
     }
 
     const signalOwnedProcessGroup = (signal: NodeJS.Signals) =>
