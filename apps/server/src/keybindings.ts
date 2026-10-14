@@ -642,7 +642,8 @@ const make = Effect.gen(function* () {
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
     // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedKeybindingsEvents = fs.watch(keybindingsConfigDir).pipe(
+    // Only the config file's parent is needed; recursive watches can fan out under PRoot.
+    const debouncedKeybindingsEvents = fs.watch(keybindingsConfigDir, { recursive: false }).pipe(
       Stream.filter((event) => {
         return (
           event.path === keybindingsConfigFile ||

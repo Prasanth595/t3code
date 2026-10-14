@@ -9,6 +9,9 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import { KeybindingsConfigError, MAX_KEYBINDINGS_COUNT } from "@t3tools/contracts";
@@ -58,6 +61,34 @@ const readKeybindingsConfig = (configPath: string) =>
   });
 
 it.layer(NodeServices.layer)("keybindings", (it) => {
+  it.effect("reloads keybindings after successive external atomic replacements", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.start;
+        const pull = yield* Stream.toPull(keybindings.streamChanges);
+
+        for (const key of ["y", "z"]) {
+          yield* writeFileStringAtomically({
+            filePath: keybindingsConfigPath,
+            contents: yield* encodeKeybindingsConfigJson([
+              { key: `mod+shift+${key}`, command: "terminal.toggle" },
+            ]),
+          });
+
+          const changes = yield* pull;
+          const toggle = changes
+            .at(-1)
+            ?.keybindings.find((rule) => rule.command === "terminal.toggle");
+          assert.equal(toggle?.shortcut.key, key);
+          assert.isTrue(toggle?.shortcut.shiftKey);
+          assert.deepEqual(yield* keybindings.getSnapshot, changes.at(-1));
+        }
+      }),
+    ).pipe(TestClock.withLive, Effect.provide(layerKeybindings())),
+  );
+
   it.effect("parses shortcuts including plus key", () =>
     Effect.sync(() => {
       assert.deepEqual(Keybindings.parseKeybindingShortcut("mod+j"), {

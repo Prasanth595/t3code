@@ -1116,8 +1116,9 @@ const make = Effect.gen(function* () {
     const directory = pathService.dirname(filePath);
     const fileName = pathService.basename(filePath);
     const resolvedFilePath = pathService.resolve(filePath);
+    // Watch the parent for atomic replacements without watching the userdata tree under PRoot.
     return fs
-      .watch(directory)
+      .watch(directory, { recursive: false })
       .pipe(
         Stream.filter(
           (event) =>
