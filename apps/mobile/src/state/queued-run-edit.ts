@@ -104,25 +104,6 @@ export function endQueuedRunEdit(
   setQueuedRunEdit(threadKey, null);
 }
 
-/** Detect content changes during a save, ignoring background upload metadata. */
-export function queuedEditDraftChanged(
-  saved: {
-    readonly text: string;
-    readonly attachments: ReadonlyArray<{ readonly id: string }>;
-    readonly context?: OrchestrationMessageContext;
-  },
-  current: typeof saved,
-): boolean {
-  return (
-    current.text !== saved.text ||
-    current.attachments.length !== saved.attachments.length ||
-    current.attachments.some(
-      (attachment, index) => attachment.id !== saved.attachments[index]?.id,
-    ) ||
-    current.context !== saved.context
-  );
-}
-
 /**
  * The replacement payload for `queued-run.edit`. Attachments replace the
  * message's list wholesale, so kept server attachments are resent alongside

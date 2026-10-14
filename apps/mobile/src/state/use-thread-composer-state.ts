@@ -97,7 +97,6 @@ import {
   endQueuedRunEdit,
   getQueuedRunEdit,
   queuedEditDraftKey,
-  queuedEditDraftChanged,
   removeQueuedRunEditAttachment,
   resolveQueuedEditPayload,
   useQueuedRunEdit,
@@ -554,11 +553,6 @@ export function useThreadComposerState() {
         );
         return;
       }
-      // Saving sends a snapshot. Keep edits made during preparation or the RPC
-      // in the composer so they can be saved in a subsequent request.
-      const currentDraft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, edit.runId));
-      if (getQueuedRunEdit(threadKey) !== edit || queuedEditDraftChanged(draft, currentDraft))
-        return;
       endQueuedRunEdit(threadKey, { deferAttachmentCleanup: true });
       scheduleUnusedComposerAttachmentCleanup(draft.attachments);
     } finally {
