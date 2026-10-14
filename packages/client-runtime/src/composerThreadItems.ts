@@ -38,7 +38,9 @@ export function matchComposerThreadItems(input: {
         shell.archivedAt === null &&
         shell.title.toLowerCase().includes(query),
     )
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .sort((left, right) =>
+      left.updatedAt === right.updatedAt ? 0 : left.updatedAt < right.updatedAt ? 1 : -1,
+    )
     .slice(0, COMPOSER_THREAD_RESULT_LIMIT)
     .map((shell) => ({
       id: `thread:${shell.environmentId}:${shell.id}`,

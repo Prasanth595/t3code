@@ -188,7 +188,13 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       }
       rows.push({ draftId: DraftId.make(draftKey), session, composer });
     }
-    rows.sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
+    rows.sort((left, right) =>
+      left.session.createdAt === right.session.createdAt
+        ? 0
+        : left.session.createdAt < right.session.createdAt
+          ? 1
+          : -1,
+    );
     return rows;
   })();
   if (drafts.length === 0) {

@@ -404,7 +404,7 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
       others.push(entry);
     }
   }
-  const byRecency = (left: Entry, right: Entry) => right.updatedAt.localeCompare(left.updatedAt);
+  const byRecency = (left: Entry, right: Entry) => newestFirst(left.updatedAt, right.updatedAt);
   return (
     [
       { key: "authored", entries: [...authoredByKey.values()].toSorted(byRecency) },
@@ -503,7 +503,7 @@ export function mergePullRequestLists(
   return {
     viewers,
     providers: [...providers.values()],
-    entries: entries.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    entries: entries.toSorted((left, right) => newestFirst(left.updatedAt, right.updatedAt)),
     errors,
     truncated,
     nextCursors,
@@ -697,7 +697,7 @@ export function rankPullRequestMatches<Entry extends PullRequestListEntry>(
   if (query.trim().length === 0) return entries;
   return entries.toSorted((left, right) => {
     const byScore = scorePullRequestMatch(right, query) - scorePullRequestMatch(left, query);
-    return byScore !== 0 ? byScore : right.updatedAt.localeCompare(left.updatedAt);
+    return byScore !== 0 ? byScore : newestFirst(left.updatedAt, right.updatedAt);
   });
 }
 
@@ -718,7 +718,7 @@ export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEn
     if (byTier !== 0) return byTier;
     const measured = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
     const sized = left.additions + left.deletions - (right.additions + right.deletions);
-    return measured || sized || right.updatedAt.localeCompare(left.updatedAt);
+    return measured || sized || newestFirst(left.updatedAt, right.updatedAt);
   });
 }
 
@@ -1011,4 +1011,12 @@ export function findProjectForRepository<
   // Azure repository names can collide across projects on the same host.
   const scoped = findScopedProject(candidates, input.scopedEnvironmentId, input.scopedProjectId);
   return scoped ?? candidates[0];
+}
+
+/**
+ * Newest-first order for ISO timestamps. Plain comparison orders them identically to
+ * `localeCompare` without going through locale collation.
+ */
+function newestFirst(left: string, right: string): number {
+  return left === right ? 0 : left < right ? 1 : -1;
 }
