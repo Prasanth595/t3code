@@ -874,6 +874,13 @@ export const layerWithOptions = (
                 });
                 if (committed) return;
               }
+              yield* Effect.logWarning(
+                "orchestration-v2.provider-session-release-roster-conflict",
+                {
+                  providerSessionId,
+                  providerThreadId,
+                },
+              );
             }),
           { discard: true },
         );
