@@ -701,8 +701,9 @@ export const layer = Layer.effect(
         ),
       );
 
-    // The task's previous run is the agent's work in the thread it runs in:
-    // its bound thread, or the thread its last run launched. Following the
+    // The task's previous run is the agent's work in the threads it runs in:
+    // its bound thread and the thread its last run used, which differ after
+    // an edit changes the binding. Following the
     // thread rather than one run also covers restart continuations and
     // queued follow-ups. A deleted thread cannot hold the schedule back.
     const readPreviousRun = (id: ScheduledTaskId) =>
@@ -712,7 +713,7 @@ export const layer = Layer.effect(
           MAX(run.completed_at) AS finished_at
         FROM scheduled_tasks AS task
         JOIN orchestration_v2_projection_threads AS thread
-          ON thread.thread_id = COALESCE(task.thread_id, task.last_thread_id)
+          ON (thread.thread_id = task.thread_id OR thread.thread_id = task.last_thread_id)
           AND thread.deleted_at IS NULL
         JOIN orchestration_v2_projection_runs AS run ON run.thread_id = thread.thread_id
         WHERE task.task_id = ${id}

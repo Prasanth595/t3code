@@ -109,7 +109,12 @@ const withService = <A, E>(
             return { threadId: `thread-${n}`, resumed: false } as never;
           }).pipe(Effect.orDie),
       }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        sendToThread: (input) =>
+          Queue.offer(launches, { runId: `sent:${input.threadId}`, busyRunsAtLaunch: 0 }).pipe(
+            Effect.as({} as never),
+          ),
+      }),
       Layer.mock(SecretRequests.SecretRequests)({}),
       Layer.succeed(ScheduledTaskService.ScheduledTaskCronDescriber, describeCron),
     );
@@ -198,6 +203,35 @@ it.effect("keeps waiting while a restart continuation carries on the previous ru
       yield* finishRun("run-1-continued", localTime(10, 41));
       yield* TestClock.adjust("6 seconds");
       assert.equal((yield* Queue.take(launches)).runId, "run-2");
+    }),
+  ),
+);
+
+it.effect("waits for a launched run even after the task is rebound to another thread", () =>
+  withService(({ service, launches, finishRun, awaitTask }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* service.upsert(yield* taskInput());
+      yield* pollAt(localTime(10, 0));
+      assert.equal((yield* Queue.take(launches)).runId, "run-1");
+      yield* awaitTask((current) => current.runCount === 1);
+
+      // Rebind the task to an idle thread while run-1 is still working in the
+      // thread the task launched.
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads
+          (thread_id, project_id, title, default_provider, runtime_mode,
+           interaction_mode, created_at, updated_at, payload_json)
+        VALUES ('thread-bound', 'project-catch-up', 'Orchestrator', 'codex',
+          'full-access', 'default', '2026-07-01', '2026-07-01', '{}')
+      `;
+      yield* service.upsert(yield* taskInput({ threadId: "thread-bound" }));
+      yield* pollAt(localTime(10, 40));
+      assert.equal(yield* Queue.size(launches), 0);
+
+      yield* finishRun("run-1", localTime(10, 40));
+      yield* TestClock.adjust("6 seconds");
+      assert.equal((yield* Queue.take(launches)).runId, "sent:thread-bound");
     }),
   ),
 );
