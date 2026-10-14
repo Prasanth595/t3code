@@ -18,6 +18,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Live server updates:** the desktop app runs its server and web client from a live folder. The update button offers a new main commit in blue, before "update everything", and only the server restarts (`T3CODE_DESKTOP_LIVE_SERVER_DIR`).
 - **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now", also at the end of "update everything".
 - **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`). The machine map Install update works on it too, now or when idle.
+- **Local deploy:** `scripts/fork-deploy-local.sh <ssh-host>` builds this checkout for a headless Linux server and switches its background service to it, without a release.
 - **Changelog:** a timeline of fork releases with every fork and upstream commit, the pending upstream commits, a "Start Fork Sync" button, and an "Ask agent" menu (`forkChangelogEnabled`).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
 - **Repair agent:** a failed sync or release calls a webhook that starts a repair agent.

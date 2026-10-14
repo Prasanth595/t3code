@@ -113,6 +113,25 @@ A headless server that runs as the upstream background service (`t3 service inst
 - "Update everything" and `t3 update` also install fork releases. A self-update request for a version that has no fork release installs the newest fork release instead. The mobile app comes from upstream and offers upstream versions, so its "Check for updates" installs the newest fork release.
 - The code is in `apps/server/src/fork/ForkUpdates.ts` and `apps/server/src/fork/forkReleases.ts`.
 
+## Deploy a local build
+
+To try a change on a headless server before a release, deploy a build of your checkout over SSH. The server must run as the background service. It takes a few minutes, not a release run.
+
+```sh
+scripts/fork-deploy-local.sh <ssh-host>
+```
+
+- The script reads the system of the server with `ssh <ssh-host> uname -sm`. It supports Linux x64 and arm64.
+- It builds the web client and the `t3` executable for that system here. It takes the native packages and the resource monitor from the newest fork release that has `SHA256SUMS`.
+- If the checkout changes `apps/server/package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml` or `patches` since that release, the script stops. Such a change needs a release.
+- The version follows the rule of the Mac local build in "Versions": it sorts above the release it follows and below the next one. Thus `forkAutoUpdate` replaces it with the next release.
+- On the server, the script unpacks the build into `<T3 home>/runtime/versions/<version>` and runs `t3 update <version> --yes`. The update checks that the new `t3` runs, then restarts the service at once. The restart stops running agent turns.
+- Unlike a release update, this switch does not go back by itself when the new version does not start.
+- `<T3 home>` is `~/.t3` of the SSH user, or `T3CODE_HOME` of the SSH session.
+- To go back, run `t3 update <version> --yes --allow-downgrade` on the server with the earlier version. It is still in `runtime/versions`.
+- To build only, run `scripts/fork-deploy-local.sh --archive linux-x64` or `--archive linux-arm64`. The archive is in `release/`.
+- The script changes the version in the `package.json` files during the build and puts them back after it.
+
 ## Live server updates
 
 Most fork changes are server and web code. They reach the Mac without a new app and without an app restart.
