@@ -1963,20 +1963,42 @@ describe("deriveMessagesTimelineRows", () => {
       kind: "thinking",
       createdAt: "2026-01-01T00:00:00Z",
     });
+    const assistantEntry = {
+      id: "assistant-entry",
+      kind: "message",
+      createdAt: "2026-01-01T00:00:10Z",
+      message: {
+        id: "assistant" as never,
+        role: "assistant",
+        text: "Checking the tests next.",
+        runId: "turn-1" as never,
+        createdAt: "2026-01-01T00:00:10Z",
+        updatedAt: "2026-01-01T00:00:12Z",
+        streaming: false,
+      },
+    } as const;
+    expect(deriveThinkingRow([userEntry, assistantEntry])).toMatchObject({
+      kind: "thinking",
+      createdAt: "2026-01-01T00:00:10Z",
+    });
+    // An optimistic steer is appended after the run's entries. It is the
+    // user's input, not the agent's activity, so it does not move the stamp.
     expect(
       deriveThinkingRow([
         userEntry,
+        assistantEntry,
         {
-          id: "assistant-entry",
+          id: "steer-entry",
           kind: "message",
-          createdAt: "2026-01-01T00:00:10Z",
+          createdAt: "2026-01-01T00:00:20Z",
           message: {
-            id: "assistant" as never,
-            role: "assistant",
-            text: "Checking the tests next.",
-            runId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:10Z",
-            updatedAt: "2026-01-01T00:00:12Z",
+            id: "steer" as never,
+            role: "user",
+            text: "Also check the docs.",
+            runId: null,
+            inputIntent: "steer",
+            createdAt: "2026-01-01T00:00:20Z",
+            updatedAt: "2026-01-01T00:00:20Z",
             streaming: false,
           },
         },

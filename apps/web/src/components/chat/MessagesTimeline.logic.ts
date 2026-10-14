@@ -1965,12 +1965,16 @@ export function deriveMessagesTimelineRows(input: {
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
-    // Stamp when the latest activity started, not the turn. Start times stay
+    // Stamp when the latest activity in the active response started, not the
+    // turn. Later sends (a steer) are not that activity. Start times stay
     // fixed while text streams, which keeps the incremental streaming path in
     // parity.
+    const latestActiveEntry = timelineEntries.findLast((entry) =>
+      runIdIsActiveResponse(timelineEntryRunId(entry)),
+    );
     const thinkingCreatedAt = maxIsoTimestamp(
       input.activeTurnStartedAt ?? null,
-      timelineEntries.at(-1)?.createdAt ?? null,
+      latestActiveEntry?.createdAt ?? null,
     );
     // A failed latest tool hands the row back to thinking, but its group
     // stays reachable through the same disclosure the live row offers.
