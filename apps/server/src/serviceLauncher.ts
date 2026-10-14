@@ -31,7 +31,15 @@ import {
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
-const PREPARED_TIMEOUT_MS = 120_000;
+/**
+ * How long a trial has to report prepared. Migrations and the open-time
+ * `PRAGMA optimize` count toward it and scale with the database: tens of GB on
+ * a cold page cache take minutes. They run synchronously on the child's main
+ * thread, so it cannot report progress meanwhile. A missed window rolls back
+ * the database, so the next attempt pays the same cost. Crashes are caught at
+ * exit; this only bounds a trial that is alive but stuck.
+ */
+export const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
 // Matches SERVER_EXIT_CODE_STATE_DIR_OWNED in contracts. The standalone
 // launcher stays independent of the Effect-backed contracts package.
@@ -109,6 +117,12 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
+function runCp(args: ReadonlyArray<string>): Promise<boolean> {
+  return new Promise((resolve) => {
+    NodeChildProcess.execFile("cp", args, (error) => resolve(error === null));
+  });
+}
+
 /**
  * Copies a database file as a copy-on-write clone where the filesystem has
  * them (APFS via `cp -c`, btrfs/XFS reflinks via `cp --reflink=auto`), which
@@ -131,13 +145,7 @@ async function copyDatabaseFile(source: string, destination: string): Promise<vo
       : platform === "linux"
         ? ["--reflink=auto", source, destination]
         : undefined;
-  if (args === undefined) return NodeFSP.copyFile(source, destination);
-  return new Promise((resolve, reject) => {
-    NodeChildProcess.execFile("cp", args, (error) => {
-      if (error === null) resolve();
-      else NodeFSP.copyFile(source, destination).then(resolve, reject);
-    });
-  });
+  if (args === undefined || !(await runCp(args))) await NodeFSP.copyFile(source, destination);
 }
 
 const GIB = 1024 ** 3;
@@ -148,23 +156,20 @@ const GIB = 1024 ** 3;
 const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
 const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
 
-/** Size of the database and its existing sidecars. A main file that cannot be read is an error. */
-async function databaseSizeBytes(dbPath: string): Promise<number> {
-  let total = 0;
+/**
+ * Stats of the database and its existing sidecars, following symlinks. A main
+ * file that cannot be read is an error.
+ */
+async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.Stats>> {
+  const stats: Array<NodeFS.Stats> = [];
   for (const suffix of DB_FILE_SUFFIXES) {
     const stat = await NodeFSP.stat(`${dbPath}${suffix}`).catch((cause: unknown) => {
       if (suffix !== "" && (cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw cause;
     });
-    total += stat?.size ?? 0;
+    if (stat !== undefined) stats.push(stat);
   }
-  return total;
-}
-
-function runCp(args: ReadonlyArray<string>): Promise<boolean> {
-  return new Promise((resolve) => {
-    NodeChildProcess.execFile("cp", args, (error) => resolve(error === null));
-  });
+  return stats;
 }
 
 /**
@@ -189,18 +194,12 @@ async function backupCanClone(dbPath: string, backupRoot: string): Promise<boole
       NodeFSP.statfs("/"),
     ]);
     if (backupFs.type !== systemFs.type) return false;
-    // `stat` follows symlinks, so a file linked from another volume is caught.
-    // A hard-linked file is restored by a full copy, so it needs the full space.
-    for (const suffix of DB_FILE_SUFFIXES) {
-      const source = await NodeFSP.stat(`${dbPath}${suffix}`).catch((cause: unknown) => {
-        if (suffix !== "" && (cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-        throw cause;
-      });
-      if (source !== undefined && (source.dev !== backupDirectory.dev || source.nlink > 1)) {
-        return false;
-      }
-    }
-    return true;
+    // A file linked from another volume is caught because `stat` follows
+    // symlinks. A hard-linked file is restored by a full copy, so it needs the
+    // full space.
+    return (await statDatabaseFiles(dbPath)).every(
+      (source) => source.dev === backupDirectory.dev && source.nlink === 1,
+    );
   }
   if (platform !== "linux") return false;
   const probe = NodePath.join(backupRoot, `.clone-probe-${NodeCrypto.randomUUID()}`);
@@ -245,7 +244,8 @@ export async function databaseBackupBlocker(
   const { readFreeBytes, canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   const backupRoot = NodePath.join(baseDir, "runtime", "db-backup");
   await NodeFSP.mkdir(backupRoot, { recursive: true, mode: 0o700 });
-  const [size, free] = await Promise.all([databaseSizeBytes(dbPath), readFreeBytes(backupRoot)]);
+  const [files, free] = await Promise.all([statDatabaseFiles(dbPath), readFreeBytes(backupRoot)]);
+  const size = files.reduce((total, file) => total + file.size, 0);
   const fullCopyBytes = size * 1.05;
   if (free >= fullCopyBytes) return undefined;
   const clonedBytes = Math.max(
