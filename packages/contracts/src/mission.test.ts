@@ -9,7 +9,14 @@ import {
   emptyMissionExecution,
   isEmptyMissionExecution,
   missionExecutionResults,
+  missionRetroCheckpoints,
 } from "./missionExecution.ts";
+import {
+  MAX_MISSION_RETRO_CHECKPOINTS,
+  MissionRetroCheckpoint,
+  MissionRetroCheckpoints,
+  MissionRetroSourceRef,
+} from "./missionRetro.ts";
 import { MAX_QUARANTINE_ENTRIES } from "./missionResult.ts";
 
 const decodeCommand = Schema.decodeUnknownSync(MissionCommand);
@@ -20,6 +27,11 @@ const encodeMission = Schema.encodeSync(Mission);
 
 const decodeExecution = Schema.decodeUnknownSync(MissionExecution);
 const decodeMission = Schema.decodeUnknownSync(Mission);
+
+const decodeRetroCheckpoint = Schema.decodeUnknownSync(MissionRetroCheckpoint);
+const decodeRetroCheckpoints = Schema.decodeUnknownSync(MissionRetroCheckpoints);
+const decodeRetroSourceRef = Schema.decodeUnknownSync(MissionRetroSourceRef);
+const encodeExecution = Schema.encodeSync(MissionExecution);
 
 const OCCURRED_AT = "2026-10-14T00:00:00.000Z";
 const AUTHORITY = { source: "mission-council", ref: "decision-2026-001" } as const;
@@ -366,6 +378,123 @@ describe("mission wire schemas", () => {
     expect(() =>
       decodeExecution({ ...emptyMissionExecution(), results: [record] }),
     ).toThrow();
+  });
+
+  it("round-trips bounded retro checkpoint descriptors as empty by default", () => {
+    const decoded = decodeExecution(emptyMissionExecution());
+    expect(missionRetroCheckpoints(decoded)).toEqual([]);
+    expect(isEmptyMissionExecution(decoded)).toBe(true);
+    const checkpoint = decodeRetroCheckpoint({
+      checkpointId: "retro-0123456789abcdef0123456789abcdef",
+      teamId: "team-1",
+      environmentId: "env-1",
+      missionId: "mission-1",
+      sourceThreadId: "thread-origin",
+      sourceRoot: "thread://thread-origin",
+      trigger: "milestone",
+      requestedReporter: "muse-spark-1.3-contributor",
+      status: "queued_ready",
+      coverage: "full",
+      snapshotFingerprint: "a".repeat(64),
+      coveredFromInclusive: 4,
+      coveredToExclusive: 12,
+      sourceRefs: [
+        {
+          rootRef: "thread://thread-origin",
+          chunkRef: "chunk-4-12",
+          chunkHash: "b".repeat(64),
+          coveredFromInclusive: 4,
+          coveredToExclusive: 12,
+        },
+      ],
+      omissions: [],
+      capturedAt: OCCURRED_AT,
+    });
+    const withCheckpoint = decodeExecution({
+      ...emptyMissionExecution(),
+      retroCheckpoints: [checkpoint],
+    });
+    expect(missionRetroCheckpoints(withCheckpoint)).toHaveLength(1);
+    expect(isEmptyMissionExecution(withCheckpoint)).toBe(false);
+    const roundTripped = decodeMission({
+      ...missionFixture(),
+      execution: encodeExecution(withCheckpoint),
+    });
+    expect(missionRetroCheckpoints(roundTripped.execution!)).toHaveLength(1);
+  });
+
+  it("rejects retro checkpoints beyond the bound at decode", () => {
+    const checkpoint = decodeRetroCheckpoint({
+      checkpointId: "retro-bound",
+      teamId: "team-1",
+      environmentId: "env-1",
+      missionId: "mission-1",
+      sourceThreadId: "thread-origin",
+      sourceRoot: "thread://thread-origin",
+      trigger: "settled",
+      requestedReporter: "muse-spark-1.3-contributor",
+      status: "queued_capacity",
+      coverage: "unknown",
+      snapshotFingerprint: "c".repeat(64),
+      coveredFromInclusive: 0,
+      coveredToExclusive: 3,
+      sourceRefs: [],
+      omissions: ["range 1-2 redacted before export"],
+      capturedAt: OCCURRED_AT,
+    });
+    expect(() =>
+      decodeRetroCheckpoints(
+        Array.from({ length: MAX_MISSION_RETRO_CHECKPOINTS + 1 }, () => ({ ...checkpoint })),
+      ),
+    ).toThrow();
+  });
+
+  it("rejects reversed or empty retro ranges at decode", () => {
+    const ref = {
+      rootRef: "thread://thread-origin",
+      chunkRef: "chunk-0-0",
+      chunkHash: "d".repeat(64),
+      coveredFromInclusive: 5,
+      coveredToExclusive: 5,
+    };
+    expect(() => decodeRetroSourceRef(ref)).toThrow();
+    expect(() =>
+      decodeRetroSourceRef({
+        ...ref,
+        coveredFromInclusive: 9,
+        coveredToExclusive: 5,
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRetroSourceRef({
+        ...ref,
+        chunkHash: "not-a-sha256",
+        coveredFromInclusive: 1,
+        coveredToExclusive: 2,
+      }),
+    ).toThrow();
+  });
+
+  it("round-trips a mission.retro-checkpoint-captured event with the full mission", () => {
+    const event = decodeEvent({
+      sequence: 13,
+      eventId: "event-13",
+      aggregateKind: "mission",
+      aggregateId: "mission-1",
+      occurredAt: OCCURRED_AT,
+      commandId: "cmd-13",
+      metadata: {},
+      type: "mission.retro-checkpoint-captured",
+      payload: {
+        mission: { ...missionFixture(), revision: 3, execution: emptyMissionExecution() },
+        checkpointId: "retro-0123456789abcdef0123456789abcdef",
+      },
+    });
+    expect(event.type).toBe("mission.retro-checkpoint-captured");
+    if (event.type === "mission.retro-checkpoint-captured") {
+      expect(event.payload.mission.revision).toBe(3);
+      expect(event.payload.checkpointId).toBe("retro-0123456789abcdef0123456789abcdef");
+    }
   });
 
   it("round-trips a mission.result-reconciled event with the full mission", () => {

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { MissionRetroCheckpoints, type MissionRetroCheckpoint } from "./missionRetro.ts";
 import { MissionResultRecord } from "./missionResult.ts";
 
 /**
@@ -8,11 +9,12 @@ import { MissionResultRecord } from "./missionResult.ts";
  *
  * Holds admission/reservation receipts, normalized writer scope claims,
  * consumed one-use exception IDs, and dedicated per-task result records.
- * Only the dedicated admission-reserved event may append admissions, and
- * only the dedicated result-reconciled event may append results; generic
- * create/replace cannot forge or erase either. Arrays stay small (no
- * transcripts); when a bound is reached the owning store denies further
- * writes rather than dropping history.
+ * Only the dedicated admission-reserved event may append admissions,
+ * only the dedicated result-reconciled event may append results, and only
+ * the dedicated retro-checkpoint-captured event may append retro
+ * checkpoints; generic create/replace cannot forge or erase any of them.
+ * Arrays stay small (no transcripts); when a bound is reached the owning
+ * store denies further writes rather than dropping history.
  */
 
 /** Maximum persisted admission receipts per mission snapshot. */
@@ -130,6 +132,12 @@ export const MissionExecution = Schema.Struct({
    * forward untouched.
    */
   results: Schema.optional(MissionExecutionResults),
+  /**
+   * Optional bounded retro checkpoint descriptors. Omitted on older
+   * snapshots and decoded as empty; same forge/preserve rules as results.
+   * Only the retro-checkpoint-captured event appends here.
+   */
+  retroCheckpoints: Schema.optional(MissionRetroCheckpoints),
 });
 export type MissionExecution = typeof MissionExecution.Type;
 
@@ -139,16 +147,23 @@ export const emptyMissionExecution = (): MissionExecution => ({
   writerClaims: [],
   consumedExceptionIds: [],
   results: [],
+  retroCheckpoints: [],
 });
 
-/** True when no admission, claim, consumption, or result is recorded. */
+/** True when no admission, claim, consumption, result, or checkpoint is recorded. */
 export const isEmptyMissionExecution = (execution: MissionExecution): boolean =>
   execution.admissions.length === 0 &&
   execution.writerClaims.length === 0 &&
   execution.consumedExceptionIds.length === 0 &&
-  (execution.results ?? []).length === 0;
+  (execution.results ?? []).length === 0 &&
+  (execution.retroCheckpoints ?? []).length === 0;
 
 /** Dedicated result records, treating an omitted array as empty. */
 export const missionExecutionResults = (
   execution: MissionExecution,
 ): ReadonlyArray<MissionResultRecord> => execution.results ?? [];
+
+/** Dedicated retro checkpoint descriptors, treating an omitted array as empty. */
+export const missionRetroCheckpoints = (
+  execution: MissionExecution,
+): ReadonlyArray<MissionRetroCheckpoint> => execution.retroCheckpoints ?? [];

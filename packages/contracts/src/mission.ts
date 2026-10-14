@@ -241,6 +241,19 @@ export const MissionAdmissionReservedEvent = Schema.Struct({
 });
 export type MissionAdmissionReservedEvent = typeof MissionAdmissionReservedEvent.Type;
 
+export const MissionRetroCheckpointCapturedEvent = Schema.Struct({
+  ...MissionEventBaseFields,
+  type: Schema.Literal("mission.retro-checkpoint-captured"),
+  payload: Schema.Struct({
+    /** Full updated mission snapshot, queued checkpoint descriptor included. */
+    mission: Mission,
+    /** Stable checkpoint id for the captured originating-thread boundary. */
+    checkpointId: TrimmedNonEmptyString,
+  }),
+});
+export type MissionRetroCheckpointCapturedEvent =
+  typeof MissionRetroCheckpointCapturedEvent.Type;
+
 export const MissionResultReconciledEvent = Schema.Struct({
   ...MissionEventBaseFields,
   type: Schema.Literal("mission.result-reconciled"),
@@ -266,5 +279,6 @@ export const MissionEvent = Schema.Union([
   MissionRevisedEvent,
   MissionAdmissionReservedEvent,
   MissionResultReconciledEvent,
+  MissionRetroCheckpointCapturedEvent,
 ]);
 export type MissionEvent = typeof MissionEvent.Type;
