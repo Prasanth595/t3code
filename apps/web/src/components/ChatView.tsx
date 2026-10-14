@@ -286,12 +286,10 @@ import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
 } from "./pullRequest/pullRequestDetail.logic";
-import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
-import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -714,6 +712,16 @@ const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const PullRequestDetailPanel = lazy(() =>
+  import("./pullRequest/PullRequestDetailPanel").then((module) => ({
+    default: module.PullRequestDetailPanel,
+  })),
+);
+const ThreadPullRequestsPanel = lazy(() =>
+  import("./pullRequest/ThreadPullRequestsPanel").then((module) => ({
+    default: module.ThreadPullRequestsPanel,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -11189,48 +11197,52 @@ export default function ChatView(props: ChatViewProps) {
       // is only right for the thread's own pull request, whose branch is already under the
       // reader's feet. A link the agent wrote can open any other one here, and that one has to be
       // checkable out like it is anywhere else.
-      <PullRequestDetailPanel
-        getShortcutContext={getShortcutContext}
-        shortcutsEnabled={
-          rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
-        }
-        key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
-        environmentId={activeThread.environmentId}
-        onSelectPullRequest={(reference) => {
-          if (activeThreadRef)
-            useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-              projectId: reference.projectId,
-              repository: reference.repository,
-              number: reference.number,
-              ...(reference.host ? { host: reference.host } : {}),
-            });
-        }}
-        threadRef={activeThreadRef}
-        reference={{
-          projectId: renderedRightPanelSurface.projectId as ProjectId,
-          ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
-          repository: renderedRightPanelSurface.repository,
-          number: renderedRightPanelSurface.number,
-        }}
-        context={pullRequestPanelContext(
-          {
-            projectId: activeThread.projectId,
-            pullRequests: visiblePullRequests,
-            linkedPullRequest: linkedThreadPullRequest,
-            branchPullRequest:
-              activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
-          },
-          renderedRightPanelSurface,
-        )}
-        composerDraftTarget={composerDraftTarget}
-        onBack={
-          activeThreadRef !== null && pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
-            ? addPullRequestsSurface
-            : undefined
-        }
-      />
+      <Suspense fallback={<PullRequestDetailGhost />}>
+        <PullRequestDetailPanel
+          getShortcutContext={getShortcutContext}
+          shortcutsEnabled={
+            rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
+          }
+          key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
+          environmentId={activeThread.environmentId}
+          onSelectPullRequest={(reference) => {
+            if (activeThreadRef)
+              useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+                projectId: reference.projectId,
+                repository: reference.repository,
+                number: reference.number,
+                ...(reference.host ? { host: reference.host } : {}),
+              });
+          }}
+          threadRef={activeThreadRef}
+          reference={{
+            projectId: renderedRightPanelSurface.projectId as ProjectId,
+            ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
+            repository: renderedRightPanelSurface.repository,
+            number: renderedRightPanelSurface.number,
+          }}
+          context={pullRequestPanelContext(
+            {
+              projectId: activeThread.projectId,
+              pullRequests: visiblePullRequests,
+              linkedPullRequest: linkedThreadPullRequest,
+              branchPullRequest:
+                activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
+            },
+            renderedRightPanelSurface,
+          )}
+          composerDraftTarget={composerDraftTarget}
+          onBack={
+            activeThreadRef !== null && pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
+              ? addPullRequestsSurface
+              : undefined
+          }
+        />
+      </Suspense>
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
-      <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+      <Suspense fallback={null}>
+        <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+      </Suspense>
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
