@@ -202,6 +202,7 @@ const layerMachineMap = (input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(MachineHost.MachineHost)({
+          isDesktopCommand: (kind) => kind === "installUpdate" || kind === "reloadWindows",
           supportedCommands: () => ["stopAllAgents"],
           status: (status) =>
             Effect.succeed({

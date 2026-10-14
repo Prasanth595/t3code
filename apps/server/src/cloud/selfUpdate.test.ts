@@ -33,6 +33,14 @@ const archiveBytes = new TextEncoder().encode("not really a tarball");
 const releaseHttpClient = (order: string[]) =>
   HttpClient.make((request) =>
     Effect.gen(function* () {
+      // Fork: the update first checks that the fork release of the version is installable.
+      if (request.url.startsWith("https://api.github.com/")) {
+        order.push("index");
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json([{ tag_name: "v1.1.0", assets: [{ name: "SHA256SUMS" }] }]),
+        );
+      }
       if (request.url.endsWith("/SHA256SUMS")) {
         const digest = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", archiveBytes));
         const hex = Array.from(new Uint8Array(digest), (byte) =>
@@ -351,7 +359,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         method: "boot-service",
         updateId: "launcher-id",
       });
-      expect(order).toEqual(["download", "extract", "preflight", "accept"]);
+      expect(order).toEqual(["index", "download", "extract", "preflight", "accept"]);
     }),
   );
 

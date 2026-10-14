@@ -346,7 +346,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const local = yield* state.snapshot;
       if (local.saved.handledCommandIds.includes(command.id)) return;
-      if (MachineHost.DESKTOP_COMMAND_KINDS.has(command.input._tag)) {
+      if (host.isDesktopCommand(command.input._tag)) {
         // MM-1402: it waits for the desktop app, which reports its result.
         yield* state.updateSaved((saved) => ({
           ...saved,

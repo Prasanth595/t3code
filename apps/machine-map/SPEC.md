@@ -89,6 +89,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-502** Each machine reports which commands it supports. The portal offers only those.
 - **MM-503** Each command shows its result in the portal and in the history: who sent it, when, and the outcome.
 - **MM-504** Dangerous commands ask for confirmation in the portal: restart server, stop all agents, remove machine.
+- **MM-505** A server that runs as the T3 Code background service runs Install update itself. It installs the newest fork release now, or "when idle" at the first update check with no running agent turn. A server of a desktop app hands Install update to the desktop app (MM-1402).
 
 ## 6. Queue and offline machines
 

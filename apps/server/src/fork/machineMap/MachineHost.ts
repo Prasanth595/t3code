@@ -1,7 +1,8 @@
 /**
  * Fork: machine map. This machine as the portal sees it: its status (MM-1002) and the commands it
  * runs itself (MM-501). The desktop commands (`installUpdate`, `reloadWindows`) are not here:
- * `MachineMap` hands them to the desktop app (MM-1402).
+ * `MachineMap` hands them to the desktop app (MM-1402). A server that runs as the background
+ * service runs `installUpdate` itself (MM-505, `ForkUpdates`).
  */
 import {
   AuthSessionId,
@@ -43,6 +44,7 @@ import * as HostResources from "../../resourceTelemetry/HostResources.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
 import { getAutoBootstrapThreadModelSelection } from "../../serverRuntimeStartup.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ForkUpdates from "../ForkUpdates.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachinePeers from "./MachinePeers.ts";
 
@@ -56,7 +58,7 @@ export interface CommandOutcome {
 }
 
 /** These run in the desktop app. The server only holds them for it (MM-1402). */
-export const DESKTOP_COMMAND_KINDS: ReadonlySet<MachineCommandKind> = new Set([
+const DESKTOP_COMMAND_KINDS: ReadonlySet<MachineCommandKind> = new Set([
   "installUpdate",
   "reloadWindows",
 ]);
@@ -171,6 +173,8 @@ const errorText = (cause: unknown): string =>
 export class MachineHost extends Context.Service<
   MachineHost,
   {
+    /** MM-1402: the desktop app runs this command, not the server. */
+    readonly isDesktopCommand: (kind: MachineCommandKind) => boolean;
     /** MM-502: the commands this machine can run now. */
     readonly supportedCommands: (input: {
       readonly desktopConnected: boolean;
@@ -202,6 +206,7 @@ const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const state = yield* MachineMapState.MachineMapState;
   const peers = yield* MachinePeers.MachinePeers;
+  const forkUpdates = yield* ForkUpdates.ForkUpdates;
 
   const startedAtMs = yield* Clock.currentTimeMillis;
   const descriptor = yield* environment.getDescriptor;
@@ -267,10 +272,14 @@ const make = Effect.gen(function* () {
     return sample;
   });
 
+  const isDesktopCommand: MachineHost["Service"]["isDesktopCommand"] = (kind) =>
+    DESKTOP_COMMAND_KINDS.has(kind) && !(kind === "installUpdate" && forkUpdates.available);
+
   const supportedCommands: MachineHost["Service"]["supportedCommands"] = (input) => [
     ...(supervised ? (["restartServer"] as const) : []),
     ...SERVER_COMMAND_KINDS,
-    ...(input.desktopConnected ? [...DESKTOP_COMMAND_KINDS] : []),
+    ...(forkUpdates.available ? (["installUpdate"] as const) : []),
+    ...(input.desktopConnected ? [...DESKTOP_COMMAND_KINDS].filter(isDesktopCommand) : []),
   ];
 
   const clientSessions = auth.listSessions().pipe(
@@ -496,6 +505,9 @@ const make = Effect.gen(function* () {
         case "testArrow":
           return succeed(yield* peers.testArrow(input.to));
         case "installUpdate":
+          return forkUpdates.available
+            ? succeed(yield* forkUpdates.install({ whenIdle: input.whenIdle }))
+            : fail("This command runs in the desktop app.");
         case "reloadWindows":
           return fail("This command runs in the desktop app.");
       }
@@ -509,7 +521,14 @@ const make = Effect.gen(function* () {
     process.kill(process.pid, "SIGTERM");
   });
 
-  return MachineHost.of({ supportedCommands, status, run, restartProcess, supervised });
+  return MachineHost.of({
+    isDesktopCommand,
+    supportedCommands,
+    status,
+    run,
+    restartProcess,
+    supervised,
+  });
 });
 
 export const layer = Layer.effect(MachineHost, make);

@@ -102,6 +102,17 @@ scripts/fork-desktop-mac.sh --publish
 
 The script creates a prerelease on the fork. Installed fork apps offer it as an update.
 
+## Server updates
+
+A headless server that runs as the upstream background service (`t3 service install`) updates from the fork releases. The install is the upstream self-update: it unpacks the release into `<T3 home>/runtime/versions/<version>`, and the service launcher starts it on trial. If the new version does not start, the launcher goes back to the old version.
+
+- Turn on the server setting `forkAutoUpdate` (default `false`). Then the server checks the fork releases every 5 minutes. When a newer release is ready and no agent turn runs, it installs the release.
+- A release is ready when it has `SHA256SUMS`. A version that rolled back or failed is not tried again. A newer release is tried.
+- The machine map command Install update (`installUpdate`) works on such a server too (MM-505). `whenIdle: false` installs the newest fork release now. `whenIdle: true` installs it at the first check with no running agent turn, also when `forkAutoUpdate` is off.
+- A restart stops the running turns. The upstream setting "Continue threads after restarts" (`continueThreadsAfterServerUpdate`, on by default) and "Recover interrupted agents" continue them after the update.
+- "Update everything" and `t3 update` also install fork releases. A self-update request for a version that has no fork release installs the newest fork release instead. The mobile app comes from upstream and offers upstream versions, so its "Check for updates" installs the newest fork release.
+- The code is in `apps/server/src/fork/ForkUpdates.ts` and `apps/server/src/fork/forkReleases.ts`.
+
 ## Live server updates
 
 Most fork changes are server and web code. They reach the Mac without a new app and without an app restart.

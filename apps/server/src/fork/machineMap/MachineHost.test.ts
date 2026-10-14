@@ -32,6 +32,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import * as HostResources from "../../resourceTelemetry/HostResources.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ForkUpdates from "../ForkUpdates.ts";
 import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachinePeers from "./MachinePeers.ts";
@@ -159,6 +160,7 @@ const makeLayer = (input: {
           run: () => Effect.succeed({ code: 128, stdout: "" } as never),
         }),
         Layer.mock(MachinePeers.MachinePeers)({}),
+        Layer.mock(ForkUpdates.ForkUpdates)({ available: false }),
       ),
     ),
     Layer.provide(ServerSecretStore.layer),

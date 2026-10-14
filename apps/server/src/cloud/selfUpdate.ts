@@ -22,8 +22,10 @@ import { HttpClient } from "effect/http";
 
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import { forkUpdateTarget } from "../fork/forkReleases.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -213,15 +215,21 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       );
     }
 
-    const targetVersion = input.targetVersion.trim();
-    if (!isExactServiceVersion(targetVersion)) {
-      return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
+    const requestedVersion = input.targetVersion.trim();
+    if (!isExactServiceVersion(requestedVersion)) {
+      return yield* failWith(`'${requestedVersion}' is not an exact t3 version.`);
     }
     if (yield* Ref.getAndSet(inFlight, true)) {
       return yield* failWith("A server update is already in progress.");
     }
 
     return yield* Effect.gen(function* () {
+      // Fork: a version without a fork release installs the newest fork release.
+      const targetVersion = yield* forkUpdateTarget(
+        httpClient,
+        requestedVersion,
+        packageJson.version,
+      );
       yield* reportProgress("downloading");
       const paths = yield* ensurePinnedRuntimeInstalled({
         baseDir: serverConfig.baseDir,
