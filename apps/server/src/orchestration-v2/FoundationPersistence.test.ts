@@ -447,7 +447,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     ),
   );
 
-  it.effect("traces an event write as one transaction without its SQL statements", () =>
+  it.effect("traces an event write and its transaction without its SQL statements", () =>
     Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;
       const now = yield* DateTime.now;
@@ -468,8 +468,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         })
         .pipe(Effect.withTracer(tracer));
 
-      assert.include(names, "sql.transaction");
-      assert.notInclude(names, "sqlite");
+      // These two spans time a slow commit; the statements inside are not traced.
+      assert.deepEqual(names, ["orchestrationV2.EventSink.write", "sql.transaction"]);
     }),
   );
 

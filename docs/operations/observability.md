@@ -646,8 +646,8 @@ Current high-value span and metric boundaries include:
 - provider session and turn operations
 - git command execution and git hook events
 - terminal session lifecycle
-- sqlite query execution, except the statements inside event-write transactions, which the
-  `sql.transaction` span times as one
+- sqlite query execution, except the statements inside `orchestrationV2.EventSink.write`, which
+  its `sql.transaction` span times as one
 - event loop stalls (`server.eventLoop.stall`)
 
 ### Current Constraints
