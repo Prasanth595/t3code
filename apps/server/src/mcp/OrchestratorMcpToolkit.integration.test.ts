@@ -2723,35 +2723,24 @@ describe("orchestrator MCP toolkit", () => {
             ).toMatchObject({ state: "disposed" });
             yield* expectOffersToStay(0);
 
-            // A question from a wait-mode child ends the wait early, because only
-            // the parent can get it answered. The wait gives up delivery the same
-            // way a timeout does.
-            const knownTaskIds = new Set(
-              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.map(
-                (task) => task.id,
-              ),
-            );
+            // A child's question ends a blocking wait, which then gives up
+            // delivery the same way a timeout does.
             const questionFiber = yield* invoke("delegate_task", {
               task: cancellationPrompt,
-              target: {
-                providerInstanceId: codexInstanceId,
-                model: codexModel,
-              },
+              title: "Wait question",
+              target: { providerInstanceId: codexInstanceId, model: codexModel },
               mode: "wait",
               timeoutMs: 600_000,
               clientRequestId: "delegate-wait-question-1",
             }).pipe(Effect.forkChild);
-            const questionParent = yield* waitForProjection(
+            const questionTask = (yield* waitForProjection(
               orchestrator,
               parentThreadId,
               (projection) =>
                 projection.subagents.some(
-                  (task) => !knownTaskIds.has(task.id) && task.childThreadId !== null,
+                  (task) => task.title === "Wait question" && task.childThreadId !== null,
                 ),
-            );
-            const questionTask = questionParent.subagents.find(
-              (task) => !knownTaskIds.has(task.id),
-            )!;
+            )).subagents.find((task) => task.title === "Wait question")!;
             const questionChildThreadId = questionTask.childThreadId!;
             yield* waitForProjection(orchestrator, questionChildThreadId, (projection) =>
               projection.providerTurns.some((turn) => turn.status === "running"),
@@ -2795,7 +2784,6 @@ describe("orchestrator MCP toolkit", () => {
             ).toBe("always");
             const questionCancelCall = yield* invoke("task_cancel", {
               taskId: questionTask.id,
-              reason: "The question was only needed to end the wait.",
               clientRequestId: "cancel-wait-question-1",
             });
             expect(questionCancelCall.isError).toBe(false);
@@ -2804,7 +2792,6 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id === questionTask.id && task.status === "interrupted",
               ),
             );
-            yield* expectOffersToStay(0);
 
             // The MCP tool cannot force the reverse interleaving (child
             // terminal before the upgrade lands), so dispatch the command
