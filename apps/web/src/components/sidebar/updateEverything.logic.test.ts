@@ -212,6 +212,7 @@ describe("resolveUpdateRunMachineStatus", () => {
 describe("update everything summary", () => {
   const result = collectUpdateEverythingResult({
     localVersion: "0.0.50",
+    localFailures: ["Could not download update: Network error."],
     servers: [
       { label: "alvin", outcome: { status: "failed", message: "Download failed." } },
       { label: "box", outcome: { status: "updated" } },
@@ -230,7 +231,11 @@ describe("update everything summary", () => {
       localVersion: "0.0.50",
       updatedServers: 2,
       updatedProviders: 1,
-      failures: ["alvin: Download failed.", "box · Codex: npm exited with code 1."],
+      failures: [
+        "This app: Could not download update: Network error.",
+        "alvin: Download failed.",
+        "box · Codex: npm exited with code 1.",
+      ],
     });
   });
 
@@ -238,7 +243,11 @@ describe("update everything summary", () => {
     expect(getUpdateEverythingToastView(result, "0.0.50")).toEqual({
       type: "error",
       title: "Updated this app, 2 servers, and 1 provider",
-      description: "alvin: Download failed.\nbox · Codex: npm exited with code 1.",
+      description: [
+        "This app: Could not download update: Network error.",
+        "alvin: Download failed.",
+        "box · Codex: npm exited with code 1.",
+      ].join("\n"),
     });
     expect(getUpdateEverythingToastView({ ...result, failures: [] }, "0.0.40")).toEqual({
       type: "success",

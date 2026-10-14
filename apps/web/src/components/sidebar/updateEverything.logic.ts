@@ -252,6 +252,8 @@ export interface UpdateEverythingResult {
 /** Counts what a pass updated and lists each failure with its machine. */
 export function collectUpdateEverythingResult(input: {
   readonly localVersion: string | null;
+  /** This app's own download or install failures. */
+  readonly localFailures: ReadonlyArray<string>;
   readonly servers: ReadonlyArray<{
     readonly label: string;
     readonly outcome: ServerUpdateOutcome;
@@ -266,6 +268,7 @@ export function collectUpdateEverythingResult(input: {
     updatedServers: input.servers.filter(({ outcome }) => outcome.status === "updated").length,
     updatedProviders: input.providers.filter((outcome) => outcome.status === "updated").length,
     failures: [
+      ...input.localFailures.map((failure) => `This app: ${failure}`),
       ...input.servers.flatMap(({ label, outcome }) =>
         outcome.status === "failed" ? [`${label}: ${outcome.message}`] : [],
       ),

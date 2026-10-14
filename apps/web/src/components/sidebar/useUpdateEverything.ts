@@ -30,6 +30,9 @@ import {
   showUpdateEverythingResult,
 } from "./updateEverythingRun";
 
+/** Where this app's own download or install reports a failure. */
+export type ReportLocalUpdateError = (title: string, description: string) => void;
+
 /**
  * The remote half of the sidebar update button: outdated providers on every
  * connected machine, and servers behind the version this client runs or is
@@ -110,11 +113,19 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     restarts,
     /** Behind machines the run leaves alone, with the reason. */
     skipped,
-    /** Runs the pass. `installLocal` resolves true when this app is relaunching. */
-    run: async (local: {
-      downloadLocal?: () => Promise<boolean>;
-      installLocal?: () => Promise<boolean>;
+    /** Runs the pass. `installLocal` resolves true when this app is relaunching.
+        Both report failures to the pass, which lists them in its summary. */
+    run: async ({
+      downloadLocal,
+      installLocal,
+    }: {
+      downloadLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
+      installLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
     }) => {
+      const localFailures: Array<string> = [];
+      const reportLocalError: ReportLocalUpdateError = (title, description) => {
+        localFailures.push(`${title}: ${description}`);
+      };
       const machinesById = new Map<UpdateRunMachine["environmentId"], UpdateRunMachine>();
       for (const machine of providers.machines) {
         machinesById.set(machine.environmentId, {
@@ -135,7 +146,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
           result: null,
         });
       }
-      const localVersion = local.installLocal ? localUpdateVersion : null;
+      const localVersion = installLocal ? localUpdateVersion : null;
       setUpdateEverythingRun(() => ({
         localVersion,
         phase: "providers",
@@ -144,7 +155,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
       const failedProviderMachines = new Set<UpdateRunMachine["environmentId"]>();
       try {
         const outcome = await runUpdateEverything({
-          ...(local.downloadLocal ? { downloadLocal: local.downloadLocal } : {}),
+          ...(downloadLocal ? { downloadLocal: () => downloadLocal(reportLocalError) } : {}),
           updateProviders: async () => {
             const runs = await providers.updateAll({ quiet: true });
             const outcomes = runs.map((run) => {
@@ -176,18 +187,20 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
               }),
             ),
         });
-        const result = collectUpdateEverythingResult({
-          localVersion: null,
-          servers: outcome.servers,
-          providers: outcome.providers,
-        });
-        if (outcome.localReady && local.installLocal) {
+        const result = () =>
+          collectUpdateEverythingResult({
+            localVersion: null,
+            localFailures,
+            servers: outcome.servers,
+            providers: outcome.providers,
+          });
+        if (outcome.localReady && installLocal) {
           setUpdateEverythingRun((run) => run && { ...run, phase: "installing" });
-          saveUpdateEverythingResult({ ...result, localVersion });
-          if (await local.installLocal()) return;
+          saveUpdateEverythingResult({ ...result(), localVersion });
+          if (await installLocal(reportLocalError)) return;
           clearSavedUpdateEverythingResult();
         }
-        showUpdateEverythingResult(result);
+        showUpdateEverythingResult(result());
       } finally {
         setUpdateEverythingRun(() => null);
       }

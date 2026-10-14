@@ -870,10 +870,10 @@ const make = Effect.gen(function* () {
             });
           }
           const run = latestRestartContinuation(runs, current);
-          const settled =
+          const pending =
             isTerminalRunStatus(run.status) &&
-            !(yield* orchestrator.restartContinuationPending(run));
-          return { run, settled };
+            (yield* orchestrator.restartContinuationPending(run));
+          return { run, pending, settled: isTerminalRunStatus(run.status) && !pending };
         });
       const initial = yield* outcome(target.runs);
       if (initial.settled) {
@@ -883,26 +883,33 @@ const make = Effect.gen(function* () {
       // Re-read the runs only when the thread records an update to the waited
       // run or a continuation, or its deletion, instead of polling the
       // projection for up to an hour. Each stream keeps one event type, so
-      // transcript events never fill its buffer.
+      // transcript events never fill its buffer. A declined continuation
+      // records no event, so its effect settling wakes the wait too.
       const wait = Stream.merge(
-        orchestrator.streamStoredEventsFrom({
-          threadId: input.threadId,
-          afterSequence,
-          eventType: "run.updated",
-        }),
-        orchestrator.streamStoredEventsFrom({
-          threadId: input.threadId,
-          afterSequence,
-          eventType: "thread.deleted",
-        }),
-      ).pipe(
-        Stream.mapError(loadError),
-        Stream.filter(
-          (stored) =>
-            stored.event.type !== "run.updated" ||
-            stored.event.payload.id === selectedRun.id ||
-            stored.event.payload.restartContinuationOfRunId !== undefined,
+        Stream.merge(
+          orchestrator.streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence,
+            eventType: "run.updated",
+          }),
+          orchestrator.streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence,
+            eventType: "thread.deleted",
+          }),
+        ).pipe(
+          Stream.mapError(loadError),
+          Stream.filter(
+            (stored) =>
+              stored.event.type !== "run.updated" ||
+              stored.event.payload.id === selectedRun.id ||
+              stored.event.payload.restartContinuationOfRunId !== undefined,
+          ),
         ),
+        initial.pending
+          ? Stream.fromEffect(orchestrator.awaitRestartContinuation(initial.run))
+          : Stream.empty,
+      ).pipe(
         Stream.mapEffect(() =>
           getProjectThreadRecords(input, ["runs"]).pipe(
             Effect.flatMap((current) => outcome(current.runs)),

@@ -730,6 +730,7 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadEventSequence: () => Effect.succeed(0),
           restartContinuationPending: (run) => Effect.succeed(pending && run.id === runId),
+          awaitRestartContinuation: () => Effect.never,
           streamStoredEventsFrom: (input) =>
             input?.eventType === "run.updated"
               ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
@@ -775,6 +776,54 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
       timedOut: false,
       run: { id: continuationId, status: "completed" },
     });
+  }),
+);
+
+it.effect("waitForThread returns the cut run once its continuation is declined", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-declined");
+    const threadId = ThreadId.make("thread:thread-management:wait-declined");
+    const runId = RunId.make("run:thread-management:wait-declined");
+    const subscribed = yield* Deferred.make<void>();
+    const declined = yield* Deferred.make<void>();
+    let pending = true;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          restartContinuationPending: () => Effect.succeed(pending),
+          awaitRestartContinuation: () => Deferred.await(declined),
+          // Declining records no thread event.
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "run.updated"
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.never),
+                )
+              : Stream.never,
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, projectId, deletedAt: null },
+              runs: [{ id: runId, status: "cancelled" }],
+            } as unknown as OrchestrationV2ThreadProjection),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(subscribed);
+    pending = false;
+    yield* Deferred.succeed(declined, undefined);
+    const result = yield* Fiber.join(fiber);
+
+    expect(result).toMatchObject({ timedOut: false, run: { id: runId, status: "cancelled" } });
   }),
 );
 

@@ -50,7 +50,7 @@ import {
   type UpdateEverythingRun,
 } from "./updateEverything.logic";
 import { useUpdateEverythingRun } from "./updateEverythingRun";
-import { useUpdateEverything } from "./useUpdateEverything";
+import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
@@ -141,11 +141,18 @@ function SidebarUpdateArchitectureWarningContent() {
   );
 }
 
+const toastUpdateError: ReportLocalUpdateError = (title, description) => {
+  toastManager.add(stackedThreadToast({ type: "error", title, description }));
+};
+
 /** Downloads this app's update. Resolves true when it is ready to install;
-    failures toast and resolve false. */
+    failures go to `reportError` (a toast by default) and resolve false. */
 async function downloadLocalUpdate(
   bridge: DesktopBridge,
-  { notifyDownloaded }: { readonly notifyDownloaded: boolean },
+  {
+    notifyDownloaded,
+    reportError = toastUpdateError,
+  }: { readonly notifyDownloaded: boolean; readonly reportError?: ReportLocalUpdateError },
 ): Promise<boolean> {
   try {
     const result = await bridge.downloadUpdate();
@@ -155,32 +162,25 @@ async function downloadLocalUpdate(
     const actionError = shouldToastDesktopUpdateActionResult(result)
       ? getDesktopUpdateActionError(result)
       : null;
-    if (actionError) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not download update",
-          description: actionError,
-        }),
-      );
-    }
+    if (actionError) reportError("Could not download update", actionError);
     return result.completed;
   } catch (error) {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: "Could not start update download",
-        description: error instanceof Error ? error.message : "An unexpected error occurred.",
-      }),
+    reportError(
+      "Could not start update download",
+      error instanceof Error ? error.message : "An unexpected error occurred.",
     );
     return false;
   }
 }
 
 /** Installs this app's downloaded update, which relaunches the app. Resolves
-    true when the relaunch is under way. Failures toast. A refused install (the
-    download is not marked ready yet) leaves the restart to the user. */
-async function installLocalUpdate(bridge: DesktopBridge): Promise<boolean> {
+    true when the relaunch is under way. Failures go to `reportError` (a toast
+    by default). A refused install (the download is not marked ready yet)
+    leaves the restart to the user. */
+async function installLocalUpdate(
+  bridge: DesktopBridge,
+  reportError: ReportLocalUpdateError = toastUpdateError,
+): Promise<boolean> {
   try {
     const result = await bridge.installUpdate();
     if (!result.accepted) {
@@ -191,21 +191,12 @@ async function installLocalUpdate(bridge: DesktopBridge): Promise<boolean> {
       ? getDesktopUpdateActionError(result)
       : null;
     if (!actionError) return true;
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: "Could not install update",
-        description: actionError,
-      }),
-    );
+    reportError("Could not install update", actionError);
     return false;
   } catch (error) {
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: "Could not install update",
-        description: error instanceof Error ? error.message : "An unexpected error occurred.",
-      }),
+    reportError(
+      "Could not install update",
+      error instanceof Error ? error.message : "An unexpected error occurred.",
     );
     return false;
   }
@@ -417,9 +408,14 @@ function SidebarUpdateControl() {
     try {
       await everything.run({
         ...(bridge && action === "download"
-          ? { downloadLocal: () => downloadLocalUpdate(bridge, { notifyDownloaded: false }) }
+          ? {
+              downloadLocal: (reportError) =>
+                downloadLocalUpdate(bridge, { notifyDownloaded: false, reportError }),
+            }
           : {}),
-        ...(bridge && action !== "none" ? { installLocal: () => installLocalUpdate(bridge) } : {}),
+        ...(bridge && action !== "none"
+          ? { installLocal: (reportError) => installLocalUpdate(bridge, reportError) }
+          : {}),
       });
     } catch (error) {
       toastManager.add(
