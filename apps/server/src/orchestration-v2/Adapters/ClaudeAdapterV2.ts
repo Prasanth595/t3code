@@ -6146,6 +6146,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // Claude turn will drain the buffer, so the subagents it reports end
         // here, through the turn that settled last, and the next wake can
         // request a continuation again. Claude's own session keeps the wake.
+        // Use the SDK frame lock through outcome application: a new start
+        // must not slip between buffer removal and the registry update.
         const dropBufferedWake = Effect.fnUntraced(function* (
           nativeThreadId: string,
           generation: number,
@@ -6164,11 +6166,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const settled = settledTurnByNativeThread.get(nativeThreadId);
           if (settled === undefined) return;
           const subagents = yield* Ref.get(sessionSubagentsByTaskId);
+          const latestLifecycle = new Map<string, SDKMessage>();
+          for (const message of buffered) {
+            if (
+              message.type === "system" &&
+              (message.subtype === "task_started" || message.subtype === "task_notification")
+            ) {
+              latestLifecycle.set(message.task_id, message);
+            }
+          }
           for (const message of buffered) {
             if (
               message.type !== "system" ||
               message.subtype !== "task_notification" ||
-              !subagents.has(message.task_id)
+              !subagents.has(message.task_id) ||
+              latestLifecycle.get(message.task_id) !== message
             ) {
               continue;
             }
@@ -6181,7 +6193,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               status: claudeTaskOutcome(message.status),
             });
           }
-        });
+        }, sdkMessageLock.withPermits(1));
 
         const bufferWakeMessage = Effect.fnUntraced(function* (wakeInput: {
           readonly nativeThreadId: string;

@@ -9450,6 +9450,104 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each(["buffered", "during drop"] as const)(
+    "a dropped wake does not end a subagent that has started again (%s)",
+    (startTiming) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const taskId = "task-drop-resumed";
+          const started = (uuid: string) =>
+            makeSubagentTaskStartedFrame({ taskId, toolUseId: uuid, uuid });
+          const notification = (uuid: string) =>
+            makeSubagentNotificationFrame({ taskId, toolUseId: uuid, uuid, summary: uuid });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-drop-resumed"),
+              text: "Start a background subagent.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(started("drop-resumed-start"));
+          yield* Queue.take(harness.subagentReceipts);
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "drop-resumed-root-result", result: "Working in background." }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+          yield* harness.offerAndWait(notification("drop-resumed-old-end"));
+          const oldWake = yield* Queue.take(harness.continuationReceipts);
+          assert.isDefined(oldWake.clearIfCurrent);
+
+          // SendMessage resumes the same task while its earlier outcome still
+          // waits for the worker to drop the wake.
+          if (startTiming === "buffered") {
+            yield* harness.offerAndWait(started("drop-resumed-new-start"));
+            yield* oldWake.clearIfCurrent!();
+          } else {
+            const clock = yield* Clock.Clock;
+            const paused = yield* Deferred.make<void>();
+            const resume = yield* Deferred.make<void>();
+            // The first timestamp read in drop occurs after its atomic buffer
+            // removal, before it publishes the subagent's terminal state.
+            const dropping = yield* oldWake.clearIfCurrent!().pipe(
+              Effect.provideService(Clock.Clock, {
+                ...clock,
+                currentTimeMillis: Deferred.succeed(paused, undefined).pipe(
+                  Effect.andThen(Deferred.await(resume)),
+                  Effect.andThen(clock.currentTimeMillis),
+                ),
+              }),
+              Effect.forkScoped,
+            );
+            yield* Deferred.await(paused);
+            const offered = yield* Deferred.make<void>();
+            const restarting = yield* harness
+              .offerAndWait(started("drop-resumed-new-start"), offered)
+              .pipe(Effect.forkScoped);
+            yield* Deferred.await(offered);
+            // Let the SDK handler attempt the start while the drop is paused.
+            // The shared lock makes it wait until the outcome has been applied.
+            yield* Effect.yieldNow;
+            yield* Deferred.succeed(resume, undefined);
+            yield* Fiber.join(dropping);
+            yield* Fiber.join(restarting);
+          }
+          assert.isTrue(
+            yield* harness.hasPendingBackgroundWork,
+            "the newer start remains running after the older wake is dropped",
+          );
+          if (startTiming === "buffered") {
+            assert.isFalse(
+              harness.events.some(
+                (event) =>
+                  event.type === "subagent.updated" &&
+                  event.subagent.result === "drop-resumed-old-end",
+              ),
+              "the superseded notification is not projected",
+            );
+          } else {
+            yield* Queue.take(harness.subagentReceipts);
+          }
+
+          yield* harness.offerAndWait(notification("drop-resumed-new-end"));
+          const newWake = yield* Queue.take(harness.continuationReceipts);
+          assert.isDefined(newWake.clearIfCurrent);
+          yield* newWake.clearIfCurrent!();
+          const ended = yield* Queue.take(harness.subagentReceipts);
+          assert.equal(ended.subagent.result, "drop-resumed-new-end");
+          assert.equal(ended.subagent.status, "completed");
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("ends buffered subagents when the worker drops their wake continuation", () =>
     Effect.scoped(
       Effect.gen(function* () {
