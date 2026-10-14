@@ -335,6 +335,18 @@ export const MissionManagerLifecycleAdvancedEvent = Schema.Struct({
 });
 export type MissionManagerLifecycleAdvancedEvent = typeof MissionManagerLifecycleAdvancedEvent.Type;
 
+export const MissionRetroSkillEvaluatedEvent = Schema.Struct({
+  ...MissionEventBaseFields,
+  type: Schema.Literal("mission.retro-skill-evaluated"),
+  payload: Schema.Struct({
+    /** Full updated mission snapshot, the appended skill-evaluation receipt included. */
+    mission: Mission,
+    /** Stable id of the receipt this event committed. */
+    evaluationId: TrimmedNonEmptyString,
+  }),
+});
+export type MissionRetroSkillEvaluatedEvent = typeof MissionRetroSkillEvaluatedEvent.Type;
+
 export const MissionEvent = Schema.Union([
   MissionCreatedEvent,
   MissionRevisedEvent,
@@ -345,5 +357,6 @@ export const MissionEvent = Schema.Union([
   MissionRetroReportReceivedEvent,
   MissionManagerHandoffReservedEvent,
   MissionManagerLifecycleAdvancedEvent,
+  MissionRetroSkillEvaluatedEvent,
 ]);
 export type MissionEvent = typeof MissionEvent.Type;
