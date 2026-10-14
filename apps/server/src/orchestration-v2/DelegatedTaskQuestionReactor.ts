@@ -39,9 +39,12 @@ export const make = Effect.gen(function* () {
       ) {
         return;
       }
-      const child = yield* projections.getThread(event.threadId);
+      const childRecords = yield* projections.getThreadRecords(event.threadId, ["runtimeRequests"]);
+      const child = childRecords.thread;
       const parentThreadId = child.lineage.parentThreadId;
       if (
+        childRecords.runtimeRequests.find((request) => request.id === event.payload.id)?.status !==
+          "pending" ||
         child.lineage.relationshipToParent !== "subagent" ||
         parentThreadId === null ||
         child.forkedFrom?.type !== "node"

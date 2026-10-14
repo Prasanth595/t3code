@@ -25,6 +25,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
+import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -692,8 +693,27 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       },
     };
 
+    const answered = {
+      ...question,
+      id: EventId.make("event:answered"),
+      payload: { ...question.payload, id: RuntimeRequestId.make("request:answered") },
+    };
+    const eventSink = yield* EventSink.EventSinkV2;
+    yield* eventSink.write({
+      events: [
+        question,
+        answered,
+        {
+          ...answered,
+          id: EventId.make("event:answered-resolved"),
+          payload: { ...answered.payload, status: "resolved", resolvedAt: now },
+        },
+      ],
+    });
+
     yield* reactor.handle(question);
     yield* reactor.handle(question);
+    yield* reactor.handle(answered);
     yield* reactor.handle({
       ...question,
       payload: {
