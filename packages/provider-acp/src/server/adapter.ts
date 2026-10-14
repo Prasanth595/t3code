@@ -255,6 +255,12 @@ export interface AcpAdapterV2Flavor {
     readonly startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult;
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<string | undefined, EffectAcpErrors.AcpError>;
+  /**
+   * Selection option ids `applyModelSelection` applies itself, which the
+   * generic loop does not match against the session's config ids. Grok stores
+   * its effort as `reasoningEffort` and writes it to its `thought_level` option.
+   */
+  readonly ownedOptionIds?: ReadonlyArray<string>;
   /** Native session mode to select for a runtime policy (e.g. Antigravity `yolo`). */
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
@@ -6333,9 +6339,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           // Restore the agent's own empty value for choices T3 stores under a
           // reserved ID (see ACP_EMPTY_OPTION_VALUE).
-          const optionSelections = (modelSelection.options ?? []).map((selection) =>
-            selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
-          );
+          const optionSelections = (modelSelection.options ?? [])
+            .filter((selection) => flavor.ownedOptionIds?.includes(selection.id) !== true)
+            .map((selection) =>
+              selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
+            );
           const configOptions = yield* runtime.getConfigOptions;
           const availableConfigIds = new Set(configOptions.map((option) => option.id));
           const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(
