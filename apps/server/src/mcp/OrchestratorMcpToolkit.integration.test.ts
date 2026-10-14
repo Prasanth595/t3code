@@ -2751,8 +2751,7 @@ describe("orchestrator MCP toolkit", () => {
                   payload: {
                     id: RuntimeRequestId.make("request:wait-question"),
                     nodeId: question.id,
-                    providerTurnId: asking.providerTurns.find((turn) => turn.status === "running")!
-                      .id,
+                    providerTurnId: null,
                     nativeRequestRef: null,
                     kind: "user_input",
                     status: "pending",
