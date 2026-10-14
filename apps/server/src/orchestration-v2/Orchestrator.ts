@@ -1930,6 +1930,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               type: "provider-session.detach" as const,
               providerSessionId: session.id,
               detail: "Provider or model selection changed.",
+              ...(canResumeAcrossInstances
+                ? { expectedTargetInstanceId: queuedRun.providerInstanceId }
+                : {}),
             },
           })),
           {
@@ -3504,6 +3507,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               request: {
                 type: "provider-session.detach",
                 providerSessionId: session.id,
+                ...(session.driver === "codex" &&
+                (command.type === "provider.switch" ||
+                  command.type === "thread.model-selection.set") &&
+                command.modelSelection.instanceId !== session.providerInstanceId
+                  ? { expectedTargetInstanceId: command.modelSelection.instanceId }
+                  : {}),
                 detail:
                   command.type === "thread.archive"
                     ? "Thread archived."
@@ -6610,6 +6619,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               type: "provider-session.detach",
               providerSessionId: previousProviderSessionId,
               detail: "Provider account changed; continuing the native thread.",
+              expectedTargetInstanceId: modelSelection.instanceId,
             },
           } satisfies PendingOrchestrationEffectV2,
         ]);

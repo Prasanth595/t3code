@@ -139,6 +139,14 @@ function makeTestAdapter(input: {
   readonly retainWriterAfterUnsubscribe?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly holdTurns?: ReadonlyMap<
+    ThreadId,
+    {
+      readonly ordinal: number;
+      readonly started: Deferred.Deferred<void>;
+      readonly release: Deferred.Deferred<void>;
+    }
+  >;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -336,6 +344,11 @@ function makeTestAdapter(input: {
                     : { nativeThreadHasTurns: turnInput.nativeThreadHasTurns }),
                 },
               ]);
+              const heldTurn = input.holdTurns?.get(turnInput.threadId);
+              if (heldTurn?.ordinal === turnInput.runOrdinal) {
+                yield* Deferred.succeed(heldTurn.started, undefined);
+                yield* Deferred.await(heldTurn.release);
+              }
               if (
                 turnInput.runOrdinal === (input.holdRunOrdinal ?? 1) &&
                 input.holdFirstTurn !== undefined
@@ -2188,6 +2201,251 @@ describe("orchestration v2 provider switching", () => {
               ProviderReplayHarness.layerWithRegistry(
                 {
                   name: "native-account-continuity",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                registry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.live.each(
+    [2, 5, 10].flatMap((count) =>
+      [false, true].flatMap((queued) => [1, 2, 3].map((repeat) => ({ count, queued, repeat }))),
+    ),
+  )(
+    "transfers a released Codex writer with $count conversations and an active peer queued=$queued repeat=$repeat",
+    ({ count, queued }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("exclusive-codex-writers");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const lifecycle = yield* Ref.make<ReadonlyArray<NativeLifecycle>>([]);
+          const writers = yield* Ref.make<ReadonlyMap<string, ProviderSessionId>>(new Map());
+          const generation = yield* Ref.make(0);
+          const ids = Array.from({ length: count }, (_, index) =>
+            ThreadId.make(`thread:exclusive-codex:${index}`),
+          );
+          const heldMain = {
+            ordinal: 2,
+            started: yield* Deferred.make<void>(),
+            release: yield* Deferred.make<void>(),
+          };
+          const heldPeer = {
+            ordinal: 2,
+            started: yield* Deferred.make<void>(),
+            release: yield* Deferred.make<void>(),
+          };
+          const target: ModelSelection = {
+            ...CODEX_MODEL_SELECTION,
+            instanceId: ProviderInstanceId.make("codex-alternate"),
+          };
+          const registry = Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+            ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+              get: (instanceId) =>
+                Effect.succeed(
+                  makeTestAdapter({
+                    instanceId,
+                    driver: CODEX_DRIVER,
+                    capabilities: CodexProviderCapabilitiesV2,
+                    modelSelection:
+                      instanceId === target.instanceId ? target : CODEX_MODEL_SELECTION,
+                    responseByRunOrdinal: {},
+                    capturedTurns,
+                    lifecycle,
+                    writers,
+                    nativeThreadGeneration: generation,
+                    retainWriterAfterUnsubscribe: false,
+                    ...(instanceId === CODEX_MODEL_SELECTION.instanceId
+                      ? {
+                          holdTurns: new Map([
+                            [ids[1]!, heldPeer],
+                            ...(queued ? [[ids[0]!, heldMain] as const] : []),
+                          ]),
+                        }
+                      : {}),
+                  }),
+                ),
+              list: () => Effect.succeed([CODEX_MODEL_SELECTION.instanceId, target.instanceId]),
+              getMetadata: () =>
+                Effect.succeed({
+                  driver: CODEX_DRIVER,
+                  continuationKey: "codex-home:/synthetic/shared-codex-home",
+                  enabled: true,
+                  capabilities: CodexProviderCapabilitiesV2,
+                }),
+            }),
+          );
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const completion = (id: ThreadId, ordinal: number) =>
+              orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.threadId === id &&
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    ["completed", "failed"].includes(event.payload.status),
+                ),
+                Stream.runHead,
+                Effect.forkScoped,
+              );
+            const dispatch = (
+              id: ThreadId,
+              ordinal: number,
+              selection: ModelSelection,
+              queue = false,
+            ) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`exclusive:${id}:${ordinal}`),
+                threadId: id,
+                messageId: MessageId.make(`exclusive:${id}:${ordinal}`),
+                text: `Synthetic request ${ordinal}`,
+                attachments: [],
+                modelSelection: selection,
+                dispatchMode: { type: queue ? "queue_after_active" : "start_immediately" },
+              });
+            const run = Effect.fn("ExclusiveCodex.run")(function* (
+              id: ThreadId,
+              ordinal: number,
+              selection: ModelSelection,
+            ) {
+              const completed = yield* completion(id, ordinal);
+              yield* dispatch(id, ordinal, selection);
+              yield* Fiber.join(completed);
+            });
+            for (const id of ids) {
+              yield* orchestrator.dispatch({
+                type: "thread.create",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`exclusive:create:${id}`),
+                threadId: id,
+                projectId: ProjectId.make("project:exclusive-codex"),
+                title: "Synthetic exclusive writer",
+                modelSelection: CODEX_MODEL_SELECTION,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: cwd,
+              });
+              yield* run(id, 1, CODEX_MODEL_SELECTION);
+            }
+            yield* worker.drain();
+            const before = yield* Effect.forEach(ids, (id) => orchestrator.getThreadProjection(id));
+            const nativeRefs = before.map(
+              (p) =>
+                p.providerThreads.find((t) => t.id === p.thread.activeProviderThreadId)!
+                  .nativeThreadRef!,
+            );
+            const sourceSessions = before.map(
+              (p) =>
+                p.providerThreads.find((t) => t.id === p.thread.activeProviderThreadId)!
+                  .providerSessionId!,
+            );
+            assert.equal(
+              new Set(sourceSessions).size,
+              1,
+              "peers must exercise the same pooled process",
+            );
+            const peerCompletion = yield* completion(ids[1]!, heldPeer.ordinal);
+            yield* dispatch(ids[1]!, heldPeer.ordinal, CODEX_MODEL_SELECTION);
+            yield* Deferred.await(heldPeer.started);
+            let nextOrdinal = heldMain.ordinal;
+            for (let cycle = 0; cycle < 3; cycle++) {
+              if (queued && cycle === 0) {
+                const mainCompletion = yield* completion(ids[0]!, nextOrdinal);
+                yield* dispatch(ids[0]!, nextOrdinal++, CODEX_MODEL_SELECTION);
+                yield* Deferred.await(heldMain.started);
+                const switchedCompletion = yield* completion(ids[0]!, nextOrdinal);
+                yield* orchestrator.dispatch({
+                  type: "thread.model-selection.set",
+                  commandId: CommandId.make("exclusive:queued-select"),
+                  threadId: ids[0]!,
+                  modelSelection: target,
+                });
+                yield* dispatch(ids[0]!, nextOrdinal++, target, true);
+                assert.equal(
+                  (yield* orchestrator.getThreadProjection(ids[0]!)).runs.at(-1)?.status,
+                  "queued",
+                );
+                yield* Deferred.succeed(heldMain.release, undefined);
+                yield* Fiber.join(mainCompletion);
+                yield* orchestrator.resumeQueuedRuns;
+                yield* Fiber.join(switchedCompletion);
+              } else yield* run(ids[0]!, nextOrdinal++, target);
+              yield* run(ids[0]!, nextOrdinal++, CODEX_MODEL_SELECTION);
+              const operations = yield* Ref.get(lifecycle);
+              for (const peerSession of sourceSessions.slice(1)) {
+                assert.isFalse(
+                  operations.some(
+                    (op) => op.sessionId === peerSession && op.method === "session/close",
+                  ),
+                  "switching must not stop a peer process, including the active peer",
+                );
+              }
+              assert.equal((yield* Ref.get(writers)).size, count);
+            }
+            yield* Deferred.succeed(heldPeer.release, undefined);
+            yield* Fiber.join(peerCompletion);
+            for (const id of ids.slice(2)) yield* run(id, heldPeer.ordinal, CODEX_MODEL_SELECTION);
+            yield* worker.drain();
+            for (let index = 0; index < ids.length; index++) {
+              const p = yield* orchestrator.getThreadProjection(ids[index]!);
+              assert.isTrue(p.runs.every((r) => r.status === "completed"));
+              assert.lengthOf(p.contextHandoffs, 0);
+              assert.deepEqual(
+                p.providerThreads.find((t) => t.id === p.thread.activeProviderThreadId)!
+                  .nativeThreadRef,
+                nativeRefs[index],
+              );
+              assert.isTrue(
+                p.attempts.every(
+                  (attempt) => attempt.nativeThreadId === nativeRefs[index]!.nativeId,
+                ),
+              );
+              if (index > 0)
+                assert.equal(
+                  p.providerThreads.find((t) => t.id === p.thread.activeProviderThreadId)!
+                    .providerSessionId,
+                  sourceSessions[index],
+                );
+            }
+            assert.equal(
+              yield* Ref.get(generation),
+              count,
+              "switching must resume instead of starting replacement threads",
+            );
+            const calls = yield* Ref.get(capturedTurns);
+            assert.equal(
+              calls.length,
+              count * 2 + 5 + (queued ? 1 : 0),
+              "no turn may execute twice",
+            );
+            assert.equal(
+              (yield* Ref.get(lifecycle)).filter((op) => op.method === "thread/start").length,
+              count,
+            );
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "exclusive-codex-writers",
                   runtimePolicyOverride: {
                     cwd,
                     approvalPolicy: "never",

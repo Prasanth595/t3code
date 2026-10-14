@@ -127,6 +127,15 @@ export class ProviderSessionReleaseError extends Schema.TaggedError<ProviderSess
   }
 }
 
+export class ProviderSessionBackgroundWorkError extends Schema.TaggedError<ProviderSessionBackgroundWorkError>()(
+  "ProviderSessionBackgroundWorkError",
+  { providerSessionId: ProviderSessionId, threadId: ThreadId },
+) {
+  override get message(): string {
+    return "Codex account switch is waiting for background work. Let its tools and child agents finish, or stop them before retrying. The original native thread remains loaded.";
+  }
+}
+
 export class ProviderSessionActivityError extends Schema.TaggedError<ProviderSessionActivityError>()(
   "ProviderSessionActivityError",
   {
@@ -185,6 +194,7 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
     readonly detail?: string;
+    readonly expectedTargetInstanceId?: ProviderInstanceId;
     /**
      * True for terminal detaches (thread archived or deleted): the thread's
      * MCP credentials are revoked immediately instead of surviving for a
@@ -2436,20 +2446,38 @@ export const layerWithOptions = (
             // The projection may already have rebound the provider-thread row
             // before this detach effect executes. The live session still owns
             // its loaded native thread and must unsubscribe that reference.
-            const loadedProviderThread = currentEntry?.loadedProviderThreadByThread.get(
-              input.threadId,
-            )?.providerThread;
+            const loaded = currentEntry?.loadedProviderThreadByThread.get(input.threadId);
+            const loadedProviderThread = loaded?.providerThread;
             let nativeOwnershipChanged = false;
             let detachedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread> =
               loadedProviderThread === undefined ? [] : [loadedProviderThread];
-            if (currentEntry?.supportsMultipleProviderThreads === true) {
+            if (
+              currentEntry?.supportsMultipleProviderThreads === true &&
+              currentEntry.attachedThreadIds.has(input.threadId)
+            ) {
               const projection = yield* Effect.option(
                 projectionStore.getThreadRecords(input.threadId, [
                   "providerThreads",
                   "providerTurns",
+                  "runs",
                 ]),
               );
               if (Option.isSome(projection)) {
+                const activeThread = projection.value.providerThreads.find(
+                  (thread) => thread.id === projection.value.thread.activeProviderThreadId,
+                );
+                // A delayed retry belongs to the earlier account switch. A
+                // new run bound to the source must keep its process and tools.
+                if (
+                  input.expectedTargetInstanceId !== undefined &&
+                  activeThread?.providerInstanceId !== input.expectedTargetInstanceId &&
+                  (projection.value.runs.some((run) =>
+                    ["preparing", "starting", "running", "waiting"].includes(run.status),
+                  ) ||
+                    projection.value.thread.modelSelection.instanceId !==
+                      input.expectedTargetInstanceId)
+                )
+                  return;
                 nativeOwnershipChanged =
                   projection.value.thread.modelSelection.instanceId !==
                     currentEntry.runtime.instanceId ||
@@ -2469,6 +2497,30 @@ export const layerWithOptions = (
                   ownedProviderThreads.set(loadedProviderThread.id, loadedProviderThread);
                 }
                 detachedProviderThreads = [...ownedProviderThreads.values()];
+                // Unloading a Codex thread releases its writer and also stops
+                // its terminals, MCP calls, and native children.
+                // An account switch must let that work settle before detaching.
+                if (currentEntry.runtime.driver === "codex" && nativeOwnershipChanged) {
+                  const ownedThread =
+                    loadedProviderThread ??
+                    detachedProviderThreads.find(
+                      (thread) => thread.ownerNodeId === null && thread.nativeThreadRef !== null,
+                    );
+                  const pendingWork =
+                    (ownedThread !== undefined && hasBusyTurn(currentEntry, ownedThread.id)) ||
+                    (currentEntry.runtime.hasPendingBackgroundWorkForThread !== undefined
+                      ? ownedThread !== undefined &&
+                        (yield* currentEntry.runtime.hasPendingBackgroundWorkForThread(ownedThread))
+                      : currentEntry.runtime.hasPendingBackgroundWork === undefined
+                        ? false
+                        : yield* currentEntry.runtime.hasPendingBackgroundWork);
+                  if (pendingWork) {
+                    return yield* new ProviderSessionBackgroundWorkError({
+                      providerSessionId: input.providerSessionId,
+                      threadId: input.threadId,
+                    });
+                  }
+                }
                 const activeTurns = projection.value.providerTurns.filter(
                   (turn) => turn.status === "running" && providerThreads.has(turn.providerThreadId),
                 );
@@ -2500,6 +2552,18 @@ export const layerWithOptions = (
             const detachResult = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
+                return [
+                  Option.none<{
+                    readonly entry: LiveSessionEntry;
+                    readonly idleUnloadFiber: Fiber.Fiber<void, never> | null;
+                  }>(),
+                  current,
+                ] as const;
+              }
+              if (
+                input.expectedTargetInstanceId !== undefined &&
+                entry.loadedProviderThreadByThread.get(input.threadId) !== loaded
+              ) {
                 return [
                   Option.none<{
                     readonly entry: LiveSessionEntry;

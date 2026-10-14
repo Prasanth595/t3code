@@ -5079,9 +5079,7 @@ it.effect.each([true, false])(
           loaded.nativeThreadRef!.nativeId!,
         ]);
       }).pipe(
-        Effect.provide(
-          layerTest({ state, idleTimeoutMs: 1_000, capabilities: CodexProviderCapabilitiesV2 }),
-        ),
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, capabilities: CodexCapabilities })),
       );
     }),
 );
@@ -5155,9 +5153,244 @@ it.effect.each([false, true])(
         yield* manager.detach({ threadId, providerSessionId });
         assert.equal((yield* Ref.get(state)).closeCount, 1);
       }).pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, capabilities: CodexCapabilities })),
+      );
+    }),
+);
+
+it.effect(
+  "keeps a Codex writer and its peer alive while an account switch waits for background work",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const pending = yield* Ref.make(true);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const sourceThread = ThreadId.make("thread:background-switch-source");
+        const peerThread = ThreadId.make("thread:background-switch-peer");
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: sourceThread, now }),
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: peerThread, now }),
+          ],
+        });
+        const sourceSession = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: sourceThread,
+        });
+        const peerSession = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: peerThread,
+        });
+        const source = yield* manager.open({
+          threadId: sourceThread,
+          providerSessionId: sourceSession,
+          modelSelection,
+          runtimePolicy,
+        });
+        const peer = yield* manager.open({
+          threadId: peerThread,
+          providerSessionId: peerSession,
+          modelSelection,
+          runtimePolicy,
+        });
+        const loaded = yield* source.resumeThread({
+          providerThread: makeProviderThread({
+            idAllocator: ids,
+            threadId: sourceThread,
+            providerSessionId: sourceSession,
+            now,
+          }),
+          threadId: sourceThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* sink.write({
+          events: [
+            {
+              id: yield* ids.allocate.event({ threadId: sourceThread }),
+              type: "provider-thread.updated",
+              threadId: sourceThread,
+              occurredAt: now,
+              payload: {
+                ...loaded,
+                providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+                providerSessionId: ProviderSessionId.make("session:background-target"),
+              },
+            },
+          ],
+        });
+        const failure = yield* manager
+          .detach({ threadId: sourceThread, providerSessionId: sourceSession })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(failure));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.strictEqual(Option.getOrThrow(yield* manager.get(sourceSession)), source);
+        assert.strictEqual(Option.getOrThrow(yield* manager.get(peerSession)), peer);
+        yield* Ref.set(pending, false);
+        yield* manager.detach({ threadId: sourceThread, providerSessionId: sourceSession });
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.isTrue(Option.isNone(yield* manager.get(sourceSession)));
+        assert.strictEqual(Option.getOrThrow(yield* manager.get(peerSession)), peer);
+        yield* manager.detach({ threadId: sourceThread, providerSessionId: sourceSession });
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
         Effect.provide(
-          layerTest({ state, idleTimeoutMs: 1_000, capabilities: CodexProviderCapabilitiesV2 }),
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            capabilities: CodexProviderCapabilitiesV2,
+            hasPendingBackgroundWorkForThread: Ref.get(pending),
+          }),
         ),
       );
     }),
+);
+
+it.effect("ignores a stale Codex detach retry while a peer has background work", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const pending = yield* Ref.make(false);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const sourceThread = ThreadId.make("thread:stale-detach-source");
+      const peerThread = ThreadId.make("thread:stale-detach-peer");
+      const sessionId = ids.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: sourceThread, now }),
+          yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: peerThread, now }),
+        ],
+      });
+      const runtime = yield* manager.open({
+        threadId: sourceThread,
+        providerSessionId: sessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.open({
+        threadId: peerThread,
+        providerSessionId: sessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const loaded = yield* runtime.resumeThread({
+        providerThread: makeProviderThread({
+          idAllocator: ids,
+          threadId: sourceThread,
+          providerSessionId: sessionId,
+          now,
+        }),
+        threadId: sourceThread,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId: sourceThread }),
+            type: "provider-thread.updated",
+            threadId: sourceThread,
+            occurredAt: now,
+            payload: {
+              ...loaded,
+              providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+              providerSessionId: ProviderSessionId.make("session:stale-detach-target"),
+            },
+          },
+        ],
+      });
+      yield* manager.detach({ threadId: sourceThread, providerSessionId: sessionId });
+      yield* Ref.set(pending, true);
+      yield* manager.detach({ threadId: sourceThread, providerSessionId: sessionId });
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+        loaded.nativeThreadRef!.nativeId!,
+      ]);
+      assert.strictEqual(Option.getOrThrow(yield* manager.get(sessionId)), runtime);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          capabilities: CodexProviderCapabilitiesV2,
+          hasPendingBackgroundWork: Ref.get(pending),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("does not replay an account-switch detach against a returned source binding", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:returned-account-detach");
+      const sessionId = ids.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* sink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId: sessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const loaded = yield* runtime.resumeThread({
+        providerThread: makeProviderThread({
+          idAllocator: ids,
+          threadId,
+          providerSessionId: sessionId,
+          now,
+        }),
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* sink.write({
+        events: [
+          {
+            id: yield* ids.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: loaded,
+          },
+        ],
+      });
+      // The caller has returned to A. A retry from the old A -> B switch
+      // must leave this live A writer, its attachment, and credential intact.
+      yield* manager.detach({
+        threadId,
+        providerSessionId: sessionId,
+        expectedTargetInstanceId: ProviderInstanceId.make("codex-alternate"),
+      });
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+      assert.strictEqual(Option.getOrThrow(yield* manager.get(sessionId)), runtime);
+      yield* manager.detach({ threadId, providerSessionId: sessionId });
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+        loaded.nativeThreadRef!.nativeId!,
+      ]);
+    }).pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 60_000, capabilities: CodexProviderCapabilitiesV2 }),
+      ),
+    );
+  }),
 );
