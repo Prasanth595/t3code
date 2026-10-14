@@ -112,6 +112,15 @@ export const make = Effect.gen(function* () {
     return yield* Effect.interrupt;
   }
 
+  // Retain launch arguments while asynchronous startup builds the application runtime.
+  const pendingSecondInstances: Array<readonly string[]> = [];
+  let handleSecondInstance = (argv: readonly string[]) => {
+    pendingSecondInstances.push(argv);
+  };
+  yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
+    handleSecondInstance(argv);
+  });
+
   yield* Effect.acquireRelease(
     Effect.try({
       try: () => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment),
@@ -216,7 +225,7 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         void runPromise(webLinks.receive(NodeURL.pathToFileURL(path).href));
       });
-      yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
+      handleSecondInstance = (argv) => {
         if (
           argv?.some(
             (value) =>
@@ -230,7 +239,8 @@ export const make = Effect.gen(function* () {
             if (Option.isSome(mainWindow)) yield* electronWindow.reveal(mainWindow.value);
           }),
         );
-      });
+      };
+      for (const argv of pendingSecondInstances.splice(0)) handleSecondInstance(argv);
     }).pipe(Effect.withSpan("desktop.clerk.configure")),
   });
 });
