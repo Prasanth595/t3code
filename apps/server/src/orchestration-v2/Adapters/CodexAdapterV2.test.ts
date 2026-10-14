@@ -2791,8 +2791,52 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "session-approval-thread";
-        const firstTurnId = "session-approval-turn-1";
-        const secondTurnId = "session-approval-turn-2";
+        const turnIds = [
+          "session-approval-turn-1",
+          "session-approval-turn-2",
+          "session-approval-turn-3",
+        ];
+        const turnPolicies = {
+          "approval-required": {
+            approvalPolicy: "untrusted",
+            approvalsReviewer: "user",
+            sandboxPolicy: { type: "readOnly" },
+          },
+          "full-access": {
+            approvalPolicy: "never",
+            approvalsReviewer: "user",
+            sandboxPolicy: { type: "dangerFullAccess" },
+          },
+        } as const;
+        const turnModes = ["approval-required", "full-access", "approval-required"] as const;
+        const turnText = (index: number) => `Review round ${index + 1}.`;
+        const startTurn = (index: number): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
+          {
+            type: "expect_outbound",
+            label: `turn ${index + 1} turn/start`,
+            frame: {
+              id: 3 + index,
+              method: "turn/start",
+              params: {
+                threadId: nativeThreadId,
+                input: [{ type: "text", text: turnText(index) }],
+                cwd: "/workspace",
+                model: "gpt-5.4",
+                ...turnPolicies[turnModes[index]!],
+                summary: "detailed",
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: `turn ${index + 1} turn/start`,
+            frame: {
+              id: 3 + index,
+              result: { turn: makeCodexReplayTurn({ id: turnIds[index]!, status: "inProgress" }) },
+            },
+          },
+          turnEvent("turn/started", turnIds[index]!),
+        ];
         const approval = (input: {
           readonly id: number;
           readonly turnId: string;
@@ -2843,12 +2887,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           entries: [
             ...codexReplayPreamble({
               nativeThreadId,
-              nativeTurnId: firstTurnId,
-              prompt: "Review it.",
-            }),
+              nativeTurnId: turnIds[0]!,
+              prompt: turnText(0),
+            }).slice(0, -3),
+            ...startTurn(0),
             ...approval({
               id: 100,
-              turnId: firstTurnId,
+              turnId: turnIds[0]!,
               kind: "commandExecution",
               itemId: "first-command",
               decision: "acceptForSession",
@@ -2856,7 +2901,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             // Answered without asking: Codex alone would ask for every new command.
             ...approval({
               id: 101,
-              turnId: firstTurnId,
+              turnId: turnIds[0]!,
               kind: "commandExecution",
               itemId: "second-command",
               decision: "acceptForSession",
@@ -2864,48 +2909,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             // Only commands were allowed, so a file change still asks.
             ...approval({
               id: 102,
-              turnId: firstTurnId,
+              turnId: turnIds[0]!,
               kind: "fileChange",
               itemId: "first-patch",
               decision: "accept",
             }),
-            turnEvent("turn/completed", firstTurnId),
-            {
-              type: "expect_outbound",
-              label: "supervised turn/start",
-              frame: {
-                id: 4,
-                method: "turn/start",
-                params: {
-                  threadId: nativeThreadId,
-                  input: [{ type: "text", text: "Again, supervised." }],
-                  cwd: "/workspace",
-                  model: "gpt-5.4",
-                  approvalPolicy: "untrusted",
-                  approvalsReviewer: "user",
-                  sandboxPolicy: { type: "readOnly" },
-                  summary: "detailed",
-                },
-              },
-            },
-            {
-              type: "emit_inbound",
-              label: "supervised turn/start",
-              frame: {
-                id: 4,
-                result: { turn: makeCodexReplayTurn({ id: secondTurnId, status: "inProgress" }) },
-              },
-            },
-            turnEvent("turn/started", secondTurnId),
-            // A runtime mode change takes the allowance back.
+            turnEvent("turn/completed", turnIds[0]!),
+            ...startTurn(1),
+            turnEvent("turn/completed", turnIds[1]!),
+            ...startTurn(2),
+            // Back in the first mode, the allowance does not come back.
             ...approval({
               id: 103,
-              turnId: secondTurnId,
+              turnId: turnIds[2]!,
               kind: "commandExecution",
               itemId: "third-command",
               decision: "accept",
             }),
-            turnEvent("turn/completed", secondTurnId),
+            turnEvent("turn/completed", turnIds[2]!),
           ],
         });
         const harness = yield* makeCodexReplayHarness(transcript);
@@ -2930,32 +2951,31 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             yield* harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision });
           });
 
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("session-approvals-1"),
-            text: "Review it.",
-          }),
-        );
+        const runTurn = (index: number) =>
+          Effect.gen(function* () {
+            yield* harness.runtime.startTurn({
+              ...makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make(`session-approvals-${index + 1}`),
+                text: turnText(index),
+              }),
+              runOrdinal: index + 1,
+              providerTurnOrdinal: index + 1,
+              runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: turnModes[index]! },
+            });
+          });
+
+        yield* runTurn(0);
         yield* answer(1, "command", "acceptForSession");
         yield* answer(2, "file-change", "accept");
-        yield* harness.firstTerminal;
-        yield* harness.runtime.startTurn({
-          ...makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("session-approvals-2"),
-            text: "Again, supervised.",
-          }),
-          runOrdinal: 2,
-          providerTurnOrdinal: 2,
-          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "approval-required" },
-        });
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn 1");
+        yield* runTurn(1);
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "turn 2");
+        yield* runTurn(2);
         yield* answer(3, "command", "accept");
-        yield* awaitUntil(() => harness.terminalEvents().length === 2, "supervised turn");
+        yield* awaitUntil(() => harness.terminalEvents().length === 3, "turn 3");
         assert.lengthOf(requests(), 3);
       }).pipe(
         Effect.provide(

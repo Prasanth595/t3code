@@ -1884,8 +1884,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
          * Approval kinds the user chose "Always allow this session" for, by
          * native thread. Codex's own acceptForSession only skips the exact
          * command or patch it answered, so every new command would ask again.
-         * The allowance holds for the runtime mode it was given in, and ends
-         * when the thread unloads, like Codex's own session approvals.
+         * A turn in another runtime mode ends the allowance, and so does the
+         * thread unloading, like Codex's own session approvals.
          */
         const sessionApprovals = new Map<
           string,
@@ -6265,6 +6265,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) =>
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
+            // Returning to the earlier mode must not bring the allowance back.
+            if (
+              sessionApprovals.get(threadId)?.runtimeMode !== turnInput.runtimePolicy.runtimeMode
+            ) {
+              sessionApprovals.delete(threadId);
+            }
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
