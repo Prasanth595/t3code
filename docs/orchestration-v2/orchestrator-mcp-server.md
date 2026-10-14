@@ -259,7 +259,10 @@ provider session. The request becomes the V2 command
 `mode: "async"` returns the current durable state immediately.
 `mode: "wait"` waits for the task result, including nested work and completion follow-ups, or until
 the timeout expires. A wait timeout does not cancel the child; the result sets
-`waitTimedOut: true`, and the caller can continue with `task_status`.
+`waitTimedOut: true`, and the caller can continue with `task_status`. A question
+from the child also ends the wait, with `hasPendingQuestion: true`, because the
+child cannot continue until the caller answers it or asks the user. Like a
+timeout, an early return hands completion delivery back to the parent wake.
 
 ```ts
 type DelegateTaskResult = {
@@ -278,6 +281,7 @@ type DelegateTaskResult = {
   latestTerminalStatus: "completed" | "failed" | "cancelled" | "interrupted" | null;
   latestTerminalSummary: string | null;
   latestTerminalResultContextTransferId: string | null;
+  hasPendingQuestion: boolean;
   waitTimedOut: boolean;
 };
 ```
