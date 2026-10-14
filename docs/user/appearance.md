@@ -42,6 +42,10 @@ On web and desktop, choose **Create theme** to adjust a palette, or import a T3 
 theme. The theme editor's color picker lets you select an area of the app to find the color to
 change. Export your theme as JSON to share it.
 
+On mobile, choose **Import theme** in **Settings → Appearance** to add a theme exported from T3 Code.
+Imported themes are saved on that device only. VS Code themes and the theme editor are available on
+web and desktop.
+
 ## Environment themes
 
 Environment themes and defaults come from the server serving your web app or the desktop app's
