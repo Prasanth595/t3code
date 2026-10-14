@@ -146,9 +146,9 @@ describe("DpopProofReplay.verifyAndConsume", () => {
         now,
       });
 
-      // The proof still passes the time check at iat + 300s, now + 600s.
+      // The proof still passes the time check until the end of second iat + 300s.
       expect(inserted.map((values) => values.expiresAt)).toEqual([
-        DateTime.formatIso(DateTime.add(now, { seconds: 600 })),
+        DateTime.formatIso(DateTime.add(now, { seconds: 601 })),
       ]);
     }).pipe(
       Effect.provide(

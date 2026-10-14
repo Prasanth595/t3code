@@ -16,11 +16,6 @@ const DPOP_ALG = "ES256";
  * Proofs carry the client's clock, so this also bounds tolerated clock skew.
  */
 export const DPOP_MAX_CLOCK_SKEW_SECONDS = 300;
-/**
- * How long a verifier must remember a consumed proof: a proof issued at the edge
- * of the future skew stays valid for the whole window after it.
- */
-export const DPOP_REPLAY_WINDOW_SECONDS = 2 * DPOP_MAX_CLOCK_SKEW_SECONDS;
 
 export const DpopPublicJwk = DpopPublicJwkSchema;
 export type DpopPublicJwk = DpopPublicJwkType;

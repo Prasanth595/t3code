@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import { lt } from "drizzle-orm";
 
 import {
-  DPOP_REPLAY_WINDOW_SECONDS,
+  DPOP_MAX_CLOCK_SKEW_SECONDS,
   DpopVerificationFailureCode,
   verifyDpopProof,
 } from "@t3tools/shared/dpop";
@@ -133,7 +133,9 @@ const make = Effect.gen(function* () {
       thumbprint: result.thumbprint,
       jti: result.jti,
       iat: result.iat,
-      expiresAt: DateTime.add(input.now, { seconds: DPOP_REPLAY_WINDOW_SECONDS }),
+      // The time check floors the clock to seconds, so the proof passes until the
+      // end of second `iat + DPOP_MAX_CLOCK_SKEW_SECONDS`.
+      expiresAt: DateTime.makeUnsafe((result.iat + DPOP_MAX_CLOCK_SKEW_SECONDS + 1) * 1_000),
     });
     if (!consumed) {
       yield* Effect.logWarning("relay dpop proof replay rejected", {
