@@ -11284,10 +11284,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
-  // Async questions do not stop a delegated child's run. Once its task result is
-  // final, nothing reads the answers, so the questions close instead of
-  // showing on the parent forever. The parent lock is held throughout, so a
-  // follow-up run cannot start between the check and the dismissal.
+  // Async questions do not stop a delegated child's run. A cancelled or
+  // interrupted task's questions close, since nobody wants that work anymore.
+  // A finished task keeps them: answering one resumes the child. The parent
+  // lock is held throughout, so a follow-up run cannot start between the
+  // check and the dismissal.
   const finishAppOwnedSubagent = (
     parentThreadId: ThreadId,
     childThreadId: ThreadId,
@@ -11300,10 +11301,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const settledContinuationOf = options?.settledContinuationOf;
         if (yield* delegatedTaskResultPending(childThreadId, undefined, settledContinuationOf))
           return;
-        const { runtimeRequests } = yield* projectionStore.getThreadRecords(childThreadId, [
-          "runtimeRequests",
-        ]);
-        for (const request of runtimeRequests) {
+        const child = yield* projectionStore.getThreadRecords(
+          childThreadId,
+          ["runtimeRequests", "runs", "messages", "subagents", "providerThreads"],
+          { messageRoles: ["user"] },
+        );
+        const { resultRun } = delegatedTaskProgress(child);
+        const status =
+          resultRun === undefined ? null : delegatedTaskTerminalStatus(runOutcome(resultRun));
+        if (status !== "cancelled" && status !== "interrupted") return;
+        for (const request of child.runtimeRequests) {
           if (
             request.status !== "pending" ||
             request.kind !== "user_input" ||
