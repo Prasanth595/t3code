@@ -18,12 +18,12 @@
  * context the caller delivered explicitly (embedded skill entry and reference
  * resources) is kept apart from that recap and sent again on every turn.
  */
-import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
-import { createInterface } from "node:readline";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeReadline from "node:readline";
 import {
   buildPromptFile,
   createEventTranslator,
@@ -56,12 +56,15 @@ const flag = (name) => {
   return index === -1 ? undefined : args[index + 1];
 };
 const accountId = flag("--account");
-const accountsPath = flag("--accounts") ?? join(homedir(), ".nofun-t3", "muse-accounts.json");
+const accountsPath =
+  flag("--accounts") ?? NodePath.join(NodeOS.homedir(), ".nofun-t3", "muse-accounts.json");
 const expandHome = (value) =>
-  value === "~" || value?.startsWith("~/") ? join(homedir(), value.slice(2)) : value;
+  value === "~" || value?.startsWith("~/")
+    ? NodePath.join(NodeOS.homedir(), value.slice(2))
+    : value;
 
 function loadAccount() {
-  const file = JSON.parse(readFileSync(accountsPath, "utf8"));
+  const file = JSON.parse(NodeFS.readFileSync(accountsPath, "utf8"));
   const account = (file.accounts ?? []).find((candidate) => candidate.id === accountId);
   if (!account) throw new Error(`No Muse account "${accountId}" in ${accountsPath}.`);
   return account;
@@ -127,16 +130,16 @@ function runPrompt(id, params) {
   const merged = mergeRequired(session.required, delivered);
   if (merged.error) return fail(id, -32000, merged.error);
   session.required = merged.required;
-  const taskId = `t3-${accountId}-${randomUUID().slice(0, 8)}`;
-  const dir = join(tmpdir(), "muse-acp", params.sessionId);
-  mkdirSync(dir, { recursive: true });
-  const promptFile = join(dir, `${taskId}.md`);
-  writeFileSync(
+  const taskId = `t3-${accountId}-${NodeCrypto.randomUUID().slice(0, 8)}`;
+  const dir = NodePath.join(NodeOS.tmpdir(), "muse-acp", params.sessionId);
+  NodeFS.mkdirSync(dir, { recursive: true });
+  const promptFile = NodePath.join(dir, `${taskId}.md`);
+  NodeFS.writeFileSync(
     promptFile,
     buildPromptFile({ required: session.required, history: session.history, request: text }),
   );
   const worker = expandHome(account.workerExecutable) ?? "muse-worker.sh";
-  const child = spawn(
+  const child = NodeChildProcess.spawn(
     worker,
     [
       "--workspace",
@@ -157,7 +160,7 @@ function runPrompt(id, params) {
   const run = { child, cancelled: false, settled: false, answer: "", streamed: "", stderr: "" };
   session.run = run;
   const translator = createEventTranslator();
-  const lines = createInterface({ input: child.stdout });
+  const lines = NodeReadline.createInterface({ input: child.stdout });
   lines.on("line", (line) => {
     let event;
     try {
@@ -261,7 +264,7 @@ function handle(message) {
       } catch (error) {
         return fail(id, -32000, error.message);
       }
-      const sessionId = randomUUID();
+      const sessionId = NodeCrypto.randomUUID();
       const session = {
         cwd: params.cwd ?? process.cwd(),
         model: MODELS[0].value,
@@ -325,7 +328,7 @@ if (!accountId) {
   process.stderr.write("usage: muse-acp.mjs --account <id> [--accounts <path>]\n");
   process.exit(2);
 }
-createInterface({ input: process.stdin }).on("line", (line) => {
+NodeReadline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (!line.trim()) return;
   try {
     handle(JSON.parse(line));
