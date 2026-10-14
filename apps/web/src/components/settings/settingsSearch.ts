@@ -290,6 +290,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance-interface",
   },
   {
+    id: "environment-artwork-image",
+    title: "Environment artwork image",
+    to: "/settings/appearance",
+    searchTerms: ["dev nightly sidebar header backdrop custom image url picture"],
+    // Shown only for Dev/Nightly artwork, so link to the always-present parent section.
+    targetId: "appearance-interface",
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",

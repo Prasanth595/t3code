@@ -400,6 +400,8 @@ export const ClientSettingsSchema = Schema.Struct({
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
+  /** Optional http(s) image shown in place of the built-in Dev/Nightly sidebar artwork. */
+  environmentArtworkImageUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
   ),
@@ -1708,6 +1710,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
+  environmentArtworkImageUrl: Schema.optionalKey(TrimmedString),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),

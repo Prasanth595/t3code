@@ -615,6 +615,16 @@ describe("ClientSettings environment identification", () => {
   });
 });
 
+describe("ClientSettings environment artwork image", () => {
+  it("defaults to no custom image and trims patched URLs", () => {
+    expect(decodeClientSettings({}).environmentArtworkImageUrl).toBe("");
+    expect(
+      decodeClientSettingsPatch({ environmentArtworkImageUrl: "  https://example.com/a.png  " })
+        .environmentArtworkImageUrl,
+    ).toBe("https://example.com/a.png");
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar", () => {
     expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);

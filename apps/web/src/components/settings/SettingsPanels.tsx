@@ -66,6 +66,7 @@ import {
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
+  resolveCustomStageArtworkUrl,
   resolveEnvironmentIdentificationPillLabel,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
@@ -555,6 +556,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
         : []),
+      ...(settings.environmentArtworkImageUrl !==
+      DEFAULT_UNIFIED_SETTINGS.environmentArtworkImageUrl
+        ? ["Environment artwork image"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -692,6 +697,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffLayout,
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
+      settings.environmentArtworkImageUrl,
       settings.contextWindowMeterEnabled,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
@@ -808,6 +814,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
+      environmentArtworkImageUrl: DEFAULT_UNIFIED_SETTINGS.environmentArtworkImageUrl,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -1347,6 +1354,43 @@ export function AppearanceSettingsPanel() {
                   ))}
                 </SelectPopup>
               </Select>
+            }
+          />
+        ) : null}
+
+        {showEnvironmentIdentification && settings.environmentIdentificationMode === "artwork" ? (
+          <SettingsRow
+            {...searchableSetting("environment-artwork-image")}
+            description={
+              settings.environmentArtworkImageUrl !== "" &&
+              resolveCustomStageArtworkUrl(settings.environmentArtworkImageUrl) === null
+                ? "Not an http(s) URL, so the built-in artwork is shown."
+                : "Show an image from an http(s) URL in place of the built-in artwork. The built-in artwork returns if the image fails to load."
+            }
+            resetAction={
+              settings.environmentArtworkImageUrl !==
+              DEFAULT_UNIFIED_SETTINGS.environmentArtworkImageUrl ? (
+                <SettingResetButton
+                  label="environment artwork image"
+                  onClick={() =>
+                    updateSettings({
+                      environmentArtworkImageUrl:
+                        DEFAULT_UNIFIED_SETTINGS.environmentArtworkImageUrl,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <DraftInput
+                size="sm"
+                className="w-full sm:w-72"
+                value={settings.environmentArtworkImageUrl}
+                onCommit={(next) => updateSettings({ environmentArtworkImageUrl: next.trim() })}
+                placeholder="https://"
+                spellCheck={false}
+                aria-label="Environment artwork image URL"
+              />
             }
           />
         ) : null}

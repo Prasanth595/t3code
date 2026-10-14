@@ -3,11 +3,15 @@ import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
-import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import {
+  useEnvironmentArtworkImageUrl,
+  useEnvironmentIdentificationMode,
+} from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import {
+  resolveCustomStageArtworkUrl,
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
   SidebarStageBackdrop,
@@ -42,6 +46,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     stageLabel,
     environmentIdentificationMode === "artwork",
   );
+  const customArtworkUrl = resolveCustomStageArtworkUrl(useEnvironmentArtworkImageUrl());
   const pillLabel =
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
@@ -55,7 +60,9 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         isElectron && "drag-region",
       )}
     >
-      {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
+      {backdropVariant ? (
+        <SidebarStageBackdrop variant={backdropVariant} customImageUrl={customArtworkUrl} />
+      ) : null}
       {/* Match the fixed control's inset and border compensation inside the sheet's safe area. */}
       <div className="relative top-[calc(var(--workspace-controls-top)-env(safe-area-inset-top))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center md:hidden">
         <SidebarTrigger

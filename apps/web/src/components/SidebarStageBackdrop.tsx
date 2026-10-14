@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useId } from "react";
+import { useId, useState } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
@@ -46,14 +46,56 @@ export function useSidebarStageBackdropVariant(enabled = true): SidebarStageBack
   return resolveSidebarStageBackdropVariant(useEnvironmentStageLabel(), enabled);
 }
 
+/**
+ * Returns the user's custom artwork URL when it is usable, otherwise null so the built-in art
+ * renders. Only http(s) URLs are accepted: they are allowed by the desktop CSP's `img-src`, and
+ * unlike pasted data URLs they keep persisted client settings small.
+ */
+export function resolveCustomStageArtworkUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  return url.protocol === "https:" || url.protocol === "http:" ? trimmed : null;
+}
+
 /** Stage-channel header art; palettes mirror the per-channel app icons in `assets/`. */
-export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdropVariant }) {
+export function SidebarStageBackdrop({
+  variant,
+  customImageUrl = null,
+}: {
+  variant: SidebarStageBackdropVariant;
+  customImageUrl?: string | null;
+}) {
+  // Remember which URL failed rather than a boolean, so editing the URL retries automatically.
+  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null);
+  const showCustomImage = customImageUrl !== null && customImageUrl !== failedImageUrl;
+
   return (
     <div
       aria-hidden
       className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden"
     >
-      <StageBackdropArt variant={variant} />
+      {showCustomImage ? (
+        <img
+          // Keyed by URL: a replaced image unmounts, so a late error from the previous URL can
+          // never mark the new one as failed.
+          key={customImageUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          data-stage-art="custom"
+          decoding="async"
+          draggable={false}
+          onError={() => setFailedImageUrl(customImageUrl)}
+          src={customImageUrl}
+        />
+      ) : (
+        <StageBackdropArt variant={variant} />
+      )}
     </div>
   );
 }

@@ -412,6 +412,11 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
   });
 }
 
+/** The raw custom sidebar-artwork image setting; callers validate it before rendering. */
+export function useEnvironmentArtworkImageUrl(): string {
+  return useClientSettingsValue().environmentArtworkImageUrl;
+}
+
 /**
  * Whether the legacy sidebar (Settings → General → Legacy features) replaces
  * the default one.
