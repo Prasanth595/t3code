@@ -102,6 +102,7 @@ import {
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
+import { checkRelayClock } from "./relayClock.ts";
 import {
   filterRelayResponse,
   relayRequestError,
@@ -470,6 +471,7 @@ export class CloudLink extends Context.Service<
       | EnvironmentAuth.ServerAuthInternalError
       | RelayRequestError
     >;
+    /** The saved link, plus how far this machine's clock is off when that breaks it. */
     readonly linkState: () => Effect.Effect<
       EnvironmentCloudLinkStateResult,
       CloudLinkInternalError
@@ -1398,7 +1400,13 @@ const make = Effect.gen(function* () {
 
   const linkState = Effect.fn("environment.cloud.linkState")(
     function* () {
-      return yield* readCloudLinkState();
+      const state = yield* readCloudLinkState();
+      // Only a configured link has a relay whose clock matters.
+      if (state.relayUrl === null) return state;
+      const clockSkewSeconds = yield* checkRelayClock(state.relayUrl).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      return clockSkewSeconds === null ? state : { ...state, clockSkewSeconds };
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-relay-config")),
   );
