@@ -37,6 +37,8 @@ export interface UpdatesHarnessOptions {
   readonly platform?: NodeJS.Platform;
   /** Contents of the resources/package-type marker a Linux package ships. */
   readonly packageType?: string | undefined;
+  /** Contents of the install record a previous run left behind. */
+  readonly installRecord?: string | undefined;
   /** Files and links by path, for the live server folder. A test can change them. */
   readonly files?: Map<string, string>;
   readonly links?: Map<string, string>;
@@ -212,11 +214,20 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 
-  // Tracks the restart markers installs leave, so installs stay free of real
-  // disk I/O that would outrun the tests' settle loops.
+  // Tracks the restart markers and install records installs leave, so
+  // installs stay free of real disk I/O that would outrun the tests' settle loops.
   const updateRestartMarkers = new Set<string>();
+  // Contents of the install record, by path once an install writes one.
+  const installRecords = new Map<string, string>();
+  let previousInstallRecord = options.installRecord;
+  const isInstallRecord = (path: string) =>
+    path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
   const layerFileSystem = FileSystem.layerNoop({
     readFileString: (path) => {
+      const installRecord = isInstallRecord(path)
+        ? (installRecords.get(path) ?? previousInstallRecord)
+        : undefined;
+      if (installRecord !== undefined) return Effect.succeed(installRecord);
       const content =
         path === "/missing/resources/package-type" ? options.packageType : options.files?.get(path);
       return content !== undefined
@@ -244,13 +255,16 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
           );
     },
     makeDirectory: () => Effect.void,
-    writeFileString: (path) =>
+    writeFileString: (path, data) =>
       Effect.sync(() => {
-        updateRestartMarkers.add(path);
+        if (isInstallRecord(path)) installRecords.set(path, data);
+        else updateRestartMarkers.add(path);
       }),
     remove: (path) =>
       Effect.sync(() => {
         updateRestartMarkers.delete(path);
+        installRecords.delete(path);
+        if (isInstallRecord(path)) previousInstallRecord = undefined;
       }),
   });
 
@@ -279,6 +293,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
     updateRestartMarkers,
+    installRecords,
+    /** The record the test started with, until the app removes it. */
+    previousInstallRecord: () => previousInstallRecord,
     downloadCount: () => downloadCount,
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
