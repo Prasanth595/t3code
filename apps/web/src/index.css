@@ -2382,6 +2382,8 @@ code {
    these rules outrank those utilities without !important. */
 html[data-viewport-sync] {
   --app-shell-height: calc(var(--app-viewport-height) - env(safe-area-inset-top));
+  /* The header toggles now sit below the safe area too, so the drawer's copy needs no offset. */
+  --workspace-controls-safe-top: 0px;
 }
 
 html[data-viewport-sync] [data-slot="sidebar-wrapper"] {
