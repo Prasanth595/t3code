@@ -10504,7 +10504,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: CommandId.make(`command:system:delegated-task-question:${request.id}`),
             threadId: childThreadId,
             requestId: request.id,
-          });
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to dismiss task question", {
+                requestId: request.id,
+                cause,
+              }),
+            ),
+          );
         }
       }
     });

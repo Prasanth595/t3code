@@ -575,15 +575,15 @@ it.effect.each([
           resolvedAt: null,
         },
       });
-      const requestStatus = Effect.map(
+      const request = Effect.map(
         orchestrator.getThreadProjection(childThreadId),
-        (projection) => projection.runtimeRequests[0]?.status,
+        (projection) => projection.runtimeRequests[0],
       );
 
       // While the task runs, its question stays open.
       yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
-      assert.equal(yield* requestStatus, "pending");
-      if (ending === "cancelled") {
+      assert.equal((yield* request)?.status, "pending");
+      if (ending === "interrupted") {
         // What task_cancel dispatches.
         yield* orchestrator.dispatch({
           type: "thread.stop",
@@ -601,7 +601,8 @@ it.effect.each([
         });
       }
       yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
-      assert.equal(yield* requestStatus, question);
+      assert.equal((yield* request)?.status, question);
+      assert.equal((yield* request)?.decision, question === "resolved" ? "cancel" : undefined);
     }).pipe(Effect.provide(layerTest)),
 );
 
