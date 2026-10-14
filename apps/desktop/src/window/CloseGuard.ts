@@ -1,9 +1,10 @@
 export interface CloseGuardOptions {
   /**
-   * Shows the window and asks its renderer to confirm. Returns false when no
-   * renderer can answer, which lets the close proceed.
+   * Shows the window and asks its renderer to confirm, tagging the request so
+   * the reply can be matched to it. Returns false when no renderer can answer,
+   * which lets the close proceed.
    */
-  readonly requestConfirmation: () => boolean;
+  readonly requestConfirmation: (requestId: number) => boolean;
 }
 
 /**
@@ -15,7 +16,12 @@ export interface CloseGuardOptions {
 export function makeCloseGuard(options: CloseGuardOptions) {
   let busyThreadCount = 0;
   let confirmed = false;
-  let pending: { readonly promise: Promise<boolean>; resolve: (ok: boolean) => void } | null = null;
+  let nextRequestId = 0;
+  let pending: {
+    readonly requestId: number;
+    readonly promise: Promise<boolean>;
+    readonly resolve: (ok: boolean) => void;
+  } | null = null;
 
   const settle = (ok: boolean) => {
     const current = pending;
@@ -39,13 +45,18 @@ export function makeCloseGuard(options: CloseGuardOptions) {
       const promise = new Promise<boolean>((resolvePromise) => {
         resolve = resolvePromise;
       });
-      pending = { promise, resolve };
-      if (!options.requestConfirmation()) settle(true);
+      const requestId = ++nextRequestId;
+      pending = { requestId, promise, resolve };
+      if (!options.requestConfirmation(requestId)) settle(true);
       return promise;
     },
-    /** The renderer's answer to the pending confirmation. */
-    resolve: (ok: boolean) => {
-      if (pending !== null) settle(ok);
+    /**
+     * The renderer's answer to a confirmation. A reply to a request that was
+     * already cancelled, such as one from a renderer that since reloaded, is
+     * ignored so it cannot answer a newer prompt.
+     */
+    resolve: (requestId: number, ok: boolean) => {
+      if (pending?.requestId === requestId) settle(ok);
     },
     /**
      * The renderer reloaded or exited: its count is stale and its prompt is

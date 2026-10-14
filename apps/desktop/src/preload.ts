@@ -255,12 +255,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       void ipcRenderer.invoke(IpcChannels.SET_BUSY_THREAD_COUNT_CHANNEL, count);
     },
     onConfirmRequest: (listener) => {
-      const wrappedListener = () => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, requestId: unknown) => {
+        if (typeof requestId !== "number") return;
         // A failed prompt must not leave the window unclosable.
         void listener()
           .catch(() => true)
           .then((confirmed) =>
-            ipcRenderer.invoke(IpcChannels.RESOLVE_CLOSE_CONFIRM_CHANNEL, confirmed),
+            ipcRenderer.invoke(IpcChannels.RESOLVE_CLOSE_CONFIRM_CHANNEL, { requestId, confirmed }),
           );
       };
 

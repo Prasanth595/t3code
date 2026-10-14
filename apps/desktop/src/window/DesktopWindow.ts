@@ -151,7 +151,10 @@ export class DesktopWindow extends Context.Service<
     // Closing the window or quitting asks first while the renderer reports
     // busy desktop-owned threads. See CloseGuard.
     readonly setBusyThreadCount: (count: number) => Effect.Effect<void>;
-    readonly resolveCloseConfirmation: (confirmed: boolean) => Effect.Effect<void>;
+    readonly resolveCloseConfirmation: (
+      requestId: number,
+      confirmed: boolean,
+    ) => Effect.Effect<void>;
     readonly canExitWithoutConfirmation: Effect.Effect<boolean>;
     readonly confirmExit: Effect.Effect<boolean>;
   }
@@ -358,13 +361,13 @@ export const make = Effect.gen(function* () {
   // The main window whose renderer answers close confirmations.
   let closeGuardWindow: Electron.BrowserWindow | null = null;
   const closeGuard = makeCloseGuard({
-    requestConfirmation: () => {
+    requestConfirmation: (requestId) => {
       const window = closeGuardWindow;
       if (window === null || window.isDestroyed() || window.webContents.isCrashed()) return false;
       // A held quit shortcut may have hidden the window before the prompt.
       window.setOpacity(1);
       void runPromise(electronWindow.reveal(window));
-      window.webContents.send(CLOSE_CONFIRM_REQUEST_CHANNEL);
+      window.webContents.send(CLOSE_CONFIRM_REQUEST_CHANNEL, requestId);
       return true;
     },
   });
@@ -1107,7 +1110,8 @@ export const make = Effect.gen(function* () {
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
     setBusyThreadCount: (count) => Effect.sync(() => closeGuard.setBusyThreadCount(count)),
-    resolveCloseConfirmation: (confirmed) => Effect.sync(() => closeGuard.resolve(confirmed)),
+    resolveCloseConfirmation: (requestId, confirmed) =>
+      Effect.sync(() => closeGuard.resolve(requestId, confirmed)),
     canExitWithoutConfirmation: Effect.sync(() => closeGuard.canExit()),
     confirmExit: Effect.promise(() => closeGuard.confirm()).pipe(
       Effect.withSpan("desktop.window.confirmExit"),

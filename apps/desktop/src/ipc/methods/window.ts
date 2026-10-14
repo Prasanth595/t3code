@@ -409,12 +409,15 @@ export const setBusyThreadCount = DesktopIpc.makeIpcMethod({
 
 export const resolveCloseConfirm = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.RESOLVE_CLOSE_CONFIRM_CHANNEL,
-  payload: Schema.Boolean,
+  payload: Schema.Struct({ requestId: NonNegativeInt, confirmed: Schema.Boolean }),
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.window.resolveCloseConfirm")(function* (confirmed, event) {
+  handler: Effect.fn("desktop.ipc.window.resolveCloseConfirm")(function* (
+    { requestId, confirmed },
+    event,
+  ) {
     if (!(yield* isMainWindowSender(event))) return;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
-    yield* desktopWindow.resolveCloseConfirmation(confirmed);
+    yield* desktopWindow.resolveCloseConfirmation(requestId, confirmed);
   }),
 });
 
