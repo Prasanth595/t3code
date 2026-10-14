@@ -24,6 +24,7 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as MissionMcpToolkit from "./MissionMcpToolkit.ts";
 import * as MissionRetroSourceToolkit from "./MissionRetroSourceToolkit.ts";
 import * as MissionRetroReportToolkit from "./MissionRetroReportToolkit.ts";
+import * as MissionCompletionToolkit from "./MissionCompletionToolkit.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
@@ -774,6 +775,7 @@ export const layer = Layer.mergeAll(
   MissionMcpToolkit.layerOptionalMissionToolkit,
   MissionRetroSourceToolkit.layerOptionalMissionRetroSourceToolkit,
   MissionRetroReportToolkit.layerOptionalMissionRetroReportToolkit,
+  MissionCompletionToolkit.layerOptionalMissionCompletionToolkit,
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,

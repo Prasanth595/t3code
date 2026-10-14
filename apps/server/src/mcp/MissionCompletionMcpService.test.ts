@@ -28,6 +28,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { HttpServer } from "effect/http";
+import { McpSchema, McpServer } from "effect/ai";
 import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -42,7 +43,8 @@ import * as Authority from "./MissionMcpAuthority.ts";
 import * as Policy from "./MissionMcpPolicy.ts";
 import * as MissionMcp from "./MissionMcpService.ts";
 import * as CompletionMcp from "./MissionCompletionMcpService.ts";
-import type * as Invocation from "./McpInvocationContext.ts";
+import * as Invocation from "./McpInvocationContext.ts";
+import * as CompletionToolkit from "./MissionCompletionToolkit.ts";
 
 const team = TeamId.make("team-1");
 const env = EnvironmentId.make("env-1");
@@ -681,6 +683,69 @@ it.effect("caller mutation while authority resolves cannot retarget the captured
     }
     assert.strictEqual(caller.thread.threadId, "mutated-thread");
     assert.strictEqual(selector.resultRevision, 99);
+    assert.deepStrictEqual(yield* projectionState(h), before);
+  }).pipe(scoped),
+);
+
+const sdkClient = McpSchema.McpServerClient.of({
+  clientId: 1,
+  protocolVersion: "2025-06-18",
+  clientCapabilities: {},
+  clientInfo: { name: "completion-real-service-test", version: "1.0.0" },
+  initializePayload: {
+    protocolVersion: "2025-06-18", capabilities: {},
+    clientInfo: { name: "completion-real-service-test", version: "1.0.0" },
+  },
+  getClient: Effect.die("Unused"),
+});
+
+it.effect("one optional SDK catalog dispatches both real manager roles and denies policy revocation", () =>
+  Effect.gen(function* () {
+    const h = yield* setup;
+    yield* h.stageExecution(fullExecution());
+    const before = yield* projectionState(h);
+    const toolkitLayer = CompletionToolkit.layerOptionalMissionCompletionToolkit.pipe(
+      Layer.provide(Layer.succeed(CompletionMcp.MissionCompletionMcpService, h.completion)),
+      Layer.provide(Layer.succeed(Authority.MissionMcpTrustedPolicy, h.publisher.policy)),
+      Layer.provideMerge(McpServer.McpServer.layer),
+    );
+    yield* Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const call = (scope: Invocation.McpInvocationScope, selector: unknown) =>
+        server.callTool({ name: "mission_completion_route_read", arguments: { selector } }).pipe(
+          Effect.provideService(Invocation.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, sdkClient),
+        );
+      const delivery = yield* call(h.caller, { ...TASK_SELECTOR });
+      assert.notStrictEqual(delivery.isError, true);
+      assert.deepStrictEqual(delivery.structuredContent, {
+        status: "candidate", missionId: "mission-1",
+        route: {
+          role: "delivery", targetThreadId: OPAQUE_DELIVERY, targetEpoch: 3,
+          canonicalRevision: 0,
+          notificationId: (delivery.structuredContent as { route: { notificationId: string } }).route.notificationId,
+        }, holdReason: null,
+      });
+      const retro = yield* call(h.retroCaller, { ...RETRO_SELECTOR });
+      assert.notStrictEqual(retro.isError, true);
+      const retroBody = retro.structuredContent as { route: { role: string; targetThreadId: string } };
+      assert.strictEqual(retroBody.route.role, "retro");
+      assert.strictEqual(retroBody.route.targetThreadId, RETRO_THREAD);
+      const wrongRole = yield* call(h.caller, { ...RETRO_SELECTOR });
+      assert.strictEqual(wrongRole.isError, true);
+      h.publisher.disable();
+      const revoked = yield* call(h.caller, { ...TASK_SELECTOR });
+      assert.strictEqual(revoked.isError, true);
+      assert.isUndefined(revoked.structuredContent);
+      const text = revoked.content[0];
+      assert.strictEqual(text?.type, "text");
+      if (text?.type === "text") {
+        assert.deepStrictEqual(parseFixture(text.text), {
+          _tag: "MissionMcpFailure", code: "authority_unavailable",
+          message: "The completion authority resolver denied the request.",
+        });
+      }
+    }).pipe(Effect.provide(toolkitLayer));
     assert.deepStrictEqual(yield* projectionState(h), before);
   }).pipe(scoped),
 );
