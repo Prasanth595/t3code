@@ -5,8 +5,8 @@
  * It builds on the upstream restart continuation (`RestartContinuation.ts`):
  * the same outbox effect carries the cut run, and this module decides what to
  * send when the switch is on. It adds two things upstream does not do:
- *  - it wakes a thread whose turn had finished but whose background work
- *    (native subagents, monitors, background shells) the restart killed;
+ *  - it wakes a thread whose turn had finished but whose background shells
+ *    the restart killed (upstream wakes it only for other background work);
  *  - it never sends a second message after a recovery turn that a restart
  *    cut before it gave an answer.
  */
@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import { isNativeMaintenanceCommand } from "./Orchestrator.ts";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 import {
+  isRestartContinuationSource,
   isRestartNoteSource,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
@@ -53,7 +54,8 @@ const isThreadPutAway = (
 /**
  * The thread's latest run when its turn had finished but its own provider
  * thread still had background work open. The restart kills that work, so the
- * agent never hears back from it. Upstream keeps these threads asleep.
+ * agent never hears back from it. Upstream wakes these threads only for work
+ * other than shells, and only with a live session.
  */
 export function settledRunWithOpenBackgroundWork(
   projection: Pick<
@@ -133,7 +135,7 @@ export const recoverInterruptedThread = Effect.fn(
   // and the user owes no answer.
   if (
     !settled &&
-    (source.status !== "cancelled" || restartContinuationBlocked(projection, source, now))
+    (source.status !== "cancelled" || restartContinuationBlocked(projection, source, now, false))
   )
     return;
   // Work started after the restart, such as a new user message, comes first.
@@ -191,9 +193,10 @@ export const recoverInterruptedThread = Effect.fn(
           }),
       }),
     );
-  if (settled) {
-    // A new turn on the same provider thread. Turn start puts the note about
-    // the killed background work in front of this text.
+  // A finished turn that lost only shells. Upstream does not continue it, so a
+  // new turn on the same provider thread wakes it. Turn start puts the note
+  // about the killed background work in front of this text.
+  if (settled && !isRestartContinuationSource(source, projection.providerTurns)) {
     yield* dispatch({
       type: "message.dispatch",
       commandId,
@@ -214,7 +217,9 @@ export const recoverInterruptedThread = Effect.fn(
     });
     return;
   }
-  // A continuation of the cut turn, as upstream sends it, with the configured text.
+  // A continuation of the cut turn, or of a finished turn that lost awaited
+  // work, as upstream sends it, with the configured text. The continuation
+  // link keeps a delegated task and `t3_thread_wait` on the new run.
   const note = restartContinuationNote(
     source,
     projection.runs,
@@ -234,7 +239,9 @@ export const recoverInterruptedThread = Effect.fn(
     notification: {
       source: { kind: "system" },
       outcome: "updated",
-      summary: "T3 Code restarted and resumed this turn",
+      summary: settled
+        ? "T3 Code restarted and stopped background work"
+        : "T3 Code restarted and resumed this turn",
       detail: text,
     },
     attachments: [],

@@ -117,7 +117,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   readonly recoverInterruptedTurns: boolean;
 }) {
   const transcript = yield* readRestartTranscript(
-    input.recoverInterruptedTurns ? `${NOTE}\n\nUser message:\n${RECOVERY}` : undefined,
+    input.recoverInterruptedTurns ? `${NOTE}\n\n${RECOVERY}` : undefined,
   );
   const workspace = yield* checkpointWorkspace(SCENARIO);
   const fs = yield* FileSystem.FileSystem;
@@ -197,7 +197,9 @@ describe("recoverInterruptedTurns", () => {
         const recovery = projection.messages.find(
           (message) => message.id === projection.runs[1]?.userMessageId,
         );
-        assert.equal(recovery?.text, RECOVERY);
+        // A continuation of the cut run, as upstream sends it, so a waiter follows the new run.
+        assert.equal(projection.runs[1]?.restartContinuationOfRunId, projection.runs[0]?.id);
+        assert.equal(recovery?.text, `${NOTE}\n\n${RECOVERY}`);
         assert.equal(recovery?.notification?.source.kind, "system");
       }).pipe(
         provideDeterministicTestRuntime,

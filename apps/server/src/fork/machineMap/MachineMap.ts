@@ -878,7 +878,7 @@ const make = Effect.gen(function* () {
             "This machine has no portal connection now. Join the machine map, or wait until it connects again.",
         });
       }
-      const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+      const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const answer = yield* Deferred.make<ToolResult, MachineMapToolError>();
       pendingToolCalls.set(requestId, answer);
       const result = yield* send({
