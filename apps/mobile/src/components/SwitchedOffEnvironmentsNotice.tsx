@@ -74,10 +74,12 @@ export function SwitchedOffEnvironmentsNotice() {
             const failed = results.filter(
               ({ result }) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
             );
-            if (failed.length === 0) {
+            if (results.every(({ result }) => result._tag === "Success")) {
               markReviewed();
               return;
             }
+            // An interrupted switch stays unanswered but is not an error to show.
+            if (failed.length === 0) return;
             Alert.alert(
               `Could not switch on ${failed.map(({ environment }) => environment.label).join(", ")}`,
               "Switch it on in Settings → Environments.",
