@@ -73,8 +73,6 @@ function ChecksBody({
   }
   return (
     <>
-      {/* The overlay scrollbar takes no layout space, so the list borrows the popover's padding
-      for its lane instead of letting it draw over the Details links. */}
       <ScrollArea className="-me-3 w-auto max-h-64">
         <ul className="flex flex-col gap-1 pe-3">
           {/* Keyed by position as well as by name: the host is the one that decides how many runs
