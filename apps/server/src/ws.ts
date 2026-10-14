@@ -555,7 +555,10 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 // Fork: one handler object for every RPC is too deep a type for tsc, so fork RPCs added after
 // this point get their own handler layers in `layerWsRpc`.
-const ServerWsRpcGroupCore = ServerWsRpcGroup.omit(WS_METHODS.machineMapRead);
+const ServerWsRpcGroupCore = ServerWsRpcGroup.omit(
+  WS_METHODS.machineMapRead,
+  WS_METHODS.machineMapShareSettings,
+);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -3201,6 +3204,14 @@ const layerWsRpc = (
                   })
                 : machineMap.readPanel,
           ),
+        ),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.machineMapShareSettings,
+        MachineMap.MachineMap.pipe(
+          Effect.map((machineMap) => (input) => machineMap.shareSettings(input)),
         ),
       ),
     ),

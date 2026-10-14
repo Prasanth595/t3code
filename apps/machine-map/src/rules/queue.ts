@@ -1,21 +1,22 @@
 /**
  * Pure rules for the queue (MM-6xx): command delivery, expiry, and what waits for each machine.
  */
-import type {
-  MachineCommand,
-  MachineCommandKind,
-  MachineId,
-  MachineMapDocument,
-  MachinePresence,
-  MachineRecord,
-  MachineStatus,
-  MapChange,
-  MapRevision,
-  SettingScope,
-  SettingValues,
+import {
+  isMachineLocalSetting,
+  type MachineCommand,
+  type MachineCommandKind,
+  type MachineId,
+  type MachineMapDocument,
+  type MachinePresence,
+  type MachineRecord,
+  type MachineStatus,
+  type MapChange,
+  type MapRevision,
+  type SettingScope,
+  type SettingValues,
 } from "@t3tools/contracts/machineMap";
 
-import { effectiveSettings, isManaged, touches } from "./map.ts";
+import { effectiveSettings, touches } from "./map.ts";
 
 /** MM-605: the default expiry of a queued command. */
 export const DEFAULT_COMMAND_MINUTES = 24 * 60;
@@ -74,8 +75,9 @@ export function pendingRevisions(
 const sameValue = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 /**
- * MM-404: settings changed on a machine become overrides of that machine. A value equal to the
- * shared value clears the override. Settings that the map does not manage stay local.
+ * MM-404: a change on a machine becomes an override of that machine when the setting has a
+ * shared value or an override. A value equal to the shared value clears the override. A setting
+ * without either stays local: the map only shows it (MM-406).
  */
 export function localSettingChanges(
   map: MachineMapDocument,
@@ -88,13 +90,46 @@ export function localSettingChanges(
   const shared = map.settings.shared[scope];
   const own = map.settings.overrides[machineId]?.[scope] ?? {};
   for (const [key, value] of Object.entries(values)) {
-    if (!isManaged(map, scope, key) || value === undefined) continue;
+    if (isMachineLocalSetting(scope, key) || value === undefined) continue;
+    if (!Object.hasOwn(shared, key) && !Object.hasOwn(own, key)) continue;
     if (Object.hasOwn(desired, key) && sameValue(desired[key], value)) continue;
     const matchesShared = Object.hasOwn(shared, key) && sameValue(shared[key], value);
     if (matchesShared && Object.hasOwn(own, key)) {
       changes.push({ _tag: "setSetting", machineId, scope, key, present: false, value: null });
     } else if (!matchesShared) {
       changes.push({ _tag: "setSetting", machineId, scope, key, present: true, value });
+    }
+  }
+  return changes;
+}
+
+/**
+ * MM-411: a change saved in T3 Settings for all environments becomes the shared value. Overrides
+ * equal to the new value go: those machines took the same bulk edit. Other overrides stay.
+ */
+export function sharedSettingChanges(
+  map: MachineMapDocument,
+  scope: SettingScope,
+  values: SettingValues,
+): Array<MapChange> {
+  const changes: Array<MapChange> = [];
+  const shared = map.settings.shared[scope];
+  for (const [key, value] of Object.entries(values)) {
+    if (isMachineLocalSetting(scope, key) || value === undefined) continue;
+    if (!Object.hasOwn(shared, key) || !sameValue(shared[key], value)) {
+      changes.push({ _tag: "setSetting", machineId: null, scope, key, present: true, value });
+    }
+    for (const [id, own] of Object.entries(map.settings.overrides)) {
+      if (Object.hasOwn(own[scope], key) && sameValue(own[scope][key], value)) {
+        changes.push({
+          _tag: "setSetting",
+          machineId: id as MachineId,
+          scope,
+          key,
+          present: false,
+          value: null,
+        });
+      }
     }
   }
   return changes;

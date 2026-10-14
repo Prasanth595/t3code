@@ -1,11 +1,17 @@
 /**
- * MM-407: the editor of each managed setting comes from the T3 settings schemas in
+ * MM-407: the editor of each setting comes from the T3 settings schemas in
  * `@t3tools/contracts`. Keys that the schemas do not know get the JSON editor.
  */
 import * as Schema from "effect/Schema";
 import type * as SchemaAST from "effect/SchemaAST";
 import { ClientSettingsSchema, ServerSettings } from "@t3tools/contracts/settings";
-import type { SettingScope } from "@t3tools/contracts/machineMap";
+import {
+  isMachineLocalSetting,
+  ScopedSettingValues,
+  type MachineMapDocument,
+  type MapChange,
+  type SettingScope,
+} from "@t3tools/contracts/machineMap";
 
 export type SettingControl =
   | { readonly _tag: "switch" }
@@ -65,4 +71,38 @@ export function settingProblem(scope: SettingScope, key: string, value: unknown)
   if (!field) return null;
   const result = Schema.decodeUnknownExit(field)(value);
   return result._tag === "Success" ? null : `Not a valid value for ${key}.`;
+}
+
+const decodeScoped = Schema.decodeUnknownExit(ScopedSettingValues);
+
+/**
+ * MM-413: the changes that make each imported value a shared value, or the reason the import
+ * fails. Values equal to the shared value make no change.
+ */
+export function importSharedChanges(
+  map: MachineMapDocument,
+  text: string,
+): Array<MapChange> | string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return "This is not valid JSON.";
+  }
+  const decoded = decodeScoped(parsed);
+  if (decoded._tag === "Failure") return 'Use the form { "server": { ... }, "client": { ... } }.';
+  const changes: Array<MapChange> = [];
+  for (const scope of ["server", "client"] as const) {
+    const shared = map.settings.shared[scope];
+    for (const [key, value] of Object.entries(decoded.value[scope])) {
+      if (isMachineLocalSetting(scope, key)) return `${scope}.${key} belongs to each machine.`;
+      const problem = settingProblem(scope, key, value);
+      if (problem) return problem;
+      if (Object.hasOwn(shared, key) && JSON.stringify(shared[key]) === JSON.stringify(value)) {
+        continue;
+      }
+      changes.push({ _tag: "setSetting", machineId: null, scope, key, present: true, value });
+    }
+  }
+  return changes;
 }

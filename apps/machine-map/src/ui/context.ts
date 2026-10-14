@@ -41,7 +41,7 @@ export type Dialog =
     }
   | { readonly _tag: "newJoinCode"; readonly machineId: MachineId; readonly machineName: string }
   | { readonly _tag: "savePreset" }
-  | { readonly _tag: "manageSetting" }
+  | { readonly _tag: "importSettings" }
   /** MM-708: the big red button, opened from the command palette. */
   | { readonly _tag: "emergency" }
   | {

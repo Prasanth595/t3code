@@ -98,12 +98,59 @@ export const ScopedSettingValues = Schema.Struct({
 });
 export type ScopedSettingValues = typeof ScopedSettingValues.Type;
 
-export const ManagedSetting = Schema.Struct({ scope: SettingScope, key: TrimmedNonEmptyString });
-export type ManagedSetting = typeof ManagedSetting.Type;
+/**
+ * MM-406: settings that belong to one machine. They never become map entries: a machine does not
+ * report them, the portal refuses a value for them, and a machine never applies one.
+ */
+const MACHINE_LOCAL_SETTINGS: Readonly<Record<SettingScope, ReadonlySet<string>>> = {
+  server: new Set([
+    // The connection to the portal itself: a shared value could cut it.
+    "machineMap",
+    // Secrets: a machine reports them redacted, so a shared value would erase them.
+    "providerInstances",
+    "sourceControlHosts",
+    "usageLimitSources",
+    // Paths on the file system of this machine.
+    "worktreesDirectory",
+    "previousWorktreesDirectories",
+    "addProjectBaseDirectory",
+    // Keyed by project id. A project id is local to one environment.
+    "projectSettingsOverrides",
+    "projectScriptOverrides",
+    "pinnedProjectScriptIds",
+    "projectAutoPullOverrides",
+    "projectAgentBrowserAccessOverrides",
+    // SSH hosts and the device setup of this machine.
+    "deviceHosts",
+    "deviceOnboardingCompleted",
+    // Uses the keychain of this machine.
+    "cursorKeychainUsageEnabled",
+    // The icon that tells this machine apart from the others.
+    "environmentIcon",
+    // The time of the last local theme change (MM-408).
+    "defaultThemeSetAt",
+  ]),
+  client: new Set([
+    // State of this app, not a preference.
+    "onboardingCompletedAt",
+    "dismissedProviderUpdateNotificationKeys",
+    // Browser profiles point to data folders on this machine.
+    "browserProfiles",
+    "browserDefaultProfileId",
+  ]),
+};
 
+export const isMachineLocalSetting = (scope: SettingScope, key: string): boolean =>
+  MACHINE_LOCAL_SETTINGS[scope].has(key);
+
+export const withoutMachineLocalSettings = (
+  scope: SettingScope,
+  values: Readonly<Record<string, unknown>>,
+): SettingValues =>
+  Object.fromEntries(Object.entries(values).filter(([key]) => !isMachineLocalSetting(scope, key)));
+
+/** MM-406: a key is shared when it has a shared value. Older maps also hold `managed`, which decodes away. */
 export const MapSettings = Schema.Struct({
-  /** MM-406: only these settings are part of the map. */
-  managed: Schema.Array(ManagedSetting),
   shared: ScopedSettingValues,
   overrides: Schema.Record(Schema.String, ScopedSettingValues),
 });
@@ -184,11 +231,6 @@ export const MapChange = Schema.Union([
     /** False clears the value: a machine follows the shared value again. */
     present: Schema.Boolean,
     value: Schema.Unknown,
-  }),
-  Schema.TaggedStruct("manageSetting", {
-    scope: SettingScope,
-    key: TrimmedNonEmptyString,
-    managed: Schema.Boolean,
   }),
   Schema.TaggedStruct("putMachine", { machine: MachineRecord }),
   Schema.TaggedStruct("removeMachine", { machineId: MachineId }),
@@ -433,7 +475,7 @@ export const MachineDesiredState = Schema.Struct({
   peers: Schema.Array(PeerMachine),
   arrowsIn: Schema.Array(ArrowRecord),
   arrowsOut: Schema.Array(ArrowRecord),
-  /** The shared values with this machine's overrides on top, for managed settings only. */
+  /** The shared values with this machine's overrides on top. Keys without a value are absent. */
   settings: ScopedSettingValues,
   /** MM-718: true while the emergency pause is on. The machine then locks every client except its own desktop app. Absent means false. */
   paused: Schema.optionalKey(Schema.Boolean),
@@ -458,13 +500,20 @@ export const MachineToPortal = Schema.Union([
     protocol: Schema.Literal(MACHINE_MAP_PROTOCOL),
     appliedRevision: Schema.NullOr(NonNegativeInt),
     status: MachineStatus,
-    /** Current values of every setting, so the portal shows drift and can manage a key (MM-405, MM-406). */
+    /** Current values of every setting but the machine-local ones (MM-405, MM-406). */
     settings: ScopedSettingValues,
   }),
   Schema.TaggedStruct("status", { status: MachineStatus }),
   Schema.TaggedStruct("applied", { revision: NonNegativeInt }),
-  /** MM-404: settings that changed on the machine, not through the map. */
-  Schema.TaggedStruct("localSettings", { scope: SettingScope, values: SettingValues }),
+  /**
+   * MM-404: settings that changed on the machine, not through the map. MM-411: `shared` is true
+   * for a change made in T3 Settings for all environments.
+   */
+  Schema.TaggedStruct("localSettings", {
+    scope: SettingScope,
+    values: SettingValues,
+    shared: Schema.optionalKey(Schema.Boolean),
+  }),
   Schema.TaggedStruct("commandResult", {
     commandId: TrimmedNonEmptyString,
     ok: Schema.Boolean,
@@ -561,7 +610,7 @@ export const MapToolInputs = {
     }),
     key: TrimmedNonEmptyString.annotate({
       description:
-        "Top-level settings key, for example recoverInterruptedTurns. Only a key that the owner manages on the map works.",
+        "Top-level settings key, for example recoverInterruptedTurns. Any key works except the machine-local ones, such as paths, secrets and machineMap.",
     }),
     value: Schema.optionalKey(
       Schema.Unknown.annotate({

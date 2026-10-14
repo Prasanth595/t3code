@@ -127,7 +127,6 @@ function changeKind(revision: RevisionChanges, change: MapChange): ChangeKind {
     case "removeMachine":
       return "machines";
     case "setSetting":
-    case "manageSetting":
       return "settings";
     case "putPreset":
     case "removePreset":
@@ -283,7 +282,6 @@ export function entryMachines(entry: HistoryEntry): ReadonlySet<string> {
       case "placePair":
         ids.add(change.a).add(change.b);
         break;
-      case "manageSetting":
       case "putPreset":
       case "removePreset":
       case "putNote":
@@ -474,14 +472,6 @@ export function revisionDiff(revision: RevisionChanges, map: MachineMapDocument)
           },
         ];
       }
-      case "manageSetting":
-        return [
-          {
-            label: `${change.scope}.${change.key}`,
-            before: change.managed ? "not managed" : "managed",
-            after: change.managed ? "managed" : "not managed",
-          },
-        ];
       case "putMachine": {
         const next = change.machine;
         const previous = before(revision, "putMachine", (c) => c.machine.id === next.id)?.machine;

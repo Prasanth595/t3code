@@ -2,20 +2,29 @@
  * Queue facts that the page derives from the snapshot (MM-602, MM-604). The page has the newest
  * revisions only (the snapshot holds 100), so a machine that missed more shows at most that many.
  */
-import type {
-  MachineCommand,
-  MachineId,
-  MachineLevel,
-  MachineMapDocument,
-  MachineRecord,
-  MapChange,
-  MapRevision,
-  PortalSnapshot,
+import {
+  isMachineLocalSetting,
+  type MachineCommand,
+  type MachineId,
+  type MachineLevel,
+  type MachineMapDocument,
+  type MachineRecord,
+  type MapChange,
+  type MapRevision,
+  type PortalSnapshot,
+  type SettingScope,
 } from "@t3tools/contracts/machineMap";
 
 import type { PauseView, PendingRotation } from "../api.ts";
 import { arrowChange, usesText } from "../rules/access.ts";
-import { changesPublicFacts, findArrow, findMachine, findNote, hasJoined } from "../rules/map.ts";
+import {
+  changesPublicFacts,
+  findArrow,
+  findMachine,
+  findNote,
+  hasJoined,
+  settingKeys,
+} from "../rules/map.ts";
 import { lockdownChanges } from "../rules/presets.ts";
 import { pendingRevisions } from "../rules/queue.ts";
 import type { Portal } from "./context.ts";
@@ -166,10 +175,6 @@ export function describeChange(change: MapChange, map: MachineMapDocument): stri
         ? `${change.scope}.${change.key} = ${valueText(change.value)} (${target})`
         : `${change.scope}.${change.key} cleared (${target})`;
     }
-    case "manageSetting":
-      return change.managed
-        ? `Manage ${change.scope}.${change.key}`
-        : `Stop managing ${change.scope}.${change.key}`;
     case "putMachine": {
       const m = change.machine;
       const before = findMachine(map, m.id);
@@ -228,4 +233,26 @@ export function pauseReach(snapshot: PortalSnapshot): PauseReach {
     arrows: changes.filter((change) => change._tag === "setArrow").length,
     mapRoles: changes.filter((change) => change._tag === "putMachine").length,
   };
+}
+
+/**
+ * MM-406: every setting is a map entry: the keys that a machine reported or that hold a value,
+ * without the machine-local keys. Keys with a shared value come first, then by name.
+ */
+export function settingEntries(
+  map: MachineMapDocument,
+  reported: PortalSnapshot["reportedSettings"],
+  scope: SettingScope,
+): Array<string> {
+  const keys = new Set(settingKeys(map, scope));
+  for (const settings of Object.values(reported)) {
+    for (const key of Object.keys(settings[scope])) keys.add(key);
+  }
+  const shared = map.settings.shared[scope];
+  return [...keys]
+    .filter((key) => !isMachineLocalSetting(scope, key))
+    .toSorted(
+      (a, b) =>
+        Number(Object.hasOwn(shared, b)) - Number(Object.hasOwn(shared, a)) || a.localeCompare(b),
+    );
 }
