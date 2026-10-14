@@ -577,13 +577,47 @@ it.effect("a delegated task that cannot be stopped fails the walk after its sibl
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("thread.stop on a finished thread refuses a late agent watch", () =>
+it.effect.each(["thread.stop", "run.interrupt"] as const)(
+  "%s cancels filing before the provider starts",
+  (type) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("thread:stop-filed-starting");
+      yield* createWatchingThread(threadId, 13);
+      yield* send(threadId, "work", "start_immediately");
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("file-starting"),
+        threadId,
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNotNull(before.thread.settleWhenIdleAt);
+      assert.isNull(before.runs[0]!.startedAt);
+      yield* orchestrator.dispatch({
+        type,
+        commandId: CommandId.make("stop-filed-starting"),
+        threadId,
+        runId: before.runs[0]!.id,
+      });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(after.runs[0]!.status, "interrupted");
+      assert.isNull(after.thread.settleWhenIdleAt);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("thread.stop cancels background filing and refuses a late agent watch", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = ThreadId.make("thread:stop-finished");
     yield* createWatchingThread(threadId, 9);
     yield* send(threadId, "work", "start_immediately");
+    yield* orchestrator.dispatch({
+      type: "thread.settle",
+      commandId: CommandId.make("file-background"),
+      threadId,
+    });
+    assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.settleWhenIdleAt);
     const now = yield* DateTime.now;
     const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
     yield* projections.apply({
@@ -594,6 +628,49 @@ it.effect("thread.stop on a finished thread refuses a late agent watch", () =>
       occurredAt: now,
       payload: { ...run, status: "completed", startedAt: now, completedAt: now },
     });
+    const providerTurnId = ProviderTurnId.make("provider-turn:stop-finished");
+    yield* projections.apply({
+      id: EventId.make("event:stop-finished:turn"),
+      type: "provider-turn.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId: run.providerThreadId!,
+        nodeId: run.rootNodeId!,
+        runAttemptId: run.activeAttemptId!,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "completed",
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:stop-finished:monitor"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("stop-finished:monitor"),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: run.providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "dynamic_tool",
+        toolName: "Monitor",
+        input: { command: "watch ci" },
+      },
+    });
 
     yield* orchestrator.dispatch({
       type: "thread.stop",
@@ -602,6 +679,12 @@ it.effect("thread.stop on a finished thread refuses a late agent watch", () =>
     });
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 10))));
     assert.deepEqual(yield* threadState(threadId), { runs: ["completed"], watched: [] });
+    const stopped = yield* orchestrator.getThreadProjection(threadId);
+    assert.isNull(stopped.thread.settleWhenIdleAt);
+    assert.equal(
+      stopped.turnItems.find((item) => item.type === "dynamic_tool")?.status,
+      "interrupted",
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 

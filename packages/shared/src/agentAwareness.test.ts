@@ -23,6 +23,8 @@ describe("projectThreadAwarenessV2", () => {
     overrides: Partial<
       Pick<
         OrchestrationV2ThreadShell,
+        | "settleWhenIdleAt"
+        | "settledOverride"
         | "activityRunStatus"
         | "status"
         | "pendingBackgroundTasks"
@@ -45,6 +47,28 @@ describe("projectThreadAwarenessV2", () => {
     ...overrides,
   });
 
+  it("keeps deferred completion out of mobile push while preserving failures", () => {
+    const input = { environmentId: "env-1" as EnvironmentId, project };
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: v2Thread({ status: "completed", settleWhenIdleAt: updatedAt }),
+      }),
+    ).toBeNull();
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: v2Thread({ status: "completed", settledOverride: "settled" }),
+      }),
+    ).toBeNull();
+    expect(
+      projectThreadAwarenessV2({
+        ...input,
+        thread: v2Thread({ status: "failed", settleWhenIdleAt: updatedAt }),
+      }),
+    ).toMatchObject({ phase: "failed" });
+  });
+
   it("projects V2 run state", () => {
     expect(
       projectThreadAwarenessV2({
@@ -53,6 +77,20 @@ describe("projectThreadAwarenessV2", () => {
         thread: v2Thread(),
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
+
+  it("keeps filed background work visible until it finishes", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          settleWhenIdleAt: updatedAt,
+          pendingBackgroundTasks: [{ taskId: "child", kind: "subagent" }],
+        }),
+      }),
+    ).toMatchObject({ phase: "running" });
   });
 
   it.each(["running", "completed", "failed"] as const)(
