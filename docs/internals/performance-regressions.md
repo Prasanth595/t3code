@@ -102,3 +102,16 @@ continuous traffic during an outage.
 Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.ts`,
 `runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`,
 `ThreadStatusIndicators.subscriptions.test.tsx`, and `desktopLocal.test.ts`.
+
+## Mobile looping animations
+
+`apps/mobile/package.json` sets Reanimated's `DISABLE_COMMIT_PAUSING_MECHANISM` so keyboard
+avoiding animates on iOS. Without commit pausing, an animation that commits to the shadow tree on every frame
+can starve React's commits: the JS thread retries the same commit until it gives up, which looks
+like a frozen screen where back does nothing. Release builds spin forever; dev builds abort with
+`ShadowTree.cpp: assertion failed (attempts < 1024)`.
+
+`ANDROID_SYNCHRONOUSLY_UPDATE_UI_PROPS` keeps Android out of that loop by applying transform,
+opacity, and color updates directly to views. Keep looping animations (`withRepeat`, shimmers,
+spinners) on those props. A layout prop such as `width` in the same animated style sends the
+whole update back through the shadow tree every frame, so pass static sizes as a plain style.
