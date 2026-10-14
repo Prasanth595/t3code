@@ -37,11 +37,10 @@ export class CursorSdkCatalog extends Context.Service<
   }
 >()("@t3tools/provider-cursor/server/CursorSdkCatalog") {}
 
-function isAuthenticationFailure(cause: unknown): boolean {
-  const { AuthenticationError, CursorSdkError } = loadCursorSdk();
+function isAuthenticationFailure(sdk: typeof import("@cursor/sdk"), cause: unknown): boolean {
   return (
-    cause instanceof AuthenticationError ||
-    (cause instanceof CursorSdkError && cause.status === 401)
+    cause instanceof sdk.AuthenticationError ||
+    (cause instanceof sdk.CursorSdkError && cause.status === 401)
   );
 }
 
@@ -52,19 +51,26 @@ export interface CursorSdkCatalogProbes {
   ) => Effect.Effect<ReadonlyArray<SDKModel>, CursorSdkCatalogError>;
 }
 
-const sdkRequest = <A>(tryRequest: () => Promise<A>) =>
-  Effect.tryPromise({
-    try: tryRequest,
-    catch: (cause) =>
-      new CursorSdkCatalogError({
-        authenticationFailure: isAuthenticationFailure(cause),
-        cause,
+const sdkRequest = <A>(request: (sdk: typeof import("@cursor/sdk")) => Promise<A>) =>
+  Effect.try({
+    try: loadCursorSdk,
+    catch: (cause) => new CursorSdkCatalogError({ authenticationFailure: false, cause }),
+  }).pipe(
+    Effect.flatMap((sdk) =>
+      Effect.tryPromise({
+        try: () => request(sdk),
+        catch: (cause) =>
+          new CursorSdkCatalogError({
+            authenticationFailure: isAuthenticationFailure(sdk, cause),
+            cause,
+          }),
       }),
-  });
+    ),
+  );
 
 const liveProbes: CursorSdkCatalogProbes = {
-  readUser: (apiKey) => sdkRequest(() => loadCursorSdk().Cursor.me({ apiKey })),
-  readModels: (apiKey) => sdkRequest(() => loadCursorSdk().Cursor.models.list({ apiKey })),
+  readUser: (apiKey) => sdkRequest((sdk) => sdk.Cursor.me({ apiKey })),
+  readModels: (apiKey) => sdkRequest((sdk) => sdk.Cursor.models.list({ apiKey })),
 };
 
 export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function* (

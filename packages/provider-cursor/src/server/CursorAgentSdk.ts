@@ -347,7 +347,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
 
   return CursorAgentSdkRunner.of({
     open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
-      const { Agent } = cursorSdk.load();
+      const { Agent } = yield* Effect.try({
+        try: () => cursorSdk.load(),
+        catch: (cause) => runnerError(cause, "sdk.load"),
+      });
       if (input.options.local?.sandboxOptions?.enabled === false) {
         yield* primeCursorSandboxSupport(input.options);
       }

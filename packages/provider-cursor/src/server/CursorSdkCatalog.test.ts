@@ -2,8 +2,15 @@ import type { SDKModel, SDKUser } from "@cursor/sdk";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import { vi } from "vite-plus/test";
 
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
+
+vi.mock("./sdk.ts", () => ({
+  loadCursorSdk: () => {
+    throw new Error("Cannot find module '@cursor/sdk'");
+  },
+}));
 
 const user = {
   apiKeyName: "test-key",
@@ -61,6 +68,15 @@ describe("CursorSdkCatalog", () => {
       expect((yield* catalog.read("test-key")).models).toEqual([model]);
       expect((yield* catalog.read("test-key")).models).toEqual([model]);
       expect(modelCalls).toBe(3);
+    }),
+  );
+
+  it.effect("reports an SDK that fails to load as a catalog error, not an auth failure", () =>
+    Effect.gen(function* () {
+      const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog();
+      const error = yield* Effect.flip(catalog.read("test-key"));
+      expect(error).toBeInstanceOf(CursorSdkCatalog.CursorSdkCatalogError);
+      expect(error.authenticationFailure).toBe(false);
     }),
   );
 });

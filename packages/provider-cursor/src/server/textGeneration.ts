@@ -98,7 +98,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         });
       }
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-text-" });
-      const { Agent } = cursorSdk.load();
+      const { Agent } = yield* Effect.try(() => cursorSdk.load());
       const agentOptions = {
         apiKey,
         mode: "plan",
