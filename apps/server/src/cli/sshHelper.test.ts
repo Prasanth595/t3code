@@ -53,6 +53,7 @@ describe("__ssh-helper pick-port", () => {
         const child = yield* spawner.spawn(
           ChildProcess.make(process.execPath, [
             ...(linuxHost ? ["--require", `${root}/preload.cjs`] : []),
+            "--experimental-strip-types",
             new URL("../bin.ts", import.meta.url).pathname,
             "__ssh-helper",
             "pick-port",
