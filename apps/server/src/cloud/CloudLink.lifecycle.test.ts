@@ -739,6 +739,47 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
+  it.effect("does not mark a link that was replaced while its rejection was in flight", () => {
+    const { store, values } = makeMemorySecretStore([
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
+    ]);
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect(yield* link.registerManagedTunnelRecovery("http://127.0.0.1:3773")).toEqual({
+        status: "superseded",
+      });
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        respond: () => {
+          values.set(
+            RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+            new TextEncoder().encode("replacement-credential"),
+          );
+          return Response.json(
+            {
+              _tag: "RelayAuthInvalidError",
+              code: "auth_invalid",
+              reason: "not_authorized",
+              traceId: "trace-stale",
+            },
+            { status: 401 },
+          );
+        },
+      }),
+    );
+  });
+
   it.effect("clears the revoked mark when the environment is linked again", () => {
     const { store } = makeMemorySecretStore([
       [RELAY_URL_SECRET, "https://relay.example.test"],

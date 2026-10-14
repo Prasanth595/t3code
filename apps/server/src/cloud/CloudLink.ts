@@ -1063,9 +1063,10 @@ const make = Effect.gen(function* () {
       tunnelId: config.tunnelId,
       origin,
     });
+    const credential = bytesToString(environmentCredential.value);
     const registered = yield* relayClientRequest({
       url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel/recovery`,
-      token: bytesToString(environmentCredential.value),
+      token: credential,
       payload: {
         cloudUserId: cloudUserIdValue,
         tunnelId: config.tunnelId,
@@ -1078,22 +1079,30 @@ const make = Effect.gen(function* () {
       // the environment was deregistered. Retrying cannot fix that, and relinking
       // is the user's call, so only mark it. Nothing stored is removed: the relay
       // also answers 401 for a skewed clock, and the next accepted registration
-      // clears the mark.
+      // clears the mark. A relink that landed while this request was in flight
+      // replaced the credential, so the rejection belongs to the old link.
       Effect.catchTags({
         RelayRequestError: (error) =>
           error.rejection === "unauthorized"
-            ? Effect.logWarning(
-                "T3 Connect no longer accepts this environment's link. Link it again to restore remote access.",
-                { cause: error },
-              ).pipe(
-                Effect.andThen(secrets.set(CLOUD_LINK_REVOKED, stringToBytes("true"))),
-                Effect.as(null),
+            ? endpointRuntime.withLinkStateLock(
+                Effect.gen(function* () {
+                  const current = yield* secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET);
+                  if (Option.isNone(current) || bytesToString(current.value) !== credential) {
+                    return "superseded" as const;
+                  }
+                  yield* Effect.logWarning(
+                    "T3 Connect no longer accepts this environment's link. Link it again to restore remote access.",
+                    { cause: error },
+                  );
+                  yield* secrets.set(CLOUD_LINK_REVOKED, stringToBytes("true"));
+                  return "revoked" as const;
+                }),
               )
             : Effect.fail(error),
       }),
     );
-    if (registered === null) {
-      return { status: "revoked" as const };
+    if (registered === "revoked" || registered === "superseded") {
+      return { status: registered };
     }
     yield* secrets.remove(CLOUD_LINK_REVOKED);
     if (registered.status === "recovery_required") {
