@@ -6,7 +6,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { act, createElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -27,7 +27,7 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock("~/state/preview", async () => {
-  const { AsyncResult, Atom } = await import("effect/unstable/reactivity");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
   return {
     previewEnvironment: {
       list: (target: { input: { threadId: string } }) => {
@@ -177,7 +177,7 @@ describe("native preview session synchronization", () => {
     expect(readThreadPreviewState(ref).desktopOverlay?.canGoBack).toBe(true);
   });
 
-  it("retains newer event state when an older list response completes", async () => {
+  it("retains newer event state when an older list response completes, then retries the list", async () => {
     const atom = listAtom();
     await mount();
     const snapshot = result(2, ["opened"]).sessions[0]!;
@@ -194,9 +194,17 @@ describe("native preview session synchronization", () => {
         createdAt: snapshot.updatedAt,
       }),
     );
-    appAtomRegistry.set(atom, AsyncResult.success(result(1, [])));
+    await act(async () => appAtomRegistry.set(atom, AsyncResult.success(result(1, []))));
     expect(readThreadPreviewState(ref).activeTabId).toBe("opened");
     expect(readThreadPreviewState(ref).serverRevision).toBe(2);
+    expect(readThreadPreviewState(ref).listLoaded).toBe(false);
+    // The overtaken list is not a baseline, so the hook asks again; its
+    // waiting state must not reconcile, and the fresh answer completes it.
+    expect(harness.lists.get(ref.threadId)?.box.requests).toBe(2);
+    expect(readThreadPreviewState(ref).activeTabId).toBe("opened");
+    appAtomRegistry.set(atom, AsyncResult.success(result(2, ["opened"])));
+    expect(readThreadPreviewState(ref).listLoaded).toBe(true);
+    expect(readThreadPreviewState(ref).activeTabId).toBe("opened");
   });
 
   it("keeps the local snapshot on a completed failure and reconciles a later success", async () => {

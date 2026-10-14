@@ -44,7 +44,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
     const reconcileSessions = (result: Atom.Type<typeof sessionsAtom>) => {
       if (result.waiting || !AsyncResult.isSuccess(result)) return;
       reconcilePreviewServerSessions(threadRef, result.value);
-      if (!result.waiting && !readThreadPreviewState(threadRef).listLoaded) {
+      if (!readThreadPreviewState(threadRef).listLoaded) {
         // An event overtook the first list. Retry the authoritative baseline;
         // do not declare a partial event-only index ready for surface cleanup.
         queueMicrotask(() => {
