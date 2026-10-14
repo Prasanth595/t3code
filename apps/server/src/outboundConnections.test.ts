@@ -18,6 +18,9 @@ interface ConnectionPolicy {
 
 // Starts a Node process the way the CLI does: apply the policy, then report the
 // allowance it ends up with and what a child spawned with its env inherits.
+// Node 22.16 and 22.17 only import the `.ts` module with type stripping turned
+// on. Type stripping and config files may print an ExperimentalWarning on
+// stderr, depending on the Node version.
 const runServerProcess = (options: {
   readonly nodeOptions?: string;
   readonly execArgv?: ReadonlyArray<string>;
@@ -26,6 +29,8 @@ const runServerProcess = (options: {
   const child = NodeChildProcess.spawnSync(
     process.execPath,
     [
+      "--experimental-strip-types",
+      "--disable-warning=ExperimentalWarning",
       ...(options.execArgv ?? []),
       "--input-type=module",
       "--eval",
@@ -86,7 +91,6 @@ it("keeps an explicit Node attempt timeout from the command line", () => {
   assert.equal(policy.spawnedChild, nodeDefaultAttemptTimeout());
 });
 
-// Node 24 still marks config files experimental and warns about it on stderr.
 it.each([
   [
     "a path",
@@ -101,7 +105,7 @@ it.each([
       JSON.stringify({ nodeOptions: { "network-family-autoselection-attempt-timeout": 300 } }),
     );
     const policy = runServerProcess({
-      execArgv: ["--disable-warning=ExperimentalWarning", ...flags(dir)],
+      execArgv: flags(dir),
       cwd: dir,
     });
 
