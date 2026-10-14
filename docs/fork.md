@@ -175,7 +175,7 @@ These steps set up a Linux server without a display, for example an Oracle Cloud
 2. On the machine, run that command:
 
 ```sh
-sudo apt-get update && sudo apt-get install -y curl tar ca-certificates
+sudo apt-get update && sudo apt-get install -y curl tar ca-certificates libatomic1
 curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
 ```
 
