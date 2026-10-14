@@ -204,10 +204,12 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
 ) {
   const devUrl = undefined;
   const fs = yield* FileSystem.FileSystem;
+  // macOS temp dirs sit under the /var -> /private/var symlink, and storage cleanup
+  // only deletes under canonical paths, so resolve the generated directory.
   const baseDir =
     typeof baseDirOrPrefix === "string"
       ? baseDirOrPrefix
-      : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
+      : yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix }));
   const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
   yield* ensureServerDirectories(derivedPaths);
 
