@@ -123,9 +123,11 @@ export interface AcpPatchedProtocol {
   readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
   /**
    * Allocates the next outbound request id. Pass it to `RpcClient.make` as
-   * `generateRequestId` so typed calls and `request` share one counter: ids
-   * never collide, and stay in the signed 32-bit range that peers built on the
-   * Kotlin ACP SDK (Junie) can decode.
+   * `generateRequestId` so typed calls and `request` share one counter and ids
+   * stay unique per connection. Ids count up from 1, so they start small enough
+   * for peers built on the Kotlin ACP SDK (Junie), which decode them as signed
+   * 32-bit integers. The counter is not bounded; only a connection that sends
+   * over 2^31 - 1 requests would leave that range.
    */
   readonly nextRequestId: () => number;
 }
