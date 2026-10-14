@@ -414,6 +414,136 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
 
+for (const hostPlatform of ["linux", "darwin"] as const) {
+  for (const configuredUrls of [[], ["not a URL", "https://example.com"]]) {
+    effectIt.effect(
+      `skips all ${hostPlatform} discovery I/O for empty normalized inputs ${configuredUrls.length}`,
+      () => {
+        const calls: string[] = [];
+        const fileSystem = FileSystem.layerNoop({
+          readFileString: (path) =>
+            Effect.sync(() => {
+              calls.push(path);
+              return "";
+            }),
+          readDirectory: (path) =>
+            Effect.sync(() => {
+              calls.push(path);
+              return [];
+            }),
+          readLink: (path) =>
+            Effect.sync(() => {
+              calls.push(path);
+              return "";
+            }),
+        });
+        const layer = layerProbeFailure(
+          (input) => {
+            calls.push(input.command);
+            return processProbeFailure(input);
+          },
+          (() => {
+            calls.push("HTTP");
+            return Promise.resolve(
+              new Response("app", { headers: { "content-type": "text/html" } }),
+            );
+          }) as typeof globalThis.fetch,
+          fileSystem,
+          hostPlatform,
+        );
+
+        return Effect.gen(function* () {
+          const scanner = yield* ownedScanner([0, -1, 1.5]);
+          expect(yield* scanner.scan(configuredUrls)).toEqual([]);
+          yield* scanner.subscribe({ configuredUrls, initialSnapshot: [] }, () => Effect.void);
+          yield* scanner.retain;
+          yield* TestClock.adjust(Duration.seconds(9));
+          expect(calls).toEqual([]);
+        }).pipe(Effect.scoped, Effect.provide(layer));
+      },
+    );
+  }
+}
+
+effectIt.effect(
+  "publishes empty results while idle and resumes discovery after terminal registration",
+  () => {
+    let processCalls = 0;
+    let httpCalls = 0;
+    let pollSpans = 0;
+    const layer = layerLsofScanner({
+      pid: () => 1234,
+      onRun: () => {
+        processCalls += 1;
+      },
+      fetch: (() => {
+        httpCalls += 1;
+        return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+      }) as typeof globalThis.fetch,
+    });
+    const tracer = Tracer.make({
+      span: (options) => {
+        if (options.name === "PortDiscovery.pollTick") pollSpans += 1;
+        return new Tracer.NativeSpan(options);
+      },
+    });
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const emptied = yield* Deferred.make<void>();
+      const discovered = yield* Deferred.make<void>();
+      const removed = yield* Deferred.make<void>();
+      const snapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
+      const oldServer: DiscoveredLocalServer = {
+        host: "localhost",
+        port: LSOF_TEST_PORT,
+        url: `http://localhost:${LSOF_TEST_PORT}`,
+        pid: 1234,
+        processName: "node",
+        terminal: null,
+      };
+      yield* scanner.subscribe({ configuredUrls: [], initialSnapshot: [oldServer] }, (servers) =>
+        Effect.gen(function* () {
+          snapshots.push(servers);
+          yield* Deferred.succeed(
+            snapshots.length === 1 ? emptied : servers.length > 0 ? discovered : removed,
+            undefined,
+          );
+        }),
+      );
+      yield* scanner.retain;
+      yield* Deferred.await(emptied);
+      yield* TestClock.adjust(Duration.seconds(9));
+      expect(pollSpans).toBeGreaterThanOrEqual(4);
+      expect(processCalls).toBe(0);
+      expect(httpCalls).toBe(0);
+      expect(snapshots).toEqual([[]]);
+
+      yield* scanner.registerTerminalProcesses({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+        processIds: [1234],
+      });
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* Deferred.await(discovered);
+      expect(snapshots.at(-1)?.[0]?.pid).toBe(1234);
+      expect(httpCalls).toBe(1);
+      const activeCalls = processCalls;
+
+      yield* scanner.unregisterTerminal({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+      });
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* Deferred.await(removed);
+      expect(snapshots.at(-1)).toEqual([]);
+      yield* TestClock.adjust(Duration.seconds(9));
+      expect(processCalls).toBe(activeCalls);
+      expect(httpCalls).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(layer), Effect.withTracer(tracer));
+  },
+);
+
 effectIt.effect("writes no poll span while no client retains the scanner", () => {
   let pollSpans = 0;
   const tracer = Tracer.make({
@@ -793,134 +923,4 @@ effectIt.effect("does not swallow process probe interruption", () =>
       expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     }
   }),
-);
-
-for (const hostPlatform of ["linux", "darwin"] as const) {
-  for (const configuredUrls of [[], ["not a URL", "https://example.com"]]) {
-    effectIt.effect(
-      `skips all ${hostPlatform} discovery I/O for empty normalized inputs ${configuredUrls.length}`,
-      () => {
-        const calls: string[] = [];
-        const fileSystem = FileSystem.layerNoop({
-          readFileString: (path) =>
-            Effect.sync(() => {
-              calls.push(path);
-              return "";
-            }),
-          readDirectory: (path) =>
-            Effect.sync(() => {
-              calls.push(path);
-              return [];
-            }),
-          readLink: (path) =>
-            Effect.sync(() => {
-              calls.push(path);
-              return "";
-            }),
-        });
-        const layer = layerProbeFailure(
-          (input) => {
-            calls.push(input.command);
-            return processProbeFailure(input);
-          },
-          (() => {
-            calls.push("HTTP");
-            return Promise.resolve(
-              new Response("app", { headers: { "content-type": "text/html" } }),
-            );
-          }) as typeof globalThis.fetch,
-          fileSystem,
-          hostPlatform,
-        );
-
-        return Effect.gen(function* () {
-          const scanner = yield* ownedScanner([0, -1, 1.5]);
-          expect(yield* scanner.scan(configuredUrls)).toEqual([]);
-          yield* scanner.subscribe({ configuredUrls, initialSnapshot: [] }, () => Effect.void);
-          yield* scanner.retain;
-          yield* TestClock.adjust(Duration.seconds(9));
-          expect(calls).toEqual([]);
-        }).pipe(Effect.scoped, Effect.provide(layer));
-      },
-    );
-  }
-}
-
-effectIt.effect(
-  "publishes empty results while idle and resumes discovery after terminal registration",
-  () => {
-    let processCalls = 0;
-    let httpCalls = 0;
-    let pollSpans = 0;
-    const layer = layerLsofScanner({
-      pid: () => 1234,
-      onRun: () => {
-        processCalls += 1;
-      },
-      fetch: (() => {
-        httpCalls += 1;
-        return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
-      }) as typeof globalThis.fetch,
-    });
-    const tracer = Tracer.make({
-      span: (options) => {
-        if (options.name === "PortDiscovery.pollTick") pollSpans += 1;
-        return new Tracer.NativeSpan(options);
-      },
-    });
-
-    return Effect.gen(function* () {
-      const scanner = yield* PortScanner.PortDiscovery;
-      const emptied = yield* Deferred.make<void>();
-      const discovered = yield* Deferred.make<void>();
-      const removed = yield* Deferred.make<void>();
-      const snapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
-      const oldServer: DiscoveredLocalServer = {
-        host: "localhost",
-        port: LSOF_TEST_PORT,
-        url: `http://localhost:${LSOF_TEST_PORT}`,
-        pid: 1234,
-        processName: "node",
-        terminal: null,
-      };
-      yield* scanner.subscribe({ configuredUrls: [], initialSnapshot: [oldServer] }, (servers) =>
-        Effect.gen(function* () {
-          snapshots.push(servers);
-          yield* Deferred.succeed(
-            snapshots.length === 1 ? emptied : servers.length > 0 ? discovered : removed,
-            undefined,
-          );
-        }),
-      );
-      yield* scanner.retain;
-      yield* Deferred.await(emptied);
-      yield* TestClock.adjust(Duration.seconds(9));
-      expect(pollSpans).toBeGreaterThanOrEqual(4);
-      expect(processCalls).toBe(0);
-      expect(httpCalls).toBe(0);
-      expect(snapshots).toEqual([[]]);
-
-      yield* scanner.registerTerminalProcesses({
-        threadId: "scanner-thread",
-        terminalId: "scanner-terminal",
-        processIds: [1234],
-      });
-      yield* TestClock.adjust(Duration.seconds(3));
-      yield* Deferred.await(discovered);
-      expect(snapshots.at(-1)?.[0]?.pid).toBe(1234);
-      expect(httpCalls).toBe(1);
-      const activeCalls = processCalls;
-
-      yield* scanner.unregisterTerminal({
-        threadId: "scanner-thread",
-        terminalId: "scanner-terminal",
-      });
-      yield* TestClock.adjust(Duration.seconds(3));
-      yield* Deferred.await(removed);
-      expect(snapshots.at(-1)).toEqual([]);
-      yield* TestClock.adjust(Duration.seconds(9));
-      expect(processCalls).toBe(activeCalls);
-      expect(httpCalls).toBe(1);
-    }).pipe(Effect.scoped, Effect.provide(layer), Effect.withTracer(tracer));
-  },
 );
