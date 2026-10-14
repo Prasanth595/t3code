@@ -1,7 +1,9 @@
 /**
- * Pure pieces of Muse subscription usage: the accounts file, the `usage/changed`
- * payload `muse serve` emits, and the pick of which subscription runs the next
- * Muse job. The service in `MuseUsage.ts` owns the processes and the cache.
+ * Pure pieces of Muse subscription usage: the accounts file, sanitized
+ * persisted observations, and the per-subscription wire snapshot. The service
+ * in `MuseUsage.ts` owns the cache; it never spawns a probe, so every
+ * observation here arrived passively (seen during useful work or delivered by
+ * a passive reader) and every failure stays sanitized metadata.
  */
 import {
   ProviderDriverKind,
@@ -94,7 +96,7 @@ export const MuseSubscriptionUsage = Schema.Struct({
 export type MuseSubscriptionUsage = typeof MuseSubscriptionUsage.Type;
 
 /** Muse reports over-quota values above 100; the wire contract caps at 100. */
-const clampPercent = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
+const clampPercent = (value: number) => Math.min(100, Math.max(0, value));
 
 export function museUsageWindows(
   usage: MuseSubscriptionUsage,
@@ -123,17 +125,118 @@ export function museUsageWindows(
 
 export interface MuseAccountState {
   readonly account: MuseAccount;
-  /** The login `account/read` reported; null until a check succeeds. */
+  /** The login the last observation reported; null until a read succeeds. */
   readonly signedInAs: string | null;
   readonly usage: MuseSubscriptionUsage | null;
   readonly error: string | null;
-  /** When the last probe finished, successful or not, epoch ms. */
+  /** When the last observation attempt finished, successful or not, epoch ms. */
   readonly checkedAtMs: number | null;
+  /**
+   * Last passive-read attempt, epoch ms. Failures update this, never the
+   * successful age, so a failed observation keeps the old reading's age.
+   */
+  readonly lastRefreshAttemptAtMs?: number | null | undefined;
+  /** Epoch ms of the stored usage's observation; null until a good read. */
+  readonly lastSuccessfulObservationAtMs?: number | null | undefined;
+  /** What the stored observation cost. Internal only, never on the wire. */
+  readonly observationCost?: MuseObservationCost | undefined;
 }
 
-/** One usage-limit source per subscription, so each keeps its own error row. */
+/**
+ * How an observation reached the service. Internal bookkeeping only: the
+ * wire snapshot never carries it.
+ *
+ * - `passive`: seen during useful work or delivered by a passive reader.
+ * - `model_turn`: cost a model turn to obtain; kept so older stored
+ *   observations still decode.
+ * - `unknown`: the provenance is unclear.
+ */
+export const MuseObservationCost = Schema.Literals(["passive", "model_turn", "unknown"]);
+export type MuseObservationCost = typeof MuseObservationCost.Type;
+
+/** Stable usage-limit source id for one account: `muse:<account id>`. */
+export const museSourceId = (accountId: string): UsageLimitSourceId =>
+  `muse:${accountId}` as UsageLimitSourceId;
+
+/**
+ * A sanitized observation persisted under `config.stateDir`. It carries the
+ * account/source binding and the reading, never launchers, roots, or
+ * credentials.
+ */
+export const MuseStoredObservation = Schema.Struct({
+  version: Schema.Literal(1),
+  accountId: Schema.String.check(Schema.isMinLength(1)),
+  sourceId: Schema.String.check(Schema.isMinLength(1)),
+  usage: MuseSubscriptionUsage,
+  signedInAs: Schema.optional(Schema.String),
+  cost: Schema.optional(MuseObservationCost),
+  recordedAtMs: Schema.Number,
+});
+export type MuseStoredObservation = typeof MuseStoredObservation.Type;
+
+export type MuseRestoreRejection = "account_mismatch" | "source_mismatch" | "identity_mismatch";
+
+export type MuseRestoreResult =
+  | {
+      readonly _tag: "Accepted";
+      readonly usage: MuseSubscriptionUsage;
+      readonly signedInAs: string | null;
+      readonly cost: MuseObservationCost;
+    }
+  | { readonly _tag: "Rejected"; readonly reason: MuseRestoreRejection };
+
+/**
+ * Validate a stored observation against the configured account before it is
+ * trusted: the account id and source id must bind to this account, and a
+ * configured expected login must still match the stored one. Anything else is
+ * rejected and the account keeps whatever it already knew (usually nothing).
+ */
+export function restoreMuseStoredObservation(
+  stored: MuseStoredObservation,
+  account: MuseAccount,
+): MuseRestoreResult {
+  if (stored.accountId !== account.id) {
+    return { _tag: "Rejected", reason: "account_mismatch" };
+  }
+  if (stored.sourceId !== museSourceId(account.id)) {
+    return { _tag: "Rejected", reason: "source_mismatch" };
+  }
+  const expected = account.expectedEmail?.trim().toLowerCase();
+  // Fail closed: a configured expected login must be positively matched. An
+  // absent or blank stored login is unknown identity, never a match.
+  if (expected && stored.signedInAs?.trim().toLowerCase() !== expected) {
+    return { _tag: "Rejected", reason: "identity_mismatch" };
+  }
+  return {
+    _tag: "Accepted",
+    usage: stored.usage,
+    signedInAs: stored.signedInAs ?? null,
+    cost: stored.cost ?? "unknown",
+  };
+}
+
+/** The one fixed wire/debug message for an uncategorized observation failure. */
+export const MUSE_OBSERVATION_FAILED = "The Muse observation failed.";
+
+/**
+ * Map any failure cause to fixed categorical metadata. The cause itself is
+ * never copied to the wire or debug output: arbitrary error text can carry
+ * payloads, paths, or credentials, so every cause collapses to the same
+ * fixed message regardless of its content.
+ */
+export function sanitizeMuseFailure(_cause: unknown): string {
+  return MUSE_OBSERVATION_FAILED;
+}
+
+/**
+ * One usage-limit source per subscription, so each keeps its own error row.
+ * The reported age always comes from the last successful observation; a
+ * later failed attempt updates the error only, never the age.
+ */
 export function museSourceSnapshot(state: MuseAccountState): UsageLimitSourceSnapshot {
-  const checkedAt = isoFromMs(state.usage?.observedAtMs ?? state.checkedAtMs ?? 0);
+  const checkedAt = isoFromMs(
+    state.usage?.observedAtMs ?? state.lastSuccessfulObservationAtMs ?? state.checkedAtMs ?? 0,
+  );
   const base = {
     id: `muse:${state.account.id}` as UsageLimitSourceId,
     kind: "muse" as const,

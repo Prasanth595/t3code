@@ -5,10 +5,10 @@
  * Each configured `settings.usageLimitSources` entry is polled on the
  * provider health-check interval and on every settings change, then
  * published as one snapshot per source over `subscribeServerConfig`, after
- * the No Fun Muse subscriptions `MuseUsage` reads on its own schedule. A source
+ * the passive No Fun Muse observation snapshots. A source
  * that fails keeps its row with `error` set so the user can see it is
- * configured but unreachable. Nothing is persisted: like provider status,
- * this is live state that re-derives on boot.
+ * configured but unreachable. Hub state re-derives on boot; sanitized successful
+ * Muse observations retain their original observation time across restarts.
  *
  * @module usage/UsageLimitSources
  */

@@ -1,31 +1,35 @@
-// @effect-diagnostics nodeBuiltinImport:off
 /**
  * MuseUsage - five-hour and weekly quota for the No Fun Muse subscriptions.
  *
- * Muse only learns its usage from a frame on a model response, and `muse exec`
- * never reports it, so a reading costs one tiny turn through `muse serve`: the
- * `usage/changed` notification arrives as the turn starts and the probe exits.
- * Probes run in a private `XDG_DATA_HOME` so they never land in the owner's
- * Muse session list, and only when a reading is older than `STALE_AFTER`, so
- * the background loop and every Muse job start share one budget.
+ * Passive only. Initialization, restart, inventory, and wave status never
+ * start a quota-only completion: there is no probe, no refresh timer, and no
+ * `muse serve` spawn anywhere in this module. The service restores the last
+ * sanitized observation per account from `config.stateDir` and otherwise only
+ * records observations delivered through `recordObservation`, the narrow
+ * ingestion point for useful work. No runtime caller feeds that method yet:
+ * until a passive reader delivers real observations, quota stays unknown and
+ * unknown data remains unknown.
+ *
+ * Each account keeps two timestamps: the successful observation's age (what
+ * the snapshot reports) and the last attempt (failures update only this plus
+ * sanitized error metadata). Only sanitized successful observations are
+ * persisted, bound to their account and source ids with no launchers, roots,
+ * or credentials; restore and restart reject anything bound otherwise.
  *
  * Accounts come from `~/.nofun-t3/muse-accounts.json`; without that file
- * nothing is probed, so tests and other installs never spawn Muse. Readings
- * are not persisted.
+ * usage is off and nothing is read or written.
  *
  * @module MuseUsage
  */
-import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
 import type { UsageLimitSourceSnapshot } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -33,22 +37,22 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
 import {
   NO_MUSE_ACCOUNTS,
   MuseAccountsFile,
+  MuseStoredObservation,
   MuseSubscriptionUsage,
+  museSourceId,
   museSourceSnapshot,
-  museChildEnvironment,
-  type MuseAccount,
+  restoreMuseStoredObservation,
+  sanitizeMuseFailure,
+  MuseAccount,
   type MuseAccountState,
+  type MuseObservationCost,
 } from "./museUsage.logic.ts";
 import { readNofunPersonaScope } from "./persona.ts";
-
-const STALE_AFTER = Duration.minutes(30);
-const CHECK_EVERY = "5 minutes" as const;
-const PROBE_TIMEOUT = "60 seconds" as const;
 
 export class MuseUsage extends Context.Service<
   MuseUsage,
@@ -56,150 +60,60 @@ export class MuseUsage extends Context.Service<
     /** One snapshot per configured subscription; empty on other personas. */
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
+    /**
+     * Record one passive observation for a configured account. Never spawns,
+     * never fails: a wrong-shaped payload or mismatched login keeps the old
+     * reading and lands as sanitized error metadata.
+     */
+    readonly recordObservation: (input: {
+      readonly accountId: string;
+      readonly usage: unknown;
+      readonly signedInAs?: string | null | undefined;
+      readonly cost?: MuseObservationCost | undefined;
+    }) => Effect.Effect<void>;
+    /** Record a passive-read failure without touching the stored reading. */
+    readonly recordObservationFailure: (input: {
+      readonly accountId: string;
+      readonly cause: unknown;
+    }) => Effect.Effect<void>;
   }
 >()("t3/nofun/MuseUsage") {}
 
 const decodeAccountsFile = Schema.decodeUnknownEffect(Schema.fromJsonString(MuseAccountsFile));
 const decodeUsage = Schema.decodeUnknownOption(MuseSubscriptionUsage);
+const decodeStored = Schema.decodeUnknownEffect(Schema.fromJsonString(MuseStoredObservation));
+const encodeStored = Schema.encodeEffect(Schema.fromJsonString(MuseStoredObservation));
+const sameAccountConfig = Schema.toEquivalence(MuseAccount);
 
 const expandHome = (value: string) =>
   value === "~" || value.startsWith("~/") ? `${NodeOS.homedir()}${value.slice(1)}` : value;
 
-/** UUIDv7, which MSP requires for every command id. */
-function uuidV7(nowMs: number): string {
-  const bytes = NodeCrypto.randomBytes(16);
-  const ms = BigInt(nowMs);
-  for (let index = 0; index < 6; index++)
-    bytes[index] = Number((ms >> BigInt(40 - index * 8)) & 0xffn);
-  bytes[6] = 0x70 | (bytes[6]! & 0x0f);
-  bytes[8] = 0x80 | (bytes[8]! & 0x3f);
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-/**
- * One `muse serve` session with a one-word turn, resolved by the first
- * `usage/changed`. The child is killed as soon as the reading lands, on
- * error, and on timeout; it never outlives the probe.
- */
-function probeOnce(
-  account: MuseAccount,
-  env: Record<string, string>,
-  nowMs: number,
-  onIdentity: (email: string | null) => string | null,
-) {
-  return Effect.callback<MuseSubscriptionUsage, string>((resume) => {
-    const child = NodeChildProcess.spawn(account.cliExecutable ?? "muse", ["serve"], {
-      stdio: ["pipe", "pipe", "ignore"],
-      env,
-    });
-    let settled = false;
-    const finish = (result: Effect.Effect<MuseSubscriptionUsage, string>) => {
-      if (settled) return;
-      settled = true;
-      child.kill("SIGTERM");
-      resume(result);
-    };
-    const send = (message: object) => child.stdin.write(`${JSON.stringify(message)}\n`);
-    let buffer = "";
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      buffer += chunk;
-      let newline = buffer.indexOf("\n");
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        newline = buffer.indexOf("\n");
-        let message: {
-          id?: number;
-          method?: string;
-          params?: unknown;
-          result?: { session?: { sessionId?: string }; label?: string };
-          error?: { message?: string };
-        };
-        try {
-          message = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (message.error) {
-          finish(Effect.fail(message.error.message ?? "Muse refused the usage probe."));
-          return;
-        }
-        if (message.id === 1) {
-          send({ jsonrpc: "2.0", method: "initialized" });
-          send({ jsonrpc: "2.0", id: 4, method: "account/read", params: {} });
-        } else if (message.id === 4) {
-          // Identity first, from local login metadata: a wrong account never spends a turn.
-          const refusal = onIdentity(message.result?.label ?? null);
-          if (refusal) {
-            finish(Effect.fail(refusal));
-            return;
-          }
-          send({
-            jsonrpc: "2.0",
-            id: 2,
-            method: "session/start",
-            params: { commandId: uuidV7(nowMs) },
-          });
-        } else if (message.id === 2) {
-          const sessionId = message.result?.session?.sessionId;
-          send({
-            jsonrpc: "2.0",
-            id: 3,
-            method: "turn/start",
-            params: { sessionId, commandId: uuidV7(nowMs), input: [{ type: "text", text: "ok" }] },
-          });
-        } else if (message.method === "usage/changed") {
-          const usage = decodeUsage(message.params);
-          finish(
-            usage._tag === "Some"
-              ? Effect.succeed(usage.value)
-              : Effect.fail("Muse reported usage in an unknown shape."),
-          );
-        }
-      }
-    });
-    child.on("error", (error) => finish(Effect.fail(`Could not start muse: ${error.message}`)));
-    child.on("exit", () => finish(Effect.fail("Muse exited before reporting usage.")));
-    send({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      // account/read is experimental in MSP v1.
-      params: {
-        clientInfo: { name: "t3_usage_probe", version: "1" },
-        capabilities: { experimentalApi: true },
-      },
-    });
-    return Effect.sync(() => finish(Effect.fail("Probe interrupted.")));
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: PROBE_TIMEOUT,
-      orElse: () => Effect.fail("Muse did not report usage in time."),
-    }),
-  );
-}
+const UNKNOWN_SHAPE = "Muse reported usage in an unknown shape.";
+const UNREADABLE_STORED = "The saved observation could not be read.";
+const WRONG_BINDING = "The saved observation is not bound to this account.";
+const WRONG_LOGIN = "The saved observation is signed in as a different login.";
+const WRONG_LOGIN_LIVE = "The Muse observation is signed in as a different login.";
+const UNKNOWN_IDENTITY = "The Muse observation did not report a signed-in login.";
+const STALE_OBSERVATION = "The Muse observation is older than the latest reading.";
+const FUTURE_OBSERVATION = "The Muse observation is dated in the future.";
+const PERSIST_FAILED = "The Muse observation could not be saved.";
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
-  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
 
   const accountsPath =
     process.env.NOFUN_MUSE_ACCOUNTS?.trim() ||
     path.join(NodeOS.homedir(), ".nofun-t3", "muse-accounts.json");
   const personaId = readNofunPersonaScope()?.info.id ?? "nofun";
-  const probeRoot = path.join(config.stateDir, "nofun", "muse-probe");
+  const observationsDir = path.join(config.stateDir, "nofun", "muse-usage");
 
   const statesRef = yield* Ref.make<ReadonlyArray<MuseAccountState>>([]);
   const changes = yield* Effect.acquireRelease(
     PubSub.unbounded<ReadonlyArray<UsageLimitSourceSnapshot>>(),
     PubSub.shutdown,
   );
-  const snapshots = Ref.get(statesRef).pipe(Effect.map((states) => states.map(museSourceSnapshot)));
-
   /** Accounts for this persona with `~` expanded, re-read each pass so edits need no restart. */
   const loadAccounts = fileSystem.readFileString(accountsPath).pipe(
     Effect.flatMap(decodeAccountsFile),
@@ -219,82 +133,234 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // One pass at a time, so a job start and the loop never probe one account twice.
-  const lock = yield* Semaphore.make(1);
-  const refreshStale = Effect.gen(function* () {
+  const storedPath = (accountId: string) =>
+    path.join(observationsDir, `${accountId.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`);
+
+  const blank = (account: MuseAccount, error: string | null): MuseAccountState => ({
+    account,
+    signedInAs: null,
+    usage: null,
+    error,
+    checkedAtMs: null,
+    lastRefreshAttemptAtMs: null,
+    lastSuccessfulObservationAtMs: null,
+    observationCost: "unknown",
+  });
+
+  /** Restore one account's sanitized observation; rejects stay sanitized. */
+  const restoreAccount = (account: MuseAccount) =>
+    Effect.gen(function* () {
+      const text = yield* fileSystem.readFileString(storedPath(account.id)).pipe(Effect.option);
+      if (Option.isNone(text)) return blank(account, null);
+      const decoded = yield* decodeStored(text.value).pipe(Effect.option);
+      if (Option.isNone(decoded)) return blank(account, UNREADABLE_STORED);
+      const restored = restoreMuseStoredObservation(decoded.value, account);
+      if (restored._tag === "Rejected") {
+        return blank(
+          account,
+          restored.reason === "identity_mismatch" ? WRONG_LOGIN : WRONG_BINDING,
+        );
+      }
+      return {
+        account,
+        signedInAs: restored.signedInAs,
+        usage: restored.usage,
+        error: null,
+        checkedAtMs: null,
+        lastRefreshAttemptAtMs: null,
+        lastSuccessfulObservationAtMs: restored.usage.observedAtMs,
+        observationCost: restored.cost,
+      } satisfies MuseAccountState;
+    });
+
+  const publish = (next: ReadonlyArray<MuseAccountState>) =>
+    Ref.set(statesRef, next).pipe(
+      Effect.andThen(PubSub.publish(changes, next.map(museSourceSnapshot))),
+      Effect.asVoid,
+    );
+
+  // Every observation mutation (and the account reconciliation it depends
+  // on) runs under one permit, so concurrent accounts or failures can never
+  // read-modify-write the shared state list and lose each other's update.
+  const mutationLock = yield* Semaphore.make(1);
+
+  /**
+   * Re-read the accounts file and reconcile cached state with it: removed
+   * accounts drop out, new accounts restore, and any account whose config
+   * changed is blanked instead of relabeling its cached reading under new
+   * identity or root bindings. Caller must hold `mutationLock`.
+   */
+  const reconcileUnlocked: Effect.Effect<ReadonlyArray<MuseAccount>> = Effect.gen(function* () {
     const accounts = yield* loadAccounts;
     const previous = yield* Ref.get(statesRef);
-    const now = yield* Clock.currentTimeMillis;
     const next: MuseAccountState[] = [];
+    let changed = false;
     for (const account of accounts) {
       const prior = previous.find((state) => state.account.id === account.id);
-      const fresh =
-        prior?.checkedAtMs !== null &&
-        prior?.checkedAtMs !== undefined &&
-        now - prior.checkedAtMs < Duration.toMillis(STALE_AFTER);
-      if (prior && fresh) {
-        next.push({ ...prior, account });
-        continue;
-      }
-      // Probe sessions go to a private data root; a launcher that pins its
-      // own roots keeps them in that account's data root instead.
-      const dataHome = path.join(probeRoot, account.id.replace(/[^a-zA-Z0-9_-]/g, "_"));
-      yield* fileSystem.makeDirectory(dataHome, { recursive: true }).pipe(Effect.ignore);
-      let signedInAs: string | null = prior?.signedInAs ?? null;
-      const childEnv = museChildEnvironment(account, process.env, dataHome);
-      const result =
-        "refused" in childEnv
-          ? ({ _tag: "Failure", failure: childEnv.refused } as const)
-          : yield* probeOnce(account, childEnv.env, now, (email) => {
-              signedInAs = email;
-              const expected = account.expectedEmail?.toLowerCase();
-              return expected && email?.toLowerCase() !== expected
-                ? `Signed in as ${email ?? "nobody"}, expected ${account.expectedEmail}.`
-                : null;
-            }).pipe(Effect.result);
-      const checkedAtMs = yield* Clock.currentTimeMillis;
-      next.push(
-        result._tag === "Success"
-          ? { account, signedInAs, usage: result.success, error: null, checkedAtMs }
-          : {
-              account,
-              signedInAs,
-              // Keep the last good bars and say the refresh failed.
-              usage: prior?.usage ?? null,
-              error: result.failure,
-              checkedAtMs,
-            },
-      );
-      if (result._tag === "Failure") {
-        yield* Effect.logDebug("muse usage probe failed", {
-          account: account.id,
-          cause: result.failure,
-        });
+      if (!prior) {
+        next.push(yield* restoreAccount(account));
+        changed = true;
+      } else if (!sameAccountConfig(prior.account, account)) {
+        next.push(blank(account, null));
+        changed = true;
+      } else {
+        next.push(prior);
       }
     }
-    yield* Ref.set(statesRef, next);
-    yield* PubSub.publish(changes, next.map(museSourceSnapshot));
-    return next;
-  }).pipe(lock.withPermits(1));
+    if (previous.some((state) => !accounts.some((a) => a.id === state.account.id))) {
+      changed = true;
+    }
+    if (changed) yield* publish(next);
+    return accounts;
+  });
 
-  // Like the hub sources: one read at boot, before any client holds a
-  // lease, then only while a client wants provider status.
-  yield* refreshStale.pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
-  yield* Effect.forever(
-    Effect.sleep(CHECK_EVERY).pipe(
-      Effect.andThen(backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })),
-      Effect.flatMap((shouldRun) => (shouldRun ? refreshStale : Effect.void)),
-      Effect.ignoreCause({ log: true }),
-    ),
-  ).pipe(Effect.forkScoped);
+  const currentSnapshots: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>> =
+    mutationLock.withPermits(1)(
+      reconcileUnlocked.pipe(
+        Effect.andThen(Ref.get(statesRef)),
+        Effect.map((states) => states.map(museSourceSnapshot)),
+      ),
+    );
+
+  const withAccount = (
+    accountId: string,
+    update: (
+      account: MuseAccount,
+      prior: MuseAccountState | undefined,
+      now: number,
+    ) => Effect.Effect<MuseAccountState, never, never>,
+  ): Effect.Effect<void> =>
+    mutationLock.withPermits(1)(
+      Effect.gen(function* () {
+        const accounts = yield* reconcileUnlocked;
+        const account = accounts.find((entry) => entry.id === accountId);
+        // Unknown data remains unknown: nothing configured, nothing recorded.
+        if (!account) return;
+        const previous = yield* Ref.get(statesRef);
+        const now = yield* Clock.currentTimeMillis;
+        const prior = previous.find((state) => state.account.id === account.id);
+        const next = yield* update(account, prior, now);
+        const rest = previous.filter((state) => state.account.id !== account.id);
+        yield* publish([...rest, next]);
+      }),
+    );
+
+  /** Persist one sanitized success atomically; false means unpersisted. */
+  const persist = (stored: MuseStoredObservation, account: MuseAccount) =>
+    encodeStored(stored).pipe(
+      Effect.flatMap((contents) =>
+        writeFileStringAtomically({
+          filePath: storedPath(account.id),
+          contents,
+        }),
+      ),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.as(true),
+      Effect.catch(() =>
+        Effect.logDebug("Muse observation could not be persisted.", {
+          account: account.id,
+        }).pipe(Effect.as(false)),
+      ),
+    );
+
+  const recordObservation: MuseUsage["Service"]["recordObservation"] = (input) =>
+    withAccount(input.accountId, (account, prior, now) =>
+      Effect.gen(function* () {
+        // Every rejected attempt advances only the attempt timestamp; the
+        // last successful reading and its age stay exactly as they were.
+        const rejected = (error: string): MuseAccountState => ({
+          account,
+          signedInAs: prior?.signedInAs ?? null,
+          usage: prior?.usage ?? null,
+          error,
+          checkedAtMs: now,
+          lastRefreshAttemptAtMs: now,
+          lastSuccessfulObservationAtMs: prior?.lastSuccessfulObservationAtMs ?? null,
+          observationCost: prior?.observationCost ?? "unknown",
+        });
+        const decoded = decodeUsage(input.usage);
+        if (Option.isNone(decoded)) return rejected(UNKNOWN_SHAPE);
+        const usage = decoded.value;
+        // Identity is fail-closed: with an expected login configured, only
+        // a positively matching reported login is trusted. An absent login
+        // is unknown identity and never inherits the prior login.
+        const expected = account.expectedEmail?.trim().toLowerCase();
+        const reported = input.signedInAs?.trim() ? input.signedInAs : null;
+        if (expected) {
+          if (!reported) return rejected(UNKNOWN_IDENTITY);
+          if (reported.trim().toLowerCase() !== expected) return rejected(WRONG_LOGIN_LIVE);
+        }
+        const signedInAs = reported ?? prior?.signedInAs ?? null;
+        // A future or older reading never replaces a fresher known success.
+        if (usage.observedAtMs > now) return rejected(FUTURE_OBSERVATION);
+        const priorSuccessAt =
+          prior?.lastSuccessfulObservationAtMs ?? prior?.usage?.observedAtMs ?? null;
+        if (priorSuccessAt !== null && usage.observedAtMs < priorSuccessAt) {
+          return rejected(STALE_OBSERVATION);
+        }
+        // Cost is unknown unless the caller supplies provenance evidence;
+        // being delivered to this ingestion point proves nothing by itself.
+        const cost = input.cost ?? "unknown";
+        const persisted = yield* persist(
+          {
+            version: 1,
+            accountId: account.id,
+            sourceId: museSourceId(account.id),
+            usage,
+            ...(signedInAs ? { signedInAs } : {}),
+            cost,
+            recordedAtMs: now,
+          },
+          account,
+        );
+        return {
+          account,
+          signedInAs,
+          usage,
+          // An unpersisted reading stays visible in memory but is visibly
+          // classified as unsaved, so a restart will not present it as kept.
+          error: persisted ? null : PERSIST_FAILED,
+          checkedAtMs: now,
+          lastRefreshAttemptAtMs: now,
+          lastSuccessfulObservationAtMs: usage.observedAtMs,
+          observationCost: cost,
+        } satisfies MuseAccountState;
+      }),
+    );
+
+  const recordObservationFailure: MuseUsage["Service"]["recordObservationFailure"] = (input) =>
+    withAccount(input.accountId, (account, prior, now) =>
+      Effect.succeed({
+        account,
+        signedInAs: prior?.signedInAs ?? null,
+        usage: prior?.usage ?? null,
+        error: sanitizeMuseFailure(input.cause),
+        checkedAtMs: now,
+        lastRefreshAttemptAtMs: now,
+        lastSuccessfulObservationAtMs: prior?.lastSuccessfulObservationAtMs ?? null,
+        observationCost: prior?.observationCost ?? "unknown",
+      } satisfies MuseAccountState),
+    );
+
+  // One passive restore at boot, before any client holds a lease. Restoring
+  // never spawns: it only reads sanitized files under `config.stateDir`.
+  const accounts = yield* loadAccounts;
+  const restored: MuseAccountState[] = [];
+  for (const account of accounts) {
+    restored.push(yield* restoreAccount(account));
+  }
+  yield* Ref.set(statesRef, restored);
 
   return {
-    current: snapshots,
+    current: currentSnapshots,
+    recordObservation,
+    recordObservationFailure,
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {
           const subscription = yield* PubSub.subscribe(changes);
-          const snapshot = yield* snapshots;
+          const snapshot = yield* currentSnapshots;
           return Stream.concat(Stream.make(snapshot), Stream.fromSubscription(subscription));
         }),
       );

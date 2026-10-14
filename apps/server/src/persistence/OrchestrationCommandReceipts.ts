@@ -6,7 +6,14 @@
  *
  * @module OrchestrationCommandReceiptRepository
  */
-import { CommandId, IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  IsoDateTime,
+  MissionId,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as Context from "effect/Context";
@@ -22,13 +29,14 @@ import {
 
 export const OrchestrationCommandReceipt = Schema.Struct({
   commandId: CommandId,
-  aggregateKind: Schema.Literals(["project", "thread"]),
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateKind: Schema.Literals(["project", "thread", "mission"]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, MissionId]),
   commandType: Schema.String,
   acceptedAt: IsoDateTime,
   resultSequence: NonNegativeInt,
   status: Schema.Literals(["accepted", "rejected"]),
   error: Schema.NullOr(Schema.String),
+  requestHash: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type OrchestrationCommandReceipt = typeof OrchestrationCommandReceipt.Type;
 
@@ -83,7 +91,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           accepted_at,
           result_sequence,
           status,
-          error
+          error,
+          request_hash
         )
         VALUES (
           ${receipt.commandId},
@@ -93,7 +102,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           ${receipt.acceptedAt},
           ${receipt.resultSequence},
           ${receipt.status},
-          ${receipt.error}
+          ${receipt.error},
+          ${receipt.requestHash ?? null}
         )
         ON CONFLICT (command_id)
         DO UPDATE SET
@@ -103,7 +113,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           accepted_at = excluded.accepted_at,
           result_sequence = excluded.result_sequence,
           status = excluded.status,
-          error = excluded.error
+          error = excluded.error,
+          request_hash = excluded.request_hash
       `,
   });
 
@@ -120,7 +131,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           accepted_at AS "acceptedAt",
           result_sequence AS "resultSequence",
           status,
-          error
+          error,
+          request_hash AS "requestHash"
         FROM orchestration_command_receipts
         WHERE command_id = ${commandId}
       `,
@@ -143,7 +155,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
         accepted_at,
         result_sequence,
         status,
-        error
+        error,
+        request_hash
       )
       VALUES (
         ${receipt.commandId},
@@ -153,7 +166,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
         ${receipt.acceptedAt},
         ${receipt.resultSequence},
         ${receipt.status},
-        ${receipt.error}
+        ${receipt.error},
+        ${receipt.requestHash ?? null}
       )
       ON CONFLICT(command_id) DO NOTHING
       RETURNING command_id
@@ -168,6 +182,13 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
     input,
   ) =>
     findReceiptByCommandId(input).pipe(
+      Effect.map(
+        Option.map((receipt) => {
+          if (receipt.requestHash != null) return receipt;
+          const { requestHash: _unused, ...legacy } = receipt;
+          return legacy;
+        }),
+      ),
       Effect.mapError(
         toPersistenceSqlError("OrchestrationCommandReceiptRepository.getByCommandId:query"),
       ),

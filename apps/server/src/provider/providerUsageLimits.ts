@@ -82,6 +82,10 @@ export function applyUsageLimitsUpdate(input: {
       ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
+      // A percent-only turn update must not strip the probe's model scope.
+      ...(window.appliesToModel === undefined && existing?.appliesToModel !== undefined
+        ? { appliesToModel: existing.appliesToModel }
+        : {}),
     };
     if (existing === undefined || !usageWindowEquals(existing, next)) {
       merged.set(window.id, next);
@@ -104,7 +108,8 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.label === b.label &&
     a.usedPercent === b.usedPercent &&
     a.resetsAt === b.resetsAt &&
-    a.windowDurationMins === b.windowDurationMins
+    a.windowDurationMins === b.windowDurationMins &&
+    a.appliesToModel === b.appliesToModel
   );
 }
 

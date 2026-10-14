@@ -12,16 +12,24 @@ const window = (
   usedPercent: number,
   resetsInMinutes: number,
   label: string = kind,
+  extra?: Partial<ServerProviderUsageWindow>,
 ): ServerProviderUsageWindow => ({
   id: `${kind}-${label}`,
   kind,
   label,
   usedPercent,
   resetsAt: at(resetsInMinutes),
+  ...extra,
 });
 
 const limits = (...windows: ServerProviderUsageWindow[]) => ({
   checkedAt: at(0),
+  windows,
+});
+
+const staleLimits = (...windows: ServerProviderUsageWindow[]) => ({
+  // Observed two hours ago; any reset since then has passed unseen.
+  checkedAt: at(-120),
   windows,
 });
 
@@ -51,16 +59,79 @@ describe("usageHeadroom", () => {
     );
   });
 
-  it("does not hold back a pool that resets within the hour", () => {
-    expect(usageHeadroom(limits(window("monthly", 100, 20)), NOW).headroom).toBe("ok");
+  it("keeps a spent pool exhausted even when it resets in 40 minutes", () => {
+    expect(usageHeadroom(limits(window("monthly", 100, 40)), NOW).headroom).toBe("exhausted");
   });
 
-  it("ignores per-model weekly windows", () => {
+  it("keeps a low pool low even when it resets in 40 minutes", () => {
+    const result = usageHeadroom(limits(window("weekly", 90, 40)), NOW);
+    expect(result.headroom).toBe("low");
+    expect(result.summary).toBe("weekly 10% left (resets in 40m)");
+  });
+
+  it("never rounds 99.6% used into exhaustion", () => {
+    const result = usageHeadroom(limits(window("weekly", 99.6, 600)), NOW);
+    expect(result.headroom).toBe("low");
+    expect(result.summary).toBe("weekly 0% left (resets in 10h 0m)");
+  });
+
+  it("reads a reset that passed since the last check as stale, not replenished", () => {
+    // Healthy numbers, but the reset passed an hour ago and nobody has
+    // observed the window since: this may be empty or full.
+    const result = usageHeadroom(staleLimits(window("session", 10, -60)), NOW);
+    expect(result).toEqual({
+      headroom: "unknown",
+      summary: "usage observation is stale or unavailable",
+    });
+  });
+
+  it("trusts a reset that passed when the observation postdates it", () => {
+    const result = usageHeadroom(
+      { checkedAt: at(-30), windows: [window("session", 10, -60)] },
+      NOW,
+    );
+    expect(result.headroom).toBe("ok");
+  });
+
+  it("gates unscoped windows whatever their label punctuation is", () => {
     const result = usageHeadroom(
       limits(window("weekly", 10, 900), window("weekly", 99, 900, "Weekly · Opus")),
       NOW,
     );
-    expect(result.headroom).toBe("ok");
+    expect(result.headroom).toBe("low");
+  });
+
+  it("gates a model-scoped window only for its model", () => {
+    const scoped = window("weekly", 100, 900, "Weekly · Fable", {
+      id: "seven_day_fable",
+      appliesToModel: "Fable",
+    });
+    const account = limits(window("session", 4, 200, "session"), window("weekly", 10, 900));
+    const withScoped = { checkedAt: at(0), windows: [...account.windows, scoped] };
+    // The spent model window blocks its own model and the model-absent call.
+    expect(usageHeadroom(withScoped, NOW, { model: "Fable" }).headroom).toBe("exhausted");
+    expect(usageHeadroom(withScoped, NOW, { model: "claude-fable-5-1" }).headroom).toBe(
+      "exhausted",
+    );
+    expect(usageHeadroom(withScoped, NOW, { model: "claude-sonnet-5-5" }).headroom).toBe("ok");
+    expect(usageHeadroom(withScoped, NOW).headroom).toBe("exhausted");
+    // A different model only answers to the healthy account-wide windows.
+    const other = usageHeadroom(withScoped, NOW, { model: "Sonnet" });
+    expect(other.headroom).toBe("ok");
+    expect(other.summary).toBe(
+      "5h 96% left (resets in 3h 20m) · weekly 90% left (resets in 15h 0m)",
+    );
+  });
+
+  it("is unknown when the selected model has no applicable windows", () => {
+    const scoped = window("weekly", 100, 900, "Weekly · Fable", {
+      id: "seven_day_fable",
+      appliesToModel: "Fable",
+    });
+    expect(usageHeadroom(limits(scoped), NOW, { model: "Sonnet" })).toEqual({
+      headroom: "unknown",
+      summary: "no usage windows apply to Sonnet",
+    });
   });
 
   it("is unknown when the provider reports no windows", () => {
@@ -68,5 +139,39 @@ describe("usageHeadroom", () => {
       headroom: "unknown",
       summary: "usage not reported",
     });
+  });
+
+  it("requires a current observation even when reset is still in the future", () => {
+    expect(usageHeadroom(staleLimits(window("weekly", 10, 900)), NOW).headroom).toBe("unknown");
+    expect(
+      usageHeadroom({ checkedAt: at(5), windows: [window("weekly", 10, 900)] }, NOW).headroom,
+    ).toBe("unknown");
+    expect(
+      usageHeadroom({ checkedAt: at(-10), windows: [window("weekly", 10, 900)] }, NOW, {
+        maxObservationAgeMs: 5 * 60_000,
+      }).headroom,
+    ).toBe("unknown");
+  });
+
+  it("does not assume replenishment when a recent observation predates an elapsed reset", () => {
+    expect(
+      usageHeadroom({ checkedAt: at(-10), windows: [window("session", 10, -5)] }, NOW),
+    ).toEqual({
+      headroom: "unknown",
+      summary: "usage stale (a window reset since the last check)",
+    });
+  });
+
+  it("is unknown when the probe failed, never an implicit ok", () => {
+    expect(
+      usageHeadroom(
+        {
+          checkedAt: at(0),
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        },
+        NOW,
+      ),
+    ).toEqual({ headroom: "unknown", summary: "usage not reported" });
   });
 });

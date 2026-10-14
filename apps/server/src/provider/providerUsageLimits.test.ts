@@ -62,6 +62,56 @@ describe("applyUsageLimitsUpdate", () => {
     ).toBe(published);
   });
 
+  it("keeps the probe's model scope when a turn update omits it", () => {
+    const scoped = {
+      id: "seven_day_fable",
+      kind: "weekly",
+      label: "Weekly · Fable",
+      usedPercent: 40,
+      windowDurationMins: 10_080,
+      appliesToModel: "Fable",
+    } as const;
+    const next = applyUsageLimitsUpdate({
+      previous: { checkedAt, windows: [scoped] },
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: {
+        windows: [
+          {
+            id: "seven_day_fable",
+            kind: "weekly",
+            label: "Weekly · Fable",
+            usedPercent: 55,
+          },
+        ],
+      },
+    });
+    expect(next?.windows).toEqual([{ ...scoped, usedPercent: 55 }]);
+  });
+
+  it("treats a changed model scope as a changed window", () => {
+    const scoped = {
+      id: "seven_day_fable",
+      kind: "weekly",
+      label: "Weekly · Fable",
+      usedPercent: 40,
+      windowDurationMins: 10_080,
+      appliesToModel: "Fable",
+    } as const;
+    const previous = { checkedAt, windows: [scoped] };
+    // Same numbers, different scope: not the identical snapshot.
+    const rescoped = applyUsageLimitsUpdate({
+      previous,
+      checkedAt,
+      update: { windows: [{ ...scoped, appliesToModel: "Ghost" }] },
+    });
+    expect(rescoped).not.toBe(previous);
+    expect(rescoped?.windows).toEqual([{ ...scoped, appliesToModel: "Ghost" }]);
+    // Same numbers, same scope: the identical snapshot.
+    expect(
+      applyUsageLimitsUpdate({ previous, checkedAt, update: { windows: [{ ...scoped }] } }),
+    ).toBe(previous);
+  });
+
   it("preserves reset credits when a streamed window update changes usage", () => {
     const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
     const next = applyUsageLimitsUpdate({

@@ -76,6 +76,10 @@ function scopedWindow(
     windowDurationMins: WEEK_MINS,
     usedPercent: clampPercent(usedPercent),
     ...(resetsAt ? { resetsAt } : {}),
+    // Typed applicability for headroom routing: this row constrains only
+    // the named model family. The name comes from the source payload's
+    // `model_scoped[].display_name`, never from label punctuation.
+    appliesToModel: displayName,
   };
 }
 

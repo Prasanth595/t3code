@@ -1,6 +1,12 @@
+import { ServerProviderUsageLimits } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
+
+const encodeLimits = Schema.encodeUnknownSync(ServerProviderUsageLimits);
+
+const decodeLimits = Schema.decodeUnknownSync(ServerProviderUsageLimits);
 
 const checkedAt = "2026-07-18T10:00:00.000Z";
 const noNames = { overageIncluded: undefined } as const;
@@ -61,6 +67,7 @@ describe("claudeUsageResponseToLimits", () => {
             usedPercent: 73,
             windowDurationMins: 10080,
             resetsAt: "2026-07-24T08:59:00.000Z",
+            appliesToModel: "Fable",
           },
         ],
       },
@@ -84,6 +91,29 @@ describe("claudeUsageResponseToLimits", () => {
         },
       }).names,
     ).toEqual({ overageIncluded: "Fable" });
+  });
+
+  it("round-trips the model scope through the wire schema", () => {
+    const { limits } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 54, resets_at: "2026-07-18T14:39:00Z" },
+          ...({
+            model_scoped: [
+              { display_name: "Fable", utilization: 73, resets_at: "2026-07-24T08:59:00Z" },
+            ],
+          } as object),
+        },
+      },
+    });
+    // What the server publishes is what a client decodes: the scope must
+    // survive JSON and the schema, while account-wide windows stay unscoped.
+    const wire = JSON.parse(JSON.stringify(limits)) as unknown;
+    const decoded = decodeLimits(wire);
+    expect(decoded.windows.map((window) => window.appliesToModel)).toEqual([undefined, "Fable"]);
+    expect((encodeLimits(decoded) as typeof limits).windows).toEqual(limits.windows);
   });
 
   it("reports API key and Bedrock accounts as unsupported", () => {
@@ -161,6 +191,7 @@ describe("claudeRateLimitEventToUpdate", () => {
           label: "Weekly · Fable",
           usedPercent: 40,
           windowDurationMins: 10080,
+          appliesToModel: "Fable",
         },
       ],
     });
