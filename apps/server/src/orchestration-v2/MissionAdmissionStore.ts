@@ -19,6 +19,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -112,9 +113,26 @@ export type MissionAdmissionReserveResult = Result.Result<
   MissionAdmissionRejection
 >;
 
+const preparedAdmission: unique symbol = Symbol("PreparedMissionAdmission");
+
+/**
+ * Produced only by prepare, with trusted observations already captured. The
+ * bound effect performs canonical checks and reservation using only sqlClient;
+ * it never reads the facts port, dispatches, or prepares a worktree. EventSink
+ * may run it as a savepoint within that SAME client's owning transaction.
+ */
+export interface PreparedMissionAdmission {
+  readonly [preparedAdmission]: true;
+  readonly sqlClient: SqlClient.SqlClient;
+  readonly reserve: Effect.Effect<MissionAdmissionReserveResult, MissionAdmissionStoreError>;
+}
+
 export class MissionAdmissionStore extends Context.Service<
   MissionAdmissionStore,
   {
+    readonly prepare: (
+      request: MissionAdmissionRequest,
+    ) => Effect.Effect<PreparedMissionAdmission, MissionAdmissionStoreError>;
     readonly reserve: (
       request: MissionAdmissionRequest,
     ) => Effect.Effect<MissionAdmissionReserveResult, MissionAdmissionStoreError>;
@@ -554,9 +572,16 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const reserve = Effect.fn("MissionAdmissionStore.reserve")(function* (
+  const prepare = Effect.fn("MissionAdmissionStore.prepare")(function* (
     request: MissionAdmissionRequest,
-  ): Effect.fn.Return<MissionAdmissionReserveResult, MissionAdmissionStoreError> {
+  ): Effect.fn.Return<PreparedMissionAdmission, MissionAdmissionStoreError> {
+    // Preparation can probe external facts, so it must precede any transaction.
+    if (Option.isSome(yield* Effect.serviceOption(sql.transactionService))) {
+      return yield* new MissionAdmissionStoreError({
+        operation: "reserve",
+        category: "persistence",
+      });
+    }
     // The authenticated runtime scope wins; request payloads cannot widen it.
     if (
       request.mission.teamId !== authority.teamId ||
@@ -569,22 +594,53 @@ const make = Effect.gen(function* () {
     }
     // Trusted observations are read before the transaction; no provider
     // dispatch, worktree preparation, or network happens inside it.
-    const trusted = yield* factsPort.readFacts(request);
-    const runOnce = () =>
-      sql.withTransaction(reserveTransaction(trusted, request)).pipe(Effect.mapError(toStoreError));
-    const first = yield* runOnce().pipe(Effect.result);
-    if (Result.isFailure(first)) {
-      // A lost CAS race or receipt collision means a concurrent reservation
-      // won; reread once so an exact duplicate recovers instead of failing.
-      if (first.failure.category !== "request_conflict") return yield* first.failure;
-      const second = yield* runOnce().pipe(Effect.result);
-      if (Result.isFailure(second)) return yield* second.failure;
-      return second.success;
-    }
-    return first.success;
+    // Bind snapshots rather than retaining mutable caller/port objects. Start
+    // the clock before observations so slow preparation cannot extend freshness.
+    const preparedAtMs = yield* Clock.currentTimeMillis;
+    const boundRequest = structuredClone(request);
+    const trusted = structuredClone(yield* factsPort.readFacts(boundRequest));
+    const reserve = Effect.gen(function* () {
+      const runOnce = () =>
+        sql
+          .withTransaction(
+            Effect.gen(function* () {
+              // Read time after acquiring the transaction, including any lock wait.
+              const nowMs = yield* Clock.currentTimeMillis;
+              if (!Number.isFinite(nowMs) || nowMs < preparedAtMs) {
+                return yield* new MissionAdmissionStoreError({
+                  operation: "reserve",
+                  category: "persistence",
+                });
+              }
+              return yield* reserveTransaction(
+                { ...trusted, nowMs: trusted.nowMs + (nowMs - preparedAtMs) },
+                boundRequest,
+              );
+            }),
+          )
+          .pipe(Effect.mapError(toStoreError));
+      const first = yield* runOnce().pipe(Effect.result);
+      if (Result.isFailure(first)) {
+        // A lost CAS race or receipt collision means a concurrent reservation
+        // won; reread once so an exact duplicate recovers instead of failing.
+        if (first.failure.category !== "request_conflict") return yield* first.failure;
+        const second = yield* runOnce().pipe(Effect.result);
+        if (Result.isFailure(second)) return yield* second.failure;
+        return second.success;
+      }
+      return first.success;
+    });
+    return { [preparedAdmission]: true, sqlClient: sql, reserve };
   });
 
-  return MissionAdmissionStore.of({ reserve });
+  const reserve = Effect.fn("MissionAdmissionStore.reserve")(function* (
+    request: MissionAdmissionRequest,
+  ) {
+    const prepared = yield* prepare(request);
+    return yield* prepared.reserve;
+  });
+
+  return MissionAdmissionStore.of({ prepare, reserve });
 });
 
 export const layer = Layer.effect(MissionAdmissionStore, make);

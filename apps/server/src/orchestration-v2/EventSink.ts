@@ -11,12 +11,14 @@ import {
   type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -32,6 +34,7 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import type { PreparedMissionAdmission } from "./MissionAdmissionStore.ts";
 
 /**
  * ERRORS
@@ -66,6 +69,25 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
+
+/** One canonical admission is paired with exactly one target command identity. */
+export const missionBoundCommandId = (input: {
+  readonly dispatchKey: string;
+  readonly threadId: ThreadId;
+  readonly commandType: string;
+}): CommandId => CommandId.make(`mission-dispatch:${stableStringify(input)}`);
+
+class MissionAdmissionGateError extends Schema.TaggedError<MissionAdmissionGateError>()(
+  "MissionAdmissionGateError",
+  {
+    commandId: CommandId,
+    category: Schema.Literals(["different_database", "outer_transaction", "receipt_conflict"]),
+  },
+) {
+  override get message(): string {
+    return `Mission admission command pairing failed (${this.category}).`;
+  }
+}
 
 /**
  * SERVICE DEFINITION
@@ -126,6 +148,14 @@ export interface EventSinkV2Shape {
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
+    /**
+     * Internal opt-in: prepared outside SQL, reserved inside this owning commit.
+     * No facts/probes/network callbacks may execute in the transaction. Public
+     * dispatch wiring remains pending: Orchestrator currently returns prior
+     * receipts before reaching the sink. That entrypoint must also capture the
+     * server-controlled prompt/options and actual command bytes before prepare.
+     */
+    readonly missionAdmission?: PreparedMissionAdmission;
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
@@ -527,8 +557,60 @@ const layerBase: Layer.Layer<
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
+      if (input.missionAdmission !== undefined) {
+        if (input.missionAdmission.sqlClient !== sql) {
+          return yield* new MissionAdmissionGateError({
+            commandId: input.commandId,
+            category: "different_database",
+          });
+        }
+        if (Option.isSome(yield* Effect.serviceOption(sql.transactionService))) {
+          return yield* new MissionAdmissionGateError({
+            commandId: input.commandId,
+            category: "outer_transaction",
+          });
+        }
+      }
       const result = yield* commitThenPublish(
         Effect.gen(function* () {
+          // Reserve before any thread/shared intent, even on exact replay. A
+          // recovered mission receipt is retrieval, never permission to launch.
+          const admission =
+            input.missionAdmission === undefined
+              ? undefined
+              : yield* input.missionAdmission.reserve;
+          if (admission !== undefined && Result.isFailure(admission)) {
+            return yield* admission.failure;
+          }
+          if (admission !== undefined && Result.isSuccess(admission)) {
+            if (input.commandId !== missionBoundCommandId({
+              dispatchKey: admission.success.receipt.dispatchKey,
+              threadId: input.threadId,
+              commandType: input.commandType,
+            })) return yield* new MissionAdmissionGateError({ commandId: input.commandId, category: "receipt_conflict" });
+            const prior = yield* commandReceipts.getByCommandId(input.commandId);
+            if (
+              Option.isSome(prior) &&
+              (prior.value.threadId !== input.threadId ||
+                prior.value.commandType !== input.commandType ||
+                prior.value.status !== "accepted")
+            ) {
+              return yield* new MissionAdmissionGateError({
+                commandId: input.commandId,
+                category: "receipt_conflict",
+              });
+            }
+            if (admission.success.recovered !== Option.isSome(prior)) {
+              return yield* new MissionAdmissionGateError({
+                commandId: input.commandId,
+                category: "receipt_conflict",
+              });
+            }
+            if (admission.success.recovered) {
+              const existing = yield* existingCommandResult(input.commandId);
+              return { ...existing, committed: false as const, cancelledEffectIds: [] };
+            }
+          }
           const reserved = yield* commandReceipts.insertIfAbsent({
             commandId: input.commandId,
             threadId: input.threadId,
@@ -539,6 +621,12 @@ const layerBase: Layer.Layer<
             error: null,
           });
           if (!reserved) {
+            if (admission !== undefined) {
+              return yield* new MissionAdmissionGateError({
+                commandId: input.commandId,
+                category: "receipt_conflict",
+              });
+            }
             const existing = yield* existingCommandResult(input.commandId);
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }

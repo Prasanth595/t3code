@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as EventStore from "../persistence/OrchestrationEventStore.ts";
 import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
@@ -234,6 +235,95 @@ const rejectionCode = (
 };
 
 describe("MissionAdmissionStore", () => {
+  it.effect("binds prepared request and facts snapshots without rereading the port", () => {
+    const facts = trustedFacts();
+    const h = harness(() => facts);
+    return Effect.gen(function* () {
+      const mission = missionFixture("mission-1", "task-a");
+      const request = requestFor(mission);
+      yield* seed(mission);
+      const store = yield* MissionAdmissionStore.MissionAdmissionStore;
+      const prepared = yield* store.prepare(request);
+      Object.assign(request, { promptHash: "caller-mutated" });
+      Object.assign(facts.route, { modelId: "caller-mutated" });
+      const reserved = ok(yield* prepared.reserve);
+      Object.assign(facts.route, { modelId: "model-a" });
+      const original = requestFor(mission);
+      const replay = ok(yield* store.reserve(original));
+      assert.deepStrictEqual(reserved.receipt, replay.receipt);
+      assert.strictEqual(reserved.receipt.chosenRoute.modelId, "model-a");
+      assert.isFalse(replay.dispatchAuthorized);
+    }).pipe(Effect.provide(memory(h)));
+  });
+
+  it.effect("refuses preparation inside a transaction before reading trusted facts", () => {
+    const h = harness(() => trustedFacts());
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const store = yield* MissionAdmissionStore.MissionAdmissionStore;
+      assert.isTrue(
+        Result.isFailure(
+          yield* sql
+            .withTransaction(store.prepare(requestFor(missionFixture("mission-1", "task-a"))))
+            .pipe(Effect.result),
+        ),
+      );
+      assert.strictEqual(h.calls.count, 0);
+    }).pipe(Effect.provide(memory(h)));
+  });
+
+  it.effect("prepares without writes and ages observations before reservation", () => {
+    const h = harness(() => trustedFacts({ maxFactAgeMs: 10_000 }));
+    return Effect.gen(function* () {
+      const mission = missionFixture("mission-1", "task-a");
+      yield* seed(mission);
+      const store = yield* MissionAdmissionStore.MissionAdmissionStore;
+      const prepared = yield* store.prepare(requestFor(mission));
+      const events = yield* EventStore.OrchestrationEventStore;
+      assert.lengthOf(yield* events.readMissionEvents(mission.id), 1);
+      yield* TestClock.adjust(10_001);
+      assert.strictEqual(rejectionCode(yield* prepared.reserve), "account_mismatch");
+      assert.strictEqual(h.calls.count, 1);
+      assert.lengthOf(yield* events.readMissionEvents(mission.id), 1);
+    }).pipe(Effect.provide(memory(h)));
+  });
+
+  it.effect("expires a prepared one-use exception before it can be consumed", () =>
+    Effect.gen(function* () {
+      const mission = missionFixture("mission-1", "task-a");
+      yield* seed(mission);
+      const store = yield* MissionAdmissionStore.MissionAdmissionStore;
+      const prepared = yield* store.prepare(requestFor(mission));
+      yield* TestClock.adjust(1_001);
+      assert.strictEqual(rejectionCode(yield* prepared.reserve), "usage_unknown");
+      const service = yield* MissionService.MissionService;
+      const current = Option.getOrThrow(yield* service.get(mission.id));
+      assert.strictEqual(current.revision, 0);
+      assert.strictEqual(current.execution, undefined);
+    }).pipe(
+      Effect.provide(
+        memory(
+          harness(() =>
+            trustedFacts({
+              usageLimits: undefined,
+              unknownUsageException: {
+                exceptionId: "prepared-ex",
+                authorityRef: "decision",
+                accountId: "acct-1",
+                taskId: "task-a",
+                attemptNumber: 1,
+                issuedAtMs: NOW_MS - 1000,
+                expiresAtMs: NOW_MS + 1000,
+                reason: "unknown",
+                remainingAssignments: 1,
+              },
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("reserves once and commits event, projection, claim, and receipt together", () =>
     Effect.gen(function* () {
       const h = harness(() => trustedFacts());
