@@ -424,14 +424,17 @@ export function PreparationProgressSheet({
           paddingBottom: Math.max(20, insets.bottom),
         }}
       >
+        {/* The detail says what the step is waiting on, so it gets its own line
+            instead of the row's narrow trailing column. */}
         {steps.map((step) => (
-          <StepRow
-            key={step.id}
-            label={step.label}
-            status={step.status}
-            detail={step.detail}
-            duration={null}
-          />
+          <View key={step.id}>
+            <StepRow label={step.label} status={step.status} detail={null} duration={null} />
+            {step.detail ? (
+              <Text className="-mt-2 mb-1 ml-8 text-2xs text-foreground-secondary">
+                {step.detail}
+              </Text>
+            ) : null}
+          </View>
         ))}
         {sinceStart ? (
           <Text
