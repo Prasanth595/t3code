@@ -2037,6 +2037,31 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "node.updated": {
             const payloadJson = yield* encodeNodePayload(event.payload);
             const payload = parseEncodedPayload(payloadJson);
+            // Most streamed updates change only the payload, but an upsert assigns
+            // every column and SQLite rewrites an index entry for each assigned
+            // indexed column, even when its value is unchanged. So first try an
+            // update that matches the indexed columns (keys and partial-index
+            // filters) and assigns the rest.
+            const nodeUpdated = yield* sql`
+              UPDATE orchestration_v2_projection_nodes
+              SET
+                root_node_id = ${event.payload.rootNodeId},
+                kind = ${event.payload.kind},
+                provider_thread_id = ${event.payload.providerThreadId},
+                runtime_request_id = ${event.payload.runtimeRequestId},
+                checkpoint_scope_id = ${event.payload.checkpointScopeId},
+                started_at = ${nullableStringField(payload, "startedAt")},
+                completed_at = ${nullableStringField(payload, "completedAt")},
+                payload_json = ${payloadJson}
+              WHERE node_id = ${event.payload.id}
+                AND thread_id IS ${event.payload.threadId}
+                AND run_id IS ${event.payload.runId}
+                AND parent_node_id IS ${event.payload.parentNodeId}
+                AND provider_turn_id IS ${event.payload.providerTurnId}
+                AND status IS ${event.payload.status}
+              RETURNING 1
+            `;
+            if (nodeUpdated.length > 0) break;
             yield* sql`
               INSERT INTO orchestration_v2_projection_nodes (
                 node_id,
@@ -2392,6 +2417,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "message.updated": {
             const payloadJson = yield* encodeMessagePayload(event.payload);
             const payload = parseEncodedPayload(payloadJson);
+            const messageUpdated = yield* sql`
+              UPDATE orchestration_v2_projection_messages
+              SET
+                streaming = ${booleanInt(event.payload.streaming)},
+                updated_at = ${stringField(payload, "updatedAt")},
+                payload_json = ${payloadJson}
+              WHERE message_id = ${event.payload.id}
+                AND thread_id IS ${event.payload.threadId}
+                AND run_id IS ${event.payload.runId}
+                AND node_id IS ${event.payload.nodeId}
+                AND role IS ${event.payload.role}
+                AND created_at IS ${stringField(payload, "createdAt")}
+              RETURNING 1
+            `;
+            if (messageUpdated.length > 0) break;
             yield* sql`
               INSERT INTO orchestration_v2_projection_messages (
                 message_id,
@@ -2463,6 +2503,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "turn-item.updated": {
             const payloadJson = yield* encodeTurnItemPayload(event.payload);
             const payload = parseEncodedPayload(payloadJson);
+            const turnItemUpdated = yield* sql`
+              UPDATE orchestration_v2_projection_turn_items
+              SET
+                provider_thread_id = ${event.payload.providerThreadId},
+                parent_item_id = ${event.payload.parentItemId},
+                updated_at = ${stringField(payload, "updatedAt")},
+                payload_json = ${payloadJson}
+              WHERE turn_item_id = ${event.payload.id}
+                AND thread_id IS ${event.payload.threadId}
+                AND run_id IS ${event.payload.runId}
+                AND node_id IS ${event.payload.nodeId}
+                AND provider_turn_id IS ${event.payload.providerTurnId}
+                AND ordinal IS ${event.payload.ordinal}
+                AND type IS ${event.payload.type}
+                AND status IS ${event.payload.status}
+              RETURNING 1
+            `;
+            if (turnItemUpdated.length > 0) break;
             yield* sql`
               INSERT INTO orchestration_v2_projection_turn_items (
                 turn_item_id,
