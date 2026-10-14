@@ -1965,9 +1965,9 @@ export function deriveMessagesTimelineRows(input: {
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
-    // Stamp the latest activity's start, not the turn's, so a stalled turn
-    // shows how long it has been quiet. Start times stay fixed while text
-    // streams, which keeps the incremental streaming path in parity.
+    // Stamp when the latest activity started, not the turn. Start times stay
+    // fixed while text streams, which keeps the incremental streaming path in
+    // parity.
     const thinkingCreatedAt = maxIsoTimestamp(
       input.activeTurnStartedAt ?? null,
       timelineEntries.at(-1)?.createdAt ?? null,

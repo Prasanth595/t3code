@@ -2960,7 +2960,12 @@ describe("deriveMessagesTimelineRows", () => {
     expect(runningActivityRow).toMatchObject({ kind: "work-live", active: true });
     expect(completedActivityRow).toMatchObject({ kind: "work-live", active: true });
     expect(failedRows.some((row) => row.kind === "work-live")).toBe(false);
-    expect(failedRows.at(-1)).toMatchObject({ kind: "thinking", id: "live-activity-row" });
+    // A failed tool hands the row back to thinking, stamped with that tool's start.
+    expect(failedRows.at(-1)).toMatchObject({
+      kind: "thinking",
+      id: "live-activity-row",
+      createdAt: "2026-01-01T00:00:05Z",
+    });
     const failedThinkingRow = failedRows.at(-1);
     const failedGroupId =
       failedThinkingRow?.kind === "thinking" ? failedThinkingRow.groupId : undefined;

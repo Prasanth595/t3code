@@ -3882,14 +3882,17 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
   // Reserve the activity row during setup so the handoff keeps the same height.
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
+  const { groupId } = row;
+  // Without a group there is nothing to focus, so keyboard users could never
+  // reveal a hover-only timestamp; that row shows it all the time.
   const timestamp = row.createdAt ? (
     <TimelineRowTimestamp
       createdAt={row.createdAt}
       timestampFormat={ctx.timestampFormat}
       className="ms-auto"
+      alwaysVisible={groupId === undefined}
     />
   ) : null;
-  const { groupId } = row;
   if (groupId === undefined) {
     return (
       <div className="group/timeline-row flex min-h-6 w-full min-w-0 items-center pe-0.5">
