@@ -302,12 +302,11 @@ const cropAnnotationScreenshot = (
   const scale = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
   // Padding and unions can overlap the viewport without any selected target.
   // Check the individual unpadded bounds before accepting even a full capture.
+  // Zero-size bounds stay eligible: a stroked SVG line reports zero height.
   if (
     targetRects.length > 0 &&
     !targetRects.some(
       (rect) =>
-        rect.width > 0 &&
-        rect.height > 0 &&
         rect.x * scale < full.width &&
         rect.y * scale < full.height &&
         (rect.x + rect.width) * scale > 0 &&
