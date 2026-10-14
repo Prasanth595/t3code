@@ -673,6 +673,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(win.asarUnpack, [WINDOWS_NATIVE_ASAR_UNPACK_GLOB]);
       assert.deepStrictEqual(winWithoutWslRuntime.asar, win.asar);
       assert.deepStrictEqual(winWithoutWslRuntime.asarUnpack, win.asarUnpack);
+      assert.match(String(linux.afterPack), /[\\/]scripts[\\/]desktop-compile-cache-hook\.ts$/);
+      assert.notProperty(mac, "afterPack");
+      assert.notProperty(win, "afterPack");
       assert.deepStrictEqual(mac.extraResources, DESKTOP_EXTRA_RESOURCES);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,

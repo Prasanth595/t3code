@@ -2890,6 +2890,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.toolsets = { appimage: "1.0.3" };
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
+    // AppImage mounts move between launches, so the runtime cannot keep a
+    // compile cache of its own. Warm one into the unpacked app before the
+    // AppImage is assembled. The .deb is built from the same directory and
+    // ships the entries too, unused: its install path is stable, so it keeps
+    // the per-user cache.
+    buildConfig.afterPack = path.join(repoRoot, "scripts/desktop-compile-cache-hook.ts");
     buildConfig.linux = {
       // The .deb is built from the same unpacked app after the AppImage.
       // electron-builder lists both in latest-linux.yml and writes

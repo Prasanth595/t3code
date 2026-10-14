@@ -11,11 +11,23 @@ import * as NodePath from "node:path";
 // Linux uses the user's cache dir because /tmp is shared between users; the
 // macOS and Windows temp dirs are already per user.
 //
-// Skipped under AppImage: it mounts the app at a new /tmp/.mount_* path each
-// launch, and Node keys entries by path, so every launch would miss and leave
-// another copy behind. The backend inherits APPIMAGE, so this covers it too.
+// AppImage mounts the app at a new /tmp/.mount_* path each launch, and Node
+// keys entries by absolute path, so a per-user cache would miss every launch
+// and leave another copy behind. AppImage instead reads the portable cache the
+// Linux build ships next to app.asar (scripts/desktop-compile-cache-hook.ts).
+// Its keys are relative to the cache directory, so every mount hits; the image
+// is read-only, so misses are compiled and never written. Node 24 looks the
+// cache up by uid and the build ships uid 1000, so other uids run without a
+// cache until Node drops the uid from portable caches. The backend inherits
+// APPIMAGE, so this covers it too.
 try {
-  if (!process.env.APPIMAGE) {
+  if (process.env.APPIMAGE) {
+    NodeModule.enableCompileCache({
+      // This file is resources/app.asar/apps/desktop/dist-electron/compileCache.cjs.
+      directory: NodePath.resolve(__dirname, "../../../..", "compile-cache"),
+      portable: true,
+    });
+  } else {
     const cacheRoot =
       // oxlint-disable-next-line t3code/no-global-process-runtime -- Loads before any Effect runtime.
       process.platform === "linux"

@@ -171,3 +171,114 @@ it("loads the emitted packaged boot entry and backend cache preload", async () =
     await NodeFSP.rm(directory, { recursive: true, force: true });
   }
 });
+
+it("under AppImage, reuses the shipped compile cache from a different mount path", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-desktop-appimage-"));
+  try {
+    const entries = ["src/boot.ts", "src/compileCache.ts"];
+    const source = NodePath.join(directory, "source");
+    await NodeFSP.mkdir(NodePath.join(source, "src"), { recursive: true });
+    await Promise.all(
+      entries.map((entry) =>
+        NodeFSP.copyFile(new URL(`../${entry}`, import.meta.url), NodePath.join(source, entry)),
+      ),
+    );
+    assert.ok(Array.isArray(desktopConfig.pack));
+    for (const packConfig of desktopConfig.pack) {
+      if (!Array.isArray(packConfig.entry)) continue;
+      if (!packConfig.entry.some((entry) => entries.includes(entry))) continue;
+      await build({
+        ...packConfig,
+        config: false,
+        cwd: source,
+        tsconfig: false,
+        sourcemap: false,
+        onSuccess: undefined,
+        logLevel: "silent",
+      });
+    }
+    // Two launches of one AppImage see the same files under different mount
+    // paths. The shipped cache sits beside app.asar, outside it.
+    const mounts = ["mount-first", "mount-second"].map((name) => NodePath.join(directory, name));
+    const cacheDirs = [];
+    for (const mount of mounts) {
+      const distElectron = NodePath.join(mount, "resources/app.asar/apps/desktop/dist-electron");
+      await NodeFSP.mkdir(distElectron, { recursive: true });
+      await NodeFSP.cp(NodePath.join(source, "dist-electron"), distElectron, { recursive: true });
+      await NodeFSP.writeFile(
+        NodePath.join(distElectron, "main.cjs"),
+        "console.log(require('node:module').getCompileCacheDir() ?? 'uncached');",
+      );
+      cacheDirs.push(NodePath.join(mount, "resources/compile-cache"));
+    }
+    const launch = (mount) =>
+      NodeChildProcess.spawnSync(
+        process.execPath,
+        [NodePath.join(mount, "resources/app.asar/apps/desktop/dist-electron/boot.cjs")],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            APPIMAGE: NodePath.join(mount, "t3code"),
+            NODE_COMPILE_CACHE: undefined,
+            NODE_DISABLE_COMPILE_CACHE: undefined,
+            // A miss on a read-only cache looks like a hit from the outside;
+            // Node's own log is what tells them apart.
+            NODE_DEBUG_NATIVE: "COMPILE_CACHE",
+            XDG_CACHE_HOME: directory,
+          },
+        },
+      );
+    const listEntries = async (cacheDir) =>
+      (await NodeFSP.readdir(cacheDir, { recursive: true, withFileTypes: true }))
+        .filter((entry) => entry.isFile())
+        .map((entry) => NodePath.relative(cacheDir, NodePath.join(entry.parentPath, entry.name)))
+        .sort();
+
+    // The build warms the cache at one path; a launch anywhere else must hit it.
+    await NodeFSP.mkdir(cacheDirs[0], { recursive: true });
+    const warm = launch(mounts[0]);
+    assert.equal(warm.status, 0, warm.stderr);
+    assert.ok(warm.stdout.trim().startsWith(cacheDirs[0]), warm.stdout);
+    const warmed = await listEntries(cacheDirs[0]);
+    assert.ok(warmed.length > 0);
+
+    // The image is read-only, so the second launch must hit without writing.
+    await NodeFSP.cp(cacheDirs[0], cacheDirs[1], { recursive: true });
+    const statsBefore = await Promise.all(
+      warmed.map((entry) => NodeFSP.stat(NodePath.join(cacheDirs[1], entry))),
+    );
+    const readOnly = process.getuid?.() !== 0;
+    if (readOnly) await chmodTree(cacheDirs[1], 0o555, 0o444);
+    try {
+      const reuse = launch(mounts[1]);
+      assert.equal(reuse.status, 0, reuse.stderr);
+      assert.ok(reuse.stdout.trim().startsWith(cacheDirs[1]), reuse.stdout);
+      assert.match(reuse.stderr, /main\.cjs was accepted/, reuse.stderr);
+    } finally {
+      if (readOnly) await chmodTree(cacheDirs[1], 0o755, 0o644);
+    }
+    assert.deepEqual(await listEntries(cacheDirs[1]), warmed);
+    const statsAfter = await Promise.all(
+      warmed.map((entry) => NodeFSP.stat(NodePath.join(cacheDirs[1], entry))),
+    );
+    assert.deepEqual(
+      statsAfter.map((stat) => stat.mtimeMs),
+      statsBefore.map((stat) => stat.mtimeMs),
+      "a hit rewrites nothing",
+    );
+  } finally {
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});
+
+async function chmodTree(root, directoryMode, fileMode) {
+  const entries = await NodeFSP.readdir(root, { recursive: true, withFileTypes: true });
+  for (const entry of entries) {
+    await NodeFSP.chmod(
+      NodePath.join(entry.parentPath, entry.name),
+      entry.isDirectory() ? directoryMode : fileMode,
+    );
+  }
+  await NodeFSP.chmod(root, directoryMode);
+}
