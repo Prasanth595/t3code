@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { switchedOffSavedEnvironments } from "@t3tools/client-runtime/state/connections";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as SecureStore from "expo-secure-store";
 import { useEffect, useState } from "react";
 import { Alert } from "react-native";
@@ -58,11 +59,29 @@ export function SwitchedOffEnvironmentsNotice() {
         { text: "Keep off", style: "cancel", onPress: markReviewed },
         {
           text: "Turn on",
-          onPress: () => {
-            markReviewed();
-            for (const { environmentId } of switchedOff) {
-              void setEnabled({ environmentId, enabled: true });
+          // The question counts as answered only once every computer switched
+          // on, so a failed write asks again on the next launch.
+          onPress: async () => {
+            const results = await Promise.all(
+              switchedOff.map(async (environment) => ({
+                environment,
+                result: await setEnabled({
+                  environmentId: environment.environmentId,
+                  enabled: true,
+                }),
+              })),
+            );
+            const failed = results.filter(
+              ({ result }) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
+            );
+            if (failed.length === 0) {
+              markReviewed();
+              return;
             }
+            Alert.alert(
+              `Could not switch on ${failed.map(({ environment }) => environment.label).join(", ")}`,
+              "Switch it on in Settings → Environments.",
+            );
           },
         },
       ],

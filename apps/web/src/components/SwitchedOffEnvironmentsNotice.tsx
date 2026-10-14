@@ -1,12 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import { switchedOffSavedEnvironments } from "@t3tools/client-runtime/state/connections";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
 import { useAtomCommand } from "../state/use-atom-command";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
 const storageKey = "t3code:switched-off-environments-review:v1";
 // Keep an active toast across remounts, including Strict Mode effect replay.
@@ -46,15 +47,36 @@ export function SwitchedOffEnvironmentsNotice() {
       markReviewed();
       return;
     }
+    let turningOn = false;
     const keepOff = () => {
       markReviewed();
       toastManager.close(id);
     };
-    const turnOn = () => {
-      keepOff();
-      for (const { environmentId } of switchedOff) {
-        void setEnabled({ environmentId, enabled: true });
+    // The question counts as answered only once every computer switched on,
+    // so a failed write asks again on the next launch.
+    const turnOn = async () => {
+      turningOn = true;
+      toastManager.close(id);
+      const results = await Promise.all(
+        switchedOff.map(async (environment) => ({
+          environment,
+          result: await setEnabled({ environmentId: environment.environmentId, enabled: true }),
+        })),
+      );
+      const failed = results.filter(
+        ({ result }) => result._tag === "Failure" && !isAtomCommandInterrupted(result),
+      );
+      if (failed.length === 0) {
+        markReviewed();
+        return;
       }
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not switch on ${failed.map(({ environment }) => environment.label).join(", ")}`,
+          description: "Switch it on in Settings → Connections.",
+        }),
+      );
     };
     const names = switchedOff.map(({ label }) => label).join(", ");
     const id = toastManager.add({
@@ -64,8 +86,10 @@ export function SwitchedOffEnvironmentsNotice() {
           : `${switchedOff.length} computers are switched off`,
       description: `${switchedOff.length === 1 ? "" : `${names}. `}An earlier update could switch computers off by mistake. Turn ${switchedOff.length === 1 ? "it" : "them"} back on to see ${switchedOff.length === 1 ? "its" : "their"} threads again.`,
       timeout: 0,
-      onClose: markReviewed,
-      actionProps: { children: "Turn on", onClick: turnOn },
+      onClose: () => {
+        if (!turningOn) markReviewed();
+      },
+      actionProps: { children: "Turn on", onClick: () => void turnOn() },
       data: {
         actionLayout: "stacked-end",
         secondaryActionProps: { children: "Keep off", onClick: keepOff },
