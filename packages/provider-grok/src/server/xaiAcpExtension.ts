@@ -413,10 +413,14 @@ export function extractXAiKilledBackgroundTasks(toolCall: AcpToolCallState): Rea
   const title = titleKey(toolCall);
   const rawInput = unknownRecord(toolCall.data.rawInput);
   const variant = nonEmptyString(rawInput?.variant)?.toLowerCase();
-  // Grok 1.0.46 sends the `KillTask` variant and retitles the finished call
-  // `kill <id> (killed)`.
+  const outputType = nonEmptyString(unknownRecord(toolCall.data.rawOutput)?.type)?.toLowerCase();
+  // Grok 1.0.46 sends the `KillTask` variant, then a final update with only a
+  // `KillTask` rawOutput and the title `kill <id> (killed)`.
   const isKill =
-    title.includes("kill_command_or_subagent") || variant === "kill" || variant === "killtask";
+    title.includes("kill_command_or_subagent") ||
+    variant === "kill" ||
+    variant === "killtask" ||
+    outputType === "killtask";
   if (!isKill) return [];
   if (toolCall.status !== "completed") return [];
   const taskIds: string[] = [];
@@ -870,7 +874,7 @@ function resultTaskIdFromGetOutputTool(
   if (output === undefined) return undefined;
   const taskHeader = firstUuidMatch(
     output,
-    new RegExp(`===\\s*Task\\s+(${XAI_UUID_RE})\\s*===`, "i"),
+    new RegExp(`===\\s*Task\\s+(${idPattern})\\s*===`, "i"),
   );
   return taskHeader;
 }

@@ -801,6 +801,31 @@ describe("XAiAcpExtension", () => {
     ]);
   });
 
+  it("keeps the identity from a text envelope header on a call-<uuid>-<n> task", () => {
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-get-text-call-id",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: {
+          rawInput: {
+            variant: "TaskOutput",
+            task_ids: [
+              "call-33333333-3333-4333-8333-333333333333-0",
+              "call-33333333-3333-4333-8333-333333333333-1",
+            ],
+          },
+          rawOutput: {
+            type: "Text",
+            text: ["=== Task call-33333333-3333-4333-8333-333333333333-1 ===", "Exit Code: 0"].join(
+              "\n",
+            ),
+          },
+        },
+      }),
+    ).toMatchObject([{ taskId: "call-33333333-3333-4333-8333-333333333333-1" }]);
+  });
+
   it("tombstones confirmed kills and ignores failed kill calls", () => {
     expect(
       extractXAiKilledBackgroundTasks({
@@ -880,6 +905,17 @@ describe("XAiAcpExtension", () => {
       { taskId: "call-bg-6", status: "completed", appendOutput: "" },
       { taskId: "call-bg-8", status: "completed", appendOutput: "" },
     ]);
+    // The final update is parsed alone and carries no rawInput.
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill-4",
+        title: "kill call-bg-6 (killed)",
+        status: "completed",
+        data: {
+          rawOutput: { type: "KillTask", Result: { task_id: "call-bg-6", outcome: "killed" } },
+        },
+      }),
+    ).toEqual([{ taskId: "call-bg-6", status: "completed", appendOutput: "" }]);
   });
 
   it("maps task lifecycle notifications to background mutations", () => {
