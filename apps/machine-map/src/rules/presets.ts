@@ -7,6 +7,7 @@ import {
   ArrowRecord,
   MachineMapRole,
   type MachineId,
+  type MachineLevel,
   type MachineMapDocument,
   type MapChange,
   type MapPreset,
@@ -216,6 +217,24 @@ export const pausedAccess = (map: MachineMapDocument): PausedAccess => ({
   arrows: map.arrows,
   mapRoles: Object.fromEntries(map.machines.map((machine) => [machine.id, machine.mapRole])),
 });
+
+/**
+ * MM-717: the arrows that had access before the pause and have none now, with their old level.
+ * The map draws them as cut lines. Arrows of machines that left are skipped.
+ */
+export function cutArrows(
+  map: MachineMapDocument,
+  before: PausedAccess,
+): Array<{ from: MachineId; to: MachineId; level: MachineLevel }> {
+  return before.arrows.flatMap((old) =>
+    old.level !== "none" &&
+    findMachine(map, old.from) !== undefined &&
+    findMachine(map, old.to) !== undefined &&
+    findArrow(map, old.from, old.to).level === "none"
+      ? [{ from: old.from, to: old.to, level: old.level }]
+      : [],
+  );
+}
 
 /**
  * MM-712: the changes that return the arrows and map roles to `before`. A machine that joined

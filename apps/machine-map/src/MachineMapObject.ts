@@ -103,6 +103,7 @@ import {
 import {
   applyPresetChanges,
   LOCKDOWN_SUMMARY,
+  cutArrows,
   lockdownChanges,
   PAUSE_SUMMARY,
   PausedAccess,
@@ -432,7 +433,9 @@ export class MachineMapObject extends DurableObject<Env> {
   }
 
   #pauseEvent(): PauseEvent {
-    return { _tag: "pause", pause: this.#pause?.state ?? null };
+    const pause = this.#pause;
+    if (!pause) return { _tag: "pause", pause: null };
+    return { _tag: "pause", pause: { ...pause.state, cut: cutArrows(this.#map, pause.before) } };
   }
 
   // ---------------------------------------------------------------- sockets

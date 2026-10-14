@@ -5,6 +5,7 @@
 import type {
   MachineCommand,
   MachineId,
+  MachineLevel,
   MachineMapDocument,
   MachineRecord,
   MapChange,
@@ -12,7 +13,7 @@ import type {
   PortalSnapshot,
 } from "@t3tools/contracts/machineMap";
 
-import type { PendingRotation } from "../api.ts";
+import type { PauseView, PendingRotation } from "../api.ts";
 import { arrowChange, usesText } from "../rules/access.ts";
 import { changesPublicFacts, findArrow, findMachine, findNote, hasJoined } from "../rules/map.ts";
 import { lockdownChanges } from "../rules/presets.ts";
@@ -102,6 +103,18 @@ export function arrowEndWait(end: ArrowEnd, machine: MachineRecord): string | nu
       return `waiting for ${machine.name} to join`;
   }
 }
+
+/** MM-717: the level before the pause of an arrow that the pause cut, or null. */
+export const cutLevel = (
+  pause: PauseView | null,
+  from: MachineId,
+  to: MachineId,
+): MachineLevel | null =>
+  pause?.cut.find((arrow) => arrow.from === from && arrow.to === to)?.level ?? null;
+
+/** MM-717: while paused, the map keeps a pair that the pause cut, drawn as a cut line. */
+export const pairCut = (pause: PauseView | null, a: MachineId, b: MachineId): boolean =>
+  cutLevel(pause, a, b) !== null || cutLevel(pause, b, a) !== null;
 
 /**
  * MM-1103: the map shows a pair when one of its arrows differs from the default. The map stores

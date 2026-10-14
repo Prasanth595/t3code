@@ -11,7 +11,7 @@ import type {
 } from "@t3tools/contracts/machineMap";
 import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
-import type { PauseState, PendingRotation, WriteResult } from "../api.ts";
+import type { PauseView, PendingRotation, WriteResult } from "../api.ts";
 import type { Route, Selection, View } from "./route.ts";
 
 /** One held change of a draft (MM-707). */
@@ -60,7 +60,7 @@ export interface Portal {
   readonly history: ReadonlyArray<MapRevision>;
   readonly rotations: ReadonlyArray<PendingRotation>;
   /** MM-713: null when nothing is paused. */
-  readonly pause: PauseState | null;
+  readonly pause: PauseView | null;
   /** MM-1506: the latest samples, thresholds and alerts. */
   readonly health: ResourcesOverview;
   readonly draft: ReadonlyArray<DraftChange> | null;

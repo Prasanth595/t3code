@@ -32,8 +32,10 @@ import {
   arrowEndWait,
   arrowEnds,
   connectMachines,
+  cutLevel,
   describeChange,
   machineQueue,
+  pairCut,
   pairShows,
   type ArrowEnd,
 } from "./derive.ts";
@@ -155,6 +157,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
   const f = source.name;
   const t = target.name;
   const permanent = arrow.revertLevel ?? arrow.level;
+  const was = arrow.level === "none" ? cutLevel(portal.pause, source.id, target.id) : null;
 
   const setLevel = (level: MachineLevel) => {
     // oxlint-disable-next-line react/purity -- This runs in a click handler, not during render.
@@ -198,6 +201,9 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
         Other way: {usesText(t, f)}: {LEVEL_LABEL[reverse.level]}
       </button>
       {portal.pause && <PausedNote />}
+      {was && (
+        <p className="hint">The pause cut this arrow. Resume returns it to {LEVEL_LABEL[was]}.</p>
+      )}
 
       <Section>How long</Section>
       <div className="seg wide" role="group" aria-label="How long">
@@ -331,7 +337,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
       {lastTest?.error && <p className="error-text">{lastTest.error}</p>}
 
       <Section>Card on the map</Section>
-      {!pairShows(map, source.id, target.id) ? (
+      {!pairShows(map, source.id, target.id) && !pairCut(portal.pause, source.id, target.id) ? (
         <p className="hint">
           The map hides this pair: neither machine uses the other. A level above None shows it
           again.
@@ -748,7 +754,8 @@ function MachineAccess({ machine }: { machine: MachineRecord }) {
   const put = (summary: string, next: MachineRecord) =>
     portal.submit(summary, [{ _tag: "putMachine", machine: next }]);
   const rows = map.machines.flatMap((other) =>
-    other.id !== machine.id && pairShows(map, machine.id, other.id)
+    other.id !== machine.id &&
+    (pairShows(map, machine.id, other.id) || pairCut(portal.pause, machine.id, other.id))
       ? [
           { from: machine, to: other },
           { from: other, to: machine },
@@ -766,6 +773,7 @@ function MachineAccess({ machine }: { machine: MachineRecord }) {
       ) : (
         rows.map(({ from, to }) => {
           const arrow = findArrow(map, from.id, to.id);
+          const was = arrow.level === "none" ? cutLevel(portal.pause, from.id, to.id) : null;
           return (
             <div className="row" key={`${from.id}>${to.id}`}>
               <button
@@ -777,7 +785,14 @@ function MachineAccess({ machine }: { machine: MachineRecord }) {
                 {arrow.expiresAt && <span className="v">Until {shortTime(arrow.expiresAt)}</span>}
               </button>
               {arrow.agentTools && <span className="sticker accent flat">tools</span>}
-              <span className={`sticker lvl-${arrow.level}`}>{LEVEL_LABEL[arrow.level]}</span>
+              {was ? (
+                <>
+                  <span className={`sticker lvl-${was} was`}>{LEVEL_LABEL[was]}</span>
+                  <span className="sticker cut-sticker">cut</span>
+                </>
+              ) : (
+                <span className={`sticker lvl-${arrow.level}`}>{LEVEL_LABEL[arrow.level]}</span>
+              )}
             </div>
           );
         })
