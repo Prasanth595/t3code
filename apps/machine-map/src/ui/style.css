@@ -771,6 +771,13 @@ p.error-text {
   font-size: 1.6rem;
   overflow-wrap: anywhere;
 }
+/* MM-1112: the tabs of the machine panel. */
+.machine-tabs {
+  margin: 18px 0 14px;
+}
+.panel input[type="search"] {
+  margin: 4px 0 8px;
+}
 /* A hint on hover or keyboard focus, for example the exact time of a history entry. */
 .tip {
   position: relative;
