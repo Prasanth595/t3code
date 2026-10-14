@@ -227,9 +227,14 @@ export interface AcpAdapterV2Flavor {
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
   ) => Effect.Effect<void>;
+  /**
+   * Receives the session's configuration after setup and each native change.
+   * `modelState` is the ACP v1 model list of agents without a model config option.
+   */
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
+    modelState: EffectAcpSchema.SessionModelState | null | undefined,
   ) => Effect.Effect<void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
@@ -5498,6 +5503,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 flavor.onSessionConfigurationUpdate?.(
                   yield* runtime.getConfigOptions,
                   yield* runtime.getModeState,
+                  (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
                 ) ?? Effect.void
               );
             }
@@ -6304,8 +6310,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startResult.sessionSetupResult.configOptions?.some(
                 (option) => option.category === "model",
               ) === true;
+            const modelState = startResult.sessionSetupResult.models;
             if (hasModelConfig) {
               yield* runtime.setModel(requestedModel);
+            } else if (modelState != null) {
+              // ACP v1 agents without a model config option (Hermes) advertise
+              // their models as session model state and switch with
+              // session/set_model.
+              if (modelState.currentModelId !== requestedModel) {
+                yield* runtime.setSessionModel(requestedModel);
+              }
+              appliedModel = requestedModel;
             }
           }
           // Same-runtime switches compare against this stored setup, so keep
@@ -6485,6 +6500,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.onSessionConfigurationUpdate?.(
               yield* runtime.getConfigOptions,
               yield* runtime.getModeState,
+              (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
             ) ?? Effect.void
           );
         });

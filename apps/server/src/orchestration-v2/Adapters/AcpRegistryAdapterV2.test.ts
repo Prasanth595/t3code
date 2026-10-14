@@ -141,7 +141,7 @@ describe("AcpRegistryAdapterV2", () => {
     });
   });
 
-  describe("the agent's own mode picker", () => {
+  describe("the agent's own pickers", () => {
     type Frame = Record<string, unknown>;
     const outbound = (method: string, params: unknown = "<any>"): Frame => ({
       type: "expect_outbound",
@@ -159,20 +159,37 @@ describe("AcpRegistryAdapterV2", () => {
       currentValue,
       options: ["ask", "auto"].map((value) => ({ value, name: value })),
     });
+    const modelOption = (currentValue: string) => ({
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue,
+      options: ["sonnet", "opus"].map((value) => ({ value, name: value })),
+    });
+    const hermesModels = (currentModelId: string) => ({
+      currentModelId,
+      availableModels: [
+        { modelId: "hermes-default", name: "Hermes Default" },
+        { modelId: "nous/hermes-4-405b", name: "Hermes 4 405B" },
+      ],
+    });
 
     // A scripted ACP v1 agent: initialize, session/new answered with `setup`,
     // then the frames T3 must send (and the agent's answers) to apply the
-    // user's stored pick from the agent's mode picker.
-    const openWithStoredModePick = Effect.fn("openWithStoredModePick")(function* (input: {
+    // user's stored picks. Returns the last configuration published to the
+    // provider's model picker.
+    const openWithStoredPicks = Effect.fn("openWithStoredPicks")(function* (input: {
       readonly setup: unknown;
-      readonly modeFrames: ReadonlyArray<Frame>;
-      readonly storedModePick: string;
+      readonly pickFrames: ReadonlyArray<Frame>;
+      readonly storedModel?: string;
+      readonly storedModePick?: string;
     }) {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const replayDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-registry-mode-pick-",
+        prefix: "t3-acp-registry-stored-picks-",
       });
       const statusPath = path.join(replayDir, "status.json");
       const transcript = yield* decodeAcpReplayTranscript(
@@ -180,7 +197,7 @@ describe("AcpRegistryAdapterV2", () => {
           provider: ACP_REGISTRY_PROVIDER,
           protocol: "acp.ndjson-jsonrpc",
           version: "1",
-          scenario: "stored-mode-pick",
+          scenario: "stored-picks",
           entries: [
             outbound("initialize"),
             answer("initialize", {
@@ -190,12 +207,13 @@ describe("AcpRegistryAdapterV2", () => {
             }),
             outbound("session/new"),
             answer("session/new", { sessionId: "agent-session", ...(input.setup as object) }),
-            ...input.modeFrames,
+            ...input.pickFrames,
           ] as never,
         },
         ACP_REGISTRY_PROVIDER,
       );
-      const instanceId = ProviderInstanceId.make("acp-registry-mode-pick");
+      const instanceId = ProviderInstanceId.make("acp-registry-stored-picks");
+      let published: AcpRegistryLiveConfiguration | undefined;
       const adapter = yield* makeAcpRegistryAdapterV2({
         selfInvocation: yield* resolveSelfInvocation(),
         instanceId,
@@ -213,15 +231,30 @@ describe("AcpRegistryAdapterV2", () => {
           childProcessSpawner,
           fileSystem,
         }),
-      }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerInjectedRuntimeCatalog,
+            Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
+              withForegroundStartup: (_startupKey, effect) => effect,
+              publishLiveConfiguration: (_instanceId, configuration) =>
+                Effect.sync(() => {
+                  published = configuration;
+                }),
+            }),
+          ),
+        ),
+      );
       yield* adapter
         .openSession({
-          threadId: ThreadId.make("thread-acp-registry-mode-pick"),
-          providerSessionId: ProviderSessionId.make("provider-session-mode-pick"),
+          threadId: ThreadId.make("thread-acp-registry-stored-picks"),
+          providerSessionId: ProviderSessionId.make("provider-session-stored-picks"),
           modelSelection: {
             instanceId,
-            model: "default",
-            options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }],
+            model: input.storedModel ?? "default",
+            ...(input.storedModePick === undefined
+              ? {}
+              : { options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }] }),
           },
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
             runtimeMode: "approval-required",
@@ -233,17 +266,18 @@ describe("AcpRegistryAdapterV2", () => {
       // Closing the session stops the agent, which writes its replay status in
       // the same tick as its last answer. The script must be consumed exactly.
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
+      return published;
     });
 
     it.effect("switches an agent that only advertises modes with session/set_mode", () =>
-      openWithStoredModePick({
+      openWithStoredPicks({
         setup: {
           modes: {
             currentModeId: "default",
             availableModes: ["default", "autoEdit"].map((id) => ({ id, name: id })),
           },
         },
-        modeFrames: [
+        pickFrames: [
           outbound("session/set_mode", { sessionId: "agent-session", modeId: "autoEdit" }),
           answer("session/set_mode", {}),
         ],
@@ -252,9 +286,9 @@ describe("AcpRegistryAdapterV2", () => {
     );
 
     it.effect("switches a mode config option under its own id", () =>
-      openWithStoredModePick({
+      openWithStoredPicks({
         setup: { configOptions: [permissionModeOption("ask")] },
-        modeFrames: [
+        pickFrames: [
           outbound("session/set_config_option", {
             sessionId: "agent-session",
             configId: "permission-mode",
@@ -263,6 +297,49 @@ describe("AcpRegistryAdapterV2", () => {
           answer("session/set_config_option", { configOptions: [permissionModeOption("auto")] }),
         ],
         storedModePick: "auto",
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("lists and switches models an agent only advertises as session model state", () =>
+      Effect.gen(function* () {
+        const published = yield* openWithStoredPicks({
+          setup: { models: hermesModels("hermes-default") },
+          pickFrames: [
+            outbound("session/set_model", {
+              sessionId: "agent-session",
+              modelId: "nous/hermes-4-405b",
+            }),
+            answer("session/set_model", {}),
+          ],
+          storedModel: "nous/hermes-4-405b",
+        });
+        assert.deepEqual(
+          published?.models.map((model) => model.id),
+          ["hermes-default", "nous/hermes-4-405b"],
+        );
+        assert.equal(published?.currentModelId, "nous/hermes-4-405b");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("switches a model config option even when session model state is advertised", () =>
+      Effect.gen(function* () {
+        const published = yield* openWithStoredPicks({
+          setup: { models: hermesModels("hermes-default"), configOptions: [modelOption("sonnet")] },
+          pickFrames: [
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "model",
+              value: "opus",
+            }),
+            answer("session/set_config_option", { configOptions: [modelOption("opus")] }),
+          ],
+          storedModel: "opus",
+        });
+        assert.deepEqual(
+          published?.models.map((model) => model.id),
+          ["sonnet", "opus"],
+        );
+        assert.equal(published?.currentModelId, "opus");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });

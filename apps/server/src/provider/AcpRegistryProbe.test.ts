@@ -196,6 +196,62 @@ describe("ACP Registry probe", () => {
     expect(result.currentModelId).toBe("sonnet");
   });
 
+  it("lists models an agent advertises only through session model state", () => {
+    const result = acpRegistryProbeResult(instanceId, {
+      sessionId: "probe-session",
+      initializeResult: { protocolVersion: 1 },
+      sessionSetupResult: {
+        sessionId: "probe-session",
+        models: {
+          currentModelId: "nous/hermes-4-405b",
+          availableModels: [
+            { modelId: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+            {
+              modelId: "nous/hermes-4-405b",
+              name: "Hermes 4 405B",
+              description: "Nous Portal",
+            },
+          ],
+        },
+      },
+      modelConfigId: undefined,
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
+
+    expect(result.models).toEqual([
+      { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6", description: null },
+      { id: "nous/hermes-4-405b", name: "Hermes 4 405B", description: "Nous Portal" },
+    ]);
+    expect(result.currentModelId).toBe("nous/hermes-4-405b");
+  });
+
+  it("prefers a model configuration option over session model state", () => {
+    const result = acpRegistryProbeResult(instanceId, {
+      sessionId: "probe-session",
+      initializeResult: { protocolVersion: 1 },
+      sessionSetupResult: {
+        sessionId: "probe-session",
+        models: {
+          currentModelId: "legacy",
+          availableModels: [{ modelId: "legacy", name: "Legacy" }],
+        },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "sonnet",
+            options: [{ value: "sonnet", name: "Sonnet" }],
+          },
+        ],
+      },
+      modelConfigId: "model",
+    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
+
+    expect(result.models).toEqual([{ id: "sonnet", name: "Sonnet", description: null }]);
+    expect(result.currentModelId).toBe("sonnet");
+  });
+
   it("omits overlong opaque model ids instead of publishing mutated ids", () => {
     const result = acpRegistryProbeResult(instanceId, {
       sessionId: "probe-session",
