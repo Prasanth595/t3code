@@ -24,7 +24,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
-import { ResourceMonitorBinary } from "./ResourceMonitorBinary.ts";
+import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 import {
   canCommandNativeTelemetrySidecar,
   canRequestNativeTelemetryRetry,
@@ -123,7 +123,7 @@ describe("NativeTelemetryClient", () => {
       );
       const client = yield* NativeTelemetryClient.make().pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(ResourceMonitorBinary, {
+        Effect.provideService(ResourceMonitorBinary.ResourceMonitorBinary, {
           resolve: Effect.succeed("/test/t3-resource-monitor"),
         }),
       );
