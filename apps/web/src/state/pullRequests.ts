@@ -161,7 +161,9 @@ export function threadPullRequestLinkToSummary(
   link: ThreadPullRequestLink,
   projectId: ProjectId,
 ): PullRequestSummary | null {
-  if (link.snapshot === null) return null;
+  // Without the host update time a snapshot cannot be ordered against a fresh read, so it sits out.
+  const updatedAt = link.snapshot?.updatedAt;
+  if (link.snapshot === null || updatedAt == null) return null;
   return {
     ...link.snapshot,
     provider: (
@@ -171,7 +173,7 @@ export function threadPullRequestLinkToSummary(
     repository: link.repository,
     number: link.number,
     url: link.url,
-    updatedAt: link.snapshot.updatedAt ?? link.snapshot.syncedAt,
+    updatedAt,
   };
 }
 

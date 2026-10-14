@@ -109,5 +109,11 @@ describe("pull request summary cache", () => {
     const fresh = summary({ isDraft: true, updatedAt: "2026-09-13T00:00:00Z" });
     expect(newestPullRequestSummary(fresh, saved)).toBe(fresh);
     expect(threadPullRequestLinkToSummary({ ...link, snapshot: null }, stale.projectId)).toBeNull();
+    expect(
+      threadPullRequestLinkToSummary(
+        { ...link, snapshot: { ...link.snapshot, updatedAt: null } },
+        stale.projectId,
+      ),
+    ).toBeNull();
   });
 });
