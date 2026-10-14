@@ -6,7 +6,6 @@ import {
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
   type DesktopUpdateState,
-  isLiveServerUpdateVersion,
 } from "@t3tools/contracts";
 import { errorTag } from "@t3tools/shared/observability";
 import * as Cause from "effect/Cause";
@@ -34,7 +33,6 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
-import * as DesktopLiveServer from "./DesktopLiveServer.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
@@ -394,22 +392,6 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // Fork live server setting: offer a ready live build as a downloaded update.
-  // See DesktopLiveServer.ts.
-  const liveServerFiles = { fileSystem, path: environment.path };
-  const offerLiveBuild = Option.match(config.liveServerDir, {
-    onNone: () => Effect.void,
-    onSome: (liveServerDir) =>
-      DesktopLiveServer.readOfferedLiveBuild(liveServerFiles, liveServerDir).pipe(
-        Effect.flatMap((liveBuild) =>
-          updateState((state) =>
-            DesktopLiveServer.reduceDesktopUpdateStateOnLiveBuild(state, liveBuild),
-          ),
-        ),
-        Effect.asVoid,
-      ),
-  });
-
   const readAppUpdateYml = fileSystem.readFileString(environment.appUpdateYmlPath, "utf-8").pipe(
     Effect.option,
     Effect.flatMap(
@@ -530,7 +512,6 @@ export const make = Effect.gen(function* () {
             yield* updateState((current) =>
               reduceDesktopUpdateStateOnCheckFailure(current, error.message, failedAt),
             );
-            yield* offerLiveBuild;
             yield* logUpdaterError(error.message, {
               errorTag: error._tag,
               cause: describeUpdateErrorCause(error.cause),
@@ -837,78 +818,6 @@ export const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.withSpan("desktop.updates.installDownloadedUpdate"));
 
-  // Installs a live build: moves the `current` link, restarts the server and
-  // reloads the windows. The app keeps running. If the new server does not
-  // start, the link goes back and the previous server starts again.
-  const installLiveBuild = Effect.fn("desktop.updates.installLiveBuild")(function* (
-    liveServerDir: string,
-    liveBuild: DesktopLiveServer.LiveBuild,
-  ) {
-    const previousTarget = yield* DesktopLiveServer.readCurrentLiveTarget(
-      liveServerFiles,
-      liveServerDir,
-    );
-    const runServerFrom = (target: string) =>
-      Effect.gen(function* () {
-        yield* DesktopLiveServer.switchCurrentLiveTarget(liveServerFiles, liveServerDir, target);
-        const primary = yield* pool.primary;
-        yield* primary.stop({ timeout: Duration.seconds(5) });
-        yield* primary.start;
-        return yield* primary.waitForReady(Duration.seconds(60));
-      }).pipe(Effect.catch(() => Effect.succeed(false)));
-
-    yield* logUpdaterInfo("installing live build", { sha: liveBuild.sha, path: liveBuild.path });
-    if (!(yield* runServerFrom(liveBuild.path))) {
-      if (Option.isSome(previousTarget)) yield* runServerFrom(previousTarget.value);
-      const message = `The live server ${DesktopLiveServer.liveBuildVersion(liveBuild)} did not start. The previous server runs again.`;
-      yield* updateState((state) => reduceDesktopUpdateStateOnInstallFailure(state, message));
-      yield* logUpdaterError(message, { sha: liveBuild.sha });
-      return { accepted: true, completed: false, failed: true };
-    }
-    yield* electronWindow.syncAllAppearance((window) =>
-      Effect.sync(() => window.webContents.reloadIgnoringCache()),
-    );
-    yield* updateState((state) =>
-      DesktopLiveServer.reduceDesktopUpdateStateOnLiveBuild(state, Option.none()),
-    );
-    return { accepted: true, completed: true, failed: false };
-  });
-
-  /**
-   * Handles every install of a live version; none means the downloaded update is
-   * a full app update. A live version never reaches the full-update path: that
-   * path stops the server and waits for a quit that never comes.
-   */
-  const installOfferedLiveBuild = Effect.fn("desktop.updates.installOfferedLiveBuild")(function* (
-    expectedVersion: string | undefined,
-  ) {
-    const state = yield* Ref.get(updateStateRef);
-    if (!isLiveServerUpdateVersion(state.downloadedVersion)) return Option.none();
-    const refused = Option.some({ accepted: false, completed: false, failed: false });
-    if (Option.isNone(config.liveServerDir)) return refused;
-    const liveServerDir = config.liveServerDir.value;
-    const liveBuild = yield* DesktopLiveServer.readOfferedLiveBuild(liveServerFiles, liveServerDir);
-    if (
-      Option.isNone(liveBuild) ||
-      state.downloadedVersion !== DesktopLiveServer.liveBuildVersion(liveBuild.value) ||
-      (expectedVersion !== undefined && expectedVersion !== state.downloadedVersion)
-    ) {
-      // The builder replaced or removed the offered build. Show what is ready now.
-      yield* updateState((current) =>
-        DesktopLiveServer.reduceDesktopUpdateStateOnLiveBuild(current, liveBuild),
-      );
-      return refused;
-    }
-    if (!(yield* tryStartUpdateAction("install"))) {
-      return Option.some({ accepted: false, completed: false, failed: false });
-    }
-    return Option.some(
-      yield* installLiveBuild(liveServerDir, liveBuild.value).pipe(
-        Effect.ensuring(finishUpdateAction("install")),
-      ),
-    );
-  });
-
   const installWithExpectedVersion = Effect.fn("desktop.updates.install")(function* (
     expectedVersion?: string,
   ) {
@@ -920,10 +829,7 @@ export const make = Effect.gen(function* () {
         state: yield* Ref.get(updateStateRef),
       };
     }
-    const liveResult = yield* installOfferedLiveBuild(expectedVersion);
-    const result = Option.isSome(liveResult)
-      ? liveResult.value
-      : yield* installDownloadedUpdate(expectedVersion);
+    const result = yield* installDownloadedUpdate(expectedVersion);
     return {
       accepted: result.accepted,
       completed: result.completed,
@@ -1027,7 +933,6 @@ export const make = Effect.gen(function* () {
     yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
     yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
     yield* logUpdaterInfo("no updates available");
-    yield* offerLiveBuild;
   }).pipe(Effect.withSpan("desktop.updates.handleUpdateNotAvailable"));
 
   const handleUpdaterError = Effect.fn("desktop.updates.handleUpdaterError")(function* (

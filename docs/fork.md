@@ -132,32 +132,6 @@ scripts/fork-deploy-local.sh <ssh-host>
 - To build only, run `scripts/fork-deploy-local.sh --archive linux-x64` or `--archive linux-arm64`. The archive is in `release/`.
 - The script changes the version in the `package.json` files during the build and puts them back after it.
 
-## Live server updates
-
-Most fork changes are server and web code. They reach the Mac without a new app and without an app restart.
-
-- The setting `T3CODE_DESKTOP_LIVE_SERVER_DIR` names a live server folder. It is off when unset.
-- With the setting, the app runs its server and web client from `<folder>/current` instead of from the app bundle. `current` is a link to `<folder>/a`, `<folder>/b` or `<folder>/c`, three worktrees of this repository.
-- `scripts/fork-live/build.sh` runs every minute, from the copy `<folder>/build.sh`. Each successful build replaces that copy, so a builder fix applies at once. When fork main has a new commit, it builds it in the folder that neither runs nor is on offer. Then it writes `<folder>/ready.json` with the path, commit, subject and build time. Thus a build on offer stays complete until you install it or a newer build replaces it.
-- When the new commits change only paths that do not reach the server or web bundle, the script builds nothing. It writes the commit to `<folder>/no-build-sha`, so that it does not try the commit again. These paths are `docs`, `*.md`, `.github`, `apps/desktop`, `apps/mobile`, `apps/marketing`, `apps/machine-map` and test files.
-- The install covers only the packages that the `t3` build needs, not the mobile app. When the lockfile, the workspace file, the patches and the package manifests did not change since the last install of the build folder, the script skips the install.
-- When the new commits change only `apps/server` without its `package.json`, the script copies the web bundle of the newest build and builds only the server.
-- The build log has a timestamp and a duration for each phase.
-- The update button offers the ready build as `live <commit>`. A full app update always comes first. The upstream "update everything" pass comes after the live build, and other servers do not follow a live build.
-- Install moves the `current` link, restarts the server and reloads the windows. If the new server does not start, the link goes back and the previous server starts again.
-- A failed build shows a macOS notification. The app keeps its current server.
-- A full app update is still needed when the app shell changes: `apps/desktop`, Electron or the native dependencies.
-
-One-time setup on the Mac:
-
-```sh
-export T3CODE_DESKTOP_LIVE_SERVER_DIR="$HOME/Github/t3code/live"
-scripts/fork-live/build.sh
-"$T3CODE_DESKTOP_LIVE_SERVER_DIR/current/scripts/fork-live/install-agent.sh" "$T3CODE_DESKTOP_LIVE_SERVER_DIR"
-```
-
-The first build creates `current` and sets the setting for apps that start later. Then quit and start the app once. The build log is `~/Library/Logs/t3-live-build.log`.
-
 ## Changelog
 
 The client setting `forkChangelogEnabled` turns on a changelog of the fork. It is off by default. Turn it on in Settings > General > About > Fork changelog.
@@ -195,7 +169,7 @@ curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fo
 - On Linux without a display, `install.sh` runs `scripts/install.sh`, the upstream installer pointed at the fork releases. It unpacks the newest release into `~/.t3/runtime/versions/<version>` and links `~/.local/bin/t3` to it. Then it runs `t3 service install`, the upstream background service `t3code.service`. The drop-in file `~/.config/systemd/user/t3code.service.d/fork.conf` keeps the server on `127.0.0.1:3773` with the PATH of the installer shell. Then it runs `t3 machine-map join <code>`. The machine needs no Node.
 - If the earlier fork service `t3code-fork.service` is on, the installer turns it off. Its files stay. See [fork-migration.md](fork-migration.md).
 - The server updates itself, see "Server updates". `t3 update` also works. A restart stops the running agent turns of that server.
-- `--from-source` clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS. It installs the systemd user service `t3code-fork.service`, which does not update itself. On macOS it installs no service.
+- `--from-source` clones fork main to `~/.local/share/t3code-fork` and builds the server. It installs the systemd user service `t3code-fork.service`, which does not update itself. On macOS it installs no service.
 - The source build needs git, curl, Node and pnpm at the versions of the root `package.json`. The script prints install hints and installs no system packages.
 - On Linux without a display, `t3 service install` turns on lingering, so the server keeps running after logout. If that needs an administrator, it says so, see [background-service.md](user/background-service.md#troubleshooting).
 - The join gives the machine its tunnel when the portal can make one (MM-213). See "Set up a headless Linux machine".
@@ -247,29 +221,6 @@ Environment=T3CODE_CLOUDFLARE_ACCESS_SUBJECTS=<owner email>,<client id of the de
 EOF
 systemctl --user daemon-reload && systemctl --user restart t3code.service
 ```
-
-## Deploy to the VPS
-
-The VPS server follows fork main. The timer `t3-deploy.timer` runs `scripts/fork-vps/deploy.sh` one minute after each run ends.
-
-- When the new commits change only paths that do not reach the server build, the script moves the running checkout to the new commit without a build or a restart. These paths are `docs`, `*.md`, `.github`, `apps/desktop`, `apps/mobile`, `apps/marketing` and test files.
-- Otherwise it waits until main has not moved for 10 minutes, so a burst of merges gets one build. Then it builds main while the old server keeps running. It builds each commit once.
-- It switches only when no agent turn runs. A server restart cancels running turns. T3 resumes them only when "Recover interrupted agents" or "Continue threads after restarts" is on. While agents run, it checks again after 5 minutes, because each check starts one node process per project.
-- `t3-deploy.service` runs at a low CPU, IO and process priority. Above 6 GB of memory, the kernel slows the build instead of taking memory from the other apps on the VPS.
-- `/opt/t3code` is a link to `/opt/t3code-a` or `/opt/t3code-b`. The script builds in the other folder, moves the link and restarts `t3-server`.
-- If the new server does not answer, the script moves the link back.
-
-One-time setup, as root on the VPS:
-
-```sh
-systemctl stop t3-server && mv /opt/t3code /opt/t3code-a && ln -s /opt/t3code-a /opt/t3code && systemctl start t3-server
-git -C /opt/t3code-a worktree add --detach /opt/t3code-b HEAD
-cp /opt/t3code/scripts/fork-vps/t3-deploy.{service,timer} /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now t3-deploy.timer
-```
-
-A change to `t3-deploy.service` or `t3-deploy.timer` reaches the VPS only when you run the `cp` and `systemctl daemon-reload` again.
-
-To read the result, run `journalctl -u t3-deploy.service -n 50`.
 
 ## Recover interrupted agents
 

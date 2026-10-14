@@ -118,43 +118,16 @@ export interface StatusInput {
   readonly desktopConnected: boolean;
   /** From the desktop app (MM-1002). */
   readonly updateWaiting: string | null;
-  /** From the desktop app, for example `live 5abed5f`. It replaces the build of the server. */
+  /** From the desktop app. It replaces the build of the server. */
   readonly desktopBuild: string | null;
 }
 
-export type BuildKind = "live" | "deploy" | "release" | "dev";
-
-const LIVE_SLOTS: ReadonlySet<string> = new Set(["a", "b", "c"]);
-
 /**
- * MM-1002: where this server runs from. The Mac desktop runs the live server from
- * `<live dir>/<a|b|c>` (T3CODE_DESKTOP_LIVE_SERVER_DIR), the VPS deploy from `/opt/t3code*`, and a
- * packaged release from no git checkout at all. Every other checkout is a dev checkout.
+ * MM-1002: `dev <7-character commit>` for a server that runs from a git checkout, for example
+ * `vp run dev`, or `release` for a packaged release.
  */
-export function buildKind(input: {
-  readonly modulePath: string;
-  readonly liveServerDir: string | null;
-  readonly commit: string | null;
-}): BuildKind {
-  if (input.commit === null) return "release";
-  const segments = input.modulePath.split("/");
-  const liveDir = input.liveServerDir?.endsWith("/")
-    ? input.liveServerDir.slice(0, -1)
-    : input.liveServerDir;
-  const underLiveDir = liveDir !== null && input.modulePath.startsWith(`${liveDir}/`);
-  // Without the setting (a server started by hand), the `live/<slot>/` folder still marks it.
-  const inLiveSlot = segments.some(
-    (segment, i) => segment === "live" && LIVE_SLOTS.has(segments[i + 1] ?? ""),
-  );
-  if (underLiveDir || inLiveSlot) return "live";
-  if (input.modulePath.startsWith("/opt/t3code")) return "deploy";
-  return "dev";
-}
-
-/** MM-1002: `<kind> <7-character commit>`, for example `live 5abed5f`, or `release`. */
-export function buildLabel(input: Parameters<typeof buildKind>[0]): string {
-  const kind = buildKind(input);
-  return input.commit === null ? kind : `${kind} ${input.commit.slice(0, 7)}`;
+export function buildLabel(commit: string | null): string {
+  return commit === null ? "release" : `dev ${commit.slice(0, 7)}`;
 }
 
 /** Waits for a person: an approval, an answer, or a proposed plan. Same rule as agent awareness. */
@@ -220,13 +193,8 @@ const make = Effect.gen(function* () {
   const hostname =
     config.tunnelPairingUrl === undefined ? null : new URL(config.tunnelPairingUrl).hostname;
 
-  // A server that runs from a git checkout (live, VPS deploy, `vp run dev`) reports its commit.
+  // A server that runs from a git checkout (`vp run dev`) reports its commit.
   // It runs once, at the first status, so a server with the map off never spawns git.
-  const liveServerDir = yield* Config.String("T3CODE_DESKTOP_LIVE_SERVER_DIR").pipe(
-    Config.option,
-    Effect.map(Option.getOrNull),
-    Effect.orElseSucceed(() => null),
-  );
   const defaultBuild = yield* path.fromFileUrl(new URL(import.meta.url)).pipe(
     Effect.flatMap((modulePath) =>
       processRunner
@@ -239,9 +207,7 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.map((output) => (output.code === 0 ? output.stdout.trim() : "")),
           Effect.orElseSucceed(() => ""),
-          Effect.map((commit) =>
-            buildLabel({ modulePath, liveServerDir, commit: commit.length > 0 ? commit : null }),
-          ),
+          Effect.map((commit) => buildLabel(commit.length > 0 ? commit : null)),
         ),
     ),
     Effect.orElseSucceed((): string => "release"),

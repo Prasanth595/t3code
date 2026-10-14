@@ -26,8 +26,7 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
-  getUpdateEverythingLocalVersion,
-  isLiveServerUpdate,
+  getDesktopUpdateDownloadedVersion,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -283,15 +282,13 @@ function SidebarUpdateControl() {
   }, [prefersReducedMotion, state?.status]);
 
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
-  // A fork live server update restarts only the server, so it gets its own color.
-  const isServerOnlyUpdate = action === "install" && isLiveServerUpdate(state);
   const isDownloading = state?.status === "downloading";
   const idleInstallArmed = useIdleInstallArmed() && action === "install";
   // Remote servers follow this app to the version it is about to install.
-  const localUpdateVersion = getUpdateEverythingLocalVersion(state);
+  const localUpdateVersion =
+    state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   const everything = useUpdateEverything(localUpdateVersion);
-  // Fork: a waiting live server update keeps its own offer. The pass follows it.
-  const runsEverything = everything.hasUpdates && !isDownloading && !isServerOnlyUpdate;
+  const runsEverything = everything.hasUpdates && !isDownloading;
   // Providers leave the list once queued, so the run keeps its own state.
   const run = useUpdateEverythingRun();
   const isRunningEverything = run !== null;
@@ -481,18 +478,15 @@ function SidebarUpdateControl() {
       className={cn(
         "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
         isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
-        showUpdateIconState && isServerOnlyUpdate && iconStatus === "downloaded"
-          ? cn("bg-info/15 text-info-foreground", !isInteractionDisabled && "hover:bg-info/25")
-          : showUpdateIconState
-            ? cn(
-                "bg-sidebar-control-surface text-sidebar-foreground",
-                !isInteractionDisabled && "hover:bg-sidebar-row-hover",
-              )
-            : cn(
-                "text-(--sidebar-icon-color)",
-                !isInteractionDisabled &&
-                  "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-              ),
+        showUpdateIconState
+          ? cn(
+              "bg-sidebar-control-surface text-sidebar-foreground",
+              !isInteractionDisabled && "hover:bg-sidebar-row-hover",
+            )
+          : cn(
+              "text-(--sidebar-icon-color)",
+              !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+            ),
         disabled && !showUpdateIconState && "opacity-60",
       )}
       onClick={handleAction}

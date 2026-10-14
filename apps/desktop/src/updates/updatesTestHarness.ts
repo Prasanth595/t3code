@@ -39,9 +39,6 @@ export interface UpdatesHarnessOptions {
   readonly packageType?: string | undefined;
   /** Contents of the install record a previous run left behind. */
   readonly installRecord?: string | undefined;
-  /** Files and links by path, for the live server folder. A test can change them. */
-  readonly files?: Map<string, string>;
-  readonly links?: Map<string, string>;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -228,27 +225,12 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         ? (installRecords.get(path) ?? previousInstallRecord)
         : undefined;
       if (installRecord !== undefined) return Effect.succeed(installRecord);
-      const content =
-        path === "/missing/resources/package-type" ? options.packageType : options.files?.get(path);
-      return content !== undefined
-        ? Effect.succeed(content)
+      return path === "/missing/resources/package-type" && options.packageType !== undefined
+        ? Effect.succeed(options.packageType)
         : Effect.fail(
             PlatformError.systemError({
               module: "FileSystem",
               method: "readFileString",
-              _tag: "NotFound",
-              pathOrDescriptor: path,
-            }),
-          );
-    },
-    readLink: (path) => {
-      const target = options.links?.get(path);
-      return target !== undefined
-        ? Effect.succeed(target)
-        : Effect.fail(
-            PlatformError.systemError({
-              module: "FileSystem",
-              method: "readLink",
               _tag: "NotFound",
               pathOrDescriptor: path,
             }),
