@@ -24,6 +24,8 @@ import {
   MissionRetroAnalysis,
   type MissionRetroAnalysis as Analysis,
 } from "../../../../packages/contracts/src/missionRetroAnalysis.ts";
+import { OrchestrationV2DomainEventJson, ThreadId } from "@t3tools/contracts";
+import { OrchestrationEffectRequestV2 } from "./EffectOutbox.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -183,14 +185,117 @@ export type MissionRetroAnalysisResult = Result.Result<
   MissionRetroAnalysisOutcome,
   MissionRetroAnalysisRejection
 >;
+/** Internal planned batch only; public command/bootstrap authentication is not wired here. */
+const DispatchIntent = Schema.Struct({
+  commandId: CommandId,
+  threadId: ThreadId,
+  commandType: Schema.NonEmptyString,
+  acceptedAt: Schema.DateTimeUtcFromString,
+  events: Schema.Array(OrchestrationV2DomainEventJson),
+  effects: Schema.Array(
+    Schema.Struct({
+      id: Schema.NonEmptyString,
+      commandId: CommandId,
+      threadId: ThreadId,
+      request: OrchestrationEffectRequestV2,
+      availableAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+    }),
+  ),
+  cancelUnsettledEffects: Schema.optionalKey(
+    Schema.Struct({
+      effectTypes: Schema.Array(
+        Schema.Union(OrchestrationEffectRequestV2.members.map((member) => member.fields.type)),
+      ),
+      reason: Schema.String,
+    }),
+  ),
+});
+export type RetroAnalysisDispatchIntent = typeof DispatchIntent.Type;
+const encodeIntent = Schema.encodeEffect(DispatchIntent, { onExcessProperty: "error" });
+const decodeIntent = Schema.decodeUnknownEffect(DispatchIntent, { onExcessProperty: "error" });
+const hash = (value: unknown): string =>
+  NodeCrypto.createHash("sha256").update(stableStringify(value)).digest("hex");
+
+/** Stable pairing does not depend on the lease token generated in the transaction. */
+export const retroBoundCommandId = (input: {
+  readonly teamId: string;
+  readonly environmentId: string;
+  readonly missionId: string;
+  readonly checkpointId: string;
+  readonly retroEpoch: number;
+  readonly claimCommandId: CommandId;
+  readonly threadId: ThreadId;
+  readonly reporterChildThreadId: string;
+  readonly reporterRunId: string;
+  readonly commandType: string;
+}): CommandId => CommandId.make(`mission-retro-dispatch:${hash(input)}`);
+
+const preparedClaim: unique symbol = Symbol("PreparedRetroAnalysisClaim");
+const preparedClaims = new WeakSet<PreparedRetroAnalysisClaim>();
+/** Bound reserve may join only this client's transaction/savepoint. It never reads facts. */
+export interface PreparedRetroAnalysisClaim {
+  readonly [preparedClaim]: true;
+  readonly sqlClient: SqlClient.SqlClient;
+  readonly pairCommandId: CommandId;
+  readonly dispatchDigest: string;
+  readonly reserve: Effect.Effect<MissionRetroAnalysisResult, MissionRetroAnalysisStoreError>;
+}
+
+// Freeze plain semantic values; DateTime's internal formatting cache is not semantic state.
+const freeze = <A>(value: A): A => {
+  if (typeof value === "object" && value !== null && !DateTime.isDateTime(value)) {
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  }
+  return value;
+};
+const snapshotIntent = Effect.fn("MissionRetroAnalysisStore.snapshotIntent")(
+  function* (intent: RetroAnalysisDispatchIntent) {
+    const encoded = yield* encodeIntent(intent);
+    const snapshot = freeze(yield* decodeIntent(structuredClone(encoded)));
+    return { intent: snapshot, digest: hash(yield* encodeIntent(snapshot)) };
+  },
+  Effect.mapError(
+    (cause) =>
+      new MissionRetroAnalysisStoreError({
+        operation: "claim",
+        category: "invalid_command",
+        cause,
+      }),
+  ),
+);
+
+/** Authenticate the opaque preparation and capture the actual sink bytes before its SQL lock. */
+export const bindPreparedRetroAnalysisDispatch = Effect.fn(
+  "MissionRetroAnalysisStore.bindPreparedDispatch",
+)(function* (prepared: PreparedRetroAnalysisClaim, intent: RetroAnalysisDispatchIntent) {
+  if (!preparedClaims.has(prepared))
+    return yield* new MissionRetroAnalysisStoreError({
+      operation: "claim",
+      category: "invalid_command",
+    });
+  const bound = yield* snapshotIntent(intent);
+  if (prepared.pairCommandId !== bound.intent.commandId || prepared.dispatchDigest !== bound.digest)
+    return yield* new MissionRetroAnalysisStoreError({
+      operation: "claim",
+      category: "request_conflict",
+    });
+  return bound.intent;
+});
+
 /**
  * Dormant lease service. SAME mission event/projection/receipt transaction, no new store or worker.
  * Expiry/restart never releases a slot. Only an authoritative exact terminal ACK does.
- * Failed/not-started retries remain held; root must bind dispatch/outbox and report acceptance later.
+ * Failed/not-started retries remain held. Prepared claims can pair internally with EventSink;
+ * public dispatch, the supervisor and report acceptance remain pending.
  */
 export class MissionRetroAnalysisStore extends Context.Service<
   MissionRetroAnalysisStore,
   {
+    readonly prepareClaim: (
+      command: MissionRetroAnalysisClaimCommand,
+      dispatchIntent: RetroAnalysisDispatchIntent,
+    ) => Effect.Effect<PreparedRetroAnalysisClaim, MissionRetroAnalysisStoreError>;
     readonly claim: (
       command: MissionRetroAnalysisClaimCommand,
     ) => Effect.Effect<MissionRetroAnalysisResult, MissionRetroAnalysisStoreError>;
@@ -316,7 +421,7 @@ const ready = (facts: MissionRetroAnalysisClaimFacts, nowMs: number): boolean =>
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const authority = yield* MissionAuthority;
+  const authority = freeze(structuredClone(yield* MissionAuthority));
   const events = yield* EventStore.OrchestrationEventStore;
   const receipts = yield* Receipts.OrchestrationCommandReceiptRepository;
   const port = yield* MissionRetroAnalysisFactsPort;
@@ -736,7 +841,175 @@ const make = Effect.gen(function* () {
     if (first.failure.category !== "request_conflict") return yield* first.failure;
     return yield* run();
   });
+  const prepareClaim = Effect.fn("MissionRetroAnalysisStore.prepareClaim")(function* (
+    input: MissionRetroAnalysisClaimCommand,
+    dispatchIntent: RetroAnalysisDispatchIntent,
+  ): Effect.fn.Return<PreparedRetroAnalysisClaim, MissionRetroAnalysisStoreError> {
+    if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
+      return yield* new MissionRetroAnalysisStoreError({
+        operation: "claim",
+        category: "persistence",
+      });
+    const command = freeze(
+      yield* decodeClaimCommand(structuredClone(input)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new MissionRetroAnalysisStoreError({
+              operation: "claim",
+              category: "invalid_command",
+              cause,
+            }),
+        ),
+      ),
+    );
+    // Latest authenticated scope/role/epoch precedes any facts or receipt read.
+    const canonical = yield* load("claim", command).pipe(Effect.mapError(mapError("claim")));
+    const checkpoint = canonical.execution?.retroCheckpoints?.find(
+      (cp) => cp.checkpointId === command.checkpointId,
+    );
+    if (checkpoint === undefined)
+      return yield* new MissionRetroAnalysisStoreError({
+        operation: "claim",
+        category: "invalid_command",
+      });
+    const bound = yield* snapshotIntent(dispatchIntent);
+    const preparedAtMs = yield* Clock.currentTimeMillis;
+    const trusted = freeze(
+      structuredClone(
+        yield* port.readClaimFacts(structuredClone(command), structuredClone(checkpoint)),
+      ),
+    );
+    if (!scopeMatches(trusted, command))
+      return yield* new MissionRetroAnalysisStoreError({
+        operation: "claim",
+        category: "scope_denied",
+      });
+    const intent = bound.intent;
+    const identity = trusted.prepared;
+    const pairCommandId = retroBoundCommandId({
+      teamId: authority.teamId,
+      environmentId: authority.environmentId,
+      missionId: command.missionId,
+      checkpointId: command.checkpointId,
+      retroEpoch: command.retroEpoch,
+      claimCommandId: command.commandId,
+      threadId: intent.threadId,
+      reporterChildThreadId: identity.reporterChildThreadId,
+      reporterRunId: identity.reporterRunId,
+      commandType: intent.commandType,
+    });
+    const starts = intent.effects.filter((effect) => effect.request.type === "provider-turn.start");
+    if (
+      intent.commandId !== pairCommandId ||
+      intent.threadId !== authority.controllerThreadId ||
+      intent.events.length === 0 ||
+      starts.length !== 1 ||
+      starts[0]!.request.type !== "provider-turn.start" ||
+      starts[0]!.request.runId !== identity.reporterRunId ||
+      starts[0]!.threadId !== identity.reporterChildThreadId ||
+      intent.effects.some(
+        (effect) =>
+          effect.commandId !== pairCommandId ||
+          (effect.threadId !== intent.threadId &&
+            effect.threadId !== identity.reporterChildThreadId) ||
+          effect.request.type === "provider-turn.restart" ||
+          effect.request.type === "provider-runtime.continue",
+      ) ||
+      new Set(intent.effects.map((effect) => effect.id)).size !== intent.effects.length
+    )
+      return yield* new MissionRetroAnalysisStoreError({
+        operation: "claim",
+        category: "invalid_command",
+      });
+    for (const event of intent.events) {
+      if (event.threadId !== intent.threadId && event.threadId !== identity.reporterChildThreadId)
+        return yield* new MissionRetroAnalysisStoreError({
+          operation: "claim",
+          category: "invalid_command",
+        });
+      const payload = event.payload;
+      // A parent frame/subagent can describe the reporter without belonging to
+      // the reporter's own thread. Its parent run/provider are not the reporter's.
+      if (
+        ("targetThreadId" in payload &&
+          payload.targetThreadId !== identity.reporterChildThreadId) ||
+        ("targetRunId" in payload &&
+          payload.targetRunId !== null &&
+          payload.targetRunId !== identity.reporterRunId) ||
+        ("targetProviderInstanceId" in payload &&
+          payload.targetProviderInstanceId !== null &&
+          payload.targetProviderInstanceId !== trusted.capacity.providerInstanceId) ||
+        ("targetModel" in payload && payload.targetModel !== trusted.capacity.modelId) ||
+        ("childThreadId" in payload &&
+          payload.childThreadId !== null &&
+          payload.childThreadId !== identity.reporterChildThreadId) ||
+        ("childThreadId" in payload &&
+          payload.childThreadId === identity.reporterChildThreadId &&
+          (("providerInstanceId" in payload &&
+            payload.providerInstanceId !== trusted.capacity.providerInstanceId) ||
+            ("model" in payload &&
+              payload.model !== null &&
+              payload.model !== trusted.capacity.modelId)))
+      )
+        return yield* new MissionRetroAnalysisStoreError({
+          operation: "claim",
+          category: "invalid_command",
+        });
+      if (event.threadId !== identity.reporterChildThreadId) continue;
+      // Only compare metadata represented by existing contracts. There is no profile field:
+      // muse-review remains a trusted preparedIdentityRef/route fact, not a sink-verified sandbox.
+      if (
+        (event.providerInstanceId !== undefined &&
+          event.providerInstanceId !== trusted.capacity.providerInstanceId) ||
+        ("providerInstanceId" in payload &&
+          payload.providerInstanceId !== trusted.capacity.providerInstanceId) ||
+        ("modelSelection" in payload &&
+          (payload.modelSelection.instanceId !== trusted.capacity.providerInstanceId ||
+            payload.modelSelection.model !== trusted.capacity.modelId)) ||
+        ("nativeMetadata" in payload &&
+          payload.nativeMetadata?.modelSelection !== undefined &&
+          (payload.nativeMetadata.modelSelection.instanceId !==
+            trusted.capacity.providerInstanceId ||
+            payload.nativeMetadata.modelSelection.model !== trusted.capacity.modelId)) ||
+        ("threadId" in payload && payload.threadId !== identity.reporterChildThreadId) ||
+        ("appThreadId" in payload &&
+          payload.appThreadId !== null &&
+          payload.appThreadId !== identity.reporterChildThreadId) ||
+        ("runId" in payload &&
+          payload.runId !== null &&
+          payload.runId !== identity.reporterRunId) ||
+        (event.type === "thread.created" && event.payload.id !== identity.reporterChildThreadId) ||
+        ((event.type === "run.created" || event.type === "run.updated") &&
+          event.payload.id !== identity.reporterRunId)
+      )
+        return yield* new MissionRetroAnalysisStoreError({
+          operation: "claim",
+          category: "invalid_command",
+        });
+    }
+    const requestHash = hash({
+      operation: "claim",
+      teamId: authority.teamId,
+      environmentId: authority.environmentId,
+      controllerThreadId: authority.controllerThreadId,
+      command,
+      pairCommandId,
+      dispatchDigest: bound.digest,
+    });
+    const prepared: PreparedRetroAnalysisClaim = Object.freeze({
+      [preparedClaim]: true as const,
+      sqlClient: sql,
+      pairCommandId,
+      dispatchDigest: bound.digest,
+      reserve: sql
+        .withTransaction(transaction("claim", command, requestHash, trusted, preparedAtMs))
+        .pipe(Effect.mapError(mapError("claim"))),
+    });
+    preparedClaims.add(prepared);
+    return prepared;
+  });
   return MissionRetroAnalysisStore.of({
+    prepareClaim,
     claim: (command) => execute("claim", command).pipe(Effect.mapError(mapError("claim"))),
     settle: (command) => execute("settle", command).pipe(Effect.mapError(mapError("settle"))),
   });

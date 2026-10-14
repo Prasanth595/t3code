@@ -35,6 +35,11 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import type { PreparedMissionAdmission } from "./MissionAdmissionStore.ts";
+import {
+  bindPreparedRetroAnalysisDispatch,
+  type PreparedRetroAnalysisClaim,
+} from "./MissionRetroAnalysisStore.ts";
+export { retroBoundCommandId } from "./MissionRetroAnalysisStore.ts";
 
 /**
  * ERRORS
@@ -86,6 +91,25 @@ class MissionAdmissionGateError extends Schema.TaggedError<MissionAdmissionGateE
 ) {
   override get message(): string {
     return `Mission admission command pairing failed (${this.category}).`;
+  }
+}
+
+class RetroAnalysisGateError extends Schema.TaggedError<RetroAnalysisGateError>()(
+  "RetroAnalysisGateError",
+  {
+    commandId: CommandId,
+    category: Schema.Literals([
+      "different_database",
+      "outer_transaction",
+      "combined_gates",
+      "not_ready",
+      "receipt_conflict",
+      "effect_conflict",
+    ]),
+  },
+) {
+  override get message(): string {
+    return `Retro analysis command pairing failed (${this.category}).`;
   }
 }
 
@@ -156,6 +180,8 @@ export interface EventSinkV2Shape {
      * server-controlled prompt/options and actual command bytes before prepare.
      */
     readonly missionAdmission?: PreparedMissionAdmission;
+    /** Internal exact planned batch; does not activate public dispatch or reporter execution. */
+    readonly preparedRetroAnalysisClaim?: PreparedRetroAnalysisClaim;
     readonly cancelUnsettledEffects?: {
       readonly effectTypes: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
       readonly reason: string;
@@ -557,6 +583,33 @@ const layerBase: Layer.Layer<
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
+      const preparedRetro = input.preparedRetroAnalysisClaim;
+      if (preparedRetro !== undefined) {
+        if (input.missionAdmission !== undefined)
+          return yield* new RetroAnalysisGateError({
+            commandId: input.commandId,
+            category: "combined_gates",
+          });
+        if (preparedRetro.sqlClient !== sql)
+          return yield* new RetroAnalysisGateError({
+            commandId: input.commandId,
+            category: "different_database",
+          });
+        if (Option.isSome(yield* Effect.serviceOption(sql.transactionService)))
+          return yield* new RetroAnalysisGateError({
+            commandId: input.commandId,
+            category: "outer_transaction",
+          });
+        const {
+          preparedRetroAnalysisClaim: _prepared,
+          missionAdmission: _admission,
+          ...intent
+        } = input;
+        input = {
+          ...(yield* bindPreparedRetroAnalysisDispatch(preparedRetro, intent)),
+          preparedRetroAnalysisClaim: preparedRetro,
+        };
+      }
       if (input.missionAdmission !== undefined) {
         if (input.missionAdmission.sqlClient !== sql) {
           return yield* new MissionAdmissionGateError({
@@ -575,6 +628,35 @@ const layerBase: Layer.Layer<
         Effect.gen(function* () {
           // Reserve before any thread/shared intent, even on exact replay. A
           // recovered mission receipt is retrieval, never permission to launch.
+          if (preparedRetro !== undefined) {
+            const reserved = yield* preparedRetro.reserve;
+            if (Result.isFailure(reserved)) return yield* reserved.failure;
+            if (
+              reserved.success.analysis.status !== "reserved" ||
+              reserved.success.analysis.lease === null
+            )
+              return yield* new RetroAnalysisGateError({
+                commandId: input.commandId,
+                category: "not_ready",
+              });
+            const prior = yield* commandReceipts.getByCommandId(input.commandId);
+            if (
+              input.commandId !== preparedRetro.pairCommandId ||
+              (Option.isSome(prior) &&
+                (prior.value.threadId !== input.threadId ||
+                  prior.value.commandType !== input.commandType ||
+                  prior.value.status !== "accepted")) ||
+              reserved.success.recovered !== Option.isSome(prior)
+            )
+              return yield* new RetroAnalysisGateError({
+                commandId: input.commandId,
+                category: "receipt_conflict",
+              });
+            if (reserved.success.recovered) {
+              const existing = yield* existingCommandResult(input.commandId);
+              return { ...existing, committed: false as const, cancelledEffectIds: [] };
+            }
+          }
           const admission =
             input.missionAdmission === undefined
               ? undefined
@@ -583,11 +665,18 @@ const layerBase: Layer.Layer<
             return yield* admission.failure;
           }
           if (admission !== undefined && Result.isSuccess(admission)) {
-            if (input.commandId !== missionBoundCommandId({
-              dispatchKey: admission.success.receipt.dispatchKey,
-              threadId: input.threadId,
-              commandType: input.commandType,
-            })) return yield* new MissionAdmissionGateError({ commandId: input.commandId, category: "receipt_conflict" });
+            if (
+              input.commandId !==
+              missionBoundCommandId({
+                dispatchKey: admission.success.receipt.dispatchKey,
+                threadId: input.threadId,
+                commandType: input.commandType,
+              })
+            )
+              return yield* new MissionAdmissionGateError({
+                commandId: input.commandId,
+                category: "receipt_conflict",
+              });
             const prior = yield* commandReceipts.getByCommandId(input.commandId);
             if (
               Option.isSome(prior) &&
@@ -621,6 +710,11 @@ const layerBase: Layer.Layer<
             error: null,
           });
           if (!reserved) {
+            if (preparedRetro !== undefined)
+              return yield* new RetroAnalysisGateError({
+                commandId: input.commandId,
+                category: "receipt_conflict",
+              });
             if (admission !== undefined) {
               return yield* new MissionAdmissionGateError({
                 commandId: input.commandId,
@@ -632,6 +726,18 @@ const layerBase: Layer.Layer<
           }
 
           const normalized = yield* normalizeEvents(input.events);
+          if (preparedRetro !== undefined) {
+            // Normalization cannot change a prepared frame or prompt unnoticed.
+            const {
+              preparedRetroAnalysisClaim: _prepared,
+              missionAdmission: _admission,
+              ...intent
+            } = input;
+            yield* bindPreparedRetroAnalysisDispatch(preparedRetro, {
+              ...intent,
+              events: normalized,
+            });
+          }
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,
@@ -643,6 +749,17 @@ const layerBase: Layer.Layer<
             );
           }
           yield* applyStoredEvents(storedEvents);
+          if (preparedRetro !== undefined) {
+            // enqueue intentionally ignores reused IDs for legacy callers. A new
+            // pair must own every intent row; a collision cannot consume a lease.
+            for (const effect of input.effects) {
+              if (Option.isSome(yield* effectOutbox.get(effect.id)))
+                return yield* new RetroAnalysisGateError({
+                  commandId: input.commandId,
+                  category: "effect_conflict",
+                });
+            }
+          }
           yield* effectOutbox.enqueue(input.effects);
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,

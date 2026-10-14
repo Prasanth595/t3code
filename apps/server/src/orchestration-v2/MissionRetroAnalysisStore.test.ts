@@ -5,6 +5,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -991,13 +992,15 @@ it.effect(
     ),
 );
 
-
 it.effect("timestamps a lease at the actual commit clock after refreshed port facts", () => {
   const h = harness({
     afterClaimFacts: TestClock.adjust(100),
-    claim: (f) => ({ ...f, nowMs: f.nowMs + 100,
+    claim: (f) => ({
+      ...f,
+      nowMs: f.nowMs + 100,
       capacity: { ...f.capacity, observedAtMs: f.nowMs + 100 },
-      host: { ...f.host, observedAtMs: f.nowMs + 100 } }),
+      host: { ...f.host, observedAtMs: f.nowMs + 100 },
+    }),
   });
   return Effect.gen(function* () {
     const store = yield* Store.MissionRetroAnalysisStore;
@@ -1018,4 +1021,45 @@ it.effect("holds an otherwise exact terminal receipt dated before its lease", ()
     assert.strictEqual(denial(result), "terminal_denied");
     assert.strictEqual((yield* current()).execution!.retroAnalyses![0]!.status, "reserved");
   }).pipe(Effect.provide(memory(harness({ terminal: (t) => ({ ...t, observedAtMs: 0 }) })))),
+);
+
+const unusedDispatchIntent: Store.RetroAnalysisDispatchIntent = {
+  commandId: CommandId.make("unprepared"),
+  threadId: retro.controllerThreadId,
+  commandType: "thread.create",
+  acceptedAt: DateTime.makeUnsafe(0),
+  events: [],
+  effects: [],
+};
+it.effect("prepared claim denies caller outer SQL before facts or any reservation", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const cp = yield* seed();
+    const store = yield* Store.MissionRetroAnalysisStore;
+    const sql = yield* SqlClient.SqlClient;
+    const before = yield* current();
+    const result = yield* sql
+      .withTransaction(store.prepareClaim(claim("mission", cp), unusedDispatchIntent))
+      .pipe(Effect.result);
+    assert.isTrue(Result.isFailure(result));
+    assert.strictEqual(h.calls.claim, 0);
+    assert.deepStrictEqual(yield* current(), before);
+  }).pipe(Effect.provide(memory(h)));
+});
+it.effect(
+  "prepared claim validates the current retro manager epoch before reading external facts",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const cp = yield* seed();
+      const store = yield* Store.MissionRetroAnalysisStore;
+      const result = yield* store
+        .prepareClaim(claim("mission", cp, { retroEpoch: 3 }), unusedDispatchIntent)
+        .pipe(Effect.result);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) assert.strictEqual(result.failure.category, "scope_denied");
+      assert.strictEqual(h.calls.claim, 0);
+      assert.strictEqual((yield* current()).revision, 1);
+    }).pipe(Effect.provide(memory(h)));
+  },
 );
