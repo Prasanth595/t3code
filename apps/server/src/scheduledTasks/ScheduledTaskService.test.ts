@@ -37,6 +37,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -2871,6 +2872,78 @@ it.effect("the domain-event reactor pauses tasks on thread archive and delete", 
         yield* awaitPaused(archivedTask.task.id);
         yield* awaitPaused(deletedTask.task.id);
         assert.equal(sendToThreadCalls, 0);
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("the domain-event reactor resumes after its event stream fails", () =>
+  Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread:reactor-resumes");
+        const firstFailed = yield* Deferred.make<void>();
+        const cursors: Array<number | undefined> = [];
+        // The first subscription fails like a transient read error. The resumed
+        // one delivers the archive committed after the reactor's cursor.
+        const threadManagement = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          streamStoredEventsFrom: (input) =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                cursors.push(input?.afterSequence);
+                if (cursors.length === 1) {
+                  yield* Deferred.succeed(firstFailed, undefined);
+                  return Stream.fail(
+                    new Orchestrator.OrchestratorDomainEventStreamError({
+                      cause: "database is locked",
+                    }),
+                  );
+                }
+                return Stream.make({
+                  sequence: (input?.afterSequence ?? 0) + 1,
+                  commandId: null,
+                  event: {
+                    id: EventId.make("event:reactor-resumes"),
+                    type: "thread.archived",
+                    threadId,
+                    providerInstanceId: ProviderInstanceId.make("codex"),
+                    occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
+                    payload: { id: threadId },
+                  } as unknown as OrchestrationV2DomainEvent,
+                } satisfies OrchestrationV2StoredEvent).pipe(Stream.concat(Stream.never));
+              }),
+            ),
+        });
+        const context = yield* Layer.build(
+          ScheduledTaskService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeCrypto.layer,
+                Scheduler.layer,
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                threadManagement,
+              ),
+            ),
+          ),
+        );
+        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+        yield* setBoundThreadState(threadId, "active");
+        const task = yield* tasks.upsert({ ...boundTaskInput, enabled: true, threadId });
+        yield* setBoundThreadState(threadId, "archived");
+        yield* Deferred.await(firstFailed);
+
+        // Well before the task is due, so its fire-time check cannot pause it.
+        yield* TestClock.adjust("10 seconds");
+
+        const paused = yield* tasks.subscribeList().pipe(
+          Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === task.task.id)),
+          Stream.filter((candidate) => candidate !== undefined && candidate.enabled === false),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(paused));
+        assert.equal(cursors.length, 2);
+        assert.equal(cursors[1], cursors[0]);
       }),
     );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),

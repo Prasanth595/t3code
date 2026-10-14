@@ -38,6 +38,7 @@ import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -1539,26 +1540,35 @@ export const layer = Layer.effect(
     // subscribes, and the forked reactor subscribes some time after this
     // layer is built. Resume from the sequence read before the sweep so an
     // archive committed in that gap is replayed rather than missed.
-    const reactorCursor = yield* latestEventSeq.pipe(
-      Effect.map(Option.some),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Could not read the event cursor for the archive reactor", {
-          cause,
-        }).pipe(Effect.as(Option.none<number>())),
+    const reactorCursor = yield* Ref.make(
+      yield* latestEventSeq.pipe(
+        Effect.map(Option.some),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not read the event cursor for the archive reactor", {
+            cause,
+          }).pipe(Effect.as(Option.none<number>())),
+        ),
       ),
     );
-    const lifecycleEvents = Option.match(reactorCursor, {
-      onNone: () => threadManagement.streamDomainEvents,
-      onSome: (afterSequence) =>
-        threadManagement
-          .streamStoredEventsFrom({ afterSequence })
-          .pipe(Stream.map((stored) => stored.event)),
-    });
-    yield* Stream.runForEach(lifecycleEvents, (event) =>
-      event.type === "thread.archived" || event.type === "thread.deleted"
+    // A failed read or a full stream buffer ends the subscription. The reactor
+    // resubscribes after the last event it handled, so pausing is delayed, not
+    // stopped until restart. Pausing an already paused task is a no-op.
+    const lifecycleEvents = Stream.unwrap(
+      Ref.get(reactorCursor).pipe(
+        Effect.flatMap(Option.match({ onNone: () => latestEventSeq, onSome: Effect.succeed })),
+        Effect.map((afterSequence) => threadManagement.streamStoredEventsFrom({ afterSequence })),
+      ),
+    );
+    yield* Stream.runForEach(lifecycleEvents, ({ sequence, event }) =>
+      (event.type === "thread.archived" || event.type === "thread.deleted"
         ? pauseLogged(event.threadId)
-        : Effect.void,
+        : Effect.void
+      ).pipe(Effect.andThen(Ref.set(reactorCursor, Option.some(sequence)))),
     ).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Schedule task archive reactor failed; resubscribing", { error }),
+      ),
+      Effect.retry({ schedule: Schedule.spaced("5 seconds") }),
       Effect.catchCause((cause) =>
         Effect.logWarning("Schedule task archive reactor stopped", { cause }),
       ),
