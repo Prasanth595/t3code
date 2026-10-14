@@ -8,7 +8,7 @@ import { View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { RequestActionButton } from "./RequestActionButton";
-import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { useVisibleSecondClock } from "../../lib/use-visible-second-clock";
 
 /**
  * Replaces the composer on a provider-native subagent thread. The provider

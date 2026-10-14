@@ -1,10 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
 import { Atom } from "effect/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { vcsActionManager } from "./vcs";
+import { useVisibleSecondClock } from "../lib/use-visible-second-clock";
 
 export function useVcsActionState(target: VcsActionTarget): VcsActionState {
   return useAtomValue(vcsActionManager.stateAtom(target));
@@ -67,9 +67,9 @@ const EMPTY_PROGRESS: GitActionProgress = {
   description: null,
 };
 
-function formatElapsedSeconds(ms: number | null): string | null {
+function formatElapsedSeconds(ms: number | null, nowMs: number): string | null {
   if (ms === null) return null;
-  const elapsed = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  const elapsed = Math.max(0, Math.floor((nowMs - ms) / 1000));
   if (elapsed < 2) return null;
   return `Running for ${elapsed}s`;
 }
@@ -78,34 +78,12 @@ export function useGitActionProgress(target: VcsActionTarget): GitActionProgress
   const actionState = useVcsActionState(target);
   const { result } = useGitActionResultNotification();
 
-  const [, forceUpdate] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const startElapsedTimer = useCallback(() => {
-    if (intervalRef.current) return;
-    intervalRef.current = setInterval(() => forceUpdate((n) => n + 1), 1000);
-  }, []);
-
-  const stopElapsedTimer = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (actionState.isRunning) {
-      startElapsedTimer();
-    } else {
-      stopElapsedTimer();
-    }
-    return stopElapsedTimer;
-  }, [actionState.isRunning, startElapsedTimer, stopElapsedTimer]);
+  const nowMs = useVisibleSecondClock(actionState.isRunning && actionState.lastOutputLine === null);
 
   if (actionState.isRunning) {
     const description =
       actionState.lastOutputLine ??
-      formatElapsedSeconds(actionState.hookStartedAtMs ?? actionState.phaseStartedAtMs);
+      formatElapsedSeconds(actionState.hookStartedAtMs ?? actionState.phaseStartedAtMs, nowMs);
     return {
       phase: "running",
       label: actionState.currentLabel,
