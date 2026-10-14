@@ -390,10 +390,6 @@ export function hasPendingChildRuns(
   );
 }
 
-function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
-  return isTerminalTaskStatus(result.status) || result.hasPendingQuestion;
-}
-
 function isTerminalTaskStatus(
   status: OrchestratorMcpDelegateTaskResult["status"],
 ): status is TerminalTaskStatus {
@@ -1469,7 +1465,10 @@ const make = Effect.gen(function* () {
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
         hasPendingQuestion: childControls.runtimeRequests.some(
-          (request) => request.kind === "user_input" && request.status === "pending",
+          (request) =>
+            request.kind === "user_input" &&
+            request.status === "pending" &&
+            request.responseCapability.type === "live",
         ),
         waitTimedOut,
       } satisfies OrchestratorMcpDelegateTaskResult;
@@ -1523,7 +1522,9 @@ const make = Effect.gen(function* () {
         .getThreadEventSequence(scope.thread.threadId)
         .pipe(Effect.mapError(streamError));
       const initial = yield* readTask(scope, taskId, false, true);
-      if (endsTaskWait(initial)) return Option.some(initial);
+      if (initial.hasPendingQuestion || isTerminalTaskStatus(initial.status)) {
+        return Option.some(initial);
+      }
       // One stream per event type, so transcript events never fill a buffer.
       return yield* Stream.mergeAll(
         TASK_WAKE_EVENTS.map(({ thread, eventType }) =>
@@ -1537,7 +1538,7 @@ const make = Effect.gen(function* () {
       ).pipe(
         Stream.mapError(streamError),
         Stream.mapEffect(() => readTask(scope, taskId, false, true)),
-        Stream.filter(endsTaskWait),
+        Stream.filter((result) => result.hasPendingQuestion || isTerminalTaskStatus(result.status)),
         Stream.runHead,
       );
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten));
@@ -2101,10 +2102,9 @@ const make = Effect.gen(function* () {
         if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
           return waited.value;
         }
-        // The blocking wait timed out or the child asked a question, so it no longer owns delivery: upgrade
-        // the task so a later terminal wakes the parent even mid-turn. Best
-        // effort; on failure the settled_only policy still wakes a settled
-        // parent.
+        // An incomplete wait gives up delivery: upgrade so a later terminal
+        // wakes the parent even mid-turn. Best effort; settled_only still
+        // wakes a settled parent if the upgrade fails.
         yield* threadManagement
           .dispatch({
             type: "delegated_task.wake-policy",

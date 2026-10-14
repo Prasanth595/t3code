@@ -259,10 +259,11 @@ provider session. The request becomes the V2 command
 `mode: "async"` returns the current durable state immediately.
 `mode: "wait"` waits for the task result, including nested work and completion follow-ups, or until
 the timeout expires. A wait timeout does not cancel the child; the result sets
-`waitTimedOut: true`, and the caller can continue with `task_status`. A question
-from the child also ends the wait, with `hasPendingQuestion: true`, because the
-child cannot continue until the caller answers it or asks the user. Like a
-timeout, an early return hands completion delivery back to the parent wake.
+`waitTimedOut: true`, and the caller can continue with `task_status`. A pending blocking
+question also ends the wait with `hasPendingQuestion: true` and `waitTimedOut: false`.
+Read it with `t3_pending_request_read` on `childThreadId`; answer with
+`t3_pending_request_respond` or ask the user. Async questions and approvals do not end
+the wait. Like a timeout, an early return enables a later completion wake.
 
 ```ts
 type DelegateTaskResult = {

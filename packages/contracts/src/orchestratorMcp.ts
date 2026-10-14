@@ -219,7 +219,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   resultContextTransferId: Schema.NullOr(ContextTransferId),
   hasPendingQuestion: Schema.Boolean.annotate({
     description:
-      "True while the child is blocked on a question. Read it with t3_pending_request_read on childThreadId, then answer with t3_pending_request_respond or ask the user. A new question also ends a mode=wait call early.",
+      "True for a pending blocking question, which ends mode=wait early. Read it with t3_pending_request_read on childThreadId; answer with t3_pending_request_respond or ask the user.",
   }),
   waitTimedOut: Schema.Boolean.annotate({
     description:
