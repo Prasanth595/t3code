@@ -182,7 +182,8 @@ function makeHarness(options: HarnessOptions = {}) {
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
-      remoteExists: () => Effect.succeed(true),
+      resolveBaseRemote: ({ refName }) =>
+        Effect.succeed({ remoteName: "origin", branchName: refName }),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
       resolveRemoteTrackingCommit: () =>
@@ -1313,6 +1314,40 @@ it.effect("renames a temporary branch on an existing worktree to a generated nam
         cwd: "/repo-worktrees/t3-abcd1234",
         oldBranch: "t3/abcd1234",
         newBranch: "generated-branch",
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("starts a worktree from the remote its base ref tracks", () =>
+  Effect.gen(function* () {
+    const fetches: Array<{ remoteName: string; refName?: string | undefined }> = [];
+    const harness = makeHarness({
+      fetchRemote: ({ remoteName, refName }) =>
+        Effect.sync(() => {
+          fetches.push({ remoteName, refName });
+        }),
+      git: {
+        resolveBaseRemote: () => Effect.succeed({ remoteName: "upstream", branchName: "main" }),
+        resolveRemoteTrackingCommit: () =>
+          Effect.succeed({ commitSha: "upstream-main-sha", remoteRefName: "upstream/main" }),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "command:launch:upstream-base",
+          thread: "thread:launch:upstream-base",
+          message: "Build the feature",
+          workspace: { type: "worktree", baseRef: "work", startFromOrigin: true },
+        }),
+      );
+      yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
+      assert.deepEqual(fetches, [{ remoteName: "upstream", refName: "upstream/main" }]);
+      assert.deepInclude(harness.createWorktree.mock.calls[0]?.[0], {
+        refName: "upstream-main-sha",
+        baseRefName: "upstream/main",
       });
     }).pipe(Effect.provide(harness.layer));
   }),
@@ -2536,7 +2571,8 @@ it.effect.each([
     const harness = makeHarness({
       hasCommit: ({ refName }) => Effect.succeed(refName === "HEAD"),
       git: {
-        remoteExists: () => Effect.succeed(testCase.origin),
+        resolveBaseRemote: ({ refName }) =>
+          Effect.succeed(testCase.origin ? { remoteName: "origin", branchName: refName } : null),
         hasRefNamed: () => Effect.succeed(false),
       },
     });
