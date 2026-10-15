@@ -361,16 +361,16 @@ export const discoverFxSkills = Effect.fn("discoverFxSkills")(function* (input: 
   const cwd = yield* realPath(input.cwd);
   const path = yield* Path.Path;
   const seenFolders = new Set<string>();
-  // fx matches `$name` ignoring ASCII case only.
+  // `$review` and `$Review` each load the skill whose name matches the typed
+  // case, so only an exact repeat of a name is dropped.
   const seenNames = new Set<string>();
   const found: Array<{ readonly skill: ServerProviderSkill; readonly rank: number }> = [];
   for (const root of skillRoots(path, cwd, home)) {
     for (const { skill, folder } of yield* discoverSkillsInRoot(root)) {
       if (seenFolders.has(folder)) continue;
       seenFolders.add(folder);
-      const nameKey = skill.name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
-      if (seenNames.has(nameKey)) continue;
-      seenNames.add(nameKey);
+      if (seenNames.has(skill.name)) continue;
+      seenNames.add(skill.name);
       found.push({ skill, rank: root.rank });
     }
   }

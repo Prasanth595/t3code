@@ -56,10 +56,10 @@ describe("discoverFxSkills", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  // For `$review` with two skills of that name (ignoring case), fx's model
-  // picks the first in scan order, so only that one is offered. fx skips a
-  // SKILL.md whose frontmatter has no name or never closes, and a symlinked
-  // folder in its managed ~/.fx/skills.
+  // For `$review` with two skills of exactly that name, fx's model loads the
+  // first in scan order, so only that one is offered; `Review` is a separate
+  // skill `$Review` loads. fx skips a SKILL.md whose frontmatter has no name
+  // or never closes, and a symlinked folder in its managed ~/.fx/skills.
   it.effect("offers the skill fx loads for each name", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -148,8 +148,6 @@ describe("discoverFxSkills", () => {
 
       const skills = yield* discoverFxSkills({ cwd: workspace, environment: { HOME: home } });
 
-      // fx scans the workspace before HOME, so the workspace `review` wins
-      // over ~/.claude's `Review`.
       assert.deepEqual(
         skills.map((skill) => [skill.name, skill.path]),
         [
@@ -159,6 +157,7 @@ describe("discoverFxSkills", () => {
           ["plain", path.join(home, ".fx/skills/plain/SKILL.md")],
           ["replacement", path.join(home, ".fx/skills/replacement/SKILL.md")],
           ["review", path.join(workspace, ".fx/skills/review/SKILL.md")],
+          ["Review", path.join(home, ".claude/skills/review/SKILL.md")],
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
