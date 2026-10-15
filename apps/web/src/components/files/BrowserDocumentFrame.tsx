@@ -127,6 +127,8 @@ export function HtmlRenderDocument(props: {
   readonly threadRef?: ScopedThreadRef | undefined;
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
+  /** Reports the image viewer opening and closing, so a virtualized row can stay mounted. */
+  readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
   /** Called when the page has loaded. */
   readonly onLoad?: () => void;
 }) {
@@ -290,6 +292,12 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("message", openImage);
     return () => window.removeEventListener("message", openImage);
   }, []);
+  const { onFullscreenChange } = props;
+  useEffect(() => {
+    if (expandedImage === null) return;
+    onFullscreenChange?.(true);
+    return () => onFullscreenChange?.(false);
+  }, [expandedImage, onFullscreenChange]);
   const { onContentHeight } = props;
   // A page posts its height once per change, so listen from the commit that
   // inserts the frame; a passive effect could run after a fast page's first post.
