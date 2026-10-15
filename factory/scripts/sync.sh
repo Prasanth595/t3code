@@ -2,19 +2,21 @@
 # Merges upstream's newest nightly tag into main through a pull request.
 #
 # Picks the newest v*-nightly.* tag at the upstream repo by version order and
-# exits 0 with "up to date" when factory/UPSTREAM already names it, or when
-# sync/<tag> is already on origin. Otherwise it creates sync/<tag> from
-# origin/main, merges the tag with --no-ff, regenerates
+# exits 0 with "up to date" when factory/UPSTREAM already names it. A tag whose
+# sync/<tag> is already on origin waits on its open pull request (exit 0), or
+# files `Sync to <tag> is stuck` when it has none. Otherwise it creates
+# sync/<tag> from origin/main, merges the tag with --no-ff, regenerates
 # apps/web/src/routeTree.gen.ts when that file conflicts, records <tag> <sha> in
 # factory/UPSTREAM, commits, and runs factory/scripts/check.sh. Green: push, open
-# the pull request `sync: <tag>` and merge it with a merge commit. Red: push, open
-# it as a draft, and file `Sync to <tag> fails checks` with the failing step and
-# the last 200 lines of its output. A conflict in any other file, or a failing
-# `vp i` or generator, aborts the merge and pushes nothing; a refused push stops
-# too. Each files its own issue (`conflicts`, `fails checks`, `cannot be pushed`)
-# and exits 1; an open issue of the same kind gets a comment and the new tag in
-# its title instead, so a lasting problem keeps one issue. gh targets origin's
-# GitHub repository, never the fork's parent.
+# the pull request `sync: <tag>`, and fast-forward main to the checked merge
+# commit, which merges it; when main moved meanwhile, the pull request waits for
+# a person. Red: push, open it as a draft, and file `Sync to <tag> fails checks`
+# with the failing step and the last 200 lines of its output. A conflict in any
+# other file, or a failing `vp i` or generator, aborts the merge and pushes
+# nothing; a refused push stops too. Each files its own issue (`conflicts`,
+# `fails checks`, `cannot be pushed`) and exits 1; an open issue of the same
+# kind gets a comment and the new tag in its title instead, so a lasting problem
+# keeps one issue. gh targets origin's GitHub repository, never the fork's parent.
 #
 # Run daily by .github/workflows/factory-sync.yml with GITHUB_TOKEN. Pull
 # requests opened with that token trigger no workflows, which is why the checks
@@ -60,11 +62,6 @@ if [[ $current == "$tag" ]]; then
 fi
 
 branch="sync/$tag"
-if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
-  echo "sync: $branch is already on origin, so $tag waits on it; delete the branch to retry"
-  exit 0
-fi
-
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
@@ -125,6 +122,24 @@ fails_before_commit() {
   echo "sync: $step failed with exit $status; $tag is not synced" >&2
   fails_checks "Merging \`$tag\` ($sha) into \`$base\` stopped: \`$step\` failed with exit $status, so nothing was pushed." "$scratch/$log"
 }
+
+# A sync branch already on origin belongs to an earlier run: its open pull
+# request waits for a person; without one, the run that pushed it stopped early.
+if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+  pr_url=$(gh pr list --head "$branch" --state open --json url --jq '.[0].url // empty')
+  if [[ -n $pr_url ]]; then
+    echo "sync: $tag waits on $pr_url"
+    exit 0
+  fi
+  echo "sync: $branch is on origin with no open pull request; $tag is not synced" >&2
+  {
+    echo "\`$branch\` is on \`origin\` with no open pull request, so \`$tag\` is not synced."
+    echo "An earlier run pushed it and stopped before its pull request was opened, or the"
+    echo "pull request was closed. Delete the branch to sync the tag again."
+  } > "$scratch/stuck.md"
+  file_issue "is stuck" "$scratch/stuck.md"
+  exit 1
+fi
 
 git fetch --quiet origin "$base"
 git fetch --quiet --no-tags "$upstream" "refs/tags/$tag:refs/tags/$tag"
@@ -196,8 +211,23 @@ if [[ $check_status == 0 ]]; then
     echo "\`factory/scripts/check.sh\` passed, so this merges on its own."
   } > "$scratch/pr.md"
   pr_url=$(gh pr create --base "$base" --head "$branch" --title "sync: $tag" --body-file "$scratch/pr.md")
-  gh pr merge "$pr_url" --merge
-  exit 0
+  # Fast-forwarding main to the checked merge commit lands exactly what the checks
+  # ran on, and GitHub marks the pull request merged. When main moved meanwhile,
+  # the push is refused and the pull request waits for a person.
+  if git push --quiet origin "$branch:$base" 2> "$scratch/land.log"; then
+    echo "sync: $tag merged into $base through $pr_url"
+    exit 0
+  fi
+  cat "$scratch/land.log" >&2
+  echo "sync: $base could not be fast-forwarded to $branch; $pr_url waits for a person" >&2
+  {
+    echo "\`$base\` could not be fast-forwarded to this branch: it moved while the checks ran,"
+    echo "or it refuses the push. The checks passed on the \`$base\` this branch was cut from,"
+    echo "not on the current one, so this needs a person: merge \`$base\` in, run"
+    echo "\`factory/scripts/check.sh\`, then merge."
+  } > "$scratch/land.md"
+  gh pr comment "$pr_url" --body-file "$scratch/land.md"
+  exit 1
 fi
 
 step=$(awk '/^check: / { step = substr($0, 8) } END { print step }' "$scratch/check.log")

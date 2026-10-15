@@ -16,11 +16,14 @@ const ROUTE_TREE = "apps/web/src/routeTree.gen.ts";
 // Every stub appends its invocation to $SYNC_TEST_LOG and whether GH_TOKEN
 // reached it to $SYNC_TEST_LOG.env; `gh` also appends the GH_REPO it ran with
 // to $SYNC_TEST_LOG.repo. `gh` answers the calls sync.sh reads from:
-// `pr create` prints a URL, and `issue list` prints every issue in
+// `pr create` prints a URL, `pr list` prints $SYNC_TEST_PR_URL (the open pull
+// request its --jq asks for), and `issue list` prints every issue in
 // $SYNC_TEST_ISSUES as the `number<TAB>title` rows the script's --jq asks for,
 // so the script's own title match is what the test exercises. `vp` fails with
 // $SYNC_TEST_VP_FAIL as its output, the generator with $SYNC_TEST_REGENERATE_FAIL,
 // and `check.sh` with the file $SYNC_TEST_CHECK_OUTPUT, when each is set.
+// `check.sh` also pushes $SYNC_TEST_MOVE_MAIN's HEAD to origin's main when set,
+// as if another pull request landed while the checks ran.
 const ghStub = `#!/usr/bin/env bash
 echo "gh $*" >> "$SYNC_TEST_LOG"
 echo "gh \${GH_TOKEN-unset}" >> "$SYNC_TEST_LOG.env"
@@ -31,6 +34,7 @@ for ((i = 1; i <= $#; i++)); do
 done
 case "$1 $2" in
   "pr create") echo "https://example.test/pr/1" ;;
+  "pr list") echo "\${SYNC_TEST_PR_URL:-}" ;;
   "issue list")
     node -e '
       for (const issue of JSON.parse(process.env.SYNC_TEST_ISSUES || "[]")) {
@@ -55,6 +59,9 @@ exit 0
 const checkStub = `#!/usr/bin/env bash
 echo "check.sh" >> "$SYNC_TEST_LOG"
 echo "check.sh \${GH_TOKEN-unset}" >> "$SYNC_TEST_LOG.env"
+if [[ -n \${SYNC_TEST_MOVE_MAIN:-} ]]; then
+  git -C "$SYNC_TEST_MOVE_MAIN" push -q origin HEAD:main
+fi
 if [[ -n \${SYNC_TEST_CHECK_OUTPUT:-} ]]; then
   cat "$SYNC_TEST_CHECK_OUTPUT"
   exit 1
@@ -214,26 +221,30 @@ describe("sync.sh", () => {
     expect(originBranches()).toEqual(["main"]);
   });
 
-  it("merges the newest tag, records it, runs the checks and merges the pull request", () => {
+  it("merges the newest tag, records it, runs the checks and lands the pull request", () => {
     makeFork(`${OLD} ${oldSha}`);
     const { status, stdout, calls, tokens, repos } = run();
     expect(status).toBe(0);
     expect(stdout).toContain(`newest nightly: ${NEWEST}`);
+    expect(stdout).toContain(`sync: ${NEWEST} merged into main through https://example.test/pr/1`);
     expect(calls.slice(0, 2)).toEqual(["vp i", "check.sh"]);
-    expect(tokens).toEqual(["vp unset", "check.sh unset", "gh secret", "gh secret"]);
-    expect(repos).toEqual(["acme/fork", "acme/fork"]);
-    expect(calls[2]).toMatch(
-      new RegExp(
-        `^gh pr create --base main --head sync/${NEWEST} --title sync: ${NEWEST} --body-file `,
+    expect(tokens).toEqual(["vp unset", "check.sh unset", "gh secret"]);
+    expect(repos).toEqual(["acme/fork"]);
+    expect(calls.slice(2)).toEqual([
+      expect.stringMatching(
+        new RegExp(
+          `^gh pr create --base main --head sync/${NEWEST} --title sync: ${NEWEST} --body-file `,
+        ),
       ),
-    );
-    expect(calls.slice(3)).toEqual(["gh pr merge https://example.test/pr/1 --merge"]);
+    ]);
     const branch = `sync/${NEWEST}`;
     expect(originBranches()).toEqual(["main", branch]);
+    // main is the checked merge commit itself, not a new merge of it.
+    expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", branch));
     expect(originFile(branch, "factory/UPSTREAM")).toBe(`${NEWEST} ${newestSha}`);
     expect(originFile(branch, "apps/server/src/server.ts")).toBe("server v10");
     expect(originFile(branch, "factory/scripts/check.sh")).toBe(checkStub.trim());
-    expect(git(origin, "rev-list", "--count", `main..${branch}`)).toBe("3");
+    expect(git(origin, "rev-list", "--count", `${branch}^1..${branch}`)).toBe("3");
     expect(git(origin, "log", "-1", "--format=%P", branch).split(" ")).toHaveLength(2);
   });
 
@@ -397,13 +408,53 @@ describe("sync.sh", () => {
     expect(body).toContain("generator broke\n");
   });
 
-  it("leaves a tag alone while its sync branch is on origin", () => {
+  it("leaves a pull request waiting for a person when main moves during the checks", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const other = NodePath.join(dir, "other");
+    NodeFS.rmSync(other, { recursive: true, force: true });
+    git(dir, "clone", "-q", origin, other);
+    git(other, "config", "user.name", "Test");
+    git(other, "config", "user.email", "test@example.com");
+    git(other, "config", "commit.gpgsign", "false");
+    write(other, "OTHER.md", "another pull request\n");
+    const moved = commit(other, "another pull request");
+    const { status, stderr, calls, body } = run({ SYNC_TEST_MOVE_MAIN: other });
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      `sync: main could not be fast-forwarded to sync/${NEWEST}; https://example.test/pr/1 waits for a person`,
+    );
+    expect(git(origin, "rev-parse", "main")).toBe(moved);
+    expect(originBranches()).toEqual(["main", `sync/${NEWEST}`]);
+    expect(calls.slice(-1)).toEqual([
+      expect.stringMatching(/^gh pr comment https:\/\/example\.test\/pr\/1 --body-file /),
+    ]);
+    expect(calls).not.toContainEqual(expect.stringMatching(/^gh pr merge/));
+    expect(body).toContain("it moved while the checks ran");
+  });
+
+  it("waits on the open pull request of a sync branch already on origin", () => {
     makeFork(`${OLD} ${oldSha}`);
     git(fork, "push", "-q", "origin", `main:refs/heads/sync/${NEWEST}`);
-    const { status, stdout, calls } = run();
+    const { status, stdout, calls } = run({ SYNC_TEST_PR_URL: "https://example.test/pr/4" });
     expect(status).toBe(0);
-    expect(stdout).toContain(`sync: sync/${NEWEST} is already on origin`);
-    expect(calls).toEqual([]);
+    expect(stdout).toContain(`sync: ${NEWEST} waits on https://example.test/pr/4`);
+    expect(calls).toEqual([
+      `gh pr list --head sync/${NEWEST} --state open --json url --jq .[0].url // empty`,
+    ]);
+    expect(git(origin, "rev-parse", `sync/${NEWEST}`)).toBe(git(origin, "rev-parse", "main"));
+  });
+
+  it("files an issue when a sync branch on origin has no open pull request", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    git(fork, "push", "-q", "origin", `main:refs/heads/sync/${NEWEST}`);
+    const { status, stderr, calls, body } = run();
+    expect(status).toBe(1);
+    expect(stderr).toContain(`sync: sync/${NEWEST} is on origin with no open pull request`);
+    expect(calls).not.toContainEqual(expect.stringMatching(/^(vp|check\.sh|gh pr create)/));
+    expect(calls.at(-1)).toMatch(
+      new RegExp(`^gh issue create --title Sync to ${NEWEST} is stuck --body-file `),
+    );
+    expect(body).toContain("Delete the branch to sync the tag again");
     expect(git(origin, "rev-parse", `sync/${NEWEST}`)).toBe(git(origin, "rev-parse", "main"));
   });
 
