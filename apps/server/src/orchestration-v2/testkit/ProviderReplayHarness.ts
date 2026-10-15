@@ -482,7 +482,7 @@ export function layerWithRegistry<Error>(
   const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(
-        layerRunFinalizationServiceProvided,
+        layerRunFinalizationServiceProvided.pipe(Layer.provide(layerThreadManagementProvided)),
         layerCheckpointRollbackServiceProvided,
         layerProviderSessionManagerProvided,
         layerProviderTurnControlServiceProvided,

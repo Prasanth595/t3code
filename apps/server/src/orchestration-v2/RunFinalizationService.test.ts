@@ -3,6 +3,7 @@ import {
   CheckpointScopeId,
   RunId,
   ThreadId,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -14,13 +15,14 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 
 it.effect("refreshes workspace after checkpoint capture without reading history", () => {
   const threadId = ThreadId.make("thread_finalize");
   const runId = RunId.make("run_finalize");
   const scopeId = CheckpointScopeId.make("scope_finalize");
   const capture = vi.fn(() => Effect.void);
-  const refresh = vi.fn(() => Effect.void);
+  const refresh = vi.fn(() => Effect.succeed(null));
   const checkpointContext = {
     runs: [],
     checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
@@ -35,6 +37,7 @@ it.effect("refreshes workspace after checkpoint capture without reading history"
             Effect.die("workspace refresh must not load transcript history"),
           getCheckpointContext: () => Effect.succeed(checkpointContext),
         }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({}),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh,
           refreshAfterTurn: () => Effect.void,
@@ -127,5 +130,103 @@ it.effect.each(
     const observer = yield* RunFinalization.RunFinalizationObserver;
     yield* observer.refresh({ cwd: "/repo", threadId, runId });
     assert.deepEqual(refreshed, [...scenario.expected]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each(
+  (
+    [
+      {
+        label: "adopts a branch the agent renamed in the thread's worktree",
+        checkedOut: "feature/ABC-123",
+        worktreeOwners: ["thread-adopt"],
+        threadWorktree: "/worktrees/adopt",
+        expected: "feature/ABC-123",
+      },
+      {
+        label: "keeps the recorded branch when another thread shares the worktree",
+        checkedOut: "feature/ABC-123",
+        worktreeOwners: ["thread-adopt", "thread-other"],
+        threadWorktree: "/worktrees/adopt",
+        expected: null,
+      },
+      {
+        label: "leaves a temporary branch to the launch rename",
+        checkedOut: "t3code/1a2b3c4d",
+        worktreeOwners: ["thread-adopt"],
+        threadWorktree: "/worktrees/adopt",
+        expected: null,
+      },
+      {
+        label: "ignores a run outside the thread's worktree",
+        checkedOut: "feature/ABC-123",
+        worktreeOwners: ["thread-adopt"],
+        threadWorktree: "/worktrees/elsewhere",
+        expected: null,
+      },
+      {
+        label: "does nothing when the recorded branch is still checked out",
+        checkedOut: "t3code/revert-login-screen",
+        worktreeOwners: ["thread-adopt"],
+        threadWorktree: "/worktrees/adopt",
+        expected: null,
+      },
+    ] as const
+  ).map((scenario) => [scenario.label, scenario] as const),
+)("%s", ([, scenario]) => {
+  const threadId = ThreadId.make("thread-adopt");
+  const runId = RunId.make("run-adopt");
+  const scopeId = CheckpointScopeId.make("scope-adopt");
+  const cwd = "/worktrees/adopt";
+  const dispatched: OrchestrationV2ServerCommand[] = [];
+  const layer = RunFinalization.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: () => Effect.void }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getCheckpointContext: () =>
+            Effect.succeed({
+              runs: [],
+              checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd }],
+              checkpoints: [],
+            }),
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              branch: "t3code/revert-login-screen",
+              worktreePath: scenario.threadWorktree,
+              activeRunId: null,
+            } as OrchestrationV2ThreadShell),
+          getThreadWorktreePaths: () =>
+            Effect.succeed(
+              scenario.worktreeOwners.map((id) => ({
+                threadId: ThreadId.make(id),
+                worktreePath: cwd,
+              })),
+            ),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command);
+              return { sequence: dispatched.length, storedEvents: [] };
+            }),
+        }),
+        Layer.succeed(RunFinalization.RunFinalizationObserver, {
+          refresh: () => Effect.succeed(scenario.checkedOut),
+          refreshAfterTurn: () => Effect.void,
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* RunFinalization.RunFinalizationService;
+    yield* service.finalize({ threadId, runId, scopeId });
+    assert.deepEqual(
+      dispatched.map((command) =>
+        command.type === "thread.metadata.update" ? command.branch : null,
+      ),
+      scenario.expected === null ? [] : [scenario.expected],
+    );
   }).pipe(Effect.provide(layer));
 });
