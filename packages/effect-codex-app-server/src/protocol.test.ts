@@ -379,7 +379,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
       const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
         stdio,
-        maxIncomingMessageLength: 16,
+        maxIncomingMessageBytes: 16,
         logIncoming: true,
         logger: (event) =>
           Effect.sync(() => {
@@ -394,7 +394,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       const response = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
       yield* Queue.take(output);
 
-      // The first line is exactly 16 characters; the second reaches 22 across two chunks.
+      // The first line is exactly 16 bytes; the second reaches 22 across two chunks.
       yield* Queue.offer(input, encoder.encode('{"method":"x/a"}\n{"method":"x/b",'));
       yield* Queue.offer(input, encoder.encode('"p":1}\n'));
       yield* Queue.end(input);
@@ -423,7 +423,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
         yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
           stdio,
-          maxIncomingMessageLength: 16,
+          maxIncomingMessageBytes: 16,
           onNotification: (notification) =>
             Effect.sync(() => {
               notifications.push(notification);
@@ -441,6 +441,37 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         );
         assert.deepEqual(notifications, [{ method: "x/a" }, { method: "x/c" }]);
       }),
+  );
+
+  it.effect("counts the incoming message limit in UTF-8 bytes, not UTF-16 code units", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const notifications: Array<CodexProtocol.CodexAppServerIncomingNotification> = [];
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        maxIncomingMessageBytes: 16,
+        onNotification: (notification) =>
+          Effect.sync(() => {
+            notifications.push(notification);
+          }),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      // 14 code units and 16 bytes, then 15 code units and 17 bytes.
+      // The first "é" is split between its two bytes across chunks.
+      const bytes = encoder.encode('{"method":"xé"}\n{"method":"éé"}\n');
+      const split = bytes.indexOf(0xc3) + 1;
+      yield* Queue.offer(input, bytes.subarray(0, split));
+      yield* Queue.offer(input, bytes.subarray(split));
+      yield* Queue.end(input);
+
+      assert.instanceOf(
+        yield* Deferred.await(termination),
+        CodexError.CodexAppServerTransportError,
+      );
+      assert.deepEqual(notifications, [{ method: "xé" }]);
+    }),
   );
 
   it.effect("reports a malformed fragmented final line before input stream termination", () =>
