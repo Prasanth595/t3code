@@ -7,6 +7,7 @@ import {
   type EnvironmentId,
   repositoryGroupingKeyOf,
 } from "@t3tools/contracts";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
@@ -32,7 +33,8 @@ function isWordCharacter(character: string | undefined): boolean {
 /**
  * Splits a commit subject so that each `#123` links to its pull request. A fork commit refers to
  * a fork pull request and an upstream commit to an upstream one. A `#` inside a word, such as
- * `C#1` or `owner/name#1`, stays text.
+ * `C#1` or `owner/name#1`, stays text. A reference in parentheses, `(#123)`, drops them: the
+ * pull request badge replaces them.
  */
 export function linkCommitSubject(
   commit: Pick<ForkCommit, "subject" | "fork">,
@@ -51,15 +53,17 @@ export function linkCommitSubject(
     const isReference =
       end > hash + 1 && !isWordCharacter(before) && !isWordCharacter(subject[end]);
     if (isReference) {
-      if (hash > textStart) {
-        parts.push({ start: textStart, text: subject.slice(textStart, hash), url: null });
+      const inParentheses = before === "(" && subject[end] === ")" && hash - 1 >= textStart;
+      const textEnd = inParentheses ? hash - 1 : hash;
+      if (textEnd > textStart) {
+        parts.push({ start: textStart, text: subject.slice(textStart, textEnd), url: null });
       }
       parts.push({
         start: hash,
         text: subject.slice(hash, end),
         url: `https://github.com/${repository}/pull/${subject.slice(hash + 1, end)}`,
       });
-      textStart = end;
+      textStart = inParentheses ? end + 1 : end;
     }
     hash = subject.indexOf("#", hash + 1);
   }
@@ -205,4 +209,17 @@ export function buildForkChangelogAgentTask(
       diff: "",
     },
   };
+}
+
+/** The releases an update brings: newer than the installed version, up to the offered one. */
+export function releasesInUpdate<Release extends Pick<ForkRelease, "version">>(
+  releases: ReadonlyArray<Release>,
+  installedVersion: string,
+  updateVersion: string,
+): Release[] {
+  return releases.filter(
+    (release) =>
+      compareSemverVersions(release.version, installedVersion) > 0 &&
+      compareSemverVersions(release.version, updateVersion) <= 0,
+  );
 }
