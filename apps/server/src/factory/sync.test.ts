@@ -13,13 +13,15 @@ const MIDDLE = "v0.0.10-nightly.20261014.2950";
 const NEWEST = "v0.0.10-nightly.20261015.3145";
 const ROUTE_TREE = "apps/web/src/routeTree.gen.ts";
 
-// Every stub appends its invocation to $SYNC_TEST_LOG. `gh` answers the calls
+// Every stub appends its invocation to $SYNC_TEST_LOG and whether GH_TOKEN
+// reached it to $SYNC_TEST_LOG.env. `gh` answers the calls
 // sync.sh reads from: `pr create` prints a URL, and `issue list` prints the
 // number of the issue in $SYNC_TEST_ISSUES whose title is the quoted --search
 // text, as the real command does with its --jq filter. `check.sh` fails with
 // $SYNC_TEST_CHECK_OUTPUT when set.
 const ghStub = `#!/usr/bin/env bash
 echo "gh $*" >> "$SYNC_TEST_LOG"
+echo "gh \${GH_TOKEN-unset}" >> "$SYNC_TEST_LOG.env"
 for ((i = 1; i <= $#; i++)); do
   j=$((i + 1))
   case "\${!i}" in
@@ -43,11 +45,13 @@ exit 0
 
 const vpStub = `#!/usr/bin/env bash
 echo "vp $*" >> "$SYNC_TEST_LOG"
+echo "vp \${GH_TOKEN-unset}" >> "$SYNC_TEST_LOG.env"
 exit 0
 `;
 
 const checkStub = `#!/usr/bin/env bash
 echo "check.sh" >> "$SYNC_TEST_LOG"
+echo "check.sh \${GH_TOKEN-unset}" >> "$SYNC_TEST_LOG.env"
 if [[ -n \${SYNC_TEST_CHECK_OUTPUT:-} ]]; then
   cat "$SYNC_TEST_CHECK_OUTPUT"
   exit 1
@@ -58,6 +62,7 @@ exit 0
 
 const regenerateStub = `#!/usr/bin/env bash
 echo "regenerate-routes.sh" >> "$SYNC_TEST_LOG"
+echo "regenerate-routes.sh \${GH_TOKEN-unset}" >> "$SYNC_TEST_LOG.env"
 echo "regenerated route tree" > "$(git rev-parse --show-toplevel)/${ROUTE_TREE}"
 `;
 
@@ -127,12 +132,23 @@ const run = (env: Record<string, string> = {}) => {
       PATH: `${NodePath.join(dir, "bin")}:${process.env.PATH}`,
       SYNC_UPSTREAM: upstream,
       SYNC_TEST_LOG: log,
+      GH_TOKEN: "secret",
       ...env,
     },
   });
-  const calls = NodeFS.existsSync(log) ? NodeFS.readFileSync(log, "utf8").trim().split("\n") : [];
+  const lines = (file: string) =>
+    NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8").trim().split("\n") : [];
+  const calls = lines(log);
+  const tokens = lines(`${log}.env`);
   const body = NodeFS.existsSync(`${log}.body`) ? NodeFS.readFileSync(`${log}.body`, "utf8") : "";
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr, calls, body };
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    calls,
+    tokens,
+    body,
+  };
 };
 
 const originBranches = () =>
@@ -184,9 +200,10 @@ describe("sync.sh", () => {
 
   it("merges the newest tag, records it, runs the checks and merges the pull request", () => {
     makeFork(`${OLD} ${oldSha}`);
-    const { status, calls } = run();
+    const { status, calls, tokens } = run();
     expect(status).toBe(0);
     expect(calls.slice(0, 2)).toEqual(["vp i", "check.sh"]);
+    expect(tokens).toEqual(["vp unset", "check.sh unset", "gh secret", "gh secret"]);
     expect(calls[2]).toMatch(
       new RegExp(
         `^gh pr create --base main --head sync/${NEWEST} --title sync: ${NEWEST} --body-file `,
@@ -204,9 +221,10 @@ describe("sync.sh", () => {
 
   it("regenerates the route tree when only that file conflicts", () => {
     makeFork(`${OLD} ${oldSha}`, { [ROUTE_TREE]: "routes, fork edit\n" });
-    const { status, calls } = run();
+    const { status, calls, tokens } = run();
     expect(status).toBe(0);
     expect(calls.slice(0, 3)).toEqual(["vp i", "regenerate-routes.sh", "check.sh"]);
+    expect(tokens[1]).toBe("regenerate-routes.sh unset");
     const branch = `sync/${NEWEST}`;
     expect(originFile(branch, ROUTE_TREE)).toBe("regenerated route tree");
     expect(originFile(branch, "factory/UPSTREAM")).toBe(`${NEWEST} ${newestSha}`);
@@ -257,7 +275,7 @@ describe("sync.sh", () => {
       ].join("\n"),
     );
     const { status, calls, body } = run({ SYNC_TEST_CHECK_OUTPUT: checkOutput });
-    expect(status).toBe(0);
+    expect(status).toBe(1);
     expect(originBranches()).toEqual(["main", `sync/${NEWEST}`]);
     expect(calls).toContainEqual(
       expect.stringMatching(
@@ -278,5 +296,41 @@ describe("sync.sh", () => {
     expect(body).toContain("line 250\n");
     expect(body).not.toContain("line 50\n");
     expect(body).not.toContain("seams ok");
+  });
+
+  it("stops with the merge's own error when the merge fails without a conflict", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    // An uncommitted edit to a file the tag changes makes git refuse the merge.
+    write(fork, "apps/server/src/server.ts", "uncommitted edit\n");
+    const { status, stderr, calls } = run();
+    expect(status).toBe(1);
+    expect(stderr).toContain("sync: git merge");
+    expect(stderr).toContain("apps/server/src/server.ts");
+    expect(calls).toEqual([]);
+    expect(originBranches()).toEqual(["main"]);
+  });
+
+  it("stops and says so when the branch cannot be pushed", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    write(origin, "hooks/pre-receive", "#!/usr/bin/env bash\necho 'refusing' >&2\nexit 1\n", 0o755);
+    const { status, stderr, calls } = run();
+    expect(status).toBe(1);
+    expect(stderr).toContain(`sync: push of sync/${NEWEST} failed`);
+    expect(calls).toEqual(["vp i", "check.sh"]);
+    expect(originBranches()).toEqual(["main"]);
+  });
+
+  it("refuses a tag outside the nightly pattern", () => {
+    git(upstream, "tag", 'v0.0.11-nightly."x', newestSha);
+    try {
+      makeFork(`${OLD} ${oldSha}`);
+      const { status, stderr, calls } = run();
+      expect(status).toBe(1);
+      expect(stderr).toContain("sync: unexpected tag name");
+      expect(calls).toEqual([]);
+      expect(originBranches()).toEqual(["main"]);
+    } finally {
+      git(upstream, "tag", "-d", 'v0.0.11-nightly."x');
+    }
   });
 });
