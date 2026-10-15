@@ -29,9 +29,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  UPSTREAM_REPOSITORY: pingdotgg/t3code
-
 jobs:
   prepare:
     name: Prepare release
@@ -43,10 +40,14 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       name: ${{ steps.version.outputs.name }}
+      notes: ${{ steps.notes.outputs.notes }}
     steps:
+      # The full history and the release tags, without file contents, for the release notes.
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
+          filter: blob:none
           sparse-checkout: |
             /*
             !/.repos/
@@ -89,6 +90,19 @@ jobs:
             --run-number "$(( ${{ github.run_number }} * 10000 ))" \
             --sha "${{ steps.commit.outputs.sha }}" \
             --github-output
+
+      # The commits after the previous release tag, from git. See scripts/fork-release-notes.ts.
+      - id: notes
+        name: Write release notes
+        run: |
+          set -euo pipefail
+          node scripts/fork-release-notes.ts "${{ steps.commit.outputs.sha }}" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+          {
+            echo "notes<<FORK_RELEASE_NOTES_EOF"
+            cat "$RUNNER_TEMP/notes.md"
+            echo "FORK_RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
 
   build_bundle:
     name: Build JS bundle
@@ -333,6 +347,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+          NOTES: ${{ needs.prepare.outputs.notes }}
           MANIFEST: ${{ matrix.platform == 'mac' && 'nightly-mac.yml' || matrix.platform == 'win' && 'nightly.yml' || matrix.arch == 'arm64' && 'nightly-linux-arm64.yml' || 'nightly-linux.yml' }}
         run: |
           set -euo pipefail
@@ -343,7 +358,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "${{ needs.prepare.outputs.sha }}" \
               --title "${{ needs.prepare.outputs.name }}" \
-              --notes "Fork build of ${UPSTREAM_REPOSITORY} main plus fork commits, from ${{ needs.prepare.outputs.sha }}." \
+              --notes "$NOTES" \
               --prerelease; then
             exit 0
           fi
