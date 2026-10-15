@@ -60,7 +60,7 @@ export const make = Effect.gen(function* () {
     readonly nowMs: number;
   }) {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
-      ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
+      ? yield* rows.listForUser({ userId: input.deliveryUser.userId, visibleAt: input.nowMs })
       : [];
     const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
       ? makeAggregateState({
@@ -116,9 +116,13 @@ export const make = Effect.gen(function* () {
         "relay.mobile.device_id": input.deviceId,
         "relay.operation": "replayForLiveActivityRegistration",
       });
+      const now = yield* DateTime.now;
       const { activeStates, targets } = yield* Effect.all(
         {
-          activeStates: rows.listForUser({ userId: input.userId }),
+          activeStates: rows.listForUser({
+            userId: input.userId,
+            visibleAt: now.epochMilliseconds,
+          }),
           targets: liveActivities.listTargets({ userId: input.userId }),
         },
         { concurrency: 2 },
@@ -130,7 +134,6 @@ export const make = Effect.gen(function* () {
       if (target.platform === "android") {
         return yield* fcmDeliveries.enqueue({ target, state: null, replay: true });
       }
-      const now = yield* DateTime.now;
       const aggregate = makeAggregateState({
         activeStates,
         terminalState: null,

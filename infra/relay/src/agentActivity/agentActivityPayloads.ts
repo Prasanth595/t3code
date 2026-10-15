@@ -19,8 +19,8 @@ export function isTerminalPhase(state: RelayAgentActivityState): boolean {
 // while a user ignores an approval prompt, so they get a longer window. The
 // underlying database row is left in place: a late publish for the thread
 // refreshes updatedAt and the row becomes visible again.
-const RUNNING_AGENT_ACTIVITY_ROW_TTL_MS = 2 * 60 * 60 * 1_000;
-const WAITING_AGENT_ACTIVITY_ROW_TTL_MS = 24 * 60 * 60 * 1_000;
+export const RUNNING_AGENT_ACTIVITY_ROW_TTL_MS = 2 * 60 * 60 * 1_000;
+export const WAITING_AGENT_ACTIVITY_ROW_TTL_MS = 24 * 60 * 60 * 1_000;
 
 export function agentActivityExpiresAt(
   state: Pick<RelayAgentActivityState, "phase" | "updatedAt">,

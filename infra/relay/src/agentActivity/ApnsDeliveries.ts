@@ -561,7 +561,7 @@ export const make = Effect.gen(function* () {
   // on persistence errors so a database hiccup never drops a legitimate start.
   const userStillHasLiveWork = Effect.fnUntraced(function* (userId: string) {
     const now = yield* DateTime.now;
-    return yield* activityRows.listForUser({ userId }).pipe(
+    return yield* activityRows.listForUser({ userId, visibleAt: now.epochMilliseconds }).pipe(
       Effect.map((states) =>
         states.some(
           (state) =>

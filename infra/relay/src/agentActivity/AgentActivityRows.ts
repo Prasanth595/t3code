@@ -7,10 +7,15 @@ import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, not, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayAgentActivityRows, relayEnvironmentLinks } from "../persistence/schema.ts";
+import { TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS } from "./agentActivityAggregate.ts";
+import {
+  RUNNING_AGENT_ACTIVITY_ROW_TTL_MS,
+  WAITING_AGENT_ACTIVITY_ROW_TTL_MS,
+} from "./agentActivityPayloads.ts";
 
 export class AgentActivityRowUpsertPersistenceError extends Schema.TaggedError<AgentActivityRowUpsertPersistenceError>()(
   "AgentActivityRowUpsertPersistenceError",
@@ -79,6 +84,8 @@ export class AgentActivityRows extends Context.Service<
     }) => Effect.Effect<void, AgentActivityRowDeletePersistenceError>;
     readonly listForUser: (input: {
       readonly userId: string;
+      /** Aggregate reads omit expired rows; identity rechecks leave this unset. */
+      readonly visibleAt?: number;
     }) => Effect.Effect<
       ReadonlyArray<RelayAgentActivityState>,
       AgentActivityRowListPersistenceError
@@ -98,6 +105,36 @@ const encodeRelayAgentActivityStateJson = Schema.encodeEffect(
 );
 
 const decodeRelayAgentActivityState = Schema.decodeUnknownOption(RelayAgentActivityStateSchema);
+
+// DateTime accepts rolled-over dates (e.g. September 31) as well as ISO strings.
+// Filter only real UTC calendar dates, so lexical ordering cannot hide such rows.
+const canonicalUtcTimestamp =
+  "^([0-9]{4}-((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])|" +
+  "(0[469]|11)-(0[1-9]|[12][0-9]|30)|02-(0[1-9]|1[0-9]|2[0-8]))|" +
+  "([0-9]{2}(0[48]|[2468][048]|[13579][26])|([02468][048]|[13579][26])00)-02-29)" +
+  "T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9][.][0-9]{3}Z$";
+
+function visibleActivityRowsAt(visibleAt: number) {
+  const cutoff = (ttlMs: number) => DateTime.formatIso(DateTime.makeUnsafe(visibleAt - ttlMs));
+  const phase = sql`${relayAgentActivityRows.stateJson} ->> 'phase'`;
+  // Canonical timestamps compare chronologically as strings. Leave legacy/offset
+  // spellings to the aggregate's DateTime parser rather than hiding valid work.
+  return or(
+    not(sql`${relayAgentActivityRows.updatedAt} ~ ${canonicalUtcTimestamp}`),
+    and(
+      inArray(phase, ["running", "starting"]),
+      gte(relayAgentActivityRows.updatedAt, cutoff(RUNNING_AGENT_ACTIVITY_ROW_TTL_MS)),
+    ),
+    and(
+      inArray(phase, ["waiting_for_approval", "waiting_for_input", "stale"]),
+      gte(relayAgentActivityRows.updatedAt, cutoff(WAITING_AGENT_ACTIVITY_ROW_TTL_MS)),
+    ),
+    and(
+      inArray(phase, ["completed", "failed"]),
+      gte(relayAgentActivityRows.updatedAt, cutoff(TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS)),
+    ),
+  );
+}
 
 export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
@@ -222,6 +259,7 @@ export const make = Effect.gen(function* () {
             eq(relayEnvironmentLinks.userId, input.userId),
             isNull(relayEnvironmentLinks.revokedAt),
             eq(relayEnvironmentLinks.liveActivitiesEnabled, true),
+            input.visibleAt === undefined ? undefined : visibleActivityRowsAt(input.visibleAt),
           ),
         )
         .orderBy(desc(relayAgentActivityRows.updatedAt))

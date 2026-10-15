@@ -204,7 +204,7 @@ export const make = Effect.gen(function* () {
       // Re-read links and state when consuming: queued messages must honor
       // sign-out, token rotation, disabled publishing, and newer thread states.
       const states = preferences.value.liveActivitiesEnabled
-        ? yield* rows.listForUser({ userId: job.userId })
+        ? yield* rows.listForUser({ userId: job.userId, visibleAt: now.epochMilliseconds })
         : [];
       const aggregate = makeAggregateState({
         activeStates: states,
