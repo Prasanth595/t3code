@@ -19,7 +19,7 @@ import * as NodeChildProcess from "node:child_process";
  * in depth, not a sandbox: code running as the same user can still read the
  * token file and ~/.ssh.
  */
-export const INHERITED_ENV: ReadonlyArray<string> = [
+const INHERITED_ENV: ReadonlySet<string> = new Set([
   "PATH",
   "HOME",
   "USER",
@@ -28,20 +28,22 @@ export const INHERITED_ENV: ReadonlyArray<string> = [
   "LANG",
   "TMPDIR",
   "TERM",
-];
+]);
 
-export const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
-export const DEFAULT_TAIL_BYTES = 16 * 1024;
-export const DEFAULT_TERM_GRACE_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_TAIL_BYTES = 16 * 1024;
+const DEFAULT_TERM_GRACE_MS = 10_000;
 /** A process that left the group may still hold the pipe; do not wait long for it. */
 const DRAIN_WAIT_MS = 2_000;
 
+/** The command itself is only in `cause`: in shell mode it is a whole script. */
 export class RunSpawnError extends Schema.TaggedError<RunSpawnError>()("RunSpawnError", {
-  command: Schema.String,
+  shell: Schema.Boolean,
+  cwd: Schema.optional(Schema.String),
   cause: Schema.Defect(),
 }) {
   override get message(): string {
-    return `Failed to spawn ${this.command}`;
+    return this.shell ? "Failed to spawn a shell command." : "Failed to spawn a command.";
   }
 }
 
@@ -62,7 +64,11 @@ export interface RunInput {
 }
 
 export interface RunResult {
-  /** Node's exit code; null when the process ended by a signal (including after a timeout). */
+  /**
+   * Node's exit code; null when the process ended by a signal. A command that
+   * handles the timeout's SIGTERM can still exit with a code, even 0, so check
+   * `timedOut` first.
+   */
   readonly exitCode: number | null;
   readonly timedOut: boolean;
   /** The last `tailBytes` of stdout and stderr interleaved, decoded as UTF-8. */
@@ -110,7 +116,7 @@ const buildEnv = (extra: Readonly<Record<string, string>> | undefined): Record<s
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(globalThis.process.env)) {
     if (value === undefined) continue;
-    if (INHERITED_ENV.includes(name) || name.startsWith("LC_")) env[name] = value;
+    if (INHERITED_ENV.has(name) || name.startsWith("LC_")) env[name] = value;
   }
   return { ...env, ...extra };
 };
@@ -133,29 +139,31 @@ export const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
     >();
     const closed = Deferred.makeUnsafe<void>();
 
+    const spawnError = (cause: unknown) =>
+      new RunSpawnError({ shell: input.shell === true, cwd: input.cwd, cause });
+
     // Acquire is uninterruptible, so an interrupt can never land between the
-    // spawn and the cleanup that kills the group.
-    const acquire = Effect.sync(() => {
-      const child = NodeChildProcess.spawn("/bin/sh", script, {
-        cwd: input.cwd,
-        env: buildEnv(input.env),
-        stdio: ["ignore", "pipe", "ignore"],
-        detached: true,
-      });
-      child.once("error", (cause) =>
-        Deferred.doneUnsafe(
-          exited,
-          Exit.fail(new RunSpawnError({ command: input.command, cause })),
-        ),
-      );
-      child.once("exit", (code, signal) =>
-        Deferred.doneUnsafe(exited, Exit.succeed([code, signal] as const)),
-      );
-      child.stdout?.on("data", (chunk: Buffer) => tail.push(chunk));
-      child.stdout?.once("close", () => Deferred.doneUnsafe(closed, Exit.void));
-      // No stdout (spawn failed): nothing to drain.
-      if (!child.stdout) Deferred.doneUnsafe(closed, Exit.void);
-      return child;
+    // spawn and the cleanup that kills the group. Spawn reports some failures
+    // by throwing (a NUL byte in env or args) and others by an 'error' event.
+    const acquire = Effect.try({
+      try: () => {
+        const child = NodeChildProcess.spawn("/bin/sh", script, {
+          cwd: input.cwd,
+          env: buildEnv(input.env),
+          stdio: ["ignore", "pipe", "ignore"],
+          detached: true,
+        });
+        child.once("error", (cause) => Deferred.doneUnsafe(exited, Exit.fail(spawnError(cause))));
+        child.once("exit", (code, signal) =>
+          Deferred.doneUnsafe(exited, Exit.succeed([code, signal] as const)),
+        );
+        child.stdout?.on("data", (chunk: Buffer) => tail.push(chunk));
+        child.stdout?.once("close", () => Deferred.doneUnsafe(closed, Exit.void));
+        // No stdout (spawn failed): nothing to drain.
+        if (!child.stdout) Deferred.doneUnsafe(closed, Exit.void);
+        return child;
+      },
+      catch: spawnError,
     });
 
     // Signals the group, and the leader too in case it left the group (softfac's kill_all).
@@ -214,8 +222,9 @@ export const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
         }
         const [exitCode] = yield* Deferred.await(exited);
 
-        // Nothing the command started may outlive it. This also closes pipe ends
-        // a stray background process still held.
+        // Kill whatever the command left in its group. This also closes pipe
+        // ends a stray in the group still held; a process that left the group
+        // (setsid, setpgid) escapes, and the drain wait below bounds it.
         killGroup(child, "SIGKILL");
         const drained = yield* Deferred.await(closed).pipe(Effect.timeoutOption(DRAIN_WAIT_MS));
         if (drained._tag === "None") child.stdout?.destroy();

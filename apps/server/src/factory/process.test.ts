@@ -2,6 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -36,6 +37,29 @@ const isAlive = (pid: number): boolean => {
     return false;
   }
 };
+
+// A temp dir that is removed however the test ends.
+const withTempDir = <A, E, R>(body: (dir: string) => Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "factory-process-"))),
+    body,
+    (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+  );
+
+const readPids = (file: string): ReadonlyArray<number> =>
+  NodeFS.readFileSync(file, "utf8").trim().split(/\s+/).map(Number);
+
+const waitForFile = (file: string) =>
+  Effect.gen(function* () {
+    for (let i = 0; i < 100 && !NodeFS.existsSync(file); i++) yield* Effect.sleep("20 millis");
+    assert.isTrue(NodeFS.existsSync(file));
+  });
+
+const waitForDeath = (pid: number) =>
+  Effect.gen(function* () {
+    for (let i = 0; i < 40 && isAlive(pid); i++) yield* Effect.sleep("50 millis");
+    assert.strictEqual(isAlive(pid), false);
+  });
 
 // 16384 lines of 65 bytes each, about 1 MiB, with a counter so the tail is checkable.
 const COUNTER_SCRIPT = `i=0; while [ $i -lt 16384 ]; do printf '%064d\\n' $i; i=$((i+1)); done`;
@@ -209,5 +233,74 @@ it.live("gives a TERM-trapping grandchild its grace before SIGKILL", () =>
     assert.strictEqual(result.timedOut, true);
     assert.include(result.tail, "caught");
     assert.isBelow((yield* Clock.currentTimeMillis) - started, 5000);
+  }),
+);
+
+it.live("fails with RunSpawnError when spawn throws synchronously", () =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(run({ command: "true", env: { BAD: "a\u0000b" } }));
+    assert.instanceOf(error, RunSpawnError);
+  }),
+);
+
+it.live("an interrupted run kills the whole process group", () =>
+  withTempDir((dir) =>
+    Effect.gen(function* () {
+      const pidFile = NodePath.join(dir, "pids");
+      const ready = NodePath.join(dir, "ready");
+      const fiber = yield* run({
+        command: `sleep 100 & echo $$ $! > "$0"; mv "$0" "$1"; sleep 100`,
+        args: [pidFile, ready],
+        shell: true,
+      }).pipe(Effect.forkChild);
+      yield* waitForFile(ready);
+      const [leader, grandchild] = readPids(ready);
+      yield* Fiber.interrupt(fiber);
+      yield* waitForDeath(grandchild!);
+      yield* waitForDeath(leader!);
+    }),
+  ),
+);
+
+it.live("does not wait long for a process that left the group and holds the pipe", () =>
+  withTempDir((dir) => {
+    const pidFile = NodePath.join(dir, "pid");
+    return Effect.gen(function* () {
+      const started = yield* Clock.currentTimeMillis;
+      // The stray writes its pid only after leaving the group, so the group kill cannot reach it.
+      const result = yield* run({
+        command: `perl -e 'setpgrp(0, 0); open my $f, ">", "$ARGV[0].tmp"; print $f $$; close $f; rename "$ARGV[0].tmp", $ARGV[0]; sleep 100' "$0" & while [ ! -s "$0" ]; do sleep 0.01; done; echo done`,
+        args: [pidFile],
+        shell: true,
+      });
+      assert.strictEqual(result.tail, "done\n");
+      assert.strictEqual(result.exitCode, 0);
+      assert.isBelow((yield* Clock.currentTimeMillis) - started, 4000);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          const [pid] = NodeFS.existsSync(pidFile) ? readPids(pidFile) : [];
+          if (pid !== undefined && pid > 0) {
+            try {
+              globalThis.process.kill(pid, "SIGKILL");
+            } catch {
+              // Already gone.
+            }
+          }
+        }),
+      ),
+    );
+  }),
+);
+
+it.live("a tail cut inside a UTF-8 character drops the partial character", () =>
+  Effect.gen(function* () {
+    // 20 000 two-byte characters; an odd cap lands the cut on a continuation byte.
+    const result = yield* run({
+      command: `perl -e 'print "\\xc3\\xa9" x 20000'`,
+      shell: true,
+      tailBytes: 4097,
+    });
+    assert.strictEqual(result.tail, "é".repeat(2048));
   }),
 );

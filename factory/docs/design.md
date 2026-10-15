@@ -36,7 +36,7 @@ This is an experiment. The Rust softfac keeps running and keeps building its rep
 │  EventSinkV2 ─────── stream(run.updated) ──► factory/t3/events.ts ─┐             │
 │  ProjectionStoreV2 ◄─ read thread/run ─────── factory/t3/sessions.ts│            │
 │  ThreadLaunchService ◄ launch ─────────────── factory/t3/sessions.ts│            │
-│  ProcessRunner ◄──── gh, git, gate cmds ───── factory/t3/process.ts │            │
+│  node:child_process ◄ gh, git, gate cmds ──── factory/process.ts    │            │
 │  ServerConfig ─────── base dir, worktrees ──► factory/t3/paths.ts   │            │
 │                                                                     ▼            │
 │  server.ts  +1 line: FactoryLayer ──────────► factory/index.ts ─► pass loop      │
