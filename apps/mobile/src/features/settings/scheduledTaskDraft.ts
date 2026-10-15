@@ -8,7 +8,7 @@ import type {
   ScheduledTaskWebhookSignature,
 } from "@t3tools/contracts";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, isScheduledTaskProjectDefaultModel } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   resolveProjectSettings,
@@ -139,6 +139,8 @@ export type ScheduledTaskDraft = {
   readonly projectId: ProjectId | null;
   readonly modelSelection: ModelSelection | null;
   readonly modelSelectionIsExplicit: boolean;
+  /** Runs resolve the project default model at run time; `modelSelection` is then unused. */
+  readonly useProjectDefaultModel: boolean;
   readonly schedule: ScheduleDraft;
   readonly workspace: Workspace;
   readonly baseRef: string;
@@ -153,6 +155,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.title,
     draft.prompt,
     draft.projectId,
+    draft.useProjectDefaultModel,
     draft.modelSelection?.instanceId,
     draft.modelSelection?.model,
     [...(draft.modelSelection?.options ?? [])]
@@ -190,6 +193,7 @@ export function createDraft(
     projectId,
     modelSelection,
     modelSelectionIsExplicit: false,
+    useProjectDefaultModel: false,
     schedule: DEFAULT_SCHEDULE,
     workspace: "worktree",
     baseRef: "main",
@@ -206,8 +210,13 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     title: task.title,
     prompt: task.prompt,
     projectId: task.projectId,
-    modelSelection: task.modelSelection,
-    modelSelectionIsExplicit: true,
+    ...(isScheduledTaskProjectDefaultModel(task.modelSelection)
+      ? { modelSelection: null, modelSelectionIsExplicit: false, useProjectDefaultModel: true }
+      : {
+          modelSelection: task.modelSelection,
+          modelSelectionIsExplicit: true,
+          useProjectDefaultModel: false,
+        }),
     schedule: scheduleDraftForTask(task),
     workspace: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",

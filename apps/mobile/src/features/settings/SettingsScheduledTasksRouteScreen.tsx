@@ -644,7 +644,7 @@ function TaskForm({
       !draft.title.trim() ||
       !draft.prompt.trim() ||
       !draft.projectId ||
-      !draft.modelSelection ||
+      (!draft.useProjectDefaultModel && !draft.modelSelection) ||
       !schedule ||
       (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
@@ -663,7 +663,10 @@ function TaskForm({
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       projectId: draft.projectId,
-      modelSelection: draft.modelSelection,
+      modelSelection:
+        draft.useProjectDefaultModel || !draft.modelSelection
+          ? { _tag: "projectDefault" }
+          : draft.modelSelection,
       schedule,
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,
@@ -783,20 +786,44 @@ function TaskForm({
             });
           }}
         />
+        <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+          <Text className="min-w-0 flex-1 text-lg text-foreground">Project default model</Text>
+          <ThemedSwitch
+            accessibilityLabel="Use project default model"
+            value={draft.useProjectDefaultModel}
+            disabled={saving || dictationPending || environmentUnavailable}
+            onValueChange={(useProjectDefaultModel) =>
+              setDraft({
+                ...draft,
+                useProjectDefaultModel,
+                modelSelection:
+                  draft.modelSelection ??
+                  scheduledTaskDefaultModel(
+                    config,
+                    projects.find((project) => project.id === draft.projectId) ?? null,
+                  ),
+              })
+            }
+          />
+        </View>
         <PickerRow
           label="Model"
           borderTop
           value={
-            modelOptions.find(
-              (option) =>
-                option.selection.instanceId === draft.modelSelection?.instanceId &&
-                option.selection.model === draft.modelSelection?.model,
-            )?.label ??
-            draft.modelSelection?.model ??
-            (modelOptions.length ? "Choose model" : "No models available")
+            draft.useProjectDefaultModel
+              ? "Project default"
+              : (modelOptions.find(
+                  (option) =>
+                    option.selection.instanceId === draft.modelSelection?.instanceId &&
+                    option.selection.model === draft.modelSelection?.model,
+                )?.label ??
+                draft.modelSelection?.model ??
+                (modelOptions.length ? "Choose model" : "No models available"))
           }
           onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-          disabled={saving || dictationPending || environmentUnavailable}
+          disabled={
+            saving || dictationPending || environmentUnavailable || draft.useProjectDefaultModel
+          }
         />
       </SettingsSection>
 

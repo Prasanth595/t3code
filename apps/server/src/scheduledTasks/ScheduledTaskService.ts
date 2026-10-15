@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isScheduledTaskProjectDefaultModel,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ScheduledTask,
@@ -22,6 +23,7 @@ import {
   type ScheduledTaskSetEnabledInput,
   type ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -44,6 +46,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
@@ -395,6 +398,7 @@ export const layer = Layer.effect(
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const secretRequests = yield* SecretRequests.SecretRequests;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     // Webhook deliveries for one task dispatch in arrival order rather than
@@ -792,26 +796,44 @@ export const layer = Layer.effect(
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
+        // A project-default task resolves its model when the run starts, the
+        // same way a new composer thread does: the project, then the app default.
+        const launchModelSelection = Effect.gen(function* () {
+          if (!isScheduledTaskProjectDefaultModel(active.modelSelection)) {
+            return active.modelSelection;
+          }
+          const settings = yield* serverSettings.getSettings;
+          const selection = resolveProjectSettings(settings, active.projectId).settings
+            .defaultModelSelection;
+          if (selection === null) {
+            return yield* taskError("Neither the project nor the app has a default model.", {
+              taskId: active.id,
+            });
+          }
+          return selection;
+        });
         const result =
           active.threadId === null
             ? yield* Effect.exit(
-                threadLaunch.launch({
-                  commandId,
-                  projectId: active.projectId,
-                  title: active.title,
-                  modelSelection: active.modelSelection,
-                  runtimeMode: active.runtimeMode,
-                  interactionMode: active.interactionMode,
-                  workspaceStrategy: active.workspaceStrategy,
-                  initialMessage: {
-                    messageId,
-                    scheduledTaskId: active.id,
-                    text: prompt,
-                    attachments: [],
-                  },
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
+                Effect.flatMap(launchModelSelection, (modelSelection) =>
+                  threadLaunch.launch({
+                    commandId,
+                    projectId: active.projectId,
+                    title: active.title,
+                    modelSelection,
+                    runtimeMode: active.runtimeMode,
+                    interactionMode: active.interactionMode,
+                    workspaceStrategy: active.workspaceStrategy,
+                    initialMessage: {
+                      messageId,
+                      scheduledTaskId: active.id,
+                      text: prompt,
+                      attachments: [],
+                    },
+                    createdBy: active.createdBy,
+                    creationSource: active.creationSource,
+                  }),
+                ),
               )
             : yield* Effect.exit(
                 threadManagement.sendToThread({
@@ -822,7 +844,11 @@ export const layer = Layer.effect(
                   scheduledTaskId: active.id,
                   text: prompt,
                   attachments: [],
-                  modelSelection: active.modelSelection,
+                  // A bound run posts into an existing thread. A project-default
+                  // task keeps that thread's model; an explicit one switches it.
+                  ...(isScheduledTaskProjectDefaultModel(active.modelSelection)
+                    ? {}
+                    : { modelSelection: active.modelSelection }),
                   // Scheduled prompts must not interrupt tools in the bound thread.
                   mode: "queue",
                   createdBy: active.createdBy,
