@@ -13,7 +13,7 @@ export function resolveUserMessageIntentBadge(
     case "queued_turn":
       return {
         label: "from queue",
-        accessibilityLabel: "Queued while the agent was busy, then sent",
+        accessibilityLabel: "Queued while the agent was busy",
         tone: "queued",
       };
     case "steer":

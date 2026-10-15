@@ -2682,7 +2682,7 @@ function UserMessageIntentMarker({
       </TooltipTrigger>
       <TooltipPopup side="top">
         {intent === "queued_turn"
-          ? "Queued while the agent was busy, then sent"
+          ? "Queued while the agent was busy"
           : intent === "promoted_queued_to_steer"
             ? "Originally queued, then promoted to steer the active turn"
             : "Steered the active turn"}
