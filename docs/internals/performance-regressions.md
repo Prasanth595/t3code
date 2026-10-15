@@ -31,6 +31,9 @@ The v2 checks pin these invariants:
   the wire boundary, including small outputs. Explicit failure flags and bounded result IDs
   preserve status and grouped action counts without shipping those bodies. Persisted events
   remain complete; the existing diff endpoints still provide file content when requested.
+  Explicit cross-environment transcript exports preserve full tool bodies so the destination
+  agent can read the context. The export rejects timeline JSON above the file attachment limit
+  before sending it; the client still applies its attachment limit to the complete file.
 - Command output reaches a client only through `orchestration.subscribeCommandOutput`, which an
   expanded command row opens and closes with itself. Live output is never an orchestration event:
   adapters send raw chunks to the
@@ -97,6 +100,12 @@ released. Local Git status reads skip divergence calculations; callers that need
 counts keep the full status path. Cached fetch failures share the existing backoff and log only
 the actual failed attempt. Unchanged desktop environment bootstrap reads retain their array
 identity so polling does not invalidate subscribers.
+
+Local trace records and provider event logs use asynchronous, serialized file writes and rotation.
+Batching synchronous appends still stalls the server event loop on slow storage, especially on
+Windows. While a trace write is slow, producers keep up to one trace file of records, so the spans
+that time a stall survive it; records drop only while the disk stays stuck. Provider logging
+retains backpressure. Shutdown drains accepted writes before closing their scope.
 
 Relay awareness queues one pending publication per thread and retains a follow-up when the thread
 changes during a send. Transcript deltas and tool output do not enqueue awareness work. Run,
