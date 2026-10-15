@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { DesktopUpdateState, EnvironmentId, ForkCommit } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { ChevronRightIcon, GitCommitHorizontalIcon, TagIcon } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -10,7 +11,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { SidebarUpdateReleaseNotes } from "../sidebar/SidebarUpdateReleaseNotes";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
-import { ChangelogClockProvider, CommitList } from "./ForkChangelogDialog";
+import { ChangelogClockProvider, CommitList, Hint } from "./ForkChangelogDialog";
 import { releasesInUpdate, UPDATE_CHANGES_LIMIT } from "./forkChangelog.logic";
 
 interface ForkUpdateChangesProps {
@@ -115,9 +116,17 @@ function UpdateCommits({
 
   return (
     <PopupBody tooltip={tooltip}>
-      <p className="shrink-0 px-1 pt-1 text-muted-foreground text-xs">
-        {releaseCount} new {releaseCount === 1 ? "release" : "releases"}
-      </p>
+      <div className="flex shrink-0 px-1 pt-1">
+        <Hint
+          label={`${releaseCount} new ${releaseCount === 1 ? "release" : "releases"}`}
+          render={
+            <span className="flex items-center gap-1 text-muted-foreground text-xs tabular-nums" />
+          }
+        >
+          <TagIcon aria-hidden className="size-3" />
+          {releaseCount}
+        </Hint>
+      </div>
       <div className="min-h-0 overflow-y-auto">
         <ChangelogClockProvider>
           <CommitList commits={shown} />
@@ -125,9 +134,22 @@ function UpdateCommits({
       </div>
       {hiddenCommits > 0 || unreadReleases > 0 ? (
         <div className="shrink-0 px-1 pt-1">
-          <Button size="xs" variant="ghost" onClick={onOpenChangelog}>
-            {moreLabel(hiddenCommits, unreadReleases)}
-          </Button>
+          <Hint
+            label={moreLabel(hiddenCommits, unreadReleases)}
+            render={<Button size="xs" variant="ghost" onClick={onOpenChangelog} />}
+          >
+            {hiddenCommits > 0 ? (
+              <span className="flex items-center gap-1 tabular-nums">
+                <GitCommitHorizontalIcon aria-hidden className="size-3" />+{hiddenCommits}
+              </span>
+            ) : null}
+            {unreadReleases > 0 ? (
+              <span className="flex items-center gap-1 tabular-nums">
+                <TagIcon aria-hidden className="size-3" />+{unreadReleases}
+              </span>
+            ) : null}
+            <ChevronRightIcon aria-hidden className="size-3" />
+          </Hint>
         </div>
       ) : null}
     </PopupBody>
@@ -160,10 +182,13 @@ function PopupBody({
   );
 }
 
+/** The accessible name and tooltip of the button that opens the changelog. */
 function moreLabel(hiddenCommits: number, unreadReleases: number): string {
+  const commits = `${hiddenCommits} more ${hiddenCommits === 1 ? "commit" : "commits"}`;
   const releases = `${unreadReleases} older ${unreadReleases === 1 ? "release" : "releases"}`;
-  if (hiddenCommits === 0) return `And ${releases}`;
-  return unreadReleases === 0
-    ? `And ${hiddenCommits} more`
-    : `And ${hiddenCommits} more, plus ${releases}`;
+  const parts = [
+    ...(hiddenCommits > 0 ? [commits] : []),
+    ...(unreadReleases > 0 ? [releases] : []),
+  ];
+  return `${parts.join(" and ")} in the changelog`;
 }
