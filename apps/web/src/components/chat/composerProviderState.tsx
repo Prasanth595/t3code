@@ -17,7 +17,7 @@ import {
 import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
-import { getProviderModelCapabilities } from "../../providerModels";
+import { getListedModelCapabilities, getProviderModelCapabilities } from "../../providerModels";
 import type { ComposerControlSize } from "./ComposerControl";
 import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
@@ -124,6 +124,17 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
           preservedOptions && preservedOptions.length > 0 ? preservedOptions : undefined,
       };
     }
+  }
+  // Nothing describes this model's options yet, so its saved options go out
+  // unchanged and the provider session checks them against its own list.
+  // Callers pass only options saved for this model (see
+  // `deriveEffectiveComposerModelState`).
+  if (getListedModelCapabilities(models, model, provider) === null) {
+    return {
+      provider,
+      promptEffort: null,
+      modelOptionsForDispatch: modelOptions && modelOptions.length > 0 ? modelOptions : undefined,
+    };
   }
   const { caps, selections } = resolveComposerOptionSelections(
     models,

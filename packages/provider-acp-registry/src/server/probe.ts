@@ -25,7 +25,10 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { parseSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  findModelConfigOption,
+  parseSessionModeState,
+} from "@t3tools/provider-acp/server/runtimeModel";
 import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -55,23 +58,16 @@ export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
 }
 
-function modelConfigOptions(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
-): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
-  return (configOptions ?? []).flatMap((option) => {
-    if (option.category !== "model" || option.type !== "select") return [];
-    return option.options.flatMap((candidate) =>
-      "value" in candidate ? [candidate] : candidate.options,
-    );
-  });
-}
-
 function normalizeModels(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  modelOption: ReturnType<typeof findModelConfigOption>,
 ): ReadonlyArray<AcpRegistryProbeModel> {
   // Model discovery is the model config option's base models; ACP has no
-  // other portable model inventory.
-  const candidates = modelConfigOptions(configOptions).map((model) => ({
+  // other portable model inventory. Later model-category options are session
+  // options, not more models.
+  const choices = (modelOption?.options ?? []).flatMap((candidate) =>
+    "value" in candidate ? [candidate] : candidate.options,
+  );
+  const candidates = choices.map((model) => ({
     id: model.value,
     name: model.name,
     description: model.description ?? null,
@@ -173,19 +169,44 @@ export interface AcpRegistryLiveConfiguration {
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
 }
 
+/** Model slug T3 lists for an ACP agent that advertises no models. */
+export const ACP_REGISTRY_DEFAULT_MODEL_SLUG = "default";
+
+/** Session option descriptors last observed for each model, keyed by model slug. */
+export type AcpRegistryModelOptions = ReadonlyMap<
+  string,
+  AcpRegistryLiveConfiguration["configOptions"]
+>;
+
+/**
+ * Records a session's option descriptors against the model they describe.
+ * ACP config options belong to the session's current model, so they are
+ * dropped when that model is not one the agent lists. Every option, modes
+ * included, is treated as model-specific: ACP marks none as independent of
+ * the model, and agents re-send the whole set after a model switch.
+ */
+export function recordAcpRegistryModelOptions(
+  known: AcpRegistryModelOptions,
+  configuration: Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">,
+): AcpRegistryModelOptions {
+  const slug =
+    configuration.models.length === 0
+      ? ACP_REGISTRY_DEFAULT_MODEL_SLUG
+      : configuration.currentModelId;
+  return slug === null ? known : new Map(known).set(slug, configuration.configOptions);
+}
+
 /** Normalizes volatile session configuration using the same bounds as discovery probes. */
 export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
 ): AcpRegistryLiveConfiguration {
-  const modelOption = configOptions.find(
-    (option) => option.category === "model" && option.type === "select",
-  );
+  const modelOption = findModelConfigOption(configOptions);
   const boundedCurrentModelId =
-    modelOption?.type === "select"
-      ? (boundedOpaqueValue(modelOption.currentValue, MAX_ID_LENGTH) ?? null)
-      : null;
-  const models = normalizeModels(configOptions);
+    modelOption === undefined
+      ? null
+      : (boundedOpaqueValue(modelOption.currentValue, MAX_ID_LENGTH) ?? null);
+  const models = normalizeModels(modelOption);
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)

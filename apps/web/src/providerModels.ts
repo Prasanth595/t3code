@@ -67,6 +67,21 @@ export function getProviderModelCapabilities(
   return withoutPlanAgentOption(caps);
 }
 
+/**
+ * The capabilities of the model the provider lists for `model`, or
+ * `undefined` when it lists none. `null` means the provider has not described
+ * the model's options yet, as an ACP Registry agent does for a model no
+ * session has run, so saved options cannot be checked against descriptors.
+ */
+export function getListedModelCapabilities(
+  models: ReadonlyArray<ServerProviderModel>,
+  model: string | null | undefined,
+  provider: ProviderDriverKind,
+): ModelCapabilities | null | undefined {
+  const slug = resolveSelectableModel(provider, model, models);
+  return models.find((candidate) => candidate.slug === slug)?.capabilities;
+}
+
 // The opencode "plan" agent is only reachable while legacy plan mode is on.
 // With it off, drop the option so it cannot be selected or dispatched, and
 // drop the descriptor entirely when nothing remains selectable. currentValue
