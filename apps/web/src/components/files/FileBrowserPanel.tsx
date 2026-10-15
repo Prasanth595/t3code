@@ -124,7 +124,12 @@ export default function FileBrowserPanel({
   } = useDirectoryEntries(environmentId, cwd);
   const [query, setQuery] = useState("");
   const [expandAll, setExpandAll] = useState(false);
-  const pathSearch = useProjectPathSearch({ environmentId, cwd, query: query.slice(0, 256) }, 200);
+  // A host folder can be as large as the home directory, and server search indexes
+  // the whole root, so its search filters only the folders already loaded.
+  const pathSearch = useProjectPathSearch(
+    { environmentId, cwd, query: hostRoot ? "" : query.slice(0, 256) },
+    200,
+  );
   const entries = useMemo(() => {
     const result = new Map(directoryEntries.map((entry) => [entry.path, entry]));
     if (query.trim() && !pathSearch.isPending) {
@@ -249,13 +254,12 @@ export default function FileBrowserPanel({
   // children shows a spinner in its row instead of a banner that shifts the tree.
   const loadingDirectoriesRef = useRef(loadingDirectories);
   const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
-  const dragMention = useMemo(
-    () =>
-      createFileTreeDragMentionController({
-        deselect: (path) => treeModelRef.current?.getItem(path)?.deselect(),
-        mentionPath: (path) => (hostRoot ? hostEntryPath(cwd, path) : path),
-      }),
-    [cwd, hostRoot],
+  // The panel remounts per root, so the root a mention is resolved against never changes.
+  const [dragMention] = useState(() =>
+    createFileTreeDragMentionController({
+      deselect: (path) => treeModelRef.current?.getItem(path)?.deselect(),
+      mentionPath: (path) => (hostRoot ? hostEntryPath(cwd, path) : path),
+    }),
   );
   const { model } = useFileTree({
     composition: {
