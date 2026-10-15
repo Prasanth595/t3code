@@ -396,6 +396,26 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("reports the signal and child stderr when the ACP process is killed", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          command: process.execPath,
+          args: [
+            "-e",
+            'process.stderr.write("runtime aborted during startup\\n", () => process.kill(process.pid, "SIGKILL"));',
+          ],
+        },
+      });
+      const error = yield* runtime.initialize().pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "AcpProcessExitedError", signal: "SIGKILL" });
+      expect(error.message).toBe(
+        "ACP process was terminated by signal SIGKILL\nruntime aborted during startup",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("drains large stderr output and keeps auth-sized logging chunks", () =>
     Effect.gen(function* () {
       const lengths: Array<number> = [];
