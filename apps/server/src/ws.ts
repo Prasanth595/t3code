@@ -120,6 +120,7 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -238,6 +239,7 @@ import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
+import { guardOwnerOnlyPatch, requireLocalDesktop } from "./fork/machineMap/browserAccess.ts";
 import { isLocalDesktopSubject, isMachineSubject } from "./fork/machineMap/machineAccess.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -1996,6 +1998,30 @@ const layerWsRpc = (
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
+            // A launch is accepted before its worktree exists, so a branch
+            // that cannot be created is refused while the client can still act.
+            Effect.andThen(
+              input.workspaceStrategy.type === "worktree" &&
+                input.workspaceStrategy.branch !== undefined &&
+                !isTemporaryWorktreeBranch(input.workspaceStrategy.branch)
+                ? threadLaunch
+                    .checkWorktreeBase({
+                      projectId: input.projectId,
+                      workspaceStrategy: input.workspaceStrategy,
+                    })
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new OrchestrationV2ThreadLaunchError({
+                            commandId: input.commandId,
+                            projectId: input.projectId,
+                            message: cause.message,
+                            cause,
+                          }),
+                      ),
+                    )
+                : Effect.void,
+            ),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -2444,6 +2470,7 @@ const layerWsRpc = (
           serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
         [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
           Effect.gen(function* () {
+            yield* guardOwnerOnlyPatch(patch, currentSession.subject);
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -2477,8 +2504,10 @@ const layerWsRpc = (
         [WS_METHODS.forkChangelogSyncStatus]: (_input) => forkChangelog.syncStatus,
         [WS_METHODS.forkChangelogStartSync]: (_input) => forkChangelog.startSync,
         [WS_METHODS.machineMapSubscribe]: (_input) => machineMap.clientStates(machineMapClient),
-        [WS_METHODS.machineMapJoin]: (input) => machineMap.join(input),
-        [WS_METHODS.machineMapLeave]: (_input) => machineMap.leave,
+        [WS_METHODS.machineMapJoin]: (input) =>
+          requireLocalDesktop(machineMapClient).pipe(Effect.andThen(machineMap.join(input))),
+        [WS_METHODS.machineMapLeave]: (_input) =>
+          requireLocalDesktop(machineMapClient).pipe(Effect.andThen(machineMap.leave)),
         [WS_METHODS.machineMapReportDesktop]: (input) =>
           machineMap.reportDesktop(input, machineMapClient).pipe(Effect.as({})),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),

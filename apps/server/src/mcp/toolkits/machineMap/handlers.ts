@@ -65,7 +65,16 @@ export const layer = McpToolAccess.toLayer(MachineMapToolkit, {
   // Joining changes the settings and the auth of this server, like an environment setting.
   machines_join: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
-      yield* refuseMachineCaller;
+      const scope = yield* refuseMachineCaller;
+      // MM-919: joining sets the portal and turns the map on, so an agent never does it.
+      // `t3 machine-map join` on a headless machine has no thread. A joined machine refuses a
+      // second join while the map is on (`MachineMap.join`).
+      if (scope.thread !== undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Agents do not join the machine map. Run t3 machine-map join on the machine.",
+        });
+      }
       const machineMap = yield* MachineMap.MachineMap;
       return yield* machineMap.join(input).pipe(Effect.mapError(toFailure));
     }),

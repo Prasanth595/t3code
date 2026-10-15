@@ -28,6 +28,8 @@ const point = (overrides: Partial<ResourcePoint> = {}): ResourcePoint => ({
   busy: 10,
   pressure: null,
   steal: null,
+  battery: null,
+  discharging: null,
   memory: 50,
   disk: 40,
   swap: 0,
@@ -73,6 +75,7 @@ describe("points (MM-1503)", () => {
       agents: { count: 4, cpuPercent: 120, memoryBytes: 1 },
       topCpu: null,
       topMemory: null,
+      battery: null,
     };
     expect(pointOf(sample)).toEqual({
       cpu: 33.3,
@@ -80,6 +83,8 @@ describe("points (MM-1503)", () => {
       busy: 30,
       pressure: 4,
       steal: 0.5,
+      battery: null,
+      discharging: null,
       memory: 75,
       disk: 33.3,
       swap: 2.5,
@@ -105,6 +110,8 @@ describe("points (MM-1503)", () => {
       busy: 10,
       pressure: null,
       steal: null,
+      battery: null,
+      discharging: null,
       memory: 50,
       disk: 60,
       swap: 0,
@@ -155,6 +162,16 @@ describe("thresholds (MM-1504)", () => {
       resourceConditions(minutes(full), { ...DEFAULT_HEALTH_THRESHOLDS, diskPercent: null }).disk,
     ).toBe(undefined);
     expect(resourceConditions([], DEFAULT_HEALTH_THRESHOLDS)).toEqual({});
+    // MM-1511: a low battery counts only while the machine runs on it.
+    const low = point({ battery: 9, discharging: true });
+    expect(resourceConditions(minutes(low), DEFAULT_HEALTH_THRESHOLDS).battery).toEqual({
+      value: 9,
+      threshold: 15,
+    });
+    expect(
+      resourceConditions(minutes({ ...low, discharging: false }), DEFAULT_HEALTH_THRESHOLDS)
+        .battery,
+    ).toBe(undefined);
   });
 
   it("a machine is down 15 minutes after it was last seen, and never when it never connected", () => {

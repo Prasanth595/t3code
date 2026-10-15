@@ -3,6 +3,7 @@
  */
 import {
   isMachineLocalSetting,
+  isOwnerOnlySetting,
   type MachineCommand,
   type MachineCommandKind,
   type MachineId,
@@ -16,7 +17,7 @@ import {
   type SettingValues,
 } from "@t3tools/contracts/machineMap";
 
-import { effectiveSettings, touches } from "./map.ts";
+import { effectiveSettings, sameValue, touches } from "./map.ts";
 
 /** MM-605: the default expiry of a queued command. */
 export const DEFAULT_COMMAND_MINUTES = 24 * 60;
@@ -72,8 +73,6 @@ export function pendingRevisions(
   );
 }
 
-const sameValue = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
-
 /**
  * MM-404: a change on a machine becomes an override of that machine when the setting has a
  * shared value or an override. A value equal to the shared value clears the override. A setting
@@ -105,7 +104,8 @@ export function localSettingChanges(
 
 /**
  * MM-411: a change saved in T3 Settings for all environments becomes the shared value. Overrides
- * equal to the new value go: those machines took the same bulk edit. Other overrides stay.
+ * equal to the new value go: those machines took the same bulk edit. Other overrides stay. An
+ * owner-only setting (MM-919) never becomes shared this way; the caller keeps it local.
  */
 export function sharedSettingChanges(
   map: MachineMapDocument,
@@ -115,7 +115,8 @@ export function sharedSettingChanges(
   const changes: Array<MapChange> = [];
   const shared = map.settings.shared[scope];
   for (const [key, value] of Object.entries(values)) {
-    if (isMachineLocalSetting(scope, key) || value === undefined) continue;
+    if (isMachineLocalSetting(scope, key) || isOwnerOnlySetting(scope, key)) continue;
+    if (value === undefined) continue;
     if (!Object.hasOwn(shared, key) || !sameValue(shared[key], value)) {
       changes.push({ _tag: "setSetting", machineId: null, scope, key, present: true, value });
     }

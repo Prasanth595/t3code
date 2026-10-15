@@ -49,6 +49,7 @@ import {
 } from "./DesktopUpdateStatusIcon";
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
 import { ForkChangelogDialog } from "../forkChangelog/ForkChangelogDialog";
+import { ForkUpdateChanges } from "../forkChangelog/ForkUpdateChanges";
 import { Button } from "../ui/button";
 import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
 import {
@@ -186,7 +187,7 @@ async function downloadLocalUpdate(
     true when the relaunch is under way. Failures go to `reportError` (a toast
     by default). A refused install (the download is not marked ready yet)
     leaves the restart to the user. */
-async function installLocalUpdate(
+export async function installLocalUpdate(
   bridge: DesktopBridge,
   reportError: ReportLocalUpdateError = toastUpdateError,
 ): Promise<boolean> {
@@ -579,11 +580,15 @@ function SidebarUpdateControl() {
             side="top"
             tooltipStyle
           >
-            <SidebarUpdateReleaseNotes
-              shell={window.desktopBridge}
-              state={state}
-              tooltip={tooltip}
-            />
+            {forkChangelogEnabled ? (
+              <ForkUpdateChanges state={state} tooltip={tooltip} />
+            ) : (
+              <SidebarUpdateReleaseNotes
+                shell={window.desktopBridge}
+                state={state}
+                tooltip={tooltip}
+              />
+            )}
             {forkChangelogEnabled ? (
               <div className="mt-2 px-1">
                 <Button

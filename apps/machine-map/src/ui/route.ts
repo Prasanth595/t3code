@@ -28,6 +28,10 @@ export const VIEW_LABEL: Record<View, string> = {
 export type Selection =
   | { readonly _tag: "none" }
   | { readonly _tag: "machine"; readonly id: string }
+  /** MM-904: a client card. */
+  | { readonly _tag: "client"; readonly id: string }
+  /** MM-907: a browser key that waits for approval, by its thumbprint. */
+  | { readonly _tag: "pending"; readonly thumbprint: string }
   | { readonly _tag: "arrow"; readonly from: string; readonly to: string }
   | { readonly _tag: "revision"; readonly revision: number }
   | { readonly _tag: "proposal"; readonly id: string }
@@ -52,6 +56,10 @@ export function formatRoute(route: Route): string {
         return [];
       case "machine":
         return ["machine", s.id];
+      case "client":
+        return ["client", s.id];
+      case "pending":
+        return ["pending", s.thumbprint];
       case "arrow":
         return ["arrow", s.from, s.to];
       case "revision":
@@ -84,6 +92,8 @@ export function parseRoute(hash: string): Route {
   if (!isView(view)) return DEFAULT_ROUTE;
   const selection = ((): Selection => {
     if (kind === "machine" && a) return { _tag: "machine", id: a };
+    if (kind === "client" && a) return { _tag: "client", id: a };
+    if (kind === "pending" && a) return { _tag: "pending", thumbprint: a };
     if (kind === "arrow" && a && b) return { _tag: "arrow", from: a, to: b };
     if (kind === "revision" && a && Number.isSafeInteger(Number(a))) {
       return { _tag: "revision", revision: Number(a) };

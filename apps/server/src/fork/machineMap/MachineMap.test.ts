@@ -36,6 +36,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as EnvironmentTheme from "../../environmentTheme.ts";
@@ -95,6 +96,7 @@ const SAMPLE: ResourceSample = {
   agents: null,
   topCpu: null,
   topMemory: null,
+  battery: null,
 };
 
 /**
@@ -583,6 +585,37 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
         }).pipe(Effect.provide(layerMachineMap({ portalUrl: portal.url, ran })));
       }),
     ),
+  );
+
+  it.effect(
+    "entering enforce ends the Access owner sessions and keeps pairing links (MM-921)",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const portal = yield* startFakePortal;
+          const ran = yield* Ref.make<ReadonlyArray<string>>([]);
+          yield* Effect.gen(function* () {
+            const auth = yield* EnvironmentAuth.EnvironmentAuth;
+            const sessions = yield* SessionStore.SessionStore;
+            const settings = yield* ServerSettings.ServerSettingsService;
+            yield* settings.updateSettings({ machineMap: { enabled: true } });
+            const accessLogin = yield* auth.issueSession({
+              subject: "one-time-token",
+              label: "cloudflare-access dev@example.com",
+            });
+            const pairingLink = yield* auth.issueSession({
+              subject: "one-time-token",
+              label: "phone",
+            });
+
+            yield* settings.updateSettings({ clientAccess: "enforce" });
+            yield* sessions.awaitInvalidation(accessLogin.sessionId);
+            const sessionIds = (yield* auth.listSessions()).map((session) => session.sessionId);
+            expect(sessionIds).not.toContain(accessLogin.sessionId);
+            expect(sessionIds).toContain(pairingLink.sessionId);
+          }).pipe(Effect.provide(layerMachineMap({ portalUrl: portal.url, ran })));
+        }),
+      ),
   );
 
   it.effect("sends a resource sample on connection, every minute and on request (MM-1501)", () =>

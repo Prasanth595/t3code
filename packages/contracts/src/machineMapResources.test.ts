@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import { MachineToPortal, PortalToMachine } from "./machineMap.ts";
+import { MachinesReadResult } from "./machineMapClient.ts";
 import {
   MachineResourcesMessage,
   PortalResourcesRequest,
@@ -29,7 +30,10 @@ const sample: ResourceSample = {
   agents: { count: 1, cpuPercent: 2, memoryBytes: 3 },
   topCpu: [{ name: "node", cpuPercent: 2, memoryBytes: 3 }],
   topMemory: [{ name: "node", cpuPercent: null, memoryBytes: 3 }],
+  battery: { percent: 54, state: "charging", minutesLeft: 62 },
 };
+
+const decodeRead = Schema.decodeUnknownSync(MachinesReadResult);
 
 describe("resource messages next to the base protocol (MM-1502)", () => {
   it("an older portal and an older server fail to decode them, so they ignore them", () => {
@@ -56,6 +60,37 @@ describe("resource messages next to the base protocol (MM-1502)", () => {
     expect(fromMachine({ _tag: "resources", sample: older })).toMatchObject({
       sample: { cpuBusyPercent: null, cpuPressurePercent: null },
     });
+  });
+
+  it("the Machines panel reads an alert kind of a newer portal (MM-1701)", () => {
+    const read = {
+      _tag: "read",
+      map: {
+        revision: 0,
+        machines: [],
+        arrows: [],
+        settings: { shared: { server: {}, client: {} }, overrides: {} },
+        presets: [],
+      },
+      presence: {},
+      commands: [],
+      resources: {
+        latest: {},
+        thresholds: {},
+        alerts: [
+          {
+            id: "a",
+            machineId: "mac",
+            kind: "fan",
+            startedAt: sample.at,
+            endedAt: null,
+            value: 1,
+            threshold: 0,
+          },
+        ],
+      },
+    };
+    expect(decodeRead(read).resources.alerts[0]?.kind).toBe("fan");
   });
 
   it("refuses a top list longer than five", () => {

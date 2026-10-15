@@ -1,15 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
-import { AuthStandardClientScopes, MACHINE_LEVEL_SCOPES } from "@t3tools/contracts";
+import { AuthStandardClientScopes, ClientId, MACHINE_LEVEL_SCOPES } from "@t3tools/contracts";
 
 import {
+  browserGrantFor,
+  clientGrantFor,
+  clientsWithChangedLevel,
   machineGrantFor,
   machineMcpAccessFor,
+  nextExpiry,
   peersWithChangedLevel,
   reachablePeers,
 } from "./machineAccess.ts";
 import { PEER, PEER_TOKEN, SELF, arrow, desiredState } from "./MachineMap.testkit.ts";
 
 const NOW = Date.parse("2026-10-13T12:00:00.000Z");
+/** When a desired state with an arrow that expires at 11:00 arrived. */
+const BEFORE_EXPIRY = Date.parse("2026-10-13T10:00:00.000Z");
 
 describe("machineGrantFor (MM-1305)", () => {
   it("gives a peer token the scopes of its arrow and the subject machine:<id>", () => {
@@ -47,6 +53,90 @@ describe("machineGrantFor (MM-1305)", () => {
   });
 });
 
+describe("clientGrantFor (MM-912)", () => {
+  it("gives an app token its client level, ends at expiry, and ends when the client goes", () => {
+    const PHONE = ClientId.make("client-phone");
+    const withPhone = (level: "standard" | "admin", expiresAt: string | null = null) => ({
+      ...desiredState({}),
+      clients: [
+        {
+          id: PHONE,
+          name: "Phone",
+          tokenClientId: "phone.access",
+          level,
+          expiresAt,
+          revertLevel: expiresAt === null ? null : ("none" as const),
+        },
+      ],
+    });
+    expect(clientGrantFor(withPhone("standard"), "phone.access", NOW)).toEqual({
+      subject: "client:client-phone",
+      scopes: AuthStandardClientScopes,
+      label: "client Phone",
+    });
+    expect(clientGrantFor(withPhone("standard"), PEER_TOKEN, NOW)).toBeUndefined();
+    expect(
+      clientGrantFor(withPhone("admin", "2026-10-13T11:00:00.000Z"), "phone.access", NOW),
+    ).toBeUndefined();
+    expect(clientsWithChangedLevel(withPhone("standard"), null, desiredState({}), NOW)).toEqual([
+      PHONE,
+    ]);
+    // The portal drops an expired client from the desired state; its sessions still end.
+    expect(
+      clientsWithChangedLevel(
+        withPhone("admin", "2026-10-13T11:00:00.000Z"),
+        BEFORE_EXPIRY,
+        desiredState({}),
+        NOW,
+      ),
+    ).toEqual([PHONE]);
+  });
+});
+
+describe("browserGrantFor (MM-917, MM-918)", () => {
+  it("gives a known browser key its client level, and ends with the key or at expiry", () => {
+    const LAPTOP = ClientId.make("client-laptop");
+    const withLaptop = (expiresAt: string | null = null) => ({
+      ...desiredState({}),
+      browserClients: [
+        {
+          id: LAPTOP,
+          name: "Laptop",
+          thumbprints: ["old-key", "laptop-key"],
+          level: "admin" as const,
+          expiresAt,
+          revertLevel: expiresAt === null ? null : ("none" as const),
+        },
+      ],
+    });
+    // An admin arrow gives a browser no more than the owner login while machines observe.
+    expect(browserGrantFor(withLaptop(), "laptop-key", NOW, "observe")).toEqual({
+      subject: "client:client-laptop",
+      scopes: MACHINE_LEVEL_SCOPES.standard,
+      label: "browser client Laptop",
+    });
+    // MM-918: enforce gives the full level of the arrow, without access:write and relay:write.
+    expect(browserGrantFor(withLaptop(), "laptop-key", NOW, "enforce")?.scopes).toEqual(
+      MACHINE_LEVEL_SCOPES.admin.filter(
+        (scope) => scope !== "access:write" && scope !== "relay:write",
+      ),
+    );
+    expect(browserGrantFor(withLaptop(), "unknown-key", NOW, "observe")).toBeUndefined();
+    expect(
+      browserGrantFor(withLaptop("2026-10-13T11:00:00.000Z"), "laptop-key", NOW, "observe"),
+    ).toBeUndefined();
+    expect(clientsWithChangedLevel(withLaptop(), null, desiredState({}), NOW)).toEqual([LAPTOP]);
+    // MM-909: a removed key ends the sessions of its client; the other keys sign in again.
+    const before = withLaptop();
+    const withoutOldKey = {
+      ...before,
+      browserClients: before.browserClients.map((c) => ({ ...c, thumbprints: ["laptop-key"] })),
+    };
+    expect(clientsWithChangedLevel(withLaptop(), null, withoutOldKey, NOW)).toEqual([LAPTOP]);
+    expect(clientsWithChangedLevel(withLaptop(), null, withLaptop(), NOW)).toEqual([]);
+  });
+});
+
 describe("machineMcpAccessFor (MM-1307)", () => {
   const subject = `machine:${PEER}`;
 
@@ -76,9 +166,40 @@ describe("peersWithChangedLevel (MM-1306)", () => {
   it("lists a peer whose level into this machine changed, or that left the map", () => {
     const before = desiredState({ arrowsIn: [arrow(PEER, SELF, "admin")] });
     expect(
-      peersWithChangedLevel(before, desiredState({ arrowsIn: [arrow(PEER, SELF, "read")] }), NOW),
+      peersWithChangedLevel(
+        before,
+        null,
+        desiredState({ arrowsIn: [arrow(PEER, SELF, "read")] }),
+        NOW,
+      ),
     ).toEqual([PEER]);
-    expect(peersWithChangedLevel(before, desiredState({}), NOW)).toEqual([PEER]);
+    expect(peersWithChangedLevel(before, null, desiredState({}), NOW)).toEqual([PEER]);
+  });
+
+  it("ends the sessions of an arrow that expired before the next desired state", () => {
+    // The portal reverts the arrow at expiry. Both states then read `none` at the current time,
+    // but the sessions still hold the level they got before the expiry.
+    const expiring = desiredState({
+      arrowsIn: [
+        arrow(PEER, SELF, "standard", {
+          expiresAt: "2026-10-13T11:00:00.000Z",
+          revertLevel: "none",
+        }),
+      ],
+    });
+    expect(peersWithChangedLevel(expiring, BEFORE_EXPIRY, desiredState({}), NOW)).toEqual([PEER]);
+  });
+
+  it("keeps sessions issued at the revert level when the old state arrived after the expiry", () => {
+    // The portal was offline at the expiry, so the state arrived already expired and the sessions
+    // got the revert level. The next state with the reverted arrow changes nothing for them.
+    const expired = desiredState({
+      arrowsIn: [
+        arrow(PEER, SELF, "admin", { expiresAt: "2026-10-13T11:00:00.000Z", revertLevel: "read" }),
+      ],
+    });
+    const reverted = desiredState({ arrowsIn: [arrow(PEER, SELF, "read")] });
+    expect(peersWithChangedLevel(expired, NOW - 60_000, reverted, NOW)).toEqual([]);
   });
 
   it("ignores agent tools and arrows out of this machine", () => {
@@ -87,7 +208,41 @@ describe("peersWithChangedLevel (MM-1306)", () => {
       arrowsIn: [arrow(PEER, SELF, "read", { agentTools: true })],
       arrowsOut: [arrow(SELF, PEER, "admin")],
     });
-    expect(peersWithChangedLevel(before, next, NOW)).toEqual([]);
+    expect(peersWithChangedLevel(before, null, next, NOW)).toEqual([]);
+  });
+});
+
+describe("nextExpiry (MM-304, MM-912)", () => {
+  it("finds the earliest arrow into this machine that drops, and skips past ones", () => {
+    const desired = {
+      ...desiredState({
+        arrowsIn: [
+          arrow(PEER, SELF, "admin", {
+            expiresAt: "2026-10-13T13:00:00.000Z",
+            revertLevel: "read",
+          }),
+          arrow(SELF, PEER, "admin", {
+            expiresAt: "2026-10-13T12:30:00.000Z",
+            revertLevel: "none",
+          }),
+        ],
+      }),
+      clients: [
+        {
+          id: ClientId.make("client-phone"),
+          name: "Phone",
+          tokenClientId: "phone.access",
+          level: "standard" as const,
+          expiresAt: "2026-10-13T13:00:00.000Z",
+          revertLevel: "none" as const,
+        },
+      ],
+    };
+    expect(nextExpiry(desired, NOW)).toEqual({
+      atMs: Date.parse("2026-10-13T13:00:00.000Z"),
+      subjects: [`machine:${PEER}`, "client:client-phone"],
+    });
+    expect(nextExpiry(desired, Date.parse("2026-10-13T13:00:00.000Z"))).toBeUndefined();
   });
 });
 

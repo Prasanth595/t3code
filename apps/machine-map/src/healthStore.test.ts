@@ -59,6 +59,7 @@ const sample = (cpuPercent: number): ResourceSample => ({
   agents: null,
   topCpu: null,
   topMemory: null,
+  battery: null,
 });
 
 const alert = (id: string, startedAt: number, endedAt: number | null): HealthAlert => ({

@@ -5,6 +5,7 @@ import type { PullRequestSpeedActionResult } from "~/components/pullRequest/Pull
 import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
 import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
 import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
+import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
   ClientSettings,
@@ -46,6 +47,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -171,6 +173,7 @@ import {
 } from "../rightPanelStore";
 import { useDebouncedValue } from "../state/queries";
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "../state/entities";
+import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useEnvironments } from "../state/environments";
 import {
   pullRequestEnvironment,
@@ -443,9 +446,12 @@ function PullRequestsRouteView() {
   // the one wrong answer the empty state can give.
   const projectsKnown = useAllEnvironmentShellsBootstrapped();
   // Only the projects the page can actually read: one on an environment that cannot list pull
-  // requests could neither be listed nor acted on.
+  // requests could neither be listed nor acted on, and the Scratch folder is never a repository.
   const projects = useMemo(
-    () => allProjects.filter((project) => environmentIds.includes(project.environmentId)),
+    () =>
+      allProjects.filter(
+        (project) => !project.isScratch && environmentIds.includes(project.environmentId),
+      ),
     [allProjects, environmentIds],
   );
   // Searching asks the hosts, which takes a round trip, so the text is held for a moment before
@@ -2198,8 +2204,13 @@ function PullRequestsRouteView() {
     />
   );
   // Fork: an owner change that leaves the scoped project out drops the project scope too, the
-  // same way picking another server does.
-  const updateMenuOwnerFilter = (owners: ReadonlyArray<string>, operator: FilterOperator) => {
+  // same way picking another server does. The owner menu and the owner chip both pass here.
+  const withOwnerScope = (
+    patch: PullRequestListPreferencePatch,
+  ): PullRequestListPreferencePatch => {
+    if (!("owners" in patch) && !("ownerOperator" in patch)) return patch;
+    const owners = "owners" in patch ? (patch.owners ?? NO_OWNERS) : menuOwners;
+    const operator = "ownerOperator" in patch ? (patch.ownerOperator ?? "is") : menuOwnerOperator;
     const kept = projectsOfOwners(projects, pullRequestMenuOwnerFilter(owners, operator));
     const keepsScope =
       search.projectId === undefined ||
@@ -2208,14 +2219,17 @@ function PullRequestsRouteView() {
           project.id === search.projectId &&
           (search.environmentId === undefined || project.environmentId === search.environmentId),
       );
-    updateListScope({
-      owners: owners.length === 0 ? undefined : owners,
-      ownerOperator: operator === "is_not" ? operator : undefined,
-      ...(keepsScope ? {} : { projectId: undefined }),
-    });
+    return keepsScope ? patch : { ...patch, projectId: undefined };
   };
+  const updateMenuOwnerFilter = (owners: ReadonlyArray<string>, operator: FilterOperator) =>
+    updateListScope(
+      withOwnerScope({
+        owners: owners.length === 0 ? undefined : owners,
+        ownerOperator: operator === "is_not" ? operator : undefined,
+      }),
+    );
   const filtersMenu = (
-    <PullRequestFiltersMenu
+    <PullRequestFiltersMenuInSidebarOrder
       onOpenChange={setFiltersOpen}
       state={search.state}
       stateOptions={STATE_TABS}
@@ -2280,7 +2294,12 @@ function PullRequestsRouteView() {
     searchInput,
     sortMenu,
     filtersMenu,
-    filterChips: <PullRequestFilterChips chips={filterChips} onChange={updateListScope} />,
+    filterChips: (
+      <PullRequestFilterChips
+        chips={filterChips}
+        onChange={(patch) => updateListScope(withOwnerScope(patch))}
+      />
+    ),
     rightPanelControl:
       // Footprint reserve while the panel is closed: the toggle itself stays
       // mounted at the fixed titlebar inset in both states so it cannot move
@@ -2557,6 +2576,18 @@ function PullRequestsRouteView() {
 }
 
 /** A compact stand-in for one pill group when the header is narrow. */
+/** Lists the projects in the sidebar's order; it re-renders with thread activity, so the page does not. */
+function PullRequestFiltersMenuInSidebarOrder(
+  props: ComponentProps<typeof PullRequestFiltersMenu>,
+) {
+  const sidebarProjectGroups = useSidebarProjectGroups();
+  const projects = useMemo(
+    () => sortProjectsByGroupOrder(props.projects, sidebarProjectGroups),
+    [props.projects, sidebarProjectGroups],
+  );
+  return <PullRequestFiltersMenu {...props} projects={projects} />;
+}
+
 function CompactFilterMenu<Value extends string>({
   label,
   triggerIcon,

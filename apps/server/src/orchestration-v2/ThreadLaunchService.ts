@@ -307,7 +307,8 @@ const make = Effect.gen(function* () {
     // blocks, as `docs` blocks `docs/x`. Limit: short names read a branch that
     // shares its name with a tag as `heads/<name>`, so the launch reports that
     // case instead. Revisit if agents name branches after tags.
-    if (branch !== undefined) {
+    // A temporary `t3/<id>` name is flattened at launch when it conflicts.
+    if (branch !== undefined && !isTemporaryWorktreeBranch(branch)) {
       const taken = yield* Effect.gen(function* () {
         const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
         if (project === undefined) return undefined;
@@ -322,10 +323,13 @@ const make = Effect.gen(function* () {
           branch,
         });
     }
+    // Scratch is outside any repository too, but the launch gives a worktree
+    // request there a thread folder of its own.
     const outside = yield* Effect.gen(function* () {
       const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
       if (project === undefined) return undefined;
-      return (yield* git.isOutsideRepository(project.workspaceRoot)) ? project : undefined;
+      if (!(yield* git.isOutsideRepository(project.workspaceRoot))) return undefined;
+      return (yield* managedFolders.isScratch(input.projectId)) ? undefined : project;
     }).pipe(Effect.orElseSucceed(() => undefined));
     if (outside !== undefined)
       return yield* new ThreadLaunchNotRepositoryError({

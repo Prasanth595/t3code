@@ -170,6 +170,28 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 
+/** Follow the project's default model, resolved when each run starts. */
+export const ScheduledTaskProjectDefaultModel = Schema.TaggedStruct("projectDefault", {}).annotate({
+  description:
+    "Use the project's default model at run time, then the app default. A task bound to a thread keeps that thread's model.",
+});
+
+/**
+ * The model choice of an agent tool call and of a stored task row: the
+ * project default, or one explicit selection. The client wire shape is
+ * `modelSelection` plus `useProjectDefaultModel` instead, which older
+ * clients decode.
+ */
+export const ScheduledTaskModelSelection = Schema.Union([
+  ScheduledTaskProjectDefaultModel,
+  ModelSelection,
+]).annotate({
+  description:
+    "Pass {_tag:'projectDefault'} to follow the project default, or {instanceId, model, options?} for one provider instance and model.",
+});
+export type ScheduledTaskModelSelection = typeof ScheduledTaskModelSelection.Type;
+export const isScheduledTaskProjectDefaultModel = Schema.is(ScheduledTaskProjectDefaultModel);
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -179,7 +201,10 @@ export const ScheduledTask = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.NullOr(ThreadId),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  /** With `useProjectDefaultModel`, the model the next run resolves. */
   modelSelection: ModelSelection,
+  /** Follow the project default model at each run. Older clients ignore it. */
+  useProjectDefaultModel: Schema.optional(Schema.Boolean),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: OrchestrationV2Actor,
@@ -218,7 +243,9 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  /** A server without `useProjectDefaultModel` saves this model. */
   modelSelection: ModelSelection,
+  useProjectDefaultModel: Schema.optional(Schema.Boolean),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),

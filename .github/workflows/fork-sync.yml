@@ -141,14 +141,44 @@ jobs:
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body-file "$RUNNER_TEMP/issue.md"
           fi
 
+  # Upstream workflows need upstream's runners and secrets, so the fork disables them.
+  # A sync can bring a new upstream workflow file, which starts active. This job fails
+  # and prints the command that disables it. Fork workflow files start with "fork-".
+  # Limit: a workflow that GitHub registers after this job runs shows up on the next sync.
+  upstream_workflows:
+    name: Check upstream workflows
+    needs: [sync]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    steps:
+      - name: List active upstream workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          active="$(gh workflow list --repo "$GITHUB_REPOSITORY" --all --json path,state \
+            --jq '.[] | select(.state == "active" and (.path | startswith(".github/workflows/"))
+              and ((.path | ltrimstr(".github/workflows/")) | startswith("fork-") | not)) | .path')"
+          if [[ -z "$active" ]]; then
+            echo "Only fork workflows are active."
+            exit 0
+          fi
+          echo "::error title=Active upstream workflows::Disable them, or rename a fork workflow to fork-*.yml."
+          while IFS= read -r path; do
+            echo "gh workflow disable --repo $GITHUB_REPOSITORY $(basename "$path")"
+          done <<<"$active"
+          exit 1
+
   # Starts a repair agent on a T3 server through a scheduled-task webhook.
   # Off until the T3_AGENT_WEBHOOK_URL secret is set.
   notify_agent:
     name: Notify repair agent
-    needs: [sync]
+    needs: [sync, upstream_workflows]
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     permissions:
       actions: read
     steps:

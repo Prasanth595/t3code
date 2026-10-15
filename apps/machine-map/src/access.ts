@@ -67,6 +67,48 @@ export async function ownerEmail(request: Request, env: Env): Promise<string | n
   return ownerEmails(env).includes(email) ? email : null;
 }
 
+const decodeApprovalClaims = Schema.decodeUnknownOption(
+  Schema.Struct({ email: Schema.String, iat: Schema.Number }),
+);
+/** Clock difference between Cloudflare and the Worker that the `iat` check allows. */
+const CLOCK_SKEW_SECONDS = 30;
+
+/**
+ * MM-1207: the owner email of a request on the approval path, or null. The JWT must come from the
+ * approvals app (`aud`) and be at most `maxAgeSeconds` old. Its MFA then happened in that time,
+ * because the app session and its MFA session have the same length (MM-1208).
+ */
+export async function approvalEmail(
+  request: Request,
+  env: Env,
+  aud: string | null,
+  maxAgeSeconds: number,
+): Promise<string | null> {
+  if (fakeAccess(request, env)) return ownerEmails(env)[0] ?? null;
+  if (aud === null) return null;
+  const claims = decodeApprovalClaims(await verify(request, env, aud));
+  if (Option.isNone(claims)) return null;
+  const age = Date.now() / 1000 - claims.value.iat;
+  if (age > maxAgeSeconds + CLOCK_SKEW_SECONDS || age < -CLOCK_SKEW_SECONDS) return null;
+  const email = claims.value.email.trim().toLowerCase();
+  return ownerEmails(env).includes(email) ? email : null;
+}
+
+/**
+ * MM-914: the client id of the service token that signed a `/client` request, or null. Its Access
+ * app lets in any token of the account; the portal then checks that a client holds it.
+ */
+export async function clientTokenId(
+  request: Request,
+  env: Env,
+  aud: string | null,
+): Promise<string | null> {
+  if (fakeAccess(request, env)) return request.headers.get("X-Dev-Client-Token-Id");
+  if (aud === null) return null;
+  const claims = decodeMachineClaims(await verify(request, env, aud));
+  return Option.isSome(claims) ? claims.value.common_name : null;
+}
+
 /** The client id of the machine token that signed a `/connect` request, or null. */
 export async function machineClientId(request: Request, env: Env): Promise<string | null> {
   if (fakeAccess(request, env)) return request.headers.get("X-Dev-Machine-Client-Id");

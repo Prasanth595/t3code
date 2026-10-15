@@ -64,6 +64,8 @@ export interface DraftState {
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
   readonly modelKey: string;
+  /** Runs resolve the project default model at run time; `modelKey` is then unused. */
+  readonly useProjectDefaultModel: boolean;
   /** Not editable in the dialog, but preserved so editing an agent-created task keeps its modes. */
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -151,9 +153,10 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         ? task.workspaceStrategy.worktreePath
         : "",
     modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
+    useProjectDefaultModel: task.useProjectDefaultModel === true,
+    baseModelSelection: task.modelSelection,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
-    baseModelSelection: task.modelSelection,
     ...(schedule.type === "webhook" && schedule.signature !== null
       ? {
           signatureEnabled: true,

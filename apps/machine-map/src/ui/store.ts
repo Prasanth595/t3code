@@ -7,11 +7,15 @@ import { MachineId, PortalEvent, type PortalSnapshot } from "@t3tools/contracts/
 import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
 import {
+  ClientInvitesEvent,
   EnrolledEvent,
   HealthEvent,
   PauseEvent,
+  PendingClientsEvent,
   ResourceSampleEvent,
   type PauseView,
+  type ClientInvite,
+  type PendingClient,
   type PendingRotation,
   type RotationsEvent,
 } from "../api.ts";
@@ -25,6 +29,10 @@ export interface PortalState {
   readonly health: ResourcesOverview;
   /** MM-212: how many times each machine used a join code while this page was open. */
   readonly joins: Readonly<Record<string, number>>;
+  /** MM-906: browser keys that wait for approval or that the owner rejected. Null until the first list. */
+  readonly pending: ReadonlyArray<PendingClient> | null;
+  /** MM-913: invites of native apps that wait to be used. */
+  readonly invites: ReadonlyArray<ClientInvite>;
 }
 
 export type PageEvent =
@@ -33,9 +41,11 @@ export type PageEvent =
   | PauseEvent
   | HealthEvent
   | ResourceSampleEvent
-  | EnrolledEvent;
+  | EnrolledEvent
+  | PendingClientsEvent
+  | ClientInvitesEvent;
 
-export const EMPTY_HEALTH: ResourcesOverview = { latest: {}, alerts: [], thresholds: {} };
+const EMPTY_HEALTH: ResourcesOverview = { latest: {}, alerts: [], thresholds: {} };
 
 export const INITIAL_STATE: PortalState = {
   snapshot: null,
@@ -43,6 +53,8 @@ export const INITIAL_STATE: PortalState = {
   pause: null,
   health: EMPTY_HEALTH,
   joins: {},
+  pending: null,
+  invites: [],
 };
 
 export function reduce(state: PortalState, event: PageEvent): PortalState {
@@ -50,6 +62,8 @@ export function reduce(state: PortalState, event: PageEvent): PortalState {
   if (event._tag === "rotations") return { ...state, rotations: event.rotations };
   if (event._tag === "pause") return { ...state, pause: event.pause };
   if (event._tag === "health") return { ...state, health: event.health };
+  if (event._tag === "pendingClients") return { ...state, pending: event.pending };
+  if (event._tag === "clientInvites") return { ...state, invites: event.invites };
   if (event._tag === "resourceSample") {
     const latest = { ...state.health.latest, [event.machineId]: event.sample };
     return { ...state, health: { ...state.health, latest } };
@@ -143,6 +157,8 @@ const decodeEvent = Schema.decodeUnknownSync(
     HealthEvent,
     ResourceSampleEvent,
     EnrolledEvent,
+    PendingClientsEvent,
+    ClientInvitesEvent,
   ]),
 );
 

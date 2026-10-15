@@ -7,7 +7,13 @@
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 import {
+  ClientId,
+  type ClientEnrollRequest,
+  type ClientEnrollResponse,
+  type ClientMachine,
+  isOwnerOnlySetting,
   MACHINE_MAP_PROTOCOL,
+  clientSessionSubject,
   machineSessionSubject,
   MachineCommand,
   MachineId,
@@ -19,6 +25,7 @@ import {
   MapRevision,
   MapToolInputs,
   ScopedSettingValues,
+  type ClientRecord,
   type CommandDelivery,
   type MachineCommandInput,
   type MachineRecord,
@@ -42,7 +49,12 @@ import {
 
 import type {
   AddMachineRequest,
+  ApprovalsStatus,
+  ApproveClientRequest,
+  ClientInvitesEvent,
   ChangesRequest,
+  InviteRequest,
+  InviteResponse,
   CommandRequest,
   DevicesResponse,
   EnrolledEvent,
@@ -52,6 +64,8 @@ import type {
   MapToolResult,
   PauseEvent,
   PauseResponse,
+  PendingClient,
+  PendingClientsEvent,
   PendingRotation,
   PortalSignIn,
   PushEndpointRequest,
@@ -73,13 +87,24 @@ import { PauseState } from "./api.ts";
 import { configured, ownerEmails } from "./access.ts";
 import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
 import { sendPush, vapidKey, type PushTarget, type VapidKey } from "./push.ts";
-import { CloudflareApi, tunnelTarget } from "./cloudflare.ts";
+import {
+  approvalsAppProblem,
+  CLIENT_POLICY_NAME,
+  CloudflareApi,
+  CloudflareApiError,
+  goneIsDone,
+  tunnelTarget,
+  type ApprovalsApp,
+} from "./cloudflare.ts";
 import type { Env } from "./env.ts";
 import {
   arrowChange,
+  clientArrowChange,
   decideAgentWrite,
   gateTool,
   raisesAnyAccess,
+  touchesClients,
+  touchesOwnerOnlySettings,
   usesText,
 } from "./rules/access.ts";
 import {
@@ -102,10 +127,15 @@ import {
   checkEditableChanges,
   absoluteChangesJson,
   absoluteMapJson,
+  clientWithKey,
   desiredState,
   emptyMap,
+  findClient,
   findMachine,
+  keepClientKeys,
+  undoChanges,
   freePosition,
+  effectiveSettings,
   hasJoined,
   machinesTouched,
   MapRuleError,
@@ -113,7 +143,8 @@ import {
 import {
   applyPresetChanges,
   cutArrows,
-  lockdownChanges,
+  cutClientArrows,
+  pauseChanges,
   PAUSE_SUMMARY,
   PausedAccess,
   pausedAccess,
@@ -197,6 +228,9 @@ const encodeTunnelGrant = (grant: MachineTunnelGrant): string => JSON.stringify(
 const PauseRecord = Schema.Struct({ state: PauseState, before: PausedAccess });
 type PauseRecord = typeof PauseRecord.Type;
 const decodePause = decodeJson(PauseRecord);
+const decodeApprovalsApp = decodeJson(Schema.Struct({ id: Schema.String, aud: Schema.String }));
+/** MM-913: an invite of a native app works this long. */
+const INVITE_MINUTES = 15;
 const decodeHelloProtocol = Schema.decodeUnknownOption(
   Schema.TaggedStruct("hello", { protocol: Schema.Number }),
 );
@@ -238,6 +272,13 @@ const SNAPSHOT_FINISHED_COMMANDS = 100;
 const SIGN_IN_WRITE_MS = 60_000;
 /** MM-709: an offline machine stops its agents if it connects within 7 days of the pause. */
 const PAUSE_STOP_MINUTES = 7 * 24 * 60;
+/** MM-906: waiting and rejected keys per reporting machine. A full list drops its oldest. */
+const PENDING_PER_MACHINE = 20;
+/** MM-906: new keys that one machine can report in `PENDING_WINDOW_MS`. More wait for the next window. */
+const PENDING_NEW_PER_WINDOW = 5;
+const PENDING_WINDOW_MS = 10 * MINUTE_MS;
+/** MM-906: a waiting or rejected key that stops signing in leaves after this time. */
+const PENDING_KEEP_MS = 14 * 24 * HOUR_MS;
 /** MM-1501: the portal asks a machine for a sample at most this often. */
 const SAMPLE_REQUEST_GAP_MS = 10_000;
 /** MM-1506: pages get the active alerts and this many ended ones. */
@@ -251,6 +292,7 @@ const ALERT_PUSH: Record<HealthAlertKind, { readonly title: string; readonly uni
   disk: { title: "disk is full", unit: "%" },
   swap: { title: "swap traffic is high", unit: " MB/s" },
   offline: { title: "is down", unit: " minutes offline" },
+  battery: { title: "battery is low", unit: "%" },
 };
 
 const nowIso = () => new Date().toISOString();
@@ -357,19 +399,17 @@ export class MachineMapObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS proposals (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS presence (machine_id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS reported_settings (machine_id TEXT PRIMARY KEY, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS join_codes (code_hash TEXT PRIMARY KEY, machine_id TEXT NOT NULL, sealed_secret TEXT NOT NULL, expires_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS join_codes (code_hash TEXT PRIMARY KEY, machine_id TEXT NOT NULL, sealed_secret TEXT NOT NULL, expires_at TEXT NOT NULL, sealed_tunnel TEXT);
       CREATE TABLE IF NOT EXISTS rotations (machine_id TEXT PRIMARY KEY, token_client_id TEXT NOT NULL, sealed_secret TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS machine_tokens (machine_id TEXT PRIMARY KEY, token_id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS enroll_attempts (ip TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sign_ins (id TEXT PRIMARY KEY, device TEXT NOT NULL, browser TEXT NOT NULL, place TEXT NOT NULL, first_seen TEXT NOT NULL, last_used TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS machine_tunnels (machine_id TEXT PRIMARY KEY, tunnel_id TEXT NOT NULL, hostname TEXT NOT NULL, created_tunnel INTEGER NOT NULL, dns_record_id TEXT, access_host_added INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS client_invites (code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL, expires_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS client_app_tokens (token_id TEXT PRIMARY KEY, client_id TEXT NOT NULL, token_client_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS pending_clients (thumbprint TEXT PRIMARY KEY, described_as TEXT NOT NULL, email TEXT, seen_on TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, state TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, sign_in_id TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
-    // MM-213: the sealed tunnel grant of a join code. Null for a code without a tunnel.
-    const joinColumns = this.#sql<{ name: string }>("PRAGMA table_info(join_codes)");
-    if (!joinColumns.some((column) => column.name === "sealed_tunnel")) {
-      this.ctx.storage.sql.exec("ALTER TABLE join_codes ADD COLUMN sealed_tunnel TEXT");
-    }
     this.ctx.storage.sql.exec(HEALTH_TABLES);
     this.#dropManageSetting();
     this.#absolutePlaces();
@@ -563,7 +603,160 @@ export class MachineMapObject extends DurableObject<Env> {
   #pauseEvent(): PauseEvent {
     const pause = this.#pause;
     if (!pause) return { _tag: "pause", pause: null };
-    return { _tag: "pause", pause: { ...pause.state, cut: cutArrows(this.#map, pause.before) } };
+    return {
+      _tag: "pause",
+      pause: {
+        ...pause.state,
+        cut: cutArrows(this.#map, pause.before),
+        cutClients: cutClientArrows(this.#map, pause.before),
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------- clients
+
+  #pendingClients(): Array<PendingClient> {
+    return this.#sql<{
+      thumbprint: string;
+      described_as: string;
+      email: string | null;
+      seen_on: string;
+      first_seen: string;
+      last_seen: string;
+      state: string;
+    }>("SELECT * FROM pending_clients ORDER BY last_seen DESC").map((row) => ({
+      thumbprint: row.thumbprint,
+      describedAs: row.described_as,
+      email: row.email,
+      seenOn: MachineId.make(row.seen_on),
+      firstSeenAt: row.first_seen,
+      lastSeenAt: row.last_seen,
+      state: row.state === "rejected" ? "rejected" : "pending",
+    }));
+  }
+
+  /** MM-913: the waiting invites, without their codes. */
+  #invitesEvent(): ClientInvitesEvent {
+    return {
+      _tag: "clientInvites",
+      invites: this.#sql<{ client_id: string; expires_at: string }>(
+        "SELECT client_id, expires_at FROM client_invites ORDER BY expires_at",
+      ).map((row) => ({ clientId: ClientId.make(row.client_id), expiresAt: row.expires_at })),
+    };
+  }
+
+  #pendingEvent(): PendingClientsEvent {
+    return { _tag: "pendingClients", pending: this.#pendingClients() };
+  }
+
+  #pendingClient(thumbprint: string): PendingClient {
+    const found = this.#pendingClients().find((p) => p.thumbprint === thumbprint);
+    if (!found) throw new PortalError(404, "This sign-in no longer waits.");
+    return found;
+  }
+
+  /**
+   * MM-906: a machine saw a browser key that no client holds. The first report keeps its machine,
+   * so another machine cannot take over a row and push it out of the list.
+   */
+  #recordClientSeen(
+    machine: MachineRecord,
+    seen: { thumbprint: string; describedAs: string; email: string | null },
+  ): void {
+    if (clientWithKey(this.#map, seen.thumbprint)) return;
+    const now = Date.now();
+    const at = new Date(now).toISOString();
+    const known = this.#sql<{ seen_on: string; last_seen: string }>(
+      "SELECT seen_on, last_seen FROM pending_clients WHERE thumbprint = ?",
+      seen.thumbprint,
+    )[0];
+    if (known) {
+      // Only the first machine updates a row, at most once a minute per key.
+      if (known.seen_on !== machine.id || now - Date.parse(known.last_seen) < MINUTE_MS) return;
+      this.#sql(
+        "UPDATE pending_clients SET described_as = ?, email = ?, last_seen = ? WHERE thumbprint = ?",
+        seen.describedAs,
+        seen.email,
+        at,
+        seen.thumbprint,
+      );
+    } else {
+      const recent = this.#sql<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM pending_clients WHERE seen_on = ? AND first_seen > ?",
+        machine.id,
+        new Date(now - PENDING_WINDOW_MS).toISOString(),
+      )[0];
+      if ((recent?.count ?? 0) >= PENDING_NEW_PER_WINDOW) {
+        console.error("too many new sign-ins", machine.id);
+        return;
+      }
+      this.#sql(
+        "INSERT INTO pending_clients (thumbprint, described_as, email, seen_on, first_seen, last_seen, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+        seen.thumbprint,
+        seen.describedAs,
+        seen.email,
+        machine.id,
+        at,
+        at,
+      );
+      this.#sql(
+        `DELETE FROM pending_clients WHERE seen_on = ? AND thumbprint NOT IN
+         (SELECT thumbprint FROM pending_clients WHERE seen_on = ? ORDER BY last_seen DESC LIMIT ?)`,
+        machine.id,
+        machine.id,
+        PENDING_PER_MACHINE,
+      );
+    }
+    this.#broadcast(this.#pendingEvent());
+    if (known) return;
+    this.#notify({
+      title: "A new device waits for approval",
+      body: `${seen.describedAs || "A browser"} signed in to ${machine.name}.`,
+      url: `/#/clients/pending/${encodeURIComponent(seen.thumbprint)}`,
+      tag: `pending:${seen.thumbprint}`,
+    });
+  }
+
+  /** MM-1208: the stored approvals app, or null before the owner set it up. */
+  #approvalsApp(): { id: string; aud: string } | null {
+    const row = this.#sql<{ value: string }>(
+      "SELECT value FROM meta WHERE key = 'approvals_app'",
+    )[0];
+    return row ? decodeApprovalsApp(row.value) : null;
+  }
+
+  /**
+   * MM-1207: the reason approvals do not work now, or null. It reads the app and the organization
+   * from Cloudflare each time, so an edit in the dashboard stops approvals at once.
+   */
+  async #approvalsProblem(host: string): Promise<string | null> {
+    // Local development only, like `DEV_FAKE_ACCESS` in `access.ts`: no Cloudflare on loopback.
+    const { hostname } = new URL(`http://${host}`);
+    if (this.env.DEV_FAKE_ACCESS === "1" && (hostname === "localhost" || hostname === "127.0.0.1"))
+      return null;
+    const api = this.#cloudflare();
+    if (!api) return "Approvals need the CF_API_TOKEN secret (MM-1205).";
+    const stored = this.#approvalsApp();
+    if (!stored) return "Set up approvals first.";
+    // A portal that set up approvals before app invites has no `/client` app yet (MM-914).
+    if (this.clientAppAud() === null) return "Set up approvals again, to add the app path.";
+    let app: ApprovalsApp;
+    let methods: ReadonlyArray<string>;
+    try {
+      [app, methods] = await Promise.all([
+        api.approvalsApp(stored.id),
+        api.organizationMfaMethods(),
+      ]);
+    } catch (error) {
+      return `Cloudflare did not confirm the approvals app: ${errorMessage(error)}`;
+    }
+    if (app.aud !== stored.aud) return "The approvals app changed. Set up approvals again.";
+    const problem = approvalsAppProblem(app, host, ownerEmails(this.env));
+    if (problem) return `${problem} Set up approvals again.`;
+    const allowed = app.mfa_config?.allowed_authenticators ?? [];
+    if (!methods.some((method) => allowed.includes(method)))
+      return "Turn on independent MFA with passkeys or security keys in Zero Trust, Access settings.";
+    return null;
   }
 
   // ---------------------------------------------------------------- sockets
@@ -575,7 +768,9 @@ export class MachineMapObject extends DurableObject<Env> {
       | PauseEvent
       | HealthEvent
       | ResourceSampleEvent
-      | EnrolledEvent,
+      | EnrolledEvent
+      | PendingClientsEvent
+      | ClientInvitesEvent,
   ): void {
     const text = JSON.stringify(event);
     for (const ws of this.ctx.getWebSockets(PAGE_TAG)) {
@@ -644,6 +839,8 @@ export class MachineMapObject extends DurableObject<Env> {
       server.send(JSON.stringify(this.#rotationsEvent()));
       server.send(JSON.stringify(this.#pauseEvent()));
       server.send(JSON.stringify(this.#healthEvent()));
+      server.send(JSON.stringify(this.#pendingEvent()));
+      server.send(JSON.stringify(this.#invitesEvent()));
       return new Response(null, { status: 101, webSocket: client });
     }
     if (pathname === "/connect") {
@@ -726,6 +923,10 @@ export class MachineMapObject extends DurableObject<Env> {
         this.#saveReportedSettings(id, message.settings);
         this.#recordHostname(machine, message.status.hostname);
         this.#checkOffline(id, Date.now());
+        // MM-919: a local clientAccess goes into the map first, so the desired state keeps it.
+        if (message.localClientAccess !== undefined) {
+          this.#recordLocalClientAccess(machine, message.localClientAccess);
+        }
         // MM-603: the current desired state, not each queued revision.
         this.#sendDesired(id);
         await this.#sendRotation(id);
@@ -757,16 +958,24 @@ export class MachineMapObject extends DurableObject<Env> {
           [message.scope]: { ...reported[message.scope], ...message.values },
         });
         // MM-411: a machine with the map role `edit` may set shared values, like its agents.
+        // MM-919: an owner-only setting goes its own way below.
         const shared = message.shared === true && machine.mapRole === "edit";
+        const values = Object.fromEntries(
+          Object.entries(message.values).filter(([key]) => !isOwnerOnlySetting(message.scope, key)),
+        );
         const changes = shared
-          ? sharedSettingChanges(this.#map, message.scope, message.values)
-          : localSettingChanges(this.#map, id, message.scope, message.values);
+          ? sharedSettingChanges(this.#map, message.scope, values)
+          : localSettingChanges(this.#map, id, message.scope, values);
         if (changes.length > 0) {
           this.#commit(
             { _tag: "agent", machineId: id, threadId: null, threadTitle: null },
             shared ? `shared from ${machine.name}` : `changed on ${machine.name}`,
             changes,
           );
+        }
+        const clientAccess = message.values.clientAccess;
+        if (message.scope === "server" && clientAccess !== undefined) {
+          this.#recordLocalClientAccess(machine, clientAccess);
         }
         return;
       }
@@ -814,6 +1023,10 @@ export class MachineMapObject extends DurableObject<Env> {
         this.#recordSample(id, message.sample);
         return;
       }
+      case "clientSeen": {
+        this.#recordClientSeen(machine, message);
+        return;
+      }
       case "rotated": {
         const row = this.#sql<{ token_client_id: string }>(
           "SELECT token_client_id FROM rotations WHERE machine_id = ?",
@@ -832,6 +1045,36 @@ export class MachineMapObject extends DurableObject<Env> {
         }
         return;
       }
+    }
+  }
+
+  /**
+   * MM-919: only the local desktop app changes clientAccess on a machine, as the way back in. The
+   * owner hears of it first; then it becomes an override of the machine. While paused, a value
+   * that leaves `enforce` is refused (MM-711), but the push message still goes out.
+   */
+  #recordLocalClientAccess(machine: MachineRecord, value: unknown): void {
+    const desired = effectiveSettings(this.#map, machine.id).server.clientAccess ?? "off";
+    if (value === desired) return;
+    this.#notify({
+      title: `clientAccess changed on ${machine.name}`,
+      body: `Set to ${String(value)} outside the portal.`,
+      url: "/#/settings",
+      tag: `client-access:${machine.id}`,
+    });
+    const changes = localSettingChanges(this.#map, machine.id, "server", { clientAccess: value });
+    if (changes.length === 0) return;
+    try {
+      this.#commit(
+        { _tag: "agent", machineId: machine.id, threadId: null, threadTitle: null },
+        `changed on ${machine.name}`,
+        changes,
+        "change",
+        "allow",
+      );
+    } catch (error) {
+      if (!(error instanceof PortalError)) throw error;
+      console.error("clientAccess change refused", machine.id, error.message);
     }
   }
 
@@ -974,6 +1217,12 @@ export class MachineMapObject extends DurableObject<Env> {
     );
   }
 
+  /** MM-1805: what needs the owner: proposals, waiting sign-ins and active health alerts. */
+  #badgeCount(): number {
+    const waiting = this.#pendingClients().filter((p) => p.state === "pending").length;
+    return this.#proposals().length + waiting + this.#alerts("active").length;
+  }
+
   /**
    * MM-1807, MM-1808: sends one message to every subscribed device, with the badge count of
    * MM-1805. `skipSignIn` leaves out the device that caused it. A gone subscription is deleted.
@@ -981,7 +1230,7 @@ export class MachineMapObject extends DurableObject<Env> {
   #notify(message: Omit<PushMessage, "badge">, skipSignIn: string | null = null): void {
     const targets = this.#pushTargets(skipSignIn);
     if (targets.length === 0) return;
-    const badge = this.#proposals().length + this.#alerts("active").length;
+    const badge = this.#badgeCount();
     this.ctx.waitUntil(this.#deliver(targets, { ...message, badge }));
   }
 
@@ -1044,8 +1293,16 @@ export class MachineMapObject extends DurableObject<Env> {
     summary: string,
     changes: ReadonlyArray<MapChange>,
     purpose: "change" | "pause" | "resume" = "change",
+    /** MM-919: the approval path, or the local report of a machine (MM-404). */
+    ownerOnlySettings: "refuse" | "allow" = "refuse",
   ): MapRevision {
     if (changes.length === 0) throw new PortalError(409, "Nothing changes.");
+    if (ownerOnlySettings === "refuse" && touchesOwnerOnlySettings(changes)) {
+      throw new PortalError(
+        403,
+        "clientAccess changes only on the approval path. Change it in the Settings view.",
+      );
+    }
     if (this.#pause && purpose !== "resume" && raisesAnyAccess(this.#map, changes)) {
       throw new PortalError(
         423,
@@ -1121,6 +1378,12 @@ export class MachineMapObject extends DurableObject<Env> {
     summary: string,
     changes: ReadonlyArray<MapChange>,
   ): WriteResult {
+    // MM-807: only the owner changes clients, never through a proposal either.
+    if (touchesClients(changes))
+      throw new PortalError(403, "Only the owner changes clients, in the portal.");
+    // MM-919: the same for clientAccess.
+    if (touchesOwnerOnlySettings(changes))
+      throw new PortalError(403, "Only the owner changes clientAccess, in the portal.");
     checkEditableChanges(this.#map, changes);
     const decision = decideAgentWrite(this.#map, actor.machineId, changes);
     if (decision._tag === "apply") {
@@ -1199,11 +1462,9 @@ export class MachineMapObject extends DurableObject<Env> {
   #undoChanges(revisionNumber: number): { summary: string; changes: ReadonlyArray<MapChange> } {
     const revision = this.#revision(revisionNumber);
     if (!revision) throw new PortalError(404, `Unknown revision ${revisionNumber}.`);
-    checkEditableChanges(this.#map, revision.inverse);
-    return {
-      summary: `Undo rev ${revision.revision}: ${revision.summary}`,
-      changes: revision.inverse,
-    };
+    const changes = undoChanges(this.#map, revision.inverse);
+    checkEditableChanges(this.#map, changes);
+    return { summary: `Undo rev ${revision.revision}: ${revision.summary}`, changes };
   }
 
   #presetChanges(
@@ -1550,7 +1811,15 @@ export class MachineMapObject extends DurableObject<Env> {
   async #scheduleAlarm(): Promise<void> {
     const times = [
       ...this.#map.arrows.flatMap((arrow) => (arrow.expiresAt ? [arrow.expiresAt] : [])),
+      ...this.#map.clientArrows.flatMap((arrow) => (arrow.expiresAt ? [arrow.expiresAt] : [])),
+      ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM client_invites").map(
+        (r) => r.expires_at,
+      ),
+      ...this.#sql<{ last_seen: string }>("SELECT last_seen FROM pending_clients").map((r) =>
+        new Date(Date.parse(r.last_seen) + PENDING_KEEP_MS).toISOString(),
+      ),
       ...this.#commandsWithStatus("queued").map((command) => command.expiresAt),
+      ...this.#commandsWithStatus("delivered").map((command) => command.expiresAt),
       ...this.#proposals().map((proposal) => proposal.expiresAt),
       ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM join_codes").map(
         (r) => r.expires_at,
@@ -1607,6 +1876,32 @@ export class MachineMapObject extends DurableObject<Env> {
         ],
       );
     }
+    for (const arrow of this.#map.clientArrows) {
+      if (arrow.expiresAt === null || arrow.revertLevel === null || !isDue(arrow.expiresAt, now))
+        continue;
+      const client = findClient(this.#map, arrow.client)?.name ?? arrow.client;
+      const to = findMachine(this.#map, arrow.to)?.name ?? arrow.to;
+      this.#commit(
+        { _tag: "portal", reason: "expiry" },
+        `${usesText(client, to)}: back to ${arrow.revertLevel}`,
+        [
+          {
+            _tag: "setClientArrow",
+            arrow: { ...arrow, level: arrow.revertLevel, expiresAt: null, revertLevel: null },
+          },
+        ],
+      );
+    }
+    const expiredInvites = this.#sql<{ client_id: string }>(
+      "DELETE FROM client_invites WHERE expires_at <= ? RETURNING client_id",
+      new Date(now).toISOString(),
+    );
+    if (expiredInvites.length > 0) this.#broadcast(this.#invitesEvent());
+    const stale = this.#sql<{ thumbprint: string }>(
+      "DELETE FROM pending_clients WHERE last_seen < ? RETURNING thumbprint",
+      new Date(now - PENDING_KEEP_MS).toISOString(),
+    );
+    if (stale.length > 0) this.#broadcast(this.#pendingEvent());
     for (const command of this.#commandsWithStatus("queued")) {
       if (!isDue(command.expiresAt, now)) continue;
       this.#saveCommand({
@@ -1614,6 +1909,17 @@ export class MachineMapObject extends DurableObject<Env> {
         status: "expired",
         updatedAt: new Date(now).toISOString(),
         error: "Expired before the machine could take it.",
+      });
+    }
+    // MM-605: a machine that took a command and never reported, for example because it restarted
+    // or lost its connection, leaves it delivered. It expires at the same time.
+    for (const command of this.#commandsWithStatus("delivered")) {
+      if (!isDue(command.expiresAt, now)) continue;
+      this.#saveCommand({
+        ...command,
+        status: "expired",
+        updatedAt: new Date(now).toISOString(),
+        error: "The machine took it but reported no result before it expired.",
       });
     }
     const expiredProposals = this.#proposals().filter((p) => isDue(p.expiresAt, now));
@@ -1655,6 +1961,14 @@ export class MachineMapObject extends DurableObject<Env> {
       if (error instanceof PortalError)
         return { ok: false, status: error.status, error: error.message };
       if (error instanceof MapRuleError) return { ok: false, status: 409, error: error.message };
+      // A refusal of Cloudflare keeps its status, so the page shows why. A Cloudflare outage is
+      // a bad gateway of the portal.
+      if (error instanceof CloudflareApiError)
+        return {
+          ok: false,
+          status: error.status >= 400 && error.status < 500 ? error.status : 502,
+          error: error.message,
+        };
       throw error;
     }
   }
@@ -1680,17 +1994,18 @@ export class MachineMapObject extends DurableObject<Env> {
     );
   }
 
-  snapshot(owner: OwnerContext) {
-    return this.#run(owner, () => this.#snapshot());
-  }
-
   /** POST /api/changes: owner changes apply at once (MM-701). */
-  changes(owner: OwnerContext, request: ChangesRequest) {
+  /** `approved`: the request came on the approval path of MM-1207, so it may change MM-919. */
+  changes(owner: OwnerContext, request: ChangesRequest, approved = false) {
     return this.#run(owner, (): WriteResult => {
-      checkEditableChanges(this.#map, request.changes);
+      // MM-909: a held draft or an open panel can send an older client record. It keeps the keys.
+      const changes = keepClientKeys(this.#map, request.changes);
+      checkEditableChanges(this.#map, changes);
+      const ownerOnly = approved ? "allow" : "refuse";
       return {
         _tag: "applied",
-        revision: this.#commit(ownerActor(owner), request.summary, request.changes).revision,
+        revision: this.#commit(ownerActor(owner), request.summary, changes, "change", ownerOnly)
+          .revision,
       };
     });
   }
@@ -2001,7 +2316,7 @@ export class MachineMapObject extends DurableObject<Env> {
   }
 
   /**
-   * MM-708 to MM-710: lock down every arrow and map role, remember them, and stop every agent.
+   * MM-708 to MM-710: set every arrow and map role to `none`, remember them, and stop every agent.
    * Owner access through Cloudflare Access stays (MM-308).
    */
   pause(owner: OwnerContext) {
@@ -2009,7 +2324,7 @@ export class MachineMapObject extends DurableObject<Env> {
       if (this.#pause) throw new PortalError(409, "Everything is already paused.");
       const actor = ownerActor(owner);
       const before = pausedAccess(this.#map);
-      const changes = lockdownChanges(this.#map);
+      const changes = pauseChanges(this.#map);
       const revision =
         changes.length > 0 ? this.#commit(actor, PAUSE_SUMMARY, changes, "pause").revision : null;
       const record: PauseRecord = { state: { pausedAt: nowIso(), by: actor, revision }, before };
@@ -2102,7 +2417,7 @@ export class MachineMapObject extends DurableObject<Env> {
         body: "Health alerts, proposals and the emergency pause show here.",
         url: "/#/clients",
         tag: "test",
-        badge: this.#proposals().length + this.#alerts("active").length,
+        badge: this.#badgeCount(),
       };
       const subject = `mailto:${ownerEmails(this.env)[0] ?? "owner@invalid"}`;
       const result = await sendPush(target, message, key, subject).catch((error: unknown) => {
@@ -2155,24 +2470,35 @@ export class MachineMapObject extends DurableObject<Env> {
     });
   }
 
-  /** MM-903: ends owner Access sessions and revokes owner T3 sessions on every machine. */
+  /**
+   * MM-903: ends owner Access sessions and revokes owner T3 sessions on every machine. The machine
+   * part runs also when Cloudflare refuses, and the answer says what Cloudflare did.
+   */
   signOutEverywhere(owner: OwnerContext) {
     return this.#run(owner, async (): Promise<SignOutEverywhereResponse> => {
       const api = this.#cloudflare();
       let accessMessage: string | null =
         "Cloudflare Access sessions need the CF_API_TOKEN secret. End them in the Zero Trust dashboard.";
       if (api) {
-        await api.revokeOwner(owner.email);
-        accessMessage = null;
+        try {
+          await api.revokeOwner(owner.email);
+          accessMessage = null;
+        } catch (error) {
+          accessMessage = `Cloudflare did not end the Access sessions: ${errorMessage(error)} The CF_API_TOKEN needs "Access: Organizations Revoke" (MM-1205).`;
+        }
       }
       let revokeCommands = 0;
-      // Sessions of machines through their arrows are not owner sessions (MM-1305).
-      const machineSubjects = new Set(this.#map.machines.map((m) => machineSessionSubject(m.id)));
+      // Sessions of machines through their arrows are not owner sessions (MM-1305). Sessions of
+      // approved clients stay too: the owner ends each client in the Clients view (MM-903).
+      const keptSubjects = new Set([
+        ...this.#map.machines.map((m) => machineSessionSubject(m.id)),
+        ...this.#map.clients.map((c) => clientSessionSubject(c.id)),
+      ]);
       for (const machine of this.#map.machines) {
         const status = this.#presence(machine.id).status;
         if (!supportsCommand(status, "revokeClient")) continue;
         for (const client of status?.clients ?? []) {
-          if (machineSubjects.has(client.subject)) continue;
+          if (keptSubjects.has(client.subject)) continue;
           this.#createCommand(
             ownerActor(owner),
             machine.id,
@@ -2184,8 +2510,429 @@ export class MachineMapObject extends DurableObject<Env> {
         }
       }
       this.#sql("DELETE FROM sign_ins");
-      return { accessMessage, revokeCommands };
+      // A signed-out device gets no more alerts. Each device turns notifications on again.
+      const pushRemoved = this.#sql("DELETE FROM push_subscriptions RETURNING endpoint").length;
+      return { accessMessage, revokeCommands, pushRemoved };
     });
+  }
+
+  /** MM-1208: whether approvals work. `host` is the portal hostname of the page. */
+  approvalsStatus(owner: OwnerContext, host: string) {
+    return this.#run(owner, async (): Promise<ApprovalsStatus> => {
+      const problem = await this.#approvalsProblem(host);
+      return problem === null ? this.#approvalsReady() : { _tag: "missing", reason: problem };
+    });
+  }
+
+  /** The time of the last check of the revoke permission, and its warning. */
+  #revokeCheck: { readonly atMs: number; readonly warning: string | null } | null = null;
+
+  /**
+   * MM-1208: approvals work. It also names a missing "Access: Organizations Revoke", which "Sign
+   * out everywhere" needs (MM-903). The check runs at most once an hour.
+   */
+  async #approvalsReady(): Promise<ApprovalsStatus> {
+    const api = this.#cloudflare();
+    if (api && (this.#revokeCheck === null || Date.now() - this.#revokeCheck.atMs > HOUR_MS)) {
+      const warning = (await api.canRevokeSessions())
+        ? null
+        : 'The CF_API_TOKEN cannot end Access sessions, so "Sign out everywhere" signs out only T3 sessions. Add "Access: Organizations Revoke" to the token (MM-1205).';
+      this.#revokeCheck = { atMs: Date.now(), warning };
+    }
+    return { _tag: "ready", warning: this.#revokeCheck?.warning ?? null };
+  }
+
+  /** MM-1208: creates the approvals app, or makes it again when it drifted. */
+  setUpApprovals(owner: OwnerContext, host: string) {
+    return this.#run(owner, async (): Promise<ApprovalsStatus> => {
+      const api = this.#cloudflare();
+      if (!api) throw new PortalError(503, "Approvals need the CF_API_TOKEN secret (MM-1205).");
+      const app = await api.ensureApprovalsApp(host, ownerEmails(this.env));
+      this.#sql(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('approvals_app', ?)",
+        JSON.stringify({ id: app.id, aud: app.aud }),
+      );
+      // MM-914: the app of `/client` comes with it, so native apps can read their machines.
+      this.#sql(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('client_app_aud', ?)",
+        await api.ensureClientTokensApp(host),
+      );
+      const problem = await this.#approvalsProblem(host);
+      return problem === null ? this.#approvalsReady() : { _tag: "missing", reason: problem };
+    });
+  }
+
+  /** The audience that the Worker checks on the approval path (MM-1207). No owner: it runs first. */
+  approvalsAud(): string | null {
+    return this.#approvalsApp()?.aud ?? null;
+  }
+
+  /**
+   * MM-907: the waiting key joins a client. The Worker checked the fresh MFA, and the portal checks
+   * again that Cloudflare still requires it, so a changed app cannot approve.
+   */
+  approveClient(owner: OwnerContext, host: string, request: ApproveClientRequest) {
+    return this.#run(owner, async (): Promise<WriteResult> => {
+      const problem = await this.#approvalsProblem(host);
+      if (problem) throw new PortalError(409, problem);
+      const pending = this.#pendingClient(request.thumbprint);
+      if (pending.state === "rejected") throw new PortalError(409, "Unblock this sign-in first.");
+      const holder = clientWithKey(this.#map, pending.thumbprint);
+      if (holder) throw new PortalError(409, `${holder.name} already holds this key.`);
+      const at = nowIso();
+      const key = { thumbprint: pending.thumbprint, addedAt: at, describedAs: pending.describedAs };
+      let client: ClientRecord;
+      let joins: MapChange;
+      if (request.client._tag === "existing") {
+        const existing = findClient(this.#map, request.client.clientId);
+        if (!existing) throw new PortalError(404, "This client is gone.");
+        // MM-907: the key gets the access of the client. Change arrows in the client panel.
+        if (request.arrows.length > 0)
+          throw new PortalError(400, "An existing client keeps its own arrows.");
+        // MM-711: Resume returns the arrows that the pause cut, so a key added now would get them.
+        if (this.#pause?.before.clientArrows.some((a) => a.client === existing.id)) {
+          throw new PortalError(
+            423,
+            `Everything is paused, and Resume gives ${existing.name} access again. Resume first.`,
+          );
+        }
+        if (existing.email !== null && existing.email !== pending.email) {
+          throw new PortalError(
+            409,
+            `${existing.name} signs in as ${existing.email}, but this sign-in used ${pending.email ?? "no email"}.`,
+          );
+        }
+        client = existing;
+        joins = { _tag: "addClientKey", clientId: existing.id, key };
+      } else {
+        const name = request.client.name;
+        if (this.#map.clients.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+          throw new PortalError(409, `A client named ${name} is already on the map.`);
+        }
+        client = {
+          id: ClientId.make(`client-${slug(name)}-${randomHex(2)}`),
+          name,
+          email: pending.email,
+          keys: [key],
+          serviceToken: null,
+          position: freePosition([
+            ...this.#map.machines.map((m) => m.position),
+            ...this.#map.clients.map((c) => c.position),
+          ]),
+          createdAt: at,
+        };
+        joins = { _tag: "putClient", client };
+      }
+      const arrows: Array<MapChange> = request.arrows
+        .filter((arrow) => arrow.level !== "none")
+        .map((arrow) => {
+          if (!findMachine(this.#map, arrow.to))
+            throw new PortalError(404, `Unknown machine ${arrow.to}.`);
+          return clientArrowChange(this.#map, {
+            client: client.id,
+            to: arrow.to,
+            level: arrow.level,
+            expiresAt: null,
+          });
+        });
+      const revision = this.#commit(
+        ownerActor(owner),
+        `Approved ${pending.describedAs || "a browser"} as ${client.name}`,
+        [joins, ...arrows],
+      );
+      this.#sql("DELETE FROM pending_clients WHERE thumbprint = ?", pending.thumbprint);
+      this.#broadcast(this.#pendingEvent());
+      return { _tag: "applied", revision: revision.revision };
+    });
+  }
+
+  /** MM-914: the audience that the Worker checks on `/client`. No owner: an app calls it. */
+  clientAppAud(): string | null {
+    return (
+      this.#sql<{ value: string }>("SELECT value FROM meta WHERE key = 'client_app_aud'")[0]
+        ?.value ?? null
+    );
+  }
+
+  /** MM-914: the machines that a client reaches: an arrow above `none` and a hostname. */
+  #clientMachines(client: ClientRecord): Array<ClientMachine> {
+    return this.#map.machines.flatMap((machine) => {
+      const arrow = this.#map.clientArrows.find(
+        (a) => a.client === client.id && a.to === machine.id,
+      );
+      if (!arrow || arrow.level === "none" || machine.hostname === null) return [];
+      return [{ id: machine.id, name: machine.name, origin: `https://${machine.hostname}` }];
+    });
+  }
+
+  /**
+   * MM-913: an invite of a native app. It runs on the approval path, because the app gets the
+   * access of its client. A new client gets the arrows of the request; an existing one keeps its own.
+   */
+  createInvite(owner: OwnerContext, host: string, request: InviteRequest) {
+    return this.#run(owner, async (): Promise<InviteResponse> => {
+      const problem = await this.#approvalsProblem(host);
+      if (problem) throw new PortalError(409, problem);
+      let clientId: ClientId;
+      if (request.client._tag === "existing") {
+        const existing = findClient(this.#map, request.client.clientId);
+        if (!existing) throw new PortalError(404, "This client is gone.");
+        if (request.arrows.length > 0)
+          throw new PortalError(400, "An existing client keeps its own arrows.");
+        if (this.#pause?.before.clientArrows.some((a) => a.client === existing.id)) {
+          throw new PortalError(
+            423,
+            `Everything is paused, and Resume gives ${existing.name} access again. Resume first.`,
+          );
+        }
+        clientId = existing.id;
+      } else {
+        const name = request.client.name;
+        if (this.#map.clients.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+          throw new PortalError(409, `A client named ${name} is already on the map.`);
+        }
+        const client: ClientRecord = {
+          id: ClientId.make(`client-${slug(name)}-${randomHex(2)}`),
+          name,
+          email: null,
+          keys: [],
+          serviceToken: null,
+          position: freePosition([
+            ...this.#map.machines.map((m) => m.position),
+            ...this.#map.clients.map((c) => c.position),
+          ]),
+          createdAt: nowIso(),
+        };
+        const arrows = request.arrows
+          .filter((arrow) => arrow.level !== "none")
+          .map((arrow) => {
+            if (!findMachine(this.#map, arrow.to))
+              throw new PortalError(404, `Unknown machine ${arrow.to}.`);
+            return clientArrowChange(this.#map, {
+              client: client.id,
+              to: arrow.to,
+              level: arrow.level,
+              expiresAt: null,
+            });
+          });
+        this.#commit(ownerActor(owner), `Added ${name} for an app invite`, [
+          { _tag: "putClient", client },
+          ...arrows,
+        ]);
+        clientId = client.id;
+      }
+      // A 128-bit code: it travels in a QR or a link, never typed.
+      const code = randomHex(16);
+      const expiresAt = addMinutes(Date.now(), INVITE_MINUTES);
+      const codeHash = await sha256Hex(code);
+      this.#sql("DELETE FROM client_invites WHERE client_id = ?", clientId);
+      this.#sql(
+        "INSERT INTO client_invites (code_hash, client_id, expires_at) VALUES (?, ?, ?)",
+        codeHash,
+        clientId,
+        expiresAt,
+      );
+      this.#broadcast(this.#invitesEvent());
+      return { clientId, url: `https://${host}/enroll/client#code=${code}`, expiresAt };
+    });
+  }
+
+  /**
+   * MM-913: a native app uses its invite. The portal makes the app token now, so the secret is
+   * only in this answer. A token from an older invite of the client ends.
+   */
+  redeemInvite(ip: string, host: string, request: ClientEnrollRequest) {
+    return this.#run(null, async (): Promise<ClientEnrollResponse> => {
+      const now = Date.now();
+      this.#countEnrollAttempt(ip, now);
+      const api = this.#cloudflare();
+      if (!api) throw new PortalError(503, "App invites need the CF_API_TOKEN secret (MM-1205).");
+      const appId = this.#machineAccessAppId();
+      const codeHash = await sha256Hex(request.code.trim().toLowerCase());
+      const row = this.#sql<{ client_id: string; expires_at: string }>(
+        "SELECT client_id, expires_at FROM client_invites WHERE code_hash = ?",
+        codeHash,
+      )[0];
+      if (!row) throw new PortalError(404, "Unknown or used invite.");
+      if (isDue(row.expires_at, now)) throw new PortalError(410, "This invite expired.");
+      const client = findClient(this.#map, ClientId.make(row.client_id));
+      if (!client) throw new PortalError(404, "The client of this invite is gone.");
+      // MM-711: Resume returns the arrows that the pause cut, so a token made now would get them.
+      if (this.#pause?.before.clientArrows.some((a) => a.client === client.id)) {
+        throw new PortalError(423, "Everything is paused. Use the invite after Resume.");
+      }
+      // Delete in one step with the check, so two requests cannot both use the code.
+      const claimed = this.#sql<{ client_id: string }>(
+        "DELETE FROM client_invites WHERE code_hash = ? RETURNING client_id",
+        codeHash,
+      );
+      if (claimed.length === 0) throw new PortalError(404, "Unknown or used invite.");
+      this.#broadcast(this.#invitesEvent());
+      const created = await api.createServiceToken(`t3-client-${slug(client.name)}`);
+      let next: ClientRecord;
+      try {
+        await api.addTokenToApp(appId, created.id, CLIENT_POLICY_NAME);
+        // The map can change during the Cloudflare calls: read the client again.
+        const current = findClient(this.#map, client.id);
+        if (!current) throw new PortalError(404, "The client of this invite is gone.");
+        if (this.#pause?.before.clientArrows.some((a) => a.client === current.id)) {
+          throw new PortalError(423, "Everything is paused. Ask for a new invite after Resume.");
+        }
+        next = { ...current, serviceToken: { clientId: created.client_id } };
+        // The row and the revision go together, with no await between them, so a removal or a
+        // second redeem always finds the row of every token that the map can name.
+        this.#sql(
+          "INSERT INTO client_app_tokens (token_id, client_id, token_client_id) VALUES (?, ?, ?)",
+          created.id,
+          next.id,
+          created.client_id,
+        );
+        try {
+          this.#commit(
+            { _tag: "portal", reason: "app invite" },
+            `${next.name} joined from ${request.device || "an app"}`,
+            [{ _tag: "putClient", client: next }],
+          );
+        } catch (error) {
+          this.#sql("DELETE FROM client_app_tokens WHERE token_id = ?", created.id);
+          throw error;
+        }
+      } catch (error) {
+        await this.#endTokenOrWarn(api, appId, created.id);
+        throw error;
+      }
+      await this.#endUnnamedTokens(api, appId, next.id);
+      return {
+        clientId: next.id,
+        name: next.name,
+        serviceToken: { clientId: created.client_id, clientSecret: created.client_secret },
+        machines: this.#clientMachines(next),
+        machinesUrl: `https://${host}/client/machines`,
+      };
+    });
+  }
+
+  /** MM-914: the machines of the client whose app token signed the request. */
+  machinesOfToken(tokenClientId: string) {
+    return this.#run(null, () => {
+      const client = this.#map.clients.find((c) => c.serviceToken?.clientId === tokenClientId);
+      if (!client) throw new PortalError(403, "This token belongs to no client.");
+      return { machines: this.#clientMachines(client) };
+    });
+  }
+
+  /** The Access app of the machine hostnames, which holds the app tokens (MM-911). */
+  #machineAccessAppId(): string {
+    const [appId] = this.#accessAppIds();
+    // `#accessAppIds` throws for an unset id, so this only satisfies the type.
+    if (appId === undefined) throw new PortalError(503, "Set MACHINE_ACCESS_APP_ID first.");
+    return appId;
+  }
+
+  /**
+   * MM-915: ends one app token in Cloudflare and forgets its row. A token or policy that someone
+   * deleted in the dashboard is already gone, so that counts as done.
+   */
+  async #endToken(api: CloudflareApi, appId: string, tokenId: string): Promise<void> {
+    await goneIsDone(api.removeTokenFromApp(appId, tokenId, CLIENT_POLICY_NAME));
+    await goneIsDone(api.deleteServiceToken(tokenId));
+    this.#sql("DELETE FROM client_app_tokens WHERE token_id = ?", tokenId);
+  }
+
+  /**
+   * MM-913: ends every stored token of a client that the map does not name. After two redeems at
+   * once, the later revision names its token, so the earlier token ends, whichever call runs last.
+   */
+  async #endUnnamedTokens(api: CloudflareApi, appId: string, clientId: ClientId): Promise<void> {
+    const named = findClient(this.#map, clientId)?.serviceToken?.clientId ?? null;
+    const rows = this.#sql<{ token_id: string; token_client_id: string }>(
+      "SELECT token_id, token_client_id FROM client_app_tokens WHERE client_id = ?",
+      clientId,
+    );
+    for (const row of rows) {
+      if (row.token_client_id !== named) await this.#endTokenOrWarn(api, appId, row.token_id);
+    }
+  }
+
+  /** Ends a token after a failed redeem. A failure is logged and pushed, because the token may live. */
+  async #endTokenOrWarn(api: CloudflareApi, appId: string, tokenId: string): Promise<void> {
+    await this.#endToken(api, appId, tokenId).catch((error: unknown) => {
+      console.error("app token clean-up failed", tokenId, errorMessage(error));
+      this.#notify({
+        title: "An app token may still be live",
+        body: `Delete the service token ${tokenId} in Cloudflare Zero Trust, Access, Service credentials.`,
+        url: "/#/clients",
+        tag: `token:${tokenId}`,
+      });
+    });
+  }
+
+  /**
+   * MM-915: removes a client. Its app token ends in Cloudflare first, so the edge refuses new
+   * requests signed with it; then machines end its sessions when they get the new desired state.
+   */
+  removeClient(owner: OwnerContext, clientId: ClientId) {
+    return this.#run(owner, async (): Promise<WriteResult> => {
+      const client = findClient(this.#map, clientId);
+      if (!client) throw new PortalError(404, "This client is gone.");
+      // Invites go first, so no redeem can start during the removal.
+      this.#sql("DELETE FROM client_invites WHERE client_id = ?", client.id);
+      this.#broadcast(this.#invitesEvent());
+      // The stored token ids decide, so a live token never stays in the policy. A redeem that was
+      // already running can add a row during the awaits, so this repeats until none is left.
+      const tokensOf = () =>
+        this.#sql<{ token_id: string }>(
+          "SELECT token_id FROM client_app_tokens WHERE client_id = ?",
+          client.id,
+        );
+      for (let rows = tokensOf(); rows.length > 0; rows = tokensOf()) {
+        const api = this.#cloudflare();
+        if (!api) {
+          throw new PortalError(
+            503,
+            "Removing an app client needs the CF_API_TOKEN secret, to end its token.",
+          );
+        }
+        const appId = this.#machineAccessAppId();
+        for (const row of rows) await this.#endToken(api, appId, row.token_id);
+      }
+      // No await between the last check and the commit.
+      if (!findClient(this.#map, client.id)) throw new PortalError(404, "This client is gone.");
+      const revision = this.#commit(ownerActor(owner), `Removed ${client.name}`, [
+        { _tag: "removeClient", clientId: client.id },
+      ]);
+      return { _tag: "applied", revision: revision.revision };
+    });
+  }
+
+  /** MM-913: the way back from an invite. Its code stops working at once. */
+  cancelInvites(owner: OwnerContext, clientId: ClientId) {
+    return this.#run(owner, () => {
+      const removed = this.#sql<{ client_id: string }>(
+        "DELETE FROM client_invites WHERE client_id = ? RETURNING client_id",
+        clientId,
+      );
+      if (removed.length === 0) throw new PortalError(404, "No invite waits for this client.");
+      this.#broadcast(this.#invitesEvent());
+      return { cancelled: removed.length };
+    });
+  }
+
+  /** MM-908: a rejected key gets nothing and stays in the list as rejected. */
+  rejectPendingClient(owner: OwnerContext, thumbprint: string) {
+    return this.#run(owner, () => this.#setPendingState(thumbprint, "rejected"));
+  }
+
+  /** MM-908: the way back from a rejection. The key waits for approval again. */
+  unblockPendingClient(owner: OwnerContext, thumbprint: string) {
+    return this.#run(owner, () => this.#setPendingState(thumbprint, "pending"));
+  }
+
+  #setPendingState(thumbprint: string, state: PendingClient["state"]): PendingClient {
+    this.#pendingClient(thumbprint);
+    this.#sql("UPDATE pending_clients SET state = ? WHERE thumbprint = ?", state, thumbprint);
+    this.#broadcast(this.#pendingEvent());
+    return this.#pendingClient(thumbprint);
   }
 
   #saveThresholds(thresholds: Readonly<Record<string, HealthThresholds>>): void {
@@ -2237,24 +2984,29 @@ export class MachineMapObject extends DurableObject<Env> {
     });
   }
 
+  /** MM-1204: counts one join or invite attempt of an address, and refuses too many. */
+  #countEnrollAttempt(ip: string, now: number): void {
+    const attempts = this.#sql<{ window_start: number; count: number }>(
+      "SELECT window_start, count FROM enroll_attempts WHERE ip = ?",
+      ip,
+    )[0];
+    const fresh = !attempts || now - attempts.window_start > ENROLL_WINDOW_MS;
+    if (!fresh && attempts.count >= ENROLL_LIMIT) {
+      throw new PortalError(429, "Too many join attempts. Wait 15 minutes.");
+    }
+    this.#sql(
+      "INSERT OR REPLACE INTO enroll_attempts (ip, window_start, count) VALUES (?, ?, ?)",
+      ip,
+      fresh ? now : attempts.window_start,
+      fresh ? 1 : attempts.count + 1,
+    );
+  }
+
   /** MM-204, MM-1204: exchanges a join code for the machine token. Each code works once. */
   enroll(ip: string, code: string) {
     return this.#run(null, async (): Promise<EnrollResponse> => {
       const now = Date.now();
-      const attempts = this.#sql<{ window_start: number; count: number }>(
-        "SELECT window_start, count FROM enroll_attempts WHERE ip = ?",
-        ip,
-      )[0];
-      const fresh = !attempts || now - attempts.window_start > ENROLL_WINDOW_MS;
-      if (!fresh && attempts.count >= ENROLL_LIMIT) {
-        throw new PortalError(429, "Too many join attempts. Wait 15 minutes.");
-      }
-      this.#sql(
-        "INSERT OR REPLACE INTO enroll_attempts (ip, window_start, count) VALUES (?, ?, ?)",
-        ip,
-        fresh ? now : attempts.window_start,
-        fresh ? 1 : attempts.count + 1,
-      );
+      this.#countEnrollAttempt(ip, now);
       const codeHash = await sha256Hex(normalizeJoinCode(code));
       // Read and delete in one step, so two requests cannot both use the code.
       const row = this.#sql<{

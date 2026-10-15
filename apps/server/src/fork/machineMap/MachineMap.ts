@@ -22,6 +22,7 @@ import {
   type MachineMapDesktopReport,
   type MachineMapJoinInput,
   type MachineMapPanelState,
+  ClientAccessMode,
   type MachineMapShareSettingsInput,
   type MachineMapShareSettingsResult,
   MachinesReadResult,
@@ -36,6 +37,7 @@ import {
   type SettingValues,
   TrimmedNonEmptyString,
   isMachineLocalSetting,
+  clientSessionSubject,
   machineSessionSubject,
   withoutMachineLocalSettings,
 } from "@t3tools/contracts";
@@ -56,6 +58,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
@@ -70,7 +73,13 @@ import * as ServerConfig from "../../config.ts";
 import * as EnvironmentTheme from "../../environmentTheme.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { isMachineSubject, peersWithChangedLevel, reachablePeers } from "./machineAccess.ts";
+import {
+  clientsWithChangedLevel,
+  isMapSubject,
+  nextExpiry,
+  peersWithChangedLevel,
+  reachablePeers,
+} from "./machineAccess.ts";
 import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachineResources from "./MachineResources.ts";
@@ -87,6 +96,10 @@ import {
 const STATUS_MIN_INTERVAL = Duration.seconds(5);
 /** Host load can change without any event, so the status is checked this often too. */
 const STATUS_IDLE_CHECK = Duration.minutes(1);
+/** MM-1306: a failed session revocation runs again this often. */
+const REVOKE_RETRY_INTERVAL = Duration.seconds(30);
+/** MM-605: queued desktop commands are checked for their expiry this often. */
+const DESKTOP_COMMAND_EXPIRY_CHECK = Duration.minutes(1);
 /** MM-1501: one resource sample a minute, and one on request at most every 10 seconds. */
 const RESOURCE_INTERVAL = Duration.minutes(1);
 const RESOURCE_REQUEST_GAP_MS = 10_000;
@@ -231,6 +244,9 @@ const make = Effect.gen(function* () {
 
   // --- Portal messages -----------------------------------------------------------------------
 
+  /** MM-919: whether the portal received the saved `pendingClientAccess`. */
+  const pendingClientAccessSeen = yield* Ref.make(false);
+
   const sendOrQueue = (message: MachineToPortal) =>
     Effect.gen(function* () {
       const send = yield* Ref.get(currentSend);
@@ -242,6 +258,7 @@ const make = Effect.gen(function* () {
               Effect.orElseSucceed(() => false),
             );
       if (!sent) yield* Ref.update(outbox, (queued) => [...queued, message]);
+      return sent;
     });
 
   const statusInput = Effect.gen(function* () {
@@ -334,24 +351,120 @@ const make = Effect.gen(function* () {
       );
     });
 
+  // One revocation pass at a time. Without it, a pass could clear a subject that a later desired
+  // state added again after the pass ended its sessions, and a session at the old level stays.
+  const revokeLock = yield* Semaphore.make(1);
+
+  /** Ends the sessions of the saved `pendingRevokes`, then clears the ones that ended. */
+  const revokePendingUnlocked = Effect.gen(function* () {
+    const pending = new Set((yield* state.snapshot).saved.pendingRevokes);
+    if (pending.size === 0) return;
+    yield* revokeSessions((subject) => pending.has(subject));
+    yield* state.updateSaved((saved) => ({
+      ...saved,
+      pendingRevokes: saved.pendingRevokes.filter((subject) => !pending.has(subject)),
+    }));
+  });
+  const revokePending = revokeLock.withPermits(1)(revokePendingUnlocked);
+
+  /**
+   * MM-1306: ends the sessions of these subjects. They stay in `pendingRevokes` until that works,
+   * so a failure runs again with the next desired state or the retry loop.
+   */
+  const endSessionsOf = (subjects: ReadonlyArray<string>) =>
+    revokeLock.withPermits(1)(
+      Effect.gen(function* () {
+        if (subjects.length > 0) {
+          yield* state.updateSaved((saved) => ({
+            ...saved,
+            pendingRevokes: [...new Set([...saved.pendingRevokes, ...subjects])],
+          }));
+        }
+        yield* revokePendingUnlocked;
+      }),
+    );
+
+  /**
+   * MM-1301: ends every machine and client session and pairing link, through `pendingRevokes`,
+   * so a failure runs again also while the map is off.
+   */
+  const endAllMapSessions = Effect.gen(function* () {
+    const sessions = yield* auth.listSessions();
+    const links = yield* auth.listPairingLinks({ excludeSubjects: [] });
+    yield* endSessionsOf(
+      [...sessions, ...links]
+        .map((item) => item.subject)
+        .filter((subject) => isMapSubject(subject)),
+    );
+  });
+
   const applyDesired = (desired: MachineDesiredState) =>
     Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
-      const before = (yield* state.snapshot).saved.desired;
+      const { desired: before, desiredAtMs: beforeAtMs } = (yield* state.snapshot).saved;
+      const changed = [
+        ...peersWithChangedLevel(before, beforeAtMs, desired, nowMs).map((peer) =>
+          machineSessionSubject(peer),
+        ),
+        // MM-912: a client whose level changed pairs again with its app token, or not at all.
+        ...clientsWithChangedLevel(before, beforeAtMs, desired, nowMs).map((id) =>
+          clientSessionSubject(id),
+        ),
+      ];
       // Save first: the auth hooks read the saved state, so the new levels hold before any
-      // session of a changed peer ends and it pairs again.
-      yield* state.updateSaved((saved) => ({ ...saved, desired }));
-      const changed = new Set(
-        peersWithChangedLevel(before, desired, nowMs).map((peer) => machineSessionSubject(peer)),
+      // session of a changed peer ends and it pairs again. The subjects to end are saved in the
+      // same write, so a failed revocation is not lost.
+      yield* revokeLock.withPermits(1)(
+        Effect.gen(function* () {
+          // MM-919: once the portal saw a local clientAccess value, its desired state decides.
+          const clientAccessSeen = yield* Ref.getAndSet(pendingClientAccessSeen, false);
+          yield* state.updateSaved((saved) => ({
+            ...saved,
+            desired,
+            desiredAtMs: nowMs,
+            pendingRevokes: [...new Set([...saved.pendingRevokes, ...changed])],
+            ...(clientAccessSeen ? { pendingClientAccess: null } : {}),
+          }));
+          // A stuck revocation must not hold back the settings; the retry loop runs it again.
+          yield* revokePendingUnlocked.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Machine map could not end sessions; it tries again.", {
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+        }),
       );
-      if (changed.size > 0) {
-        yield* revokeSessions((subject) => changed.has(subject));
-      }
       yield* applyServerSettings(desired.settings.server);
       // Client settings reach the desktop app through the client stream (MM-403).
     });
 
   // --- Commands ------------------------------------------------------------------------------
+
+  const expireDesktopCommands = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const expired = (yield* state.snapshot).saved.desktopCommands.filter(
+      (command) => Date.parse(command.expiresAt) <= nowMs,
+    );
+    if (expired.length === 0) return;
+    const ids = new Set(expired.map((command) => command.id));
+    yield* state.updateSaved((saved) => ({
+      ...saved,
+      desktopCommands: saved.desktopCommands.filter((command) => !ids.has(command.id)),
+    }));
+    yield* Effect.forEach(
+      expired,
+      (command) =>
+        sendOrQueue({
+          _tag: "commandResult",
+          commandId: command.id,
+          ok: false,
+          result: null,
+          error: "Expired before the desktop app ran it.",
+        }),
+      { discard: true },
+    );
+  });
 
   const handleCommand = (command: MachineCommand) =>
     Effect.gen(function* () {
@@ -480,7 +593,11 @@ const make = Effect.gen(function* () {
           server,
           client: withoutMachineLocalSettings("client", report.clientSettings ?? {}),
         },
+        ...(local.saved.pendingClientAccess === null
+          ? {}
+          : { localClientAccess: local.saved.pendingClientAccess }),
       });
+      if (local.saved.pendingClientAccess !== null) yield* Ref.set(pendingClientAccessSeen, true);
       yield* Ref.set(lastSentStatus, statusKey(status));
       yield* Ref.set(currentSend, send);
       const openedAt = DateTime.formatIso(yield* DateTime.now);
@@ -517,12 +634,18 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Forgets the token, the desired state and the desktop commands, and ends machine sessions.
+   * Forgets the token, the desired state and the desktop commands, and ends machine and client
+   * sessions.
    * The token goes last: its change restarts the connection fiber, which may be the caller.
    */
   const forgetMap = Effect.gen(function* () {
-    yield* state.updateSaved((saved) => ({ ...saved, desired: null, desktopCommands: [] }));
-    yield* revokeSessions(isMachineSubject).pipe(Effect.ignore({ log: true }));
+    yield* state.updateSaved((saved) => ({
+      ...saved,
+      desired: null,
+      desiredAtMs: null,
+      desktopCommands: [],
+    }));
+    yield* endAllMapSessions.pipe(Effect.ignore({ log: true }));
     yield* state.setToken(null);
   });
 
@@ -630,8 +753,8 @@ const make = Effect.gen(function* () {
       Stream.fromEffect(
         Effect.gen(function* () {
           if (next.turnedOff) {
-            // MM-1301: off means no change to auth, so no machine session stays.
-            yield* revokeSessions(isMachineSubject).pipe(
+            // MM-1301: off means no change to auth, so no machine or client session stays.
+            yield* endAllMapSessions.pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Machine map could not end machine sessions.", {
                   cause: Cause.pretty(cause),
@@ -649,6 +772,97 @@ const make = Effect.gen(function* () {
                 }),
           ),
         ),
+      ),
+    ),
+    Stream.runDrain,
+  );
+
+  // --- MM-304, MM-912: an arrow that expires ends its sessions at its expiry -----------------
+
+  /**
+   * MM-916, MM-921: a change of the `clientAccess` mode in force ends the sessions that the old
+   * mode gave. Browser clients sign in again with the level of the new mode; a client that also
+   * holds an app token pairs again with it. Entering `enforce`, also at start, ends the owner
+   * sessions of Cloudflare Access.
+   * Known limit: those match on the label `cloudflare-access <subject>`. Revisit if it changes.
+   */
+  const watchClientAccess = state.changes.pipe(
+    // The mode in force: turning the map off ends `enforce` as well.
+    Stream.map((local) => (local.enabled ? local.clientAccess : "off")),
+    Stream.changes,
+    Stream.mapAccum(
+      (): MachineMapState.LocalState["clientAccess"] | undefined => undefined,
+      // At start, only `enforce` acts: it may have been set while the server was stopped.
+      (previous, next) => [
+        next,
+        previous === undefined && next !== "enforce" ? [] : [{ previous, next }],
+      ],
+    ),
+    Stream.runForEach(({ previous, next }) =>
+      Effect.gen(function* () {
+        if (previous !== undefined && previous !== "off") {
+          const desired = (yield* state.snapshot).saved.desired;
+          yield* endSessionsOf(
+            (desired?.browserClients ?? []).map((client) => clientSessionSubject(client.id)),
+          );
+        }
+        if (next === "enforce") {
+          // By session, not by subject: pairing-link sessions share the subject `one-time-token`,
+          // and they keep working under `enforce` (MM-918).
+          const sessions = yield* auth.listSessions();
+          yield* Effect.forEach(
+            sessions.filter(
+              (session) =>
+                session.subject === "one-time-token" &&
+                session.client.label?.startsWith("cloudflare-access ") === true,
+            ),
+            (session) => auth.revokeSession(session.sessionId),
+            { discard: true },
+          );
+        }
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Machine map could not end sessions after a clientAccess change.", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+    ),
+  );
+
+  /**
+   * Sleeps until the next arrow expiry of the saved desired state, then ends the sessions of that
+   * source, also while the portal is unreachable. A new desired state starts it again from its
+   * arrival, because `applyDesired` handled every expiry before that. After a restart it starts
+   * from the arrival of the saved state, so an expiry during the downtime ends its sessions too;
+   * one that ended them before the restart ends the newer sessions of that source once more.
+   */
+  const watchExpiries = state.changes.pipe(
+    Stream.map((local) =>
+      local.enabled ? { desired: local.saved.desired, atMs: local.saved.desiredAtMs } : null,
+    ),
+    Stream.changesWith((left, right) => left?.desired === right?.desired),
+    Stream.switchMap((current) =>
+      Stream.fromEffect(
+        Effect.gen(function* () {
+          const desired = current?.desired ?? null;
+          if (desired === null) return;
+          let afterMs = current?.atMs ?? (yield* Clock.currentTimeMillis);
+          for (;;) {
+            const next = nextExpiry(desired, afterMs);
+            if (next === undefined) return;
+            const waitMs = next.atMs - (yield* Clock.currentTimeMillis);
+            if (waitMs > 0) yield* Effect.sleep(Duration.millis(waitMs));
+            yield* endSessionsOf(next.subjects).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Machine map could not end the sessions of an expired arrow.", {
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
+            afterMs = next.atMs;
+          }
+        }),
       ),
     ),
     Stream.runDrain,
@@ -681,7 +895,20 @@ const make = Effect.gen(function* () {
           changed[key] = value;
         }
         if (Object.keys(changed).length > 0) {
-          yield* sendOrQueue({ _tag: "localSettings", scope: "server", values: changed });
+          // MM-919: the way back in must reach the portal also across a restart (`hello`).
+          const clientAccess = Schema.is(ClientAccessMode)(changed.clientAccess)
+            ? changed.clientAccess
+            : undefined;
+          if (clientAccess !== undefined) {
+            yield* state.updateSaved((saved) => ({ ...saved, pendingClientAccess: clientAccess }));
+            yield* Ref.set(pendingClientAccessSeen, false);
+          }
+          const sent = yield* sendOrQueue({
+            _tag: "localSettings",
+            scope: "server",
+            values: changed,
+          });
+          if (sent && clientAccess !== undefined) yield* Ref.set(pendingClientAccessSeen, true);
         }
       }).pipe(
         Effect.catchCause((cause) =>
@@ -794,7 +1021,13 @@ const make = Effect.gen(function* () {
         build: report.build === undefined ? previous.build : report.build,
         clientSettings: report.clientSettings ?? previous.clientSettings,
       });
-      if (report.commandResult !== undefined) {
+      // MM-605: a command that the expiry check removed is already reported as expired.
+      const queued =
+        report.commandResult !== undefined &&
+        (yield* state.snapshot).saved.desktopCommands.some(
+          (command) => command.id === report.commandResult?.commandId,
+        );
+      if (report.commandResult !== undefined && queued) {
         const result = report.commandResult;
         yield* state
           .updateSaved((saved) => ({
@@ -851,7 +1084,16 @@ const make = Effect.gen(function* () {
 
   const join: MachineMap["Service"]["join"] = (input) =>
     Effect.gen(function* () {
-      const portalUrl = input.portalUrl ?? (yield* state.snapshot).portalUrl;
+      const local = yield* state.snapshot;
+      // MM-919: a joined machine with the map on joins again only after "Leave", which only its
+      // desktop app does, so no other caller can point it at another portal.
+      if (local.enabled && local.token !== null) {
+        return yield* new MachineMapRequestError({
+          reason: "join-refused",
+          detail: "This machine is on the map already. Leave the map first.",
+        });
+      }
+      const portalUrl = input.portalUrl ?? local.portalUrl;
       const enrollUrl = yield* Effect.try({
         try: () => {
           const url = new URL("/enroll", portalUrl);
@@ -1096,6 +1338,37 @@ const make = Effect.gen(function* () {
   );
   yield* forkParked(superviseConnection);
   yield* forkParked(watchLocalSettings);
+  yield* forkParked(watchExpiries);
+  // MM-1306: a revocation that failed runs again until it works.
+  yield* forkParked(
+    Effect.forever(
+      revokePending.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Machine map could not end sessions; it tries again.", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+        Effect.andThen(Effect.sleep(REVOKE_RETRY_INTERVAL)),
+      ),
+    ),
+  );
+  // MM-605: a desktop command that waited past its expiry never runs. The desktop app can stay
+  // closed for days, so the server reports it as failed and drops it.
+  yield* forkParked(
+    Effect.forever(
+      expireDesktopCommands.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Machine map could not expire desktop commands.", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+        Effect.andThen(Effect.sleep(DESKTOP_COMMAND_EXPIRY_CHECK)),
+      ),
+    ),
+  );
+  yield* forkParked(watchClientAccess);
+  // MM-906: browser keys that signed in and wait for approval. The outbox keeps them while offline.
+  yield* forkParked(Effect.forever(Queue.take(state.clientSeen).pipe(Effect.flatMap(sendOrQueue))));
   yield* forkParked(statusLoop);
   yield* forkParked(joinPendingCode);
 

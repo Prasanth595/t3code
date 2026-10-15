@@ -1,10 +1,13 @@
 import {
   CommandId,
+  isScheduledTaskProjectDefaultModel,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  ProjectId,
   ScheduledTask,
   ScheduledTaskError,
   ScheduledTaskId,
+  ScheduledTaskModelSelection,
   ThreadId,
   ScheduledTaskWebhookDeliveryId,
   type ScheduledTaskDeleteInput,
@@ -21,7 +24,9 @@ import {
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
   type ScheduledTaskUpsertInput,
+  type ModelSelection,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -44,6 +49,8 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { getAutoBootstrapThreadModelSelection } from "../serverRuntimeStartup.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
@@ -164,9 +171,14 @@ const decodeScheduleJson = Schema.decodeUnknownEffect(
 const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.workspaceStrategy),
 );
+// A row stores `{_tag:"projectDefault"}` or one explicit selection.
 const decodeModelSelectionJson = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(ScheduledTask.fields.modelSelection),
+  Schema.fromJsonString(ScheduledTaskModelSelection),
 );
+const decodeProjectId = Schema.decodeUnknownEffect(ProjectId);
+
+/** The model a project-default task resolves now, for the `modelSelection` that clients read. */
+type ProjectDefaultModel = (projectId: ProjectId) => ModelSelection;
 const HeadersJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const MissingFieldsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeHeadersJson = Schema.decodeUnknownOption(HeadersJson);
@@ -308,12 +320,20 @@ function webhookEndpoint(
   };
 }
 
-const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =>
+const decodeRow = (
+  row: ScheduledTaskRow,
+  projectDefaultModel: ProjectDefaultModel,
+  origin: WebhookOrigin | null = null,
+) =>
   Effect.gen(function* () {
     const schedule = yield* decodeScheduleJson(row.schedule_json);
     const webhook = schedule.type === "webhook" ? webhookEndpoint(row, origin) : undefined;
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
-    const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
+    const storedModel = yield* decodeModelSelectionJson(row.model_selection_json);
+    const useProjectDefaultModel = isScheduledTaskProjectDefaultModel(storedModel);
+    const modelSelection = useProjectDefaultModel
+      ? projectDefaultModel(yield* decodeProjectId(row.project_id))
+      : storedModel;
     return yield* decodeTask({
       // The stored id decodes through the task schema so a corrupt value fails
       // as a typed parse error, not a `ScheduledTaskId.make` defect.
@@ -326,6 +346,7 @@ const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =
       threadId: row.thread_id,
       workspaceStrategy,
       modelSelection,
+      ...(useProjectDefaultModel ? { useProjectDefaultModel } : {}),
       runtimeMode: row.runtime_mode,
       interactionMode: row.interaction_mode,
       createdBy: row.created_by,
@@ -354,6 +375,7 @@ const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =
 /** Select poll candidates before decoding their schedules or other JSON payloads. */
 export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(function* (
   now: DateTime.DateTime,
+  projectDefaultModel: ProjectDefaultModel,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql<ScheduledTaskRow>`
@@ -364,7 +386,7 @@ export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(funct
   `;
   const tasks: ScheduledTask[] = [];
   for (const row of rows) {
-    const decoded = yield* Effect.result(decodeRow(row));
+    const decoded = yield* Effect.result(decodeRow(row, projectDefaultModel));
     if (Result.isSuccess(decoded)) {
       const task = decoded.success;
       // next_run_at is a freeform string at the schema level; a stored value
@@ -395,8 +417,20 @@ export const layer = Layer.effect(
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const secretRequests = yield* SecretRequests.SecretRequests;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
+    // Clients without `useProjectDefaultModel` read `modelSelection`. Limit: with
+    // no project or app default they see the bootstrap thread model, and the run fails.
+    const readProjectDefaultModel = serverSettings.getSettings.pipe(
+      Effect.mapError((cause) => taskError("Could not read settings.", { cause })),
+      Effect.map(
+        (settings): ProjectDefaultModel =>
+          (projectId) =>
+            resolveProjectSettings(settings, projectId).settings.defaultModelSelection ??
+            getAutoBootstrapThreadModelSelection(),
+      ),
+    );
     // Webhook deliveries for one task dispatch in arrival order rather than
     // being dropped while an earlier delivery is still dispatching.
     const webhookPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
@@ -445,7 +479,10 @@ export const layer = Layer.effect(
     const listRows = Effect.fn("ScheduledTaskService.listRows")(function* () {
       const rows = yield* selectAllRows();
       const origin = yield* readWebhookOrigin;
-      return yield* Effect.forEach(rows, (row) => decodeRow(row, origin), { concurrency: 1 });
+      const projectDefaultModel = yield* readProjectDefaultModel;
+      return yield* Effect.forEach(rows, (row) => decodeRow(row, projectDefaultModel, origin), {
+        concurrency: 1,
+      });
     });
 
     const getRows = (id: ScheduledTaskId) => sql<ScheduledTaskRow>`
@@ -485,7 +522,7 @@ export const layer = Layer.effect(
       );
       const row = rows[0];
       if (row === undefined) return null;
-      return yield* decodeRow(row, yield* readWebhookOrigin);
+      return yield* decodeRow(row, yield* readProjectDefaultModel, yield* readWebhookOrigin);
     });
 
     const findWebhookCredentials = (id: ScheduledTaskId) =>
@@ -562,7 +599,9 @@ export const layer = Layer.effect(
           ${task.projectId},
           ${task.threadId},
           ${JSON.stringify(task.workspaceStrategy)},
-          ${JSON.stringify(task.modelSelection)},
+          ${JSON.stringify(
+            task.useProjectDefaultModel === true ? { _tag: "projectDefault" } : task.modelSelection,
+          )},
           ${task.runtimeMode},
           ${task.interactionMode},
           ${task.createdBy},
@@ -792,26 +831,44 @@ export const layer = Layer.effect(
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
+        // A project-default task resolves its model when the run starts, the
+        // same way a new composer thread does: the project, then the app default.
+        const launchModelSelection = Effect.gen(function* () {
+          if (active.useProjectDefaultModel !== true) {
+            return active.modelSelection;
+          }
+          const settings = yield* serverSettings.getSettings;
+          const selection = resolveProjectSettings(settings, active.projectId).settings
+            .defaultModelSelection;
+          if (selection === null) {
+            return yield* taskError("Neither the project nor the app has a default model.", {
+              taskId: active.id,
+            });
+          }
+          return selection;
+        });
         const result =
           active.threadId === null
             ? yield* Effect.exit(
-                threadLaunch.launch({
-                  commandId,
-                  projectId: active.projectId,
-                  title: active.title,
-                  modelSelection: active.modelSelection,
-                  runtimeMode: active.runtimeMode,
-                  interactionMode: active.interactionMode,
-                  workspaceStrategy: active.workspaceStrategy,
-                  initialMessage: {
-                    messageId,
-                    scheduledTaskId: active.id,
-                    text: prompt,
-                    attachments: [],
-                  },
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
+                Effect.flatMap(launchModelSelection, (modelSelection) =>
+                  threadLaunch.launch({
+                    commandId,
+                    projectId: active.projectId,
+                    title: active.title,
+                    modelSelection,
+                    runtimeMode: active.runtimeMode,
+                    interactionMode: active.interactionMode,
+                    workspaceStrategy: active.workspaceStrategy,
+                    initialMessage: {
+                      messageId,
+                      scheduledTaskId: active.id,
+                      text: prompt,
+                      attachments: [],
+                    },
+                    createdBy: active.createdBy,
+                    creationSource: active.creationSource,
+                  }),
+                ),
               )
             : yield* Effect.exit(
                 threadManagement.sendToThread({
@@ -822,7 +879,11 @@ export const layer = Layer.effect(
                   scheduledTaskId: active.id,
                   text: prompt,
                   attachments: [],
-                  modelSelection: active.modelSelection,
+                  // A bound run posts into an existing thread. A project-default
+                  // task keeps that thread's model; an explicit one switches it.
+                  ...(active.useProjectDefaultModel === true
+                    ? {}
+                    : { modelSelection: active.modelSelection }),
                   // Scheduled prompts must not interrupt tools in the bound thread.
                   mode: "queue",
                   createdBy: active.createdBy,
@@ -901,7 +962,7 @@ export const layer = Layer.effect(
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
       const now = yield* localNow;
-      const tasks = yield* listDueTasks(now).pipe(
+      const tasks = yield* listDueTasks(now, yield* readProjectDefaultModel).pipe(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
       const due = tasks.flatMap((task) =>
@@ -934,12 +995,13 @@ export const layer = Layer.effect(
       const rows = yield* selectAllRows();
       const stuck = rows.filter((row) => row.last_run_status === "running");
       if (stuck.length === 0) return;
+      const projectDefaultModel = yield* readProjectDefaultModel;
       const now = yield* localNow;
       yield* Effect.forEach(
         stuck,
         (row) =>
           Effect.gen(function* () {
-            const decoded = yield* Effect.result(decodeRow(row));
+            const decoded = yield* Effect.result(decodeRow(row, projectDefaultModel));
             if (Result.isSuccess(decoded)) {
               yield* sql`
                 UPDATE scheduled_tasks
@@ -1090,6 +1152,7 @@ export const layer = Layer.effect(
           threadId: input.threadId ?? null,
           workspaceStrategy: input.workspaceStrategy,
           modelSelection: input.modelSelection,
+          ...(input.useProjectDefaultModel === true ? { useProjectDefaultModel: true } : {}),
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
           createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",
@@ -1439,7 +1502,7 @@ export const layer = Layer.effect(
         ) {
           return yield* notFound;
         }
-        const task = yield* decodeRow(row);
+        const task = yield* decodeRow(row, yield* readProjectDefaultModel);
         yield* Effect.annotateCurrentSpan({ "scheduled_task.id": task.id });
         const schedule = task.schedule;
         if (schedule.type !== "webhook") return yield* notFound;

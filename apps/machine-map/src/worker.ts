@@ -3,14 +3,17 @@
  * `api.ts`, and calls the one Durable Object. Static pages come from Workers Static Assets.
  */
 import * as Schema from "effect/Schema";
-import { MachineId } from "@t3tools/contracts/machineMap";
+import { ClientEnrollRequest, ClientId, MachineId } from "@t3tools/contracts/machineMap";
 import { RESOURCE_RANGES } from "@t3tools/contracts/machineMapResources";
 
-import { machineClientId, ownerEmail } from "./access.ts";
+import { approvalEmail, clientTokenId, machineClientId, ownerEmail } from "./access.ts";
 import {
+  type ApiError,
   AddMachineRequest,
+  ApproveClientRequest,
   ChangesRequest,
   CommandRequest,
+  InviteRequest,
   EnrollRequest,
   JoinCodeRequest,
   PushEndpointRequest,
@@ -18,6 +21,7 @@ import {
   RevisionRequest,
   ThresholdsRequest,
 } from "./api.ts";
+import { APPROVALS_MAX_SECONDS, APPROVALS_PATH, CLIENT_PATH, INVITE_PATH } from "./cloudflare.ts";
 import type { Env } from "./env.ts";
 import { MACHINE_CLIENT_ID_HEADER, type Outcome, type OwnerContext } from "./MachineMapObject.ts";
 import { fetchNewestRelease } from "./releases.ts";
@@ -35,7 +39,7 @@ const toResponse = <T>(outcome: Outcome<T>): Response =>
 const mapObject = (env: Env) => env.MAP.getByName("map");
 
 /** API paths of the form `/api/<resource>/<id>/...`. */
-const ID_RESOURCES = new Set(["commands", "proposals", "machines", "presets"]);
+const ID_RESOURCES = new Set(["commands", "proposals", "machines", "presets", "pending"]);
 
 async function readBody<T>(
   request: Request,
@@ -52,8 +56,7 @@ async function readBody<T>(
   }
 }
 
-async function ownerContext(request: Request, env: Env): Promise<OwnerContext | null> {
-  const email = await ownerEmail(request, env);
+async function ownerContext(request: Request, email: string | null): Promise<OwnerContext | null> {
   if (!email) return null;
   const userAgent = request.headers.get("User-Agent");
   const { device, browser } = describeUserAgent(userAgent);
@@ -69,6 +72,68 @@ async function ownerContext(request: Request, env: Env): Promise<OwnerContext | 
   };
 }
 
+/** A write from another site. A page of the portal sends its own origin, or none. */
+const crossOrigin = (request: Request, url: URL): boolean =>
+  request.method !== "GET" &&
+  request.headers.get("Origin") !== null &&
+  request.headers.get("Origin") !== url.origin;
+
+/**
+ * MM-1207: the approval path. Its own Access app asks for a fresh MFA, so its JWT has another
+ * audience than the pages. Only actions that let a browser key in run here.
+ */
+async function grant(request: Request, env: Env, url: URL): Promise<Response> {
+  const stub = mapObject(env);
+  const email = await approvalEmail(request, env, await stub.approvalsAud(), APPROVALS_MAX_SECONDS);
+  const owner = await ownerContext(request, email);
+  if (!owner) {
+    return json(
+      {
+        error: "Approvals need a fresh passkey check. Confirm with it again.",
+        stepUp: true,
+      } satisfies ApiError,
+      403,
+    );
+  }
+  if (crossOrigin(request, url)) return fail(403, "Wrong origin.");
+  const route = `${request.method} ${url.pathname.slice(APPROVALS_PATH.length)}`;
+  switch (route) {
+    case "GET /start": {
+      // The page comes here for the MFA, then goes back to its own route. Only a hash route.
+      const then = url.searchParams.get("then") ?? "";
+      return Response.redirect(new URL(`/${then.startsWith("#/") ? then : ""}`, url).href, 303);
+    }
+    case "GET /check":
+      return json({ ok: true });
+    case "POST /approve": {
+      const body = await readBody(request, ApproveClientRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.approveClient(owner, url.host, body));
+    }
+    case "POST /invite": {
+      const body = await readBody(request, InviteRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.createInvite(owner, url.host, body));
+    }
+    // MM-919: a change of an owner-only setting, such as clientAccess.
+    case "POST /changes": {
+      const body = await readBody(request, ChangesRequest);
+      return body instanceof Response ? body : toResponse(await stub.changes(owner, body, true));
+    }
+    default:
+      return fail(404, `No route ${request.method} ${url.pathname}.`);
+  }
+}
+
+const RemoveClientRequest = Schema.Struct({ clientId: ClientId });
+
+/** MM-913: a phone browser that opens an invite link. The code is for the T3 app, not the page. */
+const INVITE_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>T3 invite</title><body style="font-family:system-ui;max-width:32rem;margin:3rem auto;padding:0 1rem">
+<h1>Open this invite in the T3 app</h1><p>Scan the QR code with the T3 app on your phone, or paste this link there. The page itself does nothing.</p>`;
+
 const integer = (value: string | null): number | null => {
   if (value === null || value.trim() === "") return null;
   const parsed = Number(value);
@@ -76,7 +141,7 @@ const integer = (value: string | null): number | null => {
 };
 
 async function api(request: Request, env: Env, url: URL): Promise<Response> {
-  const owner = await ownerContext(request, env);
+  const owner = await ownerContext(request, await ownerEmail(request, env));
   // MM-102: fail closed.
   if (!owner) return fail(403, "Only the owner can use the portal.");
   const stub = mapObject(env);
@@ -95,17 +160,9 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     if (request.headers.get("Origin") !== url.origin) return fail(403, "Wrong origin.");
     return stub.fetch(new Request(new URL("/api/events", url), request));
   }
-  if (
-    request.method !== "GET" &&
-    request.headers.get("Origin") !== null &&
-    request.headers.get("Origin") !== url.origin
-  ) {
-    return fail(403, "Wrong origin.");
-  }
+  if (crossOrigin(request, url)) return fail(403, "Wrong origin.");
 
   switch (route) {
-    case "GET /snapshot":
-      return toResponse(await stub.snapshot(owner));
     case "POST /changes": {
       const body = await readBody(request, ChangesRequest);
       return body instanceof Response ? body : toResponse(await stub.changes(owner, body));
@@ -177,6 +234,26 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.resume(owner));
     case "GET /fork-release":
       return json(await fetchNewestRelease());
+    case "GET /clients/approvals":
+      return toResponse(await stub.approvalsStatus(owner, url.host));
+    case "POST /clients/approvals":
+      return toResponse(await stub.setUpApprovals(owner, url.host));
+    case "POST /clients/invites/cancel": {
+      const body = await readBody(request, RemoveClientRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.cancelInvites(owner, body.clientId));
+    }
+    case "POST /clients/remove": {
+      const body = await readBody(request, RemoveClientRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.removeClient(owner, body.clientId));
+    }
+    case "POST /pending/:id/reject":
+      return toResponse(await stub.rejectPendingClient(owner, id));
+    case "POST /pending/:id/unblock":
+      return toResponse(await stub.unblockPendingClient(owner, id));
     case "GET /devices":
       return toResponse(await stub.devices(owner));
     case "POST /devices/sign-out-everywhere":
@@ -211,6 +288,26 @@ export default {
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
       return toResponse(await mapObject(env).enroll(ip, body.code));
     }
+    if (url.pathname === INVITE_PATH) {
+      // MM-913: a Bypass Access app leaves this path open. The invite code is the credential.
+      if (request.method === "GET")
+        return new Response(INVITE_PAGE, {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      if (request.method !== "POST") return fail(405, "Use POST.");
+      const body = await readBody(request, ClientEnrollRequest);
+      if (body instanceof Response) return body;
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      return toResponse(await mapObject(env).redeemInvite(ip, url.host, body));
+    }
+    if (url.pathname === `${CLIENT_PATH}/machines`) {
+      // MM-914: only the app token of a client gets its machines.
+      if (request.method !== "GET") return fail(405, "Use GET.");
+      const stub = mapObject(env);
+      const tokenId = await clientTokenId(request, env, await stub.clientAppAud());
+      if (!tokenId) return fail(403, "An app token of a client is required.");
+      return toResponse(await stub.machinesOfToken(tokenId));
+    }
     if (url.pathname === "/connect") {
       // MM-104: only a valid machine token JWT of the /connect Access app connects.
       const clientId = await machineClientId(request, env);
@@ -221,6 +318,7 @@ export default {
       forwarded.headers.set(MACHINE_CLIENT_ID_HEADER, clientId);
       return mapObject(env).fetch(forwarded);
     }
+    if (url.pathname.startsWith(`${APPROVALS_PATH}/`)) return grant(request, env, url);
     if (url.pathname.startsWith("/api/")) return api(request, env, url);
     return fail(404, "Not found.");
   },

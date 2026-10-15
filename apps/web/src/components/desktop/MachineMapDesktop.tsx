@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Schema from "effect/Schema";
-import { useEffect, useEffectEvent, useMemo, useRef } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import {
@@ -40,7 +40,8 @@ import {
   getDesktopUpdateDownloadedVersion,
   resolveDesktopUpdateButtonAction,
 } from "../desktopUpdate.logic";
-import { armIdleInstall, installDesktopUpdate } from "./DesktopUpdateIdleInstall";
+import { installLocalUpdate } from "../sidebar/SidebarUpdatePill";
+import { armIdleInstall } from "./DesktopUpdateIdleInstall";
 
 /**
  * Fork: the desktop app's part of the machine map (apps/machine-map/SPEC.md). It reads the state
@@ -213,6 +214,8 @@ type CommandOutcome = {
   readonly after?: () => void;
 };
 
+const UPDATE_STATE_WAIT_MS = 60_000;
+
 function MachineDesktopReports({
   state,
   environmentId,
@@ -234,6 +237,12 @@ function MachineDesktopReports({
   const reportedSettings = useRef<string | null>(null);
   const reportedUpdate = useRef<string | null | undefined>(undefined);
   const handledCommands = useRef(new Set<string>());
+  // A desktop app without an update state after this wait has no update to install.
+  const [updateStateWaitOver, setUpdateStateWaitOver] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setUpdateStateWaitOver(true), UPDATE_STATE_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // The server keeps the reports in memory, so a new connection gets them again.
   useEffect(() => {
@@ -319,7 +328,7 @@ function MachineDesktopReports({
           ok: true,
           result: { version, whenIdle: false },
           error: null,
-          after: () => void installDesktopUpdate(bridge),
+          after: () => void installLocalUpdate(bridge),
         };
       }
       default:
@@ -334,8 +343,22 @@ function MachineDesktopReports({
   const runCommands = useEffectEvent((commands: ReadonlyArray<MachineCommand>) => {
     for (const command of commands) {
       if (handledCommands.current.has(command.id)) continue;
+      const expired = Date.parse(command.expiresAt) <= Date.now();
+      // MM-1402: after the start, the update state passes "disabled" and "checking" before it
+      // can say "install". Until it does, or the wait is over, "no update" is unknown.
+      if (
+        !expired &&
+        command.input._tag === "installUpdate" &&
+        (updateState === null || resolveDesktopUpdateButtonAction(updateState) !== "install") &&
+        !updateStateWaitOver
+      ) {
+        continue;
+      }
       handledCommands.current.add(command.id);
-      const outcome = runCommand(command);
+      // MM-605: a command that waited past its expiry never runs.
+      const outcome: CommandOutcome = expired
+        ? { ok: false, result: null, error: "Expired before the desktop app ran it." }
+        : runCommand(command);
       void send({
         commandResult: {
           commandId: command.id,
@@ -352,7 +375,7 @@ function MachineDesktopReports({
   });
   useEffect(() => {
     runCommands(state.desktopCommands);
-  }, [state.desktopCommands]);
+  }, [state.desktopCommands, updateState, updateStateWaitOver]);
 
   return null;
 }

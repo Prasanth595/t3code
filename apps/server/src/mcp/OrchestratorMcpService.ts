@@ -53,6 +53,7 @@ import {
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type RuntimeMode,
+  isScheduledTaskProjectDefaultModel,
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
@@ -102,13 +103,14 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
-// Events that can make a delegated task terminal: the parent's task record,
-// and the child's runs, nested tasks, and pending provider background work.
+// Events that can end a delegated task wait: the parent's task record,
+// and the child's runs, nested tasks, provider background work, and questions.
 const TASK_WAKE_EVENTS = [
   { thread: "parent", eventType: "subagent.updated" },
   { thread: "child", eventType: "run.updated" },
   { thread: "child", eventType: "subagent.updated" },
   { thread: "child", eventType: "provider-thread.updated" },
+  { thread: "child", eventType: "runtime-request.updated" },
 ] as const;
 /** A person answers the card, so a slower poll is plenty. */
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
@@ -256,6 +258,8 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     projectId: task.projectId,
     boundThreadId: task.threadId,
     schedule: task.schedule,
+    modelSelection:
+      task.useProjectDefaultModel === true ? { _tag: "projectDefault" } : task.modelSelection,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
     // A bare path is not a URL anyone can call, so agents never get one to share.
@@ -1141,6 +1145,32 @@ const make = Effect.gen(function* () {
   const loadProviders = providerRegistry.getProviders;
 
   /**
+   * An explicit scheduled task model must name a provider instance and model
+   * from the live catalog, so a wrong id fails on save instead of on every run.
+   */
+  const checkScheduledTaskModelSelection = (selection: ModelSelection) =>
+    Effect.gen(function* () {
+      const providers = yield* loadProviders;
+      const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+      if (provider === undefined) {
+        return yield* failure(
+          "invalid_request",
+          `Provider instance ${selection.instanceId} is not configured. Use one of: ${providers.map((candidate) => candidate.instanceId).join(", ")}.`,
+        );
+      }
+      if (
+        provider.models.length > 0 &&
+        !provider.models.some((candidate) => candidate.slug === selection.model)
+      ) {
+        return yield* failure(
+          "model_unavailable",
+          `Model ${selection.model} is not advertised by provider ${selection.instanceId}.`,
+        );
+      }
+      return selection;
+    });
+
+  /**
    * Instance ids the adapter registry resolves — the same lookup a
    * `delegated_task.request` performs when it runs. Capability reporting and
    * target resolution must not advertise a set narrower (or wider) than what
@@ -1362,7 +1392,14 @@ const make = Effect.gen(function* () {
       const childControls = yield* threadManagement
         .getThreadRecords(
           task.childThreadId,
-          ["runs", "messages", "contextTransfers", "subagents", "providerThreads"],
+          [
+            "runs",
+            "messages",
+            "contextTransfers",
+            "subagents",
+            "providerThreads",
+            "runtimeRequests",
+          ],
           { messageRoles: ["user"] },
         )
         .pipe(Effect.mapError(threadManagementFailure));
@@ -1467,6 +1504,15 @@ const make = Effect.gen(function* () {
             : subagentResultForRun(childProjection, terminalRun).text
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
+        // A finished task has no question of its own; later child runs belong to other tasks.
+        hasPendingQuestion:
+          !isTerminalTaskStatus(status) &&
+          childControls.runtimeRequests.some(
+            (request) =>
+              request.kind === "user_input" &&
+              request.status === "pending" &&
+              request.responseCapability.type === "live",
+          ),
         waitTimedOut,
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (
@@ -1519,7 +1565,9 @@ const make = Effect.gen(function* () {
         .getThreadEventSequence(scope.thread.threadId)
         .pipe(Effect.mapError(streamError));
       const initial = yield* readTask(scope, taskId, false, true);
-      if (isTerminalTaskStatus(initial.status)) return Option.some(initial);
+      if (initial.hasPendingQuestion || isTerminalTaskStatus(initial.status)) {
+        return Option.some(initial);
+      }
       // One stream per event type, so transcript events never fill a buffer.
       return yield* Stream.mergeAll(
         TASK_WAKE_EVENTS.map(({ thread, eventType }) =>
@@ -1533,7 +1581,7 @@ const make = Effect.gen(function* () {
       ).pipe(
         Stream.mapError(streamError),
         Stream.mapEffect(() => readTask(scope, taskId, false, true)),
-        Stream.filter((result) => isTerminalTaskStatus(result.status)),
+        Stream.filter((result) => result.hasPendingQuestion || isTerminalTaskStatus(result.status)),
         Stream.runHead,
       );
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten));
@@ -1649,8 +1697,17 @@ const make = Effect.gen(function* () {
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
-        const modelSelection =
-          parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+        const inherited = () =>
+          parent === undefined
+            ? projectDefaultModelSelection(project)
+            : Effect.succeed(parent.thread.modelSelection);
+        // A project-default task also carries a model, for servers and clients without the flag.
+        const modelFields =
+          input.modelSelection === undefined
+            ? { modelSelection: yield* inherited() }
+            : isScheduledTaskProjectDefaultModel(input.modelSelection)
+              ? { modelSelection: yield* inherited(), useProjectDefaultModel: true }
+              : { modelSelection: yield* checkScheduledTaskModelSelection(input.modelSelection) };
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1662,7 +1719,7 @@ const make = Effect.gen(function* () {
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
           workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
-          modelSelection,
+          ...modelFields,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
           createdBy: "agent",
@@ -1744,7 +1801,16 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
-          modelSelection: existing.modelSelection,
+          ...(input.modelSelection === undefined
+            ? {
+                modelSelection: existing.modelSelection,
+                ...(existing.useProjectDefaultModel === true
+                  ? { useProjectDefaultModel: true }
+                  : {}),
+              }
+            : isScheduledTaskProjectDefaultModel(input.modelSelection)
+              ? { modelSelection: existing.modelSelection, useProjectDefaultModel: true }
+              : { modelSelection: yield* checkScheduledTaskModelSelection(input.modelSelection) }),
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
@@ -2094,13 +2160,12 @@ const make = Effect.gen(function* () {
           Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
         );
         const waited = yield* waitForTask(scope, taskId, timeoutMs);
-        if (Option.isSome(waited)) {
+        if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
           return waited.value;
         }
-        // The blocking wait timed out, so it no longer owns delivery: upgrade
-        // the task so a later terminal wakes the parent even mid-turn. Best
-        // effort; on failure the settled_only policy still wakes a settled
-        // parent.
+        // An incomplete wait gives up delivery: upgrade so a later terminal
+        // wakes the parent even mid-turn. Best effort; settled_only still
+        // wakes a settled parent if the upgrade fails.
         yield* threadManagement
           .dispatch({
             type: "delegated_task.wake-policy",
@@ -2114,7 +2179,7 @@ const make = Effect.gen(function* () {
             completionWake: "always",
           })
           .pipe(
-            // The tool result is the timed-out task either way, so failures
+            // The tool result still returns after a timeout or question, so failures
             // stay warnings. Keep the two shapes apart: a rejected receipt
             // means this exact command id already failed (a replay of a
             // no-op upgrade), while anything else is a fresh dispatch fault.
@@ -2136,7 +2201,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return yield* readTask(scope, taskId, true, true);
+        return yield* readTask(scope, taskId, Option.isNone(waited), true);
       }),
     taskStatus: (callerScope, taskId) =>
       Effect.gen(function* () {

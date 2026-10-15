@@ -12,12 +12,21 @@ fi
 
 # A repair agent's push to main starts new runs that cannot pass notify_agent=false.
 # So a failure right after a failure of the same workflow does not start another
-# agent: the agent that the first failure started watches the next run and reports it.
-previous="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$GITHUB_WORKFLOW" --status completed --limit 5 \
-  --json databaseId,conclusion --jq "[.[] | select(.databaseId != ${GITHUB_RUN_ID}) | select(.conclusion != \"cancelled\" and .conclusion != \"skipped\")][0].conclusion // empty")"
-if [[ "$previous" == "failure" ]]; then
-  echo "The previous ${GITHUB_WORKFLOW} run failed too. No new agent is notified."
-  exit 0
+# agent, when the notify job of that failure succeeded: the agent that it started
+# watches the next run and reports it. A notify job that failed reached no agent.
+# Limit: a skip also ends the job with success, so a chain of failures stays quiet
+# after one delivered call. Pull request runs never notify, so they do not count.
+previous="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$GITHUB_WORKFLOW" --status completed --limit 20 \
+  --json databaseId,conclusion,event --jq "[.[] | select(.databaseId != ${GITHUB_RUN_ID} and .event != \"pull_request\")
+    | select(.conclusion != \"cancelled\" and .conclusion != \"skipped\")][0] // empty | \"\\(.databaseId) \\(.conclusion)\"")"
+if [[ "${previous#* }" == "failure" ]]; then
+  notified="$(gh run view "${previous%% *}" --repo "$GITHUB_REPOSITORY" --json jobs \
+    --jq '[.jobs[] | select(.name == "Notify repair agent")][0].conclusion // empty')"
+  if [[ "$notified" == "success" ]]; then
+    echo "The previous ${GITHUB_WORKFLOW} run failed too, and its call succeeded. No new agent is notified."
+    exit 0
+  fi
+  echo "The previous ${GITHUB_WORKFLOW} run failed too, but its notify job ended with '${notified:-none}'. Notifying."
 fi
 
 payload="$(jq -n \
@@ -31,7 +40,10 @@ payload="$(jq -n \
   '{repository: $repository, branch: $branch, event: $event, workflow: $workflow,
     run_url: $run_url, run_id: $run_id, jobs: ($needs | map_values(.result))}')"
 echo "$payload"
-curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors \
+# The webhook server can restart, which takes minutes. So retry once a minute for 15 minutes.
+# The notify jobs have timeout-minutes: 20 to cover the last attempt (up to 120 s).
+curl --fail-with-body --silent --show-error \
+  --retry 15 --retry-delay 60 --retry-max-time 900 --max-time 120 --retry-all-errors \
   -X POST "$WEBHOOK_URL" \
   -H "content-type: application/json" \
   -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \

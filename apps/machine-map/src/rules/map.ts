@@ -3,9 +3,13 @@
  * one machine (MM-603, MM-1202), and which machines a revision touches (MM-602).
  * The Durable Object and the page share this module.
  */
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import {
   isMachineLocalSetting,
   type ArrowRecord,
+  type ClientArrowRecord,
+  type ClientId,
+  type ClientRecord,
   type MachineDesiredState,
   type MachineId,
   type MachineLevel,
@@ -47,6 +51,8 @@ export const emptyMap = (): MachineMapDocument => ({
   presets: [],
   pairPlacements: [],
   notes: [],
+  clients: [],
+  clientArrows: [],
 });
 
 /** MM-301: a pair without a stored arrow is at level `none`. */
@@ -55,6 +61,15 @@ export const defaultArrow = (from: MachineId, to: MachineId): ArrowRecord => ({
   to,
   level: "none",
   agentTools: false,
+  expiresAt: null,
+  revertLevel: null,
+});
+
+/** MM-309: a client without a stored arrow to a machine is at level `none`. */
+export const defaultClientArrow = (client: ClientId, to: MachineId): ClientArrowRecord => ({
+  client,
+  to,
+  level: "none",
   expiresAt: null,
   revertLevel: null,
 });
@@ -120,6 +135,27 @@ export function pairOffset(map: MachineMapDocument, a: MachineId, b: MachineId):
   const offset = { along: found.along, aside: found.aside };
   return a === key.a ? offset : flipOffset(offset);
 }
+
+export const findClient = (map: MachineMapDocument, id: ClientId): ClientRecord | undefined =>
+  map.clients.find((client) => client.id === id);
+
+export const findClientArrow = (
+  map: MachineMapDocument,
+  client: ClientId,
+  to: MachineId,
+): ClientArrowRecord =>
+  map.clientArrows.find((arrow) => arrow.client === client && arrow.to === to) ??
+  defaultClientArrow(client, to);
+
+/** MM-905: the client that holds a browser key, if any. */
+export const clientWithKey = (
+  map: MachineMapDocument,
+  thumbprint: string,
+): ClientRecord | undefined =>
+  map.clients.find((client) => client.keys.some((key) => key.thumbprint === thumbprint));
+
+export const sameClientArrow = (a: ClientArrowRecord, b: ClientArrowRecord): boolean =>
+  a.level === b.level && a.expiresAt === b.expiresAt && a.revertLevel === b.revertLevel;
 
 export const findNote = (map: MachineMapDocument, id: string): MapNote | undefined =>
   map.notes.find((note) => note.id === id);
@@ -197,6 +233,16 @@ function applyChange(map: MachineMapDocument, change: MapChange): Step {
       return putNote(map, change.note);
     case "removeNote":
       return removeNote(map, change.id);
+    case "putClient":
+      return putClient(map, change.client);
+    case "removeClient":
+      return removeClient(map, change.clientId);
+    case "addClientKey":
+      return addClientKey(map, change.clientId, change.key);
+    case "removeClientKey":
+      return removeClientKey(map, change.clientId, change.thumbprint);
+    case "setClientArrow":
+      return setClientArrow(map, change.arrow);
   }
 }
 
@@ -271,6 +317,13 @@ function putMachine(map: MachineMapDocument, machine: MachineRecord): Step {
   );
   if (clash) throw new MapRuleError(`${clash.name} already uses this machine token.`);
   const previous = findMachine(map, machine.id);
+  // MM-206: a new name must be free. An old duplicate stays, so a move of it still works.
+  if (previous?.name !== machine.name) {
+    const named = map.machines.find(
+      (other) => other.id !== machine.id && other.name.toLowerCase() === machine.name.toLowerCase(),
+    );
+    if (named) throw new MapRuleError(`A machine named ${named.name} is already on the map.`);
+  }
   const machines = previous
     ? map.machines.map((m) => (m.id === machine.id ? machine : m))
     : [...map.machines, machine];
@@ -289,9 +342,11 @@ function removeMachine(map: MachineMapDocument, machineId: MachineId): Step {
   const previous = findMachine(map, machineId);
   if (!previous) throw new MapRuleError(`Unknown machine ${machineId}.`);
   const removedArrows = map.arrows.filter((a) => a.from === machineId || a.to === machineId);
+  const removedClientArrows = map.clientArrows.filter((a) => a.to === machineId);
   const own = map.settings.overrides[machineId];
   const inverse: Array<MapChange> = [{ _tag: "putMachine", machine: previous }];
   for (const arrow of removedArrows) inverse.push({ _tag: "setArrow", arrow });
+  for (const arrow of removedClientArrows) inverse.push({ _tag: "setClientArrow", arrow });
   const touchesMachine = (p: { a: MachineId; b: MachineId }) =>
     p.a === machineId || p.b === machineId;
   for (const { a, b, along, aside } of map.pairPlacements.filter(touchesMachine)) {
@@ -311,6 +366,7 @@ function removeMachine(map: MachineMapDocument, machineId: MachineId): Step {
       ...map,
       machines: map.machines.filter((m) => m.id !== machineId),
       arrows: map.arrows.filter((a) => a.from !== machineId && a.to !== machineId),
+      clientArrows: map.clientArrows.filter((a) => a.to !== machineId),
       settings: { ...map.settings, overrides },
       pairPlacements: map.pairPlacements.filter((p) => !touchesMachine(p)),
     },
@@ -379,6 +435,99 @@ function removeNote(map: MachineMapDocument, id: string): Step {
   };
 }
 
+/** MM-904, MM-905: a browser key belongs to one client only. */
+function putClient(map: MachineMapDocument, client: ClientRecord): Step {
+  const thumbprints = client.keys.map((key) => key.thumbprint);
+  if (new Set(thumbprints).size !== thumbprints.length)
+    throw new MapRuleError(`${client.name} lists a browser key twice.`);
+  const clash = map.clients.find(
+    (other) =>
+      other.id !== client.id && other.keys.some((key) => thumbprints.includes(key.thumbprint)),
+  );
+  if (clash) throw new MapRuleError(`${clash.name} already holds this browser key.`);
+  const previous = findClient(map, client.id);
+  // MM-907, MM-909: keys of an existing client change only with addClientKey and removeClientKey.
+  if (previous && !sameValue(previous.keys, client.keys))
+    throw new MapRuleError(`The keys of ${previous.name} change only by approval or removal.`);
+  const clients = previous
+    ? map.clients.map((c) => (c.id === client.id ? client : c))
+    : [...map.clients, client];
+  return {
+    map: { ...map, clients },
+    inverse: [
+      previous
+        ? { _tag: "putClient", client: previous }
+        : { _tag: "removeClient", clientId: client.id },
+    ],
+  };
+}
+
+/** MM-910: removes the client with its keys and arrows. */
+function removeClient(map: MachineMapDocument, clientId: ClientId): Step {
+  const previous = findClient(map, clientId);
+  if (!previous) throw new MapRuleError(`Unknown client ${clientId}.`);
+  const removedArrows = map.clientArrows.filter((a) => a.client === clientId);
+  return {
+    map: {
+      ...map,
+      clients: map.clients.filter((c) => c.id !== clientId),
+      clientArrows: map.clientArrows.filter((a) => a.client !== clientId),
+    },
+    inverse: [
+      { _tag: "putClient", client: previous },
+      ...removedArrows.map((arrow): MapChange => ({ _tag: "setClientArrow", arrow })),
+    ],
+  };
+}
+
+type ClientKey = ClientRecord["keys"][number];
+
+/** MM-907: an approved key joins an existing client. A key belongs to one client only. */
+function addClientKey(map: MachineMapDocument, clientId: ClientId, key: ClientKey): Step {
+  const client = findClient(map, clientId);
+  if (!client) throw new MapRuleError(`Unknown client ${clientId}.`);
+  const holder = clientWithKey(map, key.thumbprint);
+  if (holder) throw new MapRuleError(`${holder.name} already holds this browser key.`);
+  return {
+    map: {
+      ...map,
+      clients: map.clients.map((c) => (c.id === clientId ? { ...c, keys: [...c.keys, key] } : c)),
+    },
+    inverse: [{ _tag: "removeClientKey", clientId, thumbprint: key.thumbprint }],
+  };
+}
+
+/** MM-909: removes one browser key. The removed browser can sign in again and wait. */
+function removeClientKey(map: MachineMapDocument, clientId: ClientId, thumbprint: string): Step {
+  const client = findClient(map, clientId);
+  const key = client?.keys.find((k) => k.thumbprint === thumbprint);
+  if (!client || !key) throw new MapRuleError("This browser key is gone.");
+  return {
+    map: {
+      ...map,
+      clients: map.clients.map((c) =>
+        c.id === clientId ? { ...c, keys: c.keys.filter((k) => k.thumbprint !== thumbprint) } : c,
+      ),
+    },
+    inverse: [{ _tag: "addClientKey", clientId, key }],
+  };
+}
+
+function setClientArrow(map: MachineMapDocument, arrow: ClientArrowRecord): Step {
+  if (!findClient(map, arrow.client)) throw new MapRuleError(`Unknown client ${arrow.client}.`);
+  if (!findMachine(map, arrow.to)) throw new MapRuleError(`Unknown machine ${arrow.to}.`);
+  if ((arrow.expiresAt === null) !== (arrow.revertLevel === null)) {
+    throw new MapRuleError("An arrow expiry needs both a time and a level to return to.");
+  }
+  const previous = findClientArrow(map, arrow.client, arrow.to);
+  const others = map.clientArrows.filter((a) => !(a.client === arrow.client && a.to === arrow.to));
+  const isDefault = sameClientArrow(arrow, defaultClientArrow(arrow.client, arrow.to));
+  return {
+    map: { ...map, clientArrows: isDefault ? others : [...others, arrow] },
+    inverse: [{ _tag: "setClientArrow", arrow: previous }],
+  };
+}
+
 const samePublicFacts = (a: MachineRecord, b: MachineRecord): boolean =>
   a.name === b.name &&
   a.kind === b.kind &&
@@ -396,6 +545,25 @@ export function checkEditableChanges(
 ): void {
   let current = map;
   for (const change of changes) {
+    if (change._tag === "putClient") {
+      const previous = findClient(current, change.client.id);
+      if (!previous) throw new MapRuleError("Approve a waiting sign-in to add a client.");
+      const next = change.client;
+      if (next.email !== previous.email || next.createdAt !== previous.createdAt) {
+        throw new MapRuleError(`The email of ${previous.name} comes from its approval.`);
+      }
+      // MM-911: only the portal sets the token, because the token lives in Cloudflare too.
+      if (!sameValue(next.serviceToken, previous.serviceToken)) {
+        throw new MapRuleError(`The app token of ${previous.name} comes from its invite.`);
+      }
+    }
+    if (change._tag === "removeClient" && findClient(current, change.clientId)?.serviceToken) {
+      throw new MapRuleError('Use "Remove client" to remove a client with an app token.');
+    }
+    // MM-907: a browser key enters the map only through an approval, which needs a fresh MFA.
+    if (change._tag === "addClientKey") {
+      throw new MapRuleError("A browser key joins a client only through an approval.");
+    }
     if (change._tag === "removeMachine") {
       throw new MapRuleError('Use "Remove machine" to remove a machine.');
     }
@@ -416,6 +584,47 @@ export function checkEditableChanges(
     current = applyChange(current, change).map;
   }
 }
+
+/**
+ * MM-909, MM-911: an owner record of a client keeps the keys and the app token that the client has
+ * now. A held draft, an open panel or a drag can hold an older record, and that record must not
+ * drop a key approved since or undo a redeemed invite.
+ */
+export function keepClientKeys(
+  map: MachineMapDocument,
+  changes: ReadonlyArray<MapChange>,
+): ReadonlyArray<MapChange> {
+  return changes.map((change): MapChange => {
+    if (change._tag !== "putClient") return change;
+    const current = findClient(map, change.client.id);
+    return current
+      ? {
+          ...change,
+          client: { ...change.client, keys: current.keys, serviceToken: current.serviceToken },
+        }
+      : change;
+  });
+}
+
+/**
+ * MM-720: the changes of an undo. A client keeps its current keys, and the arrows of a client that
+ * left the map since are skipped, for example in the undo of an old machine removal.
+ */
+export const undoChanges = (
+  map: MachineMapDocument,
+  inverse: ReadonlyArray<MapChange>,
+): ReadonlyArray<MapChange> =>
+  keepClientKeys(
+    map,
+    inverse.filter((c) => c._tag !== "setClientArrow" || findClient(map, c.arrow.client)),
+  );
+
+/**
+ * Equal values, whatever the order of object keys. A setting that a machine reports with its keys
+ * in another order is the same value, not an override.
+ */
+export const sameValue = (a: unknown, b: unknown): boolean =>
+  stableStringify(a) === stableStringify(b);
 
 type RevisionChanges = {
   readonly changes: ReadonlyArray<MapChange>;
@@ -460,8 +669,31 @@ export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineI
         if (previous.mapRole !== change.machine.mapRole) touched.add(change.machine.id);
         break;
       }
+      // MM-912, MM-917: machines apply client arrows for app tokens and browser keys.
+      case "setClientArrow":
+        touched.add(change.arrow.to);
+        break;
+      case "removeClient":
+        return "all";
+      case "putClient": {
+        const previous = revision.inverse.findLast(
+          (c): c is Extract<MapChange, { _tag: "putClient" }> =>
+            c._tag === "putClient" && c.client.id === change.client.id,
+        )?.client;
+        if (
+          !previous ||
+          previous.name !== change.client.name ||
+          !sameValue(previous.serviceToken, change.client.serviceToken)
+        )
+          return "all";
+        break;
+      }
       case "putPreset":
       case "removePreset":
+      // MM-917: machines grant browser keys. A key change is rare, so it goes to every machine.
+      case "addClientKey":
+      case "removeClientKey":
+        return "all";
       // MM-1108, MM-1109: display data. No machine applies it.
       case "placePair":
       case "putNote":
@@ -528,6 +760,36 @@ export function desiredState(
     arrowsOut: others.map((other) => findArrow(map, machineId, other.id)),
     settings: effectiveSettings(map, machineId),
     paused,
+    clients: map.clients.flatMap((client) => {
+      const arrow = findClientArrow(map, client.id, machineId);
+      if (client.serviceToken === null || (arrow.level === "none" && arrow.revertLevel === null))
+        return [];
+      return [
+        {
+          id: client.id,
+          name: client.name,
+          tokenClientId: client.serviceToken.clientId,
+          level: arrow.level,
+          expiresAt: arrow.expiresAt,
+          revertLevel: arrow.revertLevel,
+        },
+      ];
+    }),
+    browserClients: map.clients.flatMap((client) => {
+      const arrow = findClientArrow(map, client.id, machineId);
+      if (client.keys.length === 0 || (arrow.level === "none" && arrow.revertLevel === null))
+        return [];
+      return [
+        {
+          id: client.id,
+          name: client.name,
+          thumbprints: client.keys.map((key) => key.thumbprint),
+          level: arrow.level,
+          expiresAt: arrow.expiresAt,
+          revertLevel: arrow.revertLevel,
+        },
+      ];
+    }),
   };
 }
 
@@ -561,6 +823,7 @@ export function absoluteMapJson(map: unknown): unknown {
   return {
     ...map,
     machines: mapEach(map.machines, withPlace),
+    ...(map.clients === undefined ? {} : { clients: mapEach(map.clients, withPlace) }),
     ...(map.notes === undefined ? {} : { notes: mapEach(map.notes, withPlace) }),
     ...(map.pairPlacements === undefined
       ? {}
@@ -575,6 +838,8 @@ export function absoluteChangesJson(changes: unknown): unknown {
     switch (change._tag) {
       case "putMachine":
         return { ...change, machine: withPlace(change.machine) };
+      case "putClient":
+        return { ...change, client: withPlace(change.client) };
       case "putNote":
         return { ...change, note: withPlace(change.note) };
       case "placePair":

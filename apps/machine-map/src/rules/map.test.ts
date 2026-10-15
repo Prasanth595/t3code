@@ -20,8 +20,11 @@ import {
   machinesTouched,
   MapRuleError,
   pairOffset,
+  keepClientKeys,
+  sameValue,
+  undoChanges,
 } from "./map.ts";
-import { MAC, machine, threeMachines, VPS, WIN } from "./testMap.ts";
+import { client, MAC, machine, PHONE, threeMachines, VPS, WIN } from "./testMap.ts";
 
 const managed = (map: MachineMapDocument): MachineMapDocument =>
   applyChanges(map, [
@@ -147,6 +150,99 @@ describe("checkEditableChanges", () => {
       ]),
     ).not.toThrow();
   });
+
+  it("keeps keys from a stale record, and an undo never adds a key back (MM-720, MM-909)", () => {
+    const later = { thumbprint: "key-2", addedAt: "2026-10-02T00:00:00.000Z", describedAs: "x" };
+    const map = applyChanges(threeMachines(), [
+      { _tag: "putClient", client: client() },
+      { _tag: "addClientKey", clientId: PHONE, key: later },
+    ]).map;
+    // A draft or an open panel built before the second key was approved.
+    const stale = keepClientKeys(map, [{ _tag: "putClient", client: client({ name: "iPhone" }) }]);
+    const renamed = applyChanges(map, stale).map.clients[0];
+    expect(renamed?.name).toBe("iPhone");
+    expect(renamed?.keys.map((k) => k.thumbprint)).toEqual(["key-1", "key-2"]);
+    const removal = applyChanges(map, [
+      { _tag: "removeClientKey", clientId: PHONE, thumbprint: "key-2" },
+    ]);
+    expect(() =>
+      checkEditableChanges(removal.map, undoChanges(removal.map, removal.inverse)),
+    ).toThrow();
+  });
+
+  it("skips the arrows of a client that left in the undo of an old machine removal", () => {
+    const map = applyChanges(threeMachines(), [
+      { _tag: "putClient", client: client() },
+      {
+        _tag: "setClientArrow",
+        arrow: { client: PHONE, to: WIN, level: "read", expiresAt: null, revertLevel: null },
+      },
+    ]).map;
+    const removed = applyChanges(map, [{ _tag: "removeMachine", machineId: WIN }]);
+    const clientGone = applyChanges(removed.map, [{ _tag: "removeClient", clientId: PHONE }]).map;
+    const undo = undoChanges(clientGone, removed.inverse);
+    expect(undo.some((c) => c._tag === "setClientArrow")).toBe(false);
+    expect(applyChanges(clientGone, undo).map.machines.map((m) => m.id)).toContain(WIN);
+  });
+
+  it("sends app clients to their machines and keeps their token out of edits (MM-911, MM-912)", () => {
+    const withApp = applyChanges(threeMachines(), [
+      { _tag: "putClient", client: client({ serviceToken: { clientId: "phone.access" } }) },
+      {
+        _tag: "setClientArrow",
+        arrow: {
+          client: client().id,
+          to: MAC,
+          level: "standard",
+          expiresAt: null,
+          revertLevel: null,
+        },
+      },
+    ]).map;
+    expect(desiredState(withApp, MAC, false)?.clients?.map((c) => c.tokenClientId)).toEqual([
+      "phone.access",
+    ]);
+    expect(desiredState(withApp, VPS, false)?.clients).toEqual([]);
+    // MM-917: the browser keys of the same client go to the same machines.
+    expect(desiredState(withApp, MAC, false)?.browserClients?.map((c) => c.thumbprints)).toEqual([
+      client().keys.map((k) => k.thumbprint),
+    ]);
+    expect(desiredState(withApp, VPS, false)?.browserClients).toEqual([]);
+    expect(() =>
+      checkEditableChanges(withApp, [
+        { _tag: "putClient", client: client({ serviceToken: { clientId: "other.access" } }) },
+      ]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(withApp, [{ _tag: "removeClient", clientId: client().id }]),
+    ).toThrow();
+    // Undo of a rename from before the app joined keeps the token (MM-720).
+    const rename = applyChanges(withApp, [
+      { _tag: "putClient", client: client({ name: "iPhone", serviceToken: null }) },
+    ]);
+    expect(() =>
+      checkEditableChanges(rename.map, undoChanges(rename.map, rename.inverse)),
+    ).not.toThrow();
+  });
+
+  it("lets a browser key in only through an approval (MM-907)", () => {
+    const map = applyChanges(threeMachines(), [{ _tag: "putClient", client: client() }]).map;
+    const newKey = { thumbprint: "key-2", addedAt: "2026-10-02T00:00:00.000Z", describedAs: "x" };
+    expect(() =>
+      checkEditableChanges(threeMachines(), [{ _tag: "putClient", client: client() }]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(map, [{ _tag: "addClientKey", clientId: PHONE, key: newKey }]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(map, [
+        { _tag: "putClient", client: client({ keys: [...client().keys, newKey] }) },
+      ]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(map, [{ _tag: "putClient", client: client({ name: "iPhone" }) }]),
+    ).not.toThrow();
+  });
 });
 
 describe("machinesTouched", () => {
@@ -204,11 +300,13 @@ describe("places in map pixels (MM-1114)", () => {
     const old = {
       ...threeMachines(),
       machines: [{ ...machine(MAC), position: { x: 0.25, y: 0.5 } }],
+      clients: [{ ...client(), position: { x: 0.75, y: 0.25 } }],
       notes: [{ id: "n", text: "hi", color: "yellow", position: { x: 1, y: 0 } }],
       pairPlacements: [{ a: MAC, b: VPS, along: 0.5, aside: -0.2 }],
     };
     const map = decodeMap(absoluteMapJson(old));
     expect(map.machines[0]?.position).toEqual({ x: 350, y: 350 });
+    expect(map.clients[0]?.position).toEqual({ x: 1050, y: 175 });
     expect(map.notes[0]?.position).toEqual({ x: 1400, y: 0 });
     expect(map.pairPlacements[0]?.aside).toBe(-140);
     const note = { id: "n", text: "hi", color: "yellow" };
@@ -216,11 +314,22 @@ describe("places in map pixels (MM-1114)", () => {
       absoluteChangesJson([
         { _tag: "placePair", a: MAC, b: VPS, offset: null },
         { _tag: "putNote", note: { ...note, position: { x: 0.5, y: 0.5 } } },
+        { _tag: "putClient", client: { ...client(), position: { x: 0.75, y: 0.25 } } },
       ]),
     ).toEqual([
       { _tag: "placePair", a: MAC, b: VPS, offset: null },
       { _tag: "putNote", note: { ...note, position: { x: 700, y: 350 } } },
+      { _tag: "putClient", client: { ...client(), position: { x: 1050, y: 175 } } },
     ]);
+  });
+});
+
+describe("setting values (MM-405)", () => {
+  it("are equal whatever the order of object keys, so a reordered value is no override", () => {
+    expect(
+      sameValue({ a: 1, b: { c: [1, 2], d: null } }, { b: { d: null, c: [1, 2] }, a: 1 }),
+    ).toBe(true);
+    expect(sameValue([1, 2], [2, 1])).toBe(false);
   });
 });
 

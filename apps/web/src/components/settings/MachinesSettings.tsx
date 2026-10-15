@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  type ClientAccessMode,
   type MachineLevel,
   type MachineMapConnectionStatus,
   MachineMapRequestError,
@@ -9,15 +10,19 @@ import * as Schema from "effect/Schema";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
+import { isElectron } from "../../env";
 import { joinMachineMap, leaveMachineMap, useMachineMapState } from "../../state/machineMap";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 /**
  * Fork: Settings > Machines (apps/machine-map/SPEC.md MM-203, MM-1004). The state of the machine
@@ -62,6 +67,7 @@ export function MachinesSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection title="Machine map">
         <MachineMapSettingsRows />
+        {state?.joined ? <ClientAccessSettingsRow /> : null}
       </SettingsSection>
 
       {state?.joined ? (
@@ -98,6 +104,55 @@ export function MachinesSettingsPanel() {
         </SettingsSection>
       ) : null}
     </SettingsPageContainer>
+  );
+}
+
+const CLIENT_ACCESS_LABELS: Record<ClientAccessMode, string> = {
+  off: "Off",
+  observe: "Observe",
+  enforce: "Enforce",
+};
+
+/**
+ * MM-919: the way back in when `enforce` locks every browser out. The portal sets `clientAccess`
+ * on the approval path; on a machine, only its own desktop app may change it, and the portal then
+ * sends a push message.
+ */
+function ClientAccessSettingsRow() {
+  const mode = useScopedSettings((settings) => settings.clientAccess);
+  const updateSettings = useUpdateScopedSettings();
+  const { environment } = useSettingsScope();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // Only the desktop app of the selected machine itself may change it; a remote one refuses.
+  const local = isElectron && environment?.environmentId === primaryEnvironmentId;
+  return (
+    <SettingsRow
+      {...searchableSetting("machine-map-client-access")}
+      serverScoped
+      settingKeys={["clientAccess"]}
+      description="Which browsers get in through Cloudflare Access. Set it in the portal. Only the desktop app of this machine changes it here, as the way back in."
+      control={
+        <Select
+          value={mode}
+          disabled={!local}
+          onValueChange={(value) => {
+            if (value !== "off" && value !== "observe" && value !== "enforce") return;
+            updateSettings({ clientAccess: value });
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Client access">
+            <SelectValue>{CLIENT_ACCESS_LABELS[mode]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {Object.entries(CLIENT_ACCESS_LABELS).map(([value, label]) => (
+              <SelectItem key={value} hideIndicator value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
   );
 }
 

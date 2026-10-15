@@ -27,25 +27,47 @@ export function slotLayoutElements<Element extends string>(
 }
 
 /**
- * Builds the schema for one surface. Every element appears at most once, and
- * the `required` elements must appear, so a layout can never hide the parts a
- * surface depends on (for example the controls a hover reveals).
+ * The layout without the elements that this version does not know. A layout
+ * with only known elements comes back as the same object, so memos hold.
+ */
+export function knownSlotLayout<const Element extends string>(
+  layout: SlotLayout<string>,
+  elements: ReadonlyArray<Element>,
+): SlotLayout<Element> {
+  const known: ReadonlyArray<string> = elements;
+  const isKnown = (element: string): element is Element => known.includes(element);
+  const isKnownLayout = (candidate: SlotLayout<string>): candidate is SlotLayout<Element> =>
+    slotLayoutElements(candidate).every(isKnown);
+  if (isKnownLayout(layout)) return layout;
+  return {
+    rows: layout.rows.map((row) => ({
+      start: row.start.filter(isKnown),
+      end: row.end.filter(isKnown),
+    })),
+  };
+}
+
+/**
+ * Builds the stored schema for one surface. Every element appears at most
+ * once, and the `required` elements must appear, so a layout can never hide
+ * the parts a surface depends on (for example the controls a hover reveals).
+ *
+ * Element names are open strings. Every machine holds the layout, and a newer
+ * version can store an element that an older one does not know. A closed list
+ * would make an older server reject the whole settings patch, or reset every
+ * setting when it reads a newer `settings.json`. Read through `knownSlotLayout`.
  */
 // Export it when a second surface gets a layout; until then only this file uses it.
-function makeSlotLayoutSchema<const Element extends string>(
-  elements: ReadonlyArray<Element>,
-  required: ReadonlyArray<Element>,
-) {
-  const ElementSchema = Schema.Literals(elements);
+function makeSlotLayoutSchema(required: ReadonlyArray<string>) {
   const Row = Schema.Struct({
-    start: Schema.Array(ElementSchema),
-    end: Schema.Array(ElementSchema),
+    start: Schema.Array(Schema.String),
+    end: Schema.Array(Schema.String),
   });
   return Schema.Struct({
     rows: Schema.Array(Row).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_SLOT_LAYOUT_ROWS)),
   }).check(
     Schema.makeFilter(
-      (layout: SlotLayout<Element>) => {
+      (layout: SlotLayout<string>) => {
         const placed = slotLayoutElements(layout);
         return (
           new Set(placed).size === placed.length && required.every((id) => placed.includes(id))
@@ -113,17 +135,10 @@ export const REQUIRED_THREAD_CARD_ELEMENTS = [
   "status",
 ] as const satisfies ReadonlyArray<MobileThreadCardElement>;
 
-export const ThreadCardLayout = makeSlotLayoutSchema(
-  THREAD_CARD_ELEMENTS,
-  REQUIRED_THREAD_CARD_ELEMENTS,
-);
-export type ThreadCardLayout = typeof ThreadCardLayout.Type;
-
-export const MobileThreadCardLayout = makeSlotLayoutSchema(
-  MOBILE_THREAD_CARD_ELEMENTS,
-  REQUIRED_THREAD_CARD_ELEMENTS,
-);
-export type MobileThreadCardLayout = typeof MobileThreadCardLayout.Type;
+/** A stored thread card layout of either surface. */
+export const StoredThreadCardLayout = makeSlotLayoutSchema(REQUIRED_THREAD_CARD_ELEMENTS);
+export type ThreadCardLayout = SlotLayout<ThreadCardElement>;
+export type MobileThreadCardLayout = SlotLayout<MobileThreadCardElement>;
 
 /** The layout a custom card starts from: where the thread lives on top, the title below. */
 export const DEFAULT_THREAD_CARD_LAYOUT: ThreadCardLayout = {
@@ -146,8 +161,10 @@ export const DEFAULT_MOBILE_THREAD_CARD_LAYOUT: MobileThreadCardLayout = {
  * page edits both; the mobile app only reads `mobile`.
  */
 export const ThreadCardLayouts = Schema.Struct({
-  desktop: Schema.NullOr(ThreadCardLayout).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  mobile: Schema.NullOr(MobileThreadCardLayout).pipe(
+  desktop: Schema.NullOr(StoredThreadCardLayout).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  mobile: Schema.NullOr(StoredThreadCardLayout).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
 });

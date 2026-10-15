@@ -20,7 +20,7 @@ export interface Point {
 }
 
 /** The space between two cards. */
-export const GAP = 14;
+const GAP = 14;
 /** Rounds of pushing. A few machines settle in fewer; more rounds only cost time. */
 const ROUNDS = 60;
 

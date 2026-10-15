@@ -6,6 +6,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  ClientId,
   CommandDelivery,
   MachineCommandInput,
   MachineId,
@@ -149,6 +150,8 @@ export interface SignOutEverywhereResponse {
   /** Null when Cloudflare Access sessions ended. Otherwise the reason they did not. */
   readonly accessMessage: string | null;
   readonly revokeCommands: number;
+  /** Push subscriptions that the sign-out deleted. */
+  readonly pushRemoved: number;
 }
 
 /** DELETE /api/machines/:id (MM-208). Without the Cloudflare API token, the token stays in Cloudflare. */
@@ -181,7 +184,7 @@ export interface RotationsEvent {
 
 /**
  * MM-713: the emergency pause as every page shows it. Only the owner pauses, so `by` is always
- * an owner. `revision` is null when the map was already locked down.
+ * an owner. `revision` is null when every arrow, client arrow and map role was `none` already.
  */
 export const PauseState = Schema.Struct({
   pausedAt: Text,
@@ -191,11 +194,22 @@ export const PauseState = Schema.Struct({
 export type PauseState = typeof PauseState.Type;
 
 /** MM-717: an arrow that the pause set to `none`, with its level from before the pause. */
-export const CutArrow = Schema.Struct({ from: MachineId, to: MachineId, level: MachineLevel });
-export type CutArrow = typeof CutArrow.Type;
+const CutArrow = Schema.Struct({ from: MachineId, to: MachineId, level: MachineLevel });
+type CutArrow = typeof CutArrow.Type;
+
+/** MM-717: a client arrow that the pause set to `none`. */
+const CutClientArrow = Schema.Struct({
+  client: ClientId,
+  to: MachineId,
+  level: MachineLevel,
+});
 
 /** The pause as pages see it: the stored state plus the arrows it cut (MM-717). */
-export const PauseView = Schema.Struct({ ...PauseState.fields, cut: Schema.Array(CutArrow) });
+export const PauseView = Schema.Struct({
+  ...PauseState.fields,
+  cut: Schema.Array(CutArrow),
+  cutClients: Schema.Array(CutClientArrow),
+});
 export type PauseView = typeof PauseView.Type;
 
 /** Page event: the pause began (`pause` set) or ended (`pause` null). */
@@ -231,6 +245,72 @@ export type ResourceSampleEvent = typeof ResourceSampleEvent.Type;
 export const EnrolledEvent = Schema.TaggedStruct("enrolled", { machineId: MachineId });
 export type EnrolledEvent = typeof EnrolledEvent.Type;
 
+/** MM-906: a browser key that signed in and waits for the owner, or that the owner rejected. */
+export const PendingClient = Schema.Struct({
+  thumbprint: Text,
+  describedAs: Schema.String,
+  email: Schema.NullOr(Text),
+  /** The machine that reported the sign-in. */
+  seenOn: MachineId,
+  firstSeenAt: Text,
+  lastSeenAt: Text,
+  state: Schema.Literals(["pending", "rejected"]),
+});
+export type PendingClient = typeof PendingClient.Type;
+
+/** Page event with every waiting and rejected key, on connection and on each change. */
+export const PendingClientsEvent = Schema.TaggedStruct("pendingClients", {
+  pending: Schema.Array(PendingClient),
+});
+export type PendingClientsEvent = typeof PendingClientsEvent.Type;
+
+/**
+ * POST /api/grant/approve (MM-907): the key joins a new client or an existing one. The arrows
+ * of a new client start at `none` unless listed.
+ */
+export const ApproveClientRequest = Schema.Struct({
+  thumbprint: Text,
+  client: Schema.Union([
+    Schema.TaggedStruct("new", { name: Text }),
+    Schema.TaggedStruct("existing", { clientId: ClientId }),
+  ]),
+  arrows: Schema.Array(Schema.Struct({ to: MachineId, level: MachineLevel })),
+});
+export type ApproveClientRequest = typeof ApproveClientRequest.Type;
+
+/**
+ * POST /api/grant/invite (MM-913): an invite for a native app, into a new client with these
+ * arrows or into an existing client with its own arrows. A new invite ends the older ones.
+ */
+export const InviteRequest = Schema.Struct({
+  client: ApproveClientRequest.fields.client,
+  arrows: ApproveClientRequest.fields.arrows,
+});
+export type InviteRequest = typeof InviteRequest.Type;
+
+/** MM-913: a waiting invite of a native app, without its code. */
+export const ClientInvite = Schema.Struct({ clientId: ClientId, expiresAt: Text });
+export type ClientInvite = typeof ClientInvite.Type;
+
+/** Page event with every waiting invite, on connection and on each change. */
+export const ClientInvitesEvent = Schema.TaggedStruct("clientInvites", {
+  invites: Schema.Array(ClientInvite),
+});
+export type ClientInvitesEvent = typeof ClientInvitesEvent.Type;
+
+export interface InviteResponse {
+  readonly clientId: ClientId;
+  /** The QR and the link: `https://<portal>/enroll/client#code=<code>`. */
+  readonly url: string;
+  readonly expiresAt: string;
+}
+
+/** GET /api/clients/approvals (MM-1208): whether approvals work, and why not. */
+export type ApprovalsStatus =
+  /** `warning` names a token permission that another owner action needs, for example MM-903. */
+  | { readonly _tag: "ready"; readonly warning: string | null }
+  | { readonly _tag: "missing"; readonly reason: string };
+
 /** POST /api/machines/:id/thresholds (MM-1504). Null returns the machine to the defaults. */
 export const ThresholdsRequest = Schema.Struct({ thresholds: Schema.NullOr(HealthThresholds) });
 export type ThresholdsRequest = typeof ThresholdsRequest.Type;
@@ -243,6 +323,8 @@ export interface SampleResponse {
 /** Every error response has this shape. */
 export interface ApiError {
   readonly error: string;
+  /** MM-1207: the approval path needs a fresh passkey check first. */
+  readonly stepUp?: true;
 }
 
 /** Results of the agent tools that run through the portal (`toolResult.result`, MM-801). */

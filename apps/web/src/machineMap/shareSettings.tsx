@@ -28,6 +28,37 @@ const SHARE_DELAY_MS = 1_000;
 let pending: Share | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 
+type SendShare = (request: {
+  environmentId: EnvironmentId;
+  input: { server: string[]; client: Record<string, unknown> };
+}) => unknown;
+
+function queueShare(
+  send: SendShare,
+  environmentId: EnvironmentId,
+  server: readonly string[],
+  client: Record<string, unknown>,
+) {
+  if (server.length === 0 && Object.keys(client).length === 0) return;
+  if (pending !== null && pending.environmentId !== environmentId) flush();
+  pending ??= { environmentId, server: new Set(), clientSettings: {} };
+  for (const key of server) pending.server.add(key);
+  Object.assign(pending.clientSettings, client);
+  clearTimeout(timer);
+  timer = setTimeout(flush, SHARE_DELAY_MS);
+
+  function flush() {
+    const next = pending;
+    pending = null;
+    if (next === null) return;
+    // A machine off the map or offline answers `shared: false`: the save already applied.
+    void send({
+      environmentId: next.environmentId,
+      input: { server: [...next.server], client: next.clientSettings },
+    });
+  }
+}
+
 /** MM-411: call after a save for all environments, with the environments that saved it. */
 export function useShareToMachineMap() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -44,28 +75,27 @@ export function useShareToMachineMap() {
         primaryEnvironmentId;
       if (environmentId === null) return;
       const write = plan.serverWrites.find((target) => target.environmentId === environmentId);
-      const server = Object.keys(write?.patch ?? {});
-      const client = plan.hasClientWrite ? plan.clientPatch : {};
-      if (server.length === 0 && Object.keys(client).length === 0) return;
-      if (pending !== null && pending.environmentId !== environmentId) flush();
-      pending ??= { environmentId, server: new Set(), clientSettings: {} };
-      for (const key of server) pending.server.add(key);
-      Object.assign(pending.clientSettings, client);
-      clearTimeout(timer);
-      timer = setTimeout(flush, SHARE_DELAY_MS);
-
-      function flush() {
-        const next = pending;
-        pending = null;
-        if (next === null) return;
-        // A machine off the map or offline answers `shared: false`: the bulk edit already applied.
-        void share({
-          environmentId: next.environmentId,
-          input: { server: [...next.server], client: next.clientSettings },
-        });
-      }
+      queueShare(
+        share,
+        environmentId,
+        Object.keys(write?.patch ?? {}),
+        plan.hasClientWrite ? plan.clientPatch : {},
+      );
     },
     [primaryEnvironmentId, share],
+  );
+}
+
+/**
+ * MM-411 for a value that a feature saves outside T3 Settings, such as the sidebar groups: call
+ * after the save on `environmentId` succeeds, so the saved value becomes the shared value.
+ */
+export function useShareServerSettingsToMachineMap() {
+  const share = useAtomCommand(shareMachineMapSettings, { reportFailure: false });
+  return useCallback(
+    (environmentId: EnvironmentId, keys: readonly (keyof ServerSettings)[]) =>
+      queueShare(share, environmentId, keys, {}),
+    [share],
   );
 }
 
@@ -76,7 +106,11 @@ export function MachineMapSyncedMarker({ keys }: { keys: readonly (keyof ServerS
   const environmentId =
     context?.scope.kind === "environment" ? context.scope.environmentId : primaryEnvironmentId;
   const { state } = useMachineMapState(keys.length === 0 ? null : environmentId);
-  const synced = state?.desired?.settings.server ?? {};
+  // A desired state saved before the map turned off syncs nothing.
+  const synced =
+    state === null || state.connection.status === "off"
+      ? {}
+      : (state.desired?.settings.server ?? {});
   if (!keys.some((key) => Object.hasOwn(synced, key))) return null;
   return (
     <Tooltip>

@@ -1,7 +1,10 @@
 /**
  * The newest nightly of the fork for the install step of the join dialog (MM-211). Fork Release
  * publishes only pre-releases, and GitHub `releases/latest` skips them, so this reads the list.
+ * Fork Release uploads `SHA256SUMS` last, so a release with it has every installer, like the
+ * releases that a server installs (apps/server/src/fork/forkReleases.ts).
  */
+import { CLI_RELEASE_CHECKSUMS_FILE } from "@t3tools/shared/cliRelease";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -26,9 +29,11 @@ const FALLBACK: ForkRelease = {
   windowsUrl: null,
 };
 
-/** Picks the newest published release from a GitHub releases list, newest first. */
+/** Picks the newest complete published release from a GitHub releases list, newest first. */
 export function newestRelease(body: unknown): ForkRelease {
-  const release = Option.getOrUndefined(decodeReleases(body))?.find((r) => !r.draft);
+  const release = Option.getOrUndefined(decodeReleases(body))?.find(
+    (r) => !r.draft && r.assets.some((asset) => asset.name === CLI_RELEASE_CHECKSUMS_FILE),
+  );
   if (!release) return FALLBACK;
   const assetUrl = (suffix: string) =>
     release.assets.find((asset) => asset.name.endsWith(suffix))?.browser_download_url ?? null;

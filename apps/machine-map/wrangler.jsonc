@@ -10,7 +10,7 @@
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/connect", "/enroll"],
+    "run_worker_first": ["/api/*", "/connect", "/enroll", "/enroll/*", "/client/*"],
   },
   "durable_objects": {
     "bindings": [{ "name": "MAP", "class_name": "MachineMapObject" }],

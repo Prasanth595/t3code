@@ -95,6 +95,7 @@ import {
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import {
   deriveProviderSubagentStatus,
@@ -314,6 +315,7 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
+  ShieldQuestionIcon,
   TargetIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -460,7 +462,7 @@ import {
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
-import { pageAnswers, useAppOverlayStore, waitForPage } from "./AppOverlay";
+import { appOverlayUrl, runAppOverlayAction } from "./AppOverlay";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type PinnedScriptsTarget, usePinnedScriptsTargetStore } from "./PinnedScripts";
 import { useRemoteOpenState } from "~/remoteOpen";
@@ -4997,7 +4999,7 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
   const runProjectScript = useCallback(
-    async (
+    async function runScript(
       script: ProjectScript,
       options?: {
         cwd?: string;
@@ -5008,14 +5010,18 @@ export default function ChatView(props: ChatViewProps) {
         /** Where the script's preview opens. The right panel when omitted. */
         previewPresentation?: "panel" | "floating";
       },
-    ) => {
-      // An overlay action whose page already answers needs no terminal at all.
-      const overlayUrl =
-        script.previewOverlay && script.previewUrl
-          ? resolveDiscoveredServerUrl(environmentId, script.previewUrl)
-          : null;
-      if (overlayUrl !== null && (await pageAnswers(overlayUrl))) {
-        useAppOverlayStore.getState().toggle(overlayUrl, script.name);
+    ) {
+      // Fork: an overlay action shows its page in the app overlay and runs its command, in a
+      // background terminal, only when the page is down.
+      const overlayUrl = appOverlayUrl(environmentId, script);
+      if (overlayUrl !== null) {
+        await runAppOverlayAction(
+          overlayUrl,
+          script.name,
+          hasTerminalWriteAccess()
+            ? () => runScript({ ...script, previewOverlay: false, runInBackground: true }, options)
+            : undefined,
+        );
         return;
       }
       if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
@@ -5029,8 +5035,7 @@ export default function ChatView(props: ChatViewProps) {
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
-      // An overlay action starts its page's server; the overlay, not the terminal, is its view.
-      const showTerminal = shouldShowScriptTerminal(script) && overlayUrl === null;
+      const showTerminal = shouldShowScriptTerminal(script);
       // A background script gets its own terminal so it never types into a shell
       // the user is not looking at. The session stays listed in the drawer.
       // Limit: the command runs inside an interactive shell, so no exit status
@@ -5119,23 +5124,12 @@ export default function ChatView(props: ChatViewProps) {
         }
         return;
       }
-      if (overlayUrl !== null) {
-        // A hidden overlay can still hold the page of a server that stopped, for example
-        // after an upgrade. Load it again so the page matches the server that just started.
-        if (await waitForPage(overlayUrl)) {
-          useAppOverlayStore.getState().showFresh(overlayUrl, script.name);
-        } else {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: `${script.name} did not start`,
-              description: `Nothing answered at ${overlayUrl}. Its command runs in a background terminal.`,
-            }),
-          );
-        }
-        return;
-      }
-      if (script.autoOpenPreview && script.previewUrl && isPreviewSupportedInRuntime()) {
+      // Fork: an overlay action that the overlay cannot show here opens the preview instead.
+      if (
+        (script.autoOpenPreview || script.previewOverlay) &&
+        script.previewUrl &&
+        isPreviewSupportedInRuntime()
+      ) {
         const previewResult = await openUrlInPreview({
           threadRef: activeThreadRef,
           url: resolveDiscoveredServerUrl(activeThreadRef.environmentId, script.previewUrl),
@@ -7542,22 +7536,22 @@ export default function ChatView(props: ChatViewProps) {
       id: `child-input:${first.id}`,
       variant: "info",
       priority: "activity",
-      icon: <MessageCircleIcon />,
-      title:
-        childThreadInputs.length === 1
-          ? "Subagent needs input"
-          : `${childThreadInputs.length} subagents need input`,
+      icon: first.hasPendingApprovals ? <ShieldQuestionIcon /> : <MessageCircleIcon />,
+      title: childThreadInputsTitle(childThreadInputs),
       description: childThreadInputs.map((child, index) => (
         <Fragment key={child.id}>
-          {index > 0 ? ", " : null}
-          <InlineButton tone="muted" onClick={() => onOpenRelatedThread(child.id)}>
-            {child.title}
-          </InlineButton>
+          {index > 0 ? " " : null}
+          <span className="whitespace-nowrap">
+            <InlineButton tone="muted" onClick={() => onOpenRelatedThread(child.id)}>
+              {child.title}
+            </InlineButton>
+            {index < childThreadInputs.length - 1 ? "," : null}
+          </span>
         </Fragment>
       )),
       actions: (
         <Button size="xs" variant="ghost" onClick={() => onOpenRelatedThread(first.id)}>
-          Open question
+          {first.hasPendingApprovals ? "Open approval" : "Open question"}
         </Button>
       ),
     };
@@ -7732,23 +7726,26 @@ export default function ChatView(props: ChatViewProps) {
           ? undefined
           : presentation.items.map((item, index) => {
               const childThreadId = item.childThreadId;
+              const separator = index < presentation.items.length - 1 ? "," : null;
               return (
                 <Fragment key={item.taskId}>
-                  {index > 0 ? ", " : null}
+                  {index > 0 ? " " : null}
                   {childThreadId === undefined ? (
-                    <BackgroundWorkText
-                      text={item.label}
-                      cwd={gitCwd ?? undefined}
-                      threadRef={activeThreadRef}
-                    />
-                  ) : (
-                    <InlineButton
-                      tone="muted"
-                      aria-label={`Open subagent ${item.label}`}
-                      onClick={() => onOpenRelatedThread(childThreadId)}
-                    >
+                    <>
                       {item.label}
-                    </InlineButton>
+                      {separator}
+                    </>
+                  ) : (
+                    <span className="whitespace-nowrap">
+                      <InlineButton
+                        tone="muted"
+                        aria-label={`Open subagent ${item.label}`}
+                        onClick={() => onOpenRelatedThread(childThreadId)}
+                      >
+                        {item.label}
+                      </InlineButton>
+                      {separator}
+                    </span>
                   )}
                 </Fragment>
               );
@@ -11576,7 +11573,6 @@ export default function ChatView(props: ChatViewProps) {
             onNewThreadInProject={handleNewThreadInActiveProject}
             projectScripts={activeProjectScripts}
             onRunPinnedScript={canOperateTerminal ? runPinnedProjectScript : undefined}
-            onRunPinnedGlobalScript={canOperateTerminal ? runGlobalScript : undefined}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
               : {})}

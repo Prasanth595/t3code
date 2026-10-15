@@ -1,4 +1,8 @@
-import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  type PendingSubagentRequest,
+  presentThreadShell,
+} from "@t3tools/client-runtime/state/models";
+import { pendingSubagentRequestsByThread } from "@t3tools/client-runtime/state/threads";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
@@ -25,6 +29,12 @@ import {
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { toastManager } from "./ui/toast";
 
+type OnNotification = (
+  environmentId: EnvironmentId,
+  notification: Notification,
+  replaced?: "replacedByTag",
+) => void;
+
 export function ThreadNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
   const mode = useClientSettings((settings) => settings.notificationMode);
@@ -34,8 +44,10 @@ export function ThreadNotificationCoordinator() {
   const pending = useRef(
     new Map<string, { environmentId: EnvironmentId; notification: Notification }>(),
   );
-  const onNotification = useCallback((environmentId: EnvironmentId, notification: Notification) => {
-    pending.current.get(notification.tag)?.notification.close();
+  const onNotification = useCallback<OnNotification>((environmentId, notification, replaced) => {
+    // Fork: a service worker notification replaces the earlier one of its tag by itself, and
+    // closing that earlier object can close the new one, because both share the tag.
+    if (replaced !== "replacedByTag") pending.current.get(notification.tag)?.notification.close();
     pending.current.set(notification.tag, { environmentId, notification });
     setNotificationBadge(pending.current.size);
   }, []);
@@ -91,6 +103,7 @@ export function ThreadNotificationCoordinator() {
 
 interface NotificationState {
   readonly raw: OrchestrationV2ThreadShell;
+  readonly subagentRequest: PendingSubagentRequest | null;
   readonly attention: string | null;
   readonly completion: number | null;
 }
@@ -100,7 +113,7 @@ function EnvironmentNotifications({
   onNotification,
 }: {
   environmentId: EnvironmentId;
-  onNotification: (environmentId: EnvironmentId, notification: Notification) => void;
+  onNotification: OnNotification;
 }) {
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
   // The shell reducer keeps the thread list and unchanged thread objects
@@ -123,15 +136,18 @@ function EnvironmentNotifications({
       return;
     }
     const next = new Map<ThreadId, NotificationState>();
+    // Subagents are skipped below, so their requests notify through the thread above them.
+    const subagentRequests = pendingSubagentRequestsByThread(threads);
     for (const rawThread of threads) {
       if (rawThread.lineage.relationshipToParent === "subagent") continue;
       const prior = previous.current.get(rawThread.id);
+      const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
       // The same object cannot produce a new notification.
-      if (prior?.raw === rawThread) {
+      if (prior?.raw === rawThread && prior.subagentRequest === subagentRequest) {
         next.set(rawThread.id, prior);
         continue;
       }
-      const thread = presentThreadShell(environmentId, rawThread);
+      const thread = presentThreadShell(environmentId, rawThread, subagentRequest);
       let status = resolveSidebarThreadStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
       const attention =
@@ -146,7 +162,7 @@ function EnvironmentNotifications({
         Number.isFinite(completedAt)
           ? completedAt
           : (prior?.completion ?? null);
-      next.set(thread.id, { raw: rawThread, attention, completion });
+      next.set(thread.id, { raw: rawThread, subagentRequest, attention, completion });
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
         attention && attention !== prior.attention
@@ -243,7 +259,7 @@ function EnvironmentNotifications({
             void navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } }),
         )
           .then((shown) => {
-            if (shown) onNotification(environmentId, shown);
+            if (shown) onNotification(environmentId, shown, "replacedByTag");
           })
           .catch(() => undefined);
       }

@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts/machineMap";
 
 import { applyChanges, findArrow } from "../rules/map.ts";
-import { lockdownChanges, LOCKDOWN_SUMMARY, PAUSE_SUMMARY } from "../rules/presets.ts";
+import { pauseChanges, LOCKDOWN_SUMMARY, PAUSE_SUMMARY } from "../rules/presets.ts";
 import { MAC, machine, threeMachines, VPS, WIN } from "../rules/testMap.ts";
 import {
   classifyRevision,
@@ -61,7 +61,7 @@ describe("classifyRevision (MM-715)", () => {
 
   it("reads the summaries that the portal writes for pause and lockdown", () => {
     const raised = applyChanges(map, [arrowTo("admin")]).map;
-    const changes = lockdownChanges(raised);
+    const changes = pauseChanges(raised);
     expect(classifyRevision(revision(raised, changes, { summary: PAUSE_SUMMARY }))).toBe("pause");
     expect(classifyRevision(revision(raised, changes, { summary: LOCKDOWN_SUMMARY }))).toBe(
       "lockdown",

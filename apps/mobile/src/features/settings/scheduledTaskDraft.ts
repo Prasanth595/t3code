@@ -139,6 +139,8 @@ export type ScheduledTaskDraft = {
   readonly projectId: ProjectId | null;
   readonly modelSelection: ModelSelection | null;
   readonly modelSelectionIsExplicit: boolean;
+  /** Runs resolve the project default model at run time; `modelSelection` is then unused. */
+  readonly useProjectDefaultModel: boolean;
   readonly schedule: ScheduleDraft;
   readonly workspace: Workspace;
   readonly baseRef: string;
@@ -153,6 +155,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.title,
     draft.prompt,
     draft.projectId,
+    draft.useProjectDefaultModel,
     draft.modelSelection?.instanceId,
     draft.modelSelection?.model,
     [...(draft.modelSelection?.options ?? [])]
@@ -190,6 +193,7 @@ export function createDraft(
     projectId,
     modelSelection,
     modelSelectionIsExplicit: false,
+    useProjectDefaultModel: false,
     schedule: DEFAULT_SCHEDULE,
     workspace: "worktree",
     baseRef: "main",
@@ -207,7 +211,8 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     prompt: task.prompt,
     projectId: task.projectId,
     modelSelection: task.modelSelection,
-    modelSelectionIsExplicit: true,
+    modelSelectionIsExplicit: task.useProjectDefaultModel !== true,
+    useProjectDefaultModel: task.useProjectDefaultModel === true,
     schedule: scheduleDraftForTask(task),
     workspace: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",

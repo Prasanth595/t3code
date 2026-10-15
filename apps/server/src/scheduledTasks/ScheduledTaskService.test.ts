@@ -18,6 +18,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
@@ -114,7 +115,9 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
       yield* insertRow(sql, { ...row, prompt: secret }, now);
     }
     const warnings: unknown[] = [];
-    const tasks = yield* ScheduledTaskService.listDueTasks(DateTime.makeUnsafe(now)).pipe(
+    const tasks = yield* ScheduledTaskService.listDueTasks(DateTime.makeUnsafe(now), () => {
+      throw new Error("No project default task in this test.");
+    }).pipe(
       Effect.provide(
         Logger.layer([
           Logger.make(({ message }) => {
@@ -212,6 +215,7 @@ it.effect(
                     ),
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                ServerSettings.layerTest(),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,
@@ -318,6 +322,7 @@ it.effect(
                     ),
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                ServerSettings.layerTest(),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,

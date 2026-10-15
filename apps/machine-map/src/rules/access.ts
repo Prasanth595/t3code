@@ -2,16 +2,27 @@
  * Pure rules for arrows and for agent writes: build an arrow change (MM-304), the map role that a
  * tool needs (MM-802) and the self-escalation check (MM-803).
  */
-import type {
-  ArrowRecord,
-  MachineId,
-  MachineLevel,
-  MachineMapDocument,
-  MapChange,
-  MapToolName,
+import {
+  type ArrowRecord,
+  type ClientArrowRecord,
+  type ClientId,
+  isOwnerOnlySetting,
+  type MachineId,
+  type MachineLevel,
+  type MachineMapDocument,
+  type MapChange,
+  type MapToolName,
 } from "@t3tools/contracts/machineMap";
 
-import { applyChanges, findArrow, findMachine, levelRank, roleRank } from "./map.ts";
+import {
+  applyChanges,
+  findArrow,
+  findClient,
+  findClientArrow,
+  findMachine,
+  levelRank,
+  roleRank,
+} from "./map.ts";
 
 /** MM-1103: the one wording of an arrow everywhere: the source first, then the target. */
 export const usesText = (from: string, to: string): string => `${from} uses ${to}`;
@@ -44,12 +55,36 @@ export function arrowChange(map: MachineMapDocument, input: ArrowInput): MapChan
   return { _tag: "setArrow", arrow };
 }
 
-const permanentLevel = (arrow: ArrowRecord): MachineLevel => arrow.revertLevel ?? arrow.level;
+interface ClientArrowInput {
+  readonly client: ClientId;
+  readonly to: MachineId;
+  readonly level: MachineLevel;
+  /** Null makes the level permanent. */
+  readonly expiresAt: string | null;
+}
 
-/** True when `next` gives the source machine more access than `previous`, now or later. */
-export function arrowRaises(previous: ArrowRecord, next: ArrowRecord): boolean {
+/** MM-309, MM-304: a client arrow keeps its first permanent level like a machine arrow. */
+export function clientArrowChange(map: MachineMapDocument, input: ClientArrowInput): MapChange {
+  const current = findClientArrow(map, input.client, input.to);
+  return {
+    _tag: "setClientArrow",
+    arrow: {
+      client: input.client,
+      to: input.to,
+      level: input.level,
+      expiresAt: input.expiresAt,
+      revertLevel: input.expiresAt === null ? null : (current.revertLevel ?? current.level),
+    },
+  };
+}
+
+type Leveled = Pick<ArrowRecord, "level" | "expiresAt" | "revertLevel">;
+
+const permanentLevel = (arrow: Leveled): MachineLevel => arrow.revertLevel ?? arrow.level;
+
+/** True when `next` gives the source more access than `previous`, now or later. */
+function levelRaises(previous: Leveled, next: Leveled): boolean {
   if (levelRank(next.level) > levelRank(previous.level)) return true;
-  if (next.agentTools && !previous.agentTools) return true;
   if (levelRank(permanentLevel(next)) > levelRank(permanentLevel(previous))) return true;
   // A longer temporary grant above the permanent level is also more access.
   if (next.expiresAt !== null && levelRank(next.level) > levelRank(permanentLevel(previous))) {
@@ -59,6 +94,56 @@ export function arrowRaises(previous: ArrowRecord, next: ArrowRecord): boolean {
   }
   return false;
 }
+
+/** True when `next` gives the source machine more access than `previous`, now or later. */
+export const arrowRaises = (previous: ArrowRecord, next: ArrowRecord): boolean =>
+  levelRaises(previous, next) || (next.agentTools && !previous.agentTools);
+
+/** True when `next` gives the client more access than `previous`, now or later. */
+export const clientArrowRaises = (previous: ClientArrowRecord, next: ClientArrowRecord): boolean =>
+  levelRaises(previous, next);
+
+/** True when a client change gives more access: a higher arrow, a new key or a new app token. */
+function clientRaises(map: MachineMapDocument, change: MapChange): boolean {
+  if (change._tag === "setClientArrow") {
+    return clientArrowRaises(
+      findClientArrow(map, change.arrow.client, change.arrow.to),
+      change.arrow,
+    );
+  }
+  if (change._tag === "addClientKey")
+    return map.clientArrows.some((arrow) => arrow.client === change.clientId);
+  // A new client has no arrows yet; its arrows count as their own changes.
+  if (change._tag !== "putClient") return false;
+  const previous = findClient(map, change.client.id);
+  const newToken =
+    change.client.serviceToken !== null &&
+    change.client.serviceToken.clientId !== previous?.serviceToken?.clientId;
+  return newToken && map.clientArrows.some((arrow) => arrow.client === change.client.id);
+}
+
+/** MM-807: client changes that only the owner makes. */
+export const touchesClients = (changes: ReadonlyArray<MapChange>): boolean =>
+  changes.some(
+    (change) =>
+      change._tag === "putClient" ||
+      change._tag === "removeClient" ||
+      change._tag === "addClientKey" ||
+      change._tag === "removeClientKey" ||
+      change._tag === "setClientArrow",
+  );
+
+/** MM-919: changes of settings that only the owner makes, on the approval path. */
+export const touchesOwnerOnlySettings = (changes: ReadonlyArray<MapChange>): boolean =>
+  changes.some(
+    (change) => change._tag === "setSetting" && isOwnerOnlySetting(change.scope, change.key),
+  );
+
+/** MM-711, MM-919: leaving `enforce` lets browsers in again, so only `enforce` is not a raise. */
+const leavesEnforce = (change: MapChange): boolean =>
+  change._tag === "setSetting" &&
+  isOwnerOnlySetting(change.scope, change.key) &&
+  !(change.present && change.value === "enforce");
 
 /**
  * True when the changes raise access for a machine that `concerns` picks: a higher level or agent
@@ -92,14 +177,26 @@ export const raisesOwnAccess = (
   changes: ReadonlyArray<MapChange>,
 ): boolean => raises(map, changes, (id) => id === machineId);
 
-/** MM-710: true when the changes raise an arrow or a map role of any machine. */
-export const raisesAnyAccess = (
+/**
+ * MM-711: true when the changes raise an arrow or a map role of any machine, or any client, or
+ * set `clientAccess` to anything but `enforce`.
+ */
+export function raisesAnyAccess(
   map: MachineMapDocument,
   changes: ReadonlyArray<MapChange>,
-): boolean => raises(map, changes, () => true);
+): boolean {
+  if (raises(map, changes, () => true)) return true;
+  if (changes.some(leavesEnforce)) return true;
+  let current = map;
+  for (const change of changes) {
+    if (clientRaises(current, change)) return true;
+    current = applyChanges(current, [change]).map;
+  }
+  return false;
+}
 
 /** MM-802. Commands are not map changes, so a proposal cannot hold them: they need `edit`. */
-export const requiredRole = (tool: MapToolName): "read" | "propose" | "edit" => {
+const requiredRole = (tool: MapToolName): "read" | "propose" | "edit" => {
   switch (tool) {
     case "machines_read":
     case "machines_resources":

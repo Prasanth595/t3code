@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   backgroundWorkFromNotification,
   backgroundWorkFromPendingTask,
+  linksOnlyMarkdown,
   resolveBackgroundWorkDetails,
 } from "./BackgroundWorkDetails.logic.ts";
 
@@ -112,5 +113,15 @@ describe("resolveBackgroundWorkDetails", () => {
         summary: "T3 Code restarted and resumed this turn",
       }),
     ).toBeNull();
+  });
+});
+
+describe("linksOnlyMarkdown", () => {
+  it("keeps only real links as markdown, so a command shows as written", () => {
+    expect(linksOnlyMarkdown("rm -rf build/*_old # cleanup")).toBeNull();
+    expect(linksOnlyMarkdown("Watch [the log](/tmp/a_b.log) for *_x_*")).toBe(
+      "Watch [the log](/tmp/a_b.log) for \\*\\_x\\_\\*",
+    );
+    expect(linksOnlyMarkdown("[a] b [c d](not a link)")).toBeNull();
   });
 });

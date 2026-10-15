@@ -8,9 +8,10 @@ import {
   gateTool,
   raisesAnyAccess,
   raisesOwnAccess,
+  touchesOwnerOnlySettings,
 } from "./access.ts";
-import { applyChanges, findArrow } from "./map.ts";
-import { MAC, machine, threeMachines, VPS } from "./testMap.ts";
+import { applyChanges, findArrow, findClientArrow } from "./map.ts";
+import { client, MAC, machine, PHONE, threeMachines, VPS } from "./testMap.ts";
 
 const withRole = (role: "none" | "read" | "propose" | "edit"): MachineMapDocument => ({
   ...threeMachines(),
@@ -135,5 +136,45 @@ describe("raisesAnyAccess (MM-711)", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it("flags a raised client arrow and a new key on a client that has access", () => {
+    const withClient = applyChanges(withRole("edit"), [
+      { _tag: "putClient", client: client() },
+      {
+        _tag: "setClientArrow",
+        arrow: { client: PHONE, to: MAC, level: "read", expiresAt: null, revertLevel: null },
+      },
+    ]).map;
+    const raise = {
+      _tag: "setClientArrow" as const,
+      arrow: { ...findClientArrow(withClient, PHONE, MAC), level: "admin" as const },
+    };
+    const newKey = {
+      _tag: "addClientKey" as const,
+      clientId: PHONE,
+      key: { thumbprint: "key-2", addedAt: "", describedAs: "Chrome" },
+    };
+    expect(raisesAnyAccess(withClient, [raise])).toBe(true);
+    expect(raisesAnyAccess(withClient, [newKey])).toBe(true);
+    expect(raisesAnyAccess(withClient, [{ _tag: "removeClient", clientId: PHONE }])).toBe(false);
+  });
+});
+
+describe("clientAccess is owner-only (MM-919)", () => {
+  it("is a change that agents cannot make, and leaving enforce raises access", () => {
+    const set = (value: string) => ({
+      _tag: "setSetting" as const,
+      machineId: MAC,
+      scope: "server" as const,
+      key: "clientAccess",
+      present: true,
+      value,
+    });
+    expect(touchesOwnerOnlySettings([set("enforce")])).toBe(true);
+    expect(touchesOwnerOnlySettings([{ ...set("x"), key: "preferOriginRemote" }])).toBe(false);
+    // MM-711: while paused, only a move to enforce goes through.
+    expect(raisesAnyAccess(threeMachines(), [set("off")])).toBe(true);
+    expect(raisesAnyAccess(threeMachines(), [set("enforce")])).toBe(false);
   });
 });

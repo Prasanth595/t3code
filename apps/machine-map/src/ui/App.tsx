@@ -8,9 +8,10 @@ import type {
 } from "@t3tools/contracts/machineMap";
 
 import type { HistoryResponse, WriteResult } from "../api.ts";
+import { touchesOwnerOnlySettings } from "../rules/access.ts";
 import { applyChanges } from "../rules/map.ts";
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
-import { callApi } from "./apiClient.ts";
+import { callApi, StepUpNeeded } from "./apiClient.ts";
 import {
   PortalContext,
   type CommandOptions,
@@ -59,7 +60,23 @@ interface Notice {
   readonly text: string;
   /** The revision that Undo reverses (MM-703). */
   readonly undo?: number;
+  /** MM-919: the change needs a fresh passkey check first (MM-1207). */
+  readonly passkey?: true;
 }
+
+/** MM-919: owner-only settings go on the approval path, everything else on the plain one. */
+const changesPath = (changes: ReadonlyArray<MapChange>): string =>
+  touchesOwnerOnlySettings(changes) ? "/api/grant/changes" : "/api/changes";
+
+/** The notice of a failed write. A missing passkey check offers the check. */
+const failedNotice = (error: unknown): Notice =>
+  error instanceof StepUpNeeded
+    ? {
+        kind: "error",
+        text: "Confirm with your passkey, then make the change again.",
+        passkey: true,
+      }
+    : { kind: "error", text: errorText(error) };
 
 /** The revision of an applied write, so its notice can offer Undo. */
 const appliedRevision = (result: unknown): number | undefined =>
@@ -95,7 +112,7 @@ function SignInAgain() {
   );
 }
 
-/** MM-1805: the app icon counts what needs the owner: Inbox proposals and active health alerts. */
+/** MM-1805: the app icon counts what needs the owner: proposals, waiting sign-ins and alerts. */
 function useAppBadge(count: number) {
   useEffect(() => {
     if (!("setAppBadge" in navigator)) return;
@@ -174,7 +191,10 @@ export function App() {
 
   const snapshot = state.snapshot;
   const proposals = snapshot?.proposals.length ?? 0;
-  useAppBadge(proposals + state.health.alerts.filter((alert) => alert.endedAt === null).length);
+  const waiting = (state.pending ?? []).filter((p) => p.state === "pending").length;
+  useAppBadge(
+    proposals + waiting + state.health.alerts.filter((alert) => alert.endedAt === null).length,
+  );
   useEffect(() => {
     const parts = [VIEW_LABEL[route.view], "T3 machines"];
     if (state.pause) parts.unshift("Paused");
@@ -241,7 +261,7 @@ export function App() {
         const undo = appliedRevision(result);
         setNotice(undo === undefined ? { kind: "ok", text } : { kind: "ok", text, undo });
       })
-      .catch((error: unknown) => setNotice({ kind: "error", text: errorText(error) }));
+      .catch((error: unknown) => setNotice(failedNotice(error)));
   };
 
   const select = (selection: Selection, view?: View) => {
@@ -264,14 +284,17 @@ export function App() {
       return { _tag: "held" };
     }
     try {
-      const result = await callApi<WriteResult>("POST", "/api/changes", { summary, changes });
+      const result = await callApi<WriteResult>("POST", changesPath(changes), {
+        summary,
+        changes,
+      });
       if (result._tag === "proposed")
         setNotice({ kind: "ok", text: "The change waits in the Inbox." });
       else if (!options?.quiet)
         setNotice({ kind: "ok", text: `${summary}.`, undo: result.revision });
       return result;
     } catch (error) {
-      setNotice({ kind: "error", text: errorText(error) });
+      setNotice(failedNotice(error));
       return { _tag: "failed" };
     }
   };
@@ -319,6 +342,8 @@ export function App() {
     pause: state.pause,
     health: state.health,
     joins: state.joins,
+    pending: state.pending,
+    invites: state.invites,
     draft,
     now,
     route,
@@ -357,10 +382,11 @@ export function App() {
       draft.length === 1
         ? (draft[0]?.summary ?? "Draft")
         : `${draft.length} changes: ${draft.map((d) => d.summary).join("; ")}`;
+    const changes = draft.flatMap((d) => d.changes);
     call(async () => {
-      const result = await callApi<WriteResult>("POST", "/api/changes", {
+      const result = await callApi<WriteResult>("POST", changesPath(changes), {
         summary,
-        changes: draft.flatMap((d) => d.changes),
+        changes,
       });
       setDraft(null);
       return result;
@@ -371,7 +397,11 @@ export function App() {
     (sum, m) => sum + machineQueue(snapshot, state.rotations, m).count,
     0,
   );
-  const counts: Partial<Record<View, number>> = { queue: queued, inbox: proposals };
+  const counts: Partial<Record<View, number>> = {
+    queue: queued,
+    inbox: proposals,
+    clients: waiting,
+  };
   const hasPanel = route.selection._tag !== "none";
 
   const view = (() => {
@@ -546,6 +576,17 @@ export function App() {
               >
                 <UndoIcon />
                 Undo
+              </button>
+            )}
+            {notice.passkey === true && (
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => {
+                  location.href = `/api/grant/start?then=${encodeURIComponent(location.hash)}`;
+                }}
+              >
+                Confirm with passkey
               </button>
             )}
             <button

@@ -129,6 +129,7 @@ const EMPTY_DRAFT: DraftState = {
   startFromOrigin: true,
   existingWorktreePath: "",
   modelKey: "",
+  useProjectDefaultModel: false,
   runtimeMode: "full-access",
   interactionMode: "default",
   baseModelSelection: null,
@@ -912,7 +913,7 @@ function ScheduledTaskEditorDialog({
     }
     // Keep the original selection object (with provider options) when the
     // picker still points at the same instance+model.
-    const modelSelection =
+    const modelSelection: ModelSelection =
       draft.baseModelSelection !== null &&
       draft.baseModelSelection.instanceId === selection.instanceId &&
       draft.baseModelSelection.model === selection.model
@@ -938,6 +939,7 @@ function ScheduledTaskEditorDialog({
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
       modelSelection,
+      ...(draft.useProjectDefaultModel ? { useProjectDefaultModel: true } : {}),
       runtimeMode: draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
@@ -1130,10 +1132,28 @@ function ScheduledTaskEditorDialog({
             </Field>
 
             <Field label="Model">
-              <div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0 space-y-1">
+                    <Label htmlFor="scheduled-task-project-default-model">
+                      Use project default model
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      Each run uses the project default model at that time. A run that posts into a
+                      thread keeps that thread's model.
+                    </p>
+                  </div>
+                  <Switch
+                    id="scheduled-task-project-default-model"
+                    checked={draft.useProjectDefaultModel}
+                    onCheckedChange={(useProjectDefaultModel) =>
+                      setDraft((current) => ({ ...current, useProjectDefaultModel }))
+                    }
+                  />
+                </div>
                 <ProviderModelPicker
                   environmentId={environmentId}
-                  disabled={saving || !connected}
+                  disabled={saving || !connected || draft.useProjectDefaultModel}
                   activeInstanceId={activeInstanceId}
                   model={activeModel}
                   lockedProvider={null}

@@ -298,6 +298,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "thread-card-layout",
     title: "Custom card layout",
     to: "/settings/appearance",
+    scope: "environment-defaults",
     searchTerms: ["thread card sidebar compact density rows builder layout mobile branch"],
   },
   {
@@ -509,6 +510,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "recover-interrupted-turns",
     title: "Recover interrupted agents",
     to: "/settings/general",
+    scope: "environment-defaults",
     searchTerms: [
       "recover continue resume restart crash update quit interrupted agent subagent message background",
     ],
@@ -1173,6 +1175,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Machine map",
     to: "/settings/machines",
     searchTerms: ["portal join code leave connection status cloudflare access token tunnel"],
+  },
+  {
+    id: "machine-map-client-access",
+    title: "Client access",
+    to: "/settings/machines",
+    searchTerms: ["browser clients enforce observe approval cloudflare access lockout way back in"],
   },
   {
     id: "machine-map-reachable",

@@ -1,7 +1,8 @@
 /**
  * The Cloudflare API calls of the portal (MM-1205). The token needs "Access: Service Tokens Edit"
  * and "Access: Apps and Policies Edit". The machine tunnels (MM-213) also need "Cloudflare Tunnel:
- * Edit" on the account and "DNS: Edit" on the zone of the machine hostnames.
+ * Edit" on the account and "DNS: Edit" on the zone of the machine hostnames. Client approvals
+ * (MM-1208) also need "Access: Organizations, Identity Providers, and Groups Read".
  * Field names come from the Cloudflare OpenAPI spec of the Access, Tunnel and DNS endpoints.
  */
 import * as Schema from "effect/Schema";
@@ -97,11 +98,104 @@ const decodeRecord = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schem
 const READ_ONLY_APP_FIELDS = ["id", "uid", "aud", "created_at", "updated_at"];
 const READ_ONLY_POLICY_FIELDS = ["uid", "created_at", "updated_at", "reusable"];
 
+/** MM-1208: the Access app of the approval path. */
+const APPROVALS_APP_NAME = "t3 portal approvals";
+/** MM-1207: the path that needs a fresh MFA. */
+export const APPROVALS_PATH = "/api/grant";
+/** MM-1207: the longest app session and MFA session of the approval path. */
+export const APPROVALS_MAX_SECONDS = 10 * 60;
+const APPROVALS_DURATION = "10m";
+const APPROVALS_AUTHENTICATORS = ["biometrics", "security_key"];
+
+const decodeApprovalsApp = Schema.decodeUnknownSync(
+  Schema.Struct({
+    id: Schema.String,
+    aud: Schema.String,
+    type: Schema.optionalKey(Schema.String),
+    session_duration: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    path_cookie_attribute: Schema.optionalKey(Schema.Boolean),
+    destinations: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ type: Schema.String, uri: Schema.optionalKey(Schema.String) })),
+    ),
+    mfa_config: Schema.optionalKey(
+      Schema.Struct({
+        mfa_disabled: Schema.optionalKey(Schema.Boolean),
+        session_duration: Schema.optionalKey(Schema.String),
+        allowed_authenticators: Schema.optionalKey(Schema.Array(Schema.String)),
+      }),
+    ),
+    policies: Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          decision: Schema.String,
+          include: Schema.Array(Schema.Unknown),
+          exclude: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+          require: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+        }),
+      ),
+    ),
+  }),
+);
+const decodeApprovalsApps = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+);
+const decodeOrganization = Schema.decodeUnknownSync(
+  Schema.Struct({
+    mfa_config: Schema.optionalKey(
+      Schema.Struct({ allowed_authenticators: Schema.optionalKey(Schema.Array(Schema.String)) }),
+    ),
+  }),
+);
+const decodeEmailRule = Schema.decodeUnknownOption(
+  Schema.Struct({ email: Schema.Struct({ email: Schema.String }) }),
+);
+
+const UNIT_SECONDS: Readonly<Record<string, number>> = { h: 3600, m: 60, s: 1, ms: 0.001 };
+
+/**
+ * Seconds of a Go duration such as `10m` or `1h30m`, as the Access API writes them. Null for a
+ * value it cannot read, so a strange value fails the check instead of passing it.
+ */
+function durationSeconds(text: string): number | null {
+  let total = 0;
+  let digits = "";
+  let unit = "";
+  const flush = (): boolean => {
+    const factor = UNIT_SECONDS[unit];
+    if (digits === "" || factor === undefined) return false;
+    total += Number(digits) * factor;
+    digits = "";
+    unit = "";
+    return true;
+  };
+  for (const char of text.trim()) {
+    const isDigit = (char >= "0" && char <= "9") || char === ".";
+    if (isDigit && unit !== "" && !flush()) return null;
+    if (isDigit) digits += char;
+    else unit += char;
+  }
+  return text.trim() !== "" && flush() ? total : null;
+}
+
+export type ApprovalsApp = ReturnType<typeof decodeApprovalsApp>;
+
 /** The CNAME target of a tunnel. */
 export const tunnelTarget = (tunnelId: string): string => `${tunnelId}.cfargotunnel.com`;
 
-/** The app policy that holds every machine token. The portal edits no other policy. */
-export const MACHINE_POLICY_NAME = "t3 machine map tokens";
+/** The app policy that holds every machine token. */
+const MACHINE_POLICY_NAME = "t3 machine map tokens";
+/**
+ * MM-911: the policy of the machine hostnames app that holds the app tokens of native clients.
+ * It is never on the `/connect` app, so a client token cannot connect as a machine. The portal
+ * edits no other policy.
+ */
+export const CLIENT_POLICY_NAME = "t3 client tokens";
+/** MM-914: the Access app of `/client`, where a native app reads its machines with its token. */
+const CLIENT_APP_NAME = "t3 portal client tokens";
+/** MM-914: the path of that app. */
+export const CLIENT_PATH = "/client";
+/** MM-913: the invite path. The Bypass Access app of `/enroll` covers it; the code is the credential. */
+export const INVITE_PATH = "/enroll/client";
 
 export interface OwnerSession {
   readonly name: string;
@@ -113,6 +207,26 @@ export interface OwnerSession {
 
 const isoFromSeconds = (seconds: number | undefined): string | null =>
   seconds === undefined ? null : new Date(seconds * 1000).toISOString();
+
+/** A refused Cloudflare API call, with its HTTP status. */
+/** An address under the reserved `.invalid` domain: no Access user can have it. */
+const REVOKE_PROBE_EMAIL = "permission-check@t3-machine-map.invalid";
+
+export class CloudflareApiError extends Error {
+  override readonly name = "CloudflareApiError";
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** Runs a delete that may meet a resource that is gone already. A 404 counts as done. */
+export const goneIsDone = (work: Promise<void>): Promise<void> =>
+  work.catch((error: unknown) => {
+    if (error instanceof CloudflareApiError && error.status === 404) return;
+    throw error;
+  });
 
 export class CloudflareApi {
   readonly #token: string;
@@ -147,7 +261,10 @@ export class CloudflareApi {
     const envelope = decodeEnvelope(await response.json());
     if (!response.ok || !envelope.success) {
       const detail = envelope.errors.map((e) => `${e.code} ${e.message}`).join("; ");
-      throw new Error(`Cloudflare API ${method} ${path} failed: ${detail || response.status}`);
+      throw new CloudflareApiError(
+        response.status,
+        `Cloudflare API ${method} ${path} failed: ${detail || response.status}`,
+      );
     }
     return decode(envelope.result);
   }
@@ -195,18 +312,20 @@ export class CloudflareApi {
     return tokens.find((token) => token.client_id === clientId)?.id ?? null;
   }
 
-  async #machinePolicy(appId: string): Promise<Policy | undefined> {
+  async #tokenPolicy(appId: string, name: string): Promise<Policy | undefined> {
     const policies = await this.#call("GET", `/access/apps/${appId}/policies`, decodePolicies);
-    return policies.find((policy) => policy.name === MACHINE_POLICY_NAME);
+    return policies.find((policy) => policy.name === name);
   }
 
-  /** MM-201: adds the token to the machine token policy of the app. Creates the policy once. */
-  async addTokenToApp(appId: string, tokenId: string): Promise<void> {
+  /**
+   * MM-201, MM-911: adds the token to the token policy `name` of the app. Creates the policy once.
+   */
+  async addTokenToApp(appId: string, tokenId: string, name = MACHINE_POLICY_NAME): Promise<void> {
     const rule = { service_token: { token_id: tokenId } };
-    const policy = await this.#machinePolicy(appId);
+    const policy = await this.#tokenPolicy(appId, name);
     if (!policy) {
       await this.#call("POST", `/access/apps/${appId}/policies`, ignoreResult, {
-        name: MACHINE_POLICY_NAME,
+        name,
         decision: "non_identity",
         include: [rule],
       });
@@ -216,9 +335,13 @@ export class CloudflareApi {
     await this.#putPolicy(appId, policy, [...policy.include, rule]);
   }
 
-  /** MM-208: removes the token from the policy. An empty policy is deleted. */
-  async removeTokenFromApp(appId: string, tokenId: string): Promise<void> {
-    const policy = await this.#machinePolicy(appId);
+  /** MM-208, MM-915: removes the token from the policy `name`. An empty policy is deleted. */
+  async removeTokenFromApp(
+    appId: string,
+    tokenId: string,
+    name = MACHINE_POLICY_NAME,
+  ): Promise<void> {
+    const policy = await this.#tokenPolicy(appId, name);
     if (!policy) return;
     const include = policy.include.filter((rule) => ruleTokenId(rule) !== tokenId);
     if (include.length === policy.include.length) return;
@@ -276,6 +399,23 @@ export class CloudflareApi {
   /** MM-903: ends every Access session of the owner. */
   async revokeOwner(email: string): Promise<void> {
     await this.#call("POST", "/access/organizations/revoke_user", ignoreResult, { email });
+  }
+
+  /**
+   * MM-1208: whether the token may end Access sessions ("Access: Organizations Revoke"). It ends the
+   * sessions of an address that no one can own (`.invalid`), so it signs out no one. Only a refusal
+   * counts as missing; any other answer counts as allowed.
+   */
+  async canRevokeSessions(): Promise<boolean> {
+    try {
+      await this.revokeOwner(REVOKE_PROBE_EMAIL);
+      return true;
+    } catch (error) {
+      return !(
+        error instanceof CloudflareApiError &&
+        (error.status === 401 || error.status === 403)
+      );
+    }
   }
 
   // ---------------------------------------------------------------- MM-213: machine tunnels
@@ -354,6 +494,85 @@ export class CloudflareApi {
     await this.#request("DELETE", `/zones/${zoneId}/dns_records/${recordId}`, ignoreResult);
   }
 
+  /**
+   * MM-1208: creates the Access app of the approval path with a fresh MFA, or makes it again when
+   * someone changed it. Returns its id and audience.
+   */
+  async ensureApprovalsApp(host: string, owners: ReadonlyArray<string>): Promise<ApprovalsApp> {
+    const found = await this.#call(
+      "GET",
+      `/access/apps?name=${encodeURIComponent(APPROVALS_APP_NAME)}&exact=true`,
+      decodeApprovalsApps,
+    );
+    for (const app of found.filter((a) => a.name === APPROVALS_APP_NAME)) {
+      const current = await this.approvalsApp(app.id);
+      if (approvalsAppProblem(current, host, owners) === null) return current;
+      await this.#call("DELETE", `/access/apps/${app.id}`, ignoreResult);
+    }
+    const domain = `${host}${APPROVALS_PATH}`;
+    return this.#call("POST", "/access/apps", decodeApprovalsApp, {
+      type: "self_hosted",
+      name: APPROVALS_APP_NAME,
+      domain,
+      destinations: [{ type: "public", uri: domain }],
+      session_duration: APPROVALS_DURATION,
+      path_cookie_attribute: true,
+      app_launcher_visible: false,
+      mfa_config: {
+        mfa_disabled: false,
+        session_duration: APPROVALS_DURATION,
+        allowed_authenticators: APPROVALS_AUTHENTICATORS,
+      },
+      policies: [
+        {
+          name: "t3 owner",
+          decision: "allow",
+          include: owners.map((email) => ({ email: { email } })),
+        },
+      ],
+    });
+  }
+
+  /**
+   * MM-914: creates the Access app of `/client` once. It lets in any service token of the account;
+   * the Worker then accepts only the token of a client. Returns its audience.
+   */
+  async ensureClientTokensApp(host: string): Promise<string> {
+    const found = await this.#call(
+      "GET",
+      `/access/apps?name=${encodeURIComponent(CLIENT_APP_NAME)}&exact=true`,
+      decodeApprovalsApps,
+    );
+    const existing = found.find((a) => a.name === CLIENT_APP_NAME);
+    if (existing) return (await this.approvalsApp(existing.id)).aud;
+    const domain = `${host}${CLIENT_PATH}`;
+    const app = await this.#call("POST", "/access/apps", decodeApprovalsApp, {
+      type: "self_hosted",
+      name: CLIENT_APP_NAME,
+      domain,
+      destinations: [{ type: "public", uri: domain }],
+      app_launcher_visible: false,
+      policies: [
+        {
+          name: CLIENT_POLICY_NAME,
+          decision: "non_identity",
+          include: [{ any_valid_service_token: {} }],
+        },
+      ],
+    });
+    return app.aud;
+  }
+
+  approvalsApp(appId: string): Promise<ApprovalsApp> {
+    return this.#call("GET", `/access/apps/${appId}`, decodeApprovalsApp);
+  }
+
+  /** MM-1207: the MFA methods that the Zero Trust organization allows. Empty when MFA is off. */
+  async organizationMfaMethods(): Promise<ReadonlyArray<string>> {
+    const org = await this.#call("GET", "/access/organizations", decodeOrganization);
+    return org.mfa_config?.allowed_authenticators ?? [];
+  }
+
   /** The audience tag of an Access app: `T3CODE_CLOUDFLARE_ACCESS_AUD` of its hostnames. */
   async accessAppAud(appId: string): Promise<string> {
     return (await this.#call("GET", `/access/apps/${appId}`, decodeAccessApp)).aud;
@@ -416,6 +635,49 @@ export class CloudflareApi {
     }
     return true;
   }
+}
+
+/**
+ * MM-1207: the reason the approval path does not need a fresh MFA from the owner only, or null
+ * when it does. Every field must be the one the portal set, so a dashboard edit fails closed.
+ */
+export function approvalsAppProblem(
+  app: ApprovalsApp,
+  host: string,
+  owners: ReadonlyArray<string>,
+): string | null {
+  const within = (value: string | null | undefined) => {
+    const seconds = value ? durationSeconds(value) : null;
+    return seconds !== null && seconds <= APPROVALS_MAX_SECONDS;
+  };
+  if (app.type !== "self_hosted") return "The approvals app is not a self-hosted app.";
+  const uris = (app.destinations ?? []).map((d) => d.uri);
+  if (uris.length !== 1 || uris[0] !== `${host}${APPROVALS_PATH}`)
+    return `The approvals app must cover only ${host}${APPROVALS_PATH}.`;
+  if (app.path_cookie_attribute !== true)
+    return "The approvals app must scope its cookie to its path.";
+  if (!within(app.session_duration)) return "The approvals app session must be 10 minutes or less.";
+  const mfa = app.mfa_config;
+  if (!mfa || mfa.mfa_disabled === true) return "The approvals app must require MFA.";
+  if (!within(mfa.session_duration)) return "The approvals MFA must be 10 minutes old or less.";
+  const methods = mfa.allowed_authenticators ?? [];
+  if (methods.length === 0 || methods.some((m) => !APPROVALS_AUTHENTICATORS.includes(m)))
+    return "The approvals MFA must allow only a passkey or a security key.";
+  const policies = app.policies ?? [];
+  const onlyOwners = policies.every(
+    (policy) =>
+      policy.decision === "allow" &&
+      policy.include.length > 0 &&
+      policy.include.every((rule) => {
+        const emailRule = decodeEmailRule(rule);
+        return (
+          emailRule._tag === "Some" && owners.includes(emailRule.value.email.email.toLowerCase())
+        );
+      }),
+  );
+  if (policies.length === 0 || !onlyOwners)
+    return "The approvals app must allow only the owner emails.";
+  return null;
 }
 
 const ruleTokenId = (rule: unknown): string | null => {

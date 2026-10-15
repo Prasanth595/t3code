@@ -5,11 +5,15 @@ name: Fork CI
 # Limit: this file copies the ci.yml commands by hand. When upstream changes
 # them, update this file. A failure on main calls the repair agent. See docs/fork.md.
 #
-# The heavy jobs run only when the push changes code. The changes job compares the
-# push with the last green run, so a cancelled or failed run never hides a change.
+# The heavy jobs run only when the push or pull request changes code. The changes job
+# compares a push with the last green run, so a cancelled or failed run never hides a
+# change. It compares a pull request with its base.
 
 on:
   push:
+    branches:
+      - main
+  pull_request:
     branches:
       - main
   workflow_dispatch:
@@ -22,10 +26,10 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch cancels the older run. A manual run waits instead.
+# A newer push to the same branch or pull request cancels the older run. A manual run waits instead.
 concurrency:
   group: fork-ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   changes:
@@ -44,15 +48,26 @@ jobs:
         id: classify
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           code() { echo "code=true" >>"$GITHUB_OUTPUT"; echo "$1: the heavy jobs run."; exit 0; }
-          [[ "$GITHUB_EVENT_NAME" == "push" ]] || code "Manual run"
-          base="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow fork-ci.yml --branch "$GITHUB_REF_NAME" \
-            --status success --limit 1 --json headSha --jq '.[0].headSha // empty')"
-          [[ -n "$base" ]] || code "No green run to compare with"
+          head="$GITHUB_SHA"
+          case "$GITHUB_EVENT_NAME" in
+            push)
+              base="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow fork-ci.yml --branch "$GITHUB_REF_NAME" \
+                --event push --status success --limit 1 --json headSha --jq '.[0].headSha // empty')"
+              [[ -n "$base" ]] || code "No green run to compare with"
+              ;;
+            pull_request)
+              base="$PR_BASE_SHA"
+              head="$PR_HEAD_SHA"
+              ;;
+            *) code "Manual run" ;;
+          esac
           # The compare API lists at most 300 files. A longer list counts as code.
-          files="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$GITHUB_SHA" --jq '.files[].filename')" ||
+          files="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$head" --jq '.files[].filename')" ||
             code "The compare with $base failed"
           (($(wc -l <<<"$files") < 300)) || code "300 or more changed files"
           while IFS= read -r file; do
@@ -278,14 +293,32 @@ jobs:
             cargo test --locked --manifest-path "native/$crate/Cargo.toml"
           done
 
+  # The one check that branch protection requires. A skipped job counts as passed,
+  # so the docs-only path passes too. A cancelled job counts as failed.
+  result:
+    name: Fork CI result
+    needs: [changes, lint, machine_map, typecheck, build, test, test_web, test_server, rust]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check the job results
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS_JSON"
+          exit 1
+
   # Starts the repair agent, like Fork Sync and Fork Release. Without it, a red
   # main goes unnoticed. Off until the T3_AGENT_WEBHOOK_URL secret is set.
+  # A pull request never calls it: its author sees the failed check.
   notify_agent:
     name: Notify repair agent
     needs: [changes, lint, machine_map, typecheck, build, test, test_web, test_server, rust]
-    if: failure() && github.event.inputs.notify_agent != 'false'
+    if: failure() && github.event_name != 'pull_request' && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     permissions:
       actions: read
     steps:

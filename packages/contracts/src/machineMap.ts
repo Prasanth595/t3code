@@ -15,6 +15,7 @@ import {
   AuthTerminalReadScope,
 } from "./auth.ts";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ClientAccessMode } from "./settings.ts";
 
 /** Wire version of the machine and page protocols. Bump on a breaking change. */
 export const MACHINE_MAP_PROTOCOL = 1 as const;
@@ -52,6 +53,9 @@ export const MACHINE_LEVEL_SCOPES: Readonly<Record<MachineLevel, ReadonlyArray<A
 /** The session subject of a machine on the server of another machine (MM-1305). */
 export const machineSessionSubject = (machineId: MachineId): string => `machine:${machineId}`;
 
+/** The session subject of a client on a machine (MM-911). */
+export const clientSessionSubject = (clientId: string): string => `client:${clientId}`;
+
 const MapPixels = Schema.Number.check(Schema.isFinite());
 
 /**
@@ -86,6 +90,55 @@ export const ArrowRecord = Schema.Struct({
   revertLevel: Schema.NullOr(MachineLevel),
 });
 export type ArrowRecord = typeof ArrowRecord.Type;
+
+/** A browser profile that the owner approved (MM-904). */
+export const ClientId = TrimmedNonEmptyString.pipe(Schema.brand("ClientId"));
+export type ClientId = typeof ClientId.Type;
+
+/** One browser key of a client (MM-905): the JWK thumbprint of its DPoP key. */
+const ClientKey = Schema.Struct({
+  thumbprint: TrimmedNonEmptyString,
+  addedAt: MapTime,
+  /** The browser and system that the key came from, for example "Safari on iPhone". */
+  describedAs: Schema.String,
+});
+
+export const ClientRecord = Schema.Struct({
+  id: ClientId,
+  name: TrimmedNonEmptyString,
+  /** The Cloudflare Access email that the client signed in with. */
+  email: Schema.NullOr(TrimmedNonEmptyString),
+  keys: Schema.Array(ClientKey),
+  /**
+   * MM-911: the Cloudflare Access service token of a native app, by its client id. The portal
+   * makes it when the app uses its invite, and never stores the secret. Older maps decode with none.
+   */
+  serviceToken: Schema.NullOr(Schema.Struct({ clientId: TrimmedNonEmptyString })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
+  position: MapPosition,
+  createdAt: MapTime,
+});
+export type ClientRecord = typeof ClientRecord.Type;
+
+/**
+ * MM-906: the short code of a browser key, for example `K7qP-3m_x`. The waiting browser and the
+ * portal both show it, so the owner can tell that they approve the right sign-in. It keeps 8
+ * base64url characters with their case, about 48 bits, so a look-alike key is not practical.
+ */
+export const clientKeyCode = (thumbprint: string): string =>
+  `${thumbprint.slice(0, 4)}-${thumbprint.slice(4, 8)}`;
+
+/** What one client can do on one machine (MM-309). A client never gets agent tools. */
+export const ClientArrowRecord = Schema.Struct({
+  client: ClientId,
+  to: MachineId,
+  level: MachineLevel,
+  /** MM-304: at this time the arrow returns to `revertLevel`. */
+  expiresAt: Schema.NullOr(MapTime),
+  revertLevel: Schema.NullOr(MachineLevel),
+});
+export type ClientArrowRecord = typeof ClientArrowRecord.Type;
 
 export const SettingScope = Schema.Literals(["server", "client"]);
 export type SettingScope = typeof SettingScope.Type;
@@ -131,6 +184,8 @@ const MACHINE_LOCAL_SETTINGS: Readonly<Record<SettingScope, ReadonlySet<string>>
     "environmentIcon",
     // The time of the last local theme change (MM-408).
     "defaultThemeSetAt",
+    // A one-time migration flag of this machine's own settings file, not a preference.
+    "projectSettingsFolded",
   ]),
   client: new Set([
     // State of this app, not a preference.
@@ -144,6 +199,13 @@ const MACHINE_LOCAL_SETTINGS: Readonly<Record<SettingScope, ReadonlySet<string>>
 
 export const isMachineLocalSetting = (scope: SettingScope, key: string): boolean =>
   MACHINE_LOCAL_SETTINGS[scope].has(key);
+
+/**
+ * MM-919: settings that only the owner changes, in the portal on the approval path (MM-1207) or
+ * in the local desktop app. Agents, the "All environments" path (MM-411) and other clients cannot.
+ */
+export const isOwnerOnlySetting = (scope: SettingScope, key: string): boolean =>
+  scope === "server" && key === "clientAccess";
 
 export const withoutMachineLocalSettings = (
   scope: SettingScope,
@@ -204,6 +266,12 @@ export const MachineMapDocument = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
   notes: Schema.Array(MapNote).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  /** MM-904. Older maps decode with none. */
+  clients: Schema.Array(ClientRecord).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  /** MM-309: only arrows above the default `none` are stored. */
+  clientArrows: Schema.Array(ClientArrowRecord).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type MachineMapDocument = typeof MachineMapDocument.Type;
 
@@ -246,6 +314,13 @@ export const MapChange = Schema.Union([
   }),
   Schema.TaggedStruct("putNote", { note: MapNote }),
   Schema.TaggedStruct("removeNote", { id: TrimmedNonEmptyString }),
+  Schema.TaggedStruct("putClient", { client: ClientRecord }),
+  Schema.TaggedStruct("removeClient", { clientId: ClientId }),
+  /** MM-907: only an approval adds a key. No owner change and no undo can add one. */
+  Schema.TaggedStruct("addClientKey", { clientId: ClientId, key: ClientKey }),
+  /** MM-909: removes one browser key. Its undo refuses, because the inverse adds a key. */
+  Schema.TaggedStruct("removeClientKey", { clientId: ClientId, thumbprint: TrimmedNonEmptyString }),
+  Schema.TaggedStruct("setClientArrow", { arrow: ClientArrowRecord }),
 ]);
 export type MapChange = typeof MapChange.Type;
 
@@ -284,7 +359,7 @@ export const MachineCommandInput = Schema.Union([
     }),
   }).annotate({
     description:
-      "Install what the desktop update button offers: an app update or a ready live build. Desktop machines only, while the app runs.",
+      "Install an update. A desktop app installs what its update button offers, while the app runs. A server that runs as the T3 Code background service installs the newest fork release (MM-505).",
   }),
   Schema.TaggedStruct("stopAllAgents", {}).annotate({
     description: "Interrupt every running agent turn on the machine.",
@@ -470,6 +545,28 @@ export const MachineTunnelGrant = Schema.Struct({
 });
 export type MachineTunnelGrant = typeof MachineTunnelGrant.Type;
 
+/** MM-912: a native client as the machine that it may use sees it. */
+export const DesiredClient = Schema.Struct({
+  id: ClientId,
+  name: TrimmedNonEmptyString,
+  tokenClientId: TrimmedNonEmptyString,
+  level: MachineLevel,
+  expiresAt: Schema.NullOr(MapTime),
+  revertLevel: Schema.NullOr(MachineLevel),
+});
+export type DesiredClient = typeof DesiredClient.Type;
+
+/** MM-917: a browser client as the machine that it may use sees it, by the keys it holds. */
+export const DesiredBrowserClient = Schema.Struct({
+  id: ClientId,
+  name: TrimmedNonEmptyString,
+  thumbprints: Schema.Array(TrimmedNonEmptyString),
+  level: MachineLevel,
+  expiresAt: Schema.NullOr(MapTime),
+  revertLevel: Schema.NullOr(MachineLevel),
+});
+export type DesiredBrowserClient = typeof DesiredBrowserClient.Type;
+
 /** What one machine must apply (MM-603, MM-1202). */
 export const MachineDesiredState = Schema.Struct({
   revision: NonNegativeInt,
@@ -481,8 +578,55 @@ export const MachineDesiredState = Schema.Struct({
   settings: ScopedSettingValues,
   /** MM-718: true while the emergency pause is on. The machine then locks every client except its own desktop app. Absent means false. */
   paused: Schema.optionalKey(Schema.Boolean),
+  /**
+   * MM-912: the clients with a service token and an arrow above `none` to this machine. Absent
+   * from portals before native clients.
+   */
+  clients: Schema.optionalKey(Schema.Array(DesiredClient)),
+  /**
+   * MM-917: the clients with browser keys and an arrow above `none` to this machine. Absent from
+   * portals before browser keys; an older machine ignores it.
+   */
+  browserClients: Schema.optionalKey(Schema.Array(DesiredBrowserClient)),
 });
 export type MachineDesiredState = typeof MachineDesiredState.Type;
+
+/** MM-913: what a native app sends to `POST /enroll/client` with the code of its invite. */
+export const ClientEnrollRequest = Schema.Struct({
+  code: TrimmedNonEmptyString,
+  /** The phone or device, for example "Pixel 8 · Android 16". */
+  device: Schema.String.check(Schema.isMaxLength(200)),
+});
+export type ClientEnrollRequest = typeof ClientEnrollRequest.Type;
+
+/** MM-914: a machine that a client can reach, with the origin of its T3 server. */
+export const ClientMachine = Schema.Struct({
+  id: MachineId,
+  name: TrimmedNonEmptyString,
+  origin: TrimmedNonEmptyString,
+});
+export type ClientMachine = typeof ClientMachine.Type;
+
+/** MM-914: `GET <portal>/client/machines` with the token headers of a native app. */
+export const ClientMachinesResponse = Schema.Struct({ machines: Schema.Array(ClientMachine) });
+export type ClientMachinesResponse = typeof ClientMachinesResponse.Type;
+
+/**
+ * MM-913: the answer to a used invite. The secret is in this answer only. The app keeps it and
+ * sends both values as `CF-Access-Client-Id` and `CF-Access-Client-Secret` on every request.
+ */
+export const ClientEnrollResponse = Schema.Struct({
+  clientId: ClientId,
+  name: TrimmedNonEmptyString,
+  serviceToken: Schema.Struct({
+    clientId: TrimmedNonEmptyString,
+    clientSecret: TrimmedNonEmptyString,
+  }),
+  machines: Schema.Array(ClientMachine),
+  /** The absolute URL of `GET /client/machines`. */
+  machinesUrl: TrimmedNonEmptyString,
+});
+export type ClientEnrollResponse = typeof ClientEnrollResponse.Type;
 
 /** Agent tools that run through the portal (MM-801). `machine_tool_call` goes machine to machine. */
 export const MapToolName = Schema.Literals([
@@ -504,6 +648,11 @@ export const MachineToPortal = Schema.Union([
     status: MachineStatus,
     /** Current values of every setting but the machine-local ones (MM-405, MM-406). */
     settings: ScopedSettingValues,
+    /**
+     * MM-919: a `clientAccess` value that the local desktop app set and the portal has not seen
+     * yet. The portal records it before it sends the desired state.
+     */
+    localClientAccess: Schema.optionalKey(ClientAccessMode),
   }),
   Schema.TaggedStruct("status", { status: MachineStatus }),
   Schema.TaggedStruct("applied", { revision: NonNegativeInt }),
@@ -531,6 +680,13 @@ export const MachineToPortal = Schema.Union([
   }),
   /** MM-207: the machine saved the new token secret. */
   Schema.TaggedStruct("rotated", { tokenClientId: TrimmedNonEmptyString }),
+  /** MM-906: a browser key that no client holds signed in through Cloudflare Access. */
+  Schema.TaggedStruct("clientSeen", {
+    thumbprint: TrimmedNonEmptyString,
+    describedAs: Schema.String.check(Schema.isMaxLength(200)),
+    /** The Access subject: an email, or the client id of an owner service token. */
+    email: Schema.NullOr(TrimmedNonEmptyString),
+  }),
 ]);
 export type MachineToPortal = typeof MachineToPortal.Type;
 

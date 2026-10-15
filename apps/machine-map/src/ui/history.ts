@@ -4,6 +4,7 @@
  */
 import type {
   ArrowRecord,
+  ClientArrowRecord,
   MachineCommand,
   MachineId,
   MachineMapDocument,
@@ -13,13 +14,16 @@ import type {
   MapRevision,
 } from "@t3tools/contracts/machineMap";
 import type { HealthAlert } from "@t3tools/contracts/machineMapResources";
+import { clientKeyCode } from "@t3tools/contracts/machineMap";
 
-import { arrowRaises, usesText } from "../rules/access.ts";
-import { defaultArrow, roleRank } from "../rules/map.ts";
+import { arrowRaises, clientArrowRaises, usesText } from "../rules/access.ts";
+import { defaultArrow, defaultClientArrow, roleRank } from "../rules/map.ts";
 import { LOCKDOWN_SUMMARY, PAUSE_SUMMARY, RESUME_SUMMARY } from "../rules/presets.ts";
 import { noteQuote } from "./derive.ts";
+import type { Selection } from "./route.ts";
 import {
   actorText,
+  clientName,
   COMMAND_LABEL,
   LEVEL_LABEL,
   machineName,
@@ -34,6 +38,7 @@ export type HistoryKind =
   | "resume"
   | "lockdown"
   | "machines"
+  | "clients"
   | "join"
   | "settings"
   | "expiry"
@@ -55,6 +60,7 @@ export const HISTORY_KIND: Record<
   resume: { label: "Resume", sticker: "resume", important: true },
   lockdown: { label: "Lockdown", sticker: "lockdown", important: true },
   machines: { label: "Machines added or removed", sticker: "machine", important: true },
+  clients: { label: "Client keys added or removed", sticker: "client", important: true },
   join: { label: "Joins and hostnames", sticker: "joined", important: false },
   settings: { label: "Settings", sticker: "settings", important: false },
   expiry: { label: "Expiries", sticker: "expired", important: true },
@@ -92,9 +98,20 @@ function previousArrow(revision: RevisionChanges, arrow: ArrowRecord): ArrowReco
   );
 }
 
+function previousClientArrow(revision: RevisionChanges, arrow: ClientArrowRecord) {
+  return (
+    before(
+      revision,
+      "setClientArrow",
+      (c) => c.arrow.client === arrow.client && c.arrow.to === arrow.to,
+    )?.arrow ?? defaultClientArrow(arrow.client, arrow.to)
+  );
+}
+
 /** What one change did, from the most to the least telling. */
 const CHANGE_ORDER = [
   "machines",
+  "clients",
   "join",
   "raise",
   "lower",
@@ -144,6 +161,23 @@ function changeKind(revision: RevisionChanges, change: MapChange): ChangeKind {
     }
     case "removeNote":
       return "note";
+    case "setClientArrow": {
+      const previous = previousClientArrow(revision, change.arrow);
+      if (clientArrowRaises(previous, change.arrow)) return "raise";
+      if (clientArrowRaises(change.arrow, previous)) return "lower";
+      return "other";
+    }
+    case "putClient": {
+      const next = change.client;
+      const previous = before(revision, "putClient", (c) => c.client.id === next.id)?.client;
+      if (!previous) return "clients";
+      if (previous.name !== next.name) return "other";
+      return "move";
+    }
+    case "removeClient":
+    case "addClientKey":
+    case "removeClientKey":
+      return "clients";
   }
 }
 
@@ -258,7 +292,7 @@ export function actorLabel(actor: MapActor, map: MachineMapDocument): string {
 }
 
 /** The machines that an entry names. A shared setting names none. */
-export function entryMachines(entry: HistoryEntry): ReadonlySet<string> {
+function entryMachines(entry: HistoryEntry): ReadonlySet<string> {
   if (entry._tag === "alert") return new Set([entry.alert.machineId]);
   if (entry._tag === "command") {
     const { input, machineId } = entry.command;
@@ -282,10 +316,17 @@ export function entryMachines(entry: HistoryEntry): ReadonlySet<string> {
       case "placePair":
         ids.add(change.a).add(change.b);
         break;
+      case "setClientArrow":
+        ids.add(change.arrow.to);
+        break;
       case "putPreset":
       case "removePreset":
       case "putNote":
       case "removeNote":
+      case "putClient":
+      case "removeClient":
+      case "addClientKey":
+      case "removeClientKey":
         break;
     }
   }
@@ -410,6 +451,7 @@ export function groupSummary(
     if (entry._tag !== "revision") continue;
     for (const change of entry.revision.changes) {
       if (change._tag === "putMachine") machines.add(change.machine.name);
+      if (change._tag === "putClient") machines.add(change.client.name);
       if (change._tag === "placePair") cards.add([change.a, change.b].toSorted().join(">"));
       if (change._tag === "putNote") notes.add(change.note.id);
     }
@@ -423,11 +465,16 @@ export function groupSummary(
 /** One line of the before and after of a revision. */
 export interface DiffRow {
   readonly label: string;
+  /** MM-1115: the panel that the label opens, for a client that is still on the map. */
+  readonly link?: Selection;
   readonly before: string;
   readonly after: string;
 }
 
 const NOTHING = "—";
+
+const clientLink = (map: MachineMapDocument, id: string): Pick<DiffRow, "link"> =>
+  map.clients.some((client) => client.id === id) ? { link: { _tag: "client", id } } : {};
 
 function arrowText(arrow: ArrowRecord): string {
   const parts = [LEVEL_LABEL[arrow.level]];
@@ -549,6 +596,76 @@ export function revisionDiff(revision: RevisionChanges, map: MachineMapDocument)
             label: "Note",
             before: previous ? noteQuote(previous.text) : "a note",
             after: "deleted",
+          },
+        ];
+      }
+      case "setClientArrow": {
+        const previous = previousClientArrow(revision, change.arrow);
+        const text = (a: ClientArrowRecord) =>
+          a.expiresAt
+            ? `${LEVEL_LABEL[a.level]}, until ${shortTime(a.expiresAt)}`
+            : LEVEL_LABEL[a.level];
+        return [
+          {
+            label: usesText(clientName(map, change.arrow.client), name(change.arrow.to)),
+            ...clientLink(map, change.arrow.client),
+            before: text(previous),
+            after: text(change.arrow),
+          },
+        ];
+      }
+      case "putClient": {
+        const next = change.client;
+        const previous = before(revision, "putClient", (c) => c.client.id === next.id)?.client;
+        const keys = (n: number) => count(n, "key", "keys");
+        if (!previous)
+          return [
+            {
+              label: next.name,
+              ...clientLink(map, next.id),
+              before: NOTHING,
+              after: `approved, ${keys(next.keys.length)}`,
+            },
+          ];
+        const rows: Array<DiffRow> = [];
+        const field = (label: string, a: string, b: string) => {
+          if (a !== b)
+            rows.push({
+              label: `${next.name} ${label}`,
+              ...clientLink(map, next.id),
+              before: a,
+              after: b,
+            });
+        };
+        field("name", previous.name, next.name);
+        field("place", placeText(previous.position), placeText(next.position));
+        return rows;
+      }
+      case "addClientKey":
+        return [
+          {
+            label: `${clientName(map, change.clientId)} key ${clientKeyCode(change.key.thumbprint)}`,
+            ...clientLink(map, change.clientId),
+            before: NOTHING,
+            after: `approved, ${change.key.describedAs || "a browser"}`,
+          },
+        ];
+      case "removeClientKey":
+        return [
+          {
+            label: `${clientName(map, change.clientId)} key ${clientKeyCode(change.thumbprint)}`,
+            ...clientLink(map, change.clientId),
+            before: "approved",
+            after: "removed",
+          },
+        ];
+      case "removeClient": {
+        const previous = before(revision, "putClient", (c) => c.client.id === change.clientId);
+        return [
+          {
+            label: previous?.client.name ?? change.clientId,
+            before: "on the map",
+            after: "removed",
           },
         ];
       }

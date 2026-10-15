@@ -65,8 +65,10 @@ branch name remains.
 Open **Settings → Scheduled tasks** to create recurring tasks or manage existing
 ones across your connected environments. Use the settings filter to narrow the
 list by environment or project. Each task runs on the environment you choose,
-using its project, model, and workspace settings. Fixed-time schedules use that
-environment's time zone, which may differ from your phone's.
+using its project, model, and workspace settings. Turn on **Project default model**
+to use the project's default model at each run. A task that posts into a thread
+keeps that thread's model. Fixed-time schedules use that environment's time zone,
+which may differ from your phone's.
 
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
@@ -149,9 +151,10 @@ Inherit follows each machine's rules; Off keeps that project's worktrees until y
 manually. Custom applies separate worktree rules to the selected project or checkout. Browser
 captures and log retention remain machine-wide.
 
-Worktrees can be removed after a chosen number of inactive days, after merging, or when they
-have no commits beyond the default branch. Only T3-managed worktrees are eligible. Active
-sessions and shared worktrees prevent removal. **Keep worktrees with local changes** defaults
+Worktrees can be removed after a chosen number of inactive days, after a thread settles, after
+merging, or when they have no commits beyond the default branch. Set settled retention to 0 days
+to remove a worktree at the next cleanup after settlement. Only T3-managed worktrees are eligible.
+Active sessions and shared worktrees prevent removal. **Keep worktrees with local changes** defaults
 to **Uncommitted changes**, which protects tracked edits and untracked files but deletes ignored
 files such as `.env` and build output. **Any local files** also protects ignored files other than
 `node_modules`. **Edited tracked files** protects only tracked edits and allows untracked and

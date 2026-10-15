@@ -90,20 +90,22 @@ export function ForkSettingsPanel() {
   return (
     <SettingsPageContainer>
       {forkSettingGroups.map((group) => {
-        // An entry shows where search reaches each of its rows: on this platform and at the
-        // selected scope. Storage, for example, hides its worktree rows at a project scope.
+        // An entry shows where search reaches its first row, and each other row that search
+        // lists: on this platform and at the selected scope. Storage, for example, hides its
+        // worktree rows at a project scope. A row that its own setting hides, such as
+        // "Single-thread tabs" while sidebar groups are off, is not listed and does not count.
         const entries = group.entries.flatMap((entry) => {
           const items = entry.ids.map((id) => availableById.get(id));
           const [item] = items;
           return item !== undefined &&
             items.every(
               (candidate) =>
-                candidate !== undefined &&
-                isSettingsSearchItemOnPlatform(candidate, platform) &&
-                isSettingsSearchScopeAvailable(
-                  getSettingsSearchTargetScope(candidate.id)?.scope ?? null,
-                  scope.kind,
-                ),
+                candidate === undefined ||
+                (isSettingsSearchItemOnPlatform(candidate, platform) &&
+                  isSettingsSearchScopeAvailable(
+                    getSettingsSearchTargetScope(candidate.id)?.scope ?? null,
+                    scope.kind,
+                  )),
             )
             ? [{ entry, item }]
             : [];

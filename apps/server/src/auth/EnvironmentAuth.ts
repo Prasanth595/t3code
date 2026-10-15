@@ -47,6 +47,8 @@ import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./Reusa
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { makeCloudflareAccessVerifier } from "./CloudflareAccess.ts";
 import * as MachineMapState from "../fork/machineMap/MachineMapState.ts";
+import { clientBrowserSessionTtl } from "../fork/machineMap/machineAccess.ts";
+import { type ClientPending, ownerBrowserAccess } from "../fork/machineMap/browserAccess.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
@@ -540,9 +542,14 @@ export class EnvironmentAuth extends Context.Service<
     ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
     // Fork: a one-use pairing credential for a request that carries a valid
     // Cloudflare Access JWT, or undefined when the login is off or the JWT fails.
+    // It fails while the machine map pause locks every Access subject (MM-718).
+    // `ClientPending` (MM-918): `enforce` refuses this browser until the owner approves its key.
     readonly issueCloudflareAccessPairingCredential: (
       request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<AuthPairingCredentialResult | undefined, ServerAuthInternalError>;
+    ) => Effect.Effect<
+      AuthPairingCredentialResult | ClientPending | undefined,
+      ServerAuthInternalError | ServerAuthMachinePausedError
+    >;
     readonly issueStartupPairingCredential: () => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError
@@ -974,11 +981,14 @@ export const make = Effect.gen(function* () {
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
     yield* rejectTunnelDesktopBootstrap(grant.method, forwarded);
+    // Fork (MM-922): a client cookie session lasts 1 day.
+    const clientTtl = clientBrowserSessionTtl(grant);
     const session = yield* sessions
       .issue({
         method: "browser-session-cookie",
         subject: grant.subject,
         scopes: grant.scopes,
+        ...(clientTtl === undefined ? {} : { ttl: clientTtl }),
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -1056,6 +1066,10 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            // Fork (MM-922): the bearer of a browser client's sibling lasts 1 day.
+            const clientTtl = input?.proofKeyThumbprint
+              ? undefined
+              : clientBrowserSessionTtl(grant);
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
@@ -1067,6 +1081,7 @@ export const make = Effect.gen(function* () {
                       ttl: Duration.hours(1),
                     }
                   : {}),
+                ...(clientTtl === undefined ? {} : { ttl: clientTtl }),
                 // Desktop restarts forget the previous bearer token. Replace
                 // its session, including stale entries left by older versions.
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
@@ -1241,21 +1256,51 @@ export const make = Effect.gen(function* () {
       ? undefined
       : makeCloudflareAccessVerifier(config.cloudflareAccess);
 
+  // Fork (MM-917, MM-918): see `ownerBrowserAccess`.
+  const ownerBrowserAccessFor = (request: HttpServerRequest.HttpServerRequest, subject: string) =>
+    ownerBrowserAccess(machineMap, request, subject).pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+      Effect.provideService(Crypto.Crypto, crypto),
+    );
+
   const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
     (request) =>
       verifyCloudflareAccess === undefined
         ? Effect.succeed(undefined)
         : verifyCloudflareAccess(request).pipe(
+            // Fork (MM-718): an Access subject is never the local desktop app, so the pause locks
+            // it. A session made now would only be refused on its first use.
+            Effect.tap((identity) =>
+              identity === undefined || Option.isNone(machineMap)
+                ? Effect.void
+                : machineMap.value
+                    .lockedFor("one-time-token")
+                    .pipe(
+                      Effect.flatMap((locked) =>
+                        locked ? Effect.fail(new ServerAuthMachinePausedError({})) : Effect.void,
+                      ),
+                    ),
+            ),
             Effect.flatMap((identity) =>
               identity === undefined
                 ? Effect.succeed(undefined)
                 : identity.kind === "owner"
-                  ? issuePairingCredentialForSubject({
-                      scopes: AuthStandardClientScopes,
-                      subject: "one-time-token",
-                      label: `cloudflare-access ${identity.subject}`,
-                      ttl: Duration.minutes(2),
-                    })
+                  ? ownerBrowserAccessFor(request, identity.subject).pipe(
+                      Effect.flatMap((access) =>
+                        access._tag === "ClientPending"
+                          ? Effect.succeed<ClientPending | AuthPairingCredentialResult>(access)
+                          : issuePairingCredentialForSubject({
+                              ...(access._tag === "client"
+                                ? access.grant
+                                : {
+                                    scopes: AuthStandardClientScopes,
+                                    subject: "one-time-token",
+                                    label: `cloudflare-access ${identity.subject}`,
+                                  }),
+                              ttl: Duration.minutes(2),
+                            }),
+                      ),
+                    )
                   : Option.isNone(machineMap)
                     ? Effect.succeed(undefined)
                     : machineMap.value.machineGrant(identity.commonName).pipe(

@@ -42,6 +42,10 @@ const ResourcePoint = Schema.Struct({
   busy: NewerValue,
   pressure: NewerValue,
   steal: NewerValue,
+  battery: NewerValue,
+  discharging: Schema.NullOr(Schema.Boolean).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   memory: Schema.NullOr(Schema.Number),
   disk: Schema.NullOr(Schema.Number),
   swap: Schema.NullOr(Schema.Number),

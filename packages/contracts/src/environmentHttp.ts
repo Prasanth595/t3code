@@ -54,6 +54,7 @@ import {
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ThreadTranscript,
 } from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
@@ -92,6 +93,7 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "scope_not_granted",
   "invalid_command",
   "invalid_history_cursor",
+  "thread_transcript_too_large",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -100,6 +102,8 @@ export const EnvironmentAuthInvalidReason = Schema.Literals([
   "invalid_credential",
   // Fork: MM-718. The machine map pause locks every client except the desktop app of the machine.
   "machine_paused",
+  // Fork: MM-918. Under `enforce`, the browser key waits for approval in the portal.
+  "client_pending",
 ]);
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
@@ -503,6 +507,8 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       "cloudflareAccessPairingCredential",
       "/api/auth/cloudflare-access/pairing-credential",
       {
+        // MM-917: a browser proves its key with a DPoP proof, so the machine can find its client.
+        headers: OptionalDpopProofHeaders,
         success: AuthPairingCredentialResult,
         error: [EnvironmentAuthInvalidError, EnvironmentInternalError],
       },
@@ -637,6 +643,14 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
       params: EnvironmentOrchestrationThreadSnapshotParams,
       success: OrchestrationV2ThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("threadTranscript", "/api/orchestration/threads/:threadId/transcript", {
+      headers: OrchestrationProtocolHeaders,
+      params: EnvironmentOrchestrationThreadSnapshotParams,
+      success: OrchestrationV2ThreadTranscript,
+      error: [EnvironmentRequestInvalidError, ...EnvironmentOrchestrationThreadSnapshotErrors],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

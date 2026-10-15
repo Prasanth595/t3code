@@ -102,6 +102,8 @@ export class ManagedProjectFolders extends Context.Service<
   {
     /** The Scratch folder, or None when this environment does not offer one. */
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
+    /** Whether the project is the Scratch project of this environment. */
+    readonly isScratch: (projectId: ProjectId) => Effect.Effect<boolean>;
     /** Finds or creates the Scratch project and (re)creates its folder. */
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
     /**
@@ -517,6 +519,15 @@ const make = Effect.gen(function* () {
 
   return ManagedProjectFolders.of({
     scratchRoot,
+    isScratch: (projectId) =>
+      scratchRoot.pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.succeed(false),
+            onSome: (root) => isScratchProject(projectId, root),
+          }),
+        ),
+      ),
     ensureScratchProject,
     folderForThread,
     namedProjectsRoot,

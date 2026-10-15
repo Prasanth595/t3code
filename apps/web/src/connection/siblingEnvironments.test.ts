@@ -47,7 +47,7 @@ describe("requestSiblingPairingCredential", () => {
     );
     expect(fetchMock).toHaveBeenCalledWith(
       `https://t3-mac.example.com${CLOUDFLARE_ACCESS_PAIRING_PATH}`,
-      { method: "POST", credentials: "include" },
+      expect.objectContaining({ method: "POST", credentials: "include" }),
     );
   });
 

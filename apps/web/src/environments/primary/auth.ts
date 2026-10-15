@@ -19,7 +19,9 @@ import {
   stripPairingTokenFromUrl as stripPairingTokenUrl,
 } from "../../pairingUrl";
 
+import { browserKeyProof } from "../../connection/browserKeyProof";
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
+import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 import { runPrimaryHttp } from "../../lib/runtime";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
@@ -135,6 +137,8 @@ type ServerAuthGateState =
   | { status: "authenticated" }
   // Fork: MM-718. The machine map pause locks this client; pairing cannot help.
   | { status: "machine-paused" }
+  // Fork: MM-920. The browser key of this browser waits for approval in the portal.
+  | { status: "client-pending"; pending: NonNullable<AuthSessionState["clientPending"]> }
   | {
       status: "requires-auth";
       auth: AuthSessionState["auth"];
@@ -182,10 +186,18 @@ function getDesktopBootstrapCredential(): string | null {
 
 export async function fetchSessionState(): Promise<AuthSessionState> {
   return retryTransientBootstrap(async () => {
+    // MM-917: a sign-in through Cloudflare Access proves the browser key. The server reads the
+    // proof only when it makes a new session, and ignores it otherwise.
     try {
+      const proof = await browserKeyProof(
+        "GET",
+        resolvePrimaryEnvironmentHttpUrl("/api/auth/session"),
+      );
       return await runPrimaryHttp(
         PrimaryEnvironmentHttpClient.pipe(
-          Effect.flatMap((client) => client.auth.session({ headers: {} })),
+          Effect.flatMap((client) =>
+            client.auth.session({ headers: proof === null ? {} : { dpop: proof } }),
+          ),
         ),
       );
     } catch (error) {
@@ -321,6 +333,10 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
   }
 
   const bootstrapCredential = urlCredential ?? getDesktopBootstrapCredential();
+  // A pairing link still works while the key waits (MM-920).
+  if (!bootstrapCredential && currentSession.clientPending !== undefined) {
+    return { status: "client-pending", pending: currentSession.clientPending };
+  }
   if (!bootstrapCredential) {
     return {
       status: "requires-auth",

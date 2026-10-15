@@ -11,9 +11,8 @@ import {
 describe("linkCommitSubject", () => {
   it("links a pull request number to the repository of the commit", () => {
     expect(linkCommitSubject({ subject: "fix(web): row (#123)", fork: true })).toMatchObject([
-      { text: "fix(web): row (", url: null },
+      { text: "fix(web): row ", url: null },
       { text: "#123", url: "https://github.com/Yarden-zamir/t3code/pull/123" },
-      { text: ")", url: null },
     ]);
     expect(linkCommitSubject({ subject: "#7 and #8", fork: false })).toMatchObject([
       { text: "#7", url: "https://github.com/pingdotgg/t3code/pull/7" },

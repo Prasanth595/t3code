@@ -18,6 +18,7 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
+import { SidebarGroups } from "./sidebarGroups.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
@@ -29,7 +30,7 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
-import { MobileThreadCardLayout, ThreadCardLayout, ThreadCardLayouts } from "./slotLayout.ts";
+import { StoredThreadCardLayout, ThreadCardLayouts } from "./slotLayout.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
@@ -84,50 +85,6 @@ export const SidebarOwnerFilter = Schema.Struct({
   ),
 });
 export type SidebarOwnerFilter = typeof SidebarOwnerFilter.Type;
-/** Fork: what a sidebar group rule compares. `group` compares the group that holds the thread. */
-export const SidebarGroupRuleField = Schema.Literals([
-  "group",
-  "project",
-  "owner",
-  "status",
-  "provider",
-  "createdBy",
-  "background",
-  "title",
-]);
-export type SidebarGroupRuleField = typeof SidebarGroupRuleField.Type;
-/**
- * Fork: one rule of a sidebar group. "is" matches a thread that has one of `values`, and "is_not"
- * matches a thread that has none of them. A `title` value matches when the title contains it.
- * Null stands for "none", for example a project without a repository owner.
- */
-export const SidebarGroupRule = Schema.Struct({
-  field: SidebarGroupRuleField,
-  operator: Schema.Literals(["is", "is_not"]),
-  values: Schema.Array(Schema.NullOr(TrimmedNonEmptyString)),
-});
-export type SidebarGroupRule = typeof SidebarGroupRule.Type;
-/** Fork: a sidebar group. A thread matches the group when it matches every rule. */
-export const SidebarGroup = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  name: TrimmedNonEmptyString,
-  rules: Schema.Array(SidebarGroupRule).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-});
-export type SidebarGroup = typeof SidebarGroup.Type;
-/** Fork: the value of the `sidebarGroups` server setting. */
-export const SidebarGroups = Schema.Struct({
-  /** Groups in tab order. The default tab is not in this list. */
-  groups: Schema.Array(SidebarGroup).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  /**
-   * Thread key (`environmentId:threadId`) to the group that the user dragged the thread into.
-   * Keys of deleted threads stay until their group is deleted.
-   * The id `default` puts the thread in the default tab, also when a group rule matches it.
-   */
-  assignments: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-  ),
-});
-export type SidebarGroups = typeof SidebarGroups.Type;
 /** Fork: a local time of day for a snooze quick option. */
 const SnoozeQuickOptionTime = Schema.Struct({
   hour: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 23 })),
@@ -413,6 +370,16 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+/**
+ * Fork: client access of the machine map (MM-916). `off`: a browser that passes Cloudflare
+ * Access as the owner gets the owner access, as before. `observe`: the browser proves its key; a
+ * key that an approved client holds gets that client's arrow, at most `standard`, and any other
+ * key keeps the owner access and waits in the portal for approval. `enforce` (MM-918): only a key
+ * of an approved client gets in, with the full level of its arrow.
+ */
+export const ClientAccessMode = Schema.Literals(["off", "observe", "enforce"]);
+export type ClientAccessMode = typeof ClientAccessMode.Type;
+
 /** Maximum width of the chat timeline and composer on wide screens. */
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
@@ -521,9 +488,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   /** Fork: background work status icons open a details popover; their descriptions render markdown links. */
-  backgroundWorkDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  backgroundWorkDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Fork: a changelog of fork releases, upstream changes and Fork Sync runs from the update UI. */
-  forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Fork: the web app registers a service worker for the installed app (`apps/web/public/sw.js`):
    * an offline page, notifications on Android and iOS, and the badge on the app icon.
@@ -533,12 +500,12 @@ export const ClientSettingsSchema = Schema.Struct({
    * Fork: filter by repository owner (`repositoryOwnerOf`) on the pull request page and in the
    * sidebar. Remove when upstream T3 Code ships its own owner or organization filter.
    */
-  repositoryOwnerFilters: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  repositoryOwnerFilters: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Fork: the active pull request filters show as chips above the list, and an empty list names
    * the filters that emptied it. Remove when upstream T3 Code shows its active filters itself.
    */
-  pullRequestFilterChips: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  pullRequestFilterChips: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Fork: the sidebar filter by repository owner. "is" shows only the projects of these owners,
    * and "is_not" hides them. Null stands for projects without an owner. No owners shows every
@@ -1139,6 +1106,9 @@ export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
 const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
+const SettledWorktreeRetentionDays = Schema.NullOr(
+  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3650 })),
+);
 
 export const WorktreeKeepWhen = Schema.Literals([
   "any-local-files",
@@ -1152,6 +1122,9 @@ export const WorktreeCleanupRules = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
   ),
   worktreeAfterDays: StorageRetentionDays,
+  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
   worktreeUnchanged: Schema.Boolean,
@@ -1189,6 +1162,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
+  "sidebarAutoSettleKeepPullRequests",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
 ] as const;
@@ -1236,6 +1210,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   providerInstances: Schema.optionalKey(
@@ -1292,6 +1267,9 @@ export const StorageCleanupSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
   ),
   worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -1453,6 +1431,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_SESSION_IMPORT_MAX_MESSAGES)),
   ),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
@@ -1573,11 +1554,14 @@ export const ServerSettings = Schema.Struct({
   preferOriginRemote: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: machine map connection. See `MachineMapSettings`. */
   machineMap: MachineMapSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Fork: how a Cloudflare Access sign-in of a browser meets the clients of the map. See `ClientAccessMode`. */
+  clientAccess: ClientAccessMode.pipe(Schema.withDecodingDefault(Effect.succeed("off"))),
   /** Fork: user-built thread card layouts. See `ThreadCardLayouts`. */
   threadCardLayouts: ThreadCardLayouts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
-   * Fork: sidebar thread groups and their drag assignments. A shared setting, so every machine
-   * holds the same groups. Clients show them while the client setting `sidebarGroupsEnabled` is on.
+   * Fork: sidebar thread groups and their drag assignments. The machine map syncs the value: a
+   * change from the sidebar becomes its shared value (MM-411). Clients show the groups while the
+   * client setting `sidebarGroupsEnabled` is on.
    */
   sidebarGroups: SidebarGroups.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
@@ -1786,6 +1770,7 @@ export const ServerSettingsPatch = Schema.Struct({
           rules: Schema.Struct({
             worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
             worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
+            worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
             worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
             worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
             worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
@@ -1798,6 +1783,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
       worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
+      worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
       worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
       worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
       worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
@@ -1855,6 +1841,7 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
@@ -1899,10 +1886,11 @@ export const ServerSettingsPatch = Schema.Struct({
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */
   threadCardLayouts: Schema.optionalKey(
     Schema.Struct({
-      desktop: Schema.optionalKey(Schema.NullOr(ThreadCardLayout)),
-      mobile: Schema.optionalKey(Schema.NullOr(MobileThreadCardLayout)),
+      desktop: Schema.optionalKey(Schema.NullOr(StoredThreadCardLayout)),
+      mobile: Schema.optionalKey(Schema.NullOr(StoredThreadCardLayout)),
     }),
   ),
+  clientAccess: Schema.optionalKey(ClientAccessMode),
   /** Merges per field: a patched field replaces the saved one. */
   machineMap: Schema.optionalKey(
     Schema.Struct({

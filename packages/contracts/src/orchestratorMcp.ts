@@ -18,6 +18,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import {
+  ScheduledTaskModelSelection,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
@@ -217,6 +218,10 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
+  hasPendingQuestion: Schema.Boolean.annotate({
+    description:
+      "Blocking question ends mode=wait. Pass threadId=childThreadId to t3_pending_request_list, t3_pending_request_read (with requestId) and t3_pending_request_respond, or ask the user; the task's completion still wakes this thread.",
+  }),
   waitTimedOut: Schema.Boolean.annotate({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
@@ -550,6 +555,10 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
     }),
   ),
+  modelSelection: Schema.optional(ScheduledTaskModelSelection).annotate({
+    description:
+      "Omit to use this thread's model, or the project default model when there is no calling thread. instanceId must be a provider instance from orchestrator_capabilities.",
+  }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -563,6 +572,7 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
   schedule: ScheduledTaskSchedule,
+  modelSelection: ScheduledTaskModelSelection,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
   /** For webhook tasks: the public T3 Connect URL. Absent when this environment has no managed tunnel. */
@@ -603,6 +613,7 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
+  modelSelection: Schema.optional(ScheduledTaskModelSelection),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;

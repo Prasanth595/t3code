@@ -20,7 +20,7 @@ import {
   PeerMachine,
   SettingValues,
 } from "./machineMap.ts";
-import { ResourcesOverview } from "./machineMapResources.ts";
+import { HealthAlert, ResourcesOverview } from "./machineMapResources.ts";
 
 /**
  * - `off`: the `machineMap` setting is off.
@@ -139,12 +139,18 @@ export type MachineMapShareSettingsInput = typeof MachineMapShareSettingsInput.T
 export const MachineMapShareSettingsResult = Schema.Struct({ shared: Schema.Boolean });
 export type MachineMapShareSettingsResult = typeof MachineMapShareSettingsResult.Type;
 
+/**
+ * MM-1701: an alert as the Machines panel reads it. The kind is an open string, so an alert kind
+ * that a newer portal adds does not break the panel of this build.
+ */
+const PanelHealthAlert = Schema.Struct({ ...HealthAlert.fields, kind: Schema.String });
+
 /** MM-1701: the part of a `machines_read` result that the Machines panel shows. */
 export const MachinesReadResult = Schema.TaggedStruct("read", {
   map: MachineMapDocument,
   presence: Schema.Record(Schema.String, MachinePresence),
   commands: Schema.Array(MachineCommand),
-  resources: ResourcesOverview,
+  resources: Schema.Struct({ ...ResourcesOverview.fields, alerts: Schema.Array(PanelHealthAlert) }),
 });
 export type MachinesReadResult = typeof MachinesReadResult.Type;
 

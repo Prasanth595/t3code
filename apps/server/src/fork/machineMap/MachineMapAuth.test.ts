@@ -10,17 +10,23 @@ import {
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   AuthStandardClientScopes,
+  type ClientAccessMode,
+  clientKeyCode,
+  ClientId,
   EnvironmentId,
   MACHINE_LEVEL_SCOPES,
   type MachineDesiredState,
   WS_METHODS,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpServerRequest } from "effect/http";
+import { computeDpopJwkThumbprint, type DpopPublicJwk } from "@t3tools/shared/dpop";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -33,6 +39,7 @@ import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { guardOwnerOnlyPatch } from "./browserAccess.ts";
 import { isLocalDesktopSubject } from "./machineAccess.ts";
 import { PEER, PEER_TOKEN, SELF, arrow, desiredState } from "./MachineMap.testkit.ts";
 import * as MachineMapState from "./MachineMapState.ts";
@@ -74,13 +81,14 @@ const layerConfig = Layer.effect(
     return {
       ...config,
       cloudflareAccess: { teamDomain: ACCESS_TEAM, aud: "aud-tag", subjects: ["dev@example.com"] },
+      desktopBootstrapToken: "desktop-token",
     } satisfies ServerConfig.ServerConfig["Service"];
   }),
 ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-machine-map-auth-" })));
 
-const layerState = (enabled: boolean) =>
+const layerState = (enabled: boolean, clientAccess: ClientAccessMode = "off") =>
   MachineMapState.layer.pipe(
-    Layer.provide(ServerSettings.layerTest({ machineMap: { enabled } })),
+    Layer.provide(ServerSettings.layerTest({ machineMap: { enabled }, clientAccess })),
     Layer.provide(ServerSecretStore.layer),
   );
 
@@ -91,22 +99,58 @@ const layerAuthWithoutState = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerConfig),
 );
 
-const layerAuth = (state: "on" | "off") =>
+const layerAuth = (state: "on" | "off", clientAccess: ClientAccessMode = "off") =>
   EnvironmentAuth.layer.pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(layerState(state === "on")),
+    Layer.provideMerge(layerState(state === "on", clientAccess)),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.layerIdentity),
     Layer.provideMerge(layerConfig),
   );
 
-const accessRequest = (jwt: string) =>
+const PAIRING_URL = "http://127.0.0.1/api/auth/cloudflare-access/pairing-credential";
+const accessRequest = (jwt: string, dpop?: string) =>
   HttpServerRequest.fromWeb(
-    new Request("http://127.0.0.1/api/auth/cloudflare-access/pairing-credential", {
+    new Request(PAIRING_URL, {
       method: "POST",
-      headers: { "cf-access-jwt-assertion": jwt },
+      headers: {
+        host: "127.0.0.1",
+        "cf-access-jwt-assertion": jwt,
+        ...(dpop === undefined ? {} : { dpop }),
+      },
     }),
   );
+
+// A browser key, as `apps/web/src/cloud/dpop.ts` makes it.
+const browserKeys = await generateKeyPair("ES256");
+const browserJwk = (await exportJWK(browserKeys.publicKey)) as DpopPublicJwk;
+let proofCount = 0;
+// The proof time comes from the test clock, which the server checks it against.
+const browserProof = () =>
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap((nowMs) =>
+      Effect.promise(() =>
+        new SignJWT({ htm: "POST", htu: PAIRING_URL, jti: `proof-${++proofCount}` })
+          .setProtectedHeader({ typ: "dpop+jwt", alg: "ES256", jwk: browserJwk })
+          .setIssuedAt(Math.floor(nowMs / 1000))
+          .sign(browserKeys.privateKey),
+      ),
+    ),
+  );
+const LAPTOP = ClientId.make("client-laptop");
+const withLaptopAdmin = {
+  ...desiredState({}),
+  browserClients: [
+    {
+      id: LAPTOP,
+      name: "Laptop",
+      thumbprints: [computeDpopJwkThumbprint(browserJwk)],
+      level: "admin" as const,
+      expiresAt: null,
+      revertLevel: null,
+    },
+  ],
+};
 const bearerRequest = (token: string) =>
   HttpServerRequest.fromWeb(
     new Request("http://127.0.0.1/mcp", { headers: { authorization: `Bearer ${token}` } }),
@@ -118,14 +162,33 @@ const saveDesired = (desired: MachineDesiredState) =>
     yield* state.updateSaved((saved) => ({ ...saved, desired }));
   });
 
+/** What the Access hook gives the owner browser: a credential, a waiting state or nothing. */
+const ownerAccess = (dpop?: string) =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    return yield* auth.issueCloudflareAccessPairingCredential(
+      accessRequest(yield* signAccessJwt({ email: "dev@example.com" }), dpop),
+    );
+  });
+
+/** Exchanges a credential for a bearer session and authenticates with it. */
+const sessionFor = (credential: string) =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const token = yield* auth.exchangeBootstrapCredentialForAccessToken(credential, undefined, {
+      deviceType: "bot",
+    });
+    return yield* auth.authenticateHttpRequest(bearerRequest(token.access_token));
+  });
+
 /** Pairs through Cloudflare Access like a peer, then exchanges the credential for a session. */
-const pairAs = (claims: Record<string, unknown>) =>
+const pairAs = (claims: Record<string, unknown>, dpop?: string) =>
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const issued = yield* auth.issueCloudflareAccessPairingCredential(
-      accessRequest(yield* signAccessJwt(claims)),
+      accessRequest(yield* signAccessJwt(claims), dpop),
     );
-    if (issued === undefined) return undefined;
+    if (issued === undefined || "_tag" in issued) return undefined;
     const token = yield* auth.exchangeBootstrapCredentialForAccessToken(
       issued.credential,
       undefined,
@@ -183,6 +246,86 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
       expect(yield* pairAs({ common_name: PEER_TOKEN })).toBeUndefined();
       expect((yield* pairAs({ email: "dev@example.com" }))?.subject).toBe("one-time-token");
     }).pipe(withCertsFetch, Effect.provide(layerAuthWithoutState)),
+  );
+
+  it.effect(
+    "an approved browser key gets its client, at most standard, under observe (MM-917)",
+    () =>
+      Effect.gen(function* () {
+        yield* saveDesired(withLaptopAdmin);
+        const session = yield* pairAs({ email: "dev@example.com" }, yield* browserProof());
+        expect(session?.subject).toBe(`client:${LAPTOP}`);
+        expect(session?.scopes).toEqual(AuthStandardClientScopes);
+      }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "observe"))),
+  );
+
+  it.effect("a browser client's sibling bearer lasts 1 day, an owner one does not (MM-922)", () =>
+    Effect.gen(function* () {
+      yield* saveDesired(withLaptopAdmin);
+      const now = yield* Clock.currentTimeMillis;
+      const lifeInDays = (session: { readonly expiresAt?: DateTime.DateTime } | undefined) =>
+        session?.expiresAt === undefined
+          ? undefined
+          : Math.round((session.expiresAt.epochMilliseconds - now) / 86_400_000);
+      const browser = yield* pairAs({ email: "dev@example.com" }, yield* browserProof());
+      expect(browser?.subject).toBe(`client:${LAPTOP}`);
+      expect(lifeInDays(browser)).toBe(1);
+      // Without a key proof, observe keeps the owner login and its normal life.
+      expect(lifeInDays(yield* pairAs({ email: "dev@example.com" }))).not.toBe(1);
+    }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "observe"))),
+  );
+
+  it.effect("with clientAccess off, an approved browser key keeps the owner login (MM-916)", () =>
+    Effect.gen(function* () {
+      yield* saveDesired(withLaptopAdmin);
+      const session = yield* pairAs({ email: "dev@example.com" }, yield* browserProof());
+      expect(session?.subject).toBe("one-time-token");
+      expect(session?.scopes).toEqual(AuthStandardClientScopes);
+    }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "off"))),
+  );
+
+  it.effect(
+    "under enforce, an unknown or unproven browser gets no session and waits (MM-918)",
+    () =>
+      Effect.gen(function* () {
+        yield* saveDesired(desiredState({}));
+        const unknown = yield* ownerAccess(yield* browserProof());
+        expect(unknown).toEqual({
+          _tag: "ClientPending",
+          pending: {
+            code: clientKeyCode(computeDpopJwkThumbprint(browserJwk)),
+            portalUrl: expect.any(String),
+          },
+        });
+        expect(yield* ownerAccess()).toMatchObject({
+          _tag: "ClientPending",
+          pending: { code: null },
+        });
+      }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "enforce"))),
+  );
+
+  it.effect("under enforce, the desktop app and pairing links still get in (MM-918)", () =>
+    Effect.gen(function* () {
+      yield* saveDesired(desiredState({}));
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const desktop = yield* sessionFor("desktop-token");
+      expect(desktop.subject).toBe("desktop-bootstrap");
+      const link = yield* auth.createPairingLink({ label: "phone" });
+      const paired = yield* sessionFor(link.credential);
+      expect(paired.scopes).toEqual(AuthStandardClientScopes);
+    }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "enforce"))),
+  );
+
+  it.effect("only the local desktop app changes clientAccess or the map setting (MM-919)", () =>
+    Effect.gen(function* () {
+      const refused = (patch: Parameters<typeof guardOwnerOnlyPatch>[0], subject: string) =>
+        Effect.exit(guardOwnerOnlyPatch(patch, subject)).pipe(Effect.map(Exit.isFailure));
+      expect(yield* refused({ clientAccess: "off" }, "one-time-token")).toBe(true);
+      // Switching the map off would end `enforce` as well.
+      expect(yield* refused({ machineMap: { enabled: false } }, "one-time-token")).toBe(true);
+      expect(yield* refused({ clientAccess: "off" }, "desktop-bootstrap")).toBe(false);
+      expect(yield* refused({}, "one-time-token")).toBe(false);
+    }),
   );
 
   it.effect("/mcp admits a machine session only while its arrow has agent tools (MM-1307)", () =>
@@ -297,6 +440,15 @@ it.layer(NodeServices.layer)("machine map pause lock (MM-718)", (it) => {
         mcp.sessionId,
       );
     }).pipe(Effect.provide(layerAuth("on"))),
+  );
+
+  it.effect("while paused, a valid Cloudflare Access login gets no new session", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      yield* saveDesired(desiredState({ paused: true }));
+      const login = accessRequest(yield* signAccessJwt({ email: "dev@example.com" }));
+      expect(yield* pausedReason(auth.issueCloudflareAccessPairingCredential(login))).toBe(true);
+    }).pipe(withCertsFetch, Effect.provide(layerAuth("on"))),
   );
 
   it.effect("paused false or an absent flag unlocks at once, and open sockets close on pause", () =>

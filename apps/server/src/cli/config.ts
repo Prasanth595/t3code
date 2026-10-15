@@ -23,7 +23,11 @@ import * as CliError from "effect/cli/CliError";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
-import { joinedTunnelOrigin, readJoinedTunnel } from "../fork/machineMap/MachineTunnel.ts";
+import {
+  joinedTunnelOrigin,
+  machineMapEnabledInSettings,
+  readJoinedTunnel,
+} from "../fork/machineMap/MachineTunnel.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
@@ -504,9 +508,13 @@ export const resolveServerConfig = (
       aud: env.cloudflareAccessAud ?? bootstrap?.cloudflareAccessAud,
       subjects: env.cloudflareAccessSubjects ?? bootstrap?.cloudflareAccessSubjects,
     };
-    // Fork: machine map (MM-1310). The tunnel of a join applies only to a server without its own.
+    // Fork: machine map (MM-1310). The tunnel of a join applies only to a server without its own,
+    // and only while the machine map is on (MM-1301).
     const joinedTunnel =
-      explicitTunnelUrl === undefined ? yield* readJoinedTunnel(derivedPaths.stateDir) : undefined;
+      explicitTunnelUrl === undefined &&
+      (yield* machineMapEnabledInSettings(derivedPaths.settingsPath))
+        ? yield* readJoinedTunnel(derivedPaths.stateDir)
+        : undefined;
     const tunnelPairingUrl = yield* resolveTunnelPairingUrl(
       explicitTunnelUrl ?? (joinedTunnel && joinedTunnelOrigin(joinedTunnel)),
     );

@@ -9,9 +9,15 @@ name: Fork Release
 # main: .github/workflows/fork-sync.yml merges upstream. See docs/fork.md.
 
 on:
-  # Every push to main, so that servers get each change from a release.
+  # Every push to main, so that servers get each change from a release. A push
+  # that changes only docs, markdown or the portal builds no release. The next
+  # release lists its commits, because the notes start at the previous tag.
   push:
     branches: [main]
+    paths-ignore:
+      - docs/**
+      - "**/*.md"
+      - apps/machine-map/**
   workflow_dispatch:
     inputs:
       notify_agent:
@@ -29,9 +35,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  UPSTREAM_REPOSITORY: pingdotgg/t3code
-
 jobs:
   prepare:
     name: Prepare release
@@ -43,10 +46,14 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       name: ${{ steps.version.outputs.name }}
+      notes: ${{ steps.notes.outputs.notes }}
     steps:
+      # The full history and the release tags, without file contents, for the release notes.
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
+          filter: blob:none
           sparse-checkout: |
             /*
             !/.repos/
@@ -89,6 +96,25 @@ jobs:
             --run-number "$(( ${{ github.run_number }} * 10000 ))" \
             --sha "${{ steps.commit.outputs.sha }}" \
             --github-output
+
+      # The commits after the previous release tag, from git. See scripts/fork-release-notes.ts.
+      # A failed builder never stops the release: it warns and falls back to a one-line note.
+      - id: notes
+        name: Write release notes
+        run: |
+          set -euo pipefail
+          sha="${{ steps.commit.outputs.sha }}"
+          if ! node scripts/fork-release-notes.ts "$sha" > "$RUNNER_TEMP/notes.md" 2> "$RUNNER_TEMP/notes-error.log"; then
+            cat "$RUNNER_TEMP/notes-error.log" >&2
+            echo "::warning title=Release notes failed::$(tail -n 1 "$RUNNER_TEMP/notes-error.log")"
+            echo "Fork build of pingdotgg/t3code main plus fork commits, from ${sha}. (Release notes failed; see the workflow log.)" > "$RUNNER_TEMP/notes.md"
+          fi
+          cat "$RUNNER_TEMP/notes.md"
+          {
+            echo "notes<<FORK_RELEASE_NOTES_EOF"
+            cat "$RUNNER_TEMP/notes.md"
+            echo "FORK_RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
 
   build_bundle:
     name: Build JS bundle
@@ -333,6 +359,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+          NOTES: ${{ needs.prepare.outputs.notes }}
           MANIFEST: ${{ matrix.platform == 'mac' && 'nightly-mac.yml' || matrix.platform == 'win' && 'nightly.yml' || matrix.arch == 'arm64' && 'nightly-linux-arm64.yml' || 'nightly-linux.yml' }}
         run: |
           set -euo pipefail
@@ -343,7 +370,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "${{ needs.prepare.outputs.sha }}" \
               --title "${{ needs.prepare.outputs.name }}" \
-              --notes "Fork build of ${UPSTREAM_REPOSITORY} main plus fork commits, from ${{ needs.prepare.outputs.sha }}." \
+              --notes "$NOTES" \
               --prerelease; then
             exit 0
           fi
@@ -424,7 +451,7 @@ jobs:
     needs: [prepare, build_bundle, desktop, checksums]
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     permissions:
       actions: read
     steps:

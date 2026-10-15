@@ -9,13 +9,17 @@
  *    the restart killed (upstream wakes it only for other background work);
  *  - it never sends a second message after a recovery turn that a restart
  *    cut before it gave an answer.
+ * It keeps the upstream limits: the chain cap and a project that turned
+ * continuation off.
  */
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   MessageId,
+  RunId,
   type OrchestrationV2Run,
-  type RunId,
+  type ProjectId,
   type ServerSettings,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -30,10 +34,22 @@ import {
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
-import { restartContinuationBlocked } from "./RestartContinuation.ts";
+import { MAX_CONTINUATION_CHAIN, restartContinuationBlocked } from "./RestartContinuation.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const MESSAGE_ID_PREFIX = "message:recover-interrupted:";
+
+/** A project that turned continuation off keeps its threads asleep, with this switch on too. */
+export const projectTurnedContinuationOff = (
+  settings: ServerSettings,
+  projectId: ProjectId | null,
+) => {
+  const project = resolveProjectSettings(settings, projectId);
+  return (
+    project.sources.continueThreadsAfterServerUpdate === "project" &&
+    !project.settings.continueThreadsAfterServerUpdate
+  );
+};
 
 const isOpenStatus = (status: string) =>
   status === "pending" || status === "running" || status === "waiting";
@@ -100,9 +116,12 @@ export function settledRunWithOpenBackgroundWork(
   return openItem || openRoster ? run : undefined;
 }
 
-/** A run that a restart recovery started, from upstream or from this module. */
-const isRecoveryRun = (run: OrchestrationV2Run) =>
-  run.restartContinuationOfRunId !== undefined || run.userMessageId.startsWith(MESSAGE_ID_PREFIX);
+/** The run that a restart recovery run continues, from upstream or from this module. */
+const recoveredRunId = (run: OrchestrationV2Run): RunId | undefined =>
+  run.restartContinuationOfRunId ??
+  (run.userMessageId.startsWith(MESSAGE_ID_PREFIX)
+    ? RunId.make(run.userMessageId.slice(MESSAGE_ID_PREFIX.length))
+    : undefined);
 
 /**
  * Sends the recovery message for `sourceRunId`, the run the restart cut off.
@@ -124,6 +143,7 @@ export const recoverInterruptedThread = Effect.fn(
   );
   const now = yield* DateTime.now;
   if (isThreadPutAway(projection.thread, now)) return;
+  if (projectTurnedContinuationOff(settings, projection.thread.projectId)) return;
   // One message per cut run, so one per thread for each server start.
   if (projection.messages.some((message) => message.id === messageId)) return;
   const source = projection.runs.find((run) => run.id === input.sourceRunId);
@@ -165,8 +185,24 @@ export const recoverInterruptedThread = Effect.fn(
     (message) => message.id === source.userMessageId,
   );
   if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage)) return;
+  // A turn that keeps restarting the server, such as a deploy, would otherwise recover forever.
+  let chainLength = 0;
+  let previousRunId = recoveredRunId(source);
+  while (previousRunId !== undefined && chainLength < MAX_CONTINUATION_CHAIN) {
+    chainLength += 1;
+    const previous = previousRunId;
+    const run = projection.runs.find((candidate) => candidate.id === previous);
+    previousRunId = run === undefined ? undefined : recoveredRunId(run);
+  }
+  if (chainLength >= MAX_CONTINUATION_CHAIN) {
+    yield* Effect.logWarning("Not recovering a run restarted too many times in a row", {
+      threadId: input.threadId,
+      sourceRunId: input.sourceRunId,
+    });
+    return;
+  }
   // No loop: a recovery turn that a restart cut before any answer gets no second message.
-  if (isRecoveryRun(source)) {
+  if (recoveredRunId(source) !== undefined) {
     const answers = yield* threads.getThreadRecords(input.threadId, ["messages"], {
       messageRunIds: [source.id],
       messageRoles: ["assistant"],

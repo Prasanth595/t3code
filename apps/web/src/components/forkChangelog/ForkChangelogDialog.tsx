@@ -7,8 +7,23 @@ import type {
   ForkWorkflowState,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { ExternalLinkIcon } from "lucide-react";
-import { createContext, type ReactNode, use, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowDownToLineIcon,
+  CircleCheckIcon,
+  ExternalLinkIcon,
+  GitCompareArrowsIcon,
+  GitForkIcon,
+} from "lucide-react";
+import {
+  createContext,
+  type ReactElement,
+  type ReactNode,
+  use,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { APP_VERSION } from "../../branding";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -25,8 +40,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { formatChatTimestampTooltip, formatRelativeTimeLabel } from "../../timestampFormat";
 import { useRelativeTimeTick } from "../settings/settingsLayout";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { PullRequestActorAvatar } from "../pullRequest/pullRequestPresentation";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import {
   Dialog,
   DialogDescription,
@@ -38,6 +55,7 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ForkChangelogAgentMenu } from "./ForkChangelogAgentMenu";
 import { type ForkChangelogTab, linkCommitSubject } from "./forkChangelog.logic";
 
@@ -54,7 +72,7 @@ interface ChangelogClock {
 /** One minute tick for every time label, so the list itself does not re-render. */
 const ChangelogClockContext = createContext<ChangelogClock | null>(null);
 
-function ChangelogClockProvider({ children }: { readonly children: ReactNode }) {
+export function ChangelogClockProvider({ children }: { readonly children: ReactNode }) {
   const nowMs = useRelativeTimeTick(60_000);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const clock = useMemo(() => ({ nowMs, timestampFormat }), [nowMs, timestampFormat]);
@@ -196,13 +214,30 @@ function ReleaseSection({
           <TextLink href={release.url}>{release.version}</TextLink>
         </h3>
         {release.version === APP_VERSION ? (
-          <Badge size="sm" variant="secondary">
-            Installed
-          </Badge>
+          <Hint
+            label="Installed"
+            render={<span className="shrink-0 text-success-foreground" role="img" />}
+          >
+            <CircleCheckIcon aria-hidden className="size-3.5" />
+          </Hint>
         ) : null}
         <TimeLabel iso={release.publishedAt} />
         <span aria-hidden className="h-px min-w-4 flex-1 bg-border" />
-        {data?.compareUrl ? <ExternalLink href={data.compareUrl}>Compare</ExternalLink> : null}
+        {data?.compareUrl ? (
+          <Hint
+            label="Compare on GitHub"
+            render={
+              <a
+                className="shrink-0 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                href={data.compareUrl}
+                rel="noreferrer noopener"
+                target="_blank"
+              />
+            }
+          >
+            <GitCompareArrowsIcon aria-hidden className="size-3.5" />
+          </Hint>
+        ) : null}
       </div>
       {data === null ? (
         <QueryState
@@ -358,7 +393,7 @@ function SyncRun({ run }: { readonly run: ForkWorkflowRun }) {
   );
 }
 
-function CommitList({ commits }: { readonly commits: ReadonlyArray<ForkCommit> }) {
+export function CommitList({ commits }: { readonly commits: ReadonlyArray<ForkCommit> }) {
   return (
     <ul className="flex flex-col">
       {commits.map((commit) => (
@@ -368,44 +403,100 @@ function CommitList({ commits }: { readonly commits: ReadonlyArray<ForkCommit> }
   );
 }
 
-/** Subject first, then the sha, the author and the time in a muted line. */
+/** The source icon and the subject, then the author avatar, the sha and the time in a muted line. */
 function CommitRow({ commit }: { readonly commit: ForkCommit }) {
+  const authorName = commit.author ?? commit.authorLogin ?? "Unknown author";
+  const avatar = (
+    <PullRequestActorAvatar
+      actor={{
+        login: commit.authorLogin ?? authorName,
+        name: commit.author,
+        avatarUrl: commit.authorLogin
+          ? `https://github.com/${encodeURIComponent(commit.authorLogin)}.png?size=32`
+          : null,
+      }}
+    />
+  );
   return (
     <li className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 hover:bg-accent/50">
       <div className="flex items-baseline gap-1.5">
-        {commit.fork ? (
-          <Badge size="sm" variant="info">
-            Fork
-          </Badge>
-        ) : null}
+        <CommitSource fork={commit.fork} />
         <p className="min-w-0 text-sm leading-5 break-words">
           {linkCommitSubject(commit).map((part) =>
             part.url === null ? (
               part.text
             ) : (
-              <TextLink href={part.url} key={part.start}>
-                {part.text}
-              </TextLink>
+              <PullRequestReference key={part.start} number={part.text.slice(1)} url={part.url} />
             ),
           )}
         </p>
       </div>
       <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground text-xs">
+        <Hint
+          label={authorName}
+          render={
+            commit.authorLogin ? (
+              <a
+                className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                href={`https://github.com/${encodeURIComponent(commit.authorLogin)}`}
+                rel="noreferrer noopener"
+                target="_blank"
+              />
+            ) : (
+              <span role="img" />
+            )
+          }
+        >
+          {avatar}
+        </Hint>
         <span className="font-mono">
           <TextLink href={commit.url}>{commit.sha.slice(0, 7)}</TextLink>
         </span>
         <span aria-hidden>·</span>
-        {commit.authorLogin ? (
-          <TextLink href={`https://github.com/${encodeURIComponent(commit.authorLogin)}`}>
-            {commit.author ?? commit.authorLogin}
-          </TextLink>
-        ) : (
-          <span>{commit.author ?? "Unknown author"}</span>
-        )}
-        <span aria-hidden>·</span>
         <TimeLabel iso={commit.committedAt} />
       </p>
     </li>
+  );
+}
+
+const COMMIT_SOURCES = {
+  fork: { label: "Fork commit", Icon: GitForkIcon, className: "text-info-foreground" },
+  upstream: {
+    label: "Upstream commit",
+    Icon: ArrowDownToLineIcon,
+    className: "text-muted-foreground",
+  },
+} as const;
+
+function CommitSource({ fork }: { readonly fork: boolean }) {
+  const source = COMMIT_SOURCES[fork ? "fork" : "upstream"];
+  return (
+    <Hint
+      label={source.label}
+      render={<span className={`shrink-0 self-center ${source.className}`} role="img" />}
+    >
+      <source.Icon aria-hidden className="size-3.5" />
+    </Hint>
+  );
+}
+
+/**
+ * A pull request reference in the markup of the thread card pull request badge, so that a theme
+ * that styles `[data-thread-card-element="pullRequest"]` styles it the same way.
+ */
+function PullRequestReference({ number, url }: { readonly number: string; readonly url: string }) {
+  return (
+    <span className="contents" data-thread-card-element="pullRequest">
+      <InlineButton
+        aria-label={`Pull request #${number}`}
+        render={<a href={url} rel="noreferrer noopener" target="_blank" />}
+      >
+        <span className="contents font-normal text-muted-foreground text-xs tabular-nums">
+          <PullRequestGlyph.pullRequest aria-hidden className="size-3 shrink-0" />
+          <span>{number}</span>
+        </span>
+      </InlineButton>
+    </span>
   );
 }
 
@@ -512,4 +603,24 @@ function QueryState({
 
 function Notice({ children }: { readonly children: ReactNode }) {
   return <p className="px-2 py-1 text-muted-foreground text-xs">{children}</p>;
+}
+
+/** An icon or a compact control whose meaning shows in a tooltip and in its accessible name. */
+export function Hint({
+  label,
+  render,
+  children,
+}: {
+  readonly label: string;
+  readonly render: ReactElement;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger aria-label={label} render={render}>
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
 }
