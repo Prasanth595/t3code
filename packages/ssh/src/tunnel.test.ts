@@ -898,15 +898,21 @@ describe("archive runner script", () => {
         yield* fs.makeDirectory(home, { recursive: true });
         // uutils coreutils (Ubuntu's default) mkdir exits 0 when it loses the
         // race to create a directory. Shim that behavior so the race covers
-        // such hosts wherever the test runs.
-        const hostPath = process.env.PATH ?? "";
-        yield* fs.makeDirectory(`${root}/bin`);
+        // such hosts wherever the test runs, and count unpacks to prove a
+        // single install. Each shim drops its own directory from PATH.
+        const bin = `${root}/bin`;
+        yield* fs.makeDirectory(bin);
         yield* fs.writeFileString(
-          `${root}/bin/mkdir`,
-          `#!/bin/sh\nPATH='${hostPath}' exec mkdir -p "$@"\n`,
+          `${bin}/mkdir`,
+          '#!/bin/sh\nPATH=${PATH#*:}\nexec mkdir -p "$@"\n',
         );
-        yield* fs.chmod(`${root}/bin/mkdir`, 0o755);
-        const racePath = `${root}/bin:${hostPath}`;
+        yield* fs.writeFileString(
+          `${bin}/tar`,
+          '#!/bin/sh\necho >> "${0%/*}/installs"\nPATH=${PATH#*:}\nexec tar "$@"\n',
+        );
+        yield* fs.chmod(`${bin}/mkdir`, 0o755);
+        yield* fs.chmod(`${bin}/tar`, 0o755);
+        const racePath = `${bin}:${process.env.PATH ?? ""}`;
 
         const results = yield* Effect.all(
           [
@@ -920,6 +926,7 @@ describe("archive runner script", () => {
           assert.equal(result.exitCode, 0, result.stderr);
           assert.include(result.stdout, `t3 v${archiveVersion}`);
         }
+        assert.equal(yield* fs.readFileString(`${bin}/installs`), "\n");
         const versionsDir = `${home}/.t3/runtime/versions`;
         assert.deepEqual(yield* fs.readDirectory(versionsDir), [archiveVersion]);
         assert.equal(
