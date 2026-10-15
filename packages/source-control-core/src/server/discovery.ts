@@ -11,9 +11,12 @@ import {
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -47,7 +50,7 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   ) => ReadonlyArray<string>;
   readonly probeTimeoutMs?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
-  /** `null` when nothing claims the remote; `undefined` when the output cannot say. */
+  /** `null` when the CLI holds nothing for the remote; `undefined` when its output cannot say. */
   readonly refineUnknownRemote?: (
     input: SourceControlUnknownRemoteRefinementInput,
   ) => SourceControlProviderInfo | null | undefined;
@@ -61,10 +64,14 @@ export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
 export type SourceControlManagedCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "managed-cli";
   readonly probe: (cwd: string) => Effect.Effect<SourceControlProviderDiscoveryItem>;
+  /**
+   * `null` when the integration holds nothing for the remote, which includes its CLI not being
+   * installed. A failure means it could not tell, and the registry does not keep that answer.
+   */
   readonly refineUnknownRemote: (input: {
     readonly cwd: string;
     readonly context: SourceControlProvider.SourceControlProviderContext;
-  }) => Effect.Effect<UnknownRemoteVerdict>;
+  }) => Effect.Effect<SourceControlProviderInfo | null, Cause.YieldableError>;
 };
 
 export type SourceControlProviderDiscoverySpec =
@@ -303,8 +310,8 @@ export function probeSourceControlProvider(input: {
 const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
 
 /**
- * A hosting CLI that is not installed claims no remote. The spawner checks the cwd first, so only
- * the executable's own ENOENT comes from `ChildProcess`; a missing checkout fails elsewhere.
+ * A hosting CLI that is not installed claims no remote. The spawner checks the cwd before the
+ * executable, so only the executable's own ENOENT comes from `ChildProcess`.
  */
 export function isMissingExecutable(error: unknown): boolean {
   return (
@@ -315,12 +322,50 @@ export function isMissingExecutable(error: unknown): boolean {
   );
 }
 
+/** The CLI ran, but its output does not say whether it holds the remote's host. */
+class UnknownRemoteUnanswered extends Data.TaggedError("UnknownRemoteUnanswered") {}
+
 export interface UnknownRemoteVerdict {
   readonly provider: SourceControlProviderInfo | null;
-  /** Every check ahead of the answer ran, so another checkout of the server would hear the same. */
+  /** Every integration answered, so the verdict holds for other checkouts of the same server. */
   readonly settled: boolean;
 }
 
+function refineWithSpec(input: {
+  readonly spec: SourceControlProviderDiscoverySpec;
+  readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
+  readonly cwd: string;
+  readonly context: SourceControlProvider.SourceControlProviderContext;
+}): Effect.Effect<SourceControlProviderInfo | null, Cause.YieldableError> {
+  const { spec, context } = input;
+  if (spec.type === "managed-cli") {
+    return spec.refineUnknownRemote({ cwd: input.cwd, context });
+  }
+  if (!isCliRemoteRefinementSpec(spec)) return Effect.succeed(null);
+  return input.process
+    .run({
+      operation: "source-control.discovery.refine-unknown-remote",
+      command: spec.executable,
+      args: spec.remoteRefinementArgs?.(context) ?? spec.authArgs,
+      cwd: input.cwd,
+      allowNonZeroExit: true,
+      timeoutMs: probeTimeoutMs(spec),
+      maxOutputBytes: 8_000,
+      appendTruncationMarker: true,
+    })
+    .pipe(
+      Effect.catchIf(isMissingExecutable, () => Effect.void),
+      Effect.flatMap((auth) => {
+        const provider =
+          auth === undefined ? null : spec.refineUnknownRemote({ cwd: input.cwd, context, auth });
+        return provider === undefined
+          ? Effect.fail(new UnknownRemoteUnanswered())
+          : Effect.succeed(provider);
+      }),
+    );
+}
+
+/** Asks every integration whether it holds the remote's server; the first claim wins. */
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
   function* (input: {
     readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;
@@ -328,46 +373,15 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
     readonly cwd: string;
     readonly context: SourceControlProvider.SourceControlProviderContext;
   }): Effect.fn.Return<UnknownRemoteVerdict> {
-    const context = input.context;
-
-    const verdicts = yield* Effect.forEach(input.specs, (spec) => {
-      if (spec.type === "managed-cli") {
-        return spec.refineUnknownRemote({ cwd: input.cwd, context });
-      }
-      if (!isCliRemoteRefinementSpec(spec))
-        return Effect.succeed({ provider: null, settled: true });
-      return input.process
-        .run({
-          operation: "source-control.discovery.refine-unknown-remote",
-          command: spec.executable,
-          args: spec.remoteRefinementArgs?.(context) ?? spec.authArgs,
-          cwd: input.cwd,
-          allowNonZeroExit: true,
-          timeoutMs: probeTimeoutMs(spec),
-          maxOutputBytes: 8_000,
-          appendTruncationMarker: true,
-        })
-        .pipe(
-          Effect.map((auth) =>
-            spec.refineUnknownRemote({
-              cwd: input.cwd,
-              context,
-              auth,
-            }),
-          ),
-          Effect.catchIf(isMissingExecutable, () => Effect.succeed(null)),
-          Effect.orElseSucceed(() => undefined),
-          Effect.map((provider) => ({
-            provider: provider ?? null,
-            settled: provider !== undefined,
-          })),
-        );
-    });
-
+    const results = yield* Effect.forEach(input.specs, (spec) =>
+      refineWithSpec({ ...input, spec }).pipe(Effect.result),
+    );
+    // A claim reached after another integration could not answer is not settled: that one might
+    // have claimed the host first.
     let settled = true;
-    for (const verdict of verdicts) {
-      settled &&= verdict.settled;
-      if (verdict.provider) return { provider: verdict.provider, settled };
+    for (const result of results) {
+      if (Result.isFailure(result)) settled = false;
+      else if (result.success !== null) return { provider: result.success, settled };
     }
     return { provider: null, settled };
   },

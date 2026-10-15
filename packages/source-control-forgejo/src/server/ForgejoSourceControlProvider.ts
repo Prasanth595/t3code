@@ -150,37 +150,28 @@ export const makeDiscovery = Effect.gen(function* () {
         readonly context: SourceControlProvider.SourceControlProviderContext;
       }) {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
-        if (!remote) return { provider: null, settled: true };
-        let settled = true;
+        if (!remote) return null;
         for (const command of ["fj", "tea"] as const) {
           const logins = yield* listLogins({
             cwd: input.cwd,
             command,
             remoteUrl: input.context.remoteUrl,
           }).pipe(
-            // A CLI that is not installed holds no login; any other failure leaves it unasked.
+            // A CLI that is not installed holds no login; any other failure propagates.
             Effect.catchIf(
               (error) => isMissingExecutable(error.cause),
               () => Effect.succeed([]),
             ),
-            Effect.orElseSucceed(() => undefined),
           );
-          if (logins === undefined) {
-            settled = false;
-            continue;
-          }
           const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
           if (login)
             return {
-              provider: {
-                kind: SourceControlProviderKind.make("forgejo"),
-                name: discovery.label,
-                baseUrl: login.url,
-              },
-              settled,
+              kind: SourceControlProviderKind.make("forgejo"),
+              name: discovery.label,
+              baseUrl: login.url,
             };
         }
-        return { provider: null, settled };
+        return null;
       },
     ),
   } satisfies SourceControlManagedCliDiscoverySpec;

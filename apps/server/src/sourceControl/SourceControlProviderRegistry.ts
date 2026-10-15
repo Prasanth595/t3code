@@ -159,8 +159,10 @@ function selectProviderContext(
 }
 
 /**
- * Checkouts of one server share a lookup. The key omits `cwd`, which matters only when a check fails
- * there, and such a verdict is not kept. Equality ignores the lookup, so this is not a `Data.Class`.
+ * One lookup per server: remotes that differ only in `owner/repo` share a verdict, and callers
+ * that arrive while it runs wait on it. `cwd` is left out because it only matters when a probe
+ * fails there, and a failed probe is not kept. Equality ignores `lookup`, so this is not a
+ * `Data.Class`.
  */
 class UnknownRemoteLookup {
   readonly key: string;
@@ -174,6 +176,7 @@ class UnknownRemoteLookup {
     this.key = [
       context.provider.name,
       context.provider.baseUrl,
+      // Strip a trailing `owner/repo`, never the host after `//`, so one-segment remotes stay apart.
       context.remoteUrl.trim().replace(/(?<!\/\/[^/]*)[^/:]+\/[^/:]+\/?$/u, ""),
       context.requestedHost ?? "",
     ].join("\n");
@@ -247,7 +250,8 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
       Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
 
-    // A verdict a check could not give is shared with callers already waiting on it, then dropped.
+    // "No integration holds this host" is the common verdict and the one worth keeping. A verdict
+    // reached while some probe failed is handed to the callers waiting on it, then dropped.
     const unknownRemoteCache = yield* Cache.makeWith(
       (request: UnknownRemoteLookup) => request.lookup,
       {
@@ -256,8 +260,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           Exit.isSuccess(exit) && exit.value.settled ? UNKNOWN_REMOTE_CACHE_TTL : Duration.zero,
       },
     );
-    // A credential saved or a host turned on or off in Settings clears the kept verdicts. The
-    // subscription is taken here so a change made before the consumer starts is not lost.
+    // A token saved or a host toggled in Settings must show on the next read, not after the TTL.
     const settingsChanges = yield* serverSettings.subscribeChanges;
     yield* Stream.runForEach(settingsChanges, () => Cache.invalidateAll(unknownRemoteCache)).pipe(
       Effect.forkScoped,
