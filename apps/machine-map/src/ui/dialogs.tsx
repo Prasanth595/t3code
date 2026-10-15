@@ -752,6 +752,22 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
           ),
       });
     }
+    // MM-904, MM-907: clients and the sign-ins that wait for approval.
+    for (const client of map.clients) {
+      out.push({
+        label: client.name,
+        kind: "client",
+        run: () => portal.select({ _tag: "client", id: client.id }, "map"),
+      });
+    }
+    for (const pending of portal.pending ?? []) {
+      if (pending.state !== "pending") continue;
+      out.push({
+        label: `Approve ${pending.describedAs || "a browser"}`,
+        kind: "client",
+        run: () => portal.select({ _tag: "pending", thumbprint: pending.thumbprint }, "clients"),
+      });
+    }
     for (const machine of map.machines) {
       out.push({
         label: machine.name,

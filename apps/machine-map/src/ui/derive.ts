@@ -29,7 +29,7 @@ import { lockdownChanges } from "../rules/presets.ts";
 import { pendingRevisions } from "../rules/queue.ts";
 import type { Portal } from "./context.ts";
 import type { Route } from "./route.ts";
-import { LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
+import { clientName, LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
 
 export interface MachineQueue {
   readonly revisions: ReadonlyArray<MapRevision>;
@@ -208,6 +208,17 @@ export function describeChange(change: MapChange, map: MachineMapDocument): stri
       const note = findNote(map, change.id);
       return note ? `Delete note ${noteQuote(note.text)}` : "Delete a note";
     }
+    case "setClientArrow": {
+      const a = change.arrow;
+      const parts = [`${usesText(clientName(map, a.client), name(a.to))}: ${LEVEL_LABEL[a.level]}`];
+      if (a.expiresAt && a.revertLevel)
+        parts.push(`until ${shortTime(a.expiresAt)}, then ${LEVEL_LABEL[a.revertLevel]}`);
+      return parts.join(", ");
+    }
+    case "putClient":
+      return `Client ${change.client.name}`;
+    case "removeClient":
+      return `Remove ${clientName(map, change.clientId)}`;
   }
 }
 
@@ -225,7 +236,7 @@ export interface PauseReach {
   readonly offline: number;
   /** Machines that never connected get no stop. */
   readonly notJoined: number;
-  /** MM-710: the arrows and map roles that become `none`. */
+  /** MM-710: the machine and client arrows and the map roles that become `none`. */
   readonly arrows: number;
   readonly mapRoles: number;
 }
@@ -240,7 +251,9 @@ export function pauseReach(snapshot: PortalSnapshot): PauseReach {
     machines: joined.length,
     offline: joined.filter((machine) => snapshot.presence[machine.id]?.online !== true).length,
     notJoined: snapshot.map.machines.length - joined.length,
-    arrows: changes.filter((change) => change._tag === "setArrow").length,
+    arrows: changes.filter(
+      (change) => change._tag === "setArrow" || change._tag === "setClientArrow",
+    ).length,
     mapRoles: changes.filter((change) => change._tag === "putMachine").length,
   };
 }

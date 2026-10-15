@@ -18,8 +18,9 @@ import {
   machinesTouched,
   MapRuleError,
   pairOffset,
+  undoKeepingKeys,
 } from "./map.ts";
-import { MAC, machine, threeMachines, VPS, WIN } from "./testMap.ts";
+import { client, MAC, machine, threeMachines, VPS, WIN } from "./testMap.ts";
 
 const managed = (map: MachineMapDocument): MachineMapDocument =>
   applyChanges(map, [
@@ -142,6 +143,47 @@ describe("checkEditableChanges", () => {
     expect(() =>
       checkEditableChanges(map, [
         { _tag: "putMachine", machine: { ...machine(MAC), name: "Mac" } },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("undo keeps keys that came later and removes keys that the revision added (MM-720)", () => {
+    const start = applyChanges(threeMachines(), [{ _tag: "putClient", client: client() }]).map;
+    const later = { thumbprint: "key-2", addedAt: "2026-10-02T00:00:00.000Z", describedAs: "x" };
+    const rename = { _tag: "putClient" as const, client: client({ name: "iPhone" }) };
+    const renamed = applyChanges(start, [rename]);
+    const addKey = {
+      _tag: "putClient" as const,
+      client: client({ name: "iPhone", keys: [...client().keys, later] }),
+    };
+    const withKey = applyChanges(renamed.map, [addKey]);
+    const undoRename = undoKeepingKeys(withKey.map, {
+      changes: [rename],
+      inverse: renamed.inverse,
+    });
+    const afterRename = applyChanges(withKey.map, undoRename).map.clients[0];
+    expect(afterRename?.name).toBe("Phone");
+    expect(afterRename?.keys.map((k) => k.thumbprint)).toEqual(["key-1", "key-2"]);
+    const undoAdd = undoKeepingKeys(withKey.map, { changes: [addKey], inverse: withKey.inverse });
+    expect(
+      applyChanges(withKey.map, undoAdd).map.clients[0]?.keys.map((k) => k.thumbprint),
+    ).toEqual(["key-1"]);
+  });
+
+  it("lets a browser key in only through an approval (MM-907)", () => {
+    const map = applyChanges(threeMachines(), [{ _tag: "putClient", client: client() }]).map;
+    const newKey = { thumbprint: "key-2", addedAt: "2026-10-02T00:00:00.000Z", describedAs: "x" };
+    expect(() =>
+      checkEditableChanges(threeMachines(), [{ _tag: "putClient", client: client() }]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(map, [
+        { _tag: "putClient", client: client({ keys: [...client().keys, newKey] }) },
+      ]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(map, [
+        { _tag: "putClient", client: client({ name: "iPhone", keys: [] }) },
       ]),
     ).not.toThrow();
   });

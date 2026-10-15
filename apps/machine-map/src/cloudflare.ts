@@ -1,7 +1,8 @@
 /**
  * The Cloudflare API calls of the portal (MM-1205). The token needs "Access: Service Tokens Edit"
  * and "Access: Apps and Policies Edit". The machine tunnels (MM-213) also need "Cloudflare Tunnel:
- * Edit" on the account and "DNS: Edit" on the zone of the machine hostnames.
+ * Edit" on the account and "DNS: Edit" on the zone of the machine hostnames. Client approvals
+ * (MM-1208) also need "Access: Organizations, Identity Providers, and Groups Read".
  * Field names come from the Cloudflare OpenAPI spec of the Access, Tunnel and DNS endpoints.
  */
 import * as Schema from "effect/Schema";
@@ -96,6 +97,87 @@ const decodeRecord = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schem
 /** Read-only fields of an Access app and of its policies. A PUT must not send them. */
 const READ_ONLY_APP_FIELDS = ["id", "uid", "aud", "created_at", "updated_at"];
 const READ_ONLY_POLICY_FIELDS = ["uid", "created_at", "updated_at", "reusable"];
+
+/** MM-1208: the Access app of the approval path. */
+const APPROVALS_APP_NAME = "t3 portal approvals";
+/** MM-1207: the path that needs a fresh MFA. */
+export const APPROVALS_PATH = "/api/grant";
+/** MM-1207: the longest app session and MFA session of the approval path. */
+export const APPROVALS_MAX_SECONDS = 10 * 60;
+const APPROVALS_DURATION = "10m";
+const APPROVALS_AUTHENTICATORS = ["biometrics", "security_key"];
+
+const decodeApprovalsApp = Schema.decodeUnknownSync(
+  Schema.Struct({
+    id: Schema.String,
+    aud: Schema.String,
+    type: Schema.optionalKey(Schema.String),
+    session_duration: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    path_cookie_attribute: Schema.optionalKey(Schema.Boolean),
+    destinations: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ type: Schema.String, uri: Schema.optionalKey(Schema.String) })),
+    ),
+    mfa_config: Schema.optionalKey(
+      Schema.Struct({
+        mfa_disabled: Schema.optionalKey(Schema.Boolean),
+        session_duration: Schema.optionalKey(Schema.String),
+        allowed_authenticators: Schema.optionalKey(Schema.Array(Schema.String)),
+      }),
+    ),
+    policies: Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          decision: Schema.String,
+          include: Schema.Array(Schema.Unknown),
+          exclude: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+          require: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+        }),
+      ),
+    ),
+  }),
+);
+const decodeApprovalsApps = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+);
+const decodeOrganization = Schema.decodeUnknownSync(
+  Schema.Struct({
+    mfa_config: Schema.optionalKey(
+      Schema.Struct({ allowed_authenticators: Schema.optionalKey(Schema.Array(Schema.String)) }),
+    ),
+  }),
+);
+const decodeEmailRule = Schema.decodeUnknownOption(
+  Schema.Struct({ email: Schema.Struct({ email: Schema.String }) }),
+);
+
+const UNIT_SECONDS: Readonly<Record<string, number>> = { h: 3600, m: 60, s: 1, ms: 0.001 };
+
+/**
+ * Seconds of a Go duration such as `10m` or `1h30m`, as the Access API writes them. Null for a
+ * value it cannot read, so a strange value fails the check instead of passing it.
+ */
+function durationSeconds(text: string): number | null {
+  let total = 0;
+  let digits = "";
+  let unit = "";
+  const flush = (): boolean => {
+    const factor = UNIT_SECONDS[unit];
+    if (digits === "" || factor === undefined) return false;
+    total += Number(digits) * factor;
+    digits = "";
+    unit = "";
+    return true;
+  };
+  for (const char of text.trim()) {
+    const isDigit = (char >= "0" && char <= "9") || char === ".";
+    if (isDigit && unit !== "" && !flush()) return null;
+    if (isDigit) digits += char;
+    else unit += char;
+  }
+  return text.trim() !== "" && flush() ? total : null;
+}
+
+export type ApprovalsApp = ReturnType<typeof decodeApprovalsApp>;
 
 /** The CNAME target of a tunnel. */
 export const tunnelTarget = (tunnelId: string): string => `${tunnelId}.cfargotunnel.com`;
@@ -354,6 +436,55 @@ export class CloudflareApi {
     await this.#request("DELETE", `/zones/${zoneId}/dns_records/${recordId}`, ignoreResult);
   }
 
+  /**
+   * MM-1208: creates the Access app of the approval path with a fresh MFA, or makes it again when
+   * someone changed it. Returns its id and audience.
+   */
+  async ensureApprovalsApp(host: string, owners: ReadonlyArray<string>): Promise<ApprovalsApp> {
+    const found = await this.#call(
+      "GET",
+      `/access/apps?name=${encodeURIComponent(APPROVALS_APP_NAME)}&exact=true`,
+      decodeApprovalsApps,
+    );
+    for (const app of found.filter((a) => a.name === APPROVALS_APP_NAME)) {
+      const current = await this.approvalsApp(app.id);
+      if (approvalsAppProblem(current, host, owners) === null) return current;
+      await this.#call("DELETE", `/access/apps/${app.id}`, ignoreResult);
+    }
+    const domain = `${host}${APPROVALS_PATH}`;
+    return this.#call("POST", "/access/apps", decodeApprovalsApp, {
+      type: "self_hosted",
+      name: APPROVALS_APP_NAME,
+      domain,
+      destinations: [{ type: "public", uri: domain }],
+      session_duration: APPROVALS_DURATION,
+      path_cookie_attribute: true,
+      app_launcher_visible: false,
+      mfa_config: {
+        mfa_disabled: false,
+        session_duration: APPROVALS_DURATION,
+        allowed_authenticators: APPROVALS_AUTHENTICATORS,
+      },
+      policies: [
+        {
+          name: "t3 owner",
+          decision: "allow",
+          include: owners.map((email) => ({ email: { email } })),
+        },
+      ],
+    });
+  }
+
+  approvalsApp(appId: string): Promise<ApprovalsApp> {
+    return this.#call("GET", `/access/apps/${appId}`, decodeApprovalsApp);
+  }
+
+  /** MM-1207: the MFA methods that the Zero Trust organization allows. Empty when MFA is off. */
+  async organizationMfaMethods(): Promise<ReadonlyArray<string>> {
+    const org = await this.#call("GET", "/access/organizations", decodeOrganization);
+    return org.mfa_config?.allowed_authenticators ?? [];
+  }
+
   /** The audience tag of an Access app: `T3CODE_CLOUDFLARE_ACCESS_AUD` of its hostnames. */
   async accessAppAud(appId: string): Promise<string> {
     return (await this.#call("GET", `/access/apps/${appId}`, decodeAccessApp)).aud;
@@ -416,6 +547,49 @@ export class CloudflareApi {
     }
     return true;
   }
+}
+
+/**
+ * MM-1207: the reason the approval path does not need a fresh MFA from the owner only, or null
+ * when it does. Every field must be the one the portal set, so a dashboard edit fails closed.
+ */
+export function approvalsAppProblem(
+  app: ApprovalsApp,
+  host: string,
+  owners: ReadonlyArray<string>,
+): string | null {
+  const within = (value: string | null | undefined) => {
+    const seconds = value ? durationSeconds(value) : null;
+    return seconds !== null && seconds <= APPROVALS_MAX_SECONDS;
+  };
+  if (app.type !== "self_hosted") return "The approvals app is not a self-hosted app.";
+  const uris = (app.destinations ?? []).map((d) => d.uri);
+  if (uris.length !== 1 || uris[0] !== `${host}${APPROVALS_PATH}`)
+    return `The approvals app must cover only ${host}${APPROVALS_PATH}.`;
+  if (app.path_cookie_attribute !== true)
+    return "The approvals app must scope its cookie to its path.";
+  if (!within(app.session_duration)) return "The approvals app session must be 10 minutes or less.";
+  const mfa = app.mfa_config;
+  if (!mfa || mfa.mfa_disabled === true) return "The approvals app must require MFA.";
+  if (!within(mfa.session_duration)) return "The approvals MFA must be 10 minutes old or less.";
+  const methods = mfa.allowed_authenticators ?? [];
+  if (methods.length === 0 || methods.some((m) => !APPROVALS_AUTHENTICATORS.includes(m)))
+    return "The approvals MFA must allow only a passkey or a security key.";
+  const policies = app.policies ?? [];
+  const onlyOwners = policies.every(
+    (policy) =>
+      policy.decision === "allow" &&
+      policy.include.length > 0 &&
+      policy.include.every((rule) => {
+        const emailRule = decodeEmailRule(rule);
+        return (
+          emailRule._tag === "Some" && owners.includes(emailRule.value.email.email.toLowerCase())
+        );
+      }),
+  );
+  if (policies.length === 0 || !onlyOwners)
+    return "The approvals app must allow only the owner emails.";
+  return null;
 }
 
 const ruleTokenId = (rule: unknown): string | null => {

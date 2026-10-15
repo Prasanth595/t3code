@@ -9,8 +9,8 @@ import {
   raisesAnyAccess,
   raisesOwnAccess,
 } from "./access.ts";
-import { applyChanges, findArrow } from "./map.ts";
-import { MAC, machine, threeMachines, VPS } from "./testMap.ts";
+import { applyChanges, findArrow, findClientArrow } from "./map.ts";
+import { client, MAC, machine, PHONE, threeMachines, VPS } from "./testMap.ts";
 
 const withRole = (role: "none" | "read" | "propose" | "edit"): MachineMapDocument => ({
   ...threeMachines(),
@@ -135,5 +135,28 @@ describe("raisesAnyAccess (MM-711)", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it("flags a raised client arrow and a new key on a client that has access", () => {
+    const withClient = applyChanges(withRole("edit"), [
+      { _tag: "putClient", client: client() },
+      {
+        _tag: "setClientArrow",
+        arrow: { client: PHONE, to: MAC, level: "read", expiresAt: null, revertLevel: null },
+      },
+    ]).map;
+    const raise = {
+      _tag: "setClientArrow" as const,
+      arrow: { ...findClientArrow(withClient, PHONE, MAC), level: "admin" as const },
+    };
+    const newKey = {
+      _tag: "putClient" as const,
+      client: client({
+        keys: [...client().keys, { thumbprint: "key-2", addedAt: "", describedAs: "Chrome" }],
+      }),
+    };
+    expect(raisesAnyAccess(withClient, [raise])).toBe(true);
+    expect(raisesAnyAccess(withClient, [newKey])).toBe(true);
+    expect(raisesAnyAccess(withClient, [{ _tag: "removeClient", clientId: PHONE }])).toBe(false);
   });
 });

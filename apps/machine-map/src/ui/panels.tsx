@@ -1,6 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
+  clientKeyCode,
   MACHINE_LEVEL_SCOPES,
+  type ClientRecord,
   type CommandDelivery,
   type MachineCommandInput,
   type MachineId,
@@ -13,11 +15,12 @@ import {
   type SettingScope,
 } from "@t3tools/contracts/machineMap";
 
-import type { WriteResult } from "../api.ts";
-import { arrowChange, usesText } from "../rules/access.ts";
+import type { ApprovalsStatus, ApproveClientRequest, PendingClient, WriteResult } from "../api.ts";
+import { arrowChange, clientArrowChange, usesText } from "../rules/access.ts";
 import {
   effectiveSettings,
   findArrow,
+  findClientArrow,
   findMachine,
   LEVELS,
   levelRank,
@@ -26,8 +29,8 @@ import {
   roleRank,
 } from "../rules/map.ts";
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
-import { callApi } from "./apiClient.ts";
-import { usePortalContext, type CommandOptions } from "./context.ts";
+import { callApi, StepUpNeeded } from "./apiClient.ts";
+import { usePortalContext, type CommandOptions, type Portal } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import {
@@ -59,7 +62,7 @@ import {
   timeUntil,
   valueText,
 } from "./format.ts";
-import { CloseIcon, KindIcon, UndoIcon } from "./icons.tsx";
+import { ClientIcon, CloseIcon, KindIcon, UndoIcon } from "./icons.tsx";
 import { MachineStickers } from "./MachineStickers.tsx";
 import { MachineLink, RouteLink } from "./StickerLink.tsx";
 import { ResourcesSection } from "./resources.tsx";
@@ -69,6 +72,8 @@ import { settingControl, settingProblem } from "./settingControls.ts";
 const PANEL_LABEL: Record<Exclude<Selection["_tag"], "none">, string> = {
   arrow: "Arrow",
   machine: "Machine",
+  client: "Client",
+  pending: "Sign-in",
   revision: "Revision",
   proposal: "Proposal",
   setting: "Setting",
@@ -85,6 +90,10 @@ export function Panel({ selection }: { selection: Selection }) {
         return <ArrowPanel from={selection.from} to={selection.to} />;
       case "machine":
         return <MachinePanel id={selection.id} />;
+      case "client":
+        return <ClientPanel id={selection.id} />;
+      case "pending":
+        return <PendingPanel thumbprint={selection.thumbprint} />;
       case "revision":
         return <RevisionPanel revision={selection.revision} />;
       case "proposal":
@@ -1047,6 +1056,493 @@ function MachineManage({ machine }: { machine: MachineRecord }) {
           Remove machine
         </button>
       </div>
+    </>
+  );
+}
+
+/** MM-309: the level of a client on each machine, with the expiry of MM-304. */
+function ClientAccess({ client }: { client: ClientRecord }) {
+  const portal = usePortalContext();
+  const { map, now } = portal;
+  const [duration, setDuration] = useState<Duration>("permanent");
+  const [until, setUntil] = useState("");
+  const setLevel = (to: MachineRecord, level: MachineLevel) => {
+    // oxlint-disable-next-line react/purity -- This runs in a click handler, not during render.
+    const expiry = durationExpiry(duration, until, Date.now());
+    if (expiry === undefined) {
+      portal.call(() => Promise.reject(new Error("Pick a time in the future.")));
+      return;
+    }
+    const suffix = expiry === null ? "" : ` until ${shortTime(expiry)}`;
+    portal.submit(`${usesText(client.name, to.name)}: ${LEVEL_LABEL[level]}${suffix}`, [
+      clientArrowChange(map, { client: client.id, to: to.id, level, expiresAt: expiry }),
+    ]);
+  };
+  if (map.machines.length === 0) return <p className="hint">Add a machine first.</p>;
+  return (
+    <>
+      {portal.pause && <PausedNote />}
+      <div className="seg wide" role="group" aria-label="How long">
+        {(["permanent", "hour", "day", "until"] as const).map((d) => (
+          <button
+            key={d}
+            type="button"
+            aria-pressed={duration === d}
+            onClick={() => setDuration(d)}
+          >
+            {DURATION_LABEL[d]}
+          </button>
+        ))}
+      </div>
+      {duration === "until" && (
+        <input
+          type="datetime-local"
+          aria-label="Until"
+          className="full"
+          value={until}
+          onChange={(e) => setUntil(e.target.value)}
+        />
+      )}
+      {map.machines.map((machine) => {
+        const arrow = findClientArrow(map, client.id, machine.id);
+        const was =
+          arrow.level === "none"
+            ? (portal.pause?.cutClients.find((c) => c.client === client.id && c.to === machine.id)
+                ?.level ?? null)
+            : null;
+        return (
+          <div className="stack tight" key={machine.id}>
+            <div className="row">
+              <span className="t grow">{usesText(client.name, machine.name)}</span>
+              {arrow.expiresAt && arrow.revertLevel && (
+                <span
+                  className="sticker warn flat"
+                  data-tip={`Back to ${LEVEL_LABEL[arrow.revertLevel]} ${timeUntil(arrow.expiresAt, now)}`}
+                >
+                  temp
+                </span>
+              )}
+              {was && <span className="sticker cut-sticker">cut, was {LEVEL_LABEL[was]}</span>}
+            </div>
+            <div className="seg wide" role="group" aria-label={`Level on ${machine.name}`}>
+              {LEVELS.map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  aria-pressed={arrow.level === level}
+                  disabled={portal.pause !== null && levelRank(level) > levelRank(arrow.level)}
+                  onClick={() => setLevel(machine, level)}
+                >
+                  {LEVEL_LABEL[level]}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** MM-904, MM-909, MM-910: a client with its access, keys, name and removal. */
+function ClientPanel({ id }: { id: string }) {
+  const portal = usePortalContext();
+  const { map, now } = portal;
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState("");
+  const client = map.clients.find((c) => c.id === id);
+  if (!client) return <Missing what="client" />;
+  const put = (summary: string, next: ClientRecord) =>
+    portal.submit(summary, [{ _tag: "putClient", client: next }]);
+
+  return (
+    <>
+      <h2 className="with-icon">
+        <span className="icon">
+          <ClientIcon />
+        </span>
+        {client.name}
+      </h2>
+      <p className="desc">
+        {client.email ?? "No email"} · approved {timeAgo(client.createdAt, now)}
+      </p>
+
+      <Section>Access</Section>
+      <p className="hint">
+        A client starts with no access. Machines enforce these levels once they turn on client
+        access.
+      </p>
+      <ClientAccess client={client} />
+
+      <Section>Browser keys</Section>
+      {client.keys.length === 0 ? (
+        <p className="hint">No keys. Approve a waiting sign-in into this client to add one.</p>
+      ) : (
+        client.keys.map((key) => (
+          <div className="row" key={key.thumbprint}>
+            <span className="grow">
+              <span className="t">{key.describedAs || "Browser"}</span>
+              <span className="v mono">
+                {clientKeyCode(key.thumbprint)} · added {timeAgo(key.addedAt, now)}
+              </span>
+            </span>
+            <button
+              type="button"
+              className="btn small danger"
+              onClick={() =>
+                portal.open({
+                  _tag: "confirm",
+                  title: `Remove this key from ${client.name}?`,
+                  body: "That browser loses the access of this client. It can sign in again and wait for approval.",
+                  confirmLabel: "Remove key",
+                  action: () =>
+                    put(`Removed a key from ${client.name}`, {
+                      ...client,
+                      keys: client.keys.filter((k) => k.thumbprint !== key.thumbprint),
+                    }),
+                })
+              }
+            >
+              Remove
+            </button>
+          </div>
+        ))
+      )}
+
+      <Section>Name</Section>
+      {renaming ? (
+        <form
+          className="rename"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const next = name.trim();
+            if (next && next !== client.name)
+              put(`Renamed ${client.name} to ${next}`, { ...client, name: next });
+            setRenaming(false);
+          }}
+        >
+          <input
+            aria-label="Name"
+            value={name}
+            autoFocus
+            required
+            autoComplete="off"
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                setRenaming(false);
+              }
+            }}
+          />
+          <button type="submit" className="btn small primary">
+            Save
+          </button>
+          <button type="button" className="btn small" onClick={() => setRenaming(false)}>
+            Cancel
+          </button>
+        </form>
+      ) : (
+        <div className="row">
+          <span className="t grow">{client.name}</span>
+          <button
+            type="button"
+            className="btn small"
+            onClick={() => {
+              setName(client.name);
+              setRenaming(true);
+            }}
+          >
+            Rename
+          </button>
+        </div>
+      )}
+
+      <Section>Remove</Section>
+      <p className="hint">Removes the client, its keys and its arrows.</p>
+      <div className="actions spaced">
+        <button
+          type="button"
+          className="btn small danger"
+          onClick={() =>
+            portal.open({
+              _tag: "confirm",
+              title: `Remove ${client.name}?`,
+              body: "Its browsers lose all access. Each one can sign in again and wait for approval.",
+              confirmLabel: "Remove",
+              action: () => {
+                portal.select(NO_SELECTION);
+                void portal.submit(`Removed ${client.name}`, [
+                  { _tag: "removeClient", clientId: client.id },
+                ]);
+              },
+            })
+          }
+        >
+          Remove client
+        </button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * MM-907: the arrows that the approve form starts with. A sign-in with the email of an existing
+ * client copies the arrows of the newest such client. Any other sign-in starts at `none`.
+ */
+function startingArrows(map: Portal["map"], pending: PendingClient): Record<string, MachineLevel> {
+  const sameEmail = map.clients
+    .filter((c) => c.email !== null && c.email === pending.email)
+    .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  return Object.fromEntries(
+    map.machines.map((m) => {
+      if (!sameEmail) return [m.id, "none"];
+      const arrow = findClientArrow(map, sameEmail.id, m.id);
+      // A temporary level is not copied: the new client gets the permanent one.
+      return [m.id, arrow.revertLevel ?? arrow.level];
+    }),
+  );
+}
+
+/** MM-1207: whether this page has a fresh passkey check for the approval path. */
+type StepUp = "checking" | "fresh" | "needed";
+
+/** MM-906 to MM-908, MM-1207: approve or reject one waiting sign-in. */
+function PendingPanel({ thumbprint }: { thumbprint: string }) {
+  const portal = usePortalContext();
+  // The list comes right after the snapshot, so a reload or a push link waits for it.
+  if (portal.pending === null) return <p className="hint">Loading the sign-in…</p>;
+  const pending = portal.pending.find((p) => p.thumbprint === thumbprint);
+  if (!pending) return <Missing what="sign-in" />;
+  // A new key makes a new form, so its starting values come from that key.
+  return <PendingSignIn key={pending.thumbprint} pending={pending} />;
+}
+
+function PendingSignIn({ pending }: { pending: PendingClient }) {
+  const portal = usePortalContext();
+  const { map, now } = portal;
+  const thumbprint = pending.thumbprint;
+  const [status, setStatus] = useState<ApprovalsStatus | null>(null);
+  const [stepUp, setStepUp] = useState<StepUp>("checking");
+  /** The client that the key joins: a new one, or an existing one by id. */
+  const [target, setTarget] = useState<ClientRecord["id"] | null>(null);
+  const [name, setName] = useState(pending.describedAs);
+  const [arrows, setArrows] = useState<Record<string, MachineLevel>>(() =>
+    startingArrows(map, pending),
+  );
+
+  useEffect(() => {
+    let current = true;
+    callApi<ApprovalsStatus>("GET", "/api/clients/approvals")
+      .then((next) => current && setStatus(next))
+      .catch(
+        (error: unknown) =>
+          current &&
+          setStatus({
+            _tag: "missing",
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+      );
+    callApi<{ ok: boolean }>("GET", "/api/grant/check")
+      .then(() => current && setStepUp("fresh"))
+      .catch(() => current && setStepUp("needed"));
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  const seenOn = findMachine(map, pending.seenOn);
+  const confirmPasskey = () => {
+    location.href = `/api/grant/start?then=${encodeURIComponent(location.hash)}`;
+  };
+  const approve = () => {
+    const request: ApproveClientRequest = {
+      thumbprint: pending.thumbprint,
+      client:
+        target === null
+          ? { _tag: "new", name: name.trim() }
+          : { _tag: "existing", clientId: target },
+      // MM-907: an existing client keeps its own arrows. Only a new client gets arrows here.
+      arrows:
+        target === null
+          ? map.machines.flatMap((machine) => {
+              const level = arrows[machine.id] ?? "none";
+              return level === "none" ? [] : [{ to: machine.id, level }];
+            })
+          : [],
+    };
+    portal.call(async () => {
+      try {
+        const result = await callApi<WriteResult>("POST", "/api/grant/approve", request);
+        portal.select(NO_SELECTION);
+        return result;
+      } catch (error) {
+        if (error instanceof StepUpNeeded) setStepUp("needed");
+        throw error;
+      }
+    }, "Approved.");
+  };
+
+  return (
+    <>
+      <h2 className="with-icon">
+        <span className="icon">
+          <ClientIcon />
+        </span>
+        {pending.describedAs || "A browser"}
+      </h2>
+      <p className="desc">
+        {pending.email ?? "No email"} · signed in to {seenOn?.name ?? pending.seenOn}{" "}
+        {timeAgo(pending.lastSeenAt, now)}
+      </p>
+      <p className="small">
+        Code <span className="sticker flat mono">{clientKeyCode(pending.thumbprint)}</span> The
+        waiting browser shows the same code.
+      </p>
+
+      {pending.state === "rejected" ? (
+        <>
+          <p className="hint">You rejected this sign-in. It gets nothing.</p>
+          <div className="actions spaced">
+            <button
+              type="button"
+              className="btn small"
+              onClick={() =>
+                portal.call(
+                  () => callApi("POST", `/api/pending/${encodeURIComponent(thumbprint)}/unblock`),
+                  "It waits for approval again.",
+                )
+              }
+            >
+              Unblock
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          {status?._tag === "missing" && (
+            <div className="row callout">
+              <div className="v">{status.reason}</div>
+              <button
+                type="button"
+                className="btn small"
+                onClick={() =>
+                  portal.call(async () => {
+                    const next = await callApi<ApprovalsStatus>("POST", "/api/clients/approvals");
+                    setStatus(next);
+                    return next._tag === "ready" ? "Approvals are ready." : next.reason;
+                  })
+                }
+              >
+                Set up approvals
+              </button>
+            </div>
+          )}
+
+          <Section>Client</Section>
+          <div className="seg wide" role="group" aria-label="Client">
+            <button type="button" aria-pressed={target === null} onClick={() => setTarget(null)}>
+              New client
+            </button>
+            <button
+              type="button"
+              aria-pressed={target !== null}
+              disabled={map.clients.length === 0}
+              onClick={() => setTarget(map.clients[0]?.id ?? null)}
+            >
+              Add to a client
+            </button>
+          </div>
+          {target === null ? (
+            <label className="field">
+              Name
+              <input
+                value={name}
+                required
+                autoComplete="off"
+                onChange={(e) => setName(e.target.value)}
+              />
+            </label>
+          ) : (
+            <label className="field">
+              Client
+              <select
+                value={target}
+                onChange={(e) =>
+                  setTarget(map.clients.find((c) => c.id === e.target.value)?.id ?? null)
+                }
+              >
+                {map.clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {target === null && (
+            <>
+              <Section>Access</Section>
+              {map.machines.map((machine) => (
+                <label className="field inline" key={machine.id}>
+                  {machine.name}
+                  <select
+                    value={arrows[machine.id] ?? "none"}
+                    onChange={(e) => {
+                      const level = LEVELS.find((l) => l === e.target.value) ?? "none";
+                      setArrows({ ...arrows, [machine.id]: level });
+                    }}
+                  >
+                    {LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {LEVEL_LABEL[level]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </>
+          )}
+
+          <div className="actions spaced">
+            {status?._tag === "ready" && stepUp === "needed" ? (
+              <button type="button" className="btn primary" onClick={confirmPasskey}>
+                Confirm with passkey
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn primary"
+                disabled={
+                  stepUp === "checking" ||
+                  status?._tag !== "ready" ||
+                  (target === null && name.trim() === "")
+                }
+                onClick={approve}
+              >
+                Approve
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn danger"
+              onClick={() =>
+                portal.call(async () => {
+                  await callApi("POST", `/api/pending/${encodeURIComponent(thumbprint)}/reject`);
+                  portal.select(NO_SELECTION);
+                }, "Rejected. It gets nothing.")
+              }
+            >
+              Reject
+            </button>
+          </div>
+          <p className="hint">
+            Approving asks Cloudflare for your passkey, at most once in 10 minutes. Agents never
+            approve.
+          </p>
+        </>
+      )}
     </>
   );
 }

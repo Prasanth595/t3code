@@ -9,9 +9,12 @@ import type {
 import type {
   DevicesResponse,
   MapAtResponse,
+  PendingClient,
   SignOutEverywhereResponse,
   WriteResult,
 } from "../api.ts";
+import { clientKeyCode } from "@t3tools/contracts/machineMap";
+
 import { usesText } from "../rules/access.ts";
 import { effectiveSettings, findArrow, MAP_ROLES, roleRank } from "../rules/map.ts";
 import { callApi } from "./apiClient.ts";
@@ -58,7 +61,7 @@ import { ClockIcon, RobotIcon, UndoIcon } from "./icons.tsx";
 import { MapView } from "./MapView.tsx";
 import { PushSettings } from "./PushSettings.tsx";
 import { NO_SELECTION } from "./route.ts";
-import { MachineLink } from "./StickerLink.tsx";
+import { ClientLink, MachineLink, RouteLink } from "./StickerLink.tsx";
 
 /** An empty list: a short title, what fills it, and a stamp when the empty state is good news. */
 function Empty({
@@ -685,7 +688,7 @@ export function TasksView() {
 /** MM-701 to MM-704, MM-714 to MM-716: revisions and commands newest first, with a time slider. */
 export function HistoryView() {
   const portal = usePortalContext();
-  const { map, now, history } = portal;
+  const { map, now, history, route } = portal;
   const [atRevision, setAtRevision] = useState<number | null>(null);
   const [past, setPast] = useState<
     { revision: number; map: MachineMapDocument } | { revision: number; error: string } | null
@@ -793,7 +796,15 @@ export function HistoryView() {
                     <tbody>
                       {diff.map((row) => (
                         <tr key={`${row.label}:${row.before}:${row.after}`}>
-                          <th scope="row">{row.label}</th>
+                          <th scope="row">
+                            {row.link ? (
+                              <RouteLink route={{ view: route.view, selection: row.link }}>
+                                {row.label}
+                              </RouteLink>
+                            ) : (
+                              row.label
+                            )}
+                          </th>
                           <td className="before">{row.before}</td>
                           <td aria-hidden>→</td>
                           <td className="after">{row.after}</td>
@@ -1114,7 +1125,103 @@ export function InboxView() {
   );
 }
 
-/** MM-901 to MM-903. */
+/** MM-904 to MM-908, MM-1115: approved clients, sign-ins that wait, and rejected ones. */
+function ApprovedClients() {
+  const portal = usePortalContext();
+  const { map, now, route } = portal;
+  const waiting = (portal.pending ?? []).filter((p) => p.state === "pending");
+  const rejected = (portal.pending ?? []).filter((p) => p.state === "rejected");
+  const pendingLink = (p: PendingClient) => (
+    <RouteLink
+      route={{ view: route.view, selection: { _tag: "pending", thumbprint: p.thumbprint } }}
+    >
+      {p.describedAs || "A browser"}
+    </RouteLink>
+  );
+  const seenOn = (p: PendingClient) => {
+    const machine = map.machines.find((m) => m.id === p.seenOn);
+    return machine ? <MachineLink id={machine.id}>{machine.name}</MachineLink> : p.seenOn;
+  };
+  return (
+    <>
+      <h3>Waiting for approval</h3>
+      {waiting.length === 0 ? (
+        <p className="small muted">
+          No sign-in waits. A new browser shows here once a machine reports it.
+        </p>
+      ) : (
+        <ul className="list">
+          {waiting.map((p) => (
+            <li key={p.thumbprint} className="item static">
+              <span className="grow">
+                <b>{pendingLink(p)}</b>
+                <span className="sub">
+                  {p.email ?? "No email"} · {seenOn(p)} · {timeAgo(p.lastSeenAt, now)} ·{" "}
+                  {clientKeyCode(p.thumbprint)}
+                </span>
+              </span>
+              <span className="sticker wait">waits</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h3>Approved clients</h3>
+      {map.clients.length === 0 ? (
+        <p className="small muted">No clients yet. Approve a waiting sign-in to add one.</p>
+      ) : (
+        <ul className="list">
+          {map.clients.map((client) => {
+            const arrows = map.clientArrows.filter((a) => a.client === client.id);
+            return (
+              <li key={client.id} className="item static">
+                <span className="grow">
+                  <b>
+                    <ClientLink id={client.id}>{client.name}</ClientLink>
+                  </b>
+                  <span className="sub">
+                    {client.email ?? "No email"} ·{" "}
+                    {client.keys.length === 1 ? "1 key" : `${client.keys.length} keys`} ·{" "}
+                    {arrows.length === 0
+                      ? "no access"
+                      : arrows.map((a, i) => (
+                          <span key={a.to}>
+                            {i > 0 && ", "}
+                            <MachineLink id={a.to}>
+                              {map.machines.find((m) => m.id === a.to)?.name ?? a.to}
+                            </MachineLink>{" "}
+                            {LEVEL_LABEL[a.level]}
+                          </span>
+                        ))}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {rejected.length > 0 && (
+        <>
+          <h3>Rejected</h3>
+          <ul className="list">
+            {rejected.map((p) => (
+              <li key={p.thumbprint} className="item static">
+                <span className="grow">
+                  <b>{pendingLink(p)}</b>
+                  <span className="sub">
+                    {p.email ?? "No email"} · last try {timeAgo(p.lastSeenAt, now)}
+                  </span>
+                </span>
+                <span className="sticker">rejected</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </>
+  );
+}
+
+/** MM-901 to MM-908. */
 export function ClientsView() {
   const portal = usePortalContext();
   const { map, snapshot, now } = portal;
@@ -1180,6 +1287,7 @@ export function ClientsView() {
         </div>
       </div>
       {error && <p className="error-text">{error}</p>}
+      <ApprovedClients />
       <PushSettings />
       <h3>Portal sign-ins</h3>
       {devices === null ? (

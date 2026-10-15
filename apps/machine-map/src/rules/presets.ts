@@ -1,12 +1,15 @@
 /**
- * Pure rules for presets (MM-705), lockdown (MM-706), restore (MM-704) and the emergency pause
- * (MM-710, MM-712). Each returns map changes, so the result is one revision that can be undone.
+ * Pure rules for presets (MM-705), restore (MM-704) and the emergency pause (MM-710, MM-712).
+ * Each returns map changes, so the result is one revision that can be undone.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   ArrowRecord,
   isMachineLocalSetting,
+  ClientArrowRecord,
   MachineMapRole,
+  type ClientId,
   type MachineId,
   type MachineLevel,
   type MachineMapDocument,
@@ -17,12 +20,16 @@ import {
 
 import {
   defaultArrow,
+  defaultClientArrow,
   findArrow,
+  findClient,
+  findClientArrow,
   findMachine,
   findNote,
   pairOffset,
   sameArrow,
   settingKeys,
+  sameClientArrow,
 } from "./map.ts";
 
 /** Summaries that the portal writes itself. The history reads them to tell what a revision did. */
@@ -66,6 +73,23 @@ function arrowChanges(
   return changes;
 }
 
+/** Sets every arrow from a current client to a current machine to `target`, if it differs. */
+function clientArrowChanges(
+  map: MachineMapDocument,
+  target: (client: ClientId, to: MachineId) => ClientArrowRecord,
+): Array<MapChange> {
+  const changes: Array<MapChange> = [];
+  for (const client of map.clients) {
+    for (const machine of map.machines) {
+      const next = target(client.id, machine.id);
+      if (!sameClientArrow(findClientArrow(map, client.id, machine.id), next)) {
+        changes.push({ _tag: "setClientArrow", arrow: next });
+      }
+    }
+  }
+  return changes;
+}
+
 /** The arrows of a preset. Machines that left the map since the save are skipped. */
 export function applyPresetChanges(map: MachineMapDocument, preset: MapPreset): Array<MapChange> {
   return arrowChanges(
@@ -77,11 +101,14 @@ export function applyPresetChanges(map: MachineMapDocument, preset: MapPreset): 
 }
 
 /**
- * MM-706: every arrow becomes `none` and every map role becomes `none`. It changes only map
- * arrows and map roles. Owner access goes through Cloudflare Access, which lockdown never edits.
+ * MM-710: every machine arrow, every client arrow and every map role becomes `none`. Owner
+ * access through Cloudflare Access stays (MM-308).
  */
 export function lockdownChanges(map: MachineMapDocument): Array<MapChange> {
-  const changes = arrowChanges(map, defaultArrow);
+  const changes = [
+    ...arrowChanges(map, defaultArrow),
+    ...clientArrowChanges(map, defaultClientArrow),
+  ];
   for (const machine of map.machines) {
     if (machine.mapRole !== "none") {
       changes.push({ _tag: "putMachine", machine: { ...machine, mapRole: "none" } });
@@ -120,6 +147,20 @@ export function restoreChanges(
       restoredMachines.some((m) => m.id === from) && restoredMachines.some((m) => m.id === to)
         ? findArrow(target, from, to)
         : findArrow(current, from, to),
+    ),
+  );
+  // MM-907: a restore keeps the current clients and their keys. Only an approval adds a key.
+  for (const client of current.clients) {
+    const old = findClient(target, client.id);
+    if (!old) continue;
+    const next = { ...client, name: old.name, position: old.position };
+    if (!sameValue(next, client)) changes.push({ _tag: "putClient", client: next });
+  }
+  changes.push(
+    ...clientArrowChanges(current, (client, to) =>
+      findClient(target, client) && restoredMachines.some((m) => m.id === to)
+        ? findClientArrow(target, client, to)
+        : findClientArrow(current, client, to),
     ),
   );
 
@@ -209,12 +250,17 @@ export const PausedAccess = Schema.Struct({
   arrows: Schema.Array(ArrowRecord),
   /** Every machine on the map at the pause, by machine id. */
   mapRoles: Schema.Record(Schema.String, MachineMapRole),
+  /** MM-309. A pause from before clients decodes with none. */
+  clientArrows: Schema.Array(ClientArrowRecord).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type PausedAccess = typeof PausedAccess.Type;
 
 export const pausedAccess = (map: MachineMapDocument): PausedAccess => ({
   arrows: map.arrows,
   mapRoles: Object.fromEntries(map.machines.map((machine) => [machine.id, machine.mapRole])),
+  clientArrows: map.clientArrows,
 });
 
 /**
@@ -231,6 +277,21 @@ export function cutArrows(
     findMachine(map, old.to) !== undefined &&
     findArrow(map, old.from, old.to).level === "none"
       ? [{ from: old.from, to: old.to, level: old.level }]
+      : [],
+  );
+}
+
+/** MM-717: the client arrows that the pause cut, with their old level. */
+export function cutClientArrows(
+  map: MachineMapDocument,
+  before: PausedAccess,
+): Array<{ client: ClientId; to: MachineId; level: MachineLevel }> {
+  return before.clientArrows.flatMap((old) =>
+    old.level !== "none" &&
+    findClient(map, old.client) !== undefined &&
+    findMachine(map, old.to) !== undefined &&
+    findClientArrow(map, old.client, old.to).level === "none"
+      ? [{ client: old.client, to: old.to, level: old.level }]
       : [],
   );
 }
@@ -254,6 +315,15 @@ export function resumeChanges(map: MachineMapDocument, before: PausedAccess): Ar
         ? (before.arrows.find((arrow) => arrow.from === from && arrow.to === to) ??
           defaultArrow(from, to))
         : findArrow(map, from, to),
+    ),
+  );
+  // A client that the owner approved during the pause had no arrows before it, so it keeps `none`.
+  changes.push(
+    ...clientArrowChanges(map, (client, to) =>
+      wasThere(to)
+        ? (before.clientArrows.find((arrow) => arrow.client === client && arrow.to === to) ??
+          defaultClientArrow(client, to))
+        : findClientArrow(map, client, to),
     ),
   );
   return changes;
