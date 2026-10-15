@@ -9,7 +9,7 @@ import {
   type SharePayload,
 } from "expo-sharing";
 import React, { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { Alert, AppState, Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 
 import {
   buildIncomingShareDraft,
@@ -25,6 +25,7 @@ import {
   removeIncomingShareDraft,
   writeIncomingShareDraft,
 } from "./incoming-share-storage";
+import { showAlert } from "../../lib/alert";
 
 type IncomingShareContextValue = {
   readonly pendingShare: IncomingShareDraft | null;
@@ -278,7 +279,7 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
     if (!error) {
       return;
     }
-    Alert.alert("Could not import shared content", error.message, [
+    showAlert("Could not import shared content", error.message, [
       { text: "Dismiss", style: "cancel", onPress: () => setError(null) },
       {
         text: "Retry",

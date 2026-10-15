@@ -1,5 +1,5 @@
 import type { ComposerContextRecord, EnvironmentId } from "@t3tools/contracts";
-import { Alert, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { useEffect, useId, useMemo, useState } from "react";
 import type { DraftComposerAttachment } from "../lib/composerImages";
@@ -11,6 +11,7 @@ import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { AppText as Text } from "./AppText";
 import { FilePreviewModal } from "./FilePreviewModal";
 import { PresentationSource } from "./NativePresentation";
+import { showAlert } from "../lib/alert";
 
 export function ComposerContextAttachment(props: {
   record: Extract<ComposerContextRecord, { attachmentId: string }>;
@@ -82,10 +83,7 @@ export function ComposerContextAttachment(props: {
         });
       }
     } catch (cause) {
-      Alert.alert(
-        "Could not open attachment",
-        cause instanceof Error ? cause.message : "Try again.",
-      );
+      showAlert("Could not open attachment", cause instanceof Error ? cause.message : "Try again.");
     } finally {
       setSharing(false);
     }

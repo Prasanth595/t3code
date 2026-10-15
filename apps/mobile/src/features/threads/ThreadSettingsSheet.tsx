@@ -36,15 +36,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  Alert,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  TextInput,
-  View,
-} from "react-native";
+import { Platform, Pressable, RefreshControl, ScrollView, TextInput, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -103,6 +95,7 @@ import {
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import { showAlert } from "../../lib/alert";
 
 /**
  * Everyday harnesses start expanded; every other provider (OpenRouter catalogs
@@ -559,7 +552,7 @@ function ThreadSettingsSessionProvider(
   const commitPendingModel = useCallback(() => {
     if (pendingModel) {
       if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
-        Alert.alert(
+        showAlert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
         );
@@ -1007,7 +1000,7 @@ function ThreadSettingsMainContent(props: {
     void refreshProviderCatalog(session.environmentId).then((result) => {
       setIsRefreshingProviders(false);
       const error = providerCatalogRefreshError(result);
-      if (error) Alert.alert("Could not refresh models", error);
+      if (error) showAlert("Could not refresh models", error);
     });
   }, [isRefreshingProviders, refreshProviderCatalog, session.environmentId]);
   const catalogItems = useThreadSettingsCatalogItems(session);

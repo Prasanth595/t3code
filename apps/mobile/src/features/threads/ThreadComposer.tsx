@@ -33,7 +33,7 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { Alert, Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
+import { Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -129,6 +129,7 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
+import { showAlert } from "../../lib/alert";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -486,7 +487,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
     onShowUsageLimits(report);
     if (!report) {
-      Alert.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      showAlert("Usage limits unavailable", "This provider does not currently report limits.");
     }
     return report !== null;
   }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
@@ -999,7 +1000,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     } else if (!wouldExceedInputLimit) {
                       insertPaste();
                     } else {
-                      Alert.alert(
+                      showAlert(
                         wouldExceedInputLimit
                           ? "Pasted text is too large for this message"
                           : "Could not attach pasted text",

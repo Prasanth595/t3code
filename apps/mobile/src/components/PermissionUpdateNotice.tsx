@@ -3,10 +3,10 @@ import { sessionHasLegacyPermissions } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import * as SecureStore from "expo-secure-store";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert } from "react-native";
 
 import { useEnvironments } from "../state/environments";
 import { environmentSession } from "../state/session";
+import { showAlert } from "../lib/alert";
 
 const storageKey = "t3code.permission-update.v1";
 const dismissedThisLaunch = new Set<string>();
@@ -73,7 +73,7 @@ export function PermissionUpdateNotice() {
         // Remember for this launch even if persistent storage is unavailable.
       });
     };
-    Alert.alert(
+    showAlert(
       `Permissions have changed for ${environment.label}`,
       "This connection still uses the old permissions, so some actions may no longer be available. Pair again using a new link with the permissions you need.",
       [{ text: "Got it", onPress: dismiss }],

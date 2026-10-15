@@ -14,7 +14,7 @@ import { AUTH_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { useState } from "react";
-import { Alert, Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
@@ -28,6 +28,7 @@ import { connectionTone } from "../connection/connectionTone";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
+import { showAlert } from "../../lib/alert";
 
 const ICON_SIZE = Platform.OS === "android" ? 24 : 22;
 const REMOVE_SIZE = 20;
@@ -118,7 +119,7 @@ export function EnvironmentRoutesSection({
     return to;
   };
   const confirmRemove = (route: ConnectionRoute) =>
-    Alert.alert(
+    showAlert(
       `Remove ${connectionRouteLabel(route)}?`,
       connectionRouteAddress(route) ?? undefined,
       [

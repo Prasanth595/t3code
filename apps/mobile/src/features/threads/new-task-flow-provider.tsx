@@ -2,7 +2,6 @@ import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/files
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert } from "react-native";
 
 import type {
   EnvironmentId,
@@ -121,6 +120,7 @@ import {
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
+import { showAlert } from "../../lib/alert";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -883,7 +883,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         }
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          Alert.alert(
+          showAlert(
             "Could not switch machine",
             error instanceof Error
               ? error.message

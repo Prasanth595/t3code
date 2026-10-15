@@ -6,12 +6,12 @@ import type {
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { canPerformPullRequestAction } from "./pullRequestActions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { showAlert } from "../../lib/alert";
 
 /** Small row actions stay in place, preserving expanded rows and scroll position. */
 export function usePullRequestAction(params: PullRequestParams, pr: PullRequestDetail | null) {
@@ -37,7 +37,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
       refreshDetail();
       refreshActivity();
     } catch (cause) {
-      Alert.alert(
+      showAlert(
         "Couldn't update this pull request",
         cause instanceof Error ? cause.message : "Try again.",
       );
@@ -47,7 +47,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     }
   };
   const confirm = (action: PullRequestAction, title: string, message: string) =>
-    Alert.alert(title, message, [
+    showAlert(title, message, [
       { text: "Cancel", style: "cancel" },
       {
         text: title,

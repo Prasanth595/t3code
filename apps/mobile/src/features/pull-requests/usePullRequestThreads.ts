@@ -11,7 +11,7 @@ import { formatComposerContextReference } from "@t3tools/shared/composerContextR
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import { useRef, useState } from "react";
-import { Alert, Platform } from "react-native";
+import { Platform } from "react-native";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
 import { pullRequestComposerContext } from "../../lib/composerContext";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -35,6 +35,7 @@ import {
   pullRequestAgentPrompt,
   type PullRequestAgentTask,
 } from "./pullRequestAgentTasks";
+import { showAlert } from "../../lib/alert";
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
 
@@ -150,7 +151,7 @@ export function usePullRequestThreads(
           params: { draftId: draftKey, title: `Ask about #${pr.number}` },
         });
     } catch (cause) {
-      Alert.alert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
+      showAlert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
     } finally {
       pending.current = false;
       setBusy(false);

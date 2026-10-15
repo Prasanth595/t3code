@@ -18,7 +18,7 @@ import {
   useState,
   type Ref,
 } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, TextInput, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, TextInput, View } from "react-native";
 import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
 
@@ -33,6 +33,7 @@ import {
   previewStreamMessage,
   type PreviewStreamConfiguration,
 } from "./preview-stream-document";
+import { showAlert } from "../../lib/alert";
 
 export interface PreviewStreamRef {
   /** Navigation requires current control of the browser. */
@@ -91,7 +92,7 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
 
 /** The file is on the environment; saving it here goes through the share sheet. */
 function offerDownload(download: PreviewStreamDownload) {
-  Alert.alert(`Downloaded ${download.fileName}`, undefined, [
+  showAlert(`Downloaded ${download.fileName}`, undefined, [
     { text: "Not now", style: "cancel" },
     {
       text: "Save or share",
@@ -101,7 +102,7 @@ function offerDownload(download: PreviewStreamDownload) {
           attachment: { name: download.fileName, mimeType: "application/octet-stream" },
           signal: new AbortController().signal,
         }).catch((cause: unknown) =>
-          Alert.alert(
+          showAlert(
             "Could not save the download",
             cause instanceof Error ? cause.message : undefined,
           ),
@@ -265,7 +266,7 @@ function PreviewStreamDocumentView({
     if (!chooser) return;
     setFileChooser(null);
     void sendFilesToPage(chooser, pick).catch((cause: unknown) =>
-      Alert.alert(
+      showAlert(
         "Could not send the files to the page",
         cause instanceof Error ? cause.message : undefined,
       ),

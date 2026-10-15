@@ -1,6 +1,6 @@
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useRef, useState } from "react";
-import { Alert, View } from "react-native";
+import { View } from "react-native";
 import type { PullRequestReviewPosition } from "@t3tools/contracts";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { MaterialButton } from "../../components/MaterialButton";
@@ -12,6 +12,7 @@ import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { showAlert } from "../../lib/alert";
 
 export type InlineCommentParams = PullRequestParams & {
   readonly draftId?: string;
@@ -128,7 +129,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         <MaterialButton
           label="Delete draft"
           onPress={() =>
-            Alert.alert("Delete this draft?", "Your other review comments will be kept.", [
+            showAlert("Delete this draft?", "Your other review comments will be kept.", [
               { text: "Cancel", style: "cancel" },
               {
                 text: "Delete",

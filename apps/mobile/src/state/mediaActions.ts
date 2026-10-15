@@ -11,7 +11,6 @@ import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
 
 import { useRefreshAssetUrl } from "./assets";
 import { appAtomRegistry } from "./atom-registry";
@@ -20,6 +19,7 @@ import { environmentSession } from "./session";
 import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachmentDownload";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import { showAlert } from "../lib/alert";
 
 /** An explicit action may ask the server while its grant is still unresolved. */
 function allowsHostMedia(session: SessionGrantInput | null) {
@@ -83,10 +83,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
     })()
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
-          Alert.alert(
-            "Could not share file",
-            error instanceof Error ? error.message : "Try again.",
-          );
+          showAlert("Could not share file", error instanceof Error ? error.message : "Try again.");
         }
       })
       .finally(() => {

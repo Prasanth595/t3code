@@ -9,7 +9,7 @@ import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
-import { Alert, AppState, BackHandler, Pressable, StatusBar, View } from "react-native";
+import { AppState, BackHandler, Pressable, StatusBar, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -34,6 +34,7 @@ import {
   type ThreadDevicePreview,
 } from "./threadDevicePreviews";
 import { createShakeDetector } from "./shakeDetector";
+import { showAlert } from "../../lib/alert";
 
 const OVERLAY_ENTERING = FadeIn.duration(160).reduceMotion(ReduceMotion.System);
 const OVERLAY_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
@@ -138,7 +139,7 @@ function DevicePreviewScreen({
         },
       });
       if (result._tag === "Failure") {
-        Alert.alert("Could not shut down device", String(Cause.squash(result.cause)));
+        showAlert("Could not shut down device", String(Cause.squash(result.cause)));
       }
     } finally {
       setShuttingDown(false);
@@ -176,7 +177,7 @@ function DevicePreviewScreen({
       title: "Device tool versions",
       icon: "info.circle",
       onPress: () =>
-        Alert.alert(
+        showAlert(
           "Device tool versions",
           deviceToolUpdateOwnership +
             "\n\n" +

@@ -10,7 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../features/review/reviewDiffRendering";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
@@ -27,6 +27,7 @@ import { AppText as Text } from "./AppText";
 import { AppSheet } from "./AppSheet";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { getMobileTerminalTheme } from "../features/terminal/terminalTheme";
+import { showAlert } from "../lib/alert";
 
 function ContextField(props: { label: string; value: string | null | undefined; code?: boolean }) {
   if (!props.value) return null;
@@ -354,7 +355,7 @@ export function ComposerContextSheet(props: {
             onPress={() => {
               props.onClose();
               void openPullRequest(pullRequestUrl).catch(() =>
-                Alert.alert("Could not open pull request", "Try again when connected."),
+                showAlert("Could not open pull request", "Try again when connected."),
               );
             }}
             className="rounded-xl bg-subtle p-4"

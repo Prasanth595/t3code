@@ -12,7 +12,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Alert, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -34,6 +34,7 @@ import {
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
+import { showAlert } from "../../lib/alert";
 
 function SelectionRow(props: {
   readonly icon?: "arrow.triangle.branch" | ReactNode;
@@ -313,7 +314,7 @@ export function NewTaskBranchPickerRouteScreen() {
         if (result._tag === "Failure") {
           if (mountedRef.current && navigation.isFocused() && !isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
-            Alert.alert(
+            showAlert(
               "Could not switch branch",
               error instanceof Error ? error.message : "The branch could not be checked out.",
             );

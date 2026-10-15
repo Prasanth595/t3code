@@ -8,13 +8,13 @@ import type {
 } from "@t3tools/contracts";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { showAlert } from "../../lib/alert";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 import {
   COMPOSER_CONTEXT_MAX_RECORDS,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
 } from "@t3tools/contracts";
-import { Alert } from "react-native";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { pullRequestComposerContext, threadComposerContext } from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
@@ -564,10 +564,7 @@ export function useComposerCommandMenu({
         const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
         const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
         if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
-          Alert.alert(
-            "Too many context items",
-            "Remove some context from the draft and try again.",
-          );
+          showAlert("Too many context items", "Remove some context from the draft and try again.");
           return;
         }
         const result = replaceTextRange(
@@ -599,10 +596,7 @@ export function useComposerCommandMenu({
           (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
           COMPOSER_CONTEXT_MAX_RECORDS
         ) {
-          Alert.alert(
-            "Too many context items",
-            "Remove some context from the draft and try again.",
-          );
+          showAlert("Too many context items", "Remove some context from the draft and try again.");
           return;
         }
         const result = replaceTextRange(

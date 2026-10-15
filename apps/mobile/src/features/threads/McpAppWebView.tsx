@@ -21,7 +21,7 @@ import * as Predicate from "effect/Predicate";
 import Constants from "expo-constants";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
@@ -39,6 +39,7 @@ import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
+import { showAlert } from "../../lib/alert";
 
 const ROW_BOTTOM_MARGIN = 8;
 
@@ -81,7 +82,7 @@ const commandFailure = (result: {
 
 const confirm = (title: string, message: string, action: string) =>
   new Promise<boolean>((resolve) => {
-    Alert.alert(
+    showAlert(
       title,
       message,
       [

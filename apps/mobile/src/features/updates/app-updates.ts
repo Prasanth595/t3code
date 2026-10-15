@@ -446,9 +446,9 @@ async function applyDeferredAppUpdateInstall(
 }
 
 async function defaultConfirmInstallNow(): Promise<boolean> {
-  const { Alert } = await import("react-native");
+  const { showAlert } = await import("../../lib/alert");
   return new Promise<boolean>((resolve) => {
-    Alert.alert(
+    showAlert(
       "Update ready",
       "A new version has been downloaded and installs automatically the next time you leave the app. Install it now instead?",
       [

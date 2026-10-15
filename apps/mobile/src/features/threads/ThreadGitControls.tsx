@@ -17,7 +17,6 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useCallback, useMemo } from "react";
-import { Alert } from "react-native";
 import { useEnvironmentScope } from "../../state/session";
 import {
   basename,
@@ -26,6 +25,7 @@ import {
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
 import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
+import { showAlert } from "../../lib/alert";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -167,11 +167,11 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const openExistingPr = useCallback(async () => {
     const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
     if (!prUrl) {
-      Alert.alert("No open PR", "This branch does not have an open pull request.");
+      showAlert("No open PR", "This branch does not have an open pull request.");
       return;
     }
     if (!(await openPullRequest(prUrl))) {
-      Alert.alert("Unable to open PR", "The pull request could not be opened.");
+      showAlert("Unable to open PR", "The pull request could not be opened.");
     }
   }, [gitStatus, openPullRequest]);
 

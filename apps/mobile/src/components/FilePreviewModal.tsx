@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
   useMemo,
 } from "react";
-import { Alert, Keyboard } from "react-native";
+import { Keyboard } from "react-native";
 
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { useRefreshAssetUrl } from "../state/assets";
@@ -20,6 +20,7 @@ import type {
   FilePreviewSource,
   ResolvedFilePreviewSource,
 } from "./FilePreviewModal.types";
+import { showAlert } from "../lib/alert";
 
 export type {
   FilePreviewItem,
@@ -44,7 +45,7 @@ function PreviewItemResolver(props: {
   const onRequestClose = useEffectEvent(props.onRequestClose);
   const onResolutionError = useEffectEvent((error: unknown, fallbackMessage: string) => {
     if (props.onOpenError) props.onOpenError(error);
-    else Alert.alert("Could not open preview", fallbackMessage);
+    else showAlert("Could not open preview", fallbackMessage);
     onRequestClose();
   });
   useEffect(() => Keyboard.dismiss(), []);

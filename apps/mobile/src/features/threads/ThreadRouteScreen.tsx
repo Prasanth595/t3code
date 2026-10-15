@@ -26,7 +26,7 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConnectionsReady } from "../../state/workspace";
 import { useEnvironmentShellReadiness } from "../../state/shell";
@@ -92,6 +92,7 @@ import {
   useAndroidWorkspaceBack,
   useWorkspaceListNavigation,
 } from "../workspace/useAndroidWorkspaceNavigation";
+import { showAlert } from "../../lib/alert";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -834,10 +835,7 @@ function ThreadRouteContent(
     try {
       await recoverFailedThreadDraft(creation);
     } catch (error) {
-      Alert.alert(
-        "Could not restore draft",
-        error instanceof Error ? error.message : String(error),
-      );
+      showAlert("Could not restore draft", error instanceof Error ? error.message : String(error));
       return;
     }
     clearPendingThreadCreationOutcome(routeThreadIdentity);

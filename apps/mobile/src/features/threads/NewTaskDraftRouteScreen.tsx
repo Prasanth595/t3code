@@ -1,6 +1,6 @@
 import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, View } from "react-native";
+import { View } from "react-native";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -14,6 +14,7 @@ import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 
 import { NewTaskDraftScreen } from "./NewTaskDraftScreen";
+import { showAlert } from "../../lib/alert";
 
 type NewTaskDraftRouteParams = {
   readonly environmentId?: string | string[];
@@ -129,7 +130,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     if (checkoutPending || result?._tag !== "Failure") return;
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
-      Alert.alert(
+      showAlert(
         "Could not switch branch",
         error instanceof Error ? error.message : "The branch could not be checked out.",
       );

@@ -1,11 +1,11 @@
 import { useNavigation } from "@react-navigation/native";
 import { useCallback } from "react";
-import { Alert } from "react-native";
 
 import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
 import { clearComposerDraftContent } from "../../state/use-composer-drafts";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { releaseEditingQueuedMessage } from "../../state/use-thread-outbox";
+import { showAlert } from "../../lib/alert";
 
 export function usePendingTaskListActions(): {
   readonly openPendingTask: (pendingTask: PendingNewTask) => void;
@@ -31,7 +31,7 @@ export function usePendingTaskListActions(): {
 
   const confirmDeletePendingTask = useCallback((pendingTask: PendingNewTask) => {
     if (pendingTask.kind === "draft") {
-      Alert.alert("Discard draft?", `“${pendingTask.title}” will be removed.`, [
+      showAlert("Discard draft?", `“${pendingTask.title}” will be removed.`, [
         { text: "Cancel", style: "cancel" },
         {
           text: "Discard",
@@ -48,7 +48,7 @@ export function usePendingTaskListActions(): {
       ]);
       return;
     }
-    Alert.alert(
+    showAlert(
       "Delete pending task?",
       `“${pendingTask.title}” has not been sent yet and will be removed from the outbox.`,
       [
@@ -63,7 +63,7 @@ export function usePendingTaskListActions(): {
             void removeThreadOutboxMessage(pendingTask.message)
               .then(() => releaseEditingQueuedMessage(pendingTask.message.messageId))
               .catch((error) => {
-                Alert.alert(
+                showAlert(
                   "Could not delete pending task",
                   error instanceof Error ? error.message : "The pending task could not be removed.",
                 );

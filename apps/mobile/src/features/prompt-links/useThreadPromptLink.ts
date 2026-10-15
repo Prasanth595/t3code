@@ -1,7 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
 import { parseThreadLinkPrompt } from "@t3tools/shared/promptLinks";
 import { useEffect, useRef } from "react";
-import { Alert } from "react-native";
 
 import { applyLinkedPromptToThreadDraft } from "./prompt-link-actions";
 import {
@@ -9,6 +8,7 @@ import {
   promptLinkNotice,
   promptLinkSearchFromParams,
 } from "./prompt-link-model";
+import { showAlert } from "../../lib/alert";
 
 const THREAD_LINK_KEYS = ["prompt"];
 
@@ -33,7 +33,7 @@ export function useThreadPromptLink(
     navigation.setParams(clearedPromptLinkParams(THREAD_LINK_KEYS));
     const parsed = parseThreadLinkPrompt(search);
     if (!parsed.ok) {
-      Alert.alert("Could not open link", parsed.error);
+      showAlert("Could not open link", parsed.error);
       return;
     }
     if (parsed.value === null) return;

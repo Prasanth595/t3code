@@ -5,7 +5,7 @@ import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
 import { Atom } from "effect/reactivity";
 import { use, useCallback, useMemo, useRef, useState } from "react";
-import { Alert, Linking, Platform, Share } from "react-native";
+import { Linking, Platform, Share } from "react-native";
 import type { ControlPillMenuProps } from "../../components/ControlPillMenu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -17,6 +17,7 @@ import {
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
 import { pullRequestTarget } from "./usePullRequestDiff";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
+import { showAlert } from "../../lib/alert";
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -97,7 +98,7 @@ export function usePullRequestListActions(
               : { isDraft: action === "draft" },
         );
       } catch (cause) {
-        Alert.alert(
+        showAlert(
           "Couldn't update this pull request",
           cause instanceof Error ? cause.message : "Try again.",
         );
@@ -140,7 +141,7 @@ export function usePullRequestListActions(
         (value) => value === action,
       );
       if (!supported) return;
-      Alert.alert(`${PR_ACTION_LABELS[supported]}?`, `#${entry.number} · ${entry.title}`, [
+      showAlert(`${PR_ACTION_LABELS[supported]}?`, `#${entry.number} · ${entry.title}`, [
         { text: "Cancel", style: "cancel" },
         {
           text: PR_ACTION_LABELS[supported],

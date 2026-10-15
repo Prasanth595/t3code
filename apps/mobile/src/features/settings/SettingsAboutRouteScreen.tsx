@@ -1,7 +1,7 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import Constants from "expo-constants";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -15,6 +15,7 @@ import {
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { showAlert } from "../../lib/alert";
 
 export function SettingsAboutRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -67,7 +68,7 @@ function AppSettingsSection() {
       // apply immediately instead of prompting.
       await runAppUpdateCheck({
         applyMode: "immediate",
-        onFailure: (message) => Alert.alert("Update failed", message),
+        onFailure: (message) => showAlert("Update failed", message),
         onStateChange: setUpdateState,
       });
     } finally {

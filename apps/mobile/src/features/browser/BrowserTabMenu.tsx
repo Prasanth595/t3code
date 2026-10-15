@@ -9,11 +9,11 @@ import {
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
-import { Alert } from "react-native";
 
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { showAlert } from "../../lib/alert";
 
 const APPEARANCES = [
   { id: "system", title: "System" },
@@ -113,7 +113,7 @@ export function BrowserTabMenu({
 
   const run = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
     const result = await adjust({ environmentId, input: { ...target, ...change } });
-    if (result._tag === "Failure") Alert.alert("Could not change this browser tab");
+    if (result._tag === "Failure") showAlert("Could not change this browser tab");
   };
 
   const onAction = (id: string) => {
@@ -133,7 +133,7 @@ export function BrowserTabMenu({
       if (!option) return;
       void resize({ environmentId, input: { ...target, viewport: option.setting } }).then(
         (result) => {
-          if (result._tag === "Failure") Alert.alert("Could not change the viewport");
+          if (result._tag === "Failure") showAlert("Could not change the viewport");
         },
       );
     }

@@ -12,7 +12,7 @@ import { ScreenHeader } from "../../components/ScreenHeader";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { TerminalContextSheet } from "./TerminalContextSheet";
@@ -92,6 +92,7 @@ import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
 import { useTerminalGridSync } from "./useTerminalGridSync";
 import { useTerminalLifecycle } from "./useTerminalLifecycle";
+import { showAlert } from "../../lib/alert";
 
 function TerminalHeader(props: {
   readonly subtitle: string;
@@ -1283,7 +1284,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   captureRequest={captureRequest}
                   onCapture={(text) => {
                     if (text.trim()) setCapturedOutput(text);
-                    else Alert.alert("No terminal output", "There is no visible output to attach.");
+                    else showAlert("No terminal output", "There is no visible output to attach.");
                   }}
                   onInput={handleInput}
                   onResize={handleResize}

@@ -6,7 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useState } from "react";
-import { Platform, Alert, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
@@ -20,6 +20,7 @@ import { serverEnvironment } from "../../state/server";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { environmentStatusText } from "./environmentStatusText";
+import { showAlert } from "../../lib/alert";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
   if (!environment.isEnabled && environment.connectionState !== "unsupported") {
@@ -70,7 +71,7 @@ export function ConnectionEnvironmentRow(props: {
       return;
     }
     const error = Cause.squash(result.cause);
-    Alert.alert(
+    showAlert(
       "Could not update environment",
       error instanceof Error ? error.message : "The environment could not be updated.",
     );

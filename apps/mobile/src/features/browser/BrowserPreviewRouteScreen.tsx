@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, Platform, TextInput, View } from "react-native";
+import { ActivityIndicator, AppState, Platform, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ControlPill";
@@ -23,6 +23,7 @@ import {
   type PreviewPictureInPictureState,
   type PreviewStreamRef,
 } from "./PreviewStreamWebView";
+import { showAlert } from "../../lib/alert";
 
 const BrowserPreviewStack = createNativeStackNavigator<{ BrowserPreview: undefined }>();
 
@@ -104,7 +105,7 @@ function BrowserPreviewScreen({
   }, [focused, loaded, tabs.length, onClose]);
   const onPictureInPicture = useCallback((state: PreviewPictureInPictureState, detail?: string) => {
     setPictureInPicture({ supported: state.supported, active: state.active });
-    if (detail) Alert.alert("Picture in picture is unavailable", detail);
+    if (detail) showAlert("Picture in picture is unavailable", detail);
   }, []);
   const selectTab = (next: string) => {
     setPictureInPicture(NO_PICTURE_IN_PICTURE);
@@ -228,7 +229,7 @@ function BrowserAddressBar({
     try {
       onCommand({ type: "navigate", url: normalizePreviewUrl(value) });
     } catch {
-      Alert.alert("Could not open this address", "Enter an http or https URL.");
+      showAlert("Could not open this address", "Enter an http or https URL.");
     }
   };
   return (

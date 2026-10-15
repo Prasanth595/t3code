@@ -81,7 +81,6 @@ import {
 } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Platform,
   type LayoutChangeEvent,
@@ -232,6 +231,7 @@ import {
   ThreadMarkdownImageUnavailable,
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
+import { showAlert } from "../../lib/alert";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // Native iOS blockquotes and adjacent selectable text are separate layout
@@ -411,7 +411,7 @@ function AssistantForkButton(props: {
             if (result._tag !== "Success") return;
             const targetThreadReady = await waitForThreadShell(props.environmentId, targetThreadId);
             if (!targetThreadReady) {
-              Alert.alert(
+              showAlert(
                 "Fork created",
                 "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
               );
@@ -610,7 +610,7 @@ function MessageAttachmentFile(props: {
         });
       } catch (error) {
         if (!controller.signal.aborted) {
-          Alert.alert(
+          showAlert(
             "Could not open attachment",
             error instanceof Error ? error.message : "The attachment is unavailable.",
           );
@@ -1318,7 +1318,7 @@ function renderFeedEntry(
                 accessibilityLabel={intentBadge.accessibilityLabel}
                 accessibilityHint="Explains this message's badge"
                 hitSlop={8}
-                onPress={() => Alert.alert("Message history", intentBadge.explanation)}
+                onPress={() => showAlert("Message history", intentBadge.explanation)}
                 className={cn(
                   "rounded-full border px-1.5 py-0.5",
                   intentBadge.tone === "queued"
@@ -1584,7 +1584,7 @@ function UserMessageContent(props: UserMessageContentProps) {
               )
                 .then(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success))
                 .catch(() => {
-                  Alert.alert("Could not copy context", "Try copying this context again.");
+                  showAlert("Could not copy context", "Try copying this context again.");
                 });
             }
           },

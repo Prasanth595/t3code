@@ -1,11 +1,12 @@
 import { useEffect, useEffectEvent } from "react";
-import { Alert, Modal, Pressable, View } from "react-native";
+import { Modal, Pressable, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 
 import { openAttachmentInViewer } from "../lib/attachmentDownload";
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 import { MediaImagePreview } from "./MediaImagePreview";
 import { AppText as Text } from "./AppText";
+import { showAlert } from "../lib/alert";
 
 function DocumentPreview(props: {
   readonly source: ResolvedFilePreviewSource;
@@ -17,7 +18,7 @@ function DocumentPreview(props: {
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
     else
-      Alert.alert(
+      showAlert(
         "Could not open document",
         "A compatible viewer must be installed. Check your connection and try again.",
       );

@@ -19,7 +19,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
-import { Alert, Linking, Pressable, View } from "react-native";
+import { Linking, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -28,6 +28,7 @@ import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProviderColors } from "./usageProviders";
+import { showAlert } from "../../lib/alert";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
@@ -246,7 +247,7 @@ export function ResetCredits(props: {
 
   const confirm = () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    Alert.alert(
+    showAlert(
       "Use a reset credit?",
       "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
       [

@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ProviderAuthResponse, ServerProvider } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { Alert, Linking, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Linking, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -21,6 +21,7 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { showAlert } from "../../lib/alert";
 
 export function SettingsProviderAccountsRouteScreen() {
   const { selectedTargets } = useSettingsEnvironmentFilter();
@@ -333,7 +334,7 @@ function ProviderAccount({
           tone="danger"
           disabled={disabled || state === null}
           onPress={() =>
-            Alert.alert(
+            showAlert(
               "Sign out?",
               `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
               [

@@ -4,7 +4,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
-import { Alert, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -20,6 +20,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { showAlert } from "../../lib/alert";
 
 export function SettingsClientStorageRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -44,7 +45,7 @@ export function SettingsClientStorageRouteScreen() {
     const label =
       savedConnectionsById[environment.environmentId]?.environmentLabel ??
       environment.environmentId;
-    Alert.alert(
+    showAlert(
       `Clear cache for ${label}?`,
       "This removes offline threads, server metadata, and cached branches for this environment. The saved connection and credentials stay intact.",
       [
@@ -60,7 +61,7 @@ export function SettingsClientStorageRouteScreen() {
   };
 
   const confirmClearAll = () => {
-    Alert.alert(
+    showAlert(
       "Clear all client caches?",
       "This removes offline data for every environment. Connections, credentials, account data, and app preferences stay intact.",
       [

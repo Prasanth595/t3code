@@ -21,7 +21,7 @@ import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3t
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
-import { Alert, Pressable, useWindowDimensions, View } from "react-native";
+import { Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
@@ -53,6 +53,7 @@ import {
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import { showAlert } from "../../lib/alert";
 
 /**
  * Thread List v2 renders one flat native list: rich edge-to-edge rows for
@@ -881,7 +882,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (snoozeSelection._tag === "selected") {
         handleSnooze(snoozeSelection.preset.snoozedUntil);
       } else if (snoozeSelection._tag === "expired") {
-        Alert.alert("Could not snooze thread", "That snooze time has passed. Choose another time.");
+        showAlert("Could not snooze thread", "That snooze time has passed. Choose another time.");
       }
     },
     [

@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { useState } from "react";
-import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { REVIEW_MONO_FONT_FAMILY } from "../review/reviewDiffRendering";
 import { AppText as Text } from "../../components/AppText";
@@ -14,6 +14,7 @@ import { AppSheet } from "../../components/AppSheet";
 import { MaterialButton } from "../../components/MaterialButton";
 import { uuidv4 } from "../../lib/uuid";
 import { insertComposerDraftContext } from "../../state/use-composer-drafts";
+import { showAlert } from "../../lib/alert";
 
 /** Line numbers are relative to this frozen viewport, not the terminal's scrollback. */
 export function TerminalContextSheet(props: {
@@ -50,7 +51,7 @@ export function TerminalContextSheet(props: {
         context: { version: 1, records: [record] },
       })
     ) {
-      Alert.alert("Too many context items", "Remove some context from the draft and try again.");
+      showAlert("Too many context items", "Remove some context from the draft and try again.");
       return;
     }
     props.onAttach();

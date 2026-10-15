@@ -9,7 +9,7 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
-import { Alert, View } from "react-native";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -31,6 +31,7 @@ import {
   findEnvironmentUpdate,
   supportsEnvironmentUpdate,
 } from "./environment-maintenance";
+import { showAlert } from "../../lib/alert";
 
 export function SettingsEnvironmentDetailRouteScreen({
   route,
@@ -111,7 +112,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
     const targetVersion = checkedRelease?.targetVersion;
     if (disabled || !targetVersion || !capabilities || !supportsEnvironmentUpdate(capabilities))
       return;
-    Alert.alert(
+    showAlert(
       `Update ${environment?.environmentLabel ?? "environment"}?`,
       `Install T3 Code ${targetVersion}. ${capabilities.serverSelfUpdate === "desktop-managed" ? "The desktop app will close and relaunch." : "The server will restart and reconnect."} Running threads may be interrupted.`,
       [

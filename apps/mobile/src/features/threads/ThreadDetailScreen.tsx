@@ -61,7 +61,6 @@ import {
   useState,
 } from "react";
 import {
-  Alert,
   AppState,
   Keyboard,
   Platform,
@@ -151,6 +150,7 @@ import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { showAlert } from "../../lib/alert";
 
 export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
@@ -1056,7 +1056,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         composerEditorRef.current?.focus();
       }
     } catch (error) {
-      Alert.alert(
+      showAlert(
         "Could not edit message",
         error instanceof Error ? error.message : "Please try again.",
       );

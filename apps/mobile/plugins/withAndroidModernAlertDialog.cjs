@@ -14,7 +14,9 @@ const {
 // all-caps buttons) from the app theme. These resources restyle it with the
 // generated default palette: card panel, foreground text, readable primary
 // buttons, DM Sans type. Alert exposes no runtime custom-palette API, so these
-// build-time resources use the stock palette for each native appearance.
+// build-time resources use the stock palette for each native appearance. App
+// code calls showAlert (src/lib/alert.ts), which renders a Material dialog with
+// the live theme instead; this styling covers the native fallback.
 // The fonts are embedded by the expo-font plugin config in app.config.ts.
 
 // AppCompat's default dialog window background is an inset rounded rect, so

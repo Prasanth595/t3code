@@ -5,7 +5,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { EnvironmentId } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
@@ -25,6 +25,7 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { SourceFileSurface } from "./SourceFileSurface";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
+import { showAlert } from "../../lib/alert";
 
 /**
  * Both the thread stack and the new-task sheet stack register this screen, so a chip in a
@@ -228,7 +229,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     pendingNativeError.current = null;
     if (nativeViewer === null) {
       // A file this screen renders itself: an explicit viewer failure is worth a word.
-      if (message) Alert.alert("Could not open document", message);
+      if (message) showAlert("Could not open document", message);
       return;
     }
     if (message) {

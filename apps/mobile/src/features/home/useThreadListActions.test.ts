@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   pendingOrder: null as object | null,
@@ -21,7 +21,6 @@ const state = vi.hoisted(() => ({
     environmentId: string;
     input: { threadId: string; orderKey?: string };
   }[],
-  dialogs: [] as { onConfirm: () => void }[],
   alerts: [] as {
     title: string;
     buttons?: { text: string; onPress?: () => void }[];
@@ -42,9 +41,6 @@ vi.mock("react-native", () => ({
 vi.mock("expo-haptics", () => ({
   impactAsync: async () => {},
   ImpactFeedbackStyle: { Light: "light" },
-}));
-vi.mock("../../components/ConfirmDialogHost", () => ({
-  showConfirmDialog: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: () => {},
@@ -177,12 +173,9 @@ beforeEach(() => {
   ]);
   state.requests = [];
   state.shells = [];
-  state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
 });
-
-afterEach(() => vi.unstubAllEnvs());
 
 describe("thread list operation permissions", () => {
   it.each(mutationCases)(
@@ -224,32 +217,23 @@ describe("thread list operation permissions", () => {
     },
   );
 
-  it.each(["ios", "android"])("does not show a forbidden %s delete confirmation", (os) => {
-    vi.stubEnv("EXPO_OS", os);
+  it("does not show a forbidden delete confirmation", () => {
     useThreadListActions().confirmDeleteThread(makeThread({ environmentId: otherEnvironmentId }));
 
-    expect(state.dialogs).toEqual([]);
     expect(state.alerts.some((alert) => alert.title === "Delete thread?")).toBe(false);
     expect(state.requests).toEqual([]);
   });
 
-  it.each(["ios", "android"])(
-    "rechecks permission after a retained %s delete confirmation",
-    async (os) => {
-      vi.stubEnv("EXPO_OS", os);
-      useThreadListActions().confirmDeleteThread(makeThread());
-      const confirm =
-        os === "ios"
-          ? state.alerts[0]?.buttons?.find((button) => button.text === "Delete")?.onPress
-          : state.dialogs[0]?.onConfirm;
-      expect(confirm).toBeTypeOf("function");
-      state.scopes.get(primaryEnvironmentId)!.clear();
+  it("rechecks permission after a retained delete confirmation", async () => {
+    useThreadListActions().confirmDeleteThread(makeThread());
+    const confirm = state.alerts[0]?.buttons?.find((button) => button.text === "Delete")?.onPress;
+    expect(confirm).toBeTypeOf("function");
+    state.scopes.get(primaryEnvironmentId)!.clear();
 
-      await confirm!();
+    await confirm!();
 
-      expect(state.requests).toEqual([]);
-    },
-  );
+    expect(state.requests).toEqual([]);
+  });
 
   it("unarchives with only task permission and blocks a later revoked callback", async () => {
     const actions = useArchivedThreadListActions(() => {});
@@ -265,9 +249,8 @@ describe("thread list operation permissions", () => {
   });
 
   it("keeps delete independent of terminal and source-control permissions", async () => {
-    vi.stubEnv("EXPO_OS", "android");
     useArchivedThreadListActions(() => {}).confirmDeleteThread(makeThread());
-    await state.dialogs[0]!.onConfirm();
+    await state.alerts[0]!.buttons!.find((button) => button.text === "Delete")!.onPress!();
 
     expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
   });
