@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import {
   museChildEnvironment,
+  museAccountBinding,
   museSourceId,
   museSourceSnapshot,
   museUsageWindows,
@@ -215,5 +216,38 @@ describe("sanitizeMuseFailure", () => {
     expect(result).not.toContain("hunter2");
     expect(result).not.toContain("/home/user");
     expect(result).not.toContain("auth.json");
+  });
+});
+
+describe("ACP observation binding interoperability", () => {
+  it("accepts the bridge's registry fingerprint and invalidates it when account routing changes", async () => {
+    const bridge = await import(
+      new URL("../../../../scripts/nofun/muse-acp.logic.mjs", import.meta.url).href
+    );
+    const configured = {
+      ...account("support", " Owner@Example.com "),
+      cliExecutable: "/tools/muse-support",
+      workerExecutable: "/tools/worker-support",
+      configHome: "/accounts/support/config",
+      dataHome: "/accounts/support/data",
+    };
+    const binding = bridge.museAccountBinding(configured);
+    const stored = {
+      version: 1 as const,
+      accountId: configured.id,
+      sourceId: museSourceId(configured.id),
+      accountBinding: binding,
+      usage: usage(0, 100),
+      signedInAs: "owner@example.com",
+      recordedAtMs: 600,
+    };
+    expect(museAccountBinding(configured)).toBe(binding);
+    expect(restoreMuseStoredObservation(stored, configured)._tag).toBe("Accepted");
+    expect(
+      restoreMuseStoredObservation(stored, { ...configured, workerExecutable: "/other/worker" }),
+    ).toEqual({
+      _tag: "Rejected",
+      reason: "config_mismatch",
+    });
   });
 });

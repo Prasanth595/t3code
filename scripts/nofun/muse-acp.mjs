@@ -24,8 +24,11 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
+import { fileURLToPath } from "node:url";
+import { sanitizeUsage } from "./muse-msp-run.mjs";
 import {
   buildPromptFile,
+  museAccountBinding,
   createEventTranslator,
   mergeRequired,
   measurePrompt,
@@ -169,6 +172,23 @@ function runPrompt(id, params) {
     promptFile,
     buildPromptFile({ required: session.required, history: session.history, request: text }),
   );
+  // Keep the account's real worker launcher in charge. Its `muse exec`
+  // resolves to this private shim; `serve` uses the registry's original CLI.
+  // The support launcher's XDG roots and file backend survive unchanged.
+  const shimDir = NodePath.join(dir, `${taskId}-bin`);
+  if (account.cliExecutable && account.expectedEmail) {
+    NodeFS.mkdirSync(shimDir, { recursive: true, mode: 0o700 });
+    const adapter = fileURLToPath(new URL("./muse-msp-run.mjs", import.meta.url));
+    NodeFS.writeFileSync(
+      NodePath.join(shimDir, "muse"),
+      `#!${process.execPath}\nimport(${JSON.stringify(adapter)}).then(({ runMsp }) => runMsp({ executable: process.env.NOFUN_MUSE_NATIVE_CLI, expectedLogin: process.env.NOFUN_MUSE_EXPECTED_LOGIN, argv: process.argv.slice(2), env: { ...process.env, PATH: process.env.NOFUN_MUSE_ORIGINAL_PATH }, emit: event => process.stdout.write(JSON.stringify(event) + "\\n") })).then(code => { process.exitCode = code; });\n`,
+      { mode: 0o700 },
+    );
+    env.NOFUN_MUSE_NATIVE_CLI = expandHome(account.cliExecutable);
+    env.NOFUN_MUSE_EXPECTED_LOGIN = account.expectedEmail;
+    env.NOFUN_MUSE_ORIGINAL_PATH = env.PATH ?? "";
+    env.PATH = `${shimDir}${NodePath.delimiter}${env.PATH ?? ""}`;
+  }
   const worker = expandHome(account.workerExecutable) ?? "muse-worker.sh";
   const child = NodeChildProcess.spawn(
     worker,
@@ -188,6 +208,7 @@ function runPrompt(id, params) {
     // cancel must stop all of them, not orphan the model run.
     { cwd: session.cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true },
   );
+  let pendingUsage = null;
   const run = { child, cancelled: false, settled: false, answer: "", streamed: "", stderr: "" };
   const readEvents = [];
   const measurements = measurePrompt({
@@ -203,6 +224,19 @@ function runPrompt(id, params) {
     try {
       event = JSON.parse(line);
     } catch {
+      return;
+    }
+    if (event.payload_type === "t3.muse.usage" && account.cliExecutable && account.expectedEmail) {
+      const usage = sanitizeUsage(event.payload?.usage);
+      const signedInAs = event.payload?.signedInAs;
+      if (
+        usage &&
+        typeof signedInAs === "string" &&
+        signedInAs.trim().toLowerCase() === account.expectedEmail.trim().toLowerCase() &&
+        (!pendingUsage || usage.observedAtMs > pendingUsage.usage.observedAtMs)
+      ) {
+        pendingUsage = { usage, signedInAs: signedInAs.trim() };
+      }
       return;
     }
     for (const action of translator.translate(event)) {
@@ -251,6 +285,58 @@ function runPrompt(id, params) {
     }
   });
   child.on("close", (code) => {
+    NodeFS.rmSync(shimDir, { recursive: true, force: true });
+    if (pendingUsage && !run.cancelled) {
+      try {
+        const currentAccount = loadAccount();
+        const binding = museAccountBinding(account, expandHome);
+        if (museAccountBinding(currentAccount, expandHome) === binding) {
+          const keptDir = NodePath.join(NodePath.dirname(accountsPath), "muse-usage-observations");
+          NodeFS.mkdirSync(keptDir, { recursive: true, mode: 0o700 });
+          // Immutable observations prevent an older concurrent run from
+          // overwriting a newer one. Bound retention to eight per account.
+          const prefix = `${account.id.replace(/[^a-zA-Z0-9_-]/g, "_")}.`;
+          const keptPath = NodePath.join(
+            keptDir,
+            `${prefix}${pendingUsage.usage.observedAtMs}.${NodeCrypto.randomUUID()}.json`,
+          );
+          const temp = `${keptPath}.tmp`;
+          try {
+            NodeFS.writeFileSync(
+              temp,
+              JSON.stringify({
+                version: 1,
+                accountId: account.id,
+                sourceId: `muse:${account.id}`,
+                accountBinding: binding,
+                ...pendingUsage,
+                cost: "passive",
+                recordedAtMs: Date.now(),
+              }),
+              { mode: 0o600 },
+            );
+            NodeFS.renameSync(temp, keptPath);
+          } finally {
+            NodeFS.rmSync(temp, { force: true });
+          }
+          const owned = NodeFS.readdirSync(keptDir)
+            .filter(
+              (name) =>
+                name.startsWith(prefix) &&
+                /^\d+\.[a-f0-9-]{36}\.json$/.test(name.slice(prefix.length)),
+            )
+            .sort(
+              (a, b) =>
+                Number(b.slice(prefix.length).split(".")[0]) -
+                  Number(a.slice(prefix.length).split(".")[0]) || b.localeCompare(a),
+            );
+          for (const old of owned.slice(8))
+            NodeFS.rmSync(NodePath.join(keptDir, old), { force: true });
+        }
+      } catch {
+        process.stderr.write("Muse passive usage could not be saved.\n");
+      }
+    }
     if (run.settled) return;
     run.settled = true;
     session.run = null;

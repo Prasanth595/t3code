@@ -6,9 +6,9 @@
  * `muse serve` spawn anywhere in this module. The service restores the last
  * sanitized observation per account from `config.stateDir` and otherwise only
  * records observations delivered through `recordObservation`, the narrow
- * ingestion point for useful work. No runtime caller feeds that method yet:
- * until a passive reader delivers real observations, quota stays unknown and
- * unknown data remains unknown.
+ * ingestion point for useful work. `current` also ingests account-bound files
+ * kept by the ACP native useful-run adapter; it never starts a CLI or model.
+ * Until useful work delivers an observation, quota stays unknown.
  *
  * Each account keeps two timestamps: the successful observation's age (what
  * the snapshot reports) and the last attempt (failures update only this plus
@@ -45,6 +45,7 @@ import {
   MuseStoredObservation,
   MuseSubscriptionUsage,
   museSourceId,
+  museAccountBinding,
   museSourceSnapshot,
   restoreMuseStoredObservation,
   sanitizeMuseFailure,
@@ -154,6 +155,13 @@ const make = Effect.gen(function* () {
       if (Option.isNone(text)) return blank(account, null);
       const decoded = yield* decodeStored(text.value).pipe(Effect.option);
       if (Option.isNone(decoded)) return blank(account, UNREADABLE_STORED);
+      const now = yield* Clock.currentTimeMillis;
+      if (
+        decoded.value.usage.observedAtMs > now ||
+        decoded.value.usage.observedAtMs > decoded.value.recordedAtMs
+      ) {
+        return blank(account, FUTURE_OBSERVATION);
+      }
       const restored = restoreMuseStoredObservation(decoded.value, account);
       if (restored._tag === "Rejected") {
         return blank(
@@ -214,7 +222,7 @@ const make = Effect.gen(function* () {
     return accounts;
   });
 
-  const currentSnapshots: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>> =
+  const cachedSnapshots: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>> =
     mutationLock.withPermits(1)(
       reconcileUnlocked.pipe(
         Effect.andThen(Ref.get(statesRef)),
@@ -240,6 +248,7 @@ const make = Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         const prior = previous.find((state) => state.account.id === account.id);
         const next = yield* update(account, prior, now);
+        if (next === prior) return;
         const rest = previous.filter((state) => state.account.id !== account.id);
         yield* publish([...rest, next]);
       }),
@@ -264,8 +273,9 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const recordObservation: MuseUsage["Service"]["recordObservation"] = (input) =>
-    withAccount(input.accountId, (account, prior, now) =>
+  const acceptObservation =
+    (input: Parameters<MuseUsage["Service"]["recordObservation"]>[0]) =>
+    (account: MuseAccount, prior: MuseAccountState | undefined, now: number) =>
       Effect.gen(function* () {
         // Every rejected attempt advances only the attempt timestamp; the
         // last successful reading and its age stay exactly as they were.
@@ -296,7 +306,7 @@ const make = Effect.gen(function* () {
         if (usage.observedAtMs > now) return rejected(FUTURE_OBSERVATION);
         const priorSuccessAt =
           prior?.lastSuccessfulObservationAtMs ?? prior?.usage?.observedAtMs ?? null;
-        if (priorSuccessAt !== null && usage.observedAtMs < priorSuccessAt) {
+        if (priorSuccessAt !== null && usage.observedAtMs <= priorSuccessAt) {
           return rejected(STALE_OBSERVATION);
         }
         // Cost is unknown unless the caller supplies provenance evidence;
@@ -311,6 +321,7 @@ const make = Effect.gen(function* () {
             ...(signedInAs ? { signedInAs } : {}),
             cost,
             recordedAtMs: now,
+            accountBinding: museAccountBinding(account),
           },
           account,
         );
@@ -326,8 +337,61 @@ const make = Effect.gen(function* () {
           lastSuccessfulObservationAtMs: usage.observedAtMs,
           observationCost: cost,
         } satisfies MuseAccountState;
-      }),
-    );
+      });
+
+  const recordObservation: MuseUsage["Service"]["recordObservation"] = (input) =>
+    withAccount(input.accountId, acceptObservation(input));
+
+  // File-only ingestion: the ACP adapter keeps sanitized native observations
+  // beside its accounts registry, independent of any one server's lifetime.
+  // Revalidate under the mutation lock so a registry edit cannot relabel usage.
+  const readUsefulWork = Effect.gen(function* () {
+    const accounts = yield* loadAccounts;
+    for (const account of accounts) {
+      const keptDir = path.join(path.dirname(accountsPath), "muse-usage-observations");
+      const prefix = `${account.id.replace(/[^a-zA-Z0-9_-]/g, "_")}.`;
+      const names = yield* fileSystem.readDirectory(keptDir).pipe(Effect.orElseSucceed(() => []));
+      const candidates = names
+        .filter(
+          (name) =>
+            name.startsWith(prefix) && /^\d+\.[a-f0-9-]{36}\.json$/.test(name.slice(prefix.length)),
+        )
+        .sort(
+          (a, b) =>
+            Number(b.slice(prefix.length).split(".")[0]) -
+              Number(a.slice(prefix.length).split(".")[0]) || b.localeCompare(a),
+        )
+        .slice(0, 8);
+      for (const name of candidates) {
+        const kept = yield* fileSystem
+          .readFileString(path.join(keptDir, name))
+          .pipe(Effect.flatMap(decodeStored), Effect.option);
+        if (Option.isNone(kept)) continue;
+        const stored = kept.value;
+        yield* withAccount(account.id, (actual, prior, now) => {
+          if (
+            !stored.accountBinding ||
+            stored.accountBinding !== museAccountBinding(actual) ||
+            restoreMuseStoredObservation(stored, actual)._tag === "Rejected" ||
+            stored.recordedAtMs > now ||
+            stored.usage.observedAtMs > stored.recordedAtMs ||
+            stored.cost !== "passive" ||
+            !stored.signedInAs?.trim() ||
+            stored.usage.observedAtMs <= (prior?.usage?.observedAtMs ?? -1)
+          ) {
+            return Effect.succeed(prior ?? blank(actual, null));
+          }
+          return acceptObservation({
+            accountId: actual.id,
+            usage: stored.usage,
+            signedInAs: stored.signedInAs,
+            cost: "passive",
+          })(actual, prior, now);
+        });
+      }
+    }
+  });
+  const currentSnapshots = readUsefulWork.pipe(Effect.andThen(cachedSnapshots));
 
   const recordObservationFailure: MuseUsage["Service"]["recordObservationFailure"] = (input) =>
     withAccount(input.accountId, (account, prior, now) =>

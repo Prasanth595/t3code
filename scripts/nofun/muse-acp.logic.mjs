@@ -14,6 +14,19 @@ export const RECAP_LIMIT = 20_000;
 /** Total characters of required context kept per session. Over it, the prompt fails rather than truncating. */
 export const REQUIRED_CONTEXT_LIMIT = 120_000;
 
+/** Registry binding changes with identity, roots or launchers; contains no paths on disk. */
+export function museAccountBinding(account, expandHome = (value) => value) {
+  return sha256(
+    JSON.stringify([
+      account.id,
+      account.expectedEmail?.trim().toLowerCase() ?? null,
+      ...["cliExecutable", "workerExecutable", "configHome", "dataHome"].map((key) =>
+        account[key] ? expandHome(account[key]) : null,
+      ),
+    ]),
+  );
+}
+
 // ── Prompt assembly ─────────────────────────────────────────────────────────
 
 const isSkillEntry = (uri) => /(^|[/\\])SKILL\.md$/i.test(uri);
