@@ -797,7 +797,10 @@ export const layer = Layer.effect(
         const result =
           active.threadId === null
             ? yield* Effect.exit(
-                threadLaunch.checkWorktreeBase(active).pipe(
+                (active.workspaceStrategy.type === "worktree"
+                  ? threadLaunch.checkWorktreeBase(active)
+                  : Effect.void
+                ).pipe(
                   Effect.andThen(
                     threadLaunch.launch({
                       commandId,

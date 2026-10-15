@@ -200,7 +200,6 @@ it.effect(
               ScheduledTaskService.layer,
               Layer.mergeAll(
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-                  checkWorktreeBase: () => Effect.void,
                   launch: () =>
                     Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
                       Effect.andThen((n) =>
@@ -299,7 +298,6 @@ it.effect(
               ScheduledTaskService.layer,
               Layer.mergeAll(
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-                  checkWorktreeBase: () => Effect.void,
                   launch: () =>
                     Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
                       // A concurrent writer (the CLI shares the SQLite file)
