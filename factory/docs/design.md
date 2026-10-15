@@ -87,7 +87,7 @@ Three entries. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations
 
 ### Boundary rules, checked by a test
 
-- Only `apps/server/src/factory/t3/**` may import from outside `apps/server/src/factory/`.
+- Only `apps/server/src/factory/t3/**` may import T3 code: files outside `apps/server/src/factory/`, or the workspace packages (`@t3tools/*` and the rest) the server depends on.
 - No file outside `factory/` may import from it, except the two lines in `server.ts`.
 - The checks run as a vitest test in `apps/server/src/factory/boundary.test.ts`, so they run with the factory suite.
 
