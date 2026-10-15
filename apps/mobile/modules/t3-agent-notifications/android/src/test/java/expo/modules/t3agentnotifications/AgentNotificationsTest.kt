@@ -86,6 +86,32 @@ class AgentNotificationsTest {
   }
 
   @Test
+  fun dismissRemovesOnlyThatThreadsAlertsAndSummary() {
+    AgentNotifications.receive(context, update("first", false))
+    AgentNotifications.receive(context, update("second", false))
+    AgentNotifications.receive(
+      context,
+      update("other", false) + mapOf(
+        "alert_group" to "environment/other",
+        "alert_path" to "/threads/environment/other",
+      )
+    )
+    val summaryTag = "t3-agent-alert-summary:environment/thread"
+    assertTrue(manager.activeNotifications.any { it.tag == summaryTag })
+
+    AgentNotifications.receive(
+      context,
+      update("unused", false) - listOf("alert_id", "alert_group", "alert_title", "alert_body") +
+        ("dismiss_group" to "environment/thread")
+    )
+
+    val remaining = manager.activeNotifications.filter {
+      it.tag?.startsWith("t3-agent-alert") == true
+    }
+    assertEquals("environment/other", remaining.single().notification.group)
+  }
+
+  @Test
   fun missingLauncherDoesNotDiscardTheAlert() {
     shadowOf(context.packageManager).removeActivity(ComponentName(context, Activity::class.java))
     AgentNotifications.receive(context, update("no-launcher", false))

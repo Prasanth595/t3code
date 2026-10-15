@@ -128,9 +128,18 @@ object AgentNotifications {
     if (registered && fresh && NotificationManagerCompat.from(context).areNotificationsEnabled()) {
       channels(context)
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
+      data["dismiss_group"]?.let { dismissAlerts(context, it) }
       showAlert(context, prefs, scheme, data)
       updateActivity(context, prefs, scheme, data, updatedAt)
     }
+  }
+
+  /** Removes a thread's alerts once it has been read on any client. */
+  private fun dismissAlerts(context: Context, group: String) {
+    val manager = manager(context)
+    manager.activeNotifications.filter { it.tag == ALERT_TAG && it.notification.group == group }
+      .forEach { manager.cancel(it.tag, it.id) }
+    manager.cancel("$ALERT_TAG-summary:$group", 0)
   }
 
   private fun showAlert(
