@@ -303,11 +303,15 @@ describe("V2 session presentation", () => {
   });
 
   it("counts each file changed after the rewind point once", () => {
-    const checkpoint = (turnCount: number, paths: string[]) => ({
+    const checkpoint = (
+      turnCount: number,
+      paths: string[],
+      status: "ready" | "stale" = "ready",
+    ) => ({
       runId: RunId.make(`run-${turnCount}`),
       checkpointTurnCount: turnCount,
       checkpointRef: `checkpoint-${turnCount}` as never,
-      status: "ready" as const,
+      status,
       files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
       assistantMessageId: null,
       completedAt: "2026-06-20T00:00:00.000Z",
@@ -316,6 +320,8 @@ describe("V2 session presentation", () => {
       checkpoint(1, ["a.ts"]),
       checkpoint(2, ["b.ts", "c.ts"]),
       checkpoint(3, ["c.ts", "d.ts"]),
+      // Discarded by an earlier rewind, so its files are already restored.
+      checkpoint(4, ["e.ts"], "stale"),
     ];
 
     expect(countFilesChangedAfterTurnCount(checkpoints, 1)).toBe(3);

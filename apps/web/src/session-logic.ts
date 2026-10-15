@@ -1066,14 +1066,18 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
-/** Counts distinct files changed by turns a rewind to `turnCount` would undo. */
+/**
+ * Counts distinct files the agent changed in turns a rewind to `turnCount` would undo.
+ * Stale checkpoints belong to history an earlier rewind already discarded. File restore
+ * resets the whole workspace, so a zero here does not mean restoring files is a no-op.
+ */
 export function countFilesChangedAfterTurnCount(
   checkpoints: ReadonlyArray<ThreadCheckpointSummary>,
   turnCount: number,
 ): number {
   const paths = new Set<string>();
   for (const checkpoint of checkpoints) {
-    if (checkpoint.checkpointTurnCount <= turnCount) continue;
+    if (checkpoint.checkpointTurnCount <= turnCount || checkpoint.status === "stale") continue;
     for (const file of checkpoint.files) paths.add(file.path);
   }
   return paths.size;

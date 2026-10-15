@@ -12224,24 +12224,22 @@ export default function ChatView(props: ChatViewProps) {
               Rewind chat to before this message. Your prompt and attachments return to the
               composer.
               {pendingRevertChangedFileCount > 0
-                ? ` ${pendingRevertChangedFileCount} ${pendingRevertChangedFileCount === 1 ? "file" : "files"} changed since then.`
-                : " No files changed since then."}
+                ? ` The agent changed ${pendingRevertChangedFileCount} ${pendingRevertChangedFileCount === 1 ? "file" : "files"} since then.`
+                : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            {pendingRevertChangedFileCount > 0 ? (
-              <Button
-                variant="destructive-outline"
-                onClick={() => {
-                  if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
-                  setPendingRevert(null);
-                  void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, true);
-                }}
-              >
-                Revert files too
-              </Button>
-            ) : null}
+            <Button
+              variant="destructive-outline"
+              onClick={() => {
+                if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
+                setPendingRevert(null);
+                void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, true);
+              }}
+            >
+              Revert files too
+            </Button>
             <Button
               onClick={() => {
                 if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
@@ -12249,7 +12247,7 @@ export default function ChatView(props: ChatViewProps) {
                 void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, false);
               }}
             >
-              {pendingRevertChangedFileCount > 0 ? "Revert and keep changes" : "Revert"}
+              Revert and keep changes
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
