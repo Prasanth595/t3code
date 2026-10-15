@@ -893,8 +893,22 @@ function responseBoundaryRunId(entry: TimelineEntry): RunId | null {
  * message. Keep every provider turn since the initiating prompt in one visual
  * response until the replacement turn settles.
  */
-function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
-  return timelineEntries.findLastIndex(timelineEntryStartsResponse);
+function lastResponseBoundaryIndex(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+  runningRunId: RunId | null = null,
+): number {
+  return timelineEntries.findLastIndex(
+    (entry) =>
+      timelineEntryStartsResponse(entry) &&
+      // A queued message waits behind the running turn; the active turn's
+      // header must stay above it until its own run starts.
+      !(
+        runningRunId !== null &&
+        entry.kind === "message" &&
+        entry.message.inputIntent === "queued_turn" &&
+        entry.message.runId !== runningRunId
+      ),
+  );
 }
 
 function deriveActiveVisualResponseRunIds(input: {
@@ -912,7 +926,10 @@ function deriveActiveVisualResponseRunIds(input: {
     return runIds;
   }
 
-  const latestResponseBoundaryIndex = lastResponseBoundaryIndex(input.timelineEntries);
+  const latestResponseBoundaryIndex = lastResponseBoundaryIndex(
+    input.timelineEntries,
+    input.unsettledRunId,
+  );
   for (
     let index = latestResponseBoundaryIndex + 1;
     index < input.timelineEntries.length;
@@ -1399,7 +1416,7 @@ export function deriveMessagesTimelineRows(input: {
     (entry.runId == null ? runlessWorkActive : entry.runId === unsettledRunId);
 
   const activeTurnHeaderIndex = input.isWorking
-    ? lastResponseBoundaryIndex(timelineEntries) + 1
+    ? lastResponseBoundaryIndex(timelineEntries, input.runningRunId ?? null) + 1
     : timelineEntries.length;
 
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];

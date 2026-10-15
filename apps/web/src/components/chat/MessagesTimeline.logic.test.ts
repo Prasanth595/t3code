@@ -2452,6 +2452,37 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBe(true);
   });
 
+  it("keeps the working header above a message queued behind the running turn", () => {
+    const msg = (id: string, createdAt: string, runId: string, inputIntent: string) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt,
+      message: {
+        id: id as never,
+        role: "user" as const,
+        text: id,
+        runId: runId as never,
+        inputIntent: inputIntent as never,
+        createdAt,
+        updatedAt: createdAt,
+        streaming: false,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        msg("first", "2026-01-01T00:00:00Z", "run-1", "turn_start"),
+        msg("second", "2026-01-01T00:00:05Z", "run-2", "queued_turn"),
+      ],
+      latestRun: null,
+      runningRunId: "run-1" as never,
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.map((row) => row.kind)).toEqual(["message", "working", "message", "thinking"]);
+  });
+
   it("shows a provider-native subagent's runless tools as live work while it works", () => {
     const entries = (commandStatus: "inProgress" | "completed") => [
       {
