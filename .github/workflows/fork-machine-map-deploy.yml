@@ -7,9 +7,15 @@ on:
   push:
     branches:
       - main
+    # The portal imports @t3tools/contracts machineMap, machineMapResources and settings,
+    # and @t3tools/shared/qrCode. settings.ts imports about 20 other contracts files, so
+    # all of contracts/src counts: a list of files drifts when an import changes.
+    # Limit: qrCode.ts imports nothing. Add its imports here when it gets one.
     paths:
       - apps/machine-map/**
-      - packages/contracts/src/machineMap*.ts
+      - packages/contracts/src/**
+      - "!packages/contracts/src/**/*.test.ts"
+      - packages/shared/src/qrCode.ts
       - pnpm-lock.yaml
       - .github/workflows/fork-machine-map-deploy.yml
   workflow_dispatch:
