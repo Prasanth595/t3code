@@ -484,15 +484,15 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
               }),
             )
           : workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
-          ? Effect.fail(
-              new ThreadLaunch.ThreadLaunchBaseRefError({
-                projectId,
-                projectTitle: "Client target",
-                workspaceRoot: "/projects/client-target",
-                baseRef: workspaceStrategy.baseRef,
-              }),
-            )
-          : Effect.void,
+            ? Effect.fail(
+                new ThreadLaunch.ThreadLaunchBaseRefError({
+                  projectId,
+                  projectTitle: "Client target",
+                  workspaceRoot: "/projects/client-target",
+                  baseRef: workspaceStrategy.baseRef,
+                }),
+              )
+            : Effect.void,
     });
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
