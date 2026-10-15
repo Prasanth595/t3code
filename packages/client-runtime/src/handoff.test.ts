@@ -90,11 +90,19 @@ describe("pending context handoff", () => {
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
   });
-  it("stays hidden until the thread shows a sent message", () => {
+  it("stays hidden until the thread shows conversation", () => {
     const withoutMessages = { ...projection, visibleTurnItems: [] };
     expect(
       resolvePendingHandoff(withoutMessages, { instanceId: to, model: "first" }, []),
     ).toBeNull();
+    // A wake run starts with a notification instead of a user message.
+    const wakeOnly = {
+      ...projection,
+      visibleTurnItems: [{ item: { type: "notification" } }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    expect(resolvePendingHandoff(wakeOnly, { instanceId: to, model: "first" }, [])?.to.model).toBe(
+      "first",
+    );
   });
   it("only previews a same-provider model change when it needs a fresh native thread", () => {
     const providers = [
