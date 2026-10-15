@@ -33,6 +33,7 @@ export const RESOURCE_ALERT_KINDS: ReadonlyArray<HealthAlertKind> = [
   "memory",
   "disk",
   "swap",
+  "battery",
 ];
 
 /** One stored step. Percent values, swap traffic in MB/s, and the agent process count. */
@@ -44,6 +45,9 @@ export interface ResourcePoint {
   /** CPU pressure, `some avg300`. */
   readonly pressure: number | null;
   readonly steal: number | null;
+  /** MM-1510: battery percent, and whether it runs on the battery. Null without a battery. */
+  readonly battery: number | null;
+  readonly discharging: boolean | null;
   readonly memory: number | null;
   readonly disk: number | null;
   readonly swap: number | null;
@@ -71,6 +75,8 @@ export function pointOf(sample: ResourceSample): ResourcePoint {
     busy: sample.cpuBusyPercent,
     pressure: sample.cpuPressurePercent,
     steal: sample.cpuStealPercent,
+    battery: sample.battery?.percent ?? null,
+    discharging: sample.battery === null ? null : sample.battery.state === "discharging",
     memory: percentOf(sample.memoryUsedBytes, sample.memoryTotalBytes),
     disk: percentOf(sample.diskUsedBytes, sample.diskTotalBytes),
     swap: sample.swapBytesPerSecond === null ? null : round1(sample.swapBytesPerSecond / 1_000_000),
@@ -84,6 +90,7 @@ const POINT_KEYS = [
   "busy",
   "pressure",
   "steal",
+  "battery",
   "memory",
   "disk",
   "swap",
@@ -106,6 +113,9 @@ export function averagePoints(points: ReadonlyArray<ResourcePoint>): ResourcePoi
     busy: mean("busy"),
     pressure: mean("pressure"),
     steal: mean("steal"),
+    battery: mean("battery"),
+    // An hour point keeps the newest power source.
+    discharging: points.findLast((p) => p.discharging !== null)?.discharging ?? null,
     memory: mean("memory"),
     disk: mean("disk"),
     swap: mean("swap"),
@@ -172,6 +182,15 @@ export function resourceConditions(
     value !== null && threshold !== null && value > threshold ? value : null;
   add("memory", instant(newest.memory, thresholds.memoryPercent), thresholds.memoryPercent);
   add("disk", instant(newest.disk, thresholds.diskPercent), thresholds.diskPercent);
+  // MM-1511: a low battery counts only while the machine runs on it.
+  if (
+    newest.discharging === true &&
+    newest.battery !== null &&
+    thresholds.batteryPercent !== null &&
+    newest.battery < thresholds.batteryPercent
+  ) {
+    add("battery", newest.battery, thresholds.batteryPercent);
+  }
   if (thresholds.swapMegabytesPerSecond !== null) {
     add(
       "swap",
@@ -259,5 +278,6 @@ export function historyOf(
     agentCpu: points.map((p) => p.point.agentCpu),
     pressure: points.map((p) => p.point.pressure),
     steal: points.map((p) => p.point.steal),
+    battery: points.map((p) => p.point.battery),
   };
 }

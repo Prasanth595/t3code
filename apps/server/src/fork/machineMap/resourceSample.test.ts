@@ -5,9 +5,11 @@ import {
   parseCgroupPath,
   parseCpuPressure,
   parseCpuTime,
+  parseDarwinBattery,
   parseDarwinNet,
   parseDarwinSwap,
   parseDarwinSwapTraffic,
+  parseLinuxBattery,
   parseLinuxCpuTicks,
   parseLinuxNet,
   parseLinuxSwap,
@@ -30,6 +32,7 @@ const raw = (overrides: Partial<RawReadings> = {}): RawReadings => ({
   net: { inBytes: 10_000, outBytes: 2_000 },
   t3: { cpuMicros: 1_000_000, rssBytes: 300 },
   agents: { count: 3, cpuPercent: 25.04, memoryBytes: 900 },
+  battery: null,
   processes: [
     { pid: 1, cpuMs: 1_000, rssBytes: 100, name: "launchd" },
     { pid: 2, cpuMs: 5_000, rssBytes: 900, name: "node" },
@@ -39,6 +42,36 @@ const raw = (overrides: Partial<RawReadings> = {}): RawReadings => ({
 });
 
 describe("parsers (MM-1501)", () => {
+  it("reads the battery of macOS and Linux, and nothing without one (MM-1510)", () => {
+    const pmset = (line: string, source = "Battery Power") =>
+      `Now drawing from '${source}'\n -InternalBattery-0 (id=4653155)\t${line} present: true\n`;
+    expect(parseDarwinBattery(pmset("78%; discharging; 3:41 remaining"))).toEqual({
+      percent: 78,
+      state: "discharging",
+      minutesLeft: 221,
+    });
+    expect(parseDarwinBattery(pmset("45%; charging; (no estimate)", "AC Power"))).toEqual({
+      percent: 45,
+      state: "charging",
+      minutesLeft: null,
+    });
+    expect(parseDarwinBattery(pmset("80%; AC attached; not charging", "AC Power"))?.state).toBe(
+      "plugged",
+    );
+    expect(parseDarwinBattery(pmset("100%; charged; 0:00 remaining", "AC Power"))?.state).toBe(
+      "full",
+    );
+    expect(parseDarwinBattery("Now drawing from 'AC Power'\n")).toBeNull();
+    const linux = { capacity: "40", status: "Discharging", now: "20000000", full: "50000000" };
+    expect(parseLinuxBattery({ ...linux, rate: "10000000" })).toEqual({
+      percent: 40,
+      state: "discharging",
+      minutesLeft: 120,
+    });
+    expect(parseLinuxBattery({ ...linux, status: "Charging", rate: "" })?.minutesLeft).toBeNull();
+    expect(parseLinuxBattery({ ...linux, capacity: "", rate: "" })).toBeNull();
+  });
+
   it("reads Linux CPU ticks without nice time, the cgroup and the CPU pressure (MM-1504)", () => {
     // user nice system idle iowait irq softirq steal guest guest_nice
     expect(

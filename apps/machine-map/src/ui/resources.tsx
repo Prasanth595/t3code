@@ -25,6 +25,8 @@ import {
   ALERT_STICKER,
   ALERT_TEXT,
   alertValue,
+  batteryShown,
+  batteryText,
   duration,
   formatBytes,
   formatPercent,
@@ -71,16 +73,22 @@ function Meter({
   label,
   value,
   limit,
+  below = null,
   detail,
+  tip,
 }: {
   label: string;
   value: number | null;
   limit: number | null;
+  /** A value under it is hot too, as for a battery. */
+  below?: number | null;
   detail?: string;
+  tip?: string;
 }) {
-  const hot = value !== null && limit !== null && value > limit;
+  const hot =
+    value !== null && ((limit !== null && value > limit) || (below !== null && value < below));
   return (
-    <span className="meter">
+    <span className="meter" data-tip={tip}>
       <span className="meter-label">{label}</span>
       <span className="meter-bar" aria-hidden>
         <span
@@ -108,7 +116,24 @@ export function CardMeters({ machineId }: { machineId: MachineId }) {
         value={percentOf(sample.memoryUsedBytes, sample.memoryTotalBytes)}
         limit={limits.memoryPercent}
       />
+      <BatteryMeter sample={sample} limit={limits.batteryPercent} />
     </span>
+  );
+}
+
+/** MM-1510: the battery bar, only while the battery is not full. Low and discharging is hot. */
+function BatteryMeter({ sample, limit }: { sample: ResourceSample; limit: number | null }) {
+  const battery = sample.battery;
+  if (!batteryShown(battery)) return null;
+  return (
+    <Meter
+      label="Battery"
+      value={battery.percent}
+      limit={null}
+      below={battery.state === "discharging" ? limit : null}
+      detail={`${battery.percent}%${battery.state === "charging" ? " +" : ""}`}
+      tip={batteryText(battery)}
+    />
   );
 }
 
@@ -359,6 +384,7 @@ function ThresholdsForm({ machine }: { machine: MachineRecord }) {
           {field("swapMegabytesPerSecond", "Swap above", "MB/s", true)}
           {field("swapMinutes", "for", "min", false)}
           {field("offlineMinutes", "Offline for", "min", true)}
+          {field("batteryPercent", "Battery below", "%", true)}
         </div>
         <div className="actions">
           <button type="submit" className="btn small primary">
@@ -398,6 +424,7 @@ function toFields(t: HealthThresholds): Fields {
     swapMegabytesPerSecond: text(t.swapMegabytesPerSecond),
     swapMinutes: text(t.swapMinutes),
     offlineMinutes: text(t.offlineMinutes),
+    batteryPercent: text(t.batteryPercent),
   };
 }
 
@@ -416,6 +443,7 @@ function fromFields(fields: Fields): HealthThresholds | null {
     swapMegabytesPerSecond: optional(fields.swapMegabytesPerSecond),
     swapMinutes: minutes(fields.swapMinutes),
     offlineMinutes: offline === null ? null : minutes(String(offline)),
+    batteryPercent: optional(fields.batteryPercent),
   };
 }
 
@@ -530,6 +558,18 @@ export function ResourcesSection({ machine }: { machine: MachineRecord }) {
             range={range}
             now={now}
           />
+          {batteryShown(sample?.battery ?? null) && history.battery.some((v) => v !== null) && (
+            <Chart
+              title="Battery"
+              value={formatPercent(lastValue(history.battery))}
+              history={history}
+              lines={[{ values: history.battery, className: "line" }]}
+              max={100}
+              limit={limits.batteryPercent}
+              range={range}
+              now={now}
+            />
+          )}
           <Chart
             title="Disk"
             value={formatPercent(lastValue(history.disk))}
@@ -577,6 +617,12 @@ export function ResourcesSection({ machine }: { machine: MachineRecord }) {
           </dd>
           <dt>Disk</dt>
           <dd>{usedOf(lastSample.diskUsedBytes, lastSample.diskTotalBytes)}</dd>
+          {batteryShown(lastSample.battery) && (
+            <>
+              <dt>Battery</dt>
+              <dd>{batteryText(lastSample.battery)}</dd>
+            </>
+          )}
           <dt>Network</dt>
           <dd>
             in {perSecond(lastSample.netInBytesPerSecond)} · out{" "}
@@ -735,9 +781,11 @@ function HealthCard({ machine }: { machine: MachineRecord }) {
                   : formatPercent(percentOf(sample.swapUsedBytes, sample.swapTotalBytes))
               }
             />
+            <BatteryMeter sample={sample} limit={limits.batteryPercent} />
           </span>
           <span className="health-facts small">
             <span>Load {sample.load === null ? "—" : sample.load[0]}</span>
+            {batteryShown(sample.battery) && <span>Battery {batteryText(sample.battery)}</span>}
             {sample.cpuPressurePercent !== null && (
               <span>Waits for CPU {formatPercent(sample.cpuPressurePercent)}</span>
             )}

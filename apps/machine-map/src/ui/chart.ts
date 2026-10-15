@@ -94,5 +94,6 @@ export function withLivePoint(
     agentCpu: pick(history.agentCpu, point.agentCpu),
     pressure: pick(history.pressure, point.pressure),
     steal: pick(history.steal, point.steal),
+    battery: pick(history.battery, point.battery),
   };
 }

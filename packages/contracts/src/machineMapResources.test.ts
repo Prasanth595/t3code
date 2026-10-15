@@ -29,6 +29,7 @@ const sample: ResourceSample = {
   agents: { count: 1, cpuPercent: 2, memoryBytes: 3 },
   topCpu: [{ name: "node", cpuPercent: 2, memoryBytes: 3 }],
   topMemory: [{ name: "node", cpuPercent: null, memoryBytes: 3 }],
+  battery: { percent: 54, state: "charging", minutesLeft: 62 },
 };
 
 describe("resource messages next to the base protocol (MM-1502)", () => {

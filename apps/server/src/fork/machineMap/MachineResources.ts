@@ -7,12 +7,12 @@
  * Each sample stays cheap: CPU and memory come from `HostResources`, the T3 process tree from the
  * native resource monitor that already runs, and the rest from small file reads, `statfs`, and on
  * macOS and Linux at most four short commands (`ps`, plus `vm_stat`, `sysctl` and `netstat` on
- * macOS). CPU pressure (MM-1504) comes from the `cpu.pressure` file of the cgroup of the server,
+ * macOS), plus `pmset` on macOS for the battery (MM-1510). CPU pressure (MM-1504) comes from the `cpu.pressure` file of the cgroup of the server,
  * which holds its agents, so niced work in other units does not count.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
-import type { ResourceSample } from "@t3tools/contracts";
+import type { BatteryReading, ResourceSample } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -32,9 +32,11 @@ import {
   parseCgroupPath,
   parseCpuPressure,
   parseLinuxCpuTicks,
+  parseDarwinBattery,
   parseDarwinNet,
   parseDarwinSwap,
   parseDarwinSwapTraffic,
+  parseLinuxBattery,
   parseLinuxNet,
   parseLinuxSwap,
   parseLinuxSwapTraffic,
@@ -155,6 +157,52 @@ const make = Effect.gen(function* () {
         })
       : Effect.succeed(null);
 
+  /**
+   * MM-1510: the battery. Linux reads the first `BAT*` power supply. Windows reports none.
+   * Revisit when a Windows laptop joins the map: read it from `Win32_Battery` then.
+   */
+  const battery: Effect.Effect<BatteryReading | null> =
+    platform === "darwin"
+      ? output("/usr/bin/pmset", ["-g", "batt"]).pipe(
+          Effect.map((text) => orNull(text, parseDarwinBattery)),
+        )
+      : platform === "linux"
+        ? Effect.gen(function* () {
+            const root = "/sys/class/power_supply";
+            const names = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
+            // A laptop with two batteries reports the first. Revisit if one joins the map.
+            const name = names.filter((entry) => entry.startsWith("BAT")).toSorted()[0];
+            if (name === undefined) return null;
+            const read = (file: string) =>
+              fs.readFileString(`${root}/${name}/${file}`).pipe(
+                Effect.map((text) => text.trim()),
+                Effect.orElseSucceed(() => ""),
+              );
+            const [capacity, status, energyNow, energyFull, power, chargeNow, chargeFull, current] =
+              yield* Effect.all(
+                [
+                  "capacity",
+                  "status",
+                  "energy_now",
+                  "energy_full",
+                  "power_now",
+                  "charge_now",
+                  "charge_full",
+                  "current_now",
+                ].map(read),
+                { concurrency: "unbounded" },
+              );
+            const energy = energyNow !== "";
+            return parseLinuxBattery({
+              capacity: capacity ?? "",
+              status: status ?? "",
+              now: (energy ? energyNow : chargeNow) ?? "",
+              full: (energy ? energyFull : chargeFull) ?? "",
+              rate: (energy ? power : current) ?? "",
+            });
+          })
+        : Effect.succeed(null);
+
   /** The processes that the T3 server started, from the native resource monitor. */
   const agents = telemetry.refresh.pipe(
     Effect.catch(() => telemetry.latest),
@@ -171,9 +219,9 @@ const make = Effect.gen(function* () {
   );
 
   const readRaw = Effect.gen(function* () {
-    const [host, diskUse, swapUse, netUse, processList, agentUse, ticks, pressure] =
+    const [host, diskUse, swapUse, netUse, processList, agentUse, ticks, pressure, power] =
       yield* Effect.all(
-        [hostResources.read, disk, swap, net, processes, agents, cpuTicks, cpuPressure],
+        [hostResources.read, disk, swap, net, processes, agents, cpuTicks, cpuPressure, battery],
         { concurrency: "unbounded" },
       );
     const cpu = process.cpuUsage();
@@ -200,6 +248,7 @@ const make = Effect.gen(function* () {
       t3: { cpuMicros: cpu.user + cpu.system, rssBytes: process.memoryUsage.rss() },
       agents: agentUse,
       processes: processList,
+      battery: power,
     } satisfies RawReadings;
   });
 

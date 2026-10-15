@@ -4,6 +4,8 @@
  * step returns the counters for the next one.
  */
 import {
+  type BatteryReading,
+  type BatteryState,
   type ProcessGroupUse,
   type ResourceProcess,
   type ResourceSample,
@@ -59,6 +61,8 @@ export interface RawReadings {
   readonly t3: { readonly cpuMicros: number; readonly rssBytes: number };
   readonly agents: ProcessGroupUse | null;
   readonly processes: ReadonlyArray<PsProcess> | null;
+  /** MM-1510: null without a battery. */
+  readonly battery: BatteryReading | null;
 }
 
 export interface SampleCounters {
@@ -161,6 +165,88 @@ export function parseCpuPressure(pressure: string): number | null {
   const field = line === undefined ? undefined : words(line).find((w) => w.startsWith("avg300="));
   const value = Number(field?.slice("avg300=".length));
   return field === undefined || !Number.isFinite(value) || value < 0 ? null : Math.min(100, value);
+}
+
+/** `h:mm` as minutes. `0:00` and text without a time give null: the OS has no estimate. */
+const clockMinutes = (text: string | undefined): number | null => {
+  const [hours, minutes] = (text ?? "").split(":").map(Number);
+  if (hours === undefined || minutes === undefined || !Number.isInteger(hours)) return null;
+  if (!Number.isInteger(minutes) || hours < 0 || minutes < 0) return null;
+  const total = hours * 60 + minutes;
+  return total > 0 ? total : null;
+};
+
+/**
+ * MM-1510: macOS `pmset -g batt`, for example
+ * ` -InternalBattery-0 (id=1)\t78%; discharging; 3:41 remaining present: true`. Null without an
+ * internal battery, for example on a Mac mini.
+ */
+export function parseDarwinBattery(output: string): BatteryReading | null {
+  const line = output.split("\n").find((row) => row.includes("InternalBattery"));
+  const fields = line
+    ?.slice(line.lastIndexOf("\t") + 1)
+    .split(";")
+    .map((part) => part.trim());
+  const [percentText = "", stateText = "", rest = ""] = fields ?? [];
+  const percent = Number(percentText.endsWith("%") ? percentText.slice(0, -1) : Number.NaN);
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100) return null;
+  const onPower = output.includes("'AC Power'");
+  const state: BatteryState =
+    stateText === "discharging"
+      ? "discharging"
+      : stateText === "charging" || stateText === "finishing charge"
+        ? "charging"
+        : stateText === "charged"
+          ? "full"
+          : onPower
+            ? "plugged"
+            : "discharging";
+  const minutesLeft =
+    state === "charging" || state === "discharging" ? clockMinutes(words(rest)[0]) : null;
+  return { percent, state, minutesLeft };
+}
+
+const LINUX_BATTERY_STATE: Readonly<Record<string, BatteryState>> = {
+  Charging: "charging",
+  Discharging: "discharging",
+  Full: "full",
+  "Not charging": "plugged",
+};
+
+/** The files of one Linux `/sys/class/power_supply/BAT*` folder, each as its trimmed text. */
+export interface LinuxBatteryFiles {
+  readonly capacity: string;
+  readonly status: string;
+  /** Energy in µWh and power in µW, or charge in µAh and current in µA, as the driver gives. */
+  readonly now: string;
+  readonly full: string;
+  readonly rate: string;
+}
+
+/** MM-1510: a Linux battery. The time left needs a rate; without one it is null. */
+export function parseLinuxBattery(files: LinuxBatteryFiles): BatteryReading | null {
+  const percent = Number(files.capacity);
+  if (files.capacity === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) {
+    return null;
+  }
+  // "Unknown" shows on some laptops on power between charges.
+  const state = LINUX_BATTERY_STATE[files.status] ?? "plugged";
+  const now = Number(files.now);
+  const full = Number(files.full);
+  const rate = Math.abs(Number(files.rate));
+  const hours =
+    files.rate === "" || !Number.isFinite(rate) || rate <= 0 || !Number.isFinite(now)
+      ? null
+      : state === "discharging"
+        ? now / rate
+        : state === "charging" && Number.isFinite(full)
+          ? (full - now) / rate
+          : null;
+  return {
+    percent,
+    state,
+    minutesLeft: hours === null || hours <= 0 ? null : Math.round(hours * 60),
+  };
 }
 
 /** Linux `/proc/meminfo`. A machine without swap reports a total of 0. */
@@ -368,6 +454,7 @@ export function buildSample(
           },
     topCpu,
     topMemory,
+    battery: raw.battery,
   };
   return {
     sample,

@@ -46,6 +46,21 @@ export const ProcessGroupUse = Schema.Struct({
 export type ProcessGroupUse = typeof ProcessGroupUse.Type;
 
 /**
+ * MM-1510: the battery of a machine. `full` is on power at full charge, `plugged` is on power and
+ * not charging, for example a charge hold below 100%.
+ */
+export const BatteryState = Schema.Literals(["charging", "discharging", "full", "plugged"]);
+export type BatteryState = typeof BatteryState.Type;
+
+export const BatteryReading = Schema.Struct({
+  percent: Percent,
+  state: BatteryState,
+  /** Minutes until empty while discharging, or until full while charging. Null without an estimate. */
+  minutesLeft: Schema.NullOr(NonNegativeInt),
+});
+export type BatteryReading = typeof BatteryReading.Type;
+
+/**
  * MM-1501: one resource sample of a machine. A value that the platform does not give is null,
  * never a guess.
  */
@@ -87,6 +102,8 @@ export const ResourceSample = Schema.Struct({
   /** The busiest processes of the whole machine. */
   topCpu: TopProcesses,
   topMemory: TopProcesses,
+  /** MM-1510: null on a machine without a battery, on Windows, and from an older server. */
+  battery: Schema.NullOr(BatteryReading).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
 });
 export type ResourceSample = typeof ResourceSample.Type;
 
@@ -99,7 +116,14 @@ export const PortalResourcesRequest = Schema.TaggedStruct("sampleResources", {})
 export type PortalResourcesRequest = typeof PortalResourcesRequest.Type;
 
 /** MM-1505: the kinds of alerts. Each one shows as one sticker on the machine card. */
-export const HealthAlertKind = Schema.Literals(["cpu", "memory", "disk", "swap", "offline"]);
+export const HealthAlertKind = Schema.Literals([
+  "cpu",
+  "memory",
+  "disk",
+  "swap",
+  "offline",
+  "battery",
+]);
 export type HealthAlertKind = typeof HealthAlertKind.Type;
 
 const PositiveInt = NonNegativeInt.check(Schema.isGreaterThan(0));
@@ -123,6 +147,8 @@ export const HealthThresholds = Schema.Struct({
   swapMegabytesPerSecond: Schema.NullOr(Rate),
   swapMinutes: PositiveInt,
   offlineMinutes: Schema.NullOr(PositiveInt),
+  /** MM-1511: the battery alert, below this percent while discharging. */
+  batteryPercent: Schema.NullOr(Percent).pipe(Schema.withDecodingDefaultKey(Effect.succeed(15))),
 });
 export type HealthThresholds = typeof HealthThresholds.Type;
 
@@ -136,6 +162,7 @@ export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
   swapMegabytesPerSecond: 10,
   swapMinutes: 5,
   offlineMinutes: 15,
+  batteryPercent: 15,
 };
 
 /** MM-1505: an alert. `endedAt` is null while it is active. */
@@ -180,6 +207,10 @@ export const ResourceHistory = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
   steal: Schema.Array(Schema.NullOr(Schema.Number)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
+  /** MM-1510: battery percent. Empty from an older portal. */
+  battery: Schema.Array(Schema.NullOr(Schema.Number)).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
 });
