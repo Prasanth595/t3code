@@ -23,6 +23,8 @@ import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import * as MissionManagerLifecycleStore from "./MissionManagerLifecycleStore.ts";
+import * as MissionManagerRuntimeAdapter from "./MissionManagerRuntimeAdapter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
@@ -340,3 +342,35 @@ export const layerProduction = Layer.mergeAll(
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
 ).pipe(Layer.provide(Scheduler.layer), Layer.provideMerge(layerEventInfrastructure));
+
+/**
+ * P3 manager rotation over the live services, not a parallel set: the adapter
+ * reads the same thread management, launch and provider-session instances as
+ * `layer` and `layerProduction` when they are built together, so its cleanup
+ * sees and stops the sessions the orchestrator actually opened.
+ *
+ * Not part of `layerProduction`: the lifecycle store refuses to run without a
+ * root-held `MissionManagerLifecycleAuthority`, and an optional
+ * `MissionManagerBoundaryFacts` supplies the integration, GUI and fence facts
+ * no runtime service reports. The server composition provides those.
+ */
+const layerMissionManagerRuntimeAdapter = MissionManagerRuntimeAdapter.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerThreadLaunchProvided,
+      layerThreadManagementProvided,
+      layerProviderSessionManagerProvided,
+      layerCommandReceiptStoreProvided,
+    ),
+  ),
+);
+
+/** The adapter plus the accepted lifecycle store, reading facts through that same adapter. */
+export const layerMissionManagerLifecycle = Layer.mergeAll(
+  layerMissionManagerRuntimeAdapter,
+  MissionManagerLifecycleStore.layer.pipe(
+    Layer.provide(MissionManagerRuntimeAdapter.layerFactsPort),
+    Layer.provide(layerMissionManagerRuntimeAdapter),
+    Layer.provide(layerEventInfrastructure),
+  ),
+);

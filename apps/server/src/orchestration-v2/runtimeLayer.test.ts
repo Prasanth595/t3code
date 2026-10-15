@@ -24,7 +24,12 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  EnvironmentId,
+  Mission,
+  MissionId,
+  ProviderSessionId,
   RunId,
+  TeamId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -39,6 +44,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Schema from "effect/Schema";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -51,9 +57,21 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
+import * as PersistedReceipts from "../persistence/OrchestrationCommandReceipts.ts";
+import * as PersistedEvents from "../persistence/OrchestrationEventStore.ts";
+import { emptyMissionExecution } from "../../../../packages/contracts/src/missionExecution.ts";
+import * as Lifecycle from "./MissionManagerLifecycleStore.ts";
+import * as MissionManagerRuntimeAdapter from "./MissionManagerRuntimeAdapter.ts";
+import * as MissionService from "./MissionService.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { ROLLBACK_FAILED_MESSAGE } from "./CheckpointRollbackService.ts";
@@ -5335,5 +5353,290 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.isFalse(resumed.runs[1]?.queueHeld);
       }
     }),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// P3 manager runtime composition
+// ---------------------------------------------------------------------------
+
+const encodeManagerMission = Schema.encodeEffect(Schema.fromJsonString(Mission));
+const decodeManagerMission = Schema.decodeUnknownEffect(Mission);
+const MANAGER_INCUMBENT = ThreadId.make("thread:wiring:incumbent");
+const MANAGER_SUCCESSOR = ThreadId.make("thread:wiring:successor");
+const MANAGER_SESSION = ProviderSessionId.make("provider-session:wiring:incumbent");
+const managerDigest = "a".repeat(64);
+const managerNow = "2026-10-14T12:00:00.000Z";
+const managerMilestone = (commandId: string, revision: number) => ({
+  commandId,
+  evidenceDigest: managerDigest,
+  revision,
+  confirmedAt: managerNow,
+});
+
+/** A provider whose sessions open, so the orchestrator's session manager can hold a live one. */
+const managerProviderInstance = {
+  ...providerInstance,
+  orchestrationAdapter: {
+    ...orchestrationAdapter,
+    openSession: (input: Parameters<ProviderAdapterV2Shape["openSession"]>[0]) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        return {
+          instanceId: modelSelection.instanceId,
+          driver,
+          providerSessionId: input.providerSessionId,
+          providerSession: {
+            id: input.providerSessionId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            status: "ready" as const,
+            cwd: process.cwd(),
+            model: modelSelection.model,
+            capabilities: {
+              ...CodexProviderCapabilitiesV2,
+              sessions: {
+                ...CodexProviderCapabilitiesV2.sessions,
+                supportsMultipleProviderThreadsPerSession: false,
+              },
+            },
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+          events: Stream.never,
+          ensureThread: () => Effect.die("unused"),
+          resumeThread: (
+            threadInput: Parameters<ProviderAdapterV2SessionRuntime["resumeThread"]>[0],
+          ) => Effect.succeed(threadInput.providerThread),
+          startTurn: () => Effect.void,
+          steerTurn: () => Effect.void,
+          interruptTurn: () => Effect.void,
+          respondToRuntimeRequest: () => Effect.void,
+          readThreadSnapshot: () => Effect.die("unused"),
+          rollbackThread: () => Effect.die("unused"),
+          forkThread: () => Effect.die("unused"),
+        } satisfies ProviderAdapterV2SessionRuntime;
+      }),
+  },
+} as unknown as ProviderInstance;
+
+const layerManagerAuthority = Layer.succeed(Lifecycle.MissionManagerLifecycleAuthority, {
+  teamId: "team-1",
+  environmentId: "env-1",
+  role: "delivery",
+  isCurrent: () => true,
+});
+
+/**
+ * `layerMissionManagerLifecycle` built next to `layer`, with only the externals its
+ * documentation names: the root-held authority, the MCP registry and the platform.
+ */
+const layerManagerRuntimeTest = Layer.mergeAll(
+  RuntimeLayer.layer,
+  RuntimeLayer.layerMissionManagerLifecycle,
+  MissionService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        PersistedEvents.layer,
+        PersistedReceipts.layer,
+        Layer.succeed(MissionService.MissionAuthority, {
+          teamId: TeamId.make("team-1"),
+          environmentId: EnvironmentId.make("env-1"),
+          controllerThreadId: MANAGER_INCUMBENT,
+        }),
+      ),
+    ),
+  ),
+).pipe(
+  Layer.provide(layerManagerAuthority),
+  Layer.provide(
+    Layer.mergeAll(
+      WorktreeSetupTracker.layer,
+      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
+      Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
+      Layer.mock(TextGeneration.TextGeneration)({}),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      ProviderRegistryMock.layer(),
+      Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
+        peek: () =>
+          Effect.succeed({
+            repositoryIdentity: null,
+            faviconPath: null,
+            repositoryIdentityResolved: false,
+          }),
+        getAvailable: () =>
+          Effect.succeed({
+            repositoryIdentity: null,
+            faviconPath: null,
+            repositoryIdentityResolved: false,
+          }),
+        invalidate: () => Effect.void,
+      }),
+      Layer.mock(WorkspacePaths.WorkspacePaths)({
+        normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
+      }),
+    ),
+  ),
+  Layer.provide(McpSessionRegistryTestkit.layer),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
+  Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(
+    Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+      getInstance: (instanceId) =>
+        Effect.succeed(
+          instanceId === managerProviderInstance.instanceId ? managerProviderInstance : undefined,
+        ),
+      listInstances: Effect.succeed([managerProviderInstance]),
+      listUnavailable: Effect.succeed([]),
+      streamChanges: Stream.empty,
+      subscribeChanges: Effect.never,
+    }),
+  ),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerProjectServiceTest),
+  Layer.provide(layerPlatformTest),
+);
+
+it.layer(layerManagerRuntimeTest)("P3 manager runtime composition", (it) => {
+  it.effect(
+    "retires the incumbent through the very session manager the orchestrator opened its session in",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const adapter = yield* MissionManagerRuntimeAdapter.MissionManagerRuntimeAdapter;
+        const missions = yield* MissionService.MissionService;
+        const sql = yield* SqlClient.SqlClient;
+        // The lifecycle store resolves from the same composition, facts supplied by the adapter.
+        yield* Lifecycle.MissionManagerLifecycleStore;
+
+        const projectId = ProjectId.make("project:wiring");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:wiring:incumbent"),
+          threadId: MANAGER_INCUMBENT,
+          projectId,
+          title: "Incumbent manager",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* sessions.open({
+          threadId: MANAGER_INCUMBENT,
+          providerSessionId: MANAGER_SESSION,
+          modelSelection,
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          },
+        });
+
+        // Canonical state exactly as the lifecycle leaves it once routing is confirmed.
+        const reservation = {
+          reservationId: "mgr-wiring",
+          successorThreadId: MANAGER_SUCCESSOR,
+          role: "delivery" as const,
+          currentThreadId: MANAGER_INCUMBENT,
+          currentEpoch: 3,
+          observedRevision: 0,
+          timezone: "America/New_York",
+          localDate: "2026-10-14",
+          ordinal: 0,
+          reason: "first_slot" as const,
+          artifactRef: `manager-handoff:${managerDigest}`,
+          artifactSha256: managerDigest,
+          commandId: "reserve-wiring",
+          requestDigest: managerDigest,
+          reservedAt: managerNow,
+          lifecycle: {
+            state: "routing_confirmed" as const,
+            standby: managerMilestone("standby-wiring", 2),
+            quiesce: managerMilestone("quiesce-wiring", 3),
+            transfer: { ...managerMilestone("transfer-wiring", 4), previousEpoch: 3, newEpoch: 4 },
+            routing: { ...managerMilestone("routing-wiring", 5), epoch: 4 },
+          },
+        };
+        const base = yield* decodeManagerMission({
+          schemaVersion: 1,
+          id: "mission-wiring",
+          revision: 0,
+          teamId: "team-1",
+          authorityEnvironmentId: "env-1",
+          projectTimezone: "America/New_York",
+          bindings: [
+            {
+              projectId,
+              workspaceRoot: "/tmp/project",
+              baseCommit: "a2ee2aab36da0982634aa5781b9a66dd18a0bc5d",
+              ancestry: ["a2ee2aab36da0982634aa5781b9a66dd18a0bc5d"],
+            },
+          ],
+          intent: {
+            outcome: "Prove the runtime composition.",
+            scope: ["delivery"],
+            exclusions: [],
+            authorityRefs: [{ source: "mission-council", ref: "decision-2026-001" }],
+            acceptanceCriteria: [{ id: "ac-1", text: "Compose once." }],
+            decisions: [],
+          },
+          integrationTarget: { summary: "Composition proof." },
+          managers: {
+            delivery: { threadId: MANAGER_INCUMBENT, epoch: 3 },
+            retro: { threadId: "thread-retro", epoch: 1 },
+          },
+          status: "active",
+          tasks: [],
+          updatedAt: managerNow,
+        });
+        yield* missions.execute({
+          type: "mission.create",
+          commandId: CommandId.make("command:wiring:mission"),
+          mission: base,
+        });
+        const seeded = Option.getOrThrow(yield* missions.get(MissionId.make("mission-wiring")));
+        const routed = yield* decodeManagerMission({
+          ...seeded,
+          managers: { ...seeded.managers, delivery: { threadId: MANAGER_SUCCESSOR, epoch: 4 } },
+          execution: {
+            ...(seeded.execution ?? emptyMissionExecution()),
+            managerReservations: [reservation],
+          },
+        });
+        yield* sql`UPDATE projection_missions
+          SET snapshot_json = ${yield* encodeManagerMission(routed)}
+          WHERE mission_id = ${"mission-wiring"}`;
+
+        const request = {
+          missionId: "mission-wiring",
+          role: "delivery" as const,
+          reservationId: "mgr-wiring",
+        };
+        // The adapter sees the session the orchestrator's manager holds live...
+        const before = yield* adapter.readLifecycleFacts({ ...request, step: "retire" });
+        assert.isFalse(before.cleanup?.providerSession.released);
+        assert.isTrue(Option.isSome(yield* sessions.get(MANAGER_SESSION)));
+        // ...and stopping it there is what the orchestrator's own manager then reports.
+        const cleaned = yield* adapter.cleanupIncumbent(request);
+        assert.deepEqual(cleaned, { kind: "released", sessionIds: [MANAGER_SESSION] });
+        assert.isTrue(Option.isNone(yield* sessions.get(MANAGER_SESSION)));
+        const after = yield* adapter.readLifecycleFacts({ ...request, step: "retire" });
+        assert.isTrue(after.cleanup?.providerSession.released);
+        assert.isTrue(after.cleanup?.mcp.released);
+        // The incumbent's record survives; only its runtime was retired.
+        const retired = yield* orchestrator.getThreadProjection(MANAGER_INCUMBENT);
+        assert.isNull(retired.thread.archivedAt);
+        assert.deepEqual(
+          retired.providerSessions.map((session) => session.status),
+          ["stopped"],
+        );
+      }),
   );
 });

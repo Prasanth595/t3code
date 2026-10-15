@@ -2269,3 +2269,287 @@ it.effect.each([0, 1])("releases an async setup before its completion with exit 
     }).pipe(Effect.provide(harness.layer));
   }),
 );
+
+/** Lets any background preparation a launch might have forked run before a negative assertion. */
+const letBackgroundWorkRun = Effect.promise(
+  () =>
+    new Promise<void>((resolve) => {
+      setImmediate(() => setImmediate(resolve));
+    }),
+);
+
+function standbyInput(input: {
+  readonly command: string;
+  readonly thread: string;
+  readonly workspace?: ThreadLaunch.ThreadLaunchWorkspaceStrategy;
+}) {
+  return {
+    ...launchInput({
+      command: input.command,
+      thread: input.thread,
+      ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
+    }),
+    standby: true as const,
+  };
+}
+
+it.effect(
+  "a launch without a message still prepares its workspace; a standby launch does not",
+  () => {
+    const folderClaims: Array<ThreadId> = [];
+    const harness = makeHarness({
+      managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        folderForThread: (claim) =>
+          Effect.sync(() => {
+            folderClaims.push(claim.threadId);
+            return Option.some(`/scratch/folder-${folderClaims.length}`);
+          }),
+      }),
+    });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+
+      // Baseline: this is why an empty regular launch cannot stand in for standby.
+      const regular = yield* launches.launch(
+        launchInput({ command: "command:regular:empty", thread: "thread:regular:empty" }),
+      );
+      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
+      assert.deepEqual(folderClaims, [regular.threadId]);
+      assert.equal(regular.projection.thread.worktreePath, "/scratch/folder-1");
+
+      const standby = yield* launches.launch(
+        standbyInput({
+          command: "command:standby:one",
+          thread: "thread:standby:one",
+          workspace: { type: "root", branch: "main" },
+        }),
+      );
+      yield* letBackgroundWorkRun;
+      assert.equal(standby.threadId, ThreadId.make("thread:standby:one"));
+      assert.isFalse(standby.resumed);
+      // Nothing beyond the regular launch's own setup run, folder claim or worktree.
+      assert.equal(harness.runSetup.mock.calls.length, 1);
+      assert.deepEqual(folderClaims, [regular.threadId]);
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+      assert.equal(harness.generateBranchName.mock.calls.length, 0);
+      assert.equal(harness.generateThreadTitle.mock.calls.length, 0);
+      assert.isNull(yield* tracker.get(standby.threadId));
+      // A bare record: bound to the requested root and branch, with no work.
+      const thread = standby.projection.thread;
+      assert.equal(thread.projectId, projectId);
+      assert.equal(thread.branch, "main");
+      assert.isNull(thread.worktreePath);
+      assert.isNull(thread.activeProviderThreadId);
+      assert.equal(thread.createdBy, "user");
+      for (const records of [
+        standby.projection.runs,
+        standby.projection.attempts,
+        standby.projection.messages,
+        standby.projection.providerSessions,
+        standby.projection.providerThreads,
+        standby.projection.subagents,
+      ]) {
+        assert.lengthOf(records, 0);
+      }
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("binds a standby thread to an existing worktree without touching it", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const standby = yield* launches.launch(
+      standbyInput({
+        command: "command:standby:worktree",
+        thread: "thread:standby:worktree",
+        workspace: {
+          type: "existing_worktree",
+          worktreePath: "/repo-worktrees/incumbent",
+          branch: "feature/manager",
+        },
+      }),
+    );
+    yield* letBackgroundWorkRun;
+    assert.equal(standby.projection.thread.worktreePath, "/repo-worktrees/incumbent");
+    assert.equal(standby.projection.thread.branch, "feature/manager");
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+    assert.equal(harness.removeWorktree.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("replays a lost standby reply as the same thread without a second record", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = standbyInput({
+      command: "command:standby:replay",
+      thread: "thread:standby:replay",
+    });
+    const first = yield* launches.launch(input);
+    const sequenceAfterFirst = yield* threads.getThreadEventSequence(first.threadId);
+    const again = yield* launches.launch(input);
+    const third = yield* launches.launch(input);
+    yield* letBackgroundWorkRun;
+    for (const replay of [again, third]) {
+      assert.equal(replay.threadId, first.threadId);
+      assert.isTrue(replay.resumed);
+    }
+    assert.equal(yield* threads.getThreadEventSequence(first.threadId), sequenceAfterFirst);
+    const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: true });
+    assert.deepEqual(
+      listed.map((shell) => shell.id),
+      [first.threadId],
+    );
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect(
+  "refuses a changed or conflicting standby request instead of adopting or duplicating",
+  () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = standbyInput({
+        command: "command:standby:fixed",
+        thread: "thread:standby:fixed",
+      });
+      const first = yield* launches.launch(input);
+      const refused = (attempt: ThreadLaunch.ThreadLaunchInput) =>
+        launches.launch(attempt).pipe(
+          Effect.flip,
+          Effect.map((error) => {
+            assert.equal(error._tag, "ThreadLaunchError");
+            return error;
+          }),
+        );
+
+      // The same command moved to another project, workspace, thread or shape.
+      for (const changed of [
+        { ...input, projectId: otherProjectId },
+        {
+          ...input,
+          workspaceStrategy: { type: "existing_worktree" as const, worktreePath: "/elsewhere" },
+        },
+        { ...input, runtimeMode: "approval-required" as const },
+        { ...input, interactionMode: "plan" as const },
+        { ...input, modelSelection: { ...modelSelection, model: "other-model" } },
+        {
+          ...input,
+          modelSelection: { ...modelSelection, options: [{ id: "effort", value: "high" }] },
+        },
+      ]) {
+        const error = yield* refused(changed);
+        assert.equal(error.operation, "verify-standby");
+        assert.equal(error.cause, "The recorded standby thread does not match this request.");
+      }
+      const moved = yield* refused({ ...input, threadId: ThreadId.make("thread:standby:other") });
+      assert.equal(moved.operation, "verify-standby");
+      assert.equal(moved.cause, "Standby launch command identity changed.");
+
+      // A new command cannot claim a thread id that is already taken.
+      const taken = yield* refused({
+        ...input,
+        commandId: CommandId.make("command:standby:second"),
+      });
+      assert.equal(taken.operation, "verify-standby");
+      assert.equal(taken.cause, "The standby thread id is already in use.");
+
+      // Nothing was duplicated, and the original is untouched.
+      const listed = yield* threads.listProjectThreads({ projectId, includeSubagents: true });
+      assert.deepEqual(
+        listed.map((shell) => shell.id),
+        [first.threadId],
+      );
+      const replayed = yield* launches.launch(input);
+      assert.isTrue(replayed.resumed);
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("does not replay a standby launch for a thread that has since done work", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = standbyInput({
+      command: "command:standby:worked",
+      thread: "thread:standby:worked",
+    });
+    const first = yield* launches.launch(input);
+    yield* threads.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:standby:worked:message"),
+      threadId: first.threadId,
+      messageId: MessageId.make("message:standby:worked"),
+      text: "Start working.",
+      attachments: [],
+      mode: "queue",
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const error = yield* launches.launch(input).pipe(Effect.flip);
+    assert.equal(error.operation, "verify-standby");
+    assert.equal(error.cause, "The standby thread is no longer inert.");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([
+  { label: "a first message", extra: { initialMessage: { text: "Work now", attachments: [] } } },
+  {
+    label: "a new worktree",
+    extra: { workspaceStrategy: { type: "worktree" as const, baseRef: "main" } },
+  },
+  { label: "reuse of an existing thread", extra: { reuseExistingThread: true } },
+  { label: "title generation", extra: { generateTitle: true } },
+  {
+    label: "a native import",
+    extra: {
+      importedNativeThread: {
+        ref: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "native-1",
+          strength: "strong" as const,
+        },
+      },
+    },
+  },
+])("rejects a standby launch that asks for $label", ({ extra }) => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const error = yield* launches
+      .launch({
+        ...standbyInput({ command: "command:standby:unsafe", thread: "thread:standby:unsafe" }),
+        ...extra,
+      })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "ThreadLaunchError");
+    assert.equal(error.operation, "verify-standby");
+    yield* letBackgroundWorkRun;
+    assert.lengthOf(yield* threads.listProjectThreads({ projectId, includeSubagents: true }), 0);
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("rejects a standby launch without a fixed thread id", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const { threadId: _unused, ...rest } = standbyInput({
+      command: "command:standby:anonymous",
+      thread: "unused",
+    });
+    const error = yield* launches.launch(rest).pipe(Effect.flip);
+    assert.equal(error.operation, "verify-standby");
+  }).pipe(Effect.provide(harness.layer));
+});

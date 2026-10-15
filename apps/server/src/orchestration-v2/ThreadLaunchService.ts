@@ -1,6 +1,7 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -94,6 +95,20 @@ export interface ThreadLaunchInput {
   };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /**
+   * Creates the thread record and nothing else. Unlike a launch without an
+   * initial message, which still prepares its workspace, a standby launch
+   * claims no managed folder, creates no worktree, runs no setup script,
+   * starts no provider turn and accepts no message. It is server-internal
+   * (the wire launch input has no such field) and is how a manager successor
+   * exists before the role switch.
+   *
+   * The caller fixes the thread's canonical identity (`threadId`) and a stable
+   * `commandId`. Replaying the same command verifies the recorded thread is
+   * still that inert thread in the same project and workspace, so a lost reply
+   * or a changed request can neither duplicate the thread nor adopt another.
+   */
+  readonly standby?: true;
 }
 
 /** What workspace preparation reads from a launch; a retry rebuilds it from the run. */
@@ -135,6 +150,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
       "dispatch-message",
       "release-run",
       "fail-run",
+      "verify-standby",
     ]),
     commandId: CommandId,
     projectId: ProjectId,
@@ -681,6 +697,99 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Standby: records the thread under its fixed identity and stops. It never
+   * reaches the preparation path (no managed folder, worktree, setup script
+   * or setup tracker), the message path (no run, so no provider turn), or the
+   * reuse path. The command receipt is the replay key, so a lost reply
+   * returns the same thread; because the orchestrator replays a receipt by
+   * thread id alone, the recorded thread is also checked against this request
+   * and must still be inert, so a changed request fails instead of adopting a
+   * different or already-working thread.
+   */
+  const launchStandby = Effect.fn("ThreadLaunchService.launchStandby")(function* (
+    input: ThreadLaunchInput,
+  ) {
+    const threadId = input.threadId;
+    if (
+      threadId === undefined ||
+      input.initialMessage !== undefined ||
+      input.reuseExistingThread === true ||
+      input.importedNativeThread !== undefined ||
+      input.generateTitle === true ||
+      input.workspaceStrategy.type === "worktree"
+    ) {
+      return yield* mapError(
+        input,
+        "verify-standby",
+        threadId,
+      )(
+        "A standby launch needs a fixed thread id and takes no message, import, reuse or worktree.",
+      );
+    }
+    const wrap = mapError(input, "verify-standby", threadId);
+    const reject = (reason: string) => wrap(reason);
+    const launchReceipt = yield* readReceipt(input, input.commandId);
+    if (Option.isSome(launchReceipt)) {
+      const recorded = launchReceipt.value;
+      if (
+        recorded.status !== "accepted" ||
+        recorded.commandType !== "thread.create" ||
+        recorded.threadId !== threadId
+      ) {
+        return yield* reject("Standby launch command identity changed.");
+      }
+    } else if ((yield* threads.getThreadShell(threadId).pipe(Effect.mapError(wrap))) !== null) {
+      return yield* reject("The standby thread id is already in use.");
+    }
+
+    const workspace = input.workspaceStrategy;
+    yield* threads
+      .dispatch({
+        type: "thread.create",
+        commandId: input.commandId,
+        threadId,
+        projectId: input.projectId,
+        title: input.title,
+        modelSelection: input.modelSelection,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+        branch: workspace.branch ?? null,
+        worktreePath: workspace.type === "existing_worktree" ? workspace.worktreePath : null,
+        createdBy: input.createdBy,
+        creationSource: input.creationSource,
+      })
+      .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
+
+    const projection = yield* threads.getThreadProjection(threadId).pipe(Effect.mapError(wrap));
+    const thread = projection.thread;
+    if (
+      thread.projectId !== input.projectId ||
+      thread.archivedAt !== null ||
+      thread.deletedAt !== null ||
+      thread.modelSelection.instanceId !== input.modelSelection.instanceId ||
+      thread.modelSelection.model !== input.modelSelection.model ||
+      stableStringify(thread.modelSelection.options ?? []) !==
+        stableStringify(input.modelSelection.options ?? []) ||
+      thread.runtimeMode !== input.runtimeMode ||
+      thread.interactionMode !== input.interactionMode ||
+      thread.branch !== (workspace.branch ?? null) ||
+      thread.worktreePath !==
+        (workspace.type === "existing_worktree" ? workspace.worktreePath : null)
+    ) {
+      return yield* reject("The recorded standby thread does not match this request.");
+    }
+    if (
+      projection.runs.length > 0 ||
+      projection.messages.length > 0 ||
+      projection.providerSessions.length > 0 ||
+      projection.subagents.length > 0
+    ) {
+      return yield* reject("The standby thread is no longer inert.");
+    }
+    return { threadId, projection, resumed: Option.isSome(launchReceipt) };
+  });
+
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (input) {
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
@@ -696,6 +805,7 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
+      if (input.standby === true) return yield* launchStandby(input);
       if (input.reuseExistingThread === true && input.threadId === undefined) {
         return yield* mapError(
           input,
