@@ -291,7 +291,8 @@ export interface CheckStatus {
   readonly state: CheckState;
   /**
    * What GitHub says about the run that decided `state`: its conclusion when it
-   * completed, its status when it did not, and empty for a missing check.
+   * completed (`skipped` for a check that is missing because its run was skipped), its
+   * status when it did not, and empty for a check with no run at all.
    */
   readonly conclusion: string;
   /** The run's page on GitHub, when it has one. */
@@ -763,6 +764,9 @@ export const makeGitHub = (options: GitHubOptions) => {
         "an object describing a pull request",
         stdout,
       );
+      if (!isCommitId(raw.headRefOid)) {
+        return yield* parseError(args, "a pull request and its full head commit id");
+      }
       return {
         number: raw.number,
         isDraft: raw.isDraft,

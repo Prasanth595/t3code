@@ -1441,6 +1441,16 @@ it.effect("pullRequest reads the head commit as given", () =>
   }),
 );
 
+it.effect("a pullRequest whose head commit is not a full id is a parse error", () =>
+  Effect.gen(function* () {
+    for (const sha of ["", "4f1c2d3", `${HEAD_SHA}0`, HEAD_SHA.replaceAll("4", "g")]) {
+      const t = setup(reply(PR_VIEW.replace(HEAD_SHA, sha)));
+      const error = yield* t.err(t.github.pullRequest(2));
+      assert.strictEqual(error._tag, "GitHubParse", sha);
+    }
+  }),
+);
+
 it.effect("pullRequest merged and closed are not open", () =>
   Effect.gen(function* () {
     for (const state of ["MERGED", "CLOSED"]) {
@@ -1909,6 +1919,32 @@ it.effect("several runs of one name fail before they pend and pend before they p
     // One skipped run among passing ones is not every run passing.
     assert.strictEqual(yield* state(["completed", "success"], ["completed", "skipped"]), "missing");
     assert.strictEqual(yield* state(["completed", "skipped"], ["completed", "success"]), "missing");
+    // A skipped run does not hide one that is still going, or one that failed.
+    assert.strictEqual(yield* state(["completed", "skipped"], ["in_progress", null]), "pending");
+    assert.strictEqual(yield* state(["in_progress", null], ["completed", "skipped"]), "pending");
+    assert.strictEqual(yield* state(["completed", "skipped"], ["completed", "failure"]), "failed");
+    assert.strictEqual(yield* state(["completed", "failure"], ["completed", "skipped"]), "failed");
+  }),
+);
+
+it.effect("of several runs that decide alike, the first one listed is reported", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(
+        page([
+          { ...run("gate", "completed", "failure"), html_url: "https://github.com/x/y/runs/1" },
+          { ...run("gate", "completed", "cancelled"), html_url: "https://github.com/x/y/runs/2" },
+        ]),
+      ),
+    );
+    assert.deepStrictEqual(yield* t.ok(t.github.checks(BASE_SHA, ["gate"])), [
+      {
+        name: "gate",
+        state: "failed",
+        conclusion: "failure",
+        url: "https://github.com/x/y/runs/1",
+      },
+    ]);
   }),
 );
 
@@ -1927,10 +1963,14 @@ it.effect("checks reads every page", () =>
 
 it.effect("checks keeps a details link only when it is a GitHub one", () =>
   Effect.gen(function* () {
-    const odd = setup(
-      reply(page([{ ...run("gate", "completed", "failure"), html_url: "https://evil.example/x" }])),
-    );
-    assert.isNull((yield* odd.ok(odd.github.checks(BASE_SHA, ["gate"])))[0]!.url);
+    for (const url of [
+      "https://evil.example/x",
+      "https://github.com.evil.example/x",
+      "http://github.com/x",
+    ]) {
+      const odd = setup(reply(page([{ ...run("gate", "completed", "failure"), html_url: url }])));
+      assert.isNull((yield* odd.ok(odd.github.checks(BASE_SHA, ["gate"])))[0]!.url, url);
+    }
     const none = setup(reply(page([{ ...run("gate", "completed", "failure"), html_url: null }])));
     assert.isNull((yield* none.ok(none.github.checks(BASE_SHA, ["gate"])))[0]!.url);
   }),
