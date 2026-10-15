@@ -197,7 +197,8 @@ empty. Adding text or attachments replaces it with a button for your
 message after the active turn, or a steer arrow for Steer, which sends it into the active turn.
 Click it, or press `Enter` on desktop, to use that action. Hold `Cmd` on macOS or `Ctrl` on Windows
 and Linux to switch the button to the opposite icon. Click while holding that key, or press
-`Cmd+Enter` or `Ctrl+Enter` on desktop, to use the opposite action for that message.
+`Cmd+Enter` or `Ctrl+Enter` on desktop, to use the opposite action for that message. These are the
+defaults; see [Keybindings](./keybindings.md#composer-controls) to change them.
 
 Queued messages appear above the composer. Rows show a thumbnail of any attached image alongside
 the text. Drag a row by its handle to reorder it, use the handle's arrow keys, promote the message
