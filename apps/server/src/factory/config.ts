@@ -5,11 +5,12 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { parse } from "yaml";
 
-export interface ConfigError {
-  readonly file: string;
-  readonly field?: string;
-  readonly message: string;
-}
+export const ConfigErrorSchema = Schema.Struct({
+  file: Schema.String,
+  field: Schema.optionalKey(Schema.String),
+  message: Schema.String,
+});
+export type ConfigError = typeof ConfigErrorSchema.Type;
 
 /** `<file>: <field>: <message>`, or `<file>: <message>` with no field. */
 export const formatConfigError = (error: ConfigError): string =>
@@ -20,13 +21,7 @@ export const formatConfigError = (error: ConfigError): string =>
 /** The typed failure of the loaders: every problem found in one file. */
 export class ConfigErrors extends Schema.TaggedError<ConfigErrors>()("FactoryConfigErrors", {
   file: Schema.String,
-  errors: Schema.Array(
-    Schema.Struct({
-      file: Schema.String,
-      field: Schema.optionalKey(Schema.String),
-      message: Schema.String,
-    }),
-  ),
+  errors: Schema.Array(ConfigErrorSchema),
 }) {
   override get message(): string {
     return this.errors.map(formatConfigError).join("\n");
