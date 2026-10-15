@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { openDiffFilePrimaryAction, resolveDiffPathForWorkspace } from "./diffFileActions";
 import { selectThreadRightPanelState, useRightPanelStore } from "./rightPanelStore";
+import { resolveFilePreviewLocation } from "./components/files/filePreviewMode";
 
 const THREAD_REF = scopeThreadRef(
   EnvironmentId.make("environment-local"),
@@ -48,6 +49,35 @@ describe("openDiffFilePrimaryAction", () => {
       "/repo/project/apps/web/src/components/DiffPanel.tsx",
     );
   });
+
+  it.each([
+    ["/wt\\", "/wt\\/ios", "/wt\\/README.md"],
+    ["C:\\wt\\", "C:\\wt\\ios", "C:\\wt\\README.md"],
+    ["\\\\host\\share\\wt\\", "\\\\host\\share\\wt\\ios", "\\\\host\\share\\wt\\README.md"],
+    ["/", "/ios", "/README.md"],
+  ])(
+    "preserves checkout %s when opening a writable sibling preview",
+    (root, project, absolutePath) => {
+      openDiffFilePrimaryAction({
+        threadRef: THREAD_REF,
+        filePath: "README.md",
+        activeCwd: root,
+        openInEditor: vi.fn(),
+      });
+      const panel = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        THREAD_REF,
+      );
+      const surface = panel.surfaces.find((candidate) => candidate.id === panel.activeSurfaceId);
+      expect(surface?.kind).toBe("file");
+      if (surface?.kind !== "file") throw new Error("Expected the file preview surface");
+      expect(surface.relativePath).toBe(absolutePath);
+      expect(resolveFilePreviewLocation(surface.relativePath, project, root)).toEqual({
+        cwd: root,
+        relativePath: "README.md",
+      });
+    },
+  );
 
   it("opens repository-relative diff files from a nested project", () => {
     const openInEditor = vi.fn();

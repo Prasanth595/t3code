@@ -179,7 +179,9 @@ export const make = Effect.gen(function* () {
         if ((yield* fileSystem.stat(candidate)).type !== "Directory") return worktreePath;
         const root = yield* fileSystem.realPath(worktreePath);
         const resolved = yield* fileSystem.realPath(candidate);
-        return isWithinRoot(root, resolved) ? resolved : worktreePath;
+        if (!isWithinRoot(root, resolved)) return worktreePath;
+        // A separator preserves significant trailing whitespace through cwd RPC schemas.
+        return resolved.trimEnd() === resolved ? resolved : `${resolved}${path.sep}`;
       }).pipe(
         Effect.catchIf(
           (error) => error.reason._tag === "NotFound" || error.reason._tag === "BadResource",

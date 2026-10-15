@@ -1,8 +1,11 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import {
+  isWindowsAbsolutePath,
+  normalizeProjectPathForComparison,
+  resolveWorkspaceFilePath,
+} from "@t3tools/shared/path";
 
 import { useRightPanelStore } from "./rightPanelStore";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 
 interface OpenDiffFilePrimaryActionInput {
   readonly threadRef: ScopedThreadRef | null;
@@ -94,7 +97,7 @@ export function openDiffFilePrimaryAction({
   // Diff paths are relative to their checkout; the file panel may be rooted in a
   // nested project, so preserve the resolved location when opening it there.
   const targetPath = activeCwd
-    ? resolvePathLinkTarget(workspaceFilePath, activeCwd)
+    ? resolveWorkspaceFilePath(workspaceFilePath, activeCwd)
     : workspaceFilePath;
   if (threadRef) {
     useRightPanelStore.getState().openFile(threadRef, targetPath);

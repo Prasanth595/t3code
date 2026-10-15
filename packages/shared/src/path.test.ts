@@ -20,6 +20,9 @@ describe("path helpers", () => {
     ["C:/Workspace/file", "/other", "C:/Workspace/file"],
     ["file", "\\\\host\\share\\", "\\\\host\\share\\file"],
     ["file", "/", "/file"],
+    ["file", "/workspace\\", "/workspace\\/file"],
+    ["file", "/workspace\\/", "/workspace\\/file"],
+    ["src/file", "C:\\Workspace/\\", "C:\\Workspace\\src\\file"],
     ["~/report:123", "/workspace", "~/report:123"],
   ])("resolves literal path %s within %s", (path, root, expected) => {
     expect(resolveWorkspaceFilePath(path, root)).toBe(expected);

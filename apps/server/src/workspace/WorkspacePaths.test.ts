@@ -2,16 +2,20 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
+import { ProjectResolveCwdResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+
+const encodeCwdResult = Schema.encodeSync(ProjectResolveCwdResult);
 
 const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspacePaths.layer),
@@ -283,9 +287,9 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
       const candidate = path.join(root, directory);
       yield* fs.makeDirectory(candidate, { recursive: true });
       const paths = yield* pathsWithPrefix(`${directory}/`);
-      expect(yield* paths.resolveProjectCwd({ cwd: "/repo/ios", worktreePath: root })).toBe(
-        candidate,
-      );
+      const cwd = yield* paths.resolveProjectCwd({ cwd: "/repo/ios", worktreePath: root });
+      expect(encodeCwdResult({ cwd }).cwd).toBe(cwd);
+      expect(yield* fs.realPath(cwd)).toBe(candidate);
     }),
   );
 
@@ -315,18 +319,25 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
     );
   }
 
-  it.effect.skipIf(!symlinksSupported)("keeps a contained symlink inside the checkout", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* makeTempDir().pipe(Effect.flatMap((value) => fs.realPath(value)));
-      const actual = path.join(root, "packages", "ios");
-      yield* fs.makeDirectory(actual, { recursive: true });
-      yield* fs.symlink(actual, path.join(root, "ios"));
-      const paths = yield* pathsWithPrefix("ios/");
-      expect(yield* paths.resolveProjectCwd({ cwd: "/repo/ios", worktreePath: root })).toBe(actual);
-    }),
-  );
+  for (const directory of ["ios", "ios "]) {
+    it.effect.skipIf(
+      !symlinksSupported ||
+        (directory === "ios " && HostProcess.Platform.defaultValue() === "win32"),
+    )(`preserves the contained symlink target ${JSON.stringify(directory)} through cwd RPCs`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir().pipe(Effect.flatMap((value) => fs.realPath(value)));
+        const actual = path.join(root, "packages", directory);
+        yield* fs.makeDirectory(actual, { recursive: true });
+        yield* fs.symlink(actual, path.join(root, "ios"));
+        const paths = yield* pathsWithPrefix("ios/");
+        const cwd = yield* paths.resolveProjectCwd({ cwd: "/repo/ios", worktreePath: root });
+        expect(encodeCwdResult({ cwd }).cwd).toBe(cwd);
+        expect(yield* fs.realPath(cwd)).toBe(actual);
+      }),
+    );
+  }
 
   it.effect.each(["../outside/", "ios/../../outside/", "/absolute/escape/"])(
     "rejects an escaping prefix %s",
