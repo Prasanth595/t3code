@@ -203,6 +203,7 @@ function makeHarness(options: HarnessOptions = {}) {
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         folderForThread: () => Effect.succeed(Option.none()),
+        isScratch: () => Effect.succeed(false),
       }),
   );
   const layerLaunch = ThreadLaunch.layer.pipe(
@@ -1168,20 +1169,31 @@ it.effect.each([
   }),
 );
 
-it.effect("refuses a new worktree in a folder outside any repository", () =>
+it.effect.each([
+  { name: "refuses", scratch: false },
+  // The launch gives it a Scratch thread folder.
+  { name: "leaves Scratch to the launch for", scratch: true },
+])("$name a new worktree in a folder outside any repository", (testCase) =>
   Effect.gen(function* () {
     const harness = makeHarness({
+      hasCommit: () => Effect.succeed(true),
       git: { isOutsideRepository: () => Effect.succeed(true) },
+      managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratch: () => Effect.succeed(testCase.scratch),
+      }),
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const error = yield* launches
-        .checkWorktreeBase({
-          projectId,
-          workspaceStrategy: { type: "worktree", baseRef: "main" },
-        })
-        .pipe(Effect.flip);
-      assert.deepInclude(error, { _tag: "ThreadLaunchNotRepositoryError", projectId });
+      const check = launches.checkWorktreeBase({
+        projectId,
+        workspaceStrategy: { type: "worktree", baseRef: "main" },
+      });
+      if (testCase.scratch) return yield* check;
+      assert.deepInclude(yield* check.pipe(Effect.flip), {
+        _tag: "ThreadLaunchNotRepositoryError",
+        projectId,
+      });
     }).pipe(Effect.provide(harness.layer));
   }),
 );

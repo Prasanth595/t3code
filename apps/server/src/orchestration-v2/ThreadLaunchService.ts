@@ -323,10 +323,13 @@ const make = Effect.gen(function* () {
           branch,
         });
     }
+    // Scratch is outside any repository too, but the launch gives a worktree
+    // request there a thread folder of its own.
     const outside = yield* Effect.gen(function* () {
       const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
       if (project === undefined) return undefined;
-      return (yield* git.isOutsideRepository(project.workspaceRoot)) ? project : undefined;
+      if (!(yield* git.isOutsideRepository(project.workspaceRoot))) return undefined;
+      return (yield* managedFolders.isScratch(input.projectId)) ? undefined : project;
     }).pipe(Effect.orElseSucceed(() => undefined));
     if (outside !== undefined)
       return yield* new ThreadLaunchNotRepositoryError({
