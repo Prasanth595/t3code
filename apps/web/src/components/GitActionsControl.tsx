@@ -1196,9 +1196,6 @@ export default function GitActionsControl({
     () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasPrimaryRemote),
     [gitStatusForActions, hasPrimaryRemote, isGitActionRunning],
   );
-  // The dropdown trigger stays disabled while every menu item is unavailable, so it
-  // never opens onto a menu with no clickable options (#13406).
-  const hasAvailableGitActions = gitActionMenuItems.some((item) => !item.disabled);
   const quickAction = useMemo(
     () =>
       resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
@@ -1600,6 +1597,12 @@ export default function GitActionsControl({
 
   const canPublishRepository =
     canWriteSourceControl && isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
+
+  // The dropdown trigger stays disabled while every menu entry is unavailable, so it
+  // never opens onto a menu with no clickable options (#13406). Publishing renders as
+  // a separate menu entry, so its eligibility counts toward availability too.
+  const hasAvailableGitActions =
+    gitActionMenuItems.some((item) => !item.disabled) || canPublishRepository;
 
   const initializeGit = () => {
     void (async () => {
