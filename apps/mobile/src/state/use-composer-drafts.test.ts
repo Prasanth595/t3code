@@ -193,6 +193,7 @@ import {
   stickyComposerModelSelectionAtom,
   undoComposerDraftMerge,
   undoComposerDraftMergeState,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 
@@ -240,6 +241,44 @@ function contextDraft(start: number, count: number): ComposerDraft {
 }
 
 describe("mobile composer drafts", () => {
+  it.each(["existing-thread", "new-task"])(
+    "persists a model pick without a confirmation for %s",
+    async (kind) => {
+      await waitForComposerDraftsLoaded();
+      const key =
+        kind === "new-task"
+          ? createNewTaskDraft({
+              environmentId: EnvironmentId.make("environment-1"),
+              projectId: ProjectId.make("project-1"),
+            })
+          : "environment-1:thread-1";
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex_work"),
+        model: "gpt-5.4",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      // New-task hydration re-resolves model-only drafts from the sticky choice.
+      if (kind === "new-task") setStickyComposerModelSelection(modelSelection);
+      updateComposerDraftSettings(key, { modelSelection });
+      expect(getComposerDraftSnapshot(key).modelSelection).toEqual(modelSelection);
+      await flushComposerDrafts();
+
+      appAtomRegistry.set(composerDraftsAtom, {});
+      appAtomRegistry.set(stickyComposerModelSelectionAtom, null);
+      resetComposerDraftsLoadState();
+      await waitForComposerDraftsLoaded();
+      if (kind === "new-task") {
+        expect(appAtomRegistry.get(stickyComposerModelSelectionAtom)).toEqual(modelSelection);
+      } else {
+        expect(getComposerDraftSnapshot(key)).toMatchObject({
+          text: "",
+          attachments: [],
+          modelSelection,
+        });
+      }
+    },
+  );
+
   it("restores a PR checkout source after restarting the composer", () => {
     const draft: ComposerDraft = {
       text: "Address feedback",

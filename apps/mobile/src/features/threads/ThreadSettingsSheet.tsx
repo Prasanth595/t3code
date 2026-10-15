@@ -52,7 +52,6 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
-import { MaterialButton } from "../../components/MaterialButton";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
@@ -343,7 +342,7 @@ type ThreadSettingsSessionValue = {
 
 const ThreadSettingsSessionContext = createContext<ThreadSettingsSessionValue | null>(null);
 
-/** Owns the staged model and option state for one picker presentation. */
+/** Owns catalog preferences and the iOS picker's staged model and options. */
 function ThreadSettingsSessionProvider(
   props: ThreadSettingsSessionProps & { readonly children: ReactNode },
 ) {
@@ -600,8 +599,15 @@ function ThreadSettingsSessionProvider(
     });
   }, []);
 
+  const { onSelectModel } = props;
   const pressModel = useCallback(
     (option: ModelOption) => {
+      if (Platform.OS === "android") {
+        if (isApplied(option) || !canCommitPendingModel(option, props.providerGroups)) return;
+        void Haptics.selectionAsync();
+        onSelectModel(option);
+        return;
+      }
       void Haptics.selectionAsync();
       setPendingModel((current) =>
         pendingModelAfterPress({
@@ -611,7 +617,7 @@ function ThreadSettingsSessionProvider(
         }),
       );
     },
-    [isApplied],
+    [isApplied, onSelectModel, props.providerGroups],
   );
 
   const value = useMemo<ThreadSettingsSessionValue>(
@@ -832,9 +838,7 @@ function useThreadSettingsCatalogItems(
           return [];
         }
         const isPrimary = driver !== undefined && PRIMARY_PROVIDER_DRIVERS.has(driver);
-        // Staging a model must not change disclosure state. The applied model
-        // stays stable for the lifetime of this picker (Save closes it), so it
-        // is safe to use as the initial selected-provider default.
+        // Keep the applied provider visible, including after an immediate switch.
         const containsAppliedSelection = group.models.some(session.isApplied);
         const isNarrowed = session.providerFilter !== null || session.searchQuery.trim().length > 0;
         const collapsible = !isNarrowed;
@@ -1363,9 +1367,6 @@ function ThreadSettingsModelsScreen() {
                   />
                 )}
               </AndroidAnchoredMenu>
-              {session.pendingModel ? (
-                <MaterialButton label="Save" tone="text" onPress={commitAndClose} />
-              ) : null}
             </View>
           }
           onBack={presentation.onClose}
