@@ -74,6 +74,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import {
   clientsWithChangedLevel,
   isMapSubject,
+  nextExpiry,
   peersWithChangedLevel,
   reachablePeers,
 } from "./machineAccess.ts";
@@ -672,6 +673,47 @@ const make = Effect.gen(function* () {
     Stream.runDrain,
   );
 
+  // --- MM-304, MM-912: an arrow that expires ends its sessions at its expiry -----------------
+
+  /**
+   * Sleeps until the next arrow expiry of the saved desired state, then ends the sessions of that
+   * source, also while the portal is unreachable. A new desired state starts it again from its
+   * arrival, because `applyDesired` handled every expiry before that. After a restart it starts
+   * from the arrival of the saved state, so an expiry during the downtime ends its sessions too;
+   * one that ended them before the restart ends the newer sessions of that source once more.
+   */
+  const watchExpiries = state.changes.pipe(
+    Stream.map((local) =>
+      local.enabled ? { desired: local.saved.desired, atMs: local.saved.desiredAtMs } : null,
+    ),
+    Stream.changesWith((left, right) => left?.desired === right?.desired),
+    Stream.switchMap((current) =>
+      Stream.fromEffect(
+        Effect.gen(function* () {
+          const desired = current?.desired ?? null;
+          if (desired === null) return;
+          let afterMs = current?.atMs ?? (yield* Clock.currentTimeMillis);
+          for (;;) {
+            const next = nextExpiry(desired, afterMs);
+            if (next === undefined) return;
+            const waitMs = next.atMs - (yield* Clock.currentTimeMillis);
+            if (waitMs > 0) yield* Effect.sleep(Duration.millis(waitMs));
+            const subjects = new Set(next.subjects);
+            yield* revokeSessions((subject) => subjects.has(subject)).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Machine map could not end the sessions of an expired arrow.", {
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
+            afterMs = next.atMs;
+          }
+        }),
+      ),
+    ),
+    Stream.runDrain,
+  );
+
   // --- MM-404: settings that change outside the map ------------------------------------------
 
   // A change in the themes folder is a change of `sharedThemes` (MM-408).
@@ -1114,6 +1156,7 @@ const make = Effect.gen(function* () {
   );
   yield* forkParked(superviseConnection);
   yield* forkParked(watchLocalSettings);
+  yield* forkParked(watchExpiries);
   yield* forkParked(statusLoop);
   yield* forkParked(joinPendingCode);
 

@@ -399,7 +399,7 @@ export class MachineMapObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS sign_ins (id TEXT PRIMARY KEY, device TEXT NOT NULL, browser TEXT NOT NULL, place TEXT NOT NULL, first_seen TEXT NOT NULL, last_used TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS machine_tunnels (machine_id TEXT PRIMARY KEY, tunnel_id TEXT NOT NULL, hostname TEXT NOT NULL, created_tunnel INTEGER NOT NULL, dns_record_id TEXT, access_host_added INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS client_invites (code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL, expires_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS client_tokens (client_id TEXT PRIMARY KEY, token_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS client_app_tokens (token_id TEXT PRIMARY KEY, client_id TEXT NOT NULL, token_client_id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pending_clients (thumbprint TEXT PRIMARY KEY, described_as TEXT NOT NULL, email TEXT, seen_on TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, state TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, sign_in_id TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
@@ -2604,8 +2604,7 @@ export class MachineMapObject extends DurableObject<Env> {
       this.#countEnrollAttempt(ip, now);
       const api = this.#cloudflare();
       if (!api) throw new PortalError(503, "App invites need the CF_API_TOKEN secret (MM-1205).");
-      const [appId] = this.#accessAppIds();
-      if (!appId) throw new PortalError(503, "Set MACHINE_ACCESS_APP_ID first.");
+      const appId = this.#machineAccessAppId();
       const codeHash = await sha256Hex(request.code.trim().toLowerCase());
       const row = this.#sql<{ client_id: string; expires_at: string }>(
         "SELECT client_id, expires_at FROM client_invites WHERE code_hash = ?",
@@ -2627,40 +2626,39 @@ export class MachineMapObject extends DurableObject<Env> {
       if (claimed.length === 0) throw new PortalError(404, "Unknown or used invite.");
       this.#broadcast(this.#invitesEvent());
       const created = await api.createServiceToken(`t3-client-${slug(client.name)}`);
-      const dropCreated = async () => {
-        await goneIsDone(api.removeTokenFromApp(appId, created.id, CLIENT_POLICY_NAME)).catch(
-          () => undefined,
-        );
-        await goneIsDone(api.deleteServiceToken(created.id)).catch(() => undefined);
-      };
+      let next: ClientRecord;
       try {
         await api.addTokenToApp(appId, created.id, CLIENT_POLICY_NAME);
+        // The map can change during the Cloudflare calls: read the client again.
+        const current = findClient(this.#map, client.id);
+        if (!current) throw new PortalError(404, "The client of this invite is gone.");
+        if (this.#pause?.before.clientArrows.some((a) => a.client === current.id)) {
+          throw new PortalError(423, "Everything is paused. Ask for a new invite after Resume.");
+        }
+        next = { ...current, serviceToken: { clientId: created.client_id } };
+        // The row and the revision go together, with no await between them, so a removal or a
+        // second redeem always finds the row of every token that the map can name.
+        this.#sql(
+          "INSERT INTO client_app_tokens (token_id, client_id, token_client_id) VALUES (?, ?, ?)",
+          created.id,
+          next.id,
+          created.client_id,
+        );
+        try {
+          this.#commit(
+            { _tag: "portal", reason: "app invite" },
+            `${next.name} joined from ${request.device || "an app"}`,
+            [{ _tag: "putClient", client: next }],
+          );
+        } catch (error) {
+          this.#sql("DELETE FROM client_app_tokens WHERE token_id = ?", created.id);
+          throw error;
+        }
       } catch (error) {
-        await dropCreated();
+        await this.#endTokenOrWarn(api, appId, created.id);
         throw error;
       }
-      // The map can change during the Cloudflare calls: read the client again.
-      const current = findClient(this.#map, client.id);
-      if (!current) {
-        await dropCreated();
-        throw new PortalError(404, "The client of this invite is gone.");
-      }
-      if (this.#pause?.before.clientArrows.some((a) => a.client === current.id)) {
-        await dropCreated();
-        throw new PortalError(423, "Everything is paused. Ask for a new invite after Resume.");
-      }
-      await this.#dropClientToken(api, appId, current.id);
-      this.#sql(
-        "INSERT OR REPLACE INTO client_tokens (client_id, token_id) VALUES (?, ?)",
-        current.id,
-        created.id,
-      );
-      const next: ClientRecord = { ...current, serviceToken: { clientId: created.client_id } };
-      this.#commit(
-        { _tag: "portal", reason: "app invite" },
-        `${next.name} joined from ${request.device || "an app"}`,
-        [{ _tag: "putClient", client: next }],
-      );
+      await this.#endUnnamedTokens(api, appId, next.id);
       return {
         clientId: next.id,
         name: next.name,
@@ -2680,17 +2678,50 @@ export class MachineMapObject extends DurableObject<Env> {
     });
   }
 
-  /** MM-915: ends the app token of a client in Cloudflare, if it has one. */
-  async #dropClientToken(api: CloudflareApi, appId: string, clientId: ClientId): Promise<void> {
-    const row = this.#sql<{ token_id: string }>(
-      "SELECT token_id FROM client_tokens WHERE client_id = ?",
+  /** The Access app of the machine hostnames, which holds the app tokens (MM-911). */
+  #machineAccessAppId(): string {
+    const [appId] = this.#accessAppIds();
+    // `#accessAppIds` throws for an unset id, so this only satisfies the type.
+    if (appId === undefined) throw new PortalError(503, "Set MACHINE_ACCESS_APP_ID first.");
+    return appId;
+  }
+
+  /**
+   * MM-915: ends one app token in Cloudflare and forgets its row. A token or policy that someone
+   * deleted in the dashboard is already gone, so that counts as done.
+   */
+  async #endToken(api: CloudflareApi, appId: string, tokenId: string): Promise<void> {
+    await goneIsDone(api.removeTokenFromApp(appId, tokenId, CLIENT_POLICY_NAME));
+    await goneIsDone(api.deleteServiceToken(tokenId));
+    this.#sql("DELETE FROM client_app_tokens WHERE token_id = ?", tokenId);
+  }
+
+  /**
+   * MM-913: ends every stored token of a client that the map does not name. After two redeems at
+   * once, the later revision names its token, so the earlier token ends, whichever call runs last.
+   */
+  async #endUnnamedTokens(api: CloudflareApi, appId: string, clientId: ClientId): Promise<void> {
+    const named = findClient(this.#map, clientId)?.serviceToken?.clientId ?? null;
+    const rows = this.#sql<{ token_id: string; token_client_id: string }>(
+      "SELECT token_id, token_client_id FROM client_app_tokens WHERE client_id = ?",
       clientId,
-    )[0];
-    if (!row) return;
-    // A token or policy that someone deleted in the dashboard is already gone, so removal goes on.
-    await goneIsDone(api.removeTokenFromApp(appId, row.token_id, CLIENT_POLICY_NAME));
-    await goneIsDone(api.deleteServiceToken(row.token_id));
-    this.#sql("DELETE FROM client_tokens WHERE client_id = ?", clientId);
+    );
+    for (const row of rows) {
+      if (row.token_client_id !== named) await this.#endTokenOrWarn(api, appId, row.token_id);
+    }
+  }
+
+  /** Ends a token after a failed redeem. A failure is logged and pushed, because the token may live. */
+  async #endTokenOrWarn(api: CloudflareApi, appId: string, tokenId: string): Promise<void> {
+    await this.#endToken(api, appId, tokenId).catch((error: unknown) => {
+      console.error("app token clean-up failed", tokenId, errorMessage(error));
+      this.#notify({
+        title: "An app token may still be live",
+        body: `Delete the service token ${tokenId} in Cloudflare Zero Trust, Access, Service credentials.`,
+        url: "/#/clients",
+        tag: `token:${tokenId}`,
+      });
+    });
   }
 
   /**
@@ -2701,10 +2732,17 @@ export class MachineMapObject extends DurableObject<Env> {
     return this.#run(owner, async (): Promise<WriteResult> => {
       const client = findClient(this.#map, clientId);
       if (!client) throw new PortalError(404, "This client is gone.");
-      // The stored token id decides, so a live token never stays in the policy.
-      const hasToken =
-        this.#sql("SELECT 1 FROM client_tokens WHERE client_id = ?", client.id).length > 0;
-      if (hasToken) {
+      // Invites go first, so no redeem can start during the removal.
+      this.#sql("DELETE FROM client_invites WHERE client_id = ?", client.id);
+      this.#broadcast(this.#invitesEvent());
+      // The stored token ids decide, so a live token never stays in the policy. A redeem that was
+      // already running can add a row during the awaits, so this repeats until none is left.
+      const tokensOf = () =>
+        this.#sql<{ token_id: string }>(
+          "SELECT token_id FROM client_app_tokens WHERE client_id = ?",
+          client.id,
+        );
+      for (let rows = tokensOf(); rows.length > 0; rows = tokensOf()) {
         const api = this.#cloudflare();
         if (!api) {
           throw new PortalError(
@@ -2712,12 +2750,11 @@ export class MachineMapObject extends DurableObject<Env> {
             "Removing an app client needs the CF_API_TOKEN secret, to end its token.",
           );
         }
-        const [appId] = this.#accessAppIds();
-        if (!appId) throw new PortalError(503, "Set MACHINE_ACCESS_APP_ID first.");
-        await this.#dropClientToken(api, appId, client.id);
+        const appId = this.#machineAccessAppId();
+        for (const row of rows) await this.#endToken(api, appId, row.token_id);
       }
-      this.#sql("DELETE FROM client_invites WHERE client_id = ?", client.id);
-      this.#broadcast(this.#invitesEvent());
+      // No await between the last check and the commit.
+      if (!findClient(this.#map, client.id)) throw new PortalError(404, "This client is gone.");
       const revision = this.#commit(ownerActor(owner), `Removed ${client.name}`, [
         { _tag: "removeClient", clientId: client.id },
       ]);
@@ -2804,7 +2841,6 @@ export class MachineMapObject extends DurableObject<Env> {
     });
   }
 
-  /** MM-204, MM-1204: exchanges a join code for the machine token. Each code works once. */
   /** MM-1204: counts one join or invite attempt of an address, and refuses too many. */
   #countEnrollAttempt(ip: string, now: number): void {
     const attempts = this.#sql<{ window_start: number; count: number }>(
@@ -2823,6 +2859,7 @@ export class MachineMapObject extends DurableObject<Env> {
     );
   }
 
+  /** MM-204, MM-1204: exchanges a join code for the machine token. Each code works once. */
   enroll(ip: string, code: string) {
     return this.#run(null, async (): Promise<EnrollResponse> => {
       const now = Date.now();

@@ -195,6 +195,30 @@ export const peersWithChangedLevel = (
   return sourcesWithChangedLevel(arrowsIn(previous), previousAtMs, arrowsIn(next), nowMs);
 };
 
+/**
+ * MM-304, MM-912: the next arrow into this machine that expires after `afterMs`, with the session
+ * subjects whose level drops at that time. Undefined when no arrow expires later.
+ */
+export const nextExpiry = (
+  desired: MachineDesiredState,
+  afterMs: number,
+): { readonly atMs: number; readonly subjects: ReadonlyArray<string> } | undefined => {
+  const expiring = [
+    ...desired.arrowsIn
+      .filter((arrow) => arrow.to === desired.self.id)
+      .map((arrow) => [machineSessionSubject(arrow.from), arrow] as const),
+    ...(desired.clients ?? []).map((client) => [clientSessionSubject(client.id), client] as const),
+  ].flatMap(([subject, arrow]) => {
+    if (arrow.expiresAt === null || (arrow.revertLevel ?? "none") === arrow.level) return [];
+    const atMs = Date.parse(arrow.expiresAt);
+    // A time that does not parse never fires, and the portal revision still ends the sessions.
+    return atMs > afterMs ? [{ subject, atMs }] : [];
+  });
+  if (expiring.length === 0) return undefined;
+  const atMs = Math.min(...expiring.map((e) => e.atMs));
+  return { atMs, subjects: expiring.filter((e) => e.atMs === atMs).map((e) => e.subject) };
+};
+
 /** MM-306: the peers this machine can use, with the origin of their T3 server. */
 export const reachablePeers = (desired: MachineDesiredState | null, nowMs: number) =>
   (desired?.arrowsOut ?? []).flatMap((arrow) => {

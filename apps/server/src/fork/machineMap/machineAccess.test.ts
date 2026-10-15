@@ -6,6 +6,7 @@ import {
   clientsWithChangedLevel,
   machineGrantFor,
   machineMcpAccessFor,
+  nextExpiry,
   peersWithChangedLevel,
   reachablePeers,
 } from "./machineAccess.ts";
@@ -163,6 +164,40 @@ describe("peersWithChangedLevel (MM-1306)", () => {
       arrowsOut: [arrow(SELF, PEER, "admin")],
     });
     expect(peersWithChangedLevel(before, null, next, NOW)).toEqual([]);
+  });
+});
+
+describe("nextExpiry (MM-304, MM-912)", () => {
+  it("finds the earliest arrow into this machine that drops, and skips past ones", () => {
+    const desired = {
+      ...desiredState({
+        arrowsIn: [
+          arrow(PEER, SELF, "admin", {
+            expiresAt: "2026-10-13T13:00:00.000Z",
+            revertLevel: "read",
+          }),
+          arrow(SELF, PEER, "admin", {
+            expiresAt: "2026-10-13T12:30:00.000Z",
+            revertLevel: "none",
+          }),
+        ],
+      }),
+      clients: [
+        {
+          id: ClientId.make("client-phone"),
+          name: "Phone",
+          tokenClientId: "phone.access",
+          level: "standard" as const,
+          expiresAt: "2026-10-13T13:00:00.000Z",
+          revertLevel: "none" as const,
+        },
+      ],
+    };
+    expect(nextExpiry(desired, NOW)).toEqual({
+      atMs: Date.parse("2026-10-13T13:00:00.000Z"),
+      subjects: [`machine:${PEER}`, "client:client-phone"],
+    });
+    expect(nextExpiry(desired, Date.parse("2026-10-13T13:00:00.000Z"))).toBeUndefined();
   });
 });
 
