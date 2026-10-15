@@ -69,7 +69,9 @@ it.effect("publishes file accounting and the doctor command after each pass", ()
     assert.isNotNull(before);
     assert.isAbove(before!.databaseBytes, 1048576);
     assert.isTrue(before!.incrementalVacuumEnabled);
-    assert.include(before!.compactCommand, "doctor --base-dir");
+    // Quoting follows the host shell, so check each word on its own.
+    assert.include(before!.compactCommand, "doctor");
+    assert.include(before!.compactCommand, "--base-dir");
     assert.include(before!.compactCommand, config.baseDir);
 
     // The next reclaim pass frees the dropped table and republishes.
