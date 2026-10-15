@@ -453,10 +453,11 @@ async function captureSource({
       if (!active) {
         throw new DesktopSnapShotError({ operation: "window-unavailable", captureId });
       }
+      // The worker copies physical pixels. A DIP rect is ambiguous on mixed-DPI desktops.
       ({ source, png } = await captureRegionWindowSnapshot(
         regionSnapShotPool,
         active,
-        snapShotFlashBounds(active, platform),
+        active.bounds,
         snapShotThumbnailSize(active),
       ));
     } else {
