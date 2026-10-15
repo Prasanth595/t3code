@@ -166,6 +166,42 @@ describe("descriptor helpers", () => {
     ).toEqual([{ id: "fastMode", value: true }]);
   });
 
+  it("keeps a model choice the descriptor does not list, unlike other unlisted values", () => {
+    const caps = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "model",
+          label: "Model",
+          type: "select",
+          selectsModel: true,
+          options: [{ id: "cline-pass/mimo-v2.6-flash", label: "MiMo" }],
+          currentValue: "cline-pass/mimo-v2.6-flash",
+        },
+        {
+          id: "mode",
+          label: "Mode",
+          type: "select",
+          options: [{ id: "act", label: "Act" }],
+          currentValue: "act",
+        },
+      ],
+    });
+    const selections = [
+      { id: "model", value: "cline-pass/muse-spark-1.3-contributor" },
+      { id: "mode", value: "plan" },
+    ];
+
+    expect(
+      buildExplicitProviderOptionSelectionsFromDescriptors(
+        getProviderOptionDescriptors({ caps, selections }),
+        selections,
+      ),
+    ).toEqual([
+      { id: "model", value: "cline-pass/muse-spark-1.3-contributor" },
+      { id: "mode", value: "act" },
+    ]);
+  });
+
   it("stores option selection arrays in model selections", () => {
     expect(
       createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [

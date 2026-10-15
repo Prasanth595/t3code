@@ -259,6 +259,28 @@ describe("mobile model options", () => {
       null,
     );
     expect(described?.selection).toEqual({ instanceId, model: "cline-pass" });
+
+    // A saved model the described catalog no longer lists stays as saved, so
+    // the session rejects it instead of running the catalog's current model.
+    const [dropped] = buildModelOptions(
+      configWithPassCapabilities({
+        optionDescriptors: [
+          {
+            id: "model",
+            label: "Model",
+            type: "select",
+            selectsModel: true,
+            options: [{ id: "cline-pass/mimo-v2.6-flash", label: "MiMo v2.6 Flash" }],
+            currentValue: "cline-pass/mimo-v2.6-flash",
+          },
+          { id: "auto_approve", label: "Auto-approve tools", type: "boolean" },
+        ],
+      }),
+      saved,
+      undefined,
+      null,
+    );
+    expect(dropped?.selection).toEqual(saved);
   });
 
   it("limits existing threads to their provider while new tasks keep every provider", () => {

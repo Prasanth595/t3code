@@ -234,6 +234,7 @@ describe("ACP Registry probe", () => {
           id: "model",
           label: "Model",
           type: "select",
+          selectsModel: true,
           options: [
             { id: "cline-free/step-5-preview", label: "Step 5 Preview (free)" },
             { id: "cline-free/mimo-v2.6-flash", label: "MiMo-V2.6-Flash (free)" },

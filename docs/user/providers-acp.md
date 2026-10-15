@@ -83,8 +83,9 @@ is running update the picker without waiting for another provider probe.
 
 Agents report these options for the model a session is running, so each model shows the options
 it last reported. A model that has not run in a provider check or thread since the server started
-shows none until it does. Choices already saved with that model still apply, and a saved model
-choice the agent no longer offers stops the session with an error instead of running another model.
+shows none until it does. Choices already saved with that model still apply. If the agent's model
+option no longer lists a saved model choice, the session stops with an error instead of running
+another model.
 
 ## Commands and skills
 

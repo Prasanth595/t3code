@@ -76,7 +76,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
-import { getDefaultServerModel, hasUnknownModelCapabilities } from "./providerModels";
+import { getDefaultServerModel, getListedModelCapabilities } from "./providerModels";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
@@ -1342,21 +1342,32 @@ export function deriveEffectiveComposerModelState(input: {
   const selectedModels = input.providers.find(
     (provider) => provider.instanceId === selectedOptionsKey,
   )?.models;
-  if (
-    !selectedModels ||
-    !hasUnknownModelCapabilities(selectedModels, selectedModel, input.selectedProvider)
-  ) {
+  const capabilities =
+    selectedModels &&
+    getListedModelCapabilities(selectedModels, selectedModel, input.selectedProvider);
+  // Options carried over from another model are only hints that descriptors
+  // re-resolve. Values the provider receives as saved must instead come from
+  // this model's own saved options: every option while the model's options
+  // are unknown, otherwise only options that select the model a turn runs on.
+  const modelSelectingIds = new Set(
+    capabilities?.optionDescriptors?.flatMap((descriptor) =>
+      descriptor.type === "select" && descriptor.selectsModel === true ? [descriptor.id] : [],
+    ),
+  );
+  if (capabilities === undefined || (capabilities !== null && modelSelectingIds.size === 0)) {
     return { selectedModel, modelOptions };
   }
+  const sentAsSaved = (selection: ProviderOptionSelection) =>
+    capabilities === null || modelSelectingIds.has(selection.id);
 
-  // Options carried over from another model are only hints that descriptors
-  // re-resolve. With this model's options unknown they would reach the
-  // provider verbatim, so only options saved for this model are kept.
-  const { [selectedOptionsKey]: _carried, ...otherModelOptions } = modelOptions ?? {};
-  const ownOptions = savedModelOptions(input, selectedOptionsKey, selectedModel);
+  const { [selectedOptionsKey]: carried, ...otherModelOptions } = modelOptions ?? {};
+  const nextOptions = [
+    ...(carried ?? []).filter((selection) => !sentAsSaved(selection)),
+    ...(savedModelOptions(input, selectedOptionsKey, selectedModel) ?? []).filter(sentAsSaved),
+  ];
   const nextModelOptions: ProviderOptionSelectionsByProvider =
-    ownOptions && ownOptions.length > 0
-      ? { ...otherModelOptions, [selectedOptionsKey]: ownOptions }
+    nextOptions.length > 0
+      ? { ...otherModelOptions, [selectedOptionsKey]: nextOptions }
       : otherModelOptions;
   return {
     selectedModel,
@@ -1366,10 +1377,12 @@ export function deriveEffectiveComposerModelState(input: {
 
 /**
  * Options saved for exactly this instance and model: the draft's own pick when
- * the user chose it in this composer, else the thread's or project's selection
- * for this model, else the model's remembered options. Sticky seeding can
- * carry another model's options into an unpicked draft, so that draft's
- * options are not treated as this model's own.
+ * the user chose it for this instance in this composer, else the thread's or
+ * project's selection for this model, else the model's remembered options.
+ * Sticky seeding can carry another model's options into a draft entry the
+ * user never picked, so only the entry of the draft's active instance counts:
+ * after the draft falls back from an unavailable instance, an untouched
+ * entry is not this model's own.
  */
 function savedModelOptions(
   input: Pick<
@@ -1380,7 +1393,11 @@ function savedModelOptions(
   model: string,
 ): ReadonlyArray<ProviderOptionSelection> | undefined {
   const draftSelection = input.draft?.modelSelectionByProvider?.[instanceId];
-  if (input.draft?.modelSelectionExplicit === true && draftSelection?.model === model) {
+  if (
+    input.draft?.modelSelectionExplicit === true &&
+    input.draft.activeProvider === instanceId &&
+    draftSelection?.model === model
+  ) {
     return draftSelection.options;
   }
   const saved = [input.threadModelSelection, input.projectModelSelection].find(

@@ -10,9 +10,10 @@ import { type AcpSessionModeState, findModelConfigOption } from "./runtimeModel.
  * The model picker owns the first `category: "model"` select
  * (`findModelConfigOption`), so that option is excluded here. Later model
  * options, such as Cline's `model` after its `provider`, are ordinary
- * descriptors written under their own ID. Session modes advertised through
- * the modes API (rather than a config option) are folded into one synthetic
- * descriptor that the ACP adapter routes to `session/set_mode`.
+ * descriptors written under their own ID and marked `selectsModel`. Session
+ * modes advertised through the modes API (rather than a config option) are
+ * folded into one synthetic descriptor that the ACP adapter routes to
+ * `session/set_mode`.
  */
 
 /** Synthetic descriptor ID for agents that expose modes outside config options. */
@@ -119,6 +120,7 @@ export function acpProviderOptionDescriptors(input: {
     descriptors.push({
       ...base,
       type: "select",
+      ...(option.category === "model" ? { selectsModel: true } : {}),
       options: choices,
       ...(currentValue && choices.some((choice) => choice.id === currentValue)
         ? { currentValue }

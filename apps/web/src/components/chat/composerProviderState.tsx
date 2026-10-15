@@ -17,7 +17,7 @@ import {
 import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
-import { getProviderModelCapabilities, hasUnknownModelCapabilities } from "../../providerModels";
+import { getListedModelCapabilities, getProviderModelCapabilities } from "../../providerModels";
 import type { ComposerControlSize } from "./ComposerControl";
 import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
@@ -129,7 +129,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   // unchanged and the provider session checks them against its own list.
   // Callers pass only options saved for this model (see
   // `deriveEffectiveComposerModelState`).
-  if (hasUnknownModelCapabilities(models, model, provider)) {
+  if (getListedModelCapabilities(models, model, provider) === null) {
     return {
       provider,
       promptEffort: null,

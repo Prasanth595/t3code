@@ -461,6 +461,45 @@ describe("AcpRegistryAdapterV2", () => {
       ),
     );
 
+    // Cline's catalogs change with its version and the account. A saved model
+    // that ClinePass's described catalog no longer lists must reach the
+    // session as saved and fail the open, not resolve to ClinePass's default.
+    it.effect("fails the open for a saved ClinePass model its known catalog dropped", () =>
+      Effect.gen(function* () {
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const instanceId = ProviderInstanceId.make("acp-registry-dropped-model");
+        const discovered = yield* discoverCline(instanceId);
+        const open = yield* makeClineSessions(instanceId, "provider.applied");
+        // An earlier ClinePass session described its catalog.
+        yield* open({ instanceId, model: "cline-pass" });
+        const live = applyAcpRegistryLiveConfiguration(
+          discovered,
+          Option.getOrThrow(yield* coordinator.getLiveConfiguration(instanceId)),
+          [],
+        );
+        assert.deepEqual(modelChoices(live, "cline-pass"), passModels);
+
+        const droppedModel = "cline-pass/muse-spark-1.2-contributor";
+        const saved = [{ id: "model", value: droppedModel }];
+        const sent = dispatched(live, "cline-pass", saved) ?? [];
+        assert.deepEqual(sent, saved);
+        const error = yield* open({ instanceId, model: "cline-pass", options: sent }).pipe(
+          Effect.flip,
+        );
+
+        assert.strictEqual(error._tag, "ProviderAdapterOpenSessionError");
+        assert.instanceOf(error.cause, EffectAcpErrors.AcpRequestError);
+        assert.deepEqual(error.cause.data, {
+          configId: "model",
+          allowedValues: passModels,
+          receivedValue: droppedModel,
+        });
+      }).pipe(
+        Effect.provide(Layer.merge(layerTest, AcpRegistryRuntimeCoordinator.layer)),
+        Effect.scoped,
+      ),
+    );
+
     // A server restart forgets every live observation, so only the probed
     // provider is described. Clients send a saved selection's own options
     // unchanged for a model whose options are unknown; the session must apply
@@ -541,15 +580,12 @@ describe("AcpRegistryAdapterV2", () => {
             { id: "auto_approve", value: true },
           ];
           assert.deepEqual(toggleAutoApprove(live, "cline-pass"), storedOnPass);
-          // Cline's stored picks resolve to ClinePass's values there, an explicit
-          // ClinePass model is kept, and switching back keeps Cline's own picks.
-          assert.deepEqual(dispatched(live, "cline-pass", storedOnCline), storedOnPass);
+          // Each provider keeps its own explicit picks.
           assert.deepEqual(
             dispatched(live, "cline-pass", CLINE_SECONDARY_MODEL_SELECTION.options),
             [...CLINE_SECONDARY_MODEL_SELECTION.options],
           );
           assert.deepEqual(dispatched(live, "cline", storedOnCline), storedOnCline);
-          assert.deepEqual(dispatched(live, "cline", storedOnPass), storedOnCline);
         }).pipe(
           Effect.provide(Layer.merge(layerTest, AcpRegistryRuntimeCoordinator.layer)),
           Effect.scoped,

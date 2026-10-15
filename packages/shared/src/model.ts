@@ -138,7 +138,13 @@ function resolveDescriptorChoiceValue(
   ) {
     return descriptor.options.find((option) => option.isDefault)?.id;
   }
-  if (descriptor.options.some((option) => option.id === trimmed)) {
+  // A model choice the list lacks (removed, or past the list's size cap) stays
+  // as saved: the provider accepts or rejects that model. Resolving it here
+  // would run a different model.
+  if (
+    descriptor.selectsModel === true ||
+    descriptor.options.some((option) => option.id === trimmed)
+  ) {
     return trimmed;
   }
   return descriptor.currentValue ?? descriptor.options.find((option) => option.isDefault)?.id;

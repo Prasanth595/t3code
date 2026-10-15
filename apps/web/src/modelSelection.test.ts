@@ -7,7 +7,12 @@ import {
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
-import { deriveEffectiveComposerModelState } from "./composerDraftStore";
+import {
+  deriveEffectiveComposerModelState,
+  DraftId,
+  useComposerDraftStore,
+} from "./composerDraftStore";
+import { resolveComposerProviderSelection } from "./components/ChatView.logic";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
 import {
@@ -905,7 +910,7 @@ describe("resolveAppModelSelectionState with the opencode plan agent", () => {
 // Cline lists its providers as models and each provider's models as a later
 // `model` option. After a server restart only the probed provider, `cline`, has
 // described its options; ClinePass is listed with unknown capabilities.
-describe("composer dispatch for a model whose options are unknown", () => {
+describe("composer dispatch for Cline's later model option", () => {
   const driver = ProviderDriverKind.make("acpRegistry");
   const instanceId = ProviderInstanceId.make("acpRegistry_cline");
   const cline: ServerProvider = {
@@ -922,6 +927,7 @@ describe("composer dispatch for a model whose options are unknown", () => {
               id: "model",
               label: "Model",
               type: "select",
+              selectsModel: true,
               options: [
                 { id: "cline-free/step-5-preview", label: "Step 5 Preview" },
                 { id: "cline-free/mimo-v2.6-flash", label: "MiMo v2.6 Flash" },
@@ -951,10 +957,43 @@ describe("composer dispatch for a model whose options are unknown", () => {
   ];
 
   // The selection the composer sends, as ChatComposer builds it.
-  const sent = (input: Partial<Parameters<typeof deriveEffectiveComposerModelState>[0]>) => {
+  // ClinePass after a session described it: its catalog no longer lists Muse.
+  const describedPass: ServerProvider = {
+    ...cline,
+    models: cline.models.map((model) =>
+      model.slug === "cline-pass"
+        ? {
+            ...model,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "model",
+                  label: "Model",
+                  type: "select",
+                  selectsModel: true,
+                  options: [{ id: "cline-pass/mimo-v2.6-flash", label: "MiMo v2.6 Flash" }],
+                  currentValue: "cline-pass/mimo-v2.6-flash",
+                },
+                {
+                  id: "auto_approve",
+                  label: "Auto-approve tools",
+                  type: "boolean",
+                  currentValue: false,
+                },
+              ],
+            },
+          }
+        : model,
+    ),
+  };
+
+  const sent = (
+    input: Partial<Parameters<typeof deriveEffectiveComposerModelState>[0]>,
+    snapshot: ServerProvider = cline,
+  ) => {
     const state = deriveEffectiveComposerModelState({
       draft: null,
-      providers: [cline],
+      providers: [snapshot],
       selectedProvider: driver,
       selectedInstanceId: instanceId,
       threadModelSelection: null,
@@ -965,7 +1004,7 @@ describe("composer dispatch for a model whose options are unknown", () => {
     const dispatch = getComposerProviderState({
       provider: driver,
       model: state.selectedModel,
-      models: cline.models,
+      models: snapshot.models,
       modelOptions: state.modelOptions?.[instanceId],
       planModeEnabled: true,
     });
@@ -1022,8 +1061,26 @@ describe("composer dispatch for a model whose options are unknown", () => {
     ).toEqual(passOnly);
   });
 
-  it("still resolves carried options against a described model", () => {
-    // ClinePass's model is not one Cline offers, so Cline's own current model goes out.
+  it("keeps a saved model choice that the described catalog no longer lists", () => {
+    const saved = createModelSelection(instanceId, "cline-pass", passPick);
+    // The session checks it and fails the open instead of running MiMo.
+    expect(sent({ threadModelSelection: saved }, describedPass)).toEqual(saved);
+    expect(
+      sent(
+        {
+          draft: {
+            activeProvider: instanceId,
+            modelSelectionByProvider: { [instanceId]: saved },
+            modelSelectionExplicit: true,
+          },
+        },
+        describedPass,
+      ),
+    ).toEqual(saved);
+  });
+
+  it("drops another model's model choice for a described model but keeps its other options", () => {
+    // ClinePass's model carried to Cline: Cline starts on its own model.
     expect(
       sent({
         draft: {
@@ -1033,11 +1090,54 @@ describe("composer dispatch for a model whose options are unknown", () => {
           },
         },
       }),
+    ).toEqual(createModelSelection(instanceId, "cline", [{ id: "auto_approve", value: false }]));
+    // Cline's options carried to a described ClinePass.
+    expect(
+      sent(
+        {
+          draft: {
+            activeProvider: instanceId,
+            modelSelectionByProvider: {
+              [instanceId]: createModelSelection(instanceId, "cline-pass", clineToggle),
+            },
+          },
+        },
+        describedPass,
+      ),
     ).toEqual(
-      createModelSelection(instanceId, "cline", [
-        { id: "model", value: "cline-free/step-5-preview" },
-        { id: "auto_approve", value: false },
-      ]),
+      createModelSelection(instanceId, "cline-pass", [{ id: "auto_approve", value: true }]),
+    );
+  });
+
+  it("does not send carried options after falling back from another explicitly picked provider", () => {
+    const codexId = ProviderInstanceId.make("codex");
+    const codex: ServerProvider = {
+      ...provider({ instanceId: "codex", models: ["gpt-5.5"] }),
+      enabled: false,
+    };
+    const draftId = DraftId.make("cline-fallback-draft");
+    const store = useComposerDraftStore.getState();
+    // A new chat whose sticky ClinePass carries Cline's options.
+    store.setStickyModelSelection(createModelSelection(instanceId, "cline", clineToggle));
+    store.setStickyModelSelection(createModelSelection(instanceId, "cline-pass"));
+    store.applyStickyState(draftId);
+    // Picking a Codex model in it, the way the model picker writes.
+    store.setModelSelection(draftId, createModelSelection(codexId, "gpt-5.5"), {
+      explicit: true,
+      replaceOptions: true,
+    });
+    const draft = useComposerDraftStore.getState().draftsByThreadKey[draftId];
+    // Codex is then disabled, so the composer falls back to Cline.
+    const { selectedProviderEntry } = resolveComposerProviderSelection({
+      entries: deriveProviderInstanceEntries([codex, cline]),
+      candidateInstanceIds: [draft?.activeProvider],
+      lockedProvider: null,
+      lockedInstanceId: null,
+    });
+    expect(selectedProviderEntry?.instanceId).toBe(instanceId);
+    expect(sent({ draft })).toEqual(createModelSelection(instanceId, "cline-pass"));
+    expect(sent({ draft }, describedPass)).toEqual(
+      createModelSelection(instanceId, "cline-pass", [{ id: "auto_approve", value: true }]),
     );
   });
 });

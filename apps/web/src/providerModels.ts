@@ -68,17 +68,18 @@ export function getProviderModelCapabilities(
 }
 
 /**
- * Whether the provider lists `model` without describing its options yet
- * (`capabilities: null`), as an ACP Registry agent does for a model no session
- * has run. Its saved options cannot be checked against descriptors here.
+ * The capabilities of the model the provider lists for `model`, or
+ * `undefined` when it lists none. `null` means the provider has not described
+ * the model's options yet, as an ACP Registry agent does for a model no
+ * session has run, so saved options cannot be checked against descriptors.
  */
-export function hasUnknownModelCapabilities(
+export function getListedModelCapabilities(
   models: ReadonlyArray<ServerProviderModel>,
   model: string | null | undefined,
   provider: ProviderDriverKind,
-): boolean {
+): ModelCapabilities | null | undefined {
   const slug = resolveSelectableModel(provider, model, models);
-  return models.some((candidate) => candidate.slug === slug && candidate.capabilities === null);
+  return models.find((candidate) => candidate.slug === slug)?.capabilities;
 }
 
 // The opencode "plan" agent is only reachable while legacy plan mode is on.
