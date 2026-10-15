@@ -5,7 +5,13 @@ import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
 import { Heading } from "@tiptap/extension-heading";
 import { HorizontalRule } from "@tiptap/extension-horizontal-rule";
-import { type Command, type Editor, mergeAttributes } from "@tiptap/core";
+import {
+  type Command,
+  combineTransactionSteps,
+  type Editor,
+  getChangedRanges,
+  mergeAttributes,
+} from "@tiptap/core";
 import { BulletList, ListItem, OrderedList } from "@tiptap/extension-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { TaskList } from "@tiptap/extension-task-list";
@@ -220,7 +226,9 @@ function codeBlockSource(
  * Bullet and ordered items keep their exact source marker so a list
  * round-trips byte-identically: `marker` is the literal `-`, `*`, `+`, `3.`
  * or `3)`, `space` what followed it, and `indent` the leading whitespace.
- * Numbering is not renumbered: what the user typed is what the agent gets.
+ * Numbering is kept as typed: what the user typed is what the agent gets.
+ * Only an edit to a list that counted up by one renumbers it (see
+ * `renumberEditedOrderedLists`).
  */
 const ComposerListItemExtension = ListItem.extend({
   content: LIST_ITEM_CONTENT,
@@ -256,6 +264,12 @@ export const ComposerListExtensions = [
   OrderedList.extend({
     addKeyboardShortcuts() {
       return withoutBlockChords(this.parent?.(), ["Mod-Shift-7"]);
+    },
+    addProseMirrorPlugins() {
+      return [
+        ...(this.parent?.() ?? []),
+        new Plugin({ appendTransaction: renumberEditedOrderedLists }),
+      ];
     },
   }),
   ComposerListItemExtension,
@@ -1062,6 +1076,79 @@ function renumberFollowingItems(
     }
     pos += child.nodeSize;
   });
+}
+
+/** Whether every item is an ordered marker one higher than the item before it. */
+function countsUpByOne(list: ProseMirrorNode): boolean {
+  let previous: string | null = null;
+  let counts = true;
+  list.forEach((item) => {
+    const marker = item.attrs.marker;
+    if (typeof marker !== "string" || !/^\d+[.)]$/.test(marker)) counts = false;
+    else if (previous !== null && marker !== nextOrderedMarkerText(previous)) counts = false;
+    previous = marker;
+  });
+  return counts;
+}
+
+/**
+ * Deleting items from an ordered list, or lifting them out of it, renumbers
+ * the items left, the way Shift+Enter renumbers the items after one it
+ * inserts. Only a list that the edit touched and that counted up by one
+ * before it is renumbered, from its old first number, so a list typed or
+ * pasted with its own numbers is still written as typed. When its surviving
+ * items now sit in more than one list at the same depth, such as the halves
+ * around a lifted item, the later lists count on from the earlier ones. A
+ * list right after one that counts on from it is the same list in the stored
+ * draft, so the two are joined, as a rebuild from the draft would.
+ */
+function renumberEditedOrderedLists(
+  transactions: readonly Transaction[],
+  oldState: EditorState,
+  newState: EditorState,
+): Transaction | null {
+  if (!transactions.some((tr) => tr.docChanged)) return null;
+  const transform = combineTransactionSteps(oldState.doc, [...transactions]);
+  const tr = newState.tr;
+  const renumbered = new Set<number>();
+  for (const { oldRange } of getChangedRanges(transform)) {
+    oldState.doc.nodesBetween(oldRange.from, oldRange.to, (list, listPos) => {
+      if (list.type.name !== "orderedList" || !countsUpByOne(list)) return;
+      const depth = oldState.doc.resolve(listPos).depth;
+      const listPositions = new Set<number>();
+      list.forEach((_, offset) => {
+        // The start of the item's first line, which a deleted item no longer has.
+        const mapped = transform.mapping.mapResult(listPos + offset + 3, 1);
+        if (mapped.deleted) return;
+        const $line = newState.doc.resolve(mapped.pos);
+        if ($line.depth === depth + 3 && $line.node(depth + 1).type.name === "orderedList") {
+          listPositions.add($line.before(depth + 1));
+        }
+      });
+      let marker = list.firstChild!.attrs.marker as string;
+      for (const start of [...listPositions].sort((a, b) => a - b)) {
+        // A join below can have merged this list into the one before it.
+        const pos = tr.mapping.map(start);
+        if (renumbered.has(pos) || tr.doc.nodeAt(pos)?.type.name !== "orderedList") continue;
+        renumbered.add(pos);
+        const first = tr.doc.nodeAt(pos)!.firstChild!;
+        if (first.attrs.marker !== marker) {
+          tr.setNodeMarkup(pos + 1, undefined, { ...first.attrs, marker });
+        }
+        renumberFollowingItems(tr, pos, 0, marker);
+        let renumberedList = tr.doc.nodeAt(pos)!;
+        const end = pos + renumberedList.nodeSize;
+        const next = tr.doc.nodeAt(end);
+        const following = nextOrderedMarkerText(renumberedList.lastChild!.attrs.marker as string);
+        if (next?.type.name === "orderedList" && next.firstChild?.attrs.marker === following) {
+          tr.join(end);
+          renumberedList = tr.doc.nodeAt(pos)!;
+        }
+        marker = nextOrderedMarkerText(renumberedList.lastChild!.attrs.marker as string);
+      }
+    });
+  }
+  return tr.docChanged ? tr : null;
 }
 
 /**

@@ -207,6 +207,82 @@ describe("Delete at the end of a line", () => {
   });
 });
 
+/** The document position `offset` characters into the first text node holding `text`. */
+function textPos(editor: Editor, text: string, offset = 0) {
+  let pos = -1;
+  editor.state.doc.descendants((node, nodePos) => {
+    if (pos < 0 && node.isText && node.text!.includes(text)) {
+      pos = nodePos + node.text!.indexOf(text) + offset;
+    }
+  });
+  return pos;
+}
+
+describe("deleting from an ordered list", () => {
+  it.each([
+    // From the end of `a` to the end of `x`: the whole middle item.
+    ["1. a\n2. x\n3. c\n4. d", "a", "x", "1. a\n2. c\n3. d"],
+    // From the start of `x` to the start of `b`: the first item.
+    ["1. x\n2. b\n3. c", "x", "b", "1. b\n2. c"],
+    ["3. a\n4. x\n5. c", "a", "x", "3. a\n4. c"],
+    ["1) a\n2) x\n3) c", "a", "x", "1) a\n2) c"],
+    ["1. a\n   1. p\n   2. x\n   3. r\n2. b", "p", "x", "1. a\n   1. p\n   2. r\n2. b"],
+    // Numbers that did not count up by one are the user's, so they stay.
+    ["1. a\n3. x\n7. c", "a", "x", "1. a\n7. c"],
+  ])("in %j from %s to %s renumbers to %j", (value, from, to, expected) => {
+    const editor = makeEditor(value);
+    const start = textPos(editor, from, from === "x" ? 0 : from.length);
+    const end = textPos(editor, to, to === "x" ? to.length : 0);
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, start, end)),
+    );
+    editor.commands.keyboardShortcut("Backspace");
+    expect(storedDraft(editor)).toBe(expected);
+  });
+
+  it("renumbers after Delete pulls the next item up", () => {
+    const editor = makeEditor("1. a\n2. b\n3. c\n4. d");
+    placeCaret(editor, "b", 1);
+    expect(deleteAcrossList(editor)).toBe(true);
+    expect(storedDraft(editor)).toBe("1. a\n2. bc\n3. d");
+  });
+
+  it("renumbers as Backspace empties a middle item, lifts it out and joins it up", () => {
+    const editor = makeEditor("1. a\n2. x\n3. c\n4. d");
+    const x = textPos(editor, "x");
+    const tr = editor.state.tr.delete(x, x + 1);
+    editor.view.dispatch(tr.setSelection(TextSelection.create(tr.doc, x)));
+    editor.commands.keyboardShortcut("Backspace");
+    // The items after the lifted line count on from the ones before it.
+    expect(storedDraft(editor)).toBe("1. a\n\n2. c\n3. d");
+    editor.commands.keyboardShortcut("Backspace");
+    expect(storedDraft(editor)).toBe("1. a\n2. c\n3. d");
+  });
+
+  it("renumbers when Backspace lifts the emptied first item out", () => {
+    const editor = makeEditor("1. x\n2. b\n3. c");
+    const x = textPos(editor, "x");
+    const tr = editor.state.tr.delete(x, x + 1);
+    editor.view.dispatch(tr.setSelection(TextSelection.create(tr.doc, x)));
+    editor.commands.keyboardShortcut("Backspace");
+    expect(storedDraft(editor)).toBe("\n1. b\n2. c");
+  });
+
+  it("undoes the deletion and the renumbering together", () => {
+    const value = "1. a\n2. x\n3. c";
+    const editor = makeEditor(value);
+    editor.view.dispatch(
+      editor.state.tr.setSelection(
+        TextSelection.create(editor.state.doc, textPos(editor, "a", 1), textPos(editor, "x", 1)),
+      ),
+    );
+    editor.commands.keyboardShortcut("Backspace");
+    expect(storedDraft(editor)).toBe("1. a\n2. c");
+    editor.commands.undo();
+    expect(storedDraft(editor)).toBe(value);
+  });
+});
+
 describe("blocks that a list item or quote cannot hold", () => {
   it("puts lines pasted at the end of an item after the list", () => {
     const editor = makeEditor("- a");
