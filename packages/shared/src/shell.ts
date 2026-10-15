@@ -805,13 +805,30 @@ function readWindowsEnvironmentSafely(
   }
 }
 
+/**
+ * Windows resolves env keys case-insensitively, but a copied env object does
+ * not: the inherited `Path` and a written `PATH` would coexist and the child
+ * would inherit whichever one Node picks. Drop every spelling before writing.
+ */
+export function setWindowsPath(env: NodeJS.ProcessEnv, value: string): void {
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === "PATH") {
+      delete env[key];
+    }
+  }
+  env.PATH = value;
+}
+
 function mergeWindowsEnv(
   currentEnv: NodeJS.ProcessEnv,
   patch: Partial<Record<string, string>>,
 ): NodeJS.ProcessEnv {
   const nextEnv: NodeJS.ProcessEnv = { ...currentEnv };
   for (const [key, value] of Object.entries(patch)) {
-    if (value !== undefined) {
+    if (value === undefined) continue;
+    if (key === "PATH") {
+      setWindowsPath(nextEnv, value);
+    } else {
       nextEnv[key] = value;
     }
   }
