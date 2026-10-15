@@ -3373,19 +3373,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const outputIsError =
               compactDynamicToolOutput(output)?.isError === true ||
               compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
-            const page =
+            const renderCompleted =
               status === "completed" &&
               resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME &&
-              !outputIsError &&
-              htmlRenderFromToolItem({ toolName, output }) === undefined
-                ? (htmlRenderFromToolItem({
-                    toolName,
-                    output:
-                      previous?.data.rawOutput === undefined
-                        ? undefined
-                        : acpMcpToolCallOutput(previous.data.rawOutput),
-                  }) ?? (yield* mcpSessions.takeHtmlRender(context.input.threadId, input)))
+              !outputIsError;
+            const reportedPage = renderCompleted
+              ? htmlRenderFromToolItem({ toolName, output })
+              : undefined;
+            const previousPage = renderCompleted
+              ? htmlRenderFromToolItem({
+                  toolName,
+                  output:
+                    previous?.data.rawOutput === undefined
+                      ? undefined
+                      : acpMcpToolCallOutput(previous.data.rawOutput),
+                })
+              : undefined;
+            // The MCP server keeps the page of every call, so a call that
+            // reports its page still takes it the first time it completes;
+            // left behind, it would show for a later call with the same
+            // arguments.
+            const keptPage =
+              renderCompleted && previousPage === undefined
+                ? yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage)
                 : undefined;
+            const page = reportedPage === undefined ? (previousPage ?? keptPage) : undefined;
             if (page !== undefined) {
               context.tools.set(toolCall.toolCallId, {
                 ...toolCall,

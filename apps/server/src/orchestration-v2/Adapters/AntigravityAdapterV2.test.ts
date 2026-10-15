@@ -534,12 +534,13 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-html-render-test");
       const threadId = ThreadId.make("thread-antigravity-html-render");
-      const page = (name: string) => ({
+      const page = (name: string, title = "Revenue") => ({
         attachmentId: `${threadId}-${name}-html`,
-        title: "Revenue",
+        title,
         height: 240,
       });
       const revenue = { html: "<p>Revenue</p>", title: "Revenue", height: 240 };
+      const margin = { ...revenue, html: "<p>Margin</p>", title: "Margin" };
       const renderError = {
         content: [{ type: "text", text: "html_render failed" }],
         isError: true,
@@ -589,9 +590,13 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                   yield* start("trajectory:3", revenue);
                   yield* start("trajectory:4", revenue);
                   yield* start("trajectory:5", revenue);
+                  yield* start("trajectory:6", margin);
+                  yield* start("trajectory:7", margin);
                   // T3's MCP server publishes while each call runs.
                   yield* mcpSessions.recordHtmlRender(threadId, revenue, page("first"));
                   yield* mcpSessions.recordHtmlRender(threadId, revenue, page("second"));
+                  yield* mcpSessions.recordHtmlRender(threadId, margin, page("seventh", "Margin"));
+                  yield* mcpSessions.recordHtmlRender(threadId, margin, page("sixth", "Margin"));
                   yield* send({
                     sessionUpdate: "tool_call_update",
                     toolCallId: "trajectory:1",
@@ -632,6 +637,32 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "trajectory:5",
                     status: "completed",
                     rawOutput: { result: renderError },
+                  });
+                  // A call that reports its page takes that page, not the
+                  // older one another call published with the same arguments,
+                  // and a repeated completion takes nothing more.
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:6",
+                    status: "completed",
+                    rawOutput: {
+                      result: {
+                        content: [{ type: "text", text: "Shown to the reader." }],
+                        structuredContent: { htmlRender: page("sixth", "Margin") },
+                      },
+                    },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:6",
+                    status: "completed",
+                    rawOutput: "Render margin chart",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:7",
+                    status: "completed",
+                    rawOutput: "Render margin chart",
                   });
                   return { stopReason: "end_turn" as const };
                 }),
@@ -752,8 +783,21 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         page: undefined,
         output: renderError.content,
       });
+      assert.deepEqual(tool("trajectory:6"), {
+        status: "completed",
+        toolName: "t3-code.html_render",
+        page: page("sixth", "Margin"),
+        output: { htmlRender: page("sixth", "Margin") },
+      });
+      assert.deepEqual(tool("trajectory:7"), {
+        status: "completed",
+        toolName: "t3-code.html_render",
+        page: page("seventh", "Margin"),
+        output: { htmlRender: page("seventh", "Margin") },
+      });
       // Each page goes to one call; the unclaimed one stays for a later call.
       assert.deepEqual(yield* mcpSessions.takeHtmlRender(threadId, revenue), page("second"));
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, margin), undefined);
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });

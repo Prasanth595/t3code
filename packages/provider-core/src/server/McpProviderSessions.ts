@@ -41,11 +41,13 @@ export class McpProviderSessions extends Context.Service<
     ) => Effect.Effect<void>;
     /**
      * Removes and returns the oldest kept page the thread published with these
-     * arguments, so each page goes to at most one call.
+     * arguments, so each page goes to at most one call. A call that reported
+     * its page takes that very page, so it never takes another call's.
      */
     readonly takeHtmlRender: (
       threadId: ThreadId,
       input: { readonly title?: unknown; readonly height?: unknown },
+      reported?: HtmlRenderReference,
     ) => Effect.Effect<HtmlRenderReference | undefined>;
   }
 >()("@t3tools/provider-core/server/McpProviderSessions") {}
@@ -73,7 +75,7 @@ const make = Effect.gen(function* () {
           -MAX_KEPT_HTML_RENDERS,
         ),
       ),
-    takeHtmlRender: (threadId, input) =>
+    takeHtmlRender: (threadId, input, reported) =>
       Ref.modify(htmlRenders, (kept) => {
         // Agents can report a numeric argument as a string, e.g. "240".
         const height =
@@ -82,7 +84,10 @@ const make = Effect.gen(function* () {
             : input.height;
         const index = kept.findIndex(
           (page) =>
-            page.threadId === threadId && page.title === input.title && page.height === height,
+            page.threadId === threadId &&
+            (reported === undefined
+              ? page.title === input.title && page.height === height
+              : page.reference.attachmentId === reported.attachmentId),
         );
         return index === -1
           ? [undefined, kept]

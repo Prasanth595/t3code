@@ -36,4 +36,25 @@ describe("McpProviderSessions html_render pages", () => {
       );
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
+
+  it.effect("takes the very page a call reported", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const revenue = { title: "Revenue", height: 240 };
+      yield* sessions.recordHtmlRender(threadId, revenue, page("first"));
+      yield* sessions.recordHtmlRender(threadId, revenue, page("second"));
+
+      // A page this thread never kept leaves the kept pages for their calls.
+      assert.strictEqual(
+        yield* sessions.takeHtmlRender(threadId, revenue, page("unknown")),
+        undefined,
+      );
+      assert.deepStrictEqual(
+        yield* sessions.takeHtmlRender(threadId, revenue, page("second")),
+        page("second"),
+      );
+      assert.deepStrictEqual(yield* sessions.takeHtmlRender(threadId, revenue), page("first"));
+      assert.strictEqual(yield* sessions.takeHtmlRender(threadId, revenue), undefined);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
 });
