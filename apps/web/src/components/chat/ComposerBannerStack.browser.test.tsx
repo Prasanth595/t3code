@@ -65,7 +65,7 @@ const titles = (scope: ParentNode) =>
     (title) => title.textContent,
   );
 
-it("keeps an urgent notice out of the collapsed stack behind activity", async () => {
+it("keeps urgent, warning and error notices out of the collapsed stack behind activity", async () => {
   await act(async () =>
     root.render(
       <ComposerBannerStack
@@ -78,6 +78,8 @@ it("keeps an urgent notice out of the collapsed stack behind activity", async ()
             title: "Usage limit reached",
           },
           { id: "usage", variant: "info", priority: "notice", icon: null, title: "Usage limits" },
+          { id: "offline", variant: "warning", icon: null, title: "Server is reconnecting" },
+          { id: "clone", variant: "error", icon: null, title: "Failed to clone repo" },
           {
             id: "work",
             variant: "default",
@@ -92,6 +94,8 @@ it("keeps an urgent notice out of the collapsed stack behind activity", async ()
   // Order is unchanged: activity stays attached, with the notices above it.
   expect(titles(container)).toEqual([
     "Usage limit reached",
+    "Server is reconnecting",
+    "Failed to clone repo",
     "Usage limits",
     "Waiting on 2 subagents",
   ]);

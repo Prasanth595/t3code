@@ -71,10 +71,10 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
   const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
   const frontItem = orderedItems[0];
   const stackedItems = orderedItems.slice(1);
-  // An urgent notice is waiting on the user, so it keeps its expanded place above the
-  // front item instead of collapsing behind it with the other notices.
-  const pinnedItems = stackedItems.filter((item) => item.priority === "urgent");
-  const collapsedItems = stackedItems.filter((item) => item.priority !== "urgent");
+  // Urgent, warning and error notices need the user, so they keep their expanded place
+  // above the front item instead of collapsing behind it with the other notices.
+  const pinnedItems = stackedItems.filter((item) => bannerPriority(item) === 1);
+  const collapsedItems = stackedItems.filter((item) => bannerPriority(item) !== 1);
   const hasStack = collapsedItems.length > 0;
 
   // A stack with nothing left to collapse closes, so the next stack starts collapsed.
