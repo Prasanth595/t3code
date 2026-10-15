@@ -41,6 +41,7 @@ describe("check-seams.sh", () => {
     git("config", "commit.gpgsign", "false");
     write("apps/server/src/server.ts", "base\n");
     write("apps/server/src/ws.ts", "base\n");
+    write("apps/server/src/rpc.ts", "rpc base\n");
     commit("base");
     const base = git("rev-parse", "HEAD");
     write("factory/UPSTREAM", `v0.0.0-test ${base}\n`);
@@ -66,6 +67,7 @@ describe("check-seams.sh", () => {
   });
 
   it("fails and names an unlisted upstream change", () => {
+    write("apps/server/src/server.ts", "changed again\n");
     write("apps/server/src/ws.ts", "changed\n");
     commit("unlisted change");
 
@@ -73,5 +75,14 @@ describe("check-seams.sh", () => {
     expect(status).toBe(1);
     expect(output).toContain("apps/server/src/ws.ts");
     expect(output).not.toContain("apps/server/src/server.ts");
+  });
+
+  it("names an upstream file renamed into an allowed path", () => {
+    git("mv", "apps/server/src/rpc.ts", "factory/rpc.ts");
+    commit("rename upstream file");
+
+    const { status, output } = runScript();
+    expect(status).toBe(1);
+    expect(output).toContain("apps/server/src/rpc.ts");
   });
 });

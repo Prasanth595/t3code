@@ -68,6 +68,9 @@ describe("factory boundary", () => {
       imports: extractImports(fs.readFileSync(full, "utf8")),
     }));
     expect(files.some((file) => file.path === "factory/index.ts")).toBe(true);
+    expect(files.find((file) => file.path === "server.ts")?.imports).toContain(
+      "./factory/index.ts",
+    );
     expect(findBoundaryViolations(files)).toEqual([]);
   });
 
