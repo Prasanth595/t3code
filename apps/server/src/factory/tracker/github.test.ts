@@ -6,6 +6,7 @@ import { PROJECT_CONFIG_PATH } from "../config.ts";
 import { FactoryProcess, type RunInput, type RunResult, RunSpawnError } from "../process.ts";
 import {
   GitHubFailed,
+  GitHubInvalidArgument,
   GitHubOutputTooLarge,
   GitHubParse,
   GitHubRateLimited,
@@ -224,8 +225,9 @@ it.effect("branchTip refuses a branch name that could leave the refs path, with 
     for (const branch of ["", "..", "../x", "a/../b", "./x", "/x", "x//y", "x/"]) {
       const t = setup(reply(refReply(BASE_SHA)));
       const error = yield* t.err(t.github.branchTip(branch));
-      assert.strictEqual(error._tag, "GitHubParse", branch);
+      assert.strictEqual(error._tag, "GitHubInvalidArgument", branch);
       assert.deepStrictEqual(t.calls(), [], branch);
+      assert.notInclude(error.message, "unexpected output", branch);
     }
   }),
 );
@@ -316,6 +318,9 @@ it.effect("fileAt refuses what is not a plain complete file", () =>
       fileReply("submodule", "base64", 51, CONFIG_B64),
       // A file over 1 MB comes with no content and the encoding `none`.
       fileReply("file", "none", 2_000_000, ""),
+      // Under the size cap, but the content is not base64 even though it reads like it.
+      fileReply("file", "none", 51, CONFIG_B64),
+      fileReply("file", "utf-8", 51, CONFIG_B64),
       // The size says more than the content holds: truncated.
       fileReply("file", "base64", 5_000, CONFIG_B64),
       fileReply("file", "base64", 10, CONFIG_B64),
@@ -373,8 +378,9 @@ it.effect(
       ] as const) {
         const t = setup(reply(fileReply("file", "base64", 51, CONFIG_B64)));
         const error = yield* t.err(t.github.fileAt(path, sha));
-        assert.strictEqual(error._tag, "GitHubParse", `${path} ${sha}`);
+        assert.strictEqual(error._tag, "GitHubInvalidArgument", `${path} ${sha}`);
         assert.deepStrictEqual(t.calls(), [], `${path} ${sha}`);
+        assert.notInclude(error.message, "unexpected output", `${path} ${sha}`);
       }
     }),
 );
@@ -948,6 +954,7 @@ it("only a failure with HTTP 404 in stderr is not found", () => {
     new GitHubSpawnError({ args, cause: new Error("HTTP 404") }),
     new GitHubOutputTooLarge({ args, limit: 1024 }),
     new GitHubParse({ args, expected: "HTTP 404" }),
+    new GitHubInvalidArgument({ argument: "HTTP 404", expected: "x" }),
     new GitHubRateLimited({ args, stderr: "HTTP 404 API rate limit" }),
   ];
   for (const other of others) assert.isFalse(isNotFound(other), other._tag);
@@ -1002,6 +1009,24 @@ it.effect("a spawn failure is a spawn error carrying the args", () =>
   }),
 );
 
+it.effect("a gh the shell cannot find or run is a spawn error, not a failed call", () =>
+  Effect.gen(function* () {
+    for (const [status, stderr] of [
+      [127, "sh: gh: not found\n"],
+      [126, "sh: /usr/local/bin/gh: Permission denied\n"],
+    ] as const) {
+      const t = setup(fail(status, stderr));
+      const error = yield* t.err(t.github.listIssues("ready"));
+      assert.strictEqual(error._tag, "GitHubSpawnError", stderr);
+      if (error._tag !== "GitHubSpawnError") return;
+      assert.deepStrictEqual(error.args, t.calls()[0]);
+      assert.include(error.message, stderr.trim());
+    }
+    const other = setup(fail(2, "unknown flag"));
+    assert.strictEqual((yield* other.err(other.github.listIssues("ready")))._tag, "GitHubFailed");
+  }),
+);
+
 it.effect("a timed out gh is a timeout error", () =>
   Effect.gen(function* () {
     const t = setup(timedOut());
@@ -1010,6 +1035,7 @@ it.effect("a timed out gh is a timeout error", () =>
     if (error._tag !== "GitHubTimedOut") return;
     assert.strictEqual(error.seconds, 60);
     assert.include(error.message, "timed out after 60 s");
+    assert.match(error.message, /^`gh issue list .*` timed out after 60 s$/);
   }),
 );
 
@@ -1021,6 +1047,7 @@ it.effect("output past the cap is an error, never a truncation", () =>
     if (error._tag !== "GitHubOutputTooLarge") return;
     assert.strictEqual(error.limit, 8 * 1024 * 1024);
     assert.include(error.message, `printed more than ${8 * 1024 * 1024} bytes`);
+    assert.match(error.message, /^`gh issue list .*` printed more than/);
   }),
 );
 
@@ -1031,6 +1058,8 @@ it.effect("only the rate limit is read as a rate limit", () =>
     for (const stderr of [
       "GraphQL: API rate limit already exceeded for user ID 1.",
       "gh: API rate limit exceeded (HTTP 403)",
+      "HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+      "gh: Too Many Requests (HTTP 429)",
     ]) {
       const t = setup(fail(1, stderr));
       const error = yield* t.err(t.github.listIssues("ready"));
@@ -1303,6 +1332,10 @@ it("error text escapes newlines in other arguments", () => {
   assert.strictEqual(
     new GitHubParse({ args: ["issue", "edit", "a\nb\r\nc"], expected: "x" }).message,
     "`gh issue edit a\\nb\\r\\nc` returned unexpected output: x",
+  );
+  assert.strictEqual(
+    new GitHubInvalidArgument({ argument: "a\nb", expected: "a plain file path" }).message,
+    'refused "a\\nb" before calling gh: expected a plain file path',
   );
   assert.strictEqual(
     new GitHubSpawnError({ args: ["--body"], cause: new Error("nope") }).message,

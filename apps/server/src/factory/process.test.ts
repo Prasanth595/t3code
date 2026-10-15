@@ -337,6 +337,36 @@ it.live("separateStderr works without a shell", () =>
   }),
 );
 
+it.live("separateStderr waits for stderr that is written after stdout closed", () =>
+  Effect.gen(function* () {
+    // A child leaves the group (so the post-exit kill misses it), closes its stdout and
+    // writes to stderr after the leader has exited and stdout has closed.
+    const result = yield* run({
+      command: `perl -e 'setpgrp(0, 0); close STDOUT; select(undef, undef, undef, 0.5); print STDERR "late\\n"' & sleep 0.2`,
+      shell: true,
+      separateStderr: true,
+    });
+    assert.strictEqual(result.exitCode, 0);
+    assert.strictEqual(result.tail, "");
+    assert.strictEqual(result.stderrTail, "late\n");
+  }),
+);
+
+it.live("separateStderr: a timeout is not held up by a process keeping stderr open", () =>
+  Effect.gen(function* () {
+    const started = yield* Clock.currentTimeMillis;
+    const result = yield* run({
+      command: "sleep 100 & echo err >&2; sleep 100",
+      shell: true,
+      separateStderr: true,
+      timeoutMs: 300,
+    });
+    assert.strictEqual(result.timedOut, true);
+    assert.strictEqual(result.stderrTail, "err\n");
+    assert.isBelow((yield* Clock.currentTimeMillis) - started, 5000);
+  }),
+);
+
 it.live("merged mode leaves stderrTail empty", () =>
   Effect.gen(function* () {
     const result = yield* run({ command: "echo out; echo err >&2", shell: true });

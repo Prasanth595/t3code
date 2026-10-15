@@ -29,10 +29,14 @@ export const MAX_FILE_BYTES = 64 * 1024;
 
 const GH_TIMEOUT_MS = 60_000;
 const GH_OUTPUT_LIMIT = 8 * 1024 * 1024;
+/** gh's stderr for the primary limit, the secondary limit, and a 429. */
+const RATE_LIMITED = /API rate limit|secondary rate limit|HTTP 429/i;
 
 // ---- errors ----
 
 const utf8Bytes = (text: string): number => new TextEncoder().encode(text).length;
+
+const oneLine = (text: string): string => text.replaceAll("\r", "\\r").replaceAll("\n", "\\n");
 
 /**
  * The command for error messages. Comment bodies (the value after `--body`, or a
@@ -45,16 +49,22 @@ const command = (args: ReadonlyArray<string>): string => {
   for (const arg of args) {
     if (afterBodyFlag) shown.push(`<${utf8Bytes(arg)} bytes>`);
     else if (arg.startsWith("body=")) shown.push(`body=<${utf8Bytes(arg.slice(5))} bytes>`);
-    else shown.push(arg.replaceAll("\r", "\\r").replaceAll("\n", "\\n"));
+    else shown.push(oneLine(arg));
     afterBodyFlag = arg === "--body";
   }
   return shown.join(" ");
 };
 
+/** For a value shown in an error message. */
+const quoted = (text: string): string => `"${oneLine(text)}"`;
+
 const causeText = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-/** `gh` could not be started (not installed, not on PATH, ...). */
+/**
+ * `gh` could not be started: not installed, not on PATH, not executable (the shell's
+ * exit 127 or 126, with its stderr as the cause), or an argument with a NUL byte.
+ */
 export class GitHubSpawnError extends Schema.TaggedError<GitHubSpawnError>()("GitHubSpawnError", {
   args: Schema.Array(Schema.String),
   cause: Schema.Defect(),
@@ -81,7 +91,7 @@ export class GitHubTimedOut extends Schema.TaggedError<GitHubTimedOut>()("GitHub
   seconds: Schema.Number,
 }) {
   override get message(): string {
-    return `${command(this.args)} timed out after ${this.seconds} s`;
+    return `\`${command(this.args)}\` timed out after ${this.seconds} s`;
   }
 }
 
@@ -91,7 +101,7 @@ export class GitHubOutputTooLarge extends Schema.TaggedError<GitHubOutputTooLarg
   { args: Schema.Array(Schema.String), limit: Schema.Number },
 ) {
   override get message(): string {
-    return `${command(this.args)} printed more than ${this.limit} bytes`;
+    return `\`${command(this.args)}\` printed more than ${this.limit} bytes`;
   }
 }
 
@@ -105,7 +115,10 @@ export class GitHubParse extends Schema.TaggedError<GitHubParse>()("GitHubParse"
   }
 }
 
-/** `gh` failed because the GitHub rate limit for its login is used up. Retry later. */
+/**
+ * `gh` failed because GitHub is rate limiting its login: the primary limit, the
+ * secondary limit or an HTTP 429. Retry later.
+ */
 export class GitHubRateLimited extends Schema.TaggedError<GitHubRateLimited>()(
   "GitHubRateLimited",
   { args: Schema.Array(Schema.String), stderr: Schema.String },
@@ -115,8 +128,19 @@ export class GitHubRateLimited extends Schema.TaggedError<GitHubRateLimited>()(
   }
 }
 
+/** An argument was refused before any `gh` call: it could leave the path it is put in. */
+export class GitHubInvalidArgument extends Schema.TaggedError<GitHubInvalidArgument>()(
+  "GitHubInvalidArgument",
+  { argument: Schema.String, expected: Schema.String },
+) {
+  override get message(): string {
+    return `refused ${quoted(this.argument)} before calling gh: expected ${this.expected}`;
+  }
+}
+
 export type GitHubError =
   | GitHubSpawnError
+  | GitHubInvalidArgument
   | GitHubFailed
   | GitHubTimedOut
   | GitHubOutputTooLarge
@@ -315,9 +339,6 @@ const isPlainSegment = (part: string): boolean =>
 
 const isCommitId = (text: string): boolean => /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(text);
 
-/** For a value shown in an error message. */
-const quoted = (text: string): string => `"${text}"`;
-
 const withMarker = (body: string, marker: string): string => `${body}\n\n${marker}`;
 
 // ---- the client ----
@@ -361,8 +382,13 @@ export const makeGitHub = (options: GitHubOptions) => {
       if (result.truncated) {
         return yield* new GitHubOutputTooLarge({ args, limit: GH_OUTPUT_LIMIT });
       }
+      // The wrapper shell's "command not found" and "not executable"; gh itself never exits so.
+      if (result.exitCode === 127 || result.exitCode === 126) {
+        const why = result.stderrTail.trim() || `the shell exited with status ${result.exitCode}`;
+        return yield* new GitHubSpawnError({ args, cause: new Error(why) });
+      }
       if (result.exitCode !== 0) {
-        if (result.stderrTail.includes("API rate limit")) {
+        if (RATE_LIMITED.test(result.stderrTail)) {
           return yield* new GitHubRateLimited({ args, stderr: result.stderrTail });
         }
         return yield* new GitHubFailed({
@@ -578,10 +604,10 @@ export const makeGitHub = (options: GitHubOptions) => {
     Effect.gen(function* () {
       const encoded = encodeBranch(branch);
       if (encoded === null) {
-        return yield* parseError(
-          ["api"],
-          `a branch name without empty or dot segments, got ${quoted(branch)}`,
-        );
+        return yield* new GitHubInvalidArgument({
+          argument: branch,
+          expected: "a branch name without empty or dot segments",
+        });
       }
       const args = ["api", `repos/${repo}/git/ref/heads/${encoded}`];
       const view = yield* ghJson(args, RefView, "an object with the commit the ref points at");
@@ -594,15 +620,18 @@ export const makeGitHub = (options: GitHubOptions) => {
   /**
    * The text of the file at `path` in the commit `sha` (a full 40 or 64 digit id, never
    * a ref name), read through the contents API. Only a regular file of at most 64 KiB
-   * whose content arrived whole is accepted; every refusal is a Parse error. `path` is
-   * plain `/`-separated segments of letters, digits, `.`, `_` and `-`.
+   * whose content arrived whole is accepted; refusing the reply is a Parse error. `path` is
+   * plain `/`-separated segments of letters, digits, `.`, `_` and `-`; anything else, or a
+   * `sha` that is not a full id, is refused before the call.
    */
   const fileAt = (path: string, sha: string): GitHubEffect<string> =>
     Effect.gen(function* () {
       if (!path.split("/").every(isPlainSegment)) {
-        return yield* parseError(["api"], `a plain file path, got ${quoted(path)}`);
+        return yield* new GitHubInvalidArgument({ argument: path, expected: "a plain file path" });
       }
-      if (!isCommitId(sha)) return yield* parseError(["api"], "a full commit id");
+      if (!isCommitId(sha)) {
+        return yield* new GitHubInvalidArgument({ argument: sha, expected: "a full commit id" });
+      }
       const args = ["api", `repos/${repo}/contents/${path}?ref=${sha}`];
       const file = yield* ghJson(args, FileView, "an object describing a file");
       const bad = (why: string) => parseError(args, `a regular file read whole (${why})`);

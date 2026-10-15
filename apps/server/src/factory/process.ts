@@ -79,7 +79,10 @@ export interface RunResult {
    */
   readonly exitCode: number | null;
   readonly timedOut: boolean;
-  /** The last `tailBytes` of stdout and stderr interleaved, decoded as UTF-8. */
+  /**
+   * The last `tailBytes` of stdout and stderr interleaved, decoded as UTF-8; of
+   * stdout alone when `separateStderr` was set.
+   */
   readonly tail: string;
   /** The last `tailBytes` of stderr; "" unless `separateStderr` was set. */
   readonly stderrTail: string;
