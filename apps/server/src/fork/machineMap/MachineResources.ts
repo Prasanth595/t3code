@@ -5,10 +5,11 @@
  * open, so a server with the map off never samples.
  *
  * Each sample stays cheap: CPU and memory come from `HostResources`, the T3 process tree from the
- * native resource monitor that already runs, and the rest from small file reads, `statfs`, and on
- * macOS and Linux at most four short commands (`ps`, plus `vm_stat`, `sysctl` and `netstat` on
- * macOS), plus `pmset` on macOS for the battery (MM-1510). CPU pressure (MM-1504) comes from the `cpu.pressure` file of the cgroup of the server,
- * which holds its agents, so niced work in other units does not count.
+ * native resource monitor that already runs, and the rest from small file reads, `statfs`, and
+ * short commands: `ps` on macOS and Linux, plus `vm_stat`, `sysctl`, `netstat` and `pmset` (the
+ * battery, MM-1510) on macOS, so at most five. CPU pressure (MM-1504) comes from the
+ * `cpu.pressure` file of the cgroup of the server, which holds its agents, so niced work in other
+ * units does not count.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";

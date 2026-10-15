@@ -61,6 +61,7 @@ describe("parsers (MM-1501)", () => {
     expect(parseDarwinBattery(pmset("100%; charged; 0:00 remaining", "AC Power"))?.state).toBe(
       "full",
     );
+    expect(parseDarwinBattery(pmset("50%; charging", "AC Power"))?.state).toBe("charging");
     expect(parseDarwinBattery("Now drawing from 'AC Power'\n")).toBeNull();
     const linux = { capacity: "40", status: "Discharging", now: "20000000", full: "50000000" };
     expect(parseLinuxBattery({ ...linux, rate: "10000000" })).toEqual({

@@ -215,9 +215,14 @@ export function duration(fromIso: string, toMs: number): string {
   return `${Math.round(hours / 24)} days`;
 }
 
-/** MM-1510: the portal shows a battery only while it is not full. */
+/**
+ * MM-1510: the portal shows a battery only while it charges or runs on it. On power and not
+ * charging, for example a charge limit at 80%, it stays hidden like a full one.
+ */
 export const batteryShown = (battery: BatteryReading | null): battery is BatteryReading =>
-  battery !== null && battery.state !== "full" && battery.percent < 100;
+  battery !== null &&
+  (battery.state === "charging" || battery.state === "discharging") &&
+  battery.percent < 100;
 
 const minutesText = (minutes: number) =>
   minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;

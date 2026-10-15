@@ -183,9 +183,12 @@ const clockMinutes = (text: string | undefined): number | null => {
  */
 export function parseDarwinBattery(output: string): BatteryReading | null {
   const line = output.split("\n").find((row) => row.includes("InternalBattery"));
+  // A line without a time part ends its state with " present: true", for example
+  // `50%; charging present: true`. Cut that off first.
   const fields = line
     ?.slice(line.lastIndexOf("\t") + 1)
-    .split(";")
+    .split(" present:")[0]
+    ?.split(";")
     .map((part) => part.trim());
   const [percentText = "", stateText = "", rest = ""] = fields ?? [];
   const percent = Number(percentText.endsWith("%") ? percentText.slice(0, -1) : Number.NaN);
