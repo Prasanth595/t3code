@@ -19,9 +19,11 @@ import type { NumberFieldProps } from "./NumberField.types";
 
 export function NumberField(props: NumberFieldProps) {
   const { colors, fontSize } = useControlTheme();
-  const values = Array.from({ length: props.max - props.min + 1 }, (_, index) => props.min + index);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(props.value);
+  const values = Array.from({ length: props.max - props.min + 1 }, (_, index) => props.min + index);
+  if (!values.includes(draft)) values.push(draft);
+  values.sort((a, b) => a - b);
   return (
     <NativeThemeHost matchContents>
       <Popover isPresented={open} onIsPresentedChange={setOpen}>
