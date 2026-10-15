@@ -10,6 +10,7 @@ import { cn } from "@nofun/source/lib/utils";
 import { formatNumberValue } from "@nofun/ui/number-value/format";
 import { IconArrowDown, IconArrowUp, IconSearch, IconSelector } from "@tabler/icons-react";
 import { Status, type StatusTone } from "./metric.tsx";
+import { ArtifactLoading } from "./states.tsx";
 
 export type CellValue = string | number | boolean | null;
 
@@ -33,6 +34,8 @@ export type DataTableProps = {
   /** Rows shown before a "Show all" button. */
   maxRows?: number | undefined;
   emptyText?: string | undefined;
+  /** Static skeleton in place of the rows. */
+  loading?: boolean | undefined;
   className?: string | undefined;
 };
 
@@ -48,10 +51,12 @@ function renderCell(column: DataTableColumn, value: CellValue) {
   }
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (typeof value === "number" && NUMERIC.has(format)) {
+    const wholeCurrency = format === "currency" && Number.isInteger(value);
     return formatNumberValue(value, {
       format: format === "number" ? "decimal" : (format as "currency" | "percent" | "compact"),
       currency: column.currency,
-      maximumFractionDigits: format === "percent" ? 1 : 2,
+      minimumFractionDigits: wholeCurrency ? 0 : undefined,
+      maximumFractionDigits: format === "percent" ? 1 : wholeCurrency ? 0 : 2,
     });
   }
   return String(value);
@@ -73,6 +78,7 @@ export function DataTable({
   filterable = false,
   maxRows,
   emptyText = "No rows match.",
+  loading = false,
   className,
 }: DataTableProps) {
   const [sort, setSort] = React.useState<{ key: string; desc: boolean } | null>(null);
@@ -103,8 +109,17 @@ export function DataTable({
       current?.key !== key ? { key, desc: false } : current.desc ? null : { key, desc: true },
     );
 
+  if (loading) {
+    return (
+      <div data-slot="data-table" className={cn("grid min-w-0 max-w-full gap-3", className)}>
+        {caption ? <p className="m-0 text-sm text-foreground">{caption}</p> : null}
+        <ArtifactLoading label={caption ? `Loading ${caption}` : "Loading rows"} lines={4} />
+      </div>
+    );
+  }
+
   return (
-    <div data-slot="data-table" className={cn("grid min-w-0 gap-3", className)}>
+    <div data-slot="data-table" className={cn("grid min-w-0 max-w-full gap-3", className)}>
       {caption || filterable ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           {caption ? (
@@ -117,6 +132,7 @@ export function DataTable({
               <span className="sr-only">Filter rows</span>
               <IconSearch
                 aria-hidden
+                stroke={1.5}
                 className="pointer-events-none absolute start-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
               />
               <Input
@@ -158,12 +174,16 @@ export function DataTable({
                       {column.label}
                       {active ? (
                         sort.desc ? (
-                          <IconArrowDown aria-hidden className="size-3.5" />
+                          <IconArrowDown aria-hidden stroke={1.5} className="size-3.5" />
                         ) : (
-                          <IconArrowUp aria-hidden className="size-3.5" />
+                          <IconArrowUp aria-hidden stroke={1.5} className="size-3.5" />
                         )
                       ) : (
-                        <IconSelector aria-hidden className="size-3.5 text-muted-foreground/70" />
+                        <IconSelector
+                          aria-hidden
+                          stroke={1.5}
+                          className="size-3.5 text-muted-foreground/70"
+                        />
                       )}
                     </button>
                   ) : (
@@ -190,12 +210,14 @@ export function DataTable({
                 {columns.map((column) => {
                   const align =
                     column.align ?? (NUMERIC.has(column.format ?? "") ? "end" : "start");
+                  const textual = !NUMERIC.has(column.format ?? "") && column.format !== "status";
                   return (
                     <TableCell
                       key={column.key}
                       className={cn(
                         align === "end" && "text-end",
                         align === "center" && "text-center",
+                        textual && "max-w-48 whitespace-normal wrap-break-word",
                       )}
                     >
                       {renderCell(column, row[column.key] ?? null)}

@@ -1,4 +1,4 @@
-// Renders both examples in both No Fun themes to examples/out/*.html, prepared the way T3's html_render
+// Renders the examples in both No Fun themes to examples/out/*.html, prepared the way T3's html_render
 // stores them (theme bootstrap injected), then screenshots each at 1440, 728 and 390 in T3 light and dark
 // (728 is the T3 reply column) with a local Chrome. Run: node examples/render.ts [path to Chrome]
 import * as NodeFs from "node:fs/promises";
@@ -34,6 +34,12 @@ const examples = [
     input: {
       tsx: await NodeFs.readFile(NodePath.join(HERE, "comparison.tsx"), "utf8"),
       title: "Print vendors (example data)",
+    },
+  },
+  {
+    name: "edges",
+    input: {
+      spec: JSON.parse(await NodeFs.readFile(NodePath.join(HERE, "edges.spec.json"), "utf8")),
     },
   },
 ] as const;
@@ -78,7 +84,7 @@ try {
             // Exercise the filter: DTG only, then search within it.
             await page.getByRole("button", { name: "DTG", exact: true }).click();
             await page.getByPlaceholder("Name or note").fill("drop");
-          } else {
+          } else if (example.name === "dashboard") {
             // Sort the table by revenue, descending.
             await page.getByRole("button", { name: "Revenue", exact: true }).click();
             await page.getByRole("button", { name: "Revenue", exact: true }).click();
