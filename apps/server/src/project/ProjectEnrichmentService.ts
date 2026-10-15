@@ -177,9 +177,12 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   const resolveRepositoryIdentity = Effect.fn("ProjectEnrichmentService.resolveRepositoryIdentity")(
     function* (workspaceRoot: string) {
+      yield* Cache.get(repositoryIdentityCache, workspaceRoot);
+      const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
+      // A refresh can replace the entry while this lookup runs. Reading it again
+      // returns the refreshed identity, so the older one is not published last.
       const repositoryIdentity = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
       yield* logFailure(workspaceRoot, "repositoryIdentity", repositoryIdentity);
-      const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
       const repositoryIdentityResolved = Exit.isSuccess(repositoryIdentity);
       yield* PubSub.publish(changes, {
         workspaceRoot,

@@ -491,6 +491,50 @@ it.effect(
     }),
 );
 
+it.effect("publishes a refreshed identity after the lookup it replaced", () =>
+  Effect.gen(function* () {
+    const staleStarted = yield* Deferred.make<void>();
+    const releaseStale = yield* Deferred.make<void>();
+    const calls = yield* Ref.make(0);
+    const layerMetadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          Ref.getAndUpdate(calls, (count) => count + 1).pipe(
+            Effect.flatMap((call) =>
+              call === 0
+                ? // Suspends first, as a git spawn does, so the cache holds this lookup.
+                  Effect.yieldNow.pipe(
+                    Effect.andThen(Deferred.succeed(staleStarted, undefined)),
+                    Effect.andThen(Deferred.await(releaseStale)),
+                    Effect.as(identity(workspaceRoot, 1)),
+                  )
+                : Effect.succeed(identity(workspaceRoot, 2)),
+            ),
+          ),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        resolvePath: () => Effect.succeed(null),
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      const changes = yield* service.subscribeChanges;
+      yield* service.request("/cloned");
+      yield* Deferred.await(staleStarted);
+
+      yield* service.refresh("/cloned");
+      const refreshed = yield* PubSub.take(changes);
+      assert.equal(refreshed.enrichment.repositoryIdentity?.canonicalKey, "example.test/v2/cloned");
+
+      // The replaced lookup finishes last, and clients keep the last identity published.
+      yield* Deferred.succeed(releaseStale, undefined);
+      const late = yield* PubSub.take(changes);
+      assert.equal(late.enrichment.repositoryIdentity?.canonicalKey, "example.test/v2/cloned");
+    }).pipe(Effect.provide(layer(layerMetadata)));
+  }),
+);
+
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -498,39 +542,39 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
   }).pipe(Effect.provide(ProcessRunner.layer));
 
 it.layer(NodeServices.layer)("ProjectEnrichmentService with Git", (it) => {
-  it.effect("shows a clone's own repository once it lands inside another repository", () =>
+  // Clones into an empty folder under a parent that has `parentRemote` as its
+  // repository, or no repository when null, and returns the identities seen.
+  const clone = (parentRemote: string | null) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const home = yield* fileSystem.makeTempDirectoryScoped({
+      const parent = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-project-enrichment-clone-test-",
       });
-      yield* git(home, ["init"]);
-      yield* git(home, ["remote", "add", "origin", "git@github.com:example/dotfiles.git"]);
+      if (parentRemote !== null) {
+        yield* git(parent, ["init"]);
+        yield* git(parent, ["remote", "add", "origin", parentRemote]);
+      }
       // The clone's project and empty folder exist before git creates the repository.
-      const destination = path.join(home, "t3code");
+      const destination = path.join(parent, "t3code");
       yield* fileSystem.makeDirectory(destination);
 
       const service = yield* ProjectEnrichment.ProjectEnrichmentService;
       const changes = yield* service.subscribeChanges;
       yield* service.request(destination);
       const duringClone = yield* PubSub.take(changes);
-      assert.equal(
-        duringClone.enrichment.repositoryIdentity?.canonicalKey,
-        "github.com/example/dotfiles",
-      );
 
       yield* git(destination, ["init"]);
       yield* git(destination, ["remote", "add", "origin", "git@github.com:example/t3code.git"]);
       yield* service.refresh(destination);
 
       const published = yield* PubSub.take(changes);
-      assert.equal(
-        published.enrichment.repositoryIdentity?.canonicalKey,
-        "github.com/example/t3code",
-      );
       const afterClone = yield* service.peek(destination);
-      assert.equal(afterClone.repositoryIdentity?.canonicalKey, "github.com/example/t3code");
+      return {
+        duringClone: duringClone.enrichment.repositoryIdentity?.canonicalKey ?? null,
+        published: published.enrichment.repositoryIdentity?.canonicalKey,
+        afterClone: afterClone.repositoryIdentity?.canonicalKey,
+      };
     }).pipe(
       Effect.provide(
         layer(
@@ -542,6 +586,27 @@ it.layer(NodeServices.layer)("ProjectEnrichmentService with Git", (it) => {
           ),
         ),
       ),
-    ),
+    );
+
+  it.effect("shows a clone's own repository once it lands inside another repository", () =>
+    Effect.gen(function* () {
+      const identities = yield* clone("git@github.com:example/dotfiles.git");
+      assert.deepStrictEqual(identities, {
+        duringClone: "github.com/example/dotfiles",
+        published: "github.com/example/t3code",
+        afterClone: "github.com/example/t3code",
+      });
+    }),
+  );
+
+  it.effect("shows a clone's repository once it lands outside any repository", () =>
+    Effect.gen(function* () {
+      const identities = yield* clone(null);
+      assert.deepStrictEqual(identities, {
+        duringClone: null,
+        published: "github.com/example/t3code",
+        afterClone: "github.com/example/t3code",
+      });
+    }),
   );
 });
