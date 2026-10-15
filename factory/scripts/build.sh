@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the fork with upstream's own build scripts, smoke-tests the archive and only then
-# moves it to release/t3fac-<version>-darwin-arm64.tar.gz. `build.sh --print-version` only
-# prints the version. T3FAC_SMOKE_TIMEOUT sets the smoke test's deadline in seconds (60).
+# moves it to release/t3fac-<version>-darwin-arm64.tar.gz. Refuses a tree with uncommitted
+# changes, so the version always names exactly what was built. `build.sh --print-version`
+# only prints the version. T3FAC_SMOKE_TIMEOUT sets the smoke test's deadline in seconds (60).
 set -euo pipefail
 
 root=${T3FAC_REPO_ROOT:-$(git rev-parse --show-toplevel)}
@@ -14,15 +15,20 @@ else
   upstream=$(node -p 'require("./apps/server/package.json").version')
 fi
 version="${upstream}+fac.$(git rev-parse --short HEAD)"
-# Uncommitted changes to tracked files add a hash of those changes, so a build never takes
-# the name (and on install, the place) of a build with other contents.
-if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
-  version="$version.dirty.$(git diff HEAD --binary | git hash-object --stdin | cut -c1-8)"
-fi
 
 if [[ ${1:-} == --print-version ]]; then
   echo "$version"
   exit 0
+fi
+
+# Changed tracked files and untracked files that are not ignored both end up in the build.
+dirty=$(git status --porcelain)
+if [[ -n $dirty ]]; then
+  echo "build: refusing to build $version with uncommitted changes; commit or remove them:" >&2
+  head -n 10 <<< "$dirty" >&2
+  count=$(wc -l <<< "$dirty")
+  (( count <= 10 )) || echo "... and $((count - 10)) more" >&2
+  exit 1
 fi
 
 stage=""

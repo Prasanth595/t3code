@@ -383,26 +383,6 @@ describe("build.sh --print-version", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(`9.9.9+fac.${git("rev-parse", "--short", "HEAD")}`);
   });
-
-  it("names a build with uncommitted changes to tracked files after those changes", () => {
-    const versionWith = (content: string) => {
-      write("apps/server/package.json", content);
-      const result = printVersion();
-      git("checkout", "--", "apps/server/package.json");
-      expect(result.status).toBe(0);
-      return result.stdout;
-    };
-    const a = versionWith('{ "name": "t3", "version": "9.9.9", "private": true }\n');
-    const b = versionWith('{ "name": "t3", "version": "9.9.9", "private": false }\n');
-
-    const clean = `9.9.9+fac.${git("rev-parse", "--short", "HEAD")}`;
-    for (const version of [a, b]) {
-      expect(version.slice(0, clean.length)).toBe(clean);
-      expect(version.slice(clean.length)).toMatch(/^\.dirty\.[0-9a-f]{8}$/);
-    }
-    expect(b).not.toBe(a);
-    expect(versionWith('{ "name": "t3", "version": "9.9.9", "private": true }\n')).toBe(a);
-  });
 });
 
 // The whole of build.sh in a throwaway repo, with `vp` and `cargo` stubbed so the archive
@@ -486,6 +466,7 @@ describe("build.sh smoke test", () => {
       'const SEA_NODE_VERSION = "24.0.0";\n',
     );
     write(NodePath.join(repo, "native/resource-monitor/Cargo.toml"), "");
+    write(NodePath.join(repo, ".gitignore"), "release/\nnative/**/target/\n");
     git("init", "-q");
     git("config", "user.name", "Test");
     git("config", "user.email", "test@example.com");
@@ -565,6 +546,42 @@ describe("build.sh smoke test", () => {
     expect(result.tmpLeft).toEqual([]);
     expect(serverAlive()).toBe(false);
   }, 20_000);
+
+  it.each([
+    [
+      "a changed tracked file",
+      "apps/server/package.json",
+      () => write(NodePath.join(repo, "apps/server/package.json"), '{ "version": "0.0.0" }\n'),
+    ],
+    [
+      "an untracked file",
+      "apps/server/new.ts",
+      () => write(NodePath.join(repo, "apps/server/new.ts"), "export {};\n"),
+    ],
+  ])("refuses to build with %s and names it", (_name, path, dirty) => {
+    NodeFS.rmSync(NodePath.join(repo, "release"), { recursive: true, force: true });
+    dirty();
+    const result = build("ok");
+    git("checkout", "--", ".");
+    git("clean", "-fdq");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("uncommitted changes");
+    expect(result.stderr).toContain(path);
+    expect(result.stdout).not.toContain("build:");
+    expect(result.released).toEqual([]);
+  });
+
+  it("lists the first ten uncommitted paths and counts the rest", () => {
+    for (let i = 0; i < 12; i++) {
+      write(NodePath.join(repo, `scratch-${String(i).padStart(2, "0")}.ts`), "");
+    }
+    const result = build("ok");
+    git("clean", "-fdq");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("scratch-09.ts");
+    expect(result.stderr).not.toContain("scratch-10.ts");
+    expect(result.stderr).toContain("... and 2 more");
+  });
 
   it.each([
     ["exits at startup", "exit", {}, "server exited early"],
