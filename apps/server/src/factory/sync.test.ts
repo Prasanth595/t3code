@@ -653,6 +653,107 @@ describe("sync.sh", () => {
     expect(originBranches()).toEqual(["main"]);
   });
 
+  // Points the prepared branch at a forged commit, rebundles it as a green
+  // outcome, and publishes.
+  const publishForged = (out: string, log: string, forged: string) => {
+    git(fork, "update-ref", `refs/heads/sync/${NEWEST}`, forged);
+    git(fork, "bundle", "create", "-q", NodePath.join(out, "sync.bundle"), `main..sync/${NEWEST}`);
+    NodeFS.writeFileSync(NodePath.join(out, "outcome"), "green\n");
+    return publishFrom(out, log);
+  };
+
+  it("publishes nothing when the prepared merge's first parent is not on main", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const log = NodePath.join(dir, `log-${runs++}`);
+    const out = NodePath.join(dir, `out-${runs}`);
+    expect(prepareIn(out, log).status).toBe(0);
+    const prepared = git(fork, "rev-parse", `sync/${NEWEST}`);
+    // Same tree as main but not on it, so merge-tree of it and the tag matches.
+    const offMain = git(fork, "commit-tree", "main^{tree}", "-p", "main", "-m", "off main");
+    const forged = git(
+      fork,
+      "commit-tree",
+      `${prepared}^{tree}`,
+      "-p",
+      offMain,
+      "-p",
+      newestSha,
+      "-m",
+      "forged",
+    );
+    const published = publishForged(out, log, forged);
+    expect(published.status).toBe(1);
+    expect(published.stderr).toContain(`is not the merge of main and ${NEWEST}; not publishing it`);
+    expect(originBranches()).toEqual(["main"]);
+  });
+
+  it("publishes nothing when the prepared merge has a third parent", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const log = NodePath.join(dir, `log-${runs++}`);
+    const out = NodePath.join(dir, `out-${runs}`);
+    expect(prepareIn(out, log).status).toBe(0);
+    const prepared = git(fork, "rev-parse", `sync/${NEWEST}`);
+    const forged = git(
+      fork,
+      "commit-tree",
+      `${prepared}^{tree}`,
+      "-p",
+      "main",
+      "-p",
+      newestSha,
+      "-p",
+      oldSha,
+      "-m",
+      "octopus",
+    );
+    const published = publishForged(out, log, forged);
+    expect(published.status).toBe(1);
+    expect(published.stderr).toContain(`is not the merge of main and ${NEWEST}; not publishing it`);
+    expect(originBranches()).toEqual(["main"]);
+  });
+
+  it("publishes nothing when main and the tag conflict outside the route tree", () => {
+    makeFork(`${OLD} ${oldSha}`, { "README.md": "fork edit\n" });
+    const log = NodePath.join(dir, `log-${runs++}`);
+    const out = NodePath.join(dir, `out-${runs}`);
+    expect(prepareIn(out, log).status).toBe(0);
+    // git's own merge, conflict markers and all, plus the UPSTREAM line: the
+    // tree matches merge-tree exactly, so only the conflict itself refuses it.
+    const merged = NodeChildProcess.spawnSync(
+      "git",
+      ["merge-tree", "--write-tree", "--name-only", "--no-messages", "main", newestSha],
+      { cwd: fork, encoding: "utf8" },
+    );
+    expect(merged.status).toBe(1);
+    const [markedTree, conflicted] = merged.stdout.trim().split("\n");
+    expect(conflicted).toBe("README.md");
+    const index = NodePath.join(dir, `index-${runs}`);
+    const withIndex = { ...process.env, GIT_INDEX_FILE: index };
+    const upstreamBlob = NodeChildProcess.spawnSync("git", ["hash-object", "-w", "--stdin"], {
+      cwd: fork,
+      encoding: "utf8",
+      input: `${NEWEST} ${newestSha}\n`,
+    }).stdout.trim();
+    for (const args of [
+      ["read-tree", markedTree!],
+      ["update-index", "--cacheinfo", `100644,${upstreamBlob},factory/UPSTREAM`],
+    ]) {
+      NodeChildProcess.spawnSync("git", args, { cwd: fork, env: withIndex });
+    }
+    const tree = NodeChildProcess.spawnSync("git", ["write-tree"], {
+      cwd: fork,
+      encoding: "utf8",
+      env: withIndex,
+    }).stdout.trim();
+    const forged = git(fork, "commit-tree", tree, "-p", "main", "-p", newestSha, "-m", "markers");
+    const published = publishForged(out, log, forged);
+    expect(published.status).toBe(1);
+    expect(published.stderr).toContain(
+      `is not the merge of main and ${NEWEST}; not publishing it\n`,
+    );
+    expect(originBranches()).toEqual(["main"]);
+  });
+
   it("refuses a prepared directory with an unknown outcome or tag", () => {
     makeFork(`${OLD} ${oldSha}`);
     const out = NodePath.join(dir, "out-tampered");

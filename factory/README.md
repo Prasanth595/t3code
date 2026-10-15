@@ -53,4 +53,4 @@ These stop the run, push nothing, and file an issue:
 
 When an issue of the same kind is already open, the run comments on it and puts the new tag in its title, so a problem that lasts across tags keeps one issue.
 
-Pull requests opened with `GITHUB_TOKEN` trigger no workflows, which is why the script runs the checks itself and lands only when they pass. Whether they passed is the first job's word: code that compromised it could land upstream's merge unchecked, but could not change anything else or reach the write token.
+Pull requests opened with `GITHUB_TOKEN` trigger no workflows, which is why the script runs the checks itself and lands only when they pass. Two things stay the first job's word, since checking them means running upstream's code: whether the checks passed, and the content of a regenerated route tree. Code that compromised that job could land upstream's merge unchecked, with any route tree it writes when that file conflicts, but it never holds the write token.

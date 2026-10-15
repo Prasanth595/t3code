@@ -19,9 +19,11 @@
 #
 # publish treats <dir> as untrusted. It refuses a bundled branch that is not the
 # merge of a commit on main and the tag, with only factory/UPSTREAM and a
-# conflicted route tree differing from what git merges itself. Whether the
-# checks passed is prepare's word: a compromised prepare can land upstream's
-# merge unchecked, but nothing else. Green: push sync/<tag>, open `sync: <tag>`
+# conflicted route tree differing from what git merges itself. Two things stay
+# prepare's word, since checking them means running upstream's code: whether the
+# checks passed, and the content of a regenerated route tree. A compromised
+# prepare can land upstream's merge unchecked, with any route tree it writes
+# when that file conflicts. Green: push sync/<tag>, open `sync: <tag>`
 # and fast-forward main to the checked merge commit, which merges it; when main
 # moved meanwhile, the pull request waits for a person. Red: push, open it as a
 # draft, and file `Sync to <tag> fails checks` with the failing step and the
