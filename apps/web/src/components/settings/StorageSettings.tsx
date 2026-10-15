@@ -49,7 +49,7 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-function WorktreesDirectoryRow() {
+export function WorktreesDirectoryRow() {
   const { connectedEnvironments, targets } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();

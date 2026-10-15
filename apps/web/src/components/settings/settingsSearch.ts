@@ -27,6 +27,7 @@ export type SettingsPath =
   | "/settings/storage"
   | "/settings/connections"
   | "/settings/machines"
+  | "/settings/fork"
   | "/settings/archived";
 
 /**
@@ -107,6 +108,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/machines": "Machines",
+  "/settings/fork": "Fork",
   "/settings/archived": "Archive",
 };
 
@@ -345,6 +347,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "composer-context",
     title: "Composer context",
     to: "/settings/appearance",
+  },
+  {
+    id: "global-scripts",
+    title: "Global scripts",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["scripts commands every project pin pinned buttons background overlay preview"],
   },
   {
     id: "project-grouping",
@@ -661,6 +670,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Fork changelog",
     to: "/settings/general",
     searchTerms: ["changelog release notes versions upstream fork sync workflow"],
+  },
+  {
+    id: "fork-auto-update",
+    title: "Server auto-update",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["fork release install update idle background service headless server automatic"],
   },
   {
     id: "update-track",
@@ -1061,6 +1077,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     localBackendManagementOnly: true,
   },
   {
+    id: "tunnel-pairing",
+    title: "Allow pairing through a tunnel",
+    to: "/settings/connections",
+    searchTerms: [
+      "tunnel cloudflared pairing loopback trusted browser origins cookies cloudflare access login team domain audience aud emails service token",
+    ],
+    desktopOnly: true,
+    localBackendManagementOnly: true,
+  },
+  {
     id: "tailscale-https",
     title: "Tailscale HTTPS",
     to: "/settings/connections",
@@ -1178,6 +1204,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/machines": null,
+  // Fork: each row of the Fork page keeps the scope of its usual place.
+  "/settings/fork": null,
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };
@@ -1303,6 +1331,15 @@ export function filterAvailableSettingsSearchItems(
   );
 }
 
+/** Whether the row of `item` renders on this client and platform. */
+export function isSettingsSearchItemOnPlatform(item: SettingsSearchItem, platform: string) {
+  if (!isElectron && item.desktopOnly === true) return false;
+  if (item.releaseChannelOnly && !isElectron && HOSTED_APP_CHANNEL === null) return false;
+  if (item.macOnly && !isMacPlatform(platform)) return false;
+  if (item.windowsOnly && !isWindowsPlatform(platform)) return false;
+  return true;
+}
+
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
@@ -1314,10 +1351,7 @@ export function searchSettings(
 
   return items
     .flatMap((item, index) => {
-      if (!isElectron && item.desktopOnly === true) return [];
-      if (item.releaseChannelOnly && !isElectron && HOSTED_APP_CHANNEL === null) return [];
-      if (item.macOnly && !isMacPlatform(platform)) return [];
-      if (item.windowsOnly && !isWindowsPlatform(platform)) return [];
+      if (!isSettingsSearchItemOnPlatform(item, platform)) return [];
 
       const title = normalizeSearchText(item.title);
       const fields = [

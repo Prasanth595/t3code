@@ -85,6 +85,14 @@ const MOBILE_OPTIONS: ReadonlyArray<SlotLayoutElementOption<MobileThreadCardElem
 
 /** Fork: builds the thread card from its elements, per client surface. Off by default. */
 export function ThreadCardLayoutSettingsSection() {
+  return (
+    <SettingsSection id="thread-cards" title="Thread cards">
+      <ThreadCardLayoutSettingsRows />
+    </SettingsSection>
+  );
+}
+
+export function ThreadCardLayoutSettingsRows() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["threadCardLayouts"]);
@@ -99,7 +107,7 @@ export function ThreadCardLayoutSettingsSection() {
     updateSettings({ threadCardLayouts: { mobile: next } });
 
   return (
-    <SettingsSection id="thread-cards" title="Thread cards">
+    <>
       <div className="px-4 pt-3">
         <ToggleGroup
           aria-label="Card surface"
@@ -166,6 +174,6 @@ export function ThreadCardLayoutSettingsSection() {
           </div>
         ) : null}
       </SettingsRow>
-    </SettingsSection>
+    </>
   );
 }

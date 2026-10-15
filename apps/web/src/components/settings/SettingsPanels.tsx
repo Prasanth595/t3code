@@ -44,10 +44,6 @@ import {
   MIN_PANEL_ANIMATION_DURATION_MS,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-  MAX_AGENT_SESSION_IMPORT_MAX_MESSAGES,
-  MAX_AGENT_SESSION_IMPORT_WINDOW_DAYS,
-  MIN_AGENT_SESSION_IMPORT_MAX_MESSAGES,
-  MIN_AGENT_SESSION_IMPORT_WINDOW_DAYS,
   type ResponseStreamingMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
@@ -68,6 +64,14 @@ import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSetti
 import { SnoozeQuickOptionsSettingsRow } from "./SnoozeQuickOptionsSettingsRow";
 import { RepositoryOwnerFiltersSettingsRow } from "./RepositoryOwnerFiltersSettingsRow";
 import { SidebarGroupsSettingsRow } from "./SidebarGroupsSettingsRow";
+import {
+  AgentSessionImportSettingsRows,
+  BackgroundWorkDetailsSettingsRow,
+  ForkAutoUpdateSettingsRow,
+  TerminalAppShortcutsFirstSettingsRow,
+  TerminalCloseConfirmationSettingsRow,
+} from "./ForkSettingsRows";
+import { BoundedIntegerInput } from "./BoundedIntegerInput";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -296,7 +300,7 @@ function AboutVersionTitle() {
   );
 }
 
-function AboutVersionSection() {
+export function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
@@ -2109,50 +2113,6 @@ function FontFamilySettingsRow({
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
 
-function BoundedIntegerInput({
-  value,
-  min,
-  max,
-  onCommit,
-  "aria-label": ariaLabel,
-}: {
-  value: number;
-  min: number;
-  max: number;
-  onCommit: (value: number) => void;
-  "aria-label": string;
-}) {
-  // Local draft so the field can be emptied mid-edit; the setting only moves
-  // on valid input and snaps back to the persisted value on blur.
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
-
-  return (
-    <Input
-      size="sm"
-      type="number"
-      min={min}
-      max={max}
-      className="w-full sm:w-24"
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        // Number(), not parseInt: "3.5" must be rejected (not truncated to a
-        // committed 3 while the field shows 3.5) — commit only when the
-        // persisted value matches the displayed one.
-        const parsed = Number(event.target.value);
-        if (Number.isInteger(parsed) && parsed >= min && parsed <= max) {
-          onCommit(parsed);
-        }
-      }}
-      onBlur={() => setDraft(String(value))}
-      aria-label={ariaLabel}
-    />
-  );
-}
-
 // The legacy rows sit behind the fold, so a settings-search jump has to
 // expand the section before its target can mount and scroll.
 const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set([
@@ -3187,64 +3147,7 @@ export function GeneralSettingsPanel() {
             />
           }
         />
-        <SettingsRow
-          serverScoped
-          settingKeys={["agentSessionImportWindowDays"]}
-          {...searchableSetting("agent-session-import-window")}
-          description="Claude Code and Codex sessions active within this many days are offered for import."
-          resetAction={
-            settings.agentSessionImportWindowDays !==
-            DEFAULT_UNIFIED_SETTINGS.agentSessionImportWindowDays ? (
-              <SettingResetButton
-                label="session import window"
-                onClick={() =>
-                  updateSettings({
-                    agentSessionImportWindowDays:
-                      DEFAULT_UNIFIED_SETTINGS.agentSessionImportWindowDays,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <BoundedIntegerInput
-              value={settings.agentSessionImportWindowDays}
-              min={MIN_AGENT_SESSION_IMPORT_WINDOW_DAYS}
-              max={MAX_AGENT_SESSION_IMPORT_WINDOW_DAYS}
-              onCommit={(value) => updateSettings({ agentSessionImportWindowDays: value })}
-              aria-label="Days of session history offered for import"
-            />
-          }
-        />
-        <SettingsRow
-          serverScoped
-          settingKeys={["agentSessionImportMaxMessages"]}
-          {...searchableSetting("agent-session-import-max-messages")}
-          description="Newest messages kept per imported session. The first prompt is always kept."
-          resetAction={
-            settings.agentSessionImportMaxMessages !==
-            DEFAULT_UNIFIED_SETTINGS.agentSessionImportMaxMessages ? (
-              <SettingResetButton
-                label="imported messages per session"
-                onClick={() =>
-                  updateSettings({
-                    agentSessionImportMaxMessages:
-                      DEFAULT_UNIFIED_SETTINGS.agentSessionImportMaxMessages,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <BoundedIntegerInput
-              value={settings.agentSessionImportMaxMessages}
-              min={MIN_AGENT_SESSION_IMPORT_MAX_MESSAGES}
-              max={MAX_AGENT_SESSION_IMPORT_MAX_MESSAGES}
-              onCommit={(value) => updateSettings({ agentSessionImportMaxMessages: value })}
-              aria-label="Messages kept per imported session"
-            />
-          }
-        />
+        <AgentSessionImportSettingsRows />
       </SettingsSection>
 
       <SettingsSection id="confirmations" title="Confirmations">
@@ -3326,58 +3229,9 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        <SettingsRow
-          {...searchableSetting("terminal-close-confirmation")}
-          description="Ask before closing a terminal and stopping its process."
-          resetAction={
-            settings.confirmTerminalClose !== DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose ? (
-              <SettingResetButton
-                label="terminal close confirmation"
-                onClick={() =>
-                  updateSettings({
-                    confirmTerminalClose: DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmTerminalClose}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmTerminalClose: Boolean(checked) })
-              }
-              aria-label="Confirm terminal close"
-            />
-          }
-        />
+        <TerminalCloseConfirmationSettingsRow />
 
-        <SettingsRow
-          {...searchableSetting("terminal-app-shortcuts-first")}
-          description="When the terminal has focus, keys that match an app keybinding run the app command instead of going to the shell."
-          resetAction={
-            settings.terminalAppShortcutsFirst !==
-            DEFAULT_UNIFIED_SETTINGS.terminalAppShortcutsFirst ? (
-              <SettingResetButton
-                label="app shortcuts in terminal"
-                onClick={() =>
-                  updateSettings({
-                    terminalAppShortcutsFirst: DEFAULT_UNIFIED_SETTINGS.terminalAppShortcutsFirst,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.terminalAppShortcutsFirst}
-              onCheckedChange={(checked) =>
-                updateSettings({ terminalAppShortcutsFirst: Boolean(checked) })
-              }
-              aria-label="App shortcuts take priority in terminal"
-            />
-          }
-        />
+        <TerminalAppShortcutsFirstSettingsRow />
 
         {isElectron ? <AppToggleShortcutsSettingsRow /> : null}
 
@@ -3389,31 +3243,7 @@ export function GeneralSettingsPanel() {
 
         <SnoozeQuickOptionsSettingsRow />
 
-        <SettingsRow
-          {...searchableSetting("background-work-details")}
-          description="Click the status icon of a monitor, background command, or background agent to see its command and output file. Links in their descriptions open."
-          resetAction={
-            settings.backgroundWorkDetails !== DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails ? (
-              <SettingResetButton
-                label="background work details"
-                onClick={() =>
-                  updateSettings({
-                    backgroundWorkDetails: DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.backgroundWorkDetails}
-              onCheckedChange={(checked) =>
-                updateSettings({ backgroundWorkDetails: Boolean(checked) })
-              }
-              aria-label="Background work details"
-            />
-          }
-        />
+        <BackgroundWorkDetailsSettingsRow />
 
         {isElectron ? (
           <SettingsRow
@@ -3585,6 +3415,7 @@ export function GeneralSettingsPanel() {
           </>
         )}
         <ForkChangelogSettingsRow />
+        <ForkAutoUpdateSettingsRow />
         <SettingsRow
           {...searchableSetting("privacy-policy")}
           description="How we handle your data, including the anonymous usage data T3 Code collects."

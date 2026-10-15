@@ -16,6 +16,7 @@ import {
   createLucideIcon,
   CalendarClockIcon,
   GitBranchIcon,
+  GitForkIcon,
   HardDriveIcon,
   PanelsTopLeftIcon,
   KeyboardIcon,
@@ -50,6 +51,7 @@ import {
   type SettingsSearchItem,
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
+import { forkSettingsSearchItems } from "./ForkSettings";
 import { validateSettingsScopeSearch } from "./settingsScope";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -91,6 +93,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,
   "/settings/machines": NetworkIcon,
+  "/settings/fork": GitForkIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -123,7 +126,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
+  const availableItems = useAvailableSettingsSearchItems(scopeSearch);
+  // Fork: the Fork page shows rows of other pages, and search finds them there too.
+  const searchableItems = useMemo(
+    () => [...availableItems, ...forkSettingsSearchItems(availableItems)],
+    [availableItems],
+  );
   const results = useMemo(() => searchSettings(query, searchableItems), [query, searchableItems]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
