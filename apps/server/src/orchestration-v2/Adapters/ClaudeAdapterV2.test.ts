@@ -126,6 +126,7 @@ const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
               { id: "high", label: "High", isDefault: true },
             ],
           },
+          { id: "fastMode", label: "Fast mode", type: "boolean" },
         ],
       },
     },
@@ -2612,12 +2613,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           modelSelection: {
             ...sonnetSelection,
             model: "acme-claude",
-            options: [{ id: "effort", value: "low" }],
+            options: [
+              { id: "effort", value: "low" },
+              { id: "fastMode", value: true },
+            ],
           },
         }),
       );
       assert.equal(harness.getOpenedOptions()?.model, "acme-claude");
       assert.equal(harness.getOpenedOptions()?.effort, "low");
+      assert.deepInclude(harness.getOpenedOptions()?.settings, { fastMode: true });
     }).pipe(
       Effect.scoped,
       Effect.provide(
