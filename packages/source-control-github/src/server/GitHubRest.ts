@@ -44,8 +44,8 @@ export interface GitHubRestInput {
   readonly allowReserve?: boolean;
 }
 
-export class GitHubApi extends Context.Service<
-  GitHubApi,
+export class GitHubRest extends Context.Service<
+  GitHubRest,
   {
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
     /** The credential a request to `host` would carry right now. */
@@ -56,7 +56,7 @@ export class GitHubApi extends Context.Service<
       GitHubApiError
     >;
   }
->()("@t3tools/source-control-github/server/GitHubApi") {}
+>()("@t3tools/source-control-github/server/GitHubRest") {}
 
 /** A REST failure body: `{ message, errors: [{ message } | { resource, field, code }] }`. */
 const decodeRestErrors = Schema.decodeUnknownOption(
@@ -125,7 +125,7 @@ export const make = Effect.gen(function* () {
    * Sends one request through the request policy and fails a refusal with the error that says
    * why. The answer is returned only once it is known to be one.
    */
-  const send = Effect.fn("GitHubApi.send")(function* (input: {
+  const send = Effect.fn("GitHubRest.send")(function* (input: {
     readonly host: string;
     readonly operation: string;
     readonly request: HttpClientRequest.HttpClientRequest;
@@ -156,7 +156,7 @@ export const make = Effect.gen(function* () {
           const response: HttpClientResponse.HttpClientResponse = yield* httpClient
             .execute(input.request.pipe(HttpClientRequest.setHeaders(headers)))
             .pipe(
-              // `GitHubApi.send` is the request's span. The client's own span would add
+              // `GitHubRest.send` is the request's span. The client's own span would add
               // `url.full` and `url.query`, which can carry SHAs and branch names, so it is off.
               Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
             );
@@ -192,7 +192,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const rest: GitHubApi["Service"]["rest"] = (input) => {
+  const rest: GitHubRest["Service"]["rest"] = (input) => {
     const url = `${gitHubApiUrls(input.host).rest}/${input.path.replace(/^\/+/, "")}`;
     const base = HttpClientRequest.make(input.method ?? "GET")(url).pipe(
       HttpClientRequest.setHeader("accept", input.accept ?? "application/vnd.github+json"),
@@ -220,20 +220,21 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  return GitHubApi.of({ rest, credential: policy.credential });
+  return GitHubRest.of({ rest, credential: policy.credential });
 });
 
 /**
- * The REST transport together with the request policy it sends through, which the GraphQL
- * client sends through too, so both share one set of request slots.
+ * The REST transport together with the request policy it sends through. The generated GraphQL
+ * client sends through the same policy, so REST and GraphQL share one set of request slots.
  */
-export const layer = Layer.effect(GitHubApi, make).pipe(
+export const layer = Layer.effect(GitHubRest, make).pipe(
   Layer.provideMerge(GitHubRequestPolicy.layer),
 );
 
 /**
- * The transports with the credential, quota reserve and rate-limit pause they read through. An
- * application builds this once so every GitHub reader shares one view of each quota per host.
+ * REST and the request policy, with the credential, quota reserve and rate-limit pause the policy
+ * reads through: everything both transports need. An application builds this once so every GitHub
+ * reader shares one view of each quota per host.
  */
 export const layerWithDependencies = layer.pipe(
   Layer.provideMerge(GitHubCredentials.layer),

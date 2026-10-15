@@ -20,7 +20,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
@@ -198,7 +198,7 @@ function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null
  * token is checked against the API, since `gh auth status` may not know it.
  */
 export const makeDiscovery = Effect.gen(function* () {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
@@ -455,7 +455,7 @@ const contextHost = (context: SourceControlProvider.SourceControlProviderContext
   context === undefined ? undefined : new URL(context.provider.baseUrl).host;
 
 export const make = Effect.gen(function* () {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
@@ -536,7 +536,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const rest = (input: GitHubApi.GitHubRestInput, notFoundDetail?: string) =>
+  const rest = (input: GitHubRest.GitHubRestInput, notFoundDetail?: string) =>
     api.rest(input).pipe(Effect.mapError((error) => fromGitHubApiError(error, notFoundDetail)));
 
   /**

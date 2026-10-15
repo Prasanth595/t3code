@@ -36,7 +36,7 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoPullRequestProvider from "@t3tools/source-control-forgejo/server/ForgejoPullRequestProvider";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as GitHubPullRequestProvider from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
@@ -1790,7 +1790,7 @@ it.effect("keeps branch deletion on the credential that passed source repository
         GitHubPullRequestApi.layer.pipe(
           // GraphQL reads go over `http` too, through the same credential and quota as REST.
           Layer.provide(
-            GitHubApi.layer.pipe(
+            GitHubRest.layer.pipe(
               Layer.provideMerge(Layer.mergeAll(credentials, http)),
               Layer.provideMerge(GitHubQuota.layer),
               Layer.provideMerge(SourceControlRateLimit.layer),

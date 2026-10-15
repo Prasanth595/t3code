@@ -10,7 +10,7 @@ import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { decodePullRequestStacksJson, toCanWrite } from "./gitHubPullRequestJson.ts";
 import { cascadeRebaseStack } from "./githubStackRebase.ts";
@@ -120,7 +120,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   action: PullRequestAction;
   mergeMethod?: PullRequestMergeMethod;
 }) {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const identity = {
     repository: input.repository,
     number: input.number,

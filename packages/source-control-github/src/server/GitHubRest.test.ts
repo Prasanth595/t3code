@@ -10,7 +10,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
@@ -52,7 +52,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
       return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
     }),
   );
-  const layer = GitHubApi.layer.pipe(
+  const layer = GitHubRest.layer.pipe(
     Layer.provide(Layer.mergeAll(credentials, http)),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
@@ -106,7 +106,7 @@ describe("environmentToken", () => {
   });
 });
 
-describe("GitHubApi", () => {
+describe("GitHubRest", () => {
   it.effect("traces the operation, path and quota, never the query string or the token", () => {
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({
@@ -121,13 +121,13 @@ describe("GitHubApi", () => {
     );
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       yield* api.rest({
         host: "github.com",
         operation: "listWorkflowRuns",
         path: "repos/acme/web/actions/runs?head_sha=abc123&branch=feat%2Fx",
       });
-      const send = spans.find((span) => span.name === "GitHubApi.send")!;
+      const send = spans.find((span) => span.name === "GitHubRest.send")!;
       expect(Object.fromEntries(send.attributes)).toMatchObject({
         "github.operation": "listWorkflowRuns",
         "github.kind": "rest",
@@ -157,7 +157,7 @@ describe("GitHubApi", () => {
     const { layer, requests } = harness(() => json({ ok: true }, { headers: quota(remaining--) }));
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const read = { host: "github.com", operation: "sweep", path: "repos/acme/web/pulls" };
       // The first answer leaves 499 of 5000, under the last tenth; the next background read waits.
       yield* api.rest(read);
@@ -193,7 +193,7 @@ describe("GitHubApi", () => {
       ),
     );
     return Effect.gen(function* () {
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const error = yield* Effect.flip(
         api.rest({
           host: "github.com",
@@ -224,7 +224,7 @@ describe("GitHubApi", () => {
     );
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const read = { host: "github.com", operation: "sweep", path: "repos/acme/web/pulls" };
       yield* Effect.flip(api.rest(read));
       expect((yield* Effect.flip(api.rest(read)))._tag).toBe("SourceControlRateLimitPausedError");
@@ -256,7 +256,7 @@ describe("GitHubApi", () => {
     );
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const notModified = yield* api.rest({
         host: "github.com",
         operation: "checks",
@@ -278,7 +278,7 @@ describe("GitHubApi", () => {
         : json({ ok: true }),
     );
     return Effect.gen(function* () {
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const refused = yield* Effect.flip(
         api.rest({ host: "github.com", operation: "user", path: "user" }),
       );
@@ -296,7 +296,7 @@ describe("GitHubApi", () => {
   it.effect("refuses to send a pinned credential to another host", () => {
     const { layer, requests } = harness(() => json({}));
     return Effect.gen(function* () {
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const error = yield* Effect.flip(
         api.rest({ host: "git.acme.internal", operation: "user", path: "user" }),
       ).pipe(

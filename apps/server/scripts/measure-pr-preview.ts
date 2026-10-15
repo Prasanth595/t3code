@@ -13,7 +13,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as GitHubPullRequestProvider from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as ServerConfig from "../src/config.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
 import * as ServerSourceControlHost from "../src/sourceControl/ServerSourceControlHost.ts";
@@ -85,7 +85,7 @@ const sourceControlHost = ServerSourceControlHost.layer.pipe(
 );
 
 const services = GitHubPullRequestApi.layer.pipe(
-  Layer.provideMerge(GitHubApi.layerWithDependencies),
+  Layer.provideMerge(GitHubRest.layerWithDependencies),
   Layer.provideMerge(measuredHttp),
   Layer.provideMerge(sourceControlHost),
 );
@@ -99,7 +99,7 @@ for (const mode of ["detail", "preview"] as const) {
       Effect.gen(function* () {
         const provider = yield* GitHubPullRequestProvider.make;
         // Where the `graphql` quota stands before the first read. `rate_limit` is free.
-        const api = yield* GitHubApi.GitHubApi;
+        const api = yield* GitHubRest.GitHubRest;
         const limits = decodeRateLimit(
           (yield* api.rest({ host: "github.com", operation: "rateLimit", path: "rate_limit" }))
             .body,

@@ -9,7 +9,7 @@ import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -72,7 +72,7 @@ const runGitHubStackAction = (send: Send, input: Parameters<typeof runStackActio
     Effect.provide(
       Layer.mergeAll(
         fakeGit,
-        Layer.mock(GitHubApi.GitHubApi)({
+        Layer.mock(GitHubRest.GitHubRest)({
           credential: () => Effect.succeed({ token: Redacted.make("token"), fingerprint: "fp" }),
           rest: (request) =>
             send(words(request.path, request.body), "rest").pipe(

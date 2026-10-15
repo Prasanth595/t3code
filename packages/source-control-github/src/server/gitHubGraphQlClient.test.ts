@@ -8,7 +8,7 @@ import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/h
 import { GraphQLClient, GraphQLResolver } from "effect/graphql";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
@@ -43,7 +43,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     GitHubQuota.layer,
     SourceControlRateLimit.layer,
   );
-  const layer = GitHubApi.layer.pipe(Layer.provideMerge(services));
+  const layer = GitHubRest.layer.pipe(Layer.provideMerge(services));
   return { layer, requests, invalidations: () => invalidations };
 }
 
@@ -121,7 +121,7 @@ describe("GitHubGraphQlAuth", () => {
       const first = yield* Effect.flip(readStats("github.com"));
       expect(first).toMatchObject({ _tag: "GitHubApiRateLimitError", retryAt: reset * 1000 });
       // The pause is the one REST reads respect too.
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const rest = yield* Effect.flip(
         api.rest({ host: "github.com", operation: "stack", path: "repos/acme/web/stacks" }),
       );
@@ -223,7 +223,7 @@ describe("GitHubGraphQlAuth", () => {
       expect(background._tag).toBe("SourceControlRateLimitPausedError");
       expect(requests).toHaveLength(1);
       // REST spends a quota of its own, which the GraphQL reserve does not hold back.
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       yield* api.rest({ host: "github.com", operation: "user", path: "user" });
       expect(requests).toHaveLength(2);
     }).pipe(Effect.provide(layer));

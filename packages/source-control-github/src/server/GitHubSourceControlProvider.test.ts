@@ -16,7 +16,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
@@ -55,7 +55,7 @@ const remotesOutput = (...entries: ReadonlyArray<readonly [string, string]>) =>
     .flatMap(([name, url]) => [`${name}\t${url} (fetch)`, `${name}\t${url} (push)`])
     .join("\n");
 
-const restResponse = (body: unknown, status = 200): GitHubApi.GitHubRestResponse => ({
+const restResponse = (body: unknown, status = 200): GitHubRest.GitHubRestResponse => ({
   status,
   headers: {},
   body: body === undefined ? "" : encodeJson(body),
@@ -154,13 +154,13 @@ function graphQlHttp(respond: GraphQlRespond, calls: Array<GraphQlCall>) {
 }
 
 /**
- * The provider over a mocked GitHubApi, git driver and process. `remotes` is what
+ * The provider over a mocked GitHubRest, git driver and process. `remotes` is what
  * `git remote -v` prints; `git` records every driver call. GraphQL reads go over HTTP to
  * `graphql`, through the real request policy; `graphqlCalls` records each request.
  */
 function harness(input: {
   readonly remotes: string;
-  readonly api?: Partial<GitHubApi.GitHubApi["Service"]>;
+  readonly api?: Partial<GitHubRest.GitHubRest["Service"]>;
   readonly graphql?: GraphQlRespond;
   /** The credential a GraphQL read is sent with; github.com's token by default. */
   readonly credential?: (
@@ -243,7 +243,7 @@ function harness(input: {
   );
   const layer = Layer.mergeAll(
     host,
-    Layer.mock(GitHubApi.GitHubApi)(input.api ?? {}),
+    Layer.mock(GitHubRest.GitHubRest)(input.api ?? {}),
     policy,
     Layer.succeed(HttpClient.HttpClient, graphQlHttp(graphql, graphqlCalls)),
     NodeServices.layer,
@@ -252,8 +252,8 @@ function harness(input: {
 }
 
 /** The provider context for a checkout whose remote is on `host`. */
-/** The provider over a mocked GitHubApi, for reads that never touch the checkout. */
-const makeProvider = (api: Partial<GitHubApi.GitHubApi["Service"]>) =>
+/** The provider over a mocked GitHubRest, for reads that never touch the checkout. */
+const makeProvider = (api: Partial<GitHubRest.GitHubRest["Service"]>) =>
   GitHubSourceControlProvider.make.pipe(Effect.provide(harness({ remotes: "", api }).layer));
 
 const githubContext = (host: string) => ({
@@ -547,7 +547,7 @@ describe("GitHubSourceControlProvider.getChangeRequest", () => {
 
 describe("GitHubSourceControlProvider writes", () => {
   it.effect("creates a cross-repository pull request with an owner:branch head", () => {
-    const requests: Array<GitHubApi.GitHubRestInput> = [];
+    const requests: Array<GitHubRest.GitHubRestInput> = [];
     const { layer } = harness({
       remotes: remotesOutput(
         ["origin", "git@github.com:me/web.git"],
@@ -1112,7 +1112,7 @@ it.live.each([
   "ssh://git@code.example.test/team/project.git",
   "https://code.example.test/team/project.git",
 ])("keeps Enterprise operations on the selected remote: %s", (remoteUrl) => {
-  const rest: GitHubApi.GitHubRestInput[] = [];
+  const rest: GitHubRest.GitHubRestInput[] = [];
   const pr = {
     ...node(42, "feature", "team"),
     url: "https://code.example.test/team/project/pull/42",
@@ -1120,7 +1120,7 @@ it.live.each([
     headRepository: { name: "project", nameWithOwner: "team/project" },
   };
   const api = {
-    rest: (input: GitHubApi.GitHubRestInput) =>
+    rest: (input: GitHubRest.GitHubRestInput) =>
       Effect.sync(() => {
         rest.push(input);
         return restResponse({

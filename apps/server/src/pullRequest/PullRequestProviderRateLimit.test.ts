@@ -3,7 +3,7 @@ import { assert, it } from "@effect/vitest";
 
 import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";

@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
 import type { PullRequestCheck } from "@t3tools/contracts";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 
@@ -30,7 +30,7 @@ it.effect(
       const known: Array<unknown> = [];
       const revalidate = yield* makeChecksRevalidator.pipe(
         Effect.provide(
-          Layer.mock(GitHubApi.GitHubApi)({
+          Layer.mock(GitHubRest.GitHubRest)({
             rest: ({ path, ifNoneMatch }) =>
               Effect.sync(() => {
                 requests.push(path);
@@ -133,7 +133,7 @@ it.effect("does not retain failed or incomplete reads, and supports hosts withou
     let reads = 0;
     const revalidate = yield* makeChecksRevalidator.pipe(
       Effect.provide(
-        Layer.mock(GitHubApi.GitHubApi)({
+        Layer.mock(GitHubRest.GitHubRest)({
           rest: ({ path, ifNoneMatch }) =>
             unavailable
               ? Effect.fail(
@@ -219,7 +219,7 @@ it.effect("falls back when REST checks are unavailable without retrying unsuppor
     let reads = 0;
     const revalidate = yield* makeChecksRevalidator.pipe(
       Effect.provide(
-        Layer.mock(GitHubApi.GitHubApi)({
+        Layer.mock(GitHubRest.GitHubRest)({
           rest: () => {
             probes++;
             return Effect.fail(

@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { PositiveInt, type PullRequestChecks } from "@t3tools/contracts";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import type { GitHubPullRequestDetail } from "./gitHubPullRequestJson.ts";
 import type { GitHubPullRequestApiError } from "./GitHubPullRequestApi.ts";
@@ -54,7 +54,7 @@ type Validator = { etag: string | undefined; next: boolean; body: string };
 const UNSUPPORTED_STATUSES = new Set([404, 405, 501]);
 
 export const makeChecksRevalidator = Effect.gen(function* () {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const entries = yield* Cache.makeWith(
     (_key: string) =>
       Effect.sync(() => ({

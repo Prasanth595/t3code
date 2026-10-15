@@ -13,7 +13,7 @@ import * as Redacted from "effect/Redacted";
 
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
@@ -82,9 +82,9 @@ type ApiCall =
       readonly query: string;
       readonly variables?: Readonly<Record<string, unknown>>;
     }
-  | ({ readonly kind: "rest" } & GitHubApi.GitHubRestInput);
+  | ({ readonly kind: "rest" } & GitHubRest.GitHubRestInput);
 
-type ApiAnswer = Effect.Effect<GitHubApi.GitHubRestResponse, GitHubRequestPolicy.GitHubApiError>;
+type ApiAnswer = Effect.Effect<GitHubRest.GitHubRestResponse, GitHubRequestPolicy.GitHubApiError>;
 
 const mockedExecute = vi.fn<(call: ApiCall) => ApiAnswer>();
 const defaultCredential = (host: string) =>
@@ -96,8 +96,8 @@ const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
 
 /** The REST transport, answered from the mocks above. */
 const mockApi = Layer.succeed(
-  GitHubApi.GitHubApi,
-  GitHubApi.GitHubApi.of({
+  GitHubRest.GitHubRest,
+  GitHubRest.GitHubRest.of({
     rest: (input) => mockedExecute({ kind: "rest", ...input }),
     credential: (host) => mockedCredential(host),
   }),
@@ -130,7 +130,7 @@ const mockHttp = Layer.succeed(
         variables: sent.variables,
         partial: true,
       };
-      // A mocked `GitHubApi` failure with a status is what GitHub would have answered with it.
+      // A mocked failure with a status is what GitHub would have answered with it.
       const answer = yield* (
         sent.query.startsWith("query PullRequestStackMembership(")
           ? mockedStackMemberships
@@ -186,7 +186,7 @@ function output(
   invalidUtf8 = false,
   headers: Readonly<Record<string, string>> = {},
   status = 200,
-): GitHubApi.GitHubRestResponse {
+): GitHubRest.GitHubRestResponse {
   return { status, headers, body, truncated, invalidUtf8 };
 }
 
@@ -506,7 +506,7 @@ function variablesOf(needle: string): ReadonlyArray<Readonly<Record<string, unkn
 }
 
 /** Every REST request whose path contains `needle`, in order. */
-function restCallsTo(needle: string): ReadonlyArray<GitHubApi.GitHubRestInput> {
+function restCallsTo(needle: string): ReadonlyArray<GitHubRest.GitHubRestInput> {
   return mockedExecute.mock.calls.flatMap(([call]) =>
     call.kind === "rest" && call.path.includes(needle) ? [call] : [],
   );
@@ -675,7 +675,7 @@ it.effect(
       );
       const cli = yield* GitHubPullRequestApi.make.pipe(
         Effect.provide(
-          GitHubApi.layer.pipe(
+          GitHubRest.layer.pipe(
             Layer.provideMerge(Layer.mergeAll(credentials, http)),
             Layer.provideMerge(GitHubQuota.layer),
             Layer.provideMerge(SourceControlRateLimit.layer),

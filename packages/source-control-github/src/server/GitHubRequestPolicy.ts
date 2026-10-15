@@ -28,7 +28,7 @@ export const PinnedGitHubCredential = Context.Reference<{
   readonly host: string;
   readonly token: Redacted.Redacted<string>;
   readonly credentialFingerprint: string;
-} | null>("@t3tools/source-control-github/server/GitHubApi/PinnedGitHubCredential", {
+} | null>("@t3tools/source-control-github/server/GitHubRequestPolicy/PinnedGitHubCredential", {
   defaultValue: () => null,
 });
 
@@ -242,7 +242,7 @@ export const make = Effect.gen(function* () {
   const slots = yield* Semaphore.make(CONCURRENCY);
 
   const credential: GitHubRequestPolicy["Service"]["credential"] = Effect.fn(
-    "GitHubApi.credential",
+    "GitHubRest.credential",
   )(function* (host) {
     const normalized = normalizeHost(host);
     const pinned = yield* PinnedGitHubCredential;

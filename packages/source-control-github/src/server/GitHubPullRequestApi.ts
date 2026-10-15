@@ -42,7 +42,7 @@ import {
   type PullRequestPreview,
 } from "@t3tools/contracts";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
@@ -406,7 +406,7 @@ export interface GitHubPullRequestStat {
 
 /**
  * Aliased lookups per request. Measured over a hundred rows: one request carrying all hundred
- * takes ~5.2s, four of twenty-five in parallel ~2.1s. `GitHubApi` bounds how many run at once.
+ * takes ~5.2s, four of twenty-five in parallel ~2.1s. `GitHubRequestPolicy` bounds how many run at once.
  */
 const STAT_ALIASES_PER_REQUEST = 25;
 /**
@@ -997,7 +997,7 @@ const IMMEDIATELY_MERGEABLE = new Set(["CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
   const httpClient = yield* HttpClient.HttpClient;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
@@ -1699,7 +1699,7 @@ export const make = Effect.gen(function* () {
   /**
    * Runs batched lookups for one read on `host`. The resolver groups them by host and credential.
    * GitHub saying one pull request does not exist fails that lookup as not found; any other client
-   * failure is a read error against `operation`, and a `GitHubApi` failure (a rate limit, a
+   * failure is a read error against `operation`, and a request policy failure (a rate limit, a
    * refused credential) passes through as itself.
    */
   const batchedRead = <A, E, R>(
@@ -2518,7 +2518,7 @@ export const make = Effect.gen(function* () {
       }
       if (input.stackNumber !== undefined)
         return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
-          Effect.provideService(GitHubApi.GitHubApi, api),
+          Effect.provideService(GitHubRest.GitHubRest, api),
           Effect.provideService(GitHubRequestPolicy.GitHubRequestPolicy, policy),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),
