@@ -210,7 +210,9 @@ function countClosures(file: string): Map<string, number> {
     const node = locations[i]! / nodeWidth;
     if (nodes[node * nodeWidth + typeField] !== closureType) continue;
     const script = nameOf(locations[i + 2]! / nodeWidth);
-    if (!script.includes("/src/")) continue;
+    // useStableCallback keeps one effect closure per wrapper for the current
+    // and previous render; it fills in during the first updates and is bounded.
+    if (!script.includes("/src/") || script.includes("/hooks/useStableCallback.ts")) continue;
     const path = script.replace(/^.*?\/src\//, "src/").replace(/\?.*$/, "");
     const key = `${path}:${locations[i + 3]! + 1}:${locations[i + 4]! + 1} ${nameOf(node) || "(anonymous)"}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
