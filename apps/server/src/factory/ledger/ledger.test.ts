@@ -1658,6 +1658,25 @@ describe("failed writes", () => {
     ]);
   });
 
+  it("an open whose repair of a cut-off line fails is an Io error, and a later open repairs it", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, `${RED}${FRAGMENT}`);
+    const { io, faults } = faultyIo();
+    faults.failWriteAfter = 0;
+    const thrown = catchLedgerError(() => reopen(dataDir, ticking(T0, 1000), softfacRun, { io }));
+    expect(thrown.kind).toBe("Io");
+    expect(thrown.path).toBe(runFileFor(dataDir));
+    const writesNothing: AppendIo = { writeSync: () => 0, fsyncSync: () => {} };
+    const refused = catchLedgerError(() =>
+      reopen(dataDir, ticking(T0, 1000), softfacRun, { io: writesNothing }),
+    );
+    expect(refused.kind).toBe("Io");
+    expect(readText(runFileFor(dataDir))).toBe(`${RED}${FRAGMENT}`);
+
+    reopen(dataDir);
+    expect(readText(runFileFor(dataDir))).toBe(`${RED}${FRAGMENT}\n`);
+  });
+
   it("a write that fails before writing anything still terminates the line next time", () => {
     const dataDir = tempDir();
     const { io, faults } = faultyIo();
