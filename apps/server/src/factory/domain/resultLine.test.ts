@@ -171,6 +171,9 @@ describe("session result line", () => {
       "> FACTORY-STOP: stuck",
       "`FACTORY-STOP: stuck`",
       "FACTORY-STOP",
+      `note FACTORY-DONE: ${URL}`,
+      ` FACTORY-DONE: ${URL}`,
+      `> FACTORY-DONE: ${URL}`,
     ]) {
       expect(parse(message), message).toEqual(stuck(NO_RESULT_LINE, message));
     }
