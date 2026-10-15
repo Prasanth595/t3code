@@ -56,14 +56,12 @@ export function resolvePreferredThreadWorktreePath(input: {
 }
 
 export function resolveTerminalOpenLocation(input: {
-  readonly terminalLocation: TerminalLocationLike | null;
-  readonly activeSessionLocation: TerminalLocationLike | null;
+  readonly existingLocation: TerminalLocationLike | null;
   readonly projectCwd: string | null;
   readonly worktreePath: string | null;
 }): TerminalLocationLike | null {
-  const existingLocation = input.terminalLocation ?? input.activeSessionLocation;
-  if (existingLocation !== null) {
-    return existingLocation;
+  if (input.existingLocation !== null) {
+    return input.existingLocation;
   }
   if (input.projectCwd === null) {
     return null;

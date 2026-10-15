@@ -32,8 +32,7 @@ describe("resolveTerminalOpenLocation", () => {
   it("opens in the server-resolved project directory while preserving the worktree root", () => {
     expect(
       resolveTerminalOpenLocation({
-        terminalLocation: null,
-        activeSessionLocation: null,
+        existingLocation: null,
         projectCwd: "/repo/worktrees/feature/ios",
         worktreePath: "/repo/worktrees/feature",
       }),
@@ -46,8 +45,7 @@ describe("resolveTerminalOpenLocation", () => {
   it("does not choose a launch directory while the project directory is resolving", () => {
     expect(
       resolveTerminalOpenLocation({
-        terminalLocation: null,
-        activeSessionLocation: null,
+        existingLocation: null,
         projectCwd: null,
         worktreePath: "/repo/worktrees/feature",
       }),
@@ -57,8 +55,7 @@ describe("resolveTerminalOpenLocation", () => {
   it("preserves the running terminal snapshot cwd when attaching to an existing session", () => {
     expect(
       resolveTerminalOpenLocation({
-        terminalLocation: null,
-        activeSessionLocation: {
+        existingLocation: {
           cwd: "/repo/worktrees/feature",
           worktreePath: "/repo/worktrees/feature",
         },
@@ -74,8 +71,7 @@ describe("resolveTerminalOpenLocation", () => {
   it("keeps an existing terminal's explicit local workspace when the thread changes worktrees", () => {
     expect(
       resolveTerminalOpenLocation({
-        terminalLocation: { cwd: "/repo/ios", worktreePath: null },
-        activeSessionLocation: { cwd: "/other", worktreePath: "/other" },
+        existingLocation: { cwd: "/repo/ios", worktreePath: null },
         projectCwd: "/repo/worktrees/feature/ios",
         worktreePath: "/repo/worktrees/feature",
       }),

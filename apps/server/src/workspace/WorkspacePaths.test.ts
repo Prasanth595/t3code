@@ -10,6 +10,7 @@ import * as PlatformError from "effect/PlatformError";
 
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const layerTest = Layer.empty.pipe(
@@ -243,11 +244,37 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
     }),
   );
 
+  it.effect("keeps Scratch fallback independent of the host Git locale", () =>
+    Effect.gen(function* () {
+      const paths = yield* WorkspacePaths.make.pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: ({ env }) =>
+            Effect.succeed({
+              stdout: "",
+              stderr:
+                env?.LC_ALL === "C"
+                  ? "fatal: not a git repository (or any of the parent directories): .git"
+                  : "fatal: kein Git-Repository (oder irgendeines der Elternverzeichnisse): .git",
+              code: ChildProcessSpawner.ExitCode(128),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            }),
+        }),
+      );
+      expect(yield* paths.resolveProjectCwd({ cwd: "/scratch", worktreePath: "/thread" })).toBe(
+        "/thread",
+      );
+    }),
+  );
+
   it.effect.each([
     "ios",
     "nested/ios",
     "ios\\release",
-    ...(process.platform === "win32" ? [] : [" ios "]),
+    ...(HostProcess.Platform.defaultValue() === "win32" ? [] : [" ios "]),
   ])("uses the existing project directory %s", (directory) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -1,17 +1,30 @@
 import type { AssetResource, ProjectReadFileError, ScopedThreadRef } from "@t3tools/contracts";
-import { isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
+import {
+  isAbsolutePath,
+  isWindowsAbsolutePath,
+  workspaceRelativeFilePath,
+} from "@t3tools/shared/path";
+
+function relativePreviewPath(path: string, cwd: string): string | null {
+  if (!cwd) return null;
+  if (isWindowsAbsolutePath(cwd)) return workspaceRelativeFilePath(path, cwd);
+  // Backslashes are literal filename characters on POSIX environments.
+  const root = cwd.replace(/\/+$/, "");
+  if (path.replace(/\/+$/, "") === root) return ".";
+  return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
+}
 
 /** Resolve workspace links before choosing between the explorer and a file preview. */
 export function resolveFilePreviewPath(path: string | null, cwd: string): string | null {
   if (path === null) return null;
-  return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
+  return path === "." || relativePreviewPath(path, cwd) === "." ? null : path;
 }
 
 /** Relative links use the project directory; checkout siblings keep a writable root-relative target. */
 export function resolveFilePreviewLocation(path: string | null, cwd: string, workspaceRoot = cwd) {
   if (path !== null) {
     for (const root of [cwd, workspaceRoot]) {
-      const relativePath = workspaceRelativeFilePath(path, root);
+      const relativePath = relativePreviewPath(path, root);
       if (relativePath !== null) {
         return { cwd: root, relativePath: resolveFilePreviewPath(relativePath, root) };
       }

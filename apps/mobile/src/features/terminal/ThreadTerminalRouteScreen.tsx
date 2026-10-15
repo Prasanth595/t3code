@@ -410,8 +410,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       return null;
     }
     return resolveTerminalOpenLocation({
-      terminalLocation: activeKnownSession?.state.summary ?? null,
-      activeSessionLocation: activeKnownSession?.state.summary ?? null,
+      existingLocation: activeKnownSession?.state.summary ?? null,
       projectCwd: selectedThreadCwd,
       worktreePath: selectedThreadWorktreePath,
     });

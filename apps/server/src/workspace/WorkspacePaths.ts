@@ -162,6 +162,7 @@ export const make = Effect.gen(function* () {
       const prefix = yield* processRunner.run({
         command: "git",
         args: ["-C", input.cwd, "rev-parse", "--show-prefix"],
+        env: { LC_ALL: "C" },
         timeout: "5 seconds",
       });
       // Scratch threads also use worktreePath for their independent, non-Git folder.

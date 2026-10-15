@@ -194,6 +194,21 @@ describe("resolveFilePreviewPath", () => {
 });
 
 describe("resolveFilePreviewLocation", () => {
+  it.each([
+    ["/wt/ios/a\\b.txt", "/wt/ios", "/wt/ios", "a\\b.txt"],
+    ["/wt/ios/a/b.txt", "/wt/ios", "/wt/ios", "a/b.txt"],
+    ["/wt/ios\\release/a.txt", "/wt/ios", "/wt", "ios\\release/a.txt"],
+    ["/wt/ios\\release/a\\b.txt", "/wt/ios\\release", "/wt/ios\\release", "a\\b.txt"],
+    ["/wt/ios/release", "/wt/ios\\release", "/wt", "ios/release"],
+  ])("preserves the POSIX target %s beneath %s", (path, projectCwd, cwd, relativePath) => {
+    expect(resolveFilePreviewLocation(path, projectCwd, "/wt")).toEqual({ cwd, relativePath });
+  });
+
+  it("does not mistake a POSIX path with separators for a literal-backslash project root", () => {
+    expect(resolveFilePreviewPath("/wt/ios/release", "/wt/ios\\release")).toBe("/wt/ios/release");
+    expect(resolveFilePreviewPath("/wt/ios\\release", "/wt/ios\\release")).toBeNull();
+  });
+
   it("keeps an absolute sibling diff file editable within the checkout", () => {
     const location = resolveFilePreviewLocation("/wt/README.md", "/wt/ios", "/wt");
 
@@ -249,6 +264,16 @@ describe("resolveFilePreviewLocation", () => {
       cwd: "c:\\wt",
       relativePath: "README.md",
     });
+  });
+
+  it("resolves checkout siblings on a Windows UNC share", () => {
+    expect(
+      resolveFilePreviewLocation(
+        "\\\\host\\share\\wt\\README.md",
+        "\\\\host\\share\\wt\\ios",
+        "\\\\HOST\\share\\wt",
+      ),
+    ).toEqual({ cwd: "\\\\HOST\\share\\wt", relativePath: "README.md" });
   });
 });
 
