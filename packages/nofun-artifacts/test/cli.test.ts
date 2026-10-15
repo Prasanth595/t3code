@@ -181,3 +181,60 @@ test("compile exits 2 when the components dir is dirty", () => {
     NodeFs.rmSync(dirty, { recursive: true, force: true });
   }
 });
+
+test("compile runs when argv is under a symlinked tmp directory", () => {
+  const root = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "nf-cli-tmp-"));
+  const realTmp = NodePath.join(root, "private", "tmp");
+  const linkTmp = NodePath.join(root, "tmp");
+  const out = NodePath.join(root, "out");
+  NodeFs.mkdirSync(realTmp, { recursive: true });
+  NodeFs.symlinkSync(NodePath.resolve(NodePath.dirname(CLI), ".."), NodePath.join(realTmp, "pkg"));
+  NodeFs.symlinkSync(realTmp, linkTmp);
+  const linkedCli = NodePath.join(linkTmp, "pkg", "src", "cli.ts");
+  try {
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", linkedCli, "compile", "--out", out],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /Pass exactly one of --spec/);
+    assert.equal(NodeFs.existsSync(NodePath.join(out, "index.html")), false);
+  } finally {
+    NodeFs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("compile exits 2 when no bundle/index.html is produced", () => {
+  const dir = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "nf-cli-empty-"));
+  const spec = NodePath.join(dir, "empty.spec.json");
+  const out = NodePath.join(dir, "bundle");
+  NodeFs.writeFileSync(spec, "{}\n");
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        CLI,
+        "compile",
+        "--spec",
+        spec,
+        "--theme",
+        "kobra",
+        "--size",
+        "960x600",
+        "--out",
+        out,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, NOFUN_ARTIFACTS_FORCE_NO_OUTPUT: "1" },
+      },
+    );
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /compile produced no bundle\/index\.html/);
+    assert.equal(NodeFs.existsSync(NodePath.join(out, "index.html")), false);
+  } finally {
+    NodeFs.rmSync(dir, { recursive: true, force: true });
+  }
+});
