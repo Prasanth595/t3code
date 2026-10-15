@@ -310,6 +310,26 @@ describe("threadWokeAt", () => {
     ).toBe("2026-04-10T11:00:00.000Z");
   });
 
+  it.each(["failure", "subagent request"] as const)(
+    "keeps an old question from masking a newer %s wake",
+    (wake) => {
+      const shell = {
+        ...makeShell({
+          snoozedUntil: FUTURE_WAKE,
+          pending: "user-input",
+          pendingUserInputAt: SNOOZED_AT,
+          sessionStatus: wake === "failure" ? "error" : "running",
+        }),
+        pendingSubagentRequest: wake === "subagent request" ? ("user_input" as const) : null,
+      };
+      const lastVisitedAt = "2026-04-10T10:00:00.000Z";
+      expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+      const wokeAt = threadWokeAt(shell, { now: NOW });
+      expect(wokeAt).toBe("2026-04-10T11:00:00.000Z");
+      expect(Date.parse(wokeAt!)).toBeGreaterThan(Date.parse(lastVisitedAt));
+    },
+  );
+
   it("keeps the early wake authoritative after the scheduled time passes", () => {
     // Woke early at 10:30 via run-completed; the scheduled wake (PAST_WAKE
     // 10:00 relative to a later now) has ALSO passed. Reporting the

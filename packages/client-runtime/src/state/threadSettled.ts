@@ -219,12 +219,15 @@ export function threadWokeAt(
     ) {
       return latestRun.completedAt;
     }
-    return (
-      (shell.hasPendingUserInput ? shell.pendingUserInputAt : null) ??
-      runtime?.updatedAt ??
-      shell.snoozedAt ??
-      null
-    );
+    if (
+      shell.hasPendingUserInput &&
+      shell.pendingUserInputAt != null &&
+      shell.snoozedAt != null &&
+      Date.parse(shell.pendingUserInputAt) > Date.parse(shell.snoozedAt)
+    ) {
+      return shell.pendingUserInputAt;
+    }
+    return runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
   // No raised hand: woke iff the timer elapsed (still-snoozed → null).
   return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
