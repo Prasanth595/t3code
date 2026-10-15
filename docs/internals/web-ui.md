@@ -50,5 +50,5 @@ In large, long-lived components such as `ChatView`, `ChatComposer`, and `Sidebar
 [`useStableCallback`](../../apps/web/src/hooks/useStableCallback.ts) for event handlers instead
 of `useCallback`. A function called during render cannot use it; build it in a module-level
 factory instead, so its closure keeps only its inputs.
-`node scripts/find-render-scope-leaks.ts` drives a dev client and lists closures that grow with
+`vp run leaks:render-scope` drives a dev client and lists closures that grow with
 each update.

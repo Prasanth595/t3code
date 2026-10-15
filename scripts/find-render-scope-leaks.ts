@@ -8,7 +8,7 @@
  * closure count grew with the number of updates. A bounded app ends near
  * where it started; a leak grows by about one copy per update.
  *
- *   node scripts/find-render-scope-leaks.ts --url <pairing URL> [--rounds 30]
+ *   vp run leaks:render-scope --url <pairing URL> [--rounds 30]
  *     [--warmup 5] [--base-dir <dev home>] [--thread <sidebar title>] [--stream]
  *
  * --warmup     Rounds run before the first snapshot, so lazily mounted rows
