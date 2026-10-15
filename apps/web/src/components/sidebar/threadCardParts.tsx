@@ -3,7 +3,6 @@ import type { ThreadCardInfo } from "@t3tools/client-runtime/thread-card-info";
 import type { SlotLayout, ThreadCardElement } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
-  AlarmClockIcon,
   BotIcon,
   CalendarIcon,
   CircleAlertIcon,
@@ -11,7 +10,6 @@ import {
   CircleDashedIcon,
   ClockIcon,
   GitForkIcon,
-  HourglassIcon,
   LayersIcon,
   ListTodoIcon,
   MessageCircleQuestionIcon,
@@ -22,7 +20,6 @@ import {
 import type { ComponentType, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
-import type { SidebarThreadStatus } from "../Sidebar.logic";
 import { formatRelativeTimeLabel, formatShortTimestamp } from "../../timestampFormat";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { SlotLayoutView } from "../SlotLayoutView";
@@ -51,14 +48,7 @@ export const THREAD_CARD_STATUS_LABEL_CLASS =
   "flex items-center self-center justify-self-end tabular-nums text-secondary-label transition-opacity";
 export const THREAD_CARD_PIN_CLASS = "size-3 shrink-0 text-muted-foreground/65";
 
-export type ThreadCardStatusIcon =
-  | "working"
-  | "waiting"
-  | "input"
-  | "approval"
-  | "failed"
-  | "done"
-  | "woke";
+export type ThreadCardStatusIcon = "working" | "input" | "approval" | "failed" | "done" | "woke";
 
 export interface ThreadCardStatus {
   readonly label: string;
@@ -66,74 +56,22 @@ export interface ThreadCardStatus {
   readonly className: string;
 }
 
-/**
- * The status that a thread card shows, or null for a plain ready thread. Status hues follow the
- * system-wide convention set by sidebar v1 and the mobile Live Activity/widgets (amber approval,
- * indigo input, sky working), so a thread reads the same color everywhere it surfaces.
- */
-export function resolveThreadCardStatus(input: {
-  readonly status: SidebarThreadStatus;
-  readonly isWoke: boolean;
-  readonly isUnread: boolean;
-  readonly goalActive: boolean;
-}): ThreadCardStatus | null {
-  switch (input.status) {
-    case "working":
-      return {
-        // A native /goal keeps the agent going across turns until it is met.
-        label: input.goalActive ? "Goal" : "Working",
-        icon: "working",
-        // No shimmer: a label that animates forever is noise in a sidebar
-        // full of them (and repaints every vsync on high-refresh displays).
-        className: "text-info",
-      };
-    case "waiting":
-      // Waiting is calm background presence (post-settle background
-      // roster), not active progress, so the label keeps full strength.
-      return { label: "Waiting", icon: null, className: "text-muted-foreground" };
-    case "approval":
-      return { label: "Approval", icon: "approval", className: "text-warning-foreground" };
-    case "input":
-      return { label: "Input", icon: "input", className: "text-indigo-600 dark:text-indigo-300" };
-    case "limited":
-      return { label: "Limited", icon: "failed", className: "text-warning" };
-    case "failed":
-      return { label: "Failed", icon: "failed", className: "text-error" };
-    case "ready":
-      if (input.isWoke) return { label: "Woke", icon: "woke", className: "text-warning" };
-      return input.isUnread ? { label: "Done", icon: "done", className: "text-success" } : null;
-  }
-}
-
-/** The glyph of a thread card status icon. */
-export function ThreadCardStatusGlyph(props: { icon: ThreadCardStatusIcon; className?: string }) {
-  const className = cn("size-4 shrink-0", props.className);
-  switch (props.icon) {
-    case "working":
-      return <CircleDashedIcon aria-hidden className={className} />;
-    case "waiting":
-      return <HourglassIcon aria-hidden className={className} />;
-    case "input":
-      return <MessageCircleQuestionIcon aria-hidden className={className} />;
-    case "approval":
-      return <ShieldQuestionIcon aria-hidden className={className} />;
-    case "failed":
-      return <CircleAlertIcon aria-hidden className={className} />;
-    case "done":
-      return <CircleCheckIcon aria-hidden className={className} />;
-    case "woke":
-      return <AlarmClockIcon aria-hidden className={className} />;
-  }
-}
-
 /** The status label inside the `data-sidebar-status` element, for every status but Woke. */
 export function ThreadCardStatusBadge(props: { status: ThreadCardStatus; trailing?: ReactNode }) {
   const { status } = props;
   return (
     <span className={cn("inline-flex items-center gap-1 font-medium", status.className)}>
-      {status.icon === null || status.icon === "woke" ? null : (
-        <ThreadCardStatusGlyph icon={status.icon} />
-      )}
+      {status.icon === "working" ? (
+        <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+      ) : status.icon === "input" ? (
+        <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
+      ) : status.icon === "approval" ? (
+        <ShieldQuestionIcon aria-hidden className="size-4 shrink-0" />
+      ) : status.icon === "failed" ? (
+        <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
+      ) : status.icon === "done" ? (
+        <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+      ) : null}
       {/* The label alone is the live region: a role="status" wrapper around a
           ticking duration would make screen readers announce every second. */}
       <span role="status">{status.label}</span>
