@@ -130,6 +130,27 @@ describe("decodePullRequestListJson", () => {
 });
 
 describe("decodePullRequestJson", () => {
+  it("preserves the source commit used by review guides", () => {
+    const headSha = "3761752e895bc343b031539eb30802c3080b564b";
+    const detail = expectSuccess(
+      decodePullRequestJson(asJson(pullRequest({ lastMergeSourceCommit: { commitId: headSha } }))),
+    );
+
+    expect(detail).toMatchObject({ headSha });
+  });
+
+  it.each([undefined, null, {}, { commitId: null }, { commitId: " " }])(
+    "accepts a pull request without a usable source commit: %j",
+    (lastMergeSourceCommit) => {
+      const detail = expectSuccess(
+        decodePullRequestJson(asJson(pullRequest({ lastMergeSourceCommit }))),
+      );
+
+      expect(detail).not.toBeNull();
+      expect(detail).not.toHaveProperty("headSha");
+    },
+  );
+
   it("reads reviewers as review requests", () => {
     const detail = expectSuccess(
       decodePullRequestJson(

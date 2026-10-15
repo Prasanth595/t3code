@@ -351,9 +351,12 @@ export const make = Effect.gen(function* () {
         const location = pullRequest.location;
         // The file count is two reads past the pull request itself, and it is the only thing
         // riding on them, so a failure leaves it unknown rather than losing the whole detail.
-        const changedFiles =
+        // The newest push's head rides along: Azure records an iteration as soon as a push lands
+        // but only moves `lastMergeSourceCommit` once it has redone the trial merge, so the
+        // pull request's own answer can name the push before.
+        const latest =
           location === null
-            ? 0
+            ? { changedFiles: 0, headSha: undefined }
             : yield* cli.listIterations({ cwd: input.cwd, location, number: input.number }).pipe(
                 Effect.flatMap((iterations) =>
                   listLatestChanges({
@@ -361,15 +364,23 @@ export const make = Effect.gen(function* () {
                     location,
                     number: input.number,
                     iterations,
-                  }),
+                  }).pipe(
+                    Effect.map((listed) => listed.changes.length),
+                    Effect.orElseSucceed(() => 0),
+                    Effect.map((changedFiles) => ({
+                      changedFiles,
+                      headSha: iterations.at(-1)?.headCommit,
+                    })),
+                  ),
                 ),
-                Effect.map((listed) => listed.changes.length),
-                Effect.orElseSucceed(() => 0),
+                Effect.orElseSucceed(() => ({ changedFiles: 0, headSha: undefined })),
               );
+        const headSha = latest.headSha ?? pullRequest.headSha;
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
+          ...(headSha === undefined ? {} : { headSha }),
           body: pullRequest.body,
-          changedFiles,
+          changedFiles: latest.changedFiles,
           mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
           closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
           reviewers: pullRequest.reviewers,

@@ -169,6 +169,65 @@ describe("getChangeRequestSummary", () => {
 });
 
 describe("getChangeRequest", () => {
+  it.effect("reports the source commit even when file counting fails", () =>
+    Effect.gen(function* () {
+      const headSha = "3761752e895bc343b031539eb30802c3080b564b";
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed({ ...PULL_REQUEST, headSha }),
+            listIterations: () =>
+              Effect.fail(
+                new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                  command: "az",
+                  cwd: "/w",
+                  operation: "listIterations",
+                  cause: new Error("iterations unavailable"),
+                }),
+              ),
+          }),
+        ),
+      );
+
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+
+      expect(detail.headSha).toBe(headSha);
+      expect(detail.changedFiles).toBe(0);
+    }),
+  );
+
+  it.effect("reports the newest push over a source commit Azure has not caught up to", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed({ ...PULL_REQUEST, headSha: "stale" }),
+            listIterations: () =>
+              Effect.succeed([
+                { id: 1, headCommit: "stale", mergeBaseCommit: "base" },
+                { id: 2, headCommit: "fresh", mergeBaseCommit: "base" },
+              ]),
+            listIterationChanges: () => Effect.succeed({ changes: [], truncated: false }),
+          }),
+        ),
+      );
+
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+
+      expect(detail.headSha).toBe("fresh");
+    }),
+  );
+
   it.effect("still reports the file count the detail panel needs", () =>
     Effect.gen(function* () {
       const provider = yield* make.pipe(
