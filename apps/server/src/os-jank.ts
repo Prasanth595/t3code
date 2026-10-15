@@ -4,6 +4,7 @@ import {
   mergePathEntries,
   readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
+  resolveWindowsBaselinePath,
   resolveWindowsEnvironment,
 } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
@@ -61,12 +62,16 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
   const platform = yield* HostProcess.Platform;
   const env = yield* HostProcess.Environment;
 
-  // Same gate as POSIX below: the desktop merges the PowerShell PATH and the
-  // well-known CLI dirs into process.env before the backend starts
-  // (installWindowsEnvironment in apps/desktop/src/shell/DesktopShellEnvironment.ts),
-  // so the PowerShell probes would only repeat that work on the event loop.
   if (platform === "win32") {
-    if (options?.shellEnvironmentPrepared === true) return;
+    if (options?.shellEnvironmentPrepared === true) {
+      // The desktop already merged the PowerShell PATH into process.env before
+      // starting this server (installWindowsEnvironment in
+      // apps/desktop/src/shell/DesktopShellEnvironment.ts). Only the cheap known
+      // CLI dir gap-fill runs here, so no PowerShell probe is spawned.
+      const path = resolveWindowsBaselinePath(env);
+      if (path) env.PATH = path;
+      return;
+    }
     const repairedEnvironment = yield* resolveWindowsEnvironment(env).pipe(
       Effect.catchDefect((defect) =>
         Effect.sync(() => {

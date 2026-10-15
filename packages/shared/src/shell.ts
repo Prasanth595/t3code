@@ -793,6 +793,20 @@ export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArra
   ];
 }
 
+/**
+ * Windows baseline PATH: the shell PATH (when one was read), then the inherited
+ * PATH, then well-known CLI dirs appended as gap-fill. Spawns nothing, so a
+ * desktop-prepared server can use it without a PowerShell probe.
+ */
+export function resolveWindowsBaselinePath(
+  env: NodeJS.ProcessEnv,
+  shellPath?: string | undefined,
+): string | undefined {
+  const mergedPath = mergePathValues(shellPath, readEnvPath(env), "win32");
+  const knownCliPath = resolveKnownWindowsCliDirs(env).join(WINDOWS_PATH_DELIMITER);
+  return mergePathValues(mergedPath, knownCliPath, "win32");
+}
+
 function readWindowsEnvironmentSafely(
   readEnvironment: WindowsShellEnvironmentReader,
   names: ReadonlyArray<string>,
@@ -823,15 +837,12 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
 ): Effect.fn.Return<Partial<NodeJS.ProcessEnv>, never, FileSystem.FileSystem | Path.Path> {
   const readEnvironment = yield* WindowsShellEnvironment;
   const commandAvailable = yield* CommandAvailability;
-  const inheritedPath = readEnvPath(env);
   const shellPath = readWindowsEnvironmentSafely(readEnvironment, ["PATH"], {
     loadProfile: false,
   }).PATH;
-  const mergedPath = mergePathValues(shellPath, inheritedPath, "win32");
-  const knownCliPath = resolveKnownWindowsCliDirs(env).join(WINDOWS_PATH_DELIMITER);
-  // Preserve the order a user's shell uses. These directories fill gaps when
+  // Preserve the order a user's shell uses. Known CLI dirs fill gaps when
   // desktop apps launch without the full interactive-shell PATH.
-  const baselinePath = mergePathValues(mergedPath, knownCliPath, "win32");
+  const baselinePath = resolveWindowsBaselinePath(env, shellPath);
   const baselinePatch: Partial<NodeJS.ProcessEnv> = baselinePath ? { PATH: baselinePath } : {};
   const baselineEnv = mergeWindowsEnv(env, baselinePatch);
 

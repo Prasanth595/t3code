@@ -132,7 +132,12 @@ effectIt.effect("keeps mise's PATH record with the login shell PATH", () =>
 
 effectIt.effect("skips the Windows PowerShell PATH probes when the desktop prepared PATH", () =>
   Effect.gen(function* () {
-    const env: NodeJS.ProcessEnv = { PATH: "C:\\Prepared" };
+    const env: NodeJS.ProcessEnv = {
+      PATH: "C:\\Prepared;C:\\Users\\me\\AppData\\Roaming\\npm",
+      APPDATA: "C:\\Users\\me\\AppData\\Roaming",
+      LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local",
+      USERPROFILE: "C:\\Users\\me",
+    };
     const reads: Array<ReadonlyArray<string>> = [];
     const commands: string[] = [];
 
@@ -155,7 +160,20 @@ effectIt.effect("skips the Windows PowerShell PATH probes when the desktop prepa
 
     assert.deepEqual(reads, []);
     assert.deepEqual(commands, []);
-    assert.equal(env.PATH, "C:\\Prepared");
+    // Known CLI dirs are appended; the npm dir already on PATH is not duplicated.
+    assert.equal(
+      env.PATH,
+      [
+        "C:\\Prepared",
+        "C:\\Users\\me\\AppData\\Roaming\\npm",
+        "C:\\Users\\me\\AppData\\Local\\Programs\\nodejs",
+        "C:\\Users\\me\\AppData\\Local\\Volta\\bin",
+        "C:\\Users\\me\\AppData\\Local\\pnpm",
+        "C:\\Users\\me\\.local\\bin",
+        "C:\\Users\\me\\.bun\\bin",
+        "C:\\Users\\me\\scoop\\shims",
+      ].join(";"),
+    );
   }),
 );
 
