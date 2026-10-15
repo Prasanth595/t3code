@@ -1599,10 +1599,12 @@ export default function GitActionsControl({
     canWriteSourceControl && isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
 
   // The dropdown trigger stays disabled while every menu entry is unavailable, so it
-  // never opens onto a menu with no clickable options (#13406). Publishing renders as
-  // a separate menu entry, so its eligibility counts toward availability too.
+  // never opens onto a menu with no clickable options (#13406). Menu items render as
+  // disabled without the write permission, so that gates the item check; publishing
+  // renders as a separate menu entry, so its eligibility counts toward availability too.
   const hasAvailableGitActions =
-    gitActionMenuItems.some((item) => !item.disabled) || canPublishRepository;
+    (canWriteSourceControl && gitActionMenuItems.some((item) => !item.disabled)) ||
+    canPublishRepository;
 
   const initializeGit = () => {
     void (async () => {
