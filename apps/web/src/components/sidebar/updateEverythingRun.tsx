@@ -85,7 +85,12 @@ export function retryFailedUpdateRunServers(
     void update(target, { quiet: true }).then((outcome) =>
       settleUpdateRunMachine(
         target.environmentId,
-        outcome.status === "failed" ? outcome.message : null,
+        // A skipped retry (no permission, disconnected, interrupted) did not update.
+        outcome.status === "updated"
+          ? null
+          : outcome.status === "failed"
+            ? outcome.message
+            : "Could not start the update",
       ),
     );
   }
@@ -186,16 +191,19 @@ const decodeSavedResult = Schema.decodeUnknownOption(Schema.fromJsonString(Saved
 export function saveUpdateEverythingResult(result: UpdateEverythingResult): void {
   const run = appAtomRegistry.get(updateEverythingRunAtom);
   const handedOff = (run?.machines ?? []).flatMap((machine): HandedOffServer[] => {
-    if (machine.result !== null || machine.server === null) return [];
+    if (machine.result !== null) return [];
     const state = appAtomRegistry.get(serverEnvironment.updateStateAtom(machine.environmentId));
+    // A desktop-managed server installs its own feed's version, which only its
+    // update state knows. A server followed from an earlier relaunch keeps its version.
+    const targetVersion =
+      machine.handedOffVersion ??
+      (state.status === "running" ? state.targetVersion : machine.server?.targetVersion);
+    if (targetVersion === undefined) return [];
     return [
       {
         environmentId: machine.environmentId,
         label: machine.label,
-        // A desktop-managed server installs its own feed's version, which only
-        // its update state knows.
-        targetVersion:
-          state.status === "running" ? state.targetVersion : machine.server.targetVersion,
+        targetVersion,
         startedAt: machine.startedAt,
       },
     ];
@@ -262,13 +270,13 @@ export function showUpdateEverythingResult(result: UpdateEverythingResult): void
  * One toast reports them all at the end.
  */
 function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
-  const pending = servers.filter((server) => Date.now() - server.startedAt < HANDOFF_TIMEOUT_MS);
-  if (pending.length === 0) return;
+  // A server already past the timeout still shows, then fails on its first timer tick.
+  if (servers.length === 0) return;
   setUpdateEverythingRun(() => ({
     localVersion: null,
     phase: "servers",
     restartAt: null,
-    machines: pending.map((server) => ({
+    machines: servers.map((server) => ({
       environmentId: server.environmentId,
       label: server.label,
       updatesProviders: false,
@@ -279,10 +287,10 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       failure: null,
     })),
   }));
-  let remaining = pending.length;
+  let remaining = servers.length;
   let updatedServers = 0;
   const failures: string[] = [];
-  for (const server of pending) {
+  for (const server of servers) {
     let settled = false;
     const settle = (failure: string | null) => {
       if (settled) return;
