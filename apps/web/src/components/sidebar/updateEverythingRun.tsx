@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
@@ -8,11 +8,17 @@ import { useEffect } from "react";
 import { APP_VERSION } from "~/branding";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useDesktopUpdateState } from "~/state/desktopUpdate";
+import { serverEnvironment } from "~/state/server";
+import { resolveVersionMismatch } from "~/versionSkew";
+import type { ServerUpdateOutcome, ServerUpdateTarget } from "../ServerUpdateAction";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
+  closeFinishedUpdateRun,
   getUpdateEverythingToastView,
+  isServerUpdateHandedOff,
   type UpdateEverythingResult,
   type UpdateEverythingRun,
+  type UpdateRunMachine,
 } from "./updateEverything.logic";
 
 /** The running "update everything" pass, or null. Outlives the sidebar button. */
@@ -32,24 +38,124 @@ export function setUpdateEverythingRun(
   appAtomRegistry.update(updateEverythingRunAtom, update);
 }
 
-/** Records the result of every update for one machine in the running pass. */
-export function settleUpdateRunMachine(environmentId: EnvironmentId, failed: boolean): void {
+function updateRunMachines(update: (machine: UpdateRunMachine) => UpdateRunMachine): void {
+  setUpdateEverythingRun(
+    (run) => run && closeFinishedUpdateRun({ ...run, machines: run.machines.map(update) }),
+  );
+}
+
+/** Records the result of every update for one machine. `failure` is null when
+    it succeeded. The run ends once every machine is done. */
+export function settleUpdateRunMachine(environmentId: EnvironmentId, failure: string | null): void {
+  updateRunMachines((machine) =>
+    machine.environmentId === environmentId
+      ? { ...machine, result: failure === null ? "done" : "failed", failure }
+      : machine,
+  );
+}
+
+/** Retries each failed server update in the run. */
+export function retryFailedUpdateRunServers(
+  update: (
+    target: ServerUpdateTarget,
+    options: { readonly quiet: boolean },
+  ) => Promise<ServerUpdateOutcome>,
+): void {
+  const targets = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
+    (machine) => (machine.result === "failed" && machine.server !== null ? [machine.server] : []),
+  );
+  const retried = new Set(targets.map((target) => target.environmentId));
+  const startedAt = Date.now();
+  updateRunMachines((machine) =>
+    retried.has(machine.environmentId)
+      ? { ...machine, result: null, failure: null, startedAt }
+      : machine,
+  );
+  for (const target of targets) {
+    void update(target, { quiet: true }).then((outcome) =>
+      settleUpdateRunMachine(
+        target.environmentId,
+        outcome.status === "failed" ? outcome.message : null,
+      ),
+    );
+  }
+}
+
+/** Drops the finished machines, which ends a run that only kept failures. */
+export function dismissSettledUpdateRunMachines(): void {
   setUpdateEverythingRun(
     (run) =>
-      run && {
+      run &&
+      closeFinishedUpdateRun({
         ...run,
-        machines: run.machines.map((machine) =>
-          machine.environmentId === environmentId
-            ? { ...machine, result: failed ? "failed" : "done" }
-            : machine,
-        ),
-      },
+        machines: run.machines.filter((machine) => machine.result === null),
+      }),
   );
+}
+
+/** Resolves once a server restarts into its update, or its update `finished` first. */
+export function waitForServerUpdateHandoff(
+  environmentId: EnvironmentId,
+  finished: Promise<unknown>,
+): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      queueMicrotask(() => unsubscribe());
+      resolve();
+    };
+    const unsubscribe = appAtomRegistry.subscribe(
+      serverEnvironment.updateStateAtom(environmentId),
+      (state) => {
+        if (isServerUpdateHandedOff(state)) finish();
+      },
+      { immediate: true },
+    );
+    void finished.then(finish, finish);
+  });
+}
+
+let decideRestart: ((restart: boolean) => void) | null = null;
+
+/**
+ * Counts down to this app's relaunch. Resolves true when the countdown ends,
+ * or false when the user chose to restart later with {@link postponeUpdateRestart}.
+ */
+export function waitForUpdateRestart(delayMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const decide = (restart: boolean) => {
+      clearTimeout(timer);
+      decideRestart = null;
+      resolve(restart);
+    };
+    const timer = setTimeout(() => decide(true), delayMs);
+    decideRestart = decide;
+    setUpdateEverythingRun(
+      (run) => run && { ...run, phase: "countdown", restartAt: Date.now() + delayMs },
+    );
+  });
+}
+
+/** Keeps this app on its version. Its downloaded update waits on the update button. */
+export function postponeUpdateRestart(): void {
+  decideRestart?.(false);
 }
 
 const SAVED_RESULT_KEY = "t3code:update-everything-result:v1";
 // A result older than this belongs to an install that never relaunched the app.
 const SAVED_RESULT_MAX_AGE_MS = 10 * 60 * 1000;
+// Covers a background service's 30-minute trial start, like the server update itself.
+const HANDOFF_TIMEOUT_MS = 32 * 60 * 1000;
+
+const HandedOffServer = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  targetVersion: Schema.String,
+  startedAt: Schema.Number,
+});
+type HandedOffServer = typeof HandedOffServer.Type;
 
 const SavedResult = Schema.Struct({
   savedAt: Schema.Number,
@@ -57,15 +163,44 @@ const SavedResult = Schema.Struct({
   updatedServers: Schema.Number,
   updatedProviders: Schema.Number,
   failures: Schema.Array(Schema.String),
+  // Older saved results have no handed-off servers.
+  handedOff: Schema.optional(Schema.Array(HandedOffServer)),
 });
 const decodeSavedResult = Schema.decodeUnknownOption(Schema.fromJsonString(SavedResult));
 
-/** Keeps a result through this app's relaunch. Call it right before the install. */
+/**
+ * Keeps a result through this app's relaunch. Call it right before the
+ * install. Servers still restarting are saved too, so the sidebar keeps
+ * following them after the relaunch.
+ */
 export function saveUpdateEverythingResult(result: UpdateEverythingResult): void {
+  const run = appAtomRegistry.get(updateEverythingRunAtom);
+  const handedOff = (run?.machines ?? []).flatMap((machine): HandedOffServer[] => {
+    if (machine.result !== null || machine.server === null) return [];
+    const state = appAtomRegistry.get(serverEnvironment.updateStateAtom(machine.environmentId));
+    return [
+      {
+        environmentId: machine.environmentId,
+        label: machine.label,
+        // A desktop-managed server installs its own feed's version, which only
+        // its update state knows.
+        targetVersion:
+          state.status === "running" ? state.targetVersion : machine.server.targetVersion,
+        startedAt: machine.startedAt,
+      },
+    ];
+  });
   try {
     window.localStorage.setItem(
       SAVED_RESULT_KEY,
-      JSON.stringify({ ...result, savedAt: Date.now() } satisfies typeof SavedResult.Type),
+      JSON.stringify({
+        savedAt: Date.now(),
+        localVersion: result.localVersion,
+        updatedServers: result.updatedServers,
+        updatedProviders: result.updatedProviders,
+        failures: result.failures,
+        handedOff,
+      } satisfies typeof SavedResult.Type),
     );
   } catch {
     // Without storage the summary is lost with the relaunch; the update still runs.
@@ -80,7 +215,7 @@ export function clearSavedUpdateEverythingResult(): void {
   }
 }
 
-function takeSavedUpdateEverythingResult(): UpdateEverythingResult | null {
+function takeSavedUpdateEverythingResult(): typeof SavedResult.Type | null {
   try {
     const raw = window.localStorage.getItem(SAVED_RESULT_KEY);
     if (raw === null) return null;
@@ -111,19 +246,89 @@ export function showUpdateEverythingResult(result: UpdateEverythingResult): void
   );
 }
 
+/**
+ * Follows servers that were restarting when this app relaunched. Each is done
+ * once it reports its target version, or failed after the handoff timeout.
+ * One toast reports them all at the end.
+ */
+function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
+  const pending = servers.filter((server) => Date.now() - server.startedAt < HANDOFF_TIMEOUT_MS);
+  if (pending.length === 0) return;
+  setUpdateEverythingRun(() => ({
+    localVersion: null,
+    phase: "servers",
+    restartAt: null,
+    machines: pending.map((server) => ({
+      environmentId: server.environmentId,
+      label: server.label,
+      updatesProviders: false,
+      server: null,
+      handedOffVersion: server.targetVersion,
+      startedAt: server.startedAt,
+      result: null,
+      failure: null,
+    })),
+  }));
+  let remaining = pending.length;
+  let updatedServers = 0;
+  const failures: string[] = [];
+  for (const server of pending) {
+    let settled = false;
+    const settle = (failure: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      queueMicrotask(() => unsubscribe());
+      settleUpdateRunMachine(server.environmentId, failure);
+      if (failure === null) updatedServers += 1;
+      else failures.push(`${server.label}: ${failure}`);
+      remaining -= 1;
+      if (remaining === 0) {
+        showUpdateEverythingResult({
+          localVersion: null,
+          updatedServers,
+          updatedProviders: 0,
+          failures,
+          restarting: [],
+        });
+      }
+    };
+    const timer = setTimeout(
+      () => settle(`Not back after ${HANDOFF_TIMEOUT_MS / 60_000} minutes`),
+      server.startedAt + HANDOFF_TIMEOUT_MS - Date.now(),
+    );
+    const unsubscribe = appAtomRegistry.subscribe(
+      serverEnvironment.configValueAtom(server.environmentId),
+      (config) => {
+        if (
+          config !== null &&
+          resolveVersionMismatch(config.environment.serverVersion, server.targetVersion) === null
+        ) {
+          settle(null);
+        }
+      },
+      { immediate: true },
+    );
+  }
+}
+
 let notifiedNotAppliedVersion: string | null = null;
 
 /**
  * Desktop launch notices for updates: the summary of a pass that ended with
  * this app's relaunch, and a warning when the last install did not apply.
- * Mount once at the app root.
+ * Servers still restarting from that pass stay in the sidebar until they are
+ * back. Mount once at the app root.
  */
 export function DesktopUpdateLaunchNotice() {
   const notAppliedVersion = useDesktopUpdateState()?.notAppliedVersion ?? null;
 
   useEffect(() => {
-    const result = takeSavedUpdateEverythingResult();
-    if (result) showUpdateEverythingResult(result);
+    const saved = takeSavedUpdateEverythingResult();
+    if (!saved) return;
+    const handedOff = saved.handedOff ?? [];
+    showUpdateEverythingResult({ ...saved, restarting: handedOff.map((server) => server.label) });
+    followHandedOffServers(handedOff);
   }, []);
 
   useEffect(() => {
