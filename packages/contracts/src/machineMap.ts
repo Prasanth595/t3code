@@ -548,6 +548,17 @@ export const DesiredClient = Schema.Struct({
 });
 export type DesiredClient = typeof DesiredClient.Type;
 
+/** MM-917: a browser client as the machine that it may use sees it, by the keys it holds. */
+export const DesiredBrowserClient = Schema.Struct({
+  id: ClientId,
+  name: TrimmedNonEmptyString,
+  thumbprints: Schema.Array(TrimmedNonEmptyString),
+  level: MachineLevel,
+  expiresAt: Schema.NullOr(MapTime),
+  revertLevel: Schema.NullOr(MachineLevel),
+});
+export type DesiredBrowserClient = typeof DesiredBrowserClient.Type;
+
 /** What one machine must apply (MM-603, MM-1202). */
 export const MachineDesiredState = Schema.Struct({
   revision: NonNegativeInt,
@@ -564,6 +575,11 @@ export const MachineDesiredState = Schema.Struct({
    * from portals before native clients.
    */
   clients: Schema.optionalKey(Schema.Array(DesiredClient)),
+  /**
+   * MM-917: the clients with browser keys and an arrow above `none` to this machine. Absent from
+   * portals before browser keys; an older machine ignores it.
+   */
+  browserClients: Schema.optionalKey(Schema.Array(DesiredBrowserClient)),
 });
 export type MachineDesiredState = typeof MachineDesiredState.Type;
 

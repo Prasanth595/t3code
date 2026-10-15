@@ -45,6 +45,7 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { deriveAuthClientMetadata } from "./utils.ts";
 import { makeCloudflareAccessVerifier } from "./CloudflareAccess.ts";
 import * as MachineMapState from "../fork/machineMap/MachineMapState.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
@@ -1241,6 +1242,27 @@ export const make = Effect.gen(function* () {
       ? undefined
       : makeCloudflareAccessVerifier(config.cloudflareAccess);
 
+  /**
+   * Fork (MM-917): an owner browser that proves its key may get the arrow of its client instead of
+   * the owner access. A missing or bad proof keeps the owner access while `clientAccess` observes.
+   */
+  const ownerBrowserGrant = (request: HttpServerRequest.HttpServerRequest, email: string) =>
+    Option.isNone(machineMap) || request.headers.dpop === undefined
+      ? Effect.succeed(undefined)
+      : verifyRequestDpopProof({ request }).pipe(
+          Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.option,
+          Effect.flatMap((thumbprint) => {
+            const client = deriveAuthClientMetadata({ request });
+            return machineMap.value.browserGrant({
+              thumbprint: Option.getOrUndefined(thumbprint),
+              email,
+              describedAs: [client.browser, client.os].filter(Boolean).join(" on "),
+            });
+          }),
+        );
+
   const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
     (request) =>
       verifyCloudflareAccess === undefined
@@ -1250,12 +1272,18 @@ export const make = Effect.gen(function* () {
               identity === undefined
                 ? Effect.succeed(undefined)
                 : identity.kind === "owner"
-                  ? issuePairingCredentialForSubject({
-                      scopes: AuthStandardClientScopes,
-                      subject: "one-time-token",
-                      label: `cloudflare-access ${identity.subject}`,
-                      ttl: Duration.minutes(2),
-                    })
+                  ? ownerBrowserGrant(request, identity.subject).pipe(
+                      Effect.flatMap((grant) =>
+                        issuePairingCredentialForSubject({
+                          ...(grant ?? {
+                            scopes: AuthStandardClientScopes,
+                            subject: "one-time-token",
+                            label: `cloudflare-access ${identity.subject}`,
+                          }),
+                          ttl: Duration.minutes(2),
+                        }),
+                      ),
+                    )
                   : Option.isNone(machineMap)
                     ? Effect.succeed(undefined)
                     : machineMap.value.machineGrant(identity.commonName).pipe(

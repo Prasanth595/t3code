@@ -6,6 +6,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { primaryServerConfigAtom } from "../state/server";
 import { useEnvironments } from "../state/environments";
 import { connectPairing as connectPairingAtom } from "./onboarding";
+import { browserKeyProof } from "./browserKeyProof";
 
 /**
  * Fork: Cloudflare Access login for sibling environments. The page's own
@@ -46,9 +47,14 @@ export async function requestSiblingPairingCredential(
   origin: string,
   credentials: RequestCredentials = "include",
 ): Promise<string> {
-  const response = await fetch(`${origin}${CLOUDFLARE_ACCESS_PAIRING_PATH}`, {
+  const url = `${origin}${CLOUDFLARE_ACCESS_PAIRING_PATH}`;
+  // MM-917: the machine finds the client of this browser by its key. The desktop app pairs with
+  // its machine token instead, so it sends no proof.
+  const proof = credentials === "include" ? await browserKeyProof("POST", url) : null;
+  const response = await fetch(url, {
     method: "POST",
     credentials,
+    ...(proof === null ? {} : { headers: { dpop: proof } }),
   });
   if (!response.ok) {
     throw new Error(`${origin} answered ${response.status}.`);

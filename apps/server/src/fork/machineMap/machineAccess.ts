@@ -6,6 +6,7 @@ import {
   type ArrowRecord,
   type AuthEnvironmentScope,
   clientSessionSubject,
+  type DesiredBrowserClient,
   type DesiredClient,
   type AuthMcpClientAccess,
   MACHINE_LEVEL_SCOPES,
@@ -87,10 +88,36 @@ export const clientsWithChangedLevel = (
   next: MachineDesiredState | null,
   nowMs: number,
 ): ReadonlyArray<DesiredClient["id"]> => {
-  const clients = (desired: MachineDesiredState | null) =>
-    (desired?.clients ?? []).map((client) => [client.id, client] as const);
-  return sourcesWithChangedLevel(clients(previous), previousAtMs, clients(next), nowMs);
+  return sourcesWithChangedLevel(clientArrows(previous), previousAtMs, clientArrows(next), nowMs);
 };
+
+/**
+ * MM-917: the grant for a browser that proved a key that an approved client holds, or undefined
+ * for an unknown key, `none` or an expired arrow.
+ */
+export const browserGrantFor = (
+  desired: MachineDesiredState,
+  thumbprint: string,
+  nowMs: number,
+): MachineGrant | undefined => {
+  const client = desired.browserClients?.find((candidate) =>
+    candidate.thumbprints.includes(thumbprint),
+  );
+  if (client === undefined) return undefined;
+  const level = effectiveLevel(client, nowMs);
+  if (level === "none") return undefined;
+  return {
+    subject: clientSessionSubject(client.id),
+    scopes: MACHINE_LEVEL_SCOPES[level],
+    label: `client ${client.name}`,
+  };
+};
+
+/** Every client of a desired state with its arrow: app tokens (MM-912) and browser keys (MM-917). */
+const clientArrows = (desired: MachineDesiredState | null) =>
+  [...(desired?.clients ?? []), ...(desired?.browserClients ?? [])].map(
+    (client: DesiredClient | DesiredBrowserClient) => [client.id, client] as const,
+  );
 
 const MACHINE_SUBJECT_PREFIX = "machine:";
 const CLIENT_SUBJECT_PREFIX = "client:";
@@ -207,7 +234,7 @@ export const nextExpiry = (
     ...desired.arrowsIn
       .filter((arrow) => arrow.to === desired.self.id)
       .map((arrow) => [machineSessionSubject(arrow.from), arrow] as const),
-    ...(desired.clients ?? []).map((client) => [clientSessionSubject(client.id), client] as const),
+    ...clientArrows(desired).map(([id, client]) => [clientSessionSubject(id), client] as const),
   ].flatMap(([subject, arrow]) => {
     if (arrow.expiresAt === null || (arrow.revertLevel ?? "none") === arrow.level) return [];
     const atMs = Date.parse(arrow.expiresAt);

@@ -8,7 +8,9 @@
  */
 import {
   type AuthMcpClientAccess,
+  type ClientAccessMode,
   DEFAULT_MACHINE_MAP_PORTAL_URL,
+  type MachineToPortal,
   MachineCommand,
   MachineDesiredState,
   type MachineMapTokenHeaders,
@@ -23,6 +25,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -33,6 +36,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import {
   type MachineGrant,
+  browserGrantFor,
   isLocalDesktopSubject,
   clientGrantFor,
   machineGrantFor,
@@ -89,6 +93,8 @@ const encodeToken = Schema.encodeEffect(Schema.fromJsonString(MachineToken));
 export interface LocalState {
   /** The `machineMap` setting. */
   readonly enabled: boolean;
+  /** MM-916: the `clientAccess` setting. */
+  readonly clientAccess: ClientAccessMode;
   readonly portalUrl: string;
   readonly token: MachineToken | null;
   readonly saved: SavedState;
@@ -135,6 +141,17 @@ export class MachineMapState extends Context.Service<
     readonly peerOrigins: () => ReadonlyArray<string>;
     /** MM-1305: the grant for a service token that is another machine with an arrow into this one. */
     readonly machineGrant: (tokenClientId: string) => Effect.Effect<MachineGrant | undefined>;
+    /**
+     * MM-917: the grant for an owner browser sign-in with a proven key, or undefined for the owner
+     * access of today. An unknown key goes to the portal as waiting, at most once a minute.
+     */
+    readonly browserGrant: (input: {
+      readonly thumbprint: string | undefined;
+      readonly email: string;
+      readonly describedAs: string;
+    }) => Effect.Effect<MachineGrant | undefined>;
+    /** MM-906: browser keys that wait to reach the portal. `MachineMap` sends them. */
+    readonly clientSeen: Queue.Dequeue<Extract<MachineToPortal, { _tag: "clientSeen" }>>;
     /** MM-1307: the MCP client of a machine session whose arrow has agent tools. */
     readonly mcpClient: (session: {
       readonly sessionId: string;
@@ -190,8 +207,12 @@ const make = Effect.gen(function* () {
   );
   // Settings that fail to load keep the machine map off: no connection and no auth change.
   const settingAtStart = yield* settings.getSettings.pipe(
-    Effect.map((current) => current.machineMap),
-    Effect.orElseSucceed(() => ({ enabled: false, portalUrl: DEFAULT_MACHINE_MAP_PORTAL_URL })),
+    Effect.map((current) => ({ ...current.machineMap, clientAccess: current.clientAccess })),
+    Effect.orElseSucceed(() => ({
+      enabled: false,
+      portalUrl: DEFAULT_MACHINE_MAP_PORTAL_URL,
+      clientAccess: "off" as const,
+    })),
   );
   const state = yield* SubscriptionRef.make<LocalState>({
     ...settingAtStart,
@@ -199,11 +220,18 @@ const make = Effect.gen(function* () {
     saved: savedOnDisk,
   });
   yield* settings.streamChanges.pipe(
-    Stream.runForEach(({ machineMap }) =>
+    Stream.runForEach(({ machineMap, clientAccess }) =>
       SubscriptionRef.update(state, (local) =>
-        local.enabled === machineMap.enabled && local.portalUrl === machineMap.portalUrl
+        local.enabled === machineMap.enabled &&
+        local.portalUrl === machineMap.portalUrl &&
+        local.clientAccess === clientAccess
           ? local
-          : { ...local, enabled: machineMap.enabled, portalUrl: machineMap.portalUrl },
+          : {
+              ...local,
+              enabled: machineMap.enabled,
+              portalUrl: machineMap.portalUrl,
+              clientAccess,
+            },
       ),
     ),
     Effect.forkScoped,
@@ -280,6 +308,33 @@ const make = Effect.gen(function* () {
       ? Effect.never
       : SubscriptionRef.changes(state).pipe(Stream.filter(isPaused), Stream.runHead, Effect.asVoid);
 
+  // MM-906: a waiting key reaches the portal at most once a minute. The newest reports win.
+  const clientSeen = yield* Queue.sliding<Extract<MachineToPortal, { _tag: "clientSeen" }>>(50);
+  // Only owner sign-ins with a valid key proof add entries, so the cap is a safety net.
+  const lastReported = new Map<string, number>();
+  const browserGrant: MachineMapState["Service"]["browserGrant"] = (input) =>
+    Effect.gen(function* () {
+      const local = yield* SubscriptionRef.get(state);
+      const desired = local.enabled ? local.saved.desired : null;
+      if (desired === null || local.clientAccess === "off" || input.thumbprint === undefined) {
+        return undefined;
+      }
+      const nowMs = yield* Clock.currentTimeMillis;
+      const grant = browserGrantFor(desired, input.thumbprint, nowMs);
+      if (grant !== undefined) return grant;
+      if (nowMs - (lastReported.get(input.thumbprint) ?? 0) >= 60_000) {
+        if (lastReported.size >= 1000) lastReported.clear();
+        lastReported.set(input.thumbprint, nowMs);
+        yield* Queue.offer(clientSeen, {
+          _tag: "clientSeen",
+          thumbprint: input.thumbprint,
+          describedAs: input.describedAs.slice(0, 200),
+          email: input.email,
+        });
+      }
+      return undefined;
+    });
+
   return MachineMapState.of({
     snapshot: SubscriptionRef.get(state),
     changes: SubscriptionRef.changes(state),
@@ -298,6 +353,8 @@ const make = Effect.gen(function* () {
     setToken,
     trustsPeerOrigin: (origin) => peerOrigins.has(origin),
     peerOrigins: () => [...peerOrigins].toSorted(),
+    browserGrant,
+    clientSeen,
     machineGrant: (tokenClientId) =>
       Effect.all([activeDesired, Clock.currentTimeMillis]).pipe(
         Effect.map(([desired, nowMs]) =>

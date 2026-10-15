@@ -503,6 +503,8 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       "cloudflareAccessPairingCredential",
       "/api/auth/cloudflare-access/pairing-credential",
       {
+        // MM-917: a browser proves its key with a DPoP proof, so the machine can find its client.
+        headers: OptionalDpopProofHeaders,
         success: AuthPairingCredentialResult,
         error: [EnvironmentAuthInvalidError, EnvironmentInternalError],
       },

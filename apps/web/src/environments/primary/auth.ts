@@ -19,7 +19,9 @@ import {
   stripPairingTokenFromUrl as stripPairingTokenUrl,
 } from "../../pairingUrl";
 
+import { browserKeyProof } from "../../connection/browserKeyProof";
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
+import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 import { runPrimaryHttp } from "../../lib/runtime";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
@@ -182,10 +184,18 @@ function getDesktopBootstrapCredential(): string | null {
 
 export async function fetchSessionState(): Promise<AuthSessionState> {
   return retryTransientBootstrap(async () => {
+    // MM-917: a sign-in through Cloudflare Access proves the browser key. The server reads the
+    // proof only when it makes a new session, and ignores it otherwise.
     try {
+      const proof = await browserKeyProof(
+        "GET",
+        resolvePrimaryEnvironmentHttpUrl("/api/auth/session"),
+      );
       return await runPrimaryHttp(
         PrimaryEnvironmentHttpClient.pipe(
-          Effect.flatMap((client) => client.auth.session({ headers: {} })),
+          Effect.flatMap((client) =>
+            client.auth.session({ headers: proof === null ? {} : { dpop: proof } }),
+          ),
         ),
       );
     } catch (error) {

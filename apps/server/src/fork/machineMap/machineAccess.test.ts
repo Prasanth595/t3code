@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { AuthStandardClientScopes, ClientId, MACHINE_LEVEL_SCOPES } from "@t3tools/contracts";
 
 import {
+  browserGrantFor,
   clientGrantFor,
   clientsWithChangedLevel,
   machineGrantFor,
@@ -89,6 +90,35 @@ describe("clientGrantFor (MM-912)", () => {
         NOW,
       ),
     ).toEqual([PHONE]);
+  });
+});
+
+describe("browserGrantFor (MM-917)", () => {
+  it("gives a known browser key its client level, and ends with the key or at expiry", () => {
+    const LAPTOP = ClientId.make("client-laptop");
+    const withLaptop = (expiresAt: string | null = null) => ({
+      ...desiredState({}),
+      browserClients: [
+        {
+          id: LAPTOP,
+          name: "Laptop",
+          thumbprints: ["old-key", "laptop-key"],
+          level: "admin" as const,
+          expiresAt,
+          revertLevel: expiresAt === null ? null : ("none" as const),
+        },
+      ],
+    });
+    expect(browserGrantFor(withLaptop(), "laptop-key", NOW)).toEqual({
+      subject: "client:client-laptop",
+      scopes: MACHINE_LEVEL_SCOPES.admin,
+      label: "client Laptop",
+    });
+    expect(browserGrantFor(withLaptop(), "unknown-key", NOW)).toBeUndefined();
+    expect(
+      browserGrantFor(withLaptop("2026-10-13T11:00:00.000Z"), "laptop-key", NOW),
+    ).toBeUndefined();
+    expect(clientsWithChangedLevel(withLaptop(), null, desiredState({}), NOW)).toEqual([LAPTOP]);
   });
 });
 

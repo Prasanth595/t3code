@@ -1157,6 +1157,8 @@ const make = Effect.gen(function* () {
   yield* forkParked(superviseConnection);
   yield* forkParked(watchLocalSettings);
   yield* forkParked(watchExpiries);
+  // MM-906: browser keys that signed in and wait for approval. The outbox keeps them while offline.
+  yield* forkParked(Effect.forever(Queue.take(state.clientSeen).pipe(Effect.flatMap(sendOrQueue))));
   yield* forkParked(statusLoop);
   yield* forkParked(joinPendingCode);
 
