@@ -74,7 +74,7 @@ describe("handoff endpoints shared by web and mobile", () => {
 });
 
 const projection = {
-  runs: [{ ...run("source", 1, from, "source"), startedAt: "2026-10-11T00:00:00Z" }],
+  runs: [{ ...run("source", 1, from, "source"), status: "completed" }],
 } as unknown as OrchestrationV2ThreadProjection;
 
 describe("pending context handoff", () => {
@@ -88,6 +88,17 @@ describe("pending context handoff", () => {
     ).toBe("second");
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
+  });
+  it("stays hidden until a run has history to hand off", () => {
+    const firstRun = (status: string) =>
+      ({
+        runs: [{ ...run("source", 1, from, "source"), status }],
+      }) as unknown as OrchestrationV2ThreadProjection;
+    for (const status of ["running", "cancelled", "rolled_back"]) {
+      expect(
+        resolvePendingHandoff(firstRun(status), { instanceId: to, model: "first" }, []),
+      ).toBeNull();
+    }
   });
   it("only previews a same-provider model change when it needs a fresh native thread", () => {
     const providers = [

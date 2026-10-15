@@ -25,8 +25,10 @@ export function resolvePendingHandoff(
   selection: ModelSelection | null | undefined,
   providers: ReadonlyArray<ServerProvider>,
 ): HandoffEndpoints | null {
+  // Mirrors the server's handoff sources: a thread whose only run is still
+  // running (or was cancelled) has no conversation to hand off yet.
   const from = projection?.runs.findLast(
-    (run) => run.startedAt !== null && run.status !== "rolled_back",
+    (run) => run.status === "completed" || run.status === "failed" || run.status === "interrupted",
   )?.modelSelection;
   if (from === undefined || selection == null) return null;
   const source = providers.find((provider) => provider.instanceId === from.instanceId);
