@@ -10,6 +10,7 @@ import { reportLabel } from "@t3tools/provider-core/server/notification";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 
 /**
  * Wakes the parent of an app-owned delegated task when the task asks a question. The question
@@ -56,7 +57,7 @@ const make = Effect.gen(function* () {
         }
         return;
       }
-      const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents"]);
+      const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents", "runs"]);
       const { runs } = yield* projections.getThreadRecords(child.id, ["runs"]);
       const run =
         runs.find((run) => run.id === event.runId) ??
@@ -71,6 +72,13 @@ const make = Effect.gen(function* () {
         task === undefined ||
         parent.thread.archivedAt !== null ||
         parent.thread.deletedAt !== null
+      ) {
+        return;
+      }
+      // A blocking delegate_task wait delivers the question itself.
+      if (
+        task.completionWake === "settled_only" &&
+        parent.runs.some((run) => run.id === task.runId && !isTerminalRunStatus(run.status))
       ) {
         return;
       }

@@ -667,6 +667,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       parentRunId: parentRun.id,
       parentNodeId: parentRun.rootNodeId!,
       task: "Research the sources",
+      completionWake: "settled_only",
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
@@ -711,6 +712,20 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
         },
         approval,
       ],
+    });
+
+    yield* reactor.handle(question);
+    assert.isFalse(
+      (yield* projections.getThreadProjection(parentThreadId)).messages.some(
+        (message) => message.notification !== undefined,
+      ),
+    );
+    yield* orchestrator.dispatch({
+      type: "delegated_task.wake-policy",
+      commandId: CommandId.make("question-wait-ended"),
+      parentThreadId,
+      taskId: task.id,
+      completionWake: "always",
     });
 
     yield* reactor.handle(question);
