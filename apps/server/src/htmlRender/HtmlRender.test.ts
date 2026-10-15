@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   HTML_RENDER_MEASURE_FONTS,
@@ -49,6 +50,7 @@ const layerHtmlRender = (
         }),
       ),
     ),
+    Layer.provideMerge(McpProviderSessions.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-html-render-" })),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -175,9 +177,11 @@ describe("HtmlRender", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const config = yield* ServerConfig.ServerConfig;
       const htmlRender = yield* HtmlRender.HtmlRender;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const threadId = ThreadId.make("thread-html-render");
 
       const reference = yield* htmlRender.publish({
-        threadId: ThreadId.make("thread-html-render"),
+        threadId,
         html: "<p>Quarterly revenue</p>",
         title: "  Revenue  ",
         height: 9_000,
@@ -197,6 +201,15 @@ describe("HtmlRender", () => {
       const html = yield* fileSystem.readFileString(stored ?? "");
       expect(html).toContain('<style id="t3-theme">');
       expect(html).toContain("<p>Quarterly revenue</p>");
+      // The thread's provider session can attach the page to a call reported
+      // without its result, matched by the call's own arguments, once.
+      const page = { title: "  Revenue  ", height: 9_000 };
+      expect(yield* mcpSessions.takeHtmlRender(ThreadId.make("thread-other"), page)).toBe(
+        undefined,
+      );
+      expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, height: 400 })).toBe(undefined);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(reference);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -223,6 +236,13 @@ describe("HtmlRender", () => {
         expect(yield* storedPages).toHaveLength(1);
         yield* Fiber.interrupt(publishing);
         expect(yield* storedPages).toEqual([]);
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        expect(
+          yield* mcpSessions.takeHtmlRender(ThreadId.make("thread-html-cancel"), {
+            title: "X",
+            height: 200,
+          }),
+        ).toBe(undefined);
       }).pipe(
         Effect.provide(
           layerHtmlRender(

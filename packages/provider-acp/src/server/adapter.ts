@@ -32,8 +32,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -3355,6 +3358,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           } else if (mcpIdentity !== undefined) {
+            const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
+            const input =
+              mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
+            const output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
+            // Antigravity reports its own summary of an MCP call in place of
+            // the result, so a completed html_render can arrive without its
+            // page. The MCP server kept the page for the thread; storing it on
+            // the tool keeps it through later updates of this call.
+            const page =
+              status === "completed" &&
+              resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME &&
+              htmlRenderFromToolItem({ toolName, output }) === undefined
+                ? yield* mcpSessions.takeHtmlRender(context.input.threadId, input)
+                : undefined;
+            if (page !== undefined) {
+              context.tools.set(toolCall.toolCallId, {
+                ...toolCall,
+                data: { ...toolCall.data, rawOutput: { htmlRender: page } },
+              });
+            }
             turnItem = {
               ...base,
               title: null,
@@ -3366,13 +3389,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 )?.source,
               }),
               type: "dynamic_tool",
-              toolName: `${mcpIdentity.server}.${mcpIdentity.tool}`,
-              input:
-                mcpIdentity.input ??
-                unknownRecord(rawInputRecord?.arguments) ??
-                rawInputRecord ??
-                {},
-              ...(rawOutput === undefined ? {} : { output: acpMcpToolCallOutput(rawOutput) }),
+              toolName,
+              input,
+              ...(page !== undefined
+                ? { output: { htmlRender: page } }
+                : output === undefined
+                  ? {}
+                  : { output }),
             };
             yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
             yield* rearmDeferredFinalize(context);
