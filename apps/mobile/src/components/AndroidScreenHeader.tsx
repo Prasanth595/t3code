@@ -83,7 +83,7 @@ export function AndroidScreenHeader(props: {
         title={
           props.titleContent ? (
             <RNHostView matchContents={{ vertical: true }}>
-              <>{props.titleContent}</>
+              <View collapsable={false}>{props.titleContent}</View>
             </RNHostView>
           ) : !props.subtitle ? (
             <NativeText
