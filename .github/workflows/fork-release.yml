@@ -445,7 +445,7 @@ jobs:
     needs: [prepare, build_bundle, desktop, checksums]
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 20
     permissions:
       actions: read
     steps:

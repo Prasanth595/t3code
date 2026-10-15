@@ -72,4 +72,4 @@ When Fork CI, Fork Sync or Fork Release fails, `scripts/fork-notify-agent.sh` po
 
 - The repair agent watches the next run of the same workflow.
 - On a retry, run the workflow with `notify_agent=false`, so that a second failure does not start another agent.
-- A failure right after a failure of the same workflow does not post.
+- A failure right after a failure of the same workflow does not post, when the notify job of the first failure succeeded.
