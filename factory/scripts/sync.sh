@@ -14,8 +14,9 @@
 # Run daily by .github/workflows/factory-sync.yml with GITHUB_TOKEN. Pull
 # requests opened with that token trigger no workflows, which is why the checks
 # run here and the merge happens only when they pass. Needs git, gh and vp.
-# GH_TOKEN is kept from `vp i`, the generator and check.sh, which run upstream's
-# code; only git push and gh see it.
+# GH_TOKEN is dropped from the environment of `vp i`, the generator and
+# check.sh, which run upstream's code. That is hygiene, not isolation: they run
+# as the same user as this script and could still dig the token out of it.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -48,12 +49,14 @@ scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
 # Files or comments on the open issue with this exact title, with the body file.
+# The search is fuzzy, so the exact match happens here, not in gh.
 file_issue() {
   local title=$1 body=$2
   shift 2
   local number
   number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
-    --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+    --jq '.[] | "\(.number)\t\(.title)"' |
+    awk -F '\t' -v title="$title" '$2 == title { print $1; exit }')
   if [[ -n $number ]]; then
     gh issue comment "$number" --body-file "$body"
   else
