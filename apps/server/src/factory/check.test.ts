@@ -33,8 +33,10 @@ const write = (file: string, content: string) => {
   NodeFS.writeFileSync(full, content, { mode: 0o755 });
 };
 
+let runs = 0;
+
 const run = (fail?: string) => {
-  const log = NodePath.join(root, `log-${Math.random().toString(36).slice(2)}`);
+  const log = NodePath.join(root, `log-${runs++}`);
   const result = NodeChildProcess.spawnSync("bash", [script], {
     cwd: root,
     encoding: "utf8",
