@@ -140,34 +140,72 @@ const makeFork = (upstreamLine: string, forkChanges: Record<string, string> = {}
   git(fork, "push", "-q", "-u", "origin", "main");
 };
 
-const run = (env: Record<string, string> = {}) => {
-  const log = NodePath.join(dir, `log-${runs++}`);
-  const result = NodeChildProcess.spawnSync("bash", ["factory/scripts/sync.sh"], {
+// The environment both phases share; prepare gets no token, as in the workflow.
+const phaseEnv = (log: string, env: Record<string, string>, token: boolean) => {
+  const { GH_TOKEN: _ghToken, GITHUB_TOKEN: _githubToken, ...rest } = process.env;
+  return {
+    ...rest,
+    PATH: `${NodePath.join(dir, "bin")}:${process.env.PATH}`,
+    SYNC_UPSTREAM: upstream,
+    SYNC_TEST_LOG: log,
+    ...(token ? { GH_TOKEN: "secret" } : {}),
+    ...env,
+  };
+};
+
+const readLines = (file: string) =>
+  NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8").trim().split("\n") : [];
+
+const prepareIn = (out: string, log: string, env: Record<string, string> = {}) =>
+  NodeChildProcess.spawnSync("bash", ["factory/scripts/sync.sh", "prepare", out], {
     cwd: fork,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      PATH: `${NodePath.join(dir, "bin")}:${process.env.PATH}`,
-      SYNC_UPSTREAM: upstream,
-      SYNC_TEST_LOG: log,
-      GH_TOKEN: "secret",
-      ...env,
-    },
+    env: phaseEnv(log, env, false),
   });
-  const lines = (file: string) =>
-    NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8").trim().split("\n") : [];
-  const calls = lines(log);
-  const tokens = lines(`${log}.env`);
-  const repos = lines(`${log}.repo`);
-  const body = NodeFS.existsSync(`${log}.body`) ? NodeFS.readFileSync(`${log}.body`, "utf8") : "";
+
+// publish runs in a fresh clone of origin's main, like the workflow's second
+// job, with only the prepared directory carried over.
+const publishFrom = (
+  out: string,
+  log: string,
+  env: Record<string, string> = {},
+  originUrl = ORIGIN_URL,
+) => {
+  const clone = NodePath.join(dir, `publish-${runs}`);
+  git(dir, "clone", "-q", origin, clone);
+  git(clone, "remote", "set-url", "origin", originUrl);
+  git(clone, "config", `url.${origin}.insteadOf`, ORIGIN_URL);
+  return NodeChildProcess.spawnSync("bash", ["factory/scripts/sync.sh", "publish", out], {
+    cwd: clone,
+    encoding: "utf8",
+    env: phaseEnv(log, env, true),
+  });
+};
+
+const results = (log: string, prepared: number) => {
+  const calls = readLines(log);
   return {
-    status: result.status,
-    stdout: result.stdout,
-    stderr: result.stderr,
     calls,
-    tokens,
-    repos,
-    body,
+    prepareCalls: calls.slice(0, prepared),
+    publishCalls: calls.slice(prepared),
+    tokens: readLines(`${log}.env`),
+    repos: readLines(`${log}.repo`),
+    body: NodeFS.existsSync(`${log}.body`) ? NodeFS.readFileSync(`${log}.body`, "utf8") : "",
+  };
+};
+
+// Both phases in turn, publish only when prepare succeeds, as the workflow runs them.
+const run = (env: Record<string, string> = {}, originUrl = ORIGIN_URL) => {
+  const log = NodePath.join(dir, `log-${runs++}`);
+  const out = NodePath.join(dir, `out-${runs}`);
+  const prepared = prepareIn(out, log, env);
+  const preparedCalls = readLines(log).length;
+  const published = prepared.status === 0 ? publishFrom(out, log, env, originUrl) : undefined;
+  return {
+    status: published ? published.status : prepared.status,
+    stdout: prepared.stdout + (published?.stdout ?? ""),
+    stderr: prepared.stderr + (published?.stderr ?? ""),
+    ...results(log, preparedCalls),
   };
 };
 
@@ -247,9 +285,12 @@ describe("sync.sh", () => {
 
   it("merges the newest tag, records it, runs the checks and lands the pull request", () => {
     makeFork(`${OLD} ${oldSha}`);
-    const { status, stdout, calls, tokens, repos } = run();
+    const { status, stdout, calls, prepareCalls, publishCalls, tokens, repos } = run();
     expect(status).toBe(0);
     expect(stdout).toContain(`newest nightly: ${NEWEST}`);
+    // Upstream's code runs only in prepare, and gh only in publish.
+    expect(prepareCalls).toEqual(["vp i", "check.sh"]);
+    expect(publishCalls.every((call) => call.startsWith("gh "))).toBe(true);
     expect(stdout).toContain(`sync: ${NEWEST} merged into main through https://example.test/pr/1`);
     expect(calls.slice(0, 2)).toEqual(["vp i", "check.sh"]);
     expect(tokens).toEqual(["vp unset", "check.sh unset", "gh secret"]);
@@ -270,6 +311,20 @@ describe("sync.sh", () => {
     expect(originFile(branch, "factory/scripts/check.sh")).toBe(checkStub.trim());
     expect(git(origin, "rev-list", "--count", `${branch}^1..${branch}`)).toBe("3");
     expect(git(origin, "log", "-1", "--format=%P", branch).split(" ")).toHaveLength(2);
+  });
+
+  it("runs both phases from one checkout when given no arguments", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const log = NodePath.join(dir, `log-${runs++}`);
+    const result = NodeChildProcess.spawnSync("bash", ["factory/scripts/sync.sh"], {
+      cwd: fork,
+      encoding: "utf8",
+      env: phaseEnv(log, {}, true),
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`sync: ${NEWEST} merged into main`);
+    expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
+    expect(originFile("main", "factory/UPSTREAM")).toBe(`${NEWEST} ${newestSha}`);
   });
 
   it("regenerates the route tree when only that file conflicts", () => {
@@ -502,11 +557,10 @@ describe("sync.sh", () => {
 
   it("refuses an origin that is not on GitHub before calling gh", () => {
     makeFork(`${OLD} ${oldSha}`);
-    git(fork, "remote", "set-url", "origin", origin);
-    const { status, stderr, calls } = run();
+    const { status, stderr, calls } = run({}, origin);
     expect(status).toBe(1);
     expect(stderr).toContain("sync: origin is not a GitHub repository");
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(["vp i", "check.sh"]);
     expect(originBranches()).toEqual(["main"]);
   });
 
@@ -550,6 +604,71 @@ describe("sync.sh", () => {
       expect.stringMatching(/^gh issue comment 8 --body-file /),
     ]);
     expect(originBranches()).toEqual(["main"]);
+  });
+
+  it("publishes nothing when the prepared branch is not the merge it claims", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const log = NodePath.join(dir, `log-${runs++}`);
+    const out = NodePath.join(dir, `out-${runs}`);
+    expect(prepareIn(out, log).status).toBe(0);
+    // A compromised prepare slips a change to a fork file into the merge commit.
+    write(fork, "factory/scripts/check.sh", "#!/usr/bin/env bash\nexit 0\n", 0o755);
+    git(fork, "commit", "-q", "-a", "--amend", "--no-edit");
+    git(fork, "bundle", "create", "-q", NodePath.join(out, "sync.bundle"), `main..sync/${NEWEST}`);
+    const published = publishFrom(out, log);
+    expect(published.status).toBe(1);
+    expect(published.stderr).toContain(
+      `sync: the prepared sync/${NEWEST} is not the merge of main and ${NEWEST}; not publishing it: it changes factory/scripts/check.sh`,
+    );
+    expect(readLines(log)).toEqual(["vp i", "check.sh"]);
+    expect(originBranches()).toEqual(["main"]);
+  });
+
+  it("publishes nothing when the prepared UPSTREAM names another commit", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const log = NodePath.join(dir, `log-${runs++}`);
+    const out = NodePath.join(dir, `out-${runs}`);
+    expect(prepareIn(out, log).status).toBe(0);
+    write(fork, "factory/UPSTREAM", `${NEWEST} ${oldSha}\n`);
+    git(fork, "commit", "-q", "-a", "--amend", "--no-edit");
+    git(fork, "bundle", "create", "-q", NodePath.join(out, "sync.bundle"), `main..sync/${NEWEST}`);
+    const published = publishFrom(out, log);
+    expect(published.status).toBe(1);
+    expect(published.stderr).toContain(`factory/UPSTREAM does not name ${NEWEST} ${newestSha}`);
+    expect(originBranches()).toEqual(["main"]);
+  });
+
+  it("publishes nothing when the prepared commit is not a merge of the tag", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const log = NodePath.join(dir, `log-${runs++}`);
+    const out = NodePath.join(dir, `out-${runs}`);
+    expect(prepareIn(out, log).status).toBe(0);
+    // The same tree as one plain commit on main, so the tag is not a parent.
+    git(fork, "reset", "-q", "--soft", "main");
+    git(fork, "commit", "-q", "-m", "not a merge");
+    git(fork, "bundle", "create", "-q", NodePath.join(out, "sync.bundle"), `main..sync/${NEWEST}`);
+    const published = publishFrom(out, log);
+    expect(published.status).toBe(1);
+    expect(published.stderr).toContain("is not the merge of main and");
+    expect(originBranches()).toEqual(["main"]);
+  });
+
+  it("refuses a prepared directory with an unknown outcome or tag", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const out = NodePath.join(dir, "out-tampered");
+    NodeFS.mkdirSync(out, { recursive: true });
+    const log = NodePath.join(dir, `log-${runs++}`);
+    NodeFS.writeFileSync(NodePath.join(out, "outcome"), "merged\n");
+    const unknown = publishFrom(out, log);
+    expect(unknown.status).toBe(1);
+    expect(unknown.stderr).toContain("sync: unknown outcome: merged");
+    NodeFS.writeFileSync(NodePath.join(out, "outcome"), "conflicts\n");
+    NodeFS.writeFileSync(NodePath.join(out, "tag"), "v1.0.0-nightly.1.1 --repo other/repo\n");
+    runs++;
+    const badTag = publishFrom(out, log);
+    expect(badTag.status).toBe(1);
+    expect(badTag.stderr).toContain("sync: unexpected tag name");
+    expect(readLines(log)).toEqual([]);
   });
 
   it("refuses a tag outside the nightly pattern", () => {
