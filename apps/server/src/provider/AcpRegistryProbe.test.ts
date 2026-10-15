@@ -201,9 +201,9 @@ describe("ACP Registry probe", () => {
     expect(result.currentModelId).toBe("sonnet");
   });
 
-  // The replay fixture holds Cline 3.0.70's own answers: `provider` and then
-  // `model`, both `category: "model"`. Its integrated run writes the selection
-  // checked here and prompts successfully.
+  // The replay fixture's answers follow Cline 3.0.70's `acpAgent.ts` source, not
+  // a captured run: `provider` and then `model`, both `category: "model"`. Its
+  // integrated run writes the selection checked here and prompts successfully.
   it.effect("lists Cline providers as models and its later model option as a session option", () =>
     Effect.gen(function* () {
       const transcript = yield* readProviderReplayTranscript(

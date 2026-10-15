@@ -223,6 +223,44 @@ describe("mobile model options", () => {
     expect(explicitOption?.selection.options).toEqual([{ id: "serviceTier", value: "priority" }]);
   });
 
+  it("keeps saved options for a model whose options no session has described", () => {
+    const instanceId = ProviderInstanceId.make("acpRegistry_cline");
+    const configWithPassCapabilities = (capabilities: unknown) =>
+      ({
+        providers: [
+          {
+            instanceId,
+            driver: "acpRegistry",
+            displayName: "Cline",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            models: [{ slug: "cline-pass", name: "ClinePass", isCustom: false, capabilities }],
+          },
+        ],
+      }) as unknown as ServerConfig;
+    const saved: ModelSelection = {
+      instanceId,
+      model: "cline-pass",
+      options: [
+        { id: "model", value: "cline-pass/muse-spark-1.3-contributor" },
+        { id: "auto_approve", value: false },
+      ],
+    };
+
+    const [unknown] = buildModelOptions(configWithPassCapabilities(null), saved, undefined, null);
+    expect(unknown?.selection).toEqual(saved);
+
+    // A model observed without options has nothing to keep.
+    const [described] = buildModelOptions(
+      configWithPassCapabilities({ optionDescriptors: [] }),
+      saved,
+      undefined,
+      null,
+    );
+    expect(described?.selection).toEqual({ instanceId, model: "cline-pass" });
+  });
+
   it("limits existing threads to their provider while new tasks keep every provider", () => {
     const providers = ["codex", "claudeAgent"].map((instanceId) => ({
       instanceId,

@@ -76,7 +76,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
-import { getDefaultServerModel } from "./providerModels";
+import { getDefaultServerModel, hasUnknownModelCapabilities } from "./providerModels";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
@@ -738,6 +738,7 @@ export interface EffectiveComposerModelState {
 interface ComposerDraftModelState {
   activeProvider: ProviderInstanceId | null;
   modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  modelSelectionExplicit?: boolean;
 }
 
 function providerSelectionsFromModelSelection(
@@ -1248,7 +1249,10 @@ function legacyToModelSelectionByProvider(
 
 export function deriveEffectiveComposerModelState(input: {
   draft:
-    | Pick<ComposerThreadDraftState, "modelSelectionByProvider" | "activeProvider">
+    | Pick<
+        ComposerThreadDraftState,
+        "modelSelectionByProvider" | "activeProvider" | "modelSelectionExplicit"
+      >
     | null
     | undefined;
   providers: ReadonlyArray<ServerProvider>;
@@ -1263,6 +1267,11 @@ export function deriveEffectiveComposerModelState(input: {
   selectedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  /** The selected instance's remembered options per model slug. */
+  rememberedOptionsByModel?:
+    | Partial<Record<string, ReadonlyArray<ProviderOptionSelection>>>
+    | null
+    | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const baseModelCandidate =
@@ -1329,11 +1338,55 @@ export function deriveEffectiveComposerModelState(input: {
     providerSelectionsFromModelSelection(input.threadModelSelection) ??
     providerSelectionsFromModelSelection(input.projectModelSelection) ??
     null;
+  const selectedOptionsKey = input.selectedInstanceId ?? activeSelectionInstanceId;
+  const selectedModels = input.providers.find(
+    (provider) => provider.instanceId === selectedOptionsKey,
+  )?.models;
+  if (
+    !selectedModels ||
+    !hasUnknownModelCapabilities(selectedModels, selectedModel, input.selectedProvider)
+  ) {
+    return { selectedModel, modelOptions };
+  }
 
+  // Options carried over from another model are only hints that descriptors
+  // re-resolve. With this model's options unknown they would reach the
+  // provider verbatim, so only options saved for this model are kept.
+  const { [selectedOptionsKey]: _carried, ...otherModelOptions } = modelOptions ?? {};
+  const ownOptions = savedModelOptions(input, selectedOptionsKey, selectedModel);
+  const nextModelOptions: ProviderOptionSelectionsByProvider =
+    ownOptions && ownOptions.length > 0
+      ? { ...otherModelOptions, [selectedOptionsKey]: ownOptions }
+      : otherModelOptions;
   return {
     selectedModel,
-    modelOptions,
+    modelOptions: Object.keys(nextModelOptions).length > 0 ? nextModelOptions : null,
   };
+}
+
+/**
+ * Options saved for exactly this instance and model: the draft's own pick when
+ * the user chose it in this composer, else the thread's or project's selection
+ * for this model, else the model's remembered options. Sticky seeding can
+ * carry another model's options into an unpicked draft, so that draft's
+ * options are not treated as this model's own.
+ */
+function savedModelOptions(
+  input: Pick<
+    Parameters<typeof deriveEffectiveComposerModelState>[0],
+    "draft" | "threadModelSelection" | "projectModelSelection" | "rememberedOptionsByModel"
+  >,
+  instanceId: ProviderInstanceId,
+  model: string,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const draftSelection = input.draft?.modelSelectionByProvider?.[instanceId];
+  if (input.draft?.modelSelectionExplicit === true && draftSelection?.model === model) {
+    return draftSelection.options;
+  }
+  const saved = [input.threadModelSelection, input.projectModelSelection].find(
+    (selection) => selection?.instanceId === instanceId && selection.model === model,
+  );
+  return saved ? saved.options : input.rememberedOptionsByModel?.[model];
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
@@ -4519,6 +4572,7 @@ function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDr
         ? {
             activeProvider: draft.activeProvider,
             modelSelectionByProvider: draft.modelSelectionByProvider,
+            ...(draft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
           }
         : EMPTY_COMPOSER_DRAFT_MODEL_STATE;
     }),
@@ -4541,6 +4595,11 @@ export function useEffectiveComposerModelState(input: {
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
   const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
+  const rememberedOptionsByModel = useComposerDraftStore((state) =>
+    input.selectedInstanceId
+      ? state.stickyOptionsByModelByProvider[input.selectedInstanceId]
+      : undefined,
+  );
 
   return useMemo(
     () =>
@@ -4551,10 +4610,12 @@ export function useEffectiveComposerModelState(input: {
         selectedInstanceId: input.selectedInstanceId,
         threadModelSelection: input.threadModelSelection,
         projectModelSelection: input.projectModelSelection,
+        rememberedOptionsByModel,
         settings: input.settings,
       }),
     [
       draft,
+      rememberedOptionsByModel,
       input.providers,
       input.settings,
       input.projectModelSelection,

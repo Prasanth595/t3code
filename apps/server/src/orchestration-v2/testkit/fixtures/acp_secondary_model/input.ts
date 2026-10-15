@@ -18,7 +18,7 @@ export const CLINE_SECONDARY_MODEL_SELECTION = {
 } satisfies ModelSelection;
 
 const OptionalText = Schema.optionalKey(Schema.String);
-// The config options of a recorded `session/new` or `session/set_config_option` answer.
+// The config options of a `session/new` or `session/set_config_option` answer.
 const decodeClineAnswer = Schema.decodeUnknownSync(
   Schema.Struct({
     result: Schema.Struct({
@@ -53,7 +53,10 @@ const decodeClineAnswer = Schema.decodeUnknownSync(
   }),
 );
 
-/** The config options Cline answered with at the transcript entry labelled `label`. */
+/**
+ * The config options in the replay's answer labelled `label`. The transcript is
+ * shaped after Cline 3.0.70's `acpAgent.ts` source, not captured from a Cline run.
+ */
 export function clineConfigOptionsAnsweredAt(transcript: ProviderReplayTranscript, label: string) {
   const entry = transcript.entries.find(
     (candidate) => candidate.type === "emit_inbound" && candidate.label === label,

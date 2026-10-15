@@ -113,8 +113,10 @@ function withModelOptions(
 
 /**
  * Lists a session's models. Its config options describe only its current
- * model, so every other model starts without options until a probe or live
- * session observes it.
+ * model, so every other model has unknown (`null`) capabilities until a probe
+ * or live session observes it. Clients keep a selection's saved options for a
+ * model whose options are unknown, and the session checks them against the
+ * agent's own list; an observed model with no options has empty capabilities.
  */
 function modelsFromDiscovery(
   discovery:
@@ -131,7 +133,7 @@ function modelsFromDiscovery(
             name: "Default",
             isCustom: false,
             isDefault: true,
-            capabilities: EMPTY_CAPABILITIES,
+            capabilities: null,
           },
         ]
       : discovered.map((model) => ({
@@ -139,7 +141,7 @@ function modelsFromDiscovery(
           name: model.name,
           isCustom: false,
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
-          capabilities: EMPTY_CAPABILITIES,
+          capabilities: null,
         }));
   const models = providerModelsFromSettings(builtInModels, customModels, EMPTY_CAPABILITIES);
   return discovery === undefined
@@ -306,12 +308,11 @@ export function applyAcpRegistryLiveConfiguration(
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
   const knownOptions = new Map(
-    provider.models.flatMap((model) => {
-      const optionDescriptors = model.capabilities?.optionDescriptors ?? [];
-      return model.isCustom || optionDescriptors.length === 0
+    provider.models.flatMap((model) =>
+      model.isCustom || model.capabilities === null
         ? []
-        : [[model.slug, optionDescriptors] as const];
-    }),
+        : [[model.slug, model.capabilities.optionDescriptors ?? []] as const],
+    ),
   );
   return {
     ...snapshot,

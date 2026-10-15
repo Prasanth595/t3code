@@ -269,6 +269,25 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(thinkingChoices(probedSnapshot(null, [wideThinking]))).toEqual({ opus: [], glm: [] });
   });
 
+  it("tells models no session has described apart from models without options", () => {
+    const capabilities = (provider: ServerProvider) =>
+      Object.fromEntries(provider.models.map((model) => [model.slug, model.capabilities]));
+    // The probe ran on Opus, which offers no options; GLM has not run yet.
+    const probed = probedSnapshot("opus", []);
+    expect(capabilities(probed)).toEqual({ opus: { optionDescriptors: [] }, glm: null });
+
+    // A GLM session describes GLM and leaves Opus's empty observation alone.
+    const live = applyAcpRegistryLiveConfiguration(
+      probed,
+      liveState({ models, currentModelId: "glm", configOptions: [narrowThinking] }),
+      [],
+    );
+    expect(capabilities(live)).toEqual({
+      opus: { optionDescriptors: [] },
+      glm: { optionDescriptors: [narrowThinking] },
+    });
+  });
+
   it.effect("keeps each model's last observed options across live sessions and refreshes", () =>
     Effect.gen(function* () {
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;

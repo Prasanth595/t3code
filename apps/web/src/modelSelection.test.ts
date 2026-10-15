@@ -901,3 +901,143 @@ describe("resolveAppModelSelectionState with the opencode plan agent", () => {
     );
   });
 });
+
+// Cline lists its providers as models and each provider's models as a later
+// `model` option. After a server restart only the probed provider, `cline`, has
+// described its options; ClinePass is listed with unknown capabilities.
+describe("composer dispatch for a model whose options are unknown", () => {
+  const driver = ProviderDriverKind.make("acpRegistry");
+  const instanceId = ProviderInstanceId.make("acpRegistry_cline");
+  const cline: ServerProvider = {
+    ...provider({ provider: driver, instanceId }),
+    models: [
+      {
+        slug: "cline",
+        name: "Cline",
+        isCustom: false,
+        isDefault: true,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "model",
+              label: "Model",
+              type: "select",
+              options: [
+                { id: "cline-free/step-5-preview", label: "Step 5 Preview" },
+                { id: "cline-free/mimo-v2.6-flash", label: "MiMo v2.6 Flash" },
+              ],
+              currentValue: "cline-free/step-5-preview",
+            },
+            {
+              id: "auto_approve",
+              label: "Auto-approve tools",
+              type: "boolean",
+              currentValue: false,
+            },
+          ],
+        },
+      },
+      { slug: "cline-pass", name: "ClinePass", isCustom: false, capabilities: null },
+    ],
+  };
+  const passPick = [
+    { id: "model", value: "cline-pass/muse-spark-1.3-contributor" },
+    { id: "auto_approve", value: false },
+  ];
+  // Cline's options as a trait toggle on Cline stores them.
+  const clineToggle = [
+    { id: "model", value: "cline-free/step-5-preview" },
+    { id: "auto_approve", value: true },
+  ];
+
+  // The selection the composer sends, as ChatComposer builds it.
+  const sent = (input: Partial<Parameters<typeof deriveEffectiveComposerModelState>[0]>) => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: [cline],
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings: DEFAULT_UNIFIED_SETTINGS,
+      ...input,
+    });
+    const dispatch = getComposerProviderState({
+      provider: driver,
+      model: state.selectedModel,
+      models: cline.models,
+      modelOptions: state.modelOptions?.[instanceId],
+      planModeEnabled: true,
+    });
+    return createModelSelection(instanceId, state.selectedModel, dispatch.modelOptionsForDispatch);
+  };
+
+  it("sends the options saved for that model unchanged", () => {
+    const saved = createModelSelection(instanceId, "cline-pass", passPick);
+    // An existing ClinePass thread.
+    expect(sent({ threadModelSelection: saved })).toEqual(saved);
+    // A pick made in this composer.
+    expect(
+      sent({
+        draft: {
+          activeProvider: instanceId,
+          modelSelectionByProvider: { [instanceId]: saved },
+          modelSelectionExplicit: true,
+        },
+      }),
+    ).toEqual(saved);
+    // A new chat seeded with ClinePass, which remembers its own pick.
+    expect(
+      sent({
+        draft: { activeProvider: instanceId, modelSelectionByProvider: { [instanceId]: saved } },
+        rememberedOptionsByModel: { "cline-pass": passPick },
+      }),
+    ).toEqual(saved);
+  });
+
+  it("does not send another model's options to it", () => {
+    const passOnly = createModelSelection(instanceId, "cline-pass");
+    // Picking ClinePass in a Cline thread.
+    expect(
+      sent({
+        draft: {
+          activeProvider: instanceId,
+          modelSelectionByProvider: { [instanceId]: passOnly },
+          modelSelectionExplicit: true,
+        },
+        threadModelSelection: createModelSelection(instanceId, "cline", clineToggle),
+      }),
+    ).toEqual(passOnly);
+    // A new chat whose sticky selection carried Cline's options to ClinePass.
+    expect(
+      sent({
+        draft: {
+          activeProvider: instanceId,
+          modelSelectionByProvider: {
+            [instanceId]: createModelSelection(instanceId, "cline-pass", clineToggle),
+          },
+        },
+        rememberedOptionsByModel: { cline: clineToggle },
+      }),
+    ).toEqual(passOnly);
+  });
+
+  it("still resolves carried options against a described model", () => {
+    // ClinePass's model is not one Cline offers, so Cline's own current model goes out.
+    expect(
+      sent({
+        draft: {
+          activeProvider: instanceId,
+          modelSelectionByProvider: {
+            [instanceId]: createModelSelection(instanceId, "cline", passPick),
+          },
+        },
+      }),
+    ).toEqual(
+      createModelSelection(instanceId, "cline", [
+        { id: "model", value: "cline-free/step-5-preview" },
+        { id: "auto_approve", value: false },
+      ]),
+    );
+  });
+});
