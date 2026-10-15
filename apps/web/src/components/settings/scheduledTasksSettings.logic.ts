@@ -1,6 +1,5 @@
 import {
   EnvironmentId,
-  isScheduledTaskProjectDefaultModel,
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -153,13 +152,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       task.workspaceStrategy.type === "existing_worktree"
         ? task.workspaceStrategy.worktreePath
         : "",
-    ...(isScheduledTaskProjectDefaultModel(task.modelSelection)
-      ? { modelKey: "", useProjectDefaultModel: true, baseModelSelection: null }
-      : {
-          modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
-          useProjectDefaultModel: false,
-          baseModelSelection: task.modelSelection,
-        }),
+    modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
+    useProjectDefaultModel: task.useProjectDefaultModel === true,
+    baseModelSelection: task.modelSelection,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
     ...(schedule.type === "webhook" && schedule.signature !== null

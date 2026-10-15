@@ -644,7 +644,7 @@ function TaskForm({
       !draft.title.trim() ||
       !draft.prompt.trim() ||
       !draft.projectId ||
-      (!draft.useProjectDefaultModel && !draft.modelSelection) ||
+      !draft.modelSelection ||
       !schedule ||
       (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
@@ -663,10 +663,8 @@ function TaskForm({
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       projectId: draft.projectId,
-      modelSelection:
-        draft.useProjectDefaultModel || !draft.modelSelection
-          ? { _tag: "projectDefault" }
-          : draft.modelSelection,
+      modelSelection: draft.modelSelection,
+      ...(draft.useProjectDefaultModel ? { useProjectDefaultModel: true } : {}),
       schedule,
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,

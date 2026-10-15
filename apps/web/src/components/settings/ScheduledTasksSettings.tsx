@@ -17,7 +17,6 @@ import type {
   ProjectId,
   ScheduledTask,
   ScheduledTaskId,
-  ScheduledTaskModelSelection,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliveryOutcome,
@@ -878,7 +877,7 @@ function ScheduledTaskEditorDialog({
       !draft.title.trim() ||
       !draft.prompt.trim() ||
       !projects.some((project) => project.id === selectedProjectId) ||
-      (selection === null && !draft.useProjectDefaultModel)
+      selection === null
     ) {
       reportFailure("Scheduled task is incomplete", "Add a title, prompt, project, and model.");
       return;
@@ -914,14 +913,12 @@ function ScheduledTaskEditorDialog({
     }
     // Keep the original selection object (with provider options) when the
     // picker still points at the same instance+model.
-    const modelSelection: ScheduledTaskModelSelection =
-      draft.useProjectDefaultModel || selection === null
-        ? { _tag: "projectDefault" }
-        : draft.baseModelSelection !== null &&
-            draft.baseModelSelection.instanceId === selection.instanceId &&
-            draft.baseModelSelection.model === selection.model
-          ? draft.baseModelSelection
-          : selection;
+    const modelSelection: ModelSelection =
+      draft.baseModelSelection !== null &&
+      draft.baseModelSelection.instanceId === selection.instanceId &&
+      draft.baseModelSelection.model === selection.model
+        ? draft.baseModelSelection
+        : selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -942,6 +939,7 @@ function ScheduledTaskEditorDialog({
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
       modelSelection,
+      ...(draft.useProjectDefaultModel ? { useProjectDefaultModel: true } : {}),
       runtimeMode: draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",

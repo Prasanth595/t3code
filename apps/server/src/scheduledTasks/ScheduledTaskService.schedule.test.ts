@@ -6,7 +6,9 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ScheduledTask,
   ScheduledTaskId,
+  ScheduledTaskListResult,
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -24,6 +26,12 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
+const encodeTaskList = Schema.encodeEffect(ScheduledTaskListResult);
+// The task list as a client built before `useProjectDefaultModel` decodes it.
+const { useProjectDefaultModel: _flag, ...olderClientTaskFields } = ScheduledTask.fields;
+const decodeOlderClientList = Schema.decodeUnknownEffect(
+  Schema.Struct({ tasks: Schema.Array(Schema.Struct(olderClientTaskFields)) }),
+);
 
 it.effect("rejects a stale form save after deletion while preserving explicit-id creates", () =>
   Effect.gen(function* () {
@@ -155,21 +163,27 @@ it.effect("keeps a custom provider instance and the project default through a sa
         yield* decodeUpsertInput({
           ...base,
           id: "task-project-default",
-          modelSelection: { _tag: "projectDefault" },
+          modelSelection: explicit,
+          useProjectDefaultModel: true,
         }),
       );
 
-      const byId = new Map((yield* service.list()).tasks.map((task) => [task.id, task]));
+      const { tasks } = yield* service.list();
+      const byId = new Map(tasks.map((task) => [task.id, task]));
       expect(byId.get(ScheduledTaskId.make("task-explicit"))?.modelSelection).toEqual(explicit);
-      expect(byId.get(ScheduledTaskId.make("task-project-default"))?.modelSelection).toEqual({
-        _tag: "projectDefault",
-      });
-      // An explicit selection keeps the stored shape that rows saved before
-      // the project default option already hold.
-      const rows = yield* sql<{ readonly json: string }>`
-        SELECT model_selection_json AS json FROM scheduled_tasks WHERE task_id = 'task-explicit'
+      const projectDefault = byId.get(ScheduledTaskId.make("task-project-default"));
+      expect(projectDefault?.useProjectDefaultModel).toBe(true);
+      // A client built before the flag decodes every task and sees a plain model.
+      const olderClientList = yield* decodeOlderClientList(yield* encodeTaskList({ tasks }));
+      expect(olderClientList.tasks).toHaveLength(2);
+      // Rows keep their stored shape, so tasks saved before this change still decode.
+      const rows = yield* sql<{ readonly id: string; readonly json: string }>`
+        SELECT task_id AS id, model_selection_json AS json FROM scheduled_tasks ORDER BY task_id
       `;
-      expect(JSON.parse(rows[0]?.json ?? "null")).toEqual(explicit);
+      expect(rows.map((row) => JSON.parse(row.json))).toEqual([
+        explicit,
+        { _tag: "projectDefault" },
+      ]);
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -220,7 +234,8 @@ it.effect("resolves a project default task at run time: the project, then the ap
             schedule: { type: "interval", everyMs: 3_600_000 },
             projectId,
             workspaceStrategy: { type: "root" },
-            modelSelection: { _tag: "projectDefault" },
+            modelSelection: appDefault,
+            useProjectDefaultModel: true,
             runtimeMode: "full-access",
             interactionMode: "default",
           }),
