@@ -211,6 +211,17 @@ const mapReadError =
       ? new ThreadNotFoundError({ threadId })
       : new SessionsError({ operation, cause });
 
+// Ids are T3's branded non-blank strings. A blank one is a caller's mistake
+// and fails as the declared error, never as a thrown schema defect.
+const decodeCommandId = Schema.decodeUnknownEffect(CommandId);
+const decodeProjectId = Schema.decodeUnknownEffect(ProjectId);
+const decodeInstanceId = Schema.decodeUnknownEffect(ProviderInstanceId);
+const decodeThreadId = Schema.decodeUnknownEffect(ThreadId);
+
+/** A blank thread id names no thread. */
+const requireThreadId = (threadId: string) =>
+  decodeThreadId(threadId).pipe(Effect.mapError(() => new ThreadNotFoundError({ threadId })));
+
 export const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -223,15 +234,15 @@ export const make = Effect.gen(function* () {
     );
 
   const launch: FactorySessions["Service"]["launch"] = (request) =>
-    launches
-      .launch({
-        commandId: CommandId.make(request.commandId),
-        projectId: ProjectId.make(request.projectId),
+    Effect.gen(function* () {
+      const commandId = yield* decodeCommandId(request.commandId);
+      const projectId = yield* decodeProjectId(request.projectId);
+      const instanceId = yield* decodeInstanceId(request.model.instanceId);
+      const result = yield* launches.launch({
+        commandId,
+        projectId,
         title: request.title,
-        modelSelection: {
-          instanceId: ProviderInstanceId.make(request.model.instanceId),
-          model: request.model.model,
-        },
+        modelSelection: { instanceId, model: request.model.model },
         runtimeMode: "full-access",
         interactionMode: "default",
         workspaceStrategy: {
@@ -242,25 +253,31 @@ export const make = Effect.gen(function* () {
         initialMessage: { text: request.message, attachments: [] },
         createdBy: "user",
         creationSource: "server",
-      })
-      .pipe(
-        Effect.map((result) => ({
-          threadId: result.threadId as string,
-          worktreePath: result.projection.thread.worktreePath,
-          branch: result.projection.thread.branch,
-        })),
-        Effect.mapError((cause) => new SessionsError({ operation: "launch", cause })),
-      );
+      });
+      return {
+        threadId: result.threadId as string,
+        worktreePath: result.projection.thread.worktreePath,
+        branch: result.projection.thread.branch,
+      };
+    }).pipe(Effect.mapError((cause) => new SessionsError({ operation: "launch", cause })));
 
   const status: FactorySessions["Service"]["status"] = (threadId) =>
-    projections
-      .getThreadProjection(ThreadId.make(threadId))
-      .pipe(Effect.map(threadStatusOf), Effect.mapError(mapReadError("status", threadId)));
+    requireThreadId(threadId).pipe(
+      Effect.flatMap((id) =>
+        projections
+          .getThreadProjection(id)
+          .pipe(Effect.map(threadStatusOf), Effect.mapError(mapReadError("status", threadId))),
+      ),
+    );
 
   const thread: FactorySessions["Service"]["thread"] = (threadId) =>
-    projections
-      .getThread(ThreadId.make(threadId))
-      .pipe(Effect.map(threadOf), Effect.mapError(mapReadError("thread", threadId)));
+    requireThreadId(threadId).pipe(
+      Effect.flatMap((id) =>
+        projections
+          .getThread(id)
+          .pipe(Effect.map(threadOf), Effect.mapError(mapReadError("thread", threadId))),
+      ),
+    );
 
   return FactorySessions.of({ findProject, launch, status, thread });
 });
