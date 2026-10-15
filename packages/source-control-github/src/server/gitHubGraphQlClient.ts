@@ -16,7 +16,7 @@ const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 /**
  * The GitHub host and operation a generated GraphQL call is sent as. One client serves every host,
- * so each call names its own, the way `GitHubApi.graphql` takes them as arguments.
+ * so each call names its own.
  */
 export class GitHubGraphQlTarget extends Context.Service<
   GitHubGraphQlTarget,
@@ -31,7 +31,7 @@ export class GitHubGraphQlTarget extends Context.Service<
 >()("@t3tools/source-control-github/server/gitHubGraphQlClient/GitHubGraphQlTarget") {}
 
 /** A stable short id for a GraphQL document, so traces group by query without its text. */
-export function queryHash(query: string): string {
+function queryHash(query: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < query.length; index++) {
     hash ^= query.charCodeAt(index);
@@ -106,7 +106,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
 }
 
 /**
- * What a refusal GitHub sent as an HTTP status means, read the way `GitHubApi` reads one. A
+ * What a refusal GitHub sent as an HTTP status means, read the way REST reads one. A
  * failure that never reached GitHub is a request error; one that is not about the transport
  * (an answer that does not decode) is the client's own.
  */
@@ -229,9 +229,9 @@ export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) =>
   ]);
 
 /**
- * GitHub's `errors` on an answer, as the errors `GitHubApi.graphql` raised for them: not found
- * when every error says so, otherwise a response error carrying GitHub's messages. Any other
- * client error (an answer that does not decode) is returned as it is.
+ * GitHub's `errors` on an answer, as the policy's errors: not found when every error says so,
+ * otherwise a response error carrying GitHub's messages. Any other client error (an answer that
+ * does not decode) is returned as it is.
  */
 const fromClientError = (
   target: { readonly host: string; readonly operation: string },
@@ -256,9 +256,10 @@ const fromClientError = (
 };
 
 /**
- * Runs one generated GraphQL call (or several) against `target`, failing GitHub's `errors` the
- * way `GitHubApi.graphql` did. What remains a `GraphQLClientError` is an answer that did not
- * decode, which the caller reports as its own read error. The middleware's errors pass through.
+ * Runs one generated GraphQL call (or several) against `target`, failing GitHub's `errors` as
+ * `GitHubApiNotFoundError` or `GitHubApiResponseError`. What remains a `GraphQLClientError` is an
+ * answer that did not decode, which the caller reports as its own read error. The middleware's
+ * errors pass through.
  */
 export const call: {
   (

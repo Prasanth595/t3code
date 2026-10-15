@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 import { GraphQLClient, GraphQLResolver } from "effect/graphql";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -129,6 +130,58 @@ describe("GitHubGraphQlAuth", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("reads an untyped exhausted-quota error sent with HTTP 200 as a rate limit", () => {
+    const reset = Math.floor(NOW / 1000) + 900;
+    const { layer } = harness(() =>
+      json(
+        { data: null, errors: [{ message: "API rate limit already exceeded for user ID 1." }] },
+        { headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } },
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const error = yield* Effect.flip(readStats("github.com"));
+      expect(error).toMatchObject({ _tag: "GitHubApiRateLimitError", retryAt: reset * 1000 });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("traces the query hash and quota, never the variables, token or URL", () => {
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    const { layer } = harness(() =>
+      json(
+        { data: { _0_repository: { pullRequest: stats } } },
+        { headers: { "x-ratelimit-remaining": "4990", "x-ratelimit-resource": "graphql" } },
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      yield* readStats("github.com", 4242);
+      const execute = spans.find((span) => span.name === "GitHubGraphQlAuth.execute")!;
+      const attributes = Object.fromEntries(execute.attributes);
+      expect(attributes).toMatchObject({
+        "github.kind": "graphql",
+        "github.operation": "stats",
+        "http.response.status_code": 200,
+        "github.ratelimit.remaining": 4990,
+        "github.ratelimit.resource": "graphql",
+      });
+      expect(String(attributes["github.graphql.query_hash"])).toMatch(/^[0-9a-f]{8}$/);
+      const everything = spans
+        .flatMap((span) => [...span.attributes].map(([key, value]) => `${key}=${String(value)}`))
+        .join("\n");
+      expect(everything).not.toContain("4242");
+      expect(everything).not.toContain("secret");
+      expect(spans.some((span) => span.attributes.has("url.full"))).toBe(false);
+    }).pipe(Effect.provide(layer), Effect.withTracer(tracer));
+  });
+
   it.effect("reads a 403 secondary limit as a rate limit, and a 401 as a refused token", () => {
     const answers = [
       json({ message: "You have exceeded a secondary rate limit." }, { status: 403 }),
@@ -169,6 +222,10 @@ describe("GitHubGraphQlAuth", () => {
       const background = yield* Effect.flip(readStats("github.com", 2));
       expect(background._tag).toBe("SourceControlRateLimitPausedError");
       expect(requests).toHaveLength(1);
+      // REST spends a quota of its own, which the GraphQL reserve does not hold back.
+      const api = yield* GitHubApi.GitHubApi;
+      yield* api.rest({ host: "github.com", operation: "user", path: "user" });
+      expect(requests).toHaveLength(2);
     }).pipe(Effect.provide(layer));
   });
 });

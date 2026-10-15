@@ -11,7 +11,6 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
-import { queryHash } from "./gitHubGraphQlClient.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -45,20 +44,9 @@ export interface GitHubRestInput {
   readonly allowReserve?: boolean;
 }
 
-export interface GitHubGraphQlInput {
-  readonly host: string;
-  readonly operation: string;
-  readonly query: string;
-  readonly variables?: Readonly<Record<string, unknown>>;
-  readonly allowReserve?: boolean;
-  readonly maxResponseBytes?: number;
-}
-
 export class GitHubApi extends Context.Service<
   GitHubApi,
   {
-    /** The raw JSON body of a successful GraphQL answer, with `rateLimit` recorded. */
-    readonly graphql: (input: GitHubGraphQlInput) => Effect.Effect<string, GitHubApiError>;
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
     /** The credential a request to `host` would carry right now. */
     readonly credential: (
@@ -69,22 +57,6 @@ export class GitHubApi extends Context.Service<
     >;
   }
 >()("@t3tools/source-control-github/server/GitHubApi") {}
-
-/** GraphQL documents longer than this are cut in traces; the hash still identifies them. */
-const TRACED_QUERY_MAX_CHARS = 4_000;
-
-const decodeGraphQlErrors = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({
-      errors: Schema.NonEmptyArray(
-        Schema.Struct({
-          type: Schema.optional(Schema.String),
-          message: Schema.optional(Schema.String),
-        }),
-      ),
-    }),
-  ),
-);
 
 /** A REST failure body: `{ message, errors: [{ message } | { resource, field, code }] }`. */
 const decodeRestErrors = Schema.decodeUnknownOption(
@@ -126,48 +98,22 @@ function restErrorMessages(body: string): ReadonlyArray<string> | undefined {
   });
 }
 
-/**
- * GitHub reports a failed GraphQL document with HTTP 200 and an `errors` list, so a GraphQL body
- * is read for its error types as well as its status. `gh api graphql` failed those too, and
- * callers rely on that to fall back to narrower reads.
- */
+/** What a REST answer means: a 304 is an answer only when the request revalidated a cached one. */
 function classify(input: {
   readonly answer: GitHubRestResponse;
-  readonly graphql: boolean;
   readonly acceptNotModified: boolean;
 }): GitHubRequestPolicy.GitHubAnswer<GitHubRestResponse> {
   const { status, headers, body } = input.answer;
   const meta = { status, headers };
-  const errors = input.graphql
-    ? Option.getOrUndefined(decodeGraphQlErrors(body))?.errors
-    : undefined;
-  const messages = errors?.flatMap((error) => (error.message === undefined ? [] : [error.message]));
-  if (
-    GitHubRequestPolicy.isRateLimited({
-      status,
-      headers,
-      body,
-      ...(errors === undefined ? {} : { graphqlErrors: errors }),
-    })
-  ) {
+  if (GitHubRequestPolicy.isRateLimited({ status, headers, body })) {
     return { _tag: "RateLimited", ...meta };
   }
   if (status === 401) return { _tag: "Unauthorized", ...meta };
-  if (
-    status === 404 ||
-    (errors !== undefined && errors.every((error) => error.type === "NOT_FOUND"))
-  ) {
-    return { _tag: "NotFound", ...meta };
-  }
-  if (errors !== undefined) return { _tag: "Failed", messages, ...meta };
+  if (status === 404) return { _tag: "NotFound", ...meta };
   if ((status >= 200 && status < 300) || (status === 304 && input.acceptNotModified)) {
     return { _tag: "Ok", value: input.answer, ...meta };
   }
-  return {
-    _tag: "Failed",
-    messages: input.graphql ? undefined : restErrorMessages(body),
-    ...meta,
-  };
+  return { _tag: "Failed", messages: restErrorMessages(body), ...meta };
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
@@ -187,13 +133,11 @@ export const make = Effect.gen(function* () {
     readonly timeout?: Duration.Input | undefined;
     readonly allowReserve: boolean;
     readonly acceptNotModified: boolean;
-    /** Reads the body for GraphQL `errors`, which GitHub sends with HTTP 200. */
-    readonly graphql?: boolean;
   }) {
     const host = normalizeHost(input.host);
     // Only the path: a query string can carry a SHA or a branch, and never needs to be in a trace.
     yield* Effect.annotateCurrentSpan({
-      "github.kind": input.graphql === true ? "graphql" : "rest",
+      "github.kind": "rest",
       "http.request.method": input.request.method,
       "url.path": new URL(input.request.url).pathname,
     });
@@ -201,9 +145,9 @@ export const make = Effect.gen(function* () {
       {
         host,
         operation: input.operation,
-        // REST spends `core` and GraphQL its own quota, each with its own reserve. Every REST
-        // path this reads today is `core`; a `search/` read would need its own resource here.
-        resource: input.graphql === true ? "graphql" : "core",
+        // Every REST path this reads today spends `core`; a `search/` read would need its own
+        // resource here.
+        resource: "core",
         allowReserve: input.allowReserve,
         timeout: input.timeout,
       },
@@ -234,11 +178,7 @@ export const make = Effect.gen(function* () {
             truncated: collected.truncated,
             invalidUtf8: collected.invalidUtf8,
           };
-          return classify({
-            answer,
-            graphql: input.graphql === true,
-            acceptNotModified: input.acceptNotModified,
-          });
+          return classify({ answer, acceptNotModified: input.acceptNotModified });
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -280,47 +220,7 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const graphql: GitHubApi["Service"]["graphql"] = Effect.fn("GitHubApi.graphql")(
-    function* (input) {
-      const host = normalizeHost(input.host);
-      const allowReserve = input.allowReserve ?? (yield* SourceControlRateLimit.Interactive);
-      // The document, never its variables: user text (bodies, search terms) travels as variables.
-      yield* Effect.annotateCurrentSpan({
-        "github.operation": input.operation,
-        "github.graphql.query_hash": queryHash(input.query),
-        "github.graphql.query":
-          input.query.length > TRACED_QUERY_MAX_CHARS
-            ? `${input.query.slice(0, TRACED_QUERY_MAX_CHARS)}…`
-            : input.query,
-      });
-      const response = yield* send({
-        host,
-        operation: input.operation,
-        request: HttpClientRequest.post(gitHubApiUrls(host).graphql).pipe(
-          HttpClientRequest.acceptJson,
-          HttpClientRequest.bodyJsonUnsafe({
-            query: input.query,
-            variables: input.variables ?? {},
-          }),
-        ),
-        maxResponseBytes: input.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
-        allowReserve,
-        acceptNotModified: false,
-        graphql: true,
-      });
-      // A body cut at the byte cap hides any `errors` past the cut and cannot be decoded.
-      if (response.truncated) {
-        return yield* new GitHubRequestPolicy.GitHubApiResponseError({
-          host,
-          operation: input.operation,
-          status: response.status,
-        });
-      }
-      return response.body;
-    },
-  );
-
-  return GitHubApi.of({ graphql, rest, credential: policy.credential });
+  return GitHubApi.of({ rest, credential: policy.credential });
 });
 
 /**

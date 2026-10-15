@@ -72,12 +72,16 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
 
 /** One request the CLI made, as the transport received it. */
 type ApiCall =
-  | ({
+  | {
       readonly kind: "graphql";
       readonly partial?: boolean;
       /** The generated operation's name, which the routes below match on. */
       readonly operationName?: string;
-    } & GitHubApi.GitHubGraphQlInput)
+      readonly host: string;
+      readonly operation: string;
+      readonly query: string;
+      readonly variables?: Readonly<Record<string, unknown>>;
+    }
   | ({ readonly kind: "rest" } & GitHubApi.GitHubRestInput);
 
 type ApiAnswer = Effect.Effect<GitHubApi.GitHubRestResponse, GitHubRequestPolicy.GitHubApiError>;
@@ -90,33 +94,12 @@ const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
   Effect.succeed(output('{"data":{}}')),
 );
 
-/**
- * A transport that answers from the mocks above but spends the real GraphQL quota from each
- * answer's headers, the way GitHubApi does, so the reserve behaviour is still the module's to prove.
- */
-const mockApi = Layer.effect(
+/** The REST transport, answered from the mocks above. */
+const mockApi = Layer.succeed(
   GitHubApi.GitHubApi,
-  Effect.gen(function* () {
-    const quota = yield* GitHubQuota.GitHubQuota;
-    return GitHubApi.GitHubApi.of({
-      graphql: (input) =>
-        SourceControlRateLimit.Interactive.pipe(
-          Effect.flatMap((interactive) =>
-            quota.admit(input.host, "graphql", {
-              allowReserve: input.allowReserve ?? interactive,
-            }),
-          ),
-          Effect.andThen(() =>
-            (input.query.startsWith("query PullRequestStackMembership(")
-              ? mockedStackMemberships
-              : mockedExecute)({ kind: "graphql", ...input }),
-          ),
-          Effect.tap((answer) => quota.observe(input.host, answer.headers)),
-          Effect.map((answer) => answer.body),
-        ),
-      rest: (input) => mockedExecute({ kind: "rest", ...input }),
-      credential: (host) => mockedCredential(host),
-    });
+  GitHubApi.GitHubApi.of({
+    rest: (input) => mockedExecute({ kind: "rest", ...input }),
+    credential: (host) => mockedCredential(host),
   }),
 );
 

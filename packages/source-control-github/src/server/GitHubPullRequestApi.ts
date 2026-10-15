@@ -1097,8 +1097,8 @@ export const make = Effect.gen(function* () {
 
   /**
    * Runs one generated GraphQL call against `host`, reported as `operation`. GitHub's `errors`
-   * fail it as `GitHubApi.graphql` did (not found, or a response error with GitHub's messages); an
-   * answer that does not decode is a read error against `operation`.
+   * fail it as a not found, or a response error with GitHub's messages; an answer that does not
+   * decode is a read error against `operation`.
    */
   const graphql =
     (input: {

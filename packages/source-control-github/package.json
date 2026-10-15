@@ -31,10 +31,6 @@
       "types": "./src/server/GitHubCredentials.ts",
       "import": "./src/server/GitHubCredentials.ts"
     },
-    "./server/githubGraphQl": {
-      "types": "./src/server/githubGraphQl.ts",
-      "import": "./src/server/githubGraphQl.ts"
-    },
     "./server/GitHubRequestPolicy": {
       "types": "./src/server/GitHubRequestPolicy.ts",
       "import": "./src/server/GitHubRequestPolicy.ts"
