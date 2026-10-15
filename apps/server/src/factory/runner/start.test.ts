@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { afterEach, describe } from "vite-plus/test";
 
 import { timeLimitOnlyProjectConfig, type ProjectConfig } from "../config.ts";
@@ -125,6 +126,8 @@ const fakeTracker = (script: {
 };
 
 const run7: RunId = { repo: REPO, issue: "7", attempt: 1 };
+
+const isGateRunning = Schema.is(GateRunningError);
 
 const ctxFor = (dataDir: string, tracker: Tracker, clock: () => number = () => T0) => ({
   repo: REPO,
@@ -494,7 +497,7 @@ describe("start: older runs of the issue", () => {
       NodeFS.writeFileSync(lock, "");
       const { tracker, calls } = fakeTracker({});
       const error = yield* Effect.flip(startIn(dataDir, tracker));
-      assert.ok(error instanceof GateRunningError);
+      assert.ok(isGateRunning(error));
       assert.deepStrictEqual(error.run, older);
       assert.deepStrictEqual(calls, ["issue 7", "approval 7 tomkaczocha"]);
       assert.strictEqual(readRun(dataDir, older).entries.at(-1)!.event, "state_changed");
