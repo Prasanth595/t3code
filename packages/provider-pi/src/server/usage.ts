@@ -154,15 +154,16 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
   },
   parseProjected: parseRecord,
   state: { initial: () => ({ sessionId: "", faux: false }), schema: PiScanState },
-  // States without `faux` were saved before faux usage was skipped. Re-parse
-  // those holding records the current parser might drop: faux turns, and
-  // summaries a faux model may have written without leaving a faux turn.
-  isStaleCachedEntry: ({ records, state }) =>
-    !(typeof state === "object" && state !== null && "faux" in state) &&
-    records.some(
-      (record) =>
-        record.model.startsWith(`${FAUX_PROVIDER}/`) || record.model === UNATTRIBUTED_MODEL,
-    ),
+  // States without `faux` were saved before faux usage was skipped. Their faux
+  // turns go, and so do unattributed rows, which a faux model may have written
+  // without leaving a faux turn. A live file re-parses and recovers real ones.
+  upgradeCachedRecords: ({ records, state }) =>
+    typeof state === "object" && state !== null && "faux" in state
+      ? undefined
+      : records.filter(
+          (record) =>
+            !record.model.startsWith(`${FAUX_PROVIDER}/`) && record.model !== UNATTRIBUTED_MODEL,
+        ),
 };
 
 export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {

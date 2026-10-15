@@ -158,39 +158,36 @@ describe("scan cache round trip", () => {
     ["current", 5, { sessionId: "pi-session" }],
     ["legacy", 4, null],
   ] as const)(
-    "re-parses %s Pi entries saved before faux usage was skipped",
+    "replays %s Pi entries saved before faux usage was skipped, keeping real turns",
     (_, version, state) => {
       const pi = (model: string) =>
         record({ provider: "pi", model, dedupeKey: JSON.stringify(["pi", model]) });
-      const entry = (records: readonly UsageRecord[], entryState: unknown = state): CachedFile => ({
+      const entry = (entryState: unknown): CachedFile => ({
         size: 40,
         mtimeMs: 100,
         provider: "pi",
-        records,
-        tailRecords: [],
+        records: [pi("anthropic/claude-fable-5"), pi("faux/faux-1")],
+        // A summary a faux model wrote after a model switch looks like any other.
+        tailRecords: [pi("Tools/summaries")],
         position: position({ state: entryState }),
       });
       const cache: ScanCache = new Map([
-        ["/faux.jsonl", entry([pi("faux/faux-1")])],
-        // A summary a faux model wrote after a model switch left no faux turn.
-        ["/switch.jsonl", entry([pi("anthropic/claude-fable-5"), pi("Tools/summaries")])],
-        ["/real.jsonl", entry([pi("anthropic/claude-fable-5")])],
-        [
-          "/current.jsonl",
-          entry([pi("anthropic/claude-fable-5"), pi("Tools/summaries")], {
-            sessionId: "pi-session",
-            faux: false,
-          }),
-        ],
+        ["/old.jsonl", entry(state)],
+        ["/new.jsonl", entry({ sessionId: "pi-session", faux: false })],
       ]);
       const encoded = { ...encodeScanCache(cache), version };
 
       const restored = decodeScanCache(JSON.parse(JSON.stringify(encoded)), TEST_FORMAT_MAP);
 
-      // A legacy entry's state is not read, so it never proves the current parser.
-      expect([...restored.keys()]).toEqual(
-        version === 4 ? ["/real.jsonl"] : ["/real.jsonl", "/current.jsonl"],
-      );
+      // A deleted file keeps its real turns; a live one cannot resume, so it re-parses whole.
+      const old = restored.get("/old.jsonl");
+      expect([...(old?.records ?? []), ...(old?.tailRecords ?? [])].map((r) => r.model)).toEqual([
+        "anthropic/claude-fable-5",
+      ]);
+      expect(old?.size).toBe(-1);
+      expect(old?.position.resumeOffset).toBe(0);
+      // A legacy entry's state is not read, so only a current-format entry proves the new parser.
+      if (version === 5) expect(restored.get("/new.jsonl")).toEqual(cache.get("/new.jsonl"));
     },
   );
 
