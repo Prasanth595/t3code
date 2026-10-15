@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - plain Node, so the release workflow runs it without `vp i`.
 // Fork: writes the notes of a fork release from git, without the GitHub API.
-// Called by .github/workflows/fork-release.yml and scripts/fork-release-notes-backfill.ts.
+// Called by .github/workflows/fork-release.yml.
 //
 //   node scripts/fork-release-notes.ts <release-sha> [--previous <ref>] [--built-at <iso>]
 //
