@@ -1605,3 +1605,105 @@ it.live("a desktop page that comes back reconnects without waiting for a viewer"
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.live.each([
+  "display ratio 1.5",
+  "phone viewport",
+  "zoomed and scrolled",
+  "zoom after ratio read",
+  "zoom after first layout read",
+  "zoom never settles",
+  "headless",
+] as const)("snapshot sizing: %s", (scenario) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = scenario !== "headless";
+      const { browser, broker, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = scenario === "headless" ? contexts[0]! : desktopConnections[0]!.context;
+      const phone = scenario === "phone viewport";
+      const beforeZoom = {
+        ratio: phone ? 1 : 1.5,
+        width: phone ? 390 : 1280,
+        height: phone ? 844 : 800,
+        zoom: 1,
+      };
+      const afterZoom = { ratio: 3, width: 640, height: 400, zoom: 2 };
+      let current = scenario === "zoomed and scrolled" ? afterZoom : beforeZoom;
+      let ratioReads = 0;
+      let layoutReads = 0;
+      const captures: unknown[] = [];
+      const size = phone
+        ? { width: 390, height: 844 }
+        : scenario === "zoomed and scrolled"
+          ? { width: 1279, height: 799 }
+          : { width: 1280, height: 800 };
+      // An encoded IHDR makes the assertion independent of the predicted clip size.
+      const header = Buffer.alloc(24);
+      header.write("IHDR", 12);
+      header.writeUInt32BE(size.width, 16);
+      header.writeUInt32BE(size.height, 20);
+      for (const session of context.sessions) {
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation(async (method, input) => {
+          if (
+            method === "Runtime.evaluate" &&
+            String((input as { expression?: string })?.expression).includes("ratio:")
+          ) {
+            ratioReads += 1;
+            const reply = { result: { value: current } };
+            if (scenario === "zoom after ratio read") current = afterZoom;
+            if (scenario === "zoom never settles")
+              current = current === beforeZoom ? afterZoom : beforeZoom;
+            return reply;
+          }
+          if (method === "Page.getLayoutMetrics") {
+            const reply = {
+              cssVisualViewport: {
+                pageX: 0,
+                pageY: scenario === "zoomed and scrolled" ? 100 : 0,
+                zoom: current.zoom,
+              },
+            };
+            layoutReads += 1;
+            if (scenario === "zoom after first layout read" && layoutReads === 1)
+              current = afterZoom;
+            return reply;
+          }
+          if (method === "Page.captureScreenshot") {
+            captures.push((input as { clip?: unknown })?.clip);
+            return { data: header.toString("base64") };
+          }
+          return send(method, input);
+        });
+      }
+      const snapshot = broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      if (scenario === "zoom never settles") {
+        expect(JSON.stringify(yield* Effect.exit(snapshot))).toContain("zoom kept changing");
+        expect(captures).toEqual([]);
+        expect(ratioReads).toBe(3);
+        return;
+      }
+      const result = yield* snapshot;
+      expect(captures).toEqual([
+        phone
+          ? undefined
+          : {
+              x: 0,
+              y: scenario === "zoomed and scrolled" ? 200 : 0,
+              width: 1280,
+              height: 800,
+              scale: scenario === "headless" ? 0.5 : 2 / 3,
+            },
+      ]);
+      expect(result.screenshot).toMatchObject(size);
+      if (scenario === "headless") expect(ratioReads).toBe(0);
+      if (scenario.startsWith("zoom after")) expect(ratioReads).toBe(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
