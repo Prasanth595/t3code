@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import type { AppendIo } from "./ledger/appendFile.ts";
 import { errnoCode, isLedgerError, type LedgerError } from "./ledger/errors.ts";
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
@@ -114,13 +115,23 @@ export class GateCommandSpawnError extends Schema.TaggedError<GateCommandSpawnEr
 }
 
 /**
- * Why `run` failed. A failure means no attempt was used and the caller retries on its next pass,
- * with one exception: the `gate_command` lines are appended one at a time, so a ledger failure
- * partway through leaves the first of them. The commands did run, so the ledger counts that
- * attempt; it counts distinct attempt numbers, so a retry under the same number is not counted
- * twice, though its lines repeat the ones already there.
+ * The attempt's commands ran and the ledger failed while their `gate_command` lines were written,
+ * after at least one of them went in. The ledger counts the attempt, so the caller does too.
  */
-export type GateError = WorkspaceError | GateCommandSpawnError | LedgerError;
+export class GateRecordError extends Schema.TaggedError<GateRecordError>()("GateRecordError", {
+  attempt: Schema.Number,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `attempt ${this.attempt} is used: the ledger failed while its gate_command lines were written: ${causeText(this.cause)}`;
+  }
+}
+
+/**
+ * Why `run` failed. A `GateRecordError` means the attempt was used; any other failure means no
+ * attempt was used, and the caller retries on its next pass.
+ */
+export type GateError = WorkspaceError | GateCommandSpawnError | GateRecordError | LedgerError;
 
 // ---- text -----------------------------------------------------------------------------------
 
@@ -227,6 +238,8 @@ export interface GateOptions {
   readonly gitTailBytes?: number;
   /** Test only: variables set on every git call after the others, so a test can give git another HOME or PATH. */
   readonly env?: Readonly<Record<string, string>>;
+  /** Test only: the ledger's write and sync, so a test can fail an append. */
+  readonly ledgerIo?: AppendIo;
 }
 
 export interface GateInput {
@@ -737,7 +750,12 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
 
     const withLedger = <A, E>(use: (ledger: Ledger) => Effect.Effect<A, E>) =>
       Effect.acquireUseRelease(
-        ledgerCall(() => Ledger.open(dataDir, run, options.clock ? { clock: options.clock } : {})),
+        ledgerCall(() =>
+          Ledger.open(dataDir, run, {
+            ...(options.clock && { clock: options.clock }),
+            ...(options.ledgerIo && { io: options.ledgerIo }),
+          }),
+        ),
         use,
         (ledger) =>
           Effect.sync(() => {
@@ -804,27 +822,73 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
           }
         });
 
-        // The lines go in once the commands have ended in a pass or a fail, never on an error path:
-        // an attempt that errors (a command that cannot start, a ledger failure) used none. A
-        // ledger failure in this loop is the exception `GateError` describes.
-        const record = (outcome: Extract<GateResult, { readonly _tag: "pass" | "fail" }>) =>
+        // Whether the ledger holds a `gate_command` line of this attempt, so its summary counts it.
+        const ledgerCountsAttempt = ledgerCall(() => readRun(dataDir, run)).pipe(
+          Effect.map((record) =>
+            record.entries.some(
+              (entry) =>
+                entry.event === "gate_command" &&
+                typeof entry.data === "object" &&
+                entry.data !== null &&
+                "attempt" in entry.data &&
+                entry.data.attempt === attempt,
+            ),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+
+        // The attempt's `gate_command` lines, appended one at a time (the ledger has no batch).
+        // When an append fails once the ledger counts the attempt (an earlier line went in, or
+        // the failed one did: a failed sync leaves the line in the file), the attempt is used and
+        // the failure is a GateRecordError; otherwise it is the ledger's own error.
+        const appendCommandLines = (
+          lines: ReadonlyArray<{
+            readonly command: string;
+            readonly exitCode: number;
+            readonly durationMs: number;
+            readonly cause: Parameters<Ledger["append"]>[1];
+          }>,
+        ) =>
           Effect.gen(function* () {
-            for (const result of outcome.commands) {
-              yield* append(
-                {
-                  event: "gate_command",
-                  data: {
-                    attempt,
-                    command: result.command,
-                    exit_code: result.exitCode,
-                    duration_ms: result.durationMs,
+            let written = 0;
+            for (const line of lines) {
+              const appended = yield* Effect.result(
+                append(
+                  {
+                    event: "gate_command",
+                    data: {
+                      attempt,
+                      command: line.command,
+                      exit_code: line.exitCode,
+                      duration_ms: line.durationMs,
+                    },
                   },
-                },
-                makeCause("gate", "gate-command-ran", { command: result.command, attempt }),
+                  line.cause,
+                ),
               );
+              if (Result.isSuccess(appended)) {
+                written += 1;
+                continue;
+              }
+              const used = written > 0 || (yield* ledgerCountsAttempt);
+              return yield* used
+                ? new GateRecordError({ attempt, cause: appended.failure })
+                : appended.failure;
             }
-            return outcome;
           });
+
+        // The lines go in once the commands have ended in a pass or a fail, never on an error path:
+        // an attempt that errors (a command that cannot start, a ledger failure) used none,
+        // unless the ledger already counts it (see `appendCommandLines`).
+        const record = (outcome: Extract<GateResult, { readonly _tag: "pass" | "fail" }>) =>
+          appendCommandLines(
+            outcome.commands.map((result) => ({
+              command: result.command,
+              exitCode: result.exitCode,
+              durationMs: result.durationMs,
+              cause: makeCause("gate", "gate-command-ran", { command: result.command, attempt }),
+            })),
+          ).pipe(Effect.as(outcome));
 
         const runCommands = Effect.gen(function* () {
           const commands: Array<CommandResult> = [];
@@ -886,13 +950,14 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
             );
             if (made.merge._tag === "conflict") {
               // Nothing runs, and the line counts the attempt in the ledger's summary.
-              yield* append(
+              yield* appendCommandLines([
                 {
-                  event: "gate_command",
-                  data: { attempt, command: MERGE_COMMAND, exit_code: 1, duration_ms: 0 },
+                  command: MERGE_COMMAND,
+                  exitCode: 1,
+                  durationMs: 0,
+                  cause: makeCause("gate", "gate-merge-conflict", { attempt }),
                 },
-                makeCause("gate", "gate-merge-conflict", { attempt }),
-              );
+              ]);
               return { _tag: "conflict", dir, paths: made.merge.paths } satisfies GateResult;
             }
             return yield* runCommands;
