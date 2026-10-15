@@ -4,7 +4,10 @@ import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CommandId,
   EventId,
+  GitCommandError,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -12,7 +15,6 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, GitCommandError, MessageId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -21,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -758,7 +761,7 @@ describe("FactorySessions.send", () => {
     }),
   );
 
-  it.effect("fails as a sessions error when T3 rejects the message", () =>
+  it.effect("fails as a sessions error when the dispatch fails otherwise", () =>
     Effect.gen(function* () {
       const sessions = yield* Sessions.FactorySessions;
       const error = yield* Effect.flip(sessions.send(threadId, "softfac:issue-5:send-1", "x"));
@@ -776,6 +779,43 @@ describe("FactorySessions.send", () => {
         ),
       ),
     ),
+  );
+
+  const sendRefused = (refusal: Orchestrator.OrchestratorV2Error) =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      return yield* Effect.flip(sessions.send(threadId, "softfac:issue-5:send-1", "x"));
+    }).pipe(
+      Effect.provide(layerSessions({}, {}, { dispatch: () => Effect.fail(refusal) as never })),
+    );
+
+  it.effect("fails as message rejected when T3 refuses the message", () =>
+    Effect.gen(function* () {
+      const refusal = new Orchestrator.OrchestratorCommandRejectedError({
+        commandId: CommandId.make("softfac:issue-5:send-1"),
+        commandType: "message.dispatch",
+      });
+      const error = yield* sendRefused(refusal);
+      assert.strictEqual(error._tag, "FactoryMessageRejectedError");
+      if (error._tag === "FactoryMessageRejectedError") {
+        assert.strictEqual(error.threadId, threadId);
+        assert.strictEqual(error.commandId, "softfac:issue-5:send-1");
+        assert.strictEqual(error.cause, refusal);
+      }
+    }),
+  );
+
+  it.effect("fails as message rejected when the command id was refused before", () =>
+    Effect.gen(function* () {
+      const error = yield* sendRefused(
+        new Orchestrator.OrchestratorCommandPreviouslyRejectedError({
+          commandId: CommandId.make("softfac:issue-5:send-1"),
+          commandType: "message.dispatch",
+          detail: "Thread is archived.",
+        }),
+      );
+      assert.strictEqual(error._tag, "FactoryMessageRejectedError");
+    }),
   );
 });
 
@@ -841,21 +881,18 @@ const runArchive = (
         layerSessions(
           readsInTurn(reads, counter),
           {},
-          {
-            dispatch: (command) =>
-              dispatchFails
-                ? Effect.sync(() => {
+          dispatchFails
+            ? {
+                dispatch: (command) =>
+                  Effect.sync(() => {
                     commands.push(command);
                   }).pipe(
                     Effect.andThen(
                       Effect.fail(new DispatchRejected({ message: "dispatch failed" }) as never),
                     ),
-                  )
-                : Effect.sync(() => {
-                    commands.push(command);
-                    return {} as never;
-                  }),
-          },
+                  ),
+              }
+            : recordingDispatch(commands),
         ),
       ),
     );
@@ -913,17 +950,7 @@ describe("FactorySessions.archive", () => {
         yield* sessions.archive("");
       }).pipe(
         Effect.provide(
-          layerSessions(
-            readsInTurn(["live"], counter),
-            {},
-            {
-              dispatch: (command) =>
-                Effect.sync(() => {
-                  commands.push(command);
-                  return {} as never;
-                }),
-            },
-          ),
+          layerSessions(readsInTurn(["live"], counter), {}, recordingDispatch(commands)),
         ),
       );
       assert.strictEqual(commands.length, 0);
@@ -993,6 +1020,7 @@ interface GitCall {
   readonly args: ReadonlyArray<string>;
   readonly env: unknown;
   readonly allowNonZeroExit: unknown;
+  readonly timeoutMs: unknown;
 }
 
 const gitResult = (exitCode: number, stderr = "") =>
@@ -1009,6 +1037,7 @@ const recordingGit = (
       args: input.args,
       env: input.env,
       allowNonZeroExit: input.allowNonZeroExit,
+      timeoutMs: input.timeoutMs,
     });
     return answer();
   },
@@ -1061,6 +1090,8 @@ describe("FactorySessions.removeWorktree", () => {
           args: ["worktree", "remove", "--force", "--", "/tmp/wt/t3-abc"],
           env: { LC_ALL: "C" },
           allowNonZeroExit: true,
+          // A big node_modules outlasts git's 30 s default.
+          timeoutMs: 10 * 60 * 1000,
         },
       ]);
     }),

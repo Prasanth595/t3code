@@ -1,6 +1,6 @@
 import { CommandId, MessageId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
@@ -103,6 +104,19 @@ export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>
 ) {
   override get message(): string {
     return `T3 does not know thread ${this.threadId}.`;
+  }
+}
+
+/**
+ * T3 refused the message. It keeps that answer for the command id, so sending
+ * the same id again fails the same way; only a new id sends the message again.
+ */
+export class MessageRejectedError extends Schema.TaggedError<MessageRejectedError>()(
+  "FactoryMessageRejectedError",
+  { threadId: Schema.String, commandId: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `T3 refused message ${this.commandId} to thread ${this.threadId}.`;
   }
 }
 
@@ -222,14 +236,15 @@ export class FactorySessions extends Context.Service<
      * Sends a follow-up message into the thread. T3 decides delivery: it starts
      * a run when the thread is idle, steers the message into an active run
      * when the provider supports it, and queues it otherwise. `commandId`
-     * names the message like a launch's does, so a retry reuses it and T3
-     * keeps one message.
+     * names the message like a launch's does: sent again after a failure, T3
+     * keeps one message. A message T3 refused stays refused under its id, and
+     * fails as `MessageRejectedError`.
      */
     readonly send: (
       threadId: string,
       commandId: string,
       text: string,
-    ) => Effect.Effect<void, ThreadNotFoundError | SessionsError>;
+    ) => Effect.Effect<void, ThreadNotFoundError | MessageRejectedError | SessionsError>;
     /**
      * Archives the thread, which stops its active run. Succeeds when the
      * thread ends archived or gone: one that already was archived, and one T3
@@ -246,6 +261,12 @@ export class FactorySessions extends Context.Service<
 >()("t3/factory/t3/sessions/FactorySessions") {}
 
 const isThreadNotFound = Schema.is(ProjectionStore.ProjectionStoreThreadNotFoundError);
+const isRefused = Schema.is(
+  Schema.Union([
+    Orchestrator.OrchestratorCommandRejectedError,
+    Orchestrator.OrchestratorCommandPreviouslyRejectedError,
+  ]),
+);
 
 const mapReadError =
   (operation: "status" | "thread", threadId: string) =>
@@ -279,6 +300,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
 
@@ -356,18 +378,20 @@ export const make = Effect.gen(function* () {
           deliveryIntent: "auto",
           dispatchMode: { type: "start_immediately" },
         });
-      }).pipe(Effect.mapError((cause) => new SessionsError({ operation: "send", cause })));
+      }).pipe(
+        Effect.mapError((cause) =>
+          isRefused(cause)
+            ? new MessageRejectedError({ threadId, commandId, cause })
+            : new SessionsError({ operation: "send", cause }),
+        ),
+      );
     });
 
   // T3 remembers a rejected command id for good, so each attempt needs its own.
-  let archiveAttempts = 0;
   const archiveCommandId = (id: ThreadId) =>
-    Clock.currentTimeMillis.pipe(
-      Effect.flatMap((now) => {
-        archiveAttempts += 1;
-        return decodeCommandId(`factory-archive:${id}:${now.toString(16)}-${archiveAttempts}`);
-      }),
-    );
+    crypto
+      .randomUUIDv4()
+      .pipe(Effect.flatMap((uuid) => decodeCommandId(`factory-archive:${id}:${uuid}`)));
 
   const archiveState = (id: ThreadId) =>
     projections.getThread(id).pipe(
