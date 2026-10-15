@@ -206,16 +206,22 @@ export function SettingInheritance({
       .filter(Boolean)
       .join(" · ");
     const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key);
+    const winningLayer = layers.find((layer) => layer.effective);
     return [
       {
         id: `${target.environmentId}:${target.projectId ?? ""}`,
         target,
-        labels,
-        secondary,
-        environment: { ...environment, serverConfig: environment.serverConfig },
+        label: [labels.primary, secondary].filter(Boolean).join(" · "),
+        machineLabel: [labels.primary, labels.secondary].filter(Boolean).join(" · "),
+        overrides: environment.serverConfig.settings.projectSettingsOverrides,
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
         layers,
-        winningLayer: layers.find((layer) => layer.effective),
+        winningLayer,
+        resolution: {
+          winner: winningLayer?.key,
+          layers: layers.map(({ key, value }) => [key, value]),
+          settings: keys.map((settingKey) => target.settings[settingKey]),
+        },
       },
     ];
   });
@@ -225,30 +231,15 @@ export function SettingInheritance({
         target.environmentId === scopeContext?.target?.environmentId &&
         target.projectId === scopeContext?.target?.projectId,
     ) ?? chains[0];
-  const machineLabelFor = (environmentId: string) => {
-    const chain = chains.find((entry) => entry.target.environmentId === environmentId);
-    return chain ? [chain.labels.primary, chain.labels.secondary].filter(Boolean).join(" · ") : "";
-  };
+  const machineLabelFor = (environmentId: string) =>
+    chains.find((entry) => entry.target.environmentId === environmentId)?.machineLabel ?? "";
   const groups: (typeof chains)[] = [];
   for (const chain of hasMultipleEnvironments && primary
     ? [primary, ...chains.filter((entry) => entry !== primary)]
     : chains) {
-    const group = hasMultipleEnvironments
-      ? groups.find(
-          ([first]) =>
-            first &&
-            first.winningLayer?.key === chain.winningLayer?.key &&
-            first.layers.length === chain.layers.length &&
-            first.layers.every(
-              (layer, index) =>
-                layer.key === chain.layers[index]?.key &&
-                layer.value === chain.layers[index]?.value,
-            ) &&
-            keys.every((settingKey) =>
-              Equal.equals(first.target.settings[settingKey], chain.target.settings[settingKey]),
-            ),
-        )
-      : undefined;
+    const group =
+      hasMultipleEnvironments &&
+      groups.find(([first]) => first && Equal.equals(first.resolution, chain.resolution));
     if (group) group.push(chain);
     else groups.push([chain]);
   }
@@ -372,11 +363,7 @@ export function SettingInheritance({
                                 kind={member.machine}
                                 className="size-3 shrink-0"
                               />
-                              <span className="truncate">
-                                {[member.labels.primary, member.secondary]
-                                  .filter(Boolean)
-                                  .join(" · ")}
-                              </span>
+                              <span className="truncate">{member.label}</span>
                             </span>
                           ))}
                         </span>
@@ -447,9 +434,7 @@ export function SettingInheritance({
                                   members.find(
                                     (member) =>
                                       member.target.environmentId === project.environmentId,
-                                  )?.environment.serverConfig.settings.projectSettingsOverrides[
-                                    project.projectId
-                                  ]?.[key],
+                                  )?.overrides[project.projectId]?.[key],
                                 )
                               : null}
                           </span>

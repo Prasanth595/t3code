@@ -306,6 +306,10 @@ function CleanupSection() {
     return {
       environment,
       report,
+      label: settingsScopeEnvironmentLabel(environment, connectedEnvironments),
+      counts: report
+        ? `${report.counts.removed} removed, ${report.counts.kept} kept${report.counts.failed > 0 ? `, ${report.counts.failed} failed` : ""}`
+        : "",
       description: report
         ? `Last run ${formatRelativeTimeLabel(report.finishedAt)}. ${formatBytes(report.bytesFreed)} recovered.${report.counts.failed > 0 ? ` ${report.counts.failed} ${report.counts.failed === 1 ? "item" : "items"} couldn't be removed.` : ""}`
         : query?.failed
@@ -358,11 +362,9 @@ function CleanupSection() {
             <span>
               {!hasRules
                 ? "Turn on a cleanup rule to use this."
-                : summaries.map(({ environment, description }) => (
+                : summaries.map(({ environment, label, description }) => (
                     <span key={environment.environmentId} className="block">
-                      {supported.length > 1
-                        ? `${settingsScopeEnvironmentLabel(environment, connectedEnvironments)}: `
-                        : ""}
+                      {supported.length > 1 ? `${label}: ` : ""}
                       {description}
                     </span>
                   ))}
@@ -386,30 +388,17 @@ function CleanupSection() {
           title="Last run"
           headerPlacement="inside"
           summary={lastRunSummary(
-            summaries.flatMap(({ environment, report }) =>
-              report
-                ? [
-                    {
-                      label: settingsScopeEnvironmentLabel(environment, connectedEnvironments),
-                      counts: `${report.counts.removed} removed, ${report.counts.kept} kept${report.counts.failed > 0 ? `, ${report.counts.failed} failed` : ""}`,
-                    },
-                  ]
-                : [],
-            ),
+            summaries.filter(({ report }) => report !== null),
             connectedEnvironments.length,
           )}
         >
           {summaries.map(
-            ({ environment, report }) =>
+            ({ environment, label, report }) =>
               report && (
                 <CleanupResults
                   key={environment.environmentId}
                   report={report}
-                  environmentLabel={
-                    connectedEnvironments.length > 1
-                      ? settingsScopeEnvironmentLabel(environment, connectedEnvironments)
-                      : undefined
-                  }
+                  environmentLabel={connectedEnvironments.length > 1 ? label : undefined}
                 />
               ),
           )}

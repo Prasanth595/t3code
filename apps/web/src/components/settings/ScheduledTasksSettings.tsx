@@ -383,38 +383,25 @@ function ScheduledTaskEnvironmentList({
 
   const loaded = states.filter((state) => state.connected && state.error === null && state.tasks);
   const populated = loaded.filter((state) => state.tasks && state.tasks.length > 0);
-  const summaries = [
-    {
-      label: "Not connected:",
-      entries: states
-        .filter((state) => !state.connected)
-        .map(
-          ({ environment }) =>
-            `${environment.label} (${connectionStatusTitle(environment.connection)})`,
-        ),
-    },
-    {
-      label: "Loading scheduled tasks on",
-      entries: states
-        .filter((state) => state.connected && state.error === null && !state.tasks)
-        .map((state) => state.environment.label),
-    },
-    {
-      label: "Could not load scheduled tasks:",
-      entries: states
-        .filter((state) => state.error !== null)
-        .map((state) => `${state.environment.label}: ${state.error}`),
-    },
-    {
-      label: "No tasks on",
-      entries:
-        populated.length === 0
-          ? []
-          : loaded
-              .filter((state) => state.tasks?.length === 0)
-              .map((state) => state.environment.label),
-    },
-  ];
+  const summaries: Record<string, string[]> = {
+    "Not connected:": [],
+    "Loading scheduled tasks on": [],
+    "Could not load scheduled tasks:": [],
+    "No tasks on": [],
+  };
+  for (const { environment, connected, tasks, error } of states) {
+    if (!connected) {
+      summaries["Not connected:"]!.push(
+        `${environment.label} (${connectionStatusTitle(environment.connection)})`,
+      );
+    } else if (error !== null) {
+      summaries["Could not load scheduled tasks:"]!.push(`${environment.label}: ${error}`);
+    } else if (!tasks) {
+      summaries["Loading scheduled tasks on"]!.push(environment.label);
+    } else if (tasks.length === 0 && populated.length > 0) {
+      summaries["No tasks on"]!.push(environment.label);
+    }
+  }
 
   return (
     <SettingsGroup>
@@ -467,7 +454,7 @@ function ScheduledTaskEnvironmentList({
           description="No tasks match this environment and project selection."
         />
       ) : null}
-      {summaries.map(({ label, entries }) => {
+      {Object.entries(summaries).map(([label, entries]) => {
         if (entries.length === 0) return null;
         const summary = `${label} ${entries.join(", ")}`;
         return (
@@ -1183,35 +1170,34 @@ function ScheduledTaskEditorDialog({
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  {connectedEnvironments.map((entry) => (
-                    <SelectItem
-                      key={entry.environmentId}
-                      value={entry.environmentId}
-                      label={entry.label}
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <EnvironmentMachineIcon
-                          kind={resolveEnvironmentMachineKind(entry.serverConfig)}
-                          className="size-4"
-                        />
-                        <span className="min-w-0">
-                          <span className="block truncate">{entry.label}</span>
-                          {connectedEnvironments.some(
-                            (other) =>
-                              other.environmentId !== entry.environmentId &&
-                              other.label === entry.label,
-                          ) ? (
-                            <span className="block max-w-72 truncate text-xs text-muted-foreground">
-                              {
-                                settingsScopeEnvironmentLabels(entry, connectedEnvironments)
-                                  .secondary
-                              }
-                            </span>
-                          ) : null}
+                  {connectedEnvironments.map((entry) => {
+                    const { secondary } = settingsScopeEnvironmentLabels(
+                      entry,
+                      connectedEnvironments,
+                    );
+                    return (
+                      <SelectItem
+                        key={entry.environmentId}
+                        value={entry.environmentId}
+                        label={entry.label}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <EnvironmentMachineIcon
+                            kind={resolveEnvironmentMachineKind(entry.serverConfig)}
+                            className="size-4"
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate">{entry.label}</span>
+                            {secondary ? (
+                              <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                                {secondary}
+                              </span>
+                            ) : null}
+                          </span>
                         </span>
-                      </span>
-                    </SelectItem>
-                  ))}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectPopup>
               </Select>
             </Field>

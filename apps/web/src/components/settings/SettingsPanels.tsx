@@ -3470,18 +3470,15 @@ export function ArchivedThreadsPanel() {
       ),
     );
     const environmentLabels = new Map(
-      environments.map((environment) => [
-        environment.environmentId,
-        settingsScopeEnvironmentLabels(environment, environments),
-      ]),
+      environments.map((environment) => {
+        const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
+        return [environment.environmentId, secondary ? `${primary} (${secondary})` : primary];
+      }),
     );
     const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
       snapshot.threads.map((thread) => ({
         ...presentThreadShell(environmentId, thread),
-        environmentLabels: environmentLabels.get(environmentId) ?? {
-          primary: environmentId,
-          secondary: "",
-        },
+        environmentLabel: environmentLabels.get(environmentId) ?? environmentId,
       })),
     );
     const hasMultipleEnvironments =
@@ -3661,24 +3658,12 @@ export function ArchivedThreadsPanel() {
                 }}
                 title={thread.title}
                 description={
-                  hasMultipleEnvironments ? (
-                    <span className="block truncate">
-                      {thread.environmentLabels.primary}
-                      {thread.environmentLabels.secondary
-                        ? ` (${thread.environmentLabels.secondary})`
-                        : ""}
-                      {" · "}
-                      Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                      {" \u00b7 Created "}
-                      {formatRelativeTimeLabel(thread.createdAt)}
-                    </span>
-                  ) : (
-                    <>
-                      Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                      {" \u00b7 Created "}
-                      {formatRelativeTimeLabel(thread.createdAt)}
-                    </>
-                  )
+                  <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
+                    {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
+                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                    {" \u00b7 Created "}
+                    {formatRelativeTimeLabel(thread.createdAt)}
+                  </span>
                 }
                 control={
                   <Button
