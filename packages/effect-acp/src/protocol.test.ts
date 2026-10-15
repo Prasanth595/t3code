@@ -260,10 +260,12 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
             `${encodeUnknownJsonString({ jsonrpc: "2.0", method: "session/update", params })}\n`,
           ),
         );
-      yield* send({
+      const malformed = {
         sessionId: "session-1",
         update: { sessionUpdate: "usage_update", cost: { amount: 1, currency: secret } },
-      });
+      };
+      yield* send(malformed);
+      yield* send(malformed);
       yield* send({
         sessionId: "session-1",
         update: { sessionUpdate: "usage_update", used: 10, size: 100 },
@@ -286,6 +288,12 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         method: "session/update",
         issueSummary: "update.used missing",
       });
+      // The repeated bad update is dropped again but warned about once.
+      assert.lengthOf(
+        events.filter(({ stage }) => stage === "decode_failed"),
+        2,
+      );
+      assert.lengthOf(warnings, 1);
       assert.deepInclude(warnings[0] as object, {
         issueSummary: "update.used missing",
       });

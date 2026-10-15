@@ -234,6 +234,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     outstandingAcknowledgements: new Set(),
   });
   const nextRequestId = yield* Ref.make(1);
+  const warnedDecodeFailures = new Set<string>();
   const terminationHandled = yield* Ref.make(false);
   const terminationFailure = yield* Deferred.make<never, AcpError.AcpError>();
   const extPending = yield* Ref.make(new Map<string, AcpPendingRequest>());
@@ -512,22 +513,30 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
 
   // A notification has no reply to fail, so one the schema rejects is logged
   // and dropped. Ending the connection over it would kill a working session
-  // because one update, possibly from a newer spec, did not parse.
+  // because one update, possibly from a newer spec, did not parse. An agent
+  // repeats a bad shape on every update, so each distinct failure is warned
+  // about once per connection.
   const dropUndecodableNotification = (method: string) => (cause: Schema.SchemaError) => {
     const error = AcpError.AcpProtocolParseError.fromSchemaError(
       "decode-notification-payload",
       method,
       cause,
     );
+    const diagnostics = decodeFailureDiagnostics(error);
+    const key = `${method}\n${error.issueSummary}`;
+    const firstOfItsKind = !warnedDecodeFailures.has(key);
+    warnedDecodeFailures.add(key);
     return logProtocol({
       direction: "incoming",
       stage: "decode_failed",
-      payload: decodeFailureDiagnostics(error),
+      payload: diagnostics,
     }).pipe(
       Effect.andThen(
-        Effect.logWarning("Dropped an ACP notification that failed to decode").pipe(
-          Effect.annotateLogs(decodeFailureDiagnostics(error)),
-        ),
+        firstOfItsKind
+          ? Effect.logWarning("Dropped an ACP notification that failed to decode").pipe(
+              Effect.annotateLogs(diagnostics),
+            )
+          : Effect.void,
       ),
     );
   };
