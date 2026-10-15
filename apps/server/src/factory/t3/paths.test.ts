@@ -18,10 +18,10 @@ it.effect("derives the factory paths from the server base directory", () =>
     assert.strictEqual(paths.machineConfigPath, join(baseDir, "factory", "config.yml"));
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        FactoryPathsLive,
-        ServerConfig.layerTest(process.cwd(), { prefix: "factory-paths-" }),
-      ).pipe(Layer.provideMerge(NodeServices.layer)),
+      FactoryPathsLive.pipe(
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "factory-paths-" })),
+        Layer.provideMerge(NodeServices.layer),
+      ),
     ),
   ),
 );

@@ -123,8 +123,8 @@ const projectBad = (path: string, yaml: string) => {
   assertOne(projectErr(edit(PROJECT, (t) => set(t, path, yaml))), path, PFILE);
 };
 
-const machineMissing = (path: string) => {
-  assertOne(machineErr(edit(MACHINE, (t) => remove(t, path))), path, MFILE);
+const machineMissing = (path: string, errorPath = path) => {
+  assertOne(machineErr(edit(MACHINE, (t) => remove(t, path))), errorPath, MFILE);
 };
 
 /** Set `editPath` (tree address, e.g. `repos.0.path`), expect the error at `errorPath` (`repos[0].path`). */
@@ -348,9 +348,10 @@ describe("project config", () => {
     it("project minutes zero", () => projectBad("factory.limits.minutes", "0"));
     it("project minutes negative", () => projectBad("factory.limits.minutes", "-5"));
     it("project minutes fractional", () => projectBad("factory.limits.minutes", "1.5"));
-    it("project minutes written as 1.0 is fractional", () => {
-      const errs = projectErr(edit(PROJECT, (tree) => set(tree, "factory.limits.minutes", "1.0")));
+    it("project minutes written as 90.0 is fractional", () => {
+      const errs = projectErr(PROJECT.replace("minutes: 90", "minutes: 90.0"));
       assertOne(errs, "factory.limits.minutes", PFILE);
+      expect(errs[0]!.message).toBe("must be an integer of at least 1");
     });
     it("project gate retries not an integer", () =>
       projectBad("factory.limits.gate_retries", "many"));
@@ -449,7 +450,7 @@ describe("machine config", () => {
     it("machine missing max concurrent runs", () => machineMissing("max_concurrent_runs"));
     it("machine missing model", () => machineMissing("model"));
     it("machine missing repos", () => machineMissing("repos"));
-    it("machine repo missing repo", () => machineMissing("repos.0.repo"));
+    it("machine repo missing repo", () => machineMissing("repos.0.repo", "repos[0].repo"));
     it("machine repo missing path", () => {
       const t = edit(MACHINE, (tree) => remove(tree, "repos.0.path"));
       assertOne(machineErr(t), "repos[0].path", MFILE);
@@ -485,20 +486,19 @@ describe("machine config", () => {
   });
 
   describe("strings", () => {
-    for (const key of ["model", "model_instance", "gh_config_dir"]) {
-      it(`machine ${key} empty`, () => {
-        machineBad(key, '""');
-        expect(machineErr(edit(MACHINE, (t) => set(t, key, '""')))[0]!.message).toBe(
-          "must not be empty",
-        );
-      });
-      it(`machine ${key} not a string`, () => {
-        machineBad(key, "[x]");
-        expect(machineErr(edit(MACHINE, (t) => set(t, key, "[x]")))[0]!.message).toBe(
-          "must be a string",
-        );
-      });
-    }
+    const KEYS = ["model", "model_instance", "gh_config_dir"];
+    it.each(KEYS)("machine %s empty", (key) => {
+      machineBad(key, '""');
+      expect(machineErr(edit(MACHINE, (t) => set(t, key, '""')))[0]!.message).toBe(
+        "must not be empty",
+      );
+    });
+    it.each(KEYS)("machine %s not a string", (key) => {
+      machineBad(key, "[x]");
+      expect(machineErr(edit(MACHINE, (t) => set(t, key, "[x]")))[0]!.message).toBe(
+        "must be a string",
+      );
+    });
   });
 
   describe("repos", () => {
@@ -582,7 +582,11 @@ describe("machine config", () => {
 
 describe("loaders", () => {
   const withTempDir = <A, E>(
-    body: (dir: string, fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E>,
+    body: (
+      dir: string,
+      fs: FileSystem.FileSystem,
+      path: Path.Path,
+    ) => Effect.Effect<A, E, FileSystem.FileSystem>,
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
