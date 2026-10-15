@@ -991,7 +991,11 @@ export const layer: Layer.Layer<
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
-        const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
+          const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
+          // A planned detach closes ingestion before the adapter can end its open root items.
+          const openRootTurnItems = yield* Ref.make<
+            ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>
+          >(new Map());
         const routeIdentity: ProviderEventRouteIdentity = {
           threadId: input.run.threadId,
           runId: input.run.id,
@@ -1334,7 +1338,19 @@ export const layer: Layer.Layer<
                             }
                           : state,
                       );
+                      const openItems = yield* Ref.getAndSet(openRootTurnItems, new Map());
                       return Stream.fromIterable<ProviderAdapter.ProviderAdapterV2Event>([
+                        ...[...openItems.values()].map((turnItem) => ({
+                          type: "turn_item.updated" as const,
+                          driver: input.providerThread.driver,
+                          turnItem: {
+                            ...turnItem,
+                            ...("streaming" in turnItem ? { streaming: false } : {}),
+                            status: "interrupted" as const,
+                            completedAt,
+                            updatedAt: completedAt,
+                          },
+                        })),
                         ...(providerTurn?.status === "running" || providerTurn?.status === "pending"
                           ? [
                               {
@@ -1526,6 +1542,18 @@ export const layer: Layer.Layer<
                 yield* Ref.update(latestTurnItemOrdinal, (current) =>
                   Math.max(current, event.turnItem.ordinal),
                 );
+                  const turnItem = event.turnItem;
+                  // Subagent items are ended by the run-owned cascade.
+                  if (turnItem.type !== "subagent") {
+                    const open = turnItem.status === "running" || turnItem.status === "pending";
+                    yield* Ref.update(openRootTurnItems, (items) => {
+                      if (!open && !items.has(turnItem.id)) return items;
+                      const next = new Map(items);
+                      if (open) next.set(turnItem.id, turnItem);
+                      else next.delete(turnItem.id);
+                      return next;
+                    });
+                  }
               }
               if (event.type === "turn.terminal") {
                 yield* Ref.set(terminalEvent, event);
