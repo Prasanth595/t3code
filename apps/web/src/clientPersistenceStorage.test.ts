@@ -38,6 +38,23 @@ afterEach(() => {
 });
 
 describe("clientPersistenceStorage", () => {
+  it.each(["night-sky", "sunshine"] as const)(
+    "keeps the %s nightly banner after reloading settings",
+    async (nightlyBannerStyle) => {
+      const testWindow = getTestWindow();
+      const { readBrowserClientSettings, writeBrowserClientSettings } =
+        await import("./clientPersistenceStorage");
+
+      testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify({}));
+      expect(readBrowserClientSettings()?.nightlyBannerStyle).toBe("night-sky");
+
+      writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, nightlyBannerStyle });
+      vi.resetModules();
+      const reloaded = await import("./clientPersistenceStorage");
+      expect(reloaded.readBrowserClientSettings()?.nightlyBannerStyle).toBe(nightlyBannerStyle);
+    },
+  );
+
   it("persists client settings in browser storage", async () => {
     getTestWindow();
     const { readBrowserClientSettings, writeBrowserClientSettings } =

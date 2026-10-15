@@ -24,6 +24,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+  DEFAULT_NIGHTLY_BANNER_STYLE,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
   type DiffLayout,
@@ -136,7 +137,14 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Select,
+  SelectGroup,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -555,6 +563,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
         : []),
+      ...(settings.nightlyBannerStyle !== DEFAULT_NIGHTLY_BANNER_STYLE ? ["Nightly banner"] : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -696,6 +705,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffLayout,
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
+      settings.nightlyBannerStyle,
       settings.contextWindowMeterEnabled,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
@@ -813,6 +823,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
+      nightlyBannerStyle: DEFAULT_NIGHTLY_BANNER_STYLE,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -1351,6 +1362,46 @@ export function AppearanceSettingsPanel() {
                       {label}
                     </SelectItem>
                   ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        ) : null}
+
+        {environmentStageLabel.trim().toLowerCase() === "nightly" &&
+        settings.environmentIdentificationMode === "artwork" ? (
+          <SettingsRow
+            {...searchableSetting("nightly-banner")}
+            description="Choose the artwork at the top of the sidebar."
+            resetAction={
+              settings.nightlyBannerStyle !== DEFAULT_NIGHTLY_BANNER_STYLE ? (
+                <SettingResetButton
+                  label="nightly banner"
+                  onClick={() =>
+                    updateSettings({ nightlyBannerStyle: DEFAULT_NIGHTLY_BANNER_STYLE })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.nightlyBannerStyle}
+                onValueChange={(value) => {
+                  if (value === "night-sky" || value === "sunshine") {
+                    updateSettings({ nightlyBannerStyle: value });
+                  }
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Nightly banner">
+                  <SelectValue>
+                    {settings.nightlyBannerStyle === "sunshine" ? "Sunshine" : "Night sky"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectGroup>
+                    <SelectItem value="night-sky">Night sky</SelectItem>
+                    <SelectItem value="sunshine">Sunshine</SelectItem>
+                  </SelectGroup>
                 </SelectPopup>
               </Select>
             }

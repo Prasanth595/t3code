@@ -61,6 +61,18 @@ beforeEach(() => {
 });
 
 describe("restoring V2 settings", () => {
+  it("restores the nightly banner when it is the only changed setting", async () => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, nightlyBannerStyle: "sunshine" };
+    hooks.beginRender();
+    const restore = useSettingsRestore();
+
+    expect(restore.changedSettingLabels).toEqual(["Nightly banner"]);
+    await restore.restoreDefaults();
+
+    expect(state.update).toHaveBeenCalledOnce();
+    expect(state.update.mock.calls[0]?.[0].nightlyBannerStyle).toBe("night-sky");
+  });
+
   it.each([
     ["persistComposerContextStrip", "Composer context"],
     ["autoResumeLimitedThreads", "Auto-resume limited threads"],

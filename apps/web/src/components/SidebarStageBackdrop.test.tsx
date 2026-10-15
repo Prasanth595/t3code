@@ -22,6 +22,16 @@ describe("SidebarStageBackdrop", () => {
     expect(resolveEnvironmentIdentificationPillLabel("Alpha")).toBeNull();
   });
 
+  it("applies the banner preference only to enabled nightly artwork", () => {
+    expect(resolveSidebarStageBackdropVariant("Nightly", true, "sunshine")).toBe(
+      "nightly-sunshine",
+    );
+    expect(resolveSidebarStageBackdropVariant("Nightly", true, "night-sky")).toBe("nightly");
+    expect(resolveSidebarStageBackdropVariant("Nightly", false, "sunshine")).toBeNull();
+    expect(resolveSidebarStageBackdropVariant("Dev", true, "sunshine")).toBe("dev");
+    expect(resolveSidebarStageBackdropVariant("Latest", true, "sunshine")).toBeNull();
+  });
+
   it.each(["nightly", "dev"] as const)(
     "uses unique SVG definition ids when %s artwork is rendered more than once",
     (variant) => {

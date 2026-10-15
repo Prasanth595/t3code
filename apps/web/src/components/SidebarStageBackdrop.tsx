@@ -1,11 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useId } from "react";
+import type { NightlyBannerStyle } from "@t3tools/contracts/settings";
 
+import nightlySunshineUrl from "../assets/nightly-sunshine.webp";
+import { useNightlyBannerStyle } from "../hooks/useSettings";
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import { primaryServerConfigAtom } from "../state/server";
+import { cn } from "../lib/utils";
 
-export type SidebarStageBackdropVariant = "nightly" | "dev";
+export type SidebarStageBackdropVariant = "nightly" | "nightly-sunshine" | "dev";
 export type EnvironmentIdentificationPillLabel = "Dev" | "Nightly";
 
 // A wide viewBox keeps the 96-unit art height at a fixed scale while sidebar resizing reveals
@@ -15,10 +19,13 @@ const STAGE_BACKDROP_VIEW_BOX = "0 0 8192 96";
 export function resolveSidebarStageBackdropVariant(
   stageLabel: string,
   enabled = true,
+  nightlyBannerStyle: NightlyBannerStyle = "night-sky",
 ): SidebarStageBackdropVariant | null {
   if (!enabled) return null;
   const normalized = stageLabel.trim().toLowerCase();
-  if (normalized === "nightly") return "nightly";
+  if (normalized === "nightly") {
+    return nightlyBannerStyle === "sunshine" ? "nightly-sunshine" : "nightly";
+  }
   if (normalized === "dev") return "dev";
   return null;
 }
@@ -43,10 +50,12 @@ export function useEnvironmentStageLabel(): string {
 }
 
 export function useSidebarStageBackdropVariant(enabled = true): SidebarStageBackdropVariant | null {
-  return resolveSidebarStageBackdropVariant(useEnvironmentStageLabel(), enabled);
+  const stageLabel = useEnvironmentStageLabel();
+  const nightlyBannerStyle = useNightlyBannerStyle();
+  return resolveSidebarStageBackdropVariant(stageLabel, enabled, nightlyBannerStyle);
 }
 
-/** Stage-channel header art; palettes mirror the per-channel app icons in `assets/`. */
+/** Stage-channel header art, shared by both sidebar layouts. */
 export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdropVariant }) {
   return (
     <div
@@ -59,11 +68,32 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
 }
 
 export function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+  if (variant === "nightly-sunshine") return <NightlySunshineArt />;
   return variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />;
 }
 
 export function StageBackdropButtonArt({ variant }: { variant: SidebarStageBackdropVariant }) {
+  if (variant === "nightly-sunshine") return <NightlySunshineArt compact />;
   return variant === "nightly" ? <NightlySkyArt compact /> : <DevBlueprintArt compact />;
+}
+
+function NightlySunshineArt({ compact = false }: { compact?: boolean }) {
+  return (
+    <span className="relative block h-full w-full">
+      <img
+        src={nightlySunshineUrl}
+        alt=""
+        draggable={false}
+        className="h-full w-full object-cover object-[center_43%]"
+      />
+      <span
+        className={cn(
+          "absolute inset-0",
+          compact ? "bg-black/45" : "bg-linear-to-r from-black/60 via-black/30 to-black/15",
+        )}
+      />
+    </span>
+  );
 }
 
 const NIGHTLY_STARS: ReadonlyArray<{

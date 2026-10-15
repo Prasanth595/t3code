@@ -40,6 +40,7 @@ const clientSettings: ClientSettings = {
   diffIgnoreWhitespace: true,
   diffLayout: "stacked",
   environmentIdentificationMode: "artwork",
+  nightlyBannerStyle: "sunshine",
   favorites: [],
   fontFamilyCode: "",
   fontFamilyComposer: "",

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
-import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useEnvironmentIdentificationMode, useNightlyBannerStyle } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -38,9 +38,11 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }) {
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const nightlyBannerStyle = useNightlyBannerStyle();
   const backdropVariant = resolveSidebarStageBackdropVariant(
     stageLabel,
     environmentIdentificationMode === "artwork",
+    nightlyBannerStyle,
   );
   const pillLabel =
     environmentIdentificationMode === "pill"

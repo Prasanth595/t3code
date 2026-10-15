@@ -162,6 +162,10 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
+export const NightlyBannerStyle = Schema.Literals(["night-sky", "sunshine"]);
+export type NightlyBannerStyle = typeof NightlyBannerStyle.Type;
+export const DEFAULT_NIGHTLY_BANNER_STYLE: NightlyBannerStyle = "night-sky";
+
 export const SnapShotKeyChord = KeybindingShortcut.check(
   Schema.makeFilter(
     (shortcut) =>
@@ -399,6 +403,9 @@ export const ClientSettingsSchema = Schema.Struct({
   diffLayout: DiffLayout.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_LAYOUT))),
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
+  ),
+  nightlyBannerStyle: NightlyBannerStyle.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_NIGHTLY_BANNER_STYLE)),
   ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
@@ -1714,6 +1721,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
+  nightlyBannerStyle: Schema.optionalKey(NightlyBannerStyle),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),

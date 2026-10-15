@@ -598,6 +598,17 @@ describe("ClientSettings panel animations", () => {
 });
 
 describe("ClientSettings environment identification", () => {
+  it("defaults to the night sky banner and persists either style", () => {
+    expect(decodeClientSettings({}).nightlyBannerStyle).toBe("night-sky");
+    for (const nightlyBannerStyle of ["night-sky", "sunshine"] as const) {
+      expect(decodeClientSettings({ nightlyBannerStyle }).nightlyBannerStyle).toBe(
+        nightlyBannerStyle,
+      );
+      expect(decodeClientSettingsPatch({ nightlyBannerStyle })).toEqual({ nightlyBannerStyle });
+    }
+    expect(() => decodeClientSettingsPatch({ nightlyBannerStyle: "unknown" })).toThrow();
+  });
+
   it("defaults to artwork and accepts each presentation mode", () => {
     expect(decodeClientSettings({}).environmentIdentificationMode).toBe("artwork");
 

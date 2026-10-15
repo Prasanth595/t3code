@@ -337,6 +337,11 @@ describe("searchSettings", () => {
       to: "/settings/appearance",
       targetId: "appearance-interface",
     });
+    expect(searchSettings("sunshine")[0]).toMatchObject({
+      id: "nightly-banner",
+      to: "/settings/appearance",
+      targetId: "appearance-interface",
+    });
   });
 
   it("routes conditional window capture settings to the stable toggle row", () => {

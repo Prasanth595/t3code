@@ -317,6 +317,10 @@ function useClientSettingsValue(): ClientSettings {
   );
 }
 
+export function useNightlyBannerStyle() {
+  return useClientSettingsValue().nightlyBannerStyle;
+}
+
 export function mergeEnvironmentSettings(
   serverSettings: ServerSettings,
   clientSettings: ClientSettings,

@@ -290,6 +290,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance-interface",
   },
   {
+    id: "nightly-banner",
+    title: "Nightly banner",
+    to: "/settings/appearance",
+    searchTerms: ["night sky sunshine sun sidebar artwork"],
+    targetId: "appearance-interface",
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",
