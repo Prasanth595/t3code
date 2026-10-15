@@ -68,7 +68,7 @@ import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
-import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
+import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   matchesScheduledTaskScope,
@@ -390,16 +390,17 @@ function ScheduledTaskEnvironmentList({
     "No tasks on": [],
   };
   for (const { environment, connected, tasks, error } of states) {
+    const label = settingsScopeEnvironmentLabel(environment, environments);
     if (!connected) {
       summaries["Not connected:"]!.push(
-        `${environment.label} (${connectionStatusTitle(environment.connection)})`,
+        `${label} (${connectionStatusTitle(environment.connection)})`,
       );
     } else if (error !== null) {
-      summaries["Could not load scheduled tasks:"]!.push(`${environment.label}: ${error}`);
+      summaries["Could not load scheduled tasks:"]!.push(`${label}: ${error}`);
     } else if (!tasks) {
-      summaries["Loading scheduled tasks on"]!.push(environment.label);
+      summaries["Loading scheduled tasks on"]!.push(label);
     } else if (tasks.length === 0 && populated.length > 0) {
-      summaries["No tasks on"]!.push(environment.label);
+      summaries["No tasks on"]!.push(label);
     }
   }
 

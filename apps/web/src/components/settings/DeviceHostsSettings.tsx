@@ -293,6 +293,7 @@ function DeviceHostList({
           const check = hostChecks?.[member.environmentId];
           const summary = state?.hosts.find((value) => value.id === member.host.id);
           const label = environmentLabels.get(member.environmentId)?.primary ?? member.label;
+          const address = environmentLabels.get(member.environmentId)?.secondary;
           const error =
             check?.status === "failed"
               ? check.error
@@ -304,7 +305,8 @@ function DeviceHostList({
           return {
             ...member,
             label,
-            address: environmentLabels.get(member.environmentId)?.secondary,
+            address,
+            name: [label, address].filter(Boolean).join(" · "),
             state,
             status,
             check,
@@ -381,7 +383,7 @@ function DeviceHostList({
                   <div className="space-y-1">
                     {failed.map((result) => (
                       <p key={result.environmentId}>
-                        {result.label}: {result.error || "Connection failed"}
+                        {result.name}: {result.error || "Connection failed"}
                       </p>
                     ))}
                   </div>
@@ -446,7 +448,7 @@ function DeviceHostList({
                       render={<InlineButton tone="muted" />}
                     >
                       <span className="line-clamp-1 break-all text-left">
-                        {summarizeLabels(results.map((result) => result.label))}
+                        {summarizeLabels(results.map((result) => result.name))}
                       </span>
                       <ChevronDownIcon className="size-3 shrink-0" />
                     </CollapsibleTrigger>
