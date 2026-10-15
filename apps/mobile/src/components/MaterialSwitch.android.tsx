@@ -4,6 +4,14 @@ import type { ThemedSwitchProps } from "./MaterialSwitch.types";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
+// A row Pressable that becomes the JS responder intercepts every touch move on
+// Android, so Compose sees a cancel instead of a tap. The host claims the
+// responder first, as React Native's Switch does. Expo views never intercept.
+const claimTouch = {
+  onStartShouldSetResponder: () => true,
+  onResponderTerminationRequest: () => false,
+};
+
 /** Material's native switch, with the same palette and accessibility contract as our RN controls. */
 export function MaterialSwitch(props: ThemedSwitchProps) {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
@@ -25,6 +33,7 @@ export function MaterialSwitch(props: ThemedSwitchProps) {
     >
       <View importantForAccessibility="no-hide-descendants">
         <Host
+          {...claimTouch}
           colorScheme={themeAppearance}
           ignoreSafeAreaKeyboardInsets
           style={{ width: 52, height: 48 }}
