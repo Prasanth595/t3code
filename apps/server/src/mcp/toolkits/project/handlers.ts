@@ -185,7 +185,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         }
         // A launch is accepted before its worktree is provisioned, so a base
-        // ref that cannot resolve is refused while the agent can still act on it.
+        // ref that cannot resolve, or a branch that exists, is refused while
+        // the agent can still act on it.
         const strategy = input.workspaceStrategy;
         if (strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
@@ -196,11 +197,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               (error) =>
                 new OrchestratorMcpFailure({
                   code: "invalid_request",
-                  message: `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
-                    strategy.startFromOrigin === true
-                      ? "; the project has no origin remote to fetch it from."
-                      : ", or set startFromOrigin:true if it exists only on origin."
-                  }`,
+                  message:
+                    error._tag === "ThreadLaunchBranchExistsError"
+                      ? `${error.message} No thread was created. Pass a new branch name, or omit branch to let T3 Code name it.`
+                      : `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
+                          strategy.startFromOrigin === true
+                            ? "; the project has no origin remote to fetch it from."
+                            : ", or set startFromOrigin:true if it exists only on origin."
+                        }`,
                 }),
             ),
           );

@@ -2629,6 +2629,28 @@ it.effect.each([
   }),
 );
 
+it.effect("refuses a new worktree whose branch already exists", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      hasCommit: ({ refName }) => Effect.succeed(refName === "refs/heads/docs/taken"),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const error = yield* launches
+        .checkWorktreeBase({
+          projectId,
+          workspaceStrategy: { type: "worktree", baseRef: "main", branch: "docs/taken" },
+        })
+        .pipe(Effect.flip);
+      assert.deepInclude(error, {
+        _tag: "ThreadLaunchBranchExistsError",
+        projectId,
+        branch: "docs/taken",
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect.each([
   { name: "a base ref that resolves", baseRef: "main", commits: ["main", "HEAD"] },
   // Provisioning fetches it; the ref may exist nowhere else yet.

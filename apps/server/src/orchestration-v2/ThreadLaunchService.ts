@@ -164,6 +164,21 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
   }
 }
 
+/** A new worktree was asked to create a branch that already exists. */
+export class ThreadLaunchBranchExistsError extends Schema.TaggedError<ThreadLaunchBranchExistsError>()(
+  "ThreadLaunchBranchExistsError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    workspaceRoot: Schema.String,
+    branch: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Branch "${this.branch}" already exists in project "${this.projectTitle}" (${this.workspaceRoot}).`;
+  }
+}
+
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
@@ -174,13 +189,14 @@ export class ThreadLaunchService extends Context.Service<
       ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
     /**
-     * Fails when a new worktree's base ref cannot give provisioning a commit.
+     * Fails when a new worktree's base ref cannot give provisioning a commit,
+     * or when its requested branch already exists.
      * `launch` accepts such a launch and reports the failure inside the
      * thread; a caller that needs it before a thread exists checks first.
      */
     readonly checkWorktreeBase: (
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
-    ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
+    ) => Effect.Effect<void, ThreadLaunchBaseRefError | ThreadLaunchBranchExistsError>;
     /** Dispatches prepared-run.retry and prepares the run's workspace again. */
     readonly retryPreparation: (input: ThreadLaunchPreparationInput) => Effect.Effect<
       Orchestrator.OrchestratorV2DispatchResult,
@@ -266,9 +282,29 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
     const strategy = input.workspaceStrategy;
+    if (strategy.type !== "worktree") return;
+    const { baseRef, branch } = strategy;
+    // `git worktree add -b` refuses a branch that exists.
+    if (branch !== undefined) {
+      const taken = yield* Effect.gen(function* () {
+        const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
+        if (project === undefined) return undefined;
+        const exists = yield* git.hasCommit({
+          cwd: project.workspaceRoot,
+          refName: `refs/heads/${branch}`,
+        });
+        return exists ? project : undefined;
+      }).pipe(Effect.orElseSucceed(() => undefined));
+      if (taken !== undefined)
+        return yield* new ThreadLaunchBranchExistsError({
+          projectId: taken.id,
+          projectTitle: taken.title,
+          workspaceRoot: taken.workspaceRoot,
+          branch,
+        });
+    }
     // `:/text` is a commit search, which cannot be asked for a commit type.
-    if (strategy.type !== "worktree" || strategy.baseRef.startsWith(":")) return;
-    const { baseRef } = strategy;
+    if (baseRef.startsWith(":")) return;
     // Anything this cannot establish is left for the launch to report: a
     // missing project, a folder that is not a repository, a failing Git.
     const unresolved = yield* Effect.gen(function* () {
