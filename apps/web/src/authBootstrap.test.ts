@@ -14,6 +14,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { installEnvironmentHttpTest } from "../test/environmentHttpTest";
 import { __setPrimaryHttpRunnerForTests, type PrimaryHttpEffectRunner } from "./lib/runtime";
 
+// The browser key proof (MM-917) runs Effect fibers and a timer, which fake timers stop. These
+// tests cover the session flow, so the browser has no key here.
+vi.mock("./connection/browserKeyProof", () => ({ browserKeyProof: async () => null }));
+
 type TestWindow = {
   location: URL;
   history: {
