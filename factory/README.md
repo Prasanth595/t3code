@@ -26,6 +26,14 @@ vp i
 factory/scripts/check.sh
 ```
 
+Build, install and roll back the darwin-arm64 binary (LaunchAgent `io.github.rawphp.t3fac`, port 3876):
+
+```sh
+factory/scripts/build.sh                      # clean tree only: build, smoke test, then -> release/t3fac-<version>-darwin-arm64.tar.gz
+factory/scripts/install.sh <archive>          # unpack, point `current` at it, restart the job
+factory/scripts/rollback.sh                   # point `current` at the previous version, restart the job
+```
+
 ## Syncing with upstream
 
 `factory/scripts/sync.sh` merges upstream's newest `v*-nightly.*` tag into `main` through a pull request. `.github/workflows/factory-sync.yml` runs it daily at 03:17 UTC and on `workflow_dispatch`; it also runs from a checkout with `git`, `gh` and `vp` on the path and `SYNC_UPSTREAM` pointing at another repo when needed.
