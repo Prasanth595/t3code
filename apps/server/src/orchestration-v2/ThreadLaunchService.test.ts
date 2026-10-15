@@ -100,6 +100,7 @@ const adapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
+  readonly runtimeCwd?: string;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
@@ -119,7 +120,12 @@ function makeHarness(options: HarnessOptions = {}) {
   const layerDatabase = SqlitePersistence.layerMemory;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(options.adapters ?? [adapter]);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-    { name: "thread-launch" },
+    {
+      name: "thread-launch",
+      ...(options.runtimeCwd === undefined
+        ? {}
+        : { runtimePolicyOverride: { cwd: options.runtimeCwd } }),
+    },
     layerRegistry,
     { databaseLayer: layerDatabase, runEffectWorker: false },
   );
@@ -528,6 +534,7 @@ it.effect("enqueues provider work only after setup has been initiated", () =>
     const setupEntered = yield* Deferred.make<void>();
     const allowSetup = yield* Deferred.make<void>();
     const harness = makeHarness({
+      runtimeCwd: "/repo-worktrees/feature/ios",
       runSetup: () =>
         Deferred.succeed(setupEntered, undefined).pipe(
           Effect.andThen(Deferred.await(allowSetup)),
@@ -581,6 +588,7 @@ it.effect(
       const setupEntered = yield* Deferred.make<void>();
       const failSetup = yield* Deferred.make<void>();
       const harness = makeHarness({
+        runtimeCwd: "/repo-worktrees/feature/ios",
         runSetup: () =>
           Deferred.succeed(setupEntered, undefined).pipe(
             Effect.andThen(Deferred.await(failSetup)),
