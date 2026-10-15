@@ -167,7 +167,7 @@ type RunDataKeys<N extends RunEventName> = keyof Extract<RunEvent, { event: N }>
  * The 30 event types a run file can hold, each with the names of its `data` fields in the order
  * they are written.
  */
-export const RUN_EVENT_FIELDS: Readonly<Record<RunEventName, ReadonlyArray<string>>> = {
+export const RUN_EVENT_FIELDS = {
   claimed: ["machine", "github_user"],
   triage_result: ["passed", "reasons"],
   questions_posted: ["questions"],
@@ -205,7 +205,15 @@ export const RUN_EVENT_FIELDS: Readonly<Record<RunEventName, ReadonlyArray<strin
   stuck: ["reason", "branch", "commits_ahead"],
   error: ["step", "kind", "message"],
   finished: ["outcome", "total_ms", "gate_attempts", "review_cycles", "pr_url", "pr_end"],
-} satisfies { readonly [N in RunEventName]: ReadonlyArray<RunDataKeys<N>> };
+} as const satisfies { readonly [N in RunEventName]: ReadonlyArray<RunDataKeys<N>> };
+
+// `satisfies` rejects a listed field the type lacks. This rejects the other mistake: a field the
+// type has and the table omits, which `buildData` would silently drop from the file.
+type RunFieldsOmitted = {
+  [N in RunEventName]: Exclude<RunDataKeys<N>, (typeof RUN_EVENT_FIELDS)[N][number]>;
+}[RunEventName];
+const _runFieldsComplete: [RunFieldsOmitted] extends [never] ? true : RunFieldsOmitted = true;
+void _runFieldsComplete;
 
 const NESTED_FIELDS = {
   resumed_from: ["run", "branch"],
@@ -463,7 +471,7 @@ type MachineDataKeys<N extends MachineEventName> = KeysOfEach<
  * order they are written. A type with more than one shape lists the fields of all of them: the
  * ones that are absent are left out, and the shapes share no field that is ordered differently.
  */
-export const MACHINE_EVENT_FIELDS: Readonly<Record<MachineEventName, ReadonlyArray<string>>> = {
+export const MACHINE_EVENT_FIELDS = {
   pass_started: [],
   pass_finished: ["runs", "claimed", "errors", "attention"],
   preflight_failed: ["check", "why"],
@@ -491,4 +499,12 @@ export const MACHINE_EVENT_FIELDS: Readonly<Record<MachineEventName, ReadonlyArr
   retro_finished: ["n", "thread_id", "result", "duration_ms"],
   worktrees_swept: ["paths"],
   error: ["run", "step", "kind", "message"],
-} satisfies { readonly [N in MachineEventName]: ReadonlyArray<MachineDataKeys<N>> };
+} as const satisfies { readonly [N in MachineEventName]: ReadonlyArray<MachineDataKeys<N>> };
+
+// As for the run table: a field of any shape that the table omits fails the type check.
+type MachineFieldsOmitted = {
+  [N in MachineEventName]: Exclude<MachineDataKeys<N>, (typeof MACHINE_EVENT_FIELDS)[N][number]>;
+}[MachineEventName];
+const _machineFieldsComplete: [MachineFieldsOmitted] extends [never] ? true : MachineFieldsOmitted =
+  true;
+void _machineFieldsComplete;
