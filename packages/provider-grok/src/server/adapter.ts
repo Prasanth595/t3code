@@ -253,7 +253,7 @@ export function makeGrokAcpAdapterFlavor(
     // Grok ACP initialize reports promptCapabilities.image:false but the agent
     // still accepts image content blocks (verified with real screenshots).
     supportsImagePrompts: true,
-    supportsCompaction: true,
+    compaction: "marker",
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     applyModelSelection: ({ runtime, startResult, modelSelection }) =>
       Effect.gen(function* () {
