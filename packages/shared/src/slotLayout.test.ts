@@ -2,9 +2,10 @@ import {
   DEFAULT_MOBILE_THREAD_CARD_LAYOUT,
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_THREAD_CARD_LAYOUT,
+  knownSlotLayout,
   REQUIRED_THREAD_CARD_ELEMENTS,
+  StoredThreadCardLayout,
   THREAD_CARD_ELEMENTS,
-  ThreadCardLayout,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -21,7 +22,7 @@ import {
   unplacedSlotLayoutElements,
 } from "./slotLayout.ts";
 
-const decodeLayout = Schema.decodeUnknownSync(ThreadCardLayout);
+const decodeLayout = Schema.decodeUnknownSync(StoredThreadCardLayout);
 const required = REQUIRED_THREAD_CARD_ELEMENTS;
 
 describe("slot layout schema", () => {
@@ -39,10 +40,11 @@ describe("slot layout schema", () => {
     expect(() => decodeLayout({ rows: [{ start: ["title"], end: [] }] })).toThrow();
   });
 
-  it("rejects an element the surface does not offer", () => {
-    expect(() =>
-      decodeLayout({ rows: [{ start: ["title", "weather"], end: ["status"] }] }),
-    ).toThrow();
+  it("keeps an element from a newer version, and readers skip it", () => {
+    const stored = decodeLayout({ rows: [{ start: ["title", "weather"], end: ["status"] }] });
+    expect(knownSlotLayout(stored, THREAD_CARD_ELEMENTS)).toEqual({
+      rows: [{ start: ["title"], end: ["status"] }],
+    });
   });
 });
 

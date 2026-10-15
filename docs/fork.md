@@ -320,6 +320,7 @@ The server setting `threadCardLayouts` holds a custom thread card layout for des
 - A layout is rows of elements. Each row has a left group that takes the free width and truncates, and a right group that keeps its size.
 - Drag an element between groups, or into the Hidden tray to hide it. The title and the status cannot be hidden, because the status holds the settle and snooze controls.
 - The setting is shared: a change goes to every connected server that supports shared settings, so the phone reads the same layout.
+- A server stores element names it does not know, for example one that a newer version added. An older client skips them, and its next edit of that layout drops them.
 - The mobile tab offers no terminal or diff element. The preview shows the mobile arrangement with web styles, because the phone draws its cards natively.
 - Every element of a custom layout carries `data-thread-card-element="<name>"`, so a theme CSS file can style one element, for example `[data-thread-card-element="terminal"] > *`.
 - The layout schema and its edit operations are generic (`packages/contracts/src/slotLayout.ts`, `packages/shared/src/slotLayout.ts`). Another surface can reuse them with its own element list.
