@@ -10,7 +10,6 @@ import {
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { requestHeaderOrigin } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -33,11 +32,11 @@ import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { isCloudflareAccessChallenged } from "../../connection/requestHeaders";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import {
-  CloudflareAccessFields,
+  AddEnvironmentCloudflareAccess,
   type CloudflareAccessForm,
   EMPTY_CLOUDFLARE_ACCESS_FORM,
-  cloudflareAccessTokenFromForm,
-  useSaveCloudflareAccessToken,
+  pairingTargetOrigin,
+  useStageCloudflareAccessToken,
 } from "./CloudflareAccessFields";
 import { splitEnvironmentSections } from "./environmentSections";
 
@@ -78,13 +77,13 @@ export function ConnectionsNewRouteScreen({
   const [scanComplete, setScanComplete] = useState(false);
   const attemptedAutoConnectRef = useRef<string | null>(null);
   const [accessForm, setAccessForm] = useState<CloudflareAccessForm>(EMPTY_CLOUDFLARE_ACCESS_FORM);
-  const [accessOpen, setAccessOpen] = useState(false);
-  const saveAccessToken = useSaveCloudflareAccessToken();
+  const stageAccessToken = useStageCloudflareAccessToken();
   // A Cloudflare Access login page during pairing explains the failure and opens the token fields.
+  const accessOrigin = pairingTargetOrigin(buildPairingUrl(hostInput, codeInput));
   const accessChallenged =
     pairingConnectionError !== null &&
-    isCloudflareAccessChallenged(buildPairingUrl(hostInput, codeInput));
-  const showAccess = accessOpen || accessChallenged;
+    accessOrigin !== null &&
+    isCloudflareAccessChallenged(accessOrigin);
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
 
@@ -172,7 +171,8 @@ export function ConnectionsNewRouteScreen({
   );
 
   const connectAndClose = useCallback(
-    async (pairingUrl: string, replaceWithHome: boolean) => {
+    /** Pairs and closes the sheet. Returns whether pairing succeeded. */
+    async (pairingUrl: string, replaceWithHome: boolean): Promise<boolean> => {
       setIsSubmitting(true);
       onChangeConnectionPairingUrl(pairingUrl);
       try {
@@ -189,6 +189,7 @@ export function ConnectionsNewRouteScreen({
             navigation.goBack();
           }
         }
+        return AsyncResult.isSuccess(result);
       } finally {
         setIsSubmitting(false);
       }
@@ -198,21 +199,16 @@ export function ConnectionsNewRouteScreen({
 
   const handleSubmit = useCallback(async () => {
     const pairingUrl = buildPairingUrl(hostInput, codeInput);
-    const parsed = cloudflareAccessTokenFromForm(accessForm);
-    if ("error" in parsed) {
-      setPendingConnectionError(parsed.error);
+    setIsSubmitting(true);
+    const staged = await stageAccessToken(pairingUrl, accessForm);
+    if ("error" in staged) {
+      setIsSubmitting(false);
+      setPendingConnectionError(staged.error);
       return;
     }
-    const origin = requestHeaderOrigin(pairingUrl);
-    if (parsed.token !== null && origin !== null) {
-      const error = await saveAccessToken(origin, parsed.token);
-      if (error !== null) {
-        setPendingConnectionError(error);
-        return;
-      }
-    }
-    await connectAndClose(pairingUrl, false);
-  }, [accessForm, codeInput, connectAndClose, hostInput, saveAccessToken]);
+    // A token saved for a pairing that fails would stay unreachable, so put the headers back.
+    if (!(await connectAndClose(pairingUrl, false))) await staged.undo();
+  }, [accessForm, codeInput, connectAndClose, hostInput, stageAccessToken]);
 
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
@@ -303,35 +299,15 @@ export function ConnectionsNewRouteScreen({
             </Text>
           </View>
 
-          <View collapsable={false} className="gap-2">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ expanded: showAccess }}
-              onPress={() => setAccessOpen((open) => !open)}
-              className="flex-row items-center justify-between px-4 active:opacity-70"
-            >
-              <Text className="text-sm font-t3-medium text-foreground-muted">
-                Cloudflare Access service token
-              </Text>
-              <SymbolView
-                name={showAccess ? "chevron.up" : "chevron.down"}
-                size={12}
-                tintColorClassName="accent-chevron"
-                type="monochrome"
-                weight="semibold"
-              />
-            </Pressable>
-            {showAccess ? (
-              <CloudflareAccessFields
-                form={accessForm}
-                onChange={(form) => {
-                  setAccessForm(form);
-                  setPendingConnectionError(null);
-                }}
-                disabled={isSubmitting}
-              />
-            ) : null}
-          </View>
+          <AddEnvironmentCloudflareAccess
+            form={accessForm}
+            onChange={(form) => {
+              setAccessForm(form);
+              setPendingConnectionError(null);
+            }}
+            challenged={accessChallenged}
+            disabled={isSubmitting}
+          />
 
           {hasCloudPublicConfig() ? <T3ConnectSection /> : null}
         </View>

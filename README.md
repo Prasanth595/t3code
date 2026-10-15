@@ -7,7 +7,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 **Remote access**
 
 - **Cloudflare Access login:** the server accepts the Cloudflare Access JWT as the owner login (`cloudflareAccessTeamDomain`, `cloudflareAccessAud`, `cloudflareAccessSubjects`).
-- **Request headers per environment:** a saved environment sends its own headers, for example a Cloudflare Access service token. Edit them in Settings > Connections on desktop. The Android app sends them too: enter the service token under "Cloudflare Access service token" in Add environment, or in the settings of the environment.
+- **Request headers per environment:** a saved environment sends its own headers, for example a Cloudflare Access service token. Edit them in Settings > Connections on desktop. The Android app sends them on API requests, the WebSocket, attachment and project images, Markdown images and attachment downloads. Enter the token under "Cloudflare Access service token" in Add environment, or in the settings of the environment. Not covered on Android yet: provider icons, the media gallery, audio and video, thread link previews, and web views (their sub-requests and redirects cannot be limited to one origin).
 - **Tunnel pairing:** a desktop server that listens on loopback makes pairing links with its tunnel URL (`tunnelPairingEnabled`, `tunnelPairingUrl`).
 - **Trusted sibling environments:** trusted browser origins get credentialed CORS and session cookies. One browser page pairs and reaches the other hosts (`trustedBrowserOrigins`).
 

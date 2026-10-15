@@ -5,6 +5,7 @@ import {
   isCloudflareAccessChallenge,
   requestHeadersError,
   requestHeadersForUrl,
+  withCloudflareAccessServiceToken,
 } from "./requestHeaders.ts";
 
 describe("requestHeadersError", () => {
@@ -104,5 +105,24 @@ describe("isCloudflareAccessChallenge", () => {
     ).toBe(false);
     expect(isCloudflareAccessChallenge(403, { "content-type": "text/html" })).toBe(false);
     expect(isCloudflareAccessChallenge(200, { "cf-access-domain": "x" })).toBe(false);
+  });
+});
+
+describe("withCloudflareAccessServiceToken", () => {
+  it("replaces or removes only the service token headers", () => {
+    const other = { name: "X-Other", value: "keep" };
+    const headers = [
+      { name: "cf-access-client-id", value: "old.access" },
+      { name: "CF-Access-Client-Secret", value: "old" },
+      other,
+    ];
+    expect(
+      withCloudflareAccessServiceToken(headers, { clientId: "new.access", clientSecret: "new" }),
+    ).toEqual([
+      { name: "CF-Access-Client-Id", value: "new.access" },
+      { name: "CF-Access-Client-Secret", value: "new" },
+      other,
+    ]);
+    expect(withCloudflareAccessServiceToken(headers, null)).toEqual([other]);
   });
 });

@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   RelayConnectionRegistration,
   RelayConnectionTarget,
+  requestHeaderOrigin,
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type {
@@ -9,11 +10,13 @@ import type {
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import {
   connectPairingUrl as connectPairingUrlAtom,
+  moveRequestHeaders,
   updateBearerConnection,
 } from "../../connection/onboarding";
 import { useWorkspaceEnvironments } from "../../state/workspace";
@@ -36,6 +39,7 @@ export function useConnectionController() {
     reportFailure: false,
   });
   const updateBearer = useAtomCommand(updateBearerConnection, { reportFailure: false });
+  const moveHeaders = useAtomCommand(moveRequestHeaders, "request headers move");
   const registerEnvironment = useAtomCommand(environmentCatalog.register, "environment register");
   const removeEnvironmentMutation = useAtomCommand(environmentCatalog.remove, "environment remove");
   const retryEnvironmentMutation = useAtomCommand(environmentCatalog.retryNow, "environment retry");
@@ -102,16 +106,29 @@ export function useConnectionController() {
     [setEnvironmentEnabledMutation],
   );
   const updateEnvironment = useCallback(
-    (
+    async (
       environmentId: EnvironmentId,
       updates: { readonly label: string; readonly displayUrl: string },
-    ) =>
-      updateBearer({
+    ) => {
+      const previous = connectedEnvironments.find((entry) => entry.environmentId === environmentId);
+      const from = previous ? requestHeaderOrigin(previous.displayUrl) : null;
+      const to = requestHeaderOrigin(updates.displayUrl);
+      const result = await updateBearer({
         environmentId,
         label: updates.label,
         httpBaseUrl: updates.displayUrl,
-      }),
-    [updateBearer],
+      });
+      // Fork: request headers are stored per origin, so they follow an address change.
+      if (AsyncResult.isSuccess(result) && from !== null && to !== null && from !== to) {
+        const keepFrom = connectedEnvironments.some(
+          (entry) =>
+            entry.environmentId !== environmentId && requestHeaderOrigin(entry.displayUrl) === from,
+        );
+        await moveHeaders({ from, to, keepFrom });
+      }
+      return result;
+    },
+    [connectedEnvironments, moveHeaders, updateBearer],
   );
 
   return {

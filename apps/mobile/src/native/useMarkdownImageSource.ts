@@ -5,6 +5,7 @@ import { resolveMobileMarkdownMediaSource } from "../lib/markdownMediaSource";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { MarkdownImageSourceResolver } from "./SelectableMarkdownText.types";
+import { withRequestHeaders } from "../connection/requestHeaders";
 import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
 import { useCallback } from "react";
 import * as Option from "effect/Option";
@@ -39,7 +40,9 @@ export function useMarkdownImageSource(props: {
         workspaceRoot,
         imageEmbed: true,
       });
-      if (media?.access === "direct") return { uri: normalizeNativeMarkdownUrl(media.uri) };
+      if (media?.access === "direct") {
+        return withRequestHeaders({ uri: normalizeNativeMarkdownUrl(media.uri) });
+      }
       if (
         captured ||
         !fileAccess.canReadFiles ||
@@ -56,7 +59,7 @@ export function useMarkdownImageSource(props: {
       if (result._tag !== "Success") throw new Error("Could not authorize Markdown image");
       const uri = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
       if (uri === null) throw new Error("Markdown image URL is invalid");
-      return { uri };
+      return withRequestHeaders({ uri });
     },
     [
       captured,

@@ -3,6 +3,12 @@
  * service token. The connection catalog stores them (`requestHeaders`), and the
  * catalog store pushes each loaded or saved list here, so the transports read
  * them without a round trip through the storage layer.
+ *
+ * Known limit: React Native fetch, expo-image and expo-file-system keep custom
+ * headers when they follow a redirect to another origin, and React Native has
+ * no working `redirect: "manual"`. Only the saved server or Cloudflare Access
+ * in front of it can redirect today. Revisit if a server can redirect to a
+ * third party.
  */
 import {
   isCloudflareAccessChallenge,
@@ -36,6 +42,13 @@ function isCloudflareAccessResponse(response: Response): boolean {
   return isCloudflareAccessChallenge(response.status, Object.fromEntries(response.headers));
 }
 
+/** The headers for the origin of `url` as a record, or undefined when it has none. */
+export function requestHeadersRecord(url: string): Record<string, string> | undefined {
+  const extra = requestHeadersForUrl(rules, url);
+  if (extra.length === 0) return undefined;
+  return Object.fromEntries(extra.map((header) => [header.name, header.value]));
+}
+
 /**
  * An image source with the headers of its origin. Native image loaders bypass
  * fetch, so they need the headers in the source itself.
@@ -43,12 +56,8 @@ function isCloudflareAccessResponse(response: Response): boolean {
 export function withRequestHeaders<Source extends { readonly uri: string }>(
   source: Source,
 ): Source | (Source & { readonly headers: Record<string, string> }) {
-  const extra = requestHeadersForUrl(rules, source.uri);
-  if (extra.length === 0) return source;
-  return {
-    ...source,
-    headers: Object.fromEntries(extra.map((header) => [header.name, header.value])),
-  };
+  const headers = requestHeadersRecord(source.uri);
+  return headers === undefined ? source : { ...source, headers };
 }
 
 // Origins whose last response was a Cloudflare Access login. The request still
@@ -103,8 +112,7 @@ export const layerWebSocketConstructor = Layer.succeed(Socket.WebSocketConstruct
   if (options !== undefined && typeof options !== "string" && !Array.isArray(options)) {
     throw new TypeError("WebSocket client options are not supported on mobile.");
   }
-  const extra = requestHeadersForUrl(rules, url);
-  if (extra.length === 0) return new WebSocket(url, options);
-  const headers = Object.fromEntries(extra.map((header) => [header.name, header.value]));
+  const headers = requestHeadersRecord(url);
+  if (headers === undefined) return new WebSocket(url, options);
   return new NativeWebSocket(url, options ?? null, { headers });
 });

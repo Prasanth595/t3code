@@ -1,21 +1,29 @@
+/**
+ * Fork: the Cloudflare Access service token that the app sends to one server
+ * origin. Add environment saves it before pairing; the environment settings
+ * edit or remove it.
+ */
 import {
   type CloudflareAccessServiceToken,
   cloudflareAccessServiceToken,
+  type RequestHeader,
+  requestHeaderOrigin,
   requestHeadersError,
   withCloudflareAccessServiceToken,
 } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useState } from "react";
-import { View } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { readRequestHeaders, saveRequestHeaders } from "../../connection/onboarding";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { ConnectionFormField } from "./ConnectionFormField";
+import { buildPairingUrl, parsePairingUrl } from "./pairing";
 
-/** Fork: the Cloudflare Access service token that the app sends to one origin. */
 export interface CloudflareAccessForm {
   readonly clientId: string;
   readonly clientSecret: string;
@@ -26,8 +34,56 @@ export const EMPTY_CLOUDFLARE_ACCESS_FORM: CloudflareAccessForm = {
   clientSecret: "",
 };
 
+/**
+ * The origin of the server that a pairing URL pairs with. A hosted pairing
+ * link (app.t3.codes) names the server in its query, so the token never lands
+ * on the hosting site.
+ */
+export function pairingTargetOrigin(pairingUrl: string): string | null {
+  const { host } = parsePairingUrl(pairingUrl);
+  if (host === "") return null;
+  // buildPairingUrl adds the scheme that pairing uses for a bare host; the code is a placeholder.
+  return requestHeaderOrigin(buildPairingUrl(host, "origin"));
+}
+
+type TokenUpdate = (
+  current: CloudflareAccessServiceToken | null,
+) => CloudflareAccessServiceToken | null;
+
+/** Reads and writes the service token of one origin, keeping its other headers. */
+function useCloudflareAccessStore() {
+  const read = useAtomCommand(readRequestHeaders, { reportFailure: false });
+  const save = useAtomCommand(saveRequestHeaders, { reportFailure: false });
+  const write = useCallback(
+    async (origin: string, headers: ReadonlyArray<RequestHeader>): Promise<string | null> => {
+      const error = requestHeadersError(headers);
+      if (error !== null) return error;
+      const saved = await save({ origin, headers });
+      return AsyncResult.isSuccess(saved) ? null : "Could not save the service token.";
+    },
+    [save],
+  );
+  /** Applies `update` to the saved token. Returns the headers before the change, or an error. */
+  const update = useCallback(
+    async (
+      origin: string,
+      change: TokenUpdate,
+    ): Promise<
+      { readonly previous: ReadonlyArray<RequestHeader> } | { readonly error: string }
+    > => {
+      const current = await read(origin);
+      if (!AsyncResult.isSuccess(current)) return { error: "Could not read the saved headers." };
+      const next = change(cloudflareAccessServiceToken(current.value));
+      const error = await write(origin, withCloudflareAccessServiceToken(current.value, next));
+      return error === null ? { previous: current.value } : { error };
+    },
+    [read, write],
+  );
+  return useMemo(() => ({ read, write, update }), [read, update, write]);
+}
+
 /** The token to store (null removes it), or an error message for the user. */
-export function cloudflareAccessTokenFromForm(
+function cloudflareAccessTokenFromForm(
   form: CloudflareAccessForm,
 ): { readonly token: CloudflareAccessServiceToken | null } | { readonly error: string } {
   const clientId = form.clientId.trim();
@@ -39,51 +95,39 @@ export function cloudflareAccessTokenFromForm(
 }
 
 /**
- * Replaces the service token of `origin` and keeps its other headers.
- * Returns an error message, or null when the token is saved.
+ * Add environment: saves the form's token for the pairing target before pairing.
+ * `undo` puts back the headers of that origin as they were, for a pairing that fails.
  */
-export function useSaveCloudflareAccessToken() {
-  const read = useAtomCommand(readRequestHeaders, { reportFailure: false });
-  const save = useAtomCommand(saveRequestHeaders, { reportFailure: false });
+export function useStageCloudflareAccessToken() {
+  const store = useCloudflareAccessStore();
   return useCallback(
-    async (origin: string, token: CloudflareAccessServiceToken | null): Promise<string | null> => {
-      const current = await read(origin);
-      if (!AsyncResult.isSuccess(current)) return "Could not read the saved headers.";
-      const headers = withCloudflareAccessServiceToken(current.value, token);
-      const error = requestHeadersError(headers);
-      if (error !== null) return error;
-      const saved = await save({ origin, headers });
-      return AsyncResult.isSuccess(saved) ? null : "Could not save the service token.";
+    async (
+      pairingUrl: string,
+      form: CloudflareAccessForm,
+    ): Promise<{ readonly undo: () => Promise<void> } | { readonly error: string }> => {
+      const parsed = cloudflareAccessTokenFromForm(form);
+      if ("error" in parsed) return parsed;
+      const origin = pairingTargetOrigin(pairingUrl);
+      if (parsed.token === null || origin === null) return { undo: async () => {} };
+      const token = parsed.token;
+      const result = await store.update(origin, () => token);
+      if ("error" in result) return result;
+      return {
+        undo: async () => {
+          await store.write(origin, result.previous);
+        },
+      };
     },
-    [read, save],
+    [store],
   );
 }
 
-/** Loads the saved service token of `origin` into a form. Null while loading. */
-function useCloudflareAccessForm(origin: string): CloudflareAccessForm | null {
-  const read = useAtomCommand(readRequestHeaders, { reportFailure: false });
-  const [form, setForm] = useState<CloudflareAccessForm | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void read(origin).then((result) => {
-      if (cancelled) return;
-      const token = AsyncResult.isSuccess(result)
-        ? cloudflareAccessServiceToken(result.value)
-        : null;
-      setForm(token ?? EMPTY_CLOUDFLARE_ACCESS_FORM);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [origin, read]);
-  return form;
-}
-
 /** Client ID and Client Secret inputs. The secret stays masked. */
-export function CloudflareAccessFields(props: {
+function CloudflareAccessFields(props: {
   readonly form: CloudflareAccessForm;
   readonly onChange: (form: CloudflareAccessForm) => void;
   readonly disabled?: boolean;
+  readonly secretSaved?: boolean;
 }) {
   return (
     <View collapsable={false} className="gap-3">
@@ -98,6 +142,7 @@ export function CloudflareAccessFields(props: {
       />
       <ConnectionFormField
         label="Client Secret"
+        placeholder={props.secretSaved ? "Saved" : undefined}
         autoCapitalize="none"
         autoCorrect={false}
         secureTextEntry
@@ -112,51 +157,133 @@ export function CloudflareAccessFields(props: {
   );
 }
 
+/** Add environment: the collapsible token section. A Cloudflare Access login keeps it open. */
+export function AddEnvironmentCloudflareAccess(props: {
+  readonly form: CloudflareAccessForm;
+  readonly onChange: (form: CloudflareAccessForm) => void;
+  readonly challenged: boolean;
+  readonly disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const shown = open || props.challenged;
+  return (
+    <View collapsable={false} className="gap-2">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: shown }}
+        onPress={() => setOpen((value) => !value)}
+        className="flex-row items-center justify-between px-4 active:opacity-70"
+      >
+        <Text className="text-sm font-t3-medium text-foreground-muted">
+          Cloudflare Access service token
+        </Text>
+        <SymbolView
+          name={shown ? "chevron.up" : "chevron.down"}
+          size={12}
+          tintColorClassName="accent-chevron"
+          type="monochrome"
+          weight="semibold"
+        />
+      </Pressable>
+      {shown ? (
+        <CloudflareAccessFields
+          form={props.form}
+          onChange={props.onChange}
+          disabled={props.disabled}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+/** The saved Client ID of `origin` and whether a secret is saved. Null while loading. */
+function useSavedCloudflareAccess(
+  origin: string,
+): { readonly clientId: string; readonly hasSecret: boolean } | null {
+  const { read } = useCloudflareAccessStore();
+  const [saved, setSaved] = useState<{ clientId: string; hasSecret: boolean } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void read(origin).then((result) => {
+      if (cancelled) return;
+      const token = AsyncResult.isSuccess(result)
+        ? cloudflareAccessServiceToken(result.value)
+        : null;
+      setSaved({ clientId: token?.clientId ?? "", hasSecret: token !== null });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [origin, read]);
+  return saved;
+}
+
 /**
- * Settings section that edits the service token of a saved environment. It uses
- * the origin of the environment's main address; another route with its own
- * origin keeps whatever headers it already has. Revisit if routes on several
- * Access-protected origins become common.
+ * Settings section that edits the service token of a saved environment. The
+ * secret never loads into the form: an empty secret field keeps the saved one.
+ * It uses the origin of the environment's main address; another route with its
+ * own origin keeps whatever headers it already has. Revisit if routes on
+ * several Access-protected origins become common.
  */
 export function CloudflareAccessSection(props: {
   readonly origin: string;
   readonly onSaved: () => void;
 }) {
-  const loaded = useCloudflareAccessForm(props.origin);
-  // The last saved form; null until the first save on this screen.
-  const [stored, setStored] = useState<CloudflareAccessForm | null>(null);
+  const loaded = useSavedCloudflareAccess(props.origin);
+  // The state after the last save on this screen; null until then.
+  const [stored, setStored] = useState<{ clientId: string; hasSecret: boolean } | null>(null);
   const [form, setForm] = useState<CloudflareAccessForm | null>(null);
-  const saved = stored ?? loaded;
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const saveToken = useSaveCloudflareAccessToken();
-  const current = form ?? saved;
-  if (current === null) return null;
-  const hasSaved = saved !== null && saved.clientId !== "";
+  const store = useCloudflareAccessStore();
+  const saved = stored ?? loaded;
+  if (saved === null) return null;
+  const current = form ?? { clientId: saved.clientId, clientSecret: "" };
 
-  const store = async (next: CloudflareAccessForm) => {
-    const parsed = cloudflareAccessTokenFromForm(next);
-    if ("error" in parsed) {
-      setMessage(parsed.error);
+  const apply = async (change: TokenUpdate, done: string) => {
+    setPending(true);
+    const result = await store.update(props.origin, change);
+    setPending(false);
+    if ("error" in result) {
+      setMessage(result.error);
       return;
     }
-    setPending(true);
-    const error = await saveToken(props.origin, parsed.token);
-    setPending(false);
-    setMessage(
-      error ?? (parsed.token === null ? "Service token removed." : "Service token saved."),
-    );
-    if (error === null) {
-      setStored(next);
-      setForm(null);
-      props.onSaved();
+    setMessage(done);
+    const next = change(cloudflareAccessServiceToken(result.previous));
+    setStored({ clientId: next?.clientId ?? "", hasSecret: next !== null });
+    setForm(null);
+    props.onSaved();
+  };
+
+  const save = () => {
+    const clientId = current.clientId.trim();
+    const clientSecret = current.clientSecret.trim();
+    if (clientId === "") {
+      setMessage("Enter the Client ID, or remove the service token.");
+      return;
     }
+    if (clientSecret === "" && !saved.hasSecret) {
+      setMessage("Enter the Client Secret.");
+      return;
+    }
+    void apply(
+      (previous) => ({
+        clientId,
+        clientSecret: clientSecret === "" ? (previous?.clientSecret ?? "") : clientSecret,
+      }),
+      "Service token saved.",
+    );
   };
 
   return (
     <SettingsSection title="Cloudflare Access">
       <View collapsable={false} className="gap-3 bg-grouped-card px-4 py-4">
-        <CloudflareAccessFields form={current} onChange={setForm} disabled={pending} />
+        <CloudflareAccessFields
+          form={current}
+          onChange={setForm}
+          disabled={pending}
+          secretSaved={saved.hasSecret}
+        />
         {message ? <Text className="px-1 text-sm text-foreground-muted">{message}</Text> : null}
       </View>
       <SettingsActionRow
@@ -164,15 +291,15 @@ export function CloudflareAccessSection(props: {
         label="Save service token"
         loading={pending}
         disabled={pending || form === null}
-        onPress={() => void store(current)}
+        onPress={save}
       />
-      {hasSaved ? (
+      {saved.hasSecret ? (
         <SettingsActionRow
           icon="trash"
           label="Remove service token"
           tone="danger"
           disabled={pending}
-          onPress={() => void store(EMPTY_CLOUDFLARE_ACCESS_FORM)}
+          onPress={() => void apply(() => null, "Service token removed.")}
         />
       ) : null}
     </SettingsSection>
