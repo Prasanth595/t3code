@@ -1,5 +1,8 @@
 /** The issue lifecycle as a pure function: state and event in, next state and actions out. */
 
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+
 /** The `factory:` label that currently holds an issue, without its `factory:` prefix. */
 export type State =
   | "proposed"
@@ -11,7 +14,7 @@ export type State =
   | "stuck";
 
 /** Every state, in lifecycle order. */
-export const STATES: ReadonlyArray<State> = [
+export const STATES = [
   "proposed",
   "ready",
   "triage",
@@ -19,7 +22,7 @@ export const STATES: ReadonlyArray<State> = [
   "building",
   "pr-open",
   "stuck",
-];
+] as const satisfies ReadonlyArray<State>;
 
 /** The GitHub label for a state, e.g. `factory:needs-info`. */
 export const stateLabel = (state: State): string => `factory:${state}`;
@@ -104,26 +107,24 @@ export type Transition = {
   readonly actions: ReadonlyArray<Action>;
 };
 
-/** Thrown by {@link transition} when the event is not valid in the current state. */
-export class InvalidTransition extends Error {
-  readonly state: State;
-  readonly event: Event["kind"];
-
-  constructor(state: State, event: Event["kind"]) {
-    super(`event \`${event}\` is not valid in state \`${state}\``);
-    this.name = "InvalidTransition";
-    this.state = state;
-    this.event = event;
+/** The failure of {@link transition}: the event is not valid in the current state. */
+export class InvalidTransition extends Schema.TaggedError<InvalidTransition>()(
+  "InvalidTransition",
+  {
+    state: Schema.Literals(STATES),
+    /** The event's `kind`. */
+    event: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `event \`${this.event}\` is not valid in state \`${this.state}\``;
   }
 }
 
 const setLabel = (state: State): Action => ({ kind: "set-label", state });
 
-/**
- * Next state and actions for `event` arriving while an issue is in `state`. Does no I/O. Throws
- * {@link InvalidTransition} for a pair that is not in the table.
- */
-export const transition = (state: State, event: Event): Transition => {
+/** The table row for the pair, or undefined when the pair is not in the table. */
+const tableRow = (state: State, event: Event): Transition | undefined => {
   switch (event.kind) {
     case "approved":
       if (state === "proposed" || state === "stuck") return { next: "ready", actions: [] };
@@ -244,5 +245,19 @@ export const transition = (state: State, event: Event): Transition => {
       }
       break;
   }
-  throw new InvalidTransition(state, event.kind);
+  return undefined;
+};
+
+/**
+ * Next state and actions for `event` arriving while an issue is in `state`. Does no I/O. Fails
+ * with {@link InvalidTransition} for a pair that is not in the table.
+ */
+export const transition = (
+  state: State,
+  event: Event,
+): Result.Result<Transition, InvalidTransition> => {
+  const row = tableRow(state, event);
+  return row === undefined
+    ? Result.fail(new InvalidTransition({ state, event: event.kind }))
+    : Result.succeed(row);
 };

@@ -1,3 +1,4 @@
+import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -25,16 +26,15 @@ const LABEL_TABLE_ROWS = [
   "| `factory:stuck` | The factory gave up and said why in a comment. |",
 ];
 
-const ok = (state: State, event: Event): Transition => transition(state, event);
+const ok = (state: State, event: Event): Transition => {
+  const result = transition(state, event);
+  if (Result.isFailure(result)) throw new Error(result.failure.message);
+  return result.success;
+};
 
 const invalid = (state: State, event: Event): InvalidTransition | undefined => {
-  try {
-    transition(state, event);
-    return undefined;
-  } catch (error) {
-    if (error instanceof InvalidTransition) return error;
-    throw error;
-  }
+  const result = transition(state, event);
+  return Result.isFailure(result) ? result.failure : undefined;
 };
 
 const stuckActions = (reason: string): Array<Action> => [
@@ -315,6 +315,11 @@ describe("lifecycle transition table", () => {
     }
   });
 
+  it("an invalid pair is a typed failure, not a throw", () => {
+    const result = transition("building", { kind: "claimed" });
+    expect(Result.isFailure(result) && result.failure._tag).toBe("InvalidTransition");
+  });
+
   it("invalid transition display", () => {
     expect(invalid("building", { kind: "claimed" })?.message).toBe(
       "event `claimed` is not valid in state `building`",
@@ -328,7 +333,7 @@ describe("lifecycle transition table", () => {
     for (const state of STATES) {
       for (const [event] of everyEvent) {
         if (invalid(state, event)) continue;
-        const t = transition(state, event);
+        const t = ok(state, event);
         const labels = t.actions.flatMap((action) =>
           action.kind === "set-label" ? [action.state] : [],
         );
@@ -349,7 +354,7 @@ describe("lifecycle transition table", () => {
     for (const state of STATES) {
       for (const [event] of everyEvent) {
         if (invalid(state, event)) continue;
-        const t = transition(state, event);
+        const t = ok(state, event);
         const unassigns = t.actions.filter((action) => action.kind === "unassign").length;
         const assigns = t.actions.filter((action) => action.kind === "assign-to-machine").length;
         // Only entering a state counts: a comment forwarded to the session is a self-loop.
