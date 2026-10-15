@@ -3,6 +3,8 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { RUN_EVENT_FIELDS, makeCause, type Cause, type RunEvent } from "./events.ts";
@@ -940,6 +942,20 @@ describe("open", () => {
     ]);
   });
 
+  effectIt.effect(
+    "a ledger error is caught by its tag in an Effect and keeps softfac's message",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const error = catchLedgerError(() => reopen(dataDir));
+        const caught = yield* Effect.fail(error).pipe(
+          Effect.catchTags({ LedgerError: (failure) => Effect.succeed(failure.kind) }),
+        );
+        expect(caught).toBe("NotFound");
+        expect(error.message).toBe(`no run file at ${runFileFor(dataDir)}`);
+      }),
+  );
+
   it("open a missing run is not found and creates no file", () => {
     const dataDir = tempDir();
     expect(catchLedgerError(() => reopen(dataDir)).kind).toBe("NotFound");
@@ -1598,11 +1614,11 @@ describe("failed writes", () => {
     expect(error.path).toBe(runFileFor(dataDir));
     expect(readText(runFileFor(dataDir))).toBe(`${RED}{"ts":"202`);
 
-    // The append first ends the cut-off line, as a reopen does; the line is then one write
-    // and one sync.
+    // The append first ends the cut-off line with its own write and sync, as a reopen does;
+    // the line is then one write and one sync.
     faults.calls.length = 0;
     ledger.append(step("refactor"), testCause());
-    expect(faults.calls).toEqual(["write", "sync"]);
+    expect(faults.calls).toEqual(["write", "sync", "write", "sync"]);
     ledger.append(step("ship"), testCause());
     expect(readText(runFileFor(dataDir))).toBe(`${RED}{"ts":"202\n${REFACTOR}${SHIP}`);
 
@@ -1614,6 +1630,32 @@ describe("failed writes", () => {
     ]);
     expect(record.truncated).toBe(false);
     expect(record.skipped).toBe(1);
+  });
+
+  it("an append whose repair of a cut-off line fails writes nothing, and the next one repairs it", () => {
+    const dataDir = tempDir();
+    const { io, faults } = faultyIo();
+    const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
+    ledger.append(step("red"), testCause());
+    faults.failWriteAfter = 10;
+    expect(catchLedgerError(() => ledger.append(step("green"), testCause())).kind).toBe("Io");
+
+    faults.failWriteAfter = 0;
+    const error = catchLedgerError(() => ledger.append(step("refactor"), testCause()));
+    expect(error.kind).toBe("Io");
+    expect(error.path).toBe(runFileFor(dataDir));
+    expect(readText(runFileFor(dataDir))).toBe(`${RED}{"ts":"202`);
+
+    faults.failSync = true;
+    expect(catchLedgerError(() => ledger.append(step("ship"), testCause())).kind).toBe("Io");
+    // The newline went in before its sync failed, and the event was not written.
+    expect(readText(runFileFor(dataDir))).toBe(`${RED}{"ts":"202\n`);
+
+    ledger.append(step("ship"), testCause());
+    expect(readSoftfacRun(dataDir).entries.map((entry) => entry.data)).toEqual([
+      { step: "red" },
+      { step: "ship" },
+    ]);
   });
 
   it("a write that fails before writing anything still terminates the line next time", () => {

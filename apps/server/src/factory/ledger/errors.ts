@@ -1,3 +1,5 @@
+import * as Data from "effect/Data";
+
 export type LedgerErrorKind =
   | "InvalidRunId"
   | "AlreadyExists"
@@ -39,9 +41,14 @@ const messageOf = (init: LedgerErrorInit): string => {
   }
 };
 
-/** Why a ledger operation failed. The messages are the ones softfac's Rust `Display` prints. */
-export class LedgerError extends Error {
+/**
+ * Why a ledger operation failed, tagged `LedgerError` so an Effect caller can catch it with
+ * `Effect.catchTags`, then branch on `kind`. The messages are the ones softfac's Rust `Display`
+ * prints; an `Io` error keeps what the file system threw as its `cause`.
+ */
+export class LedgerError extends Data.TaggedError("LedgerError")<{
   readonly kind: LedgerErrorKind;
+  readonly message: string;
   /** `InvalidRunId` only: the text that was refused. */
   readonly input?: string;
   /** `InvalidRunId` only: why. */
@@ -50,19 +57,11 @@ export class LedgerError extends Error {
   readonly path?: string;
   /** `UnknownEvent` only: the event name that was refused. */
   readonly event?: string;
-
+  /** `Io` only: what the file system threw. */
+  readonly cause?: unknown;
+}> {
   constructor(init: LedgerErrorInit) {
-    super(messageOf(init), init.kind === "Io" ? { cause: init.cause } : undefined);
-    this.name = "LedgerError";
-    this.kind = init.kind;
-    if (init.kind === "InvalidRunId") {
-      this.input = init.input;
-      this.reason = init.reason;
-    } else if (init.kind === "UnknownEvent") {
-      this.event = init.event;
-    } else {
-      this.path = init.path;
-    }
+    super({ ...init, message: messageOf(init) });
   }
 }
 

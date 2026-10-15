@@ -73,13 +73,13 @@ const endsInNewline = (fd: number): boolean => {
 
 /**
  * A last line with no newline is a write that was cut off: end it with one `\n` write and an
- * fsync, so the next event starts on its own line, and return true. The fragment stays in the
- * file. Throws what `node:fs` throws.
+ * fsync through `io`, so the next event starts on its own line, and return true. The fragment
+ * stays in the file. Throws what `io` or `node:fs` throws.
  */
-const endCutOffLine = (fd: number): boolean => {
+const endCutOffLine = (fd: number, io: AppendIo): boolean => {
   if (endsInNewline(fd)) return false;
-  NodeFS.writeSync(fd, "\n");
-  NodeFS.fsyncSync(fd);
+  if (io.writeSync(fd, Buffer.from("\n")) !== 1) throw new Error("failed to write the line break");
+  io.fsyncSync(fd);
   return true;
 };
 
@@ -101,7 +101,7 @@ export const openForAppend = (path: string, io: AppendIo = nodeIo): AppendFile =
     throw ioError(path, error);
   }
   try {
-    endCutOffLine(fd);
+    endCutOffLine(fd, io);
   } catch (error) {
     NodeFS.closeSync(fd);
     throw ioError(path, error);
@@ -148,7 +148,7 @@ export class AppendFile {
     const fd = this.openFd();
     let ended: boolean;
     try {
-      ended = endCutOffLine(fd);
+      ended = endCutOffLine(fd, this.io);
     } catch (error) {
       throw ioError(this.path, error);
     }
