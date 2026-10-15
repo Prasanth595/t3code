@@ -37,6 +37,7 @@ import {
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   shouldShowEnvironmentIndicator,
+  shouldShowEnvironmentPicker,
 } from "./BranchToolbar.logic";
 import {
   BranchToolbarBranchSelector,
@@ -695,7 +696,11 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
 
   const showEnvironmentPicker = Boolean(
-    availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
+    onEnvironmentChange &&
+    shouldShowEnvironmentPicker({
+      environmentCount: availableEnvironments?.length ?? 0,
+      isScratchDraft: Boolean(draftId && activeProject?.isScratch),
+    }),
   );
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;

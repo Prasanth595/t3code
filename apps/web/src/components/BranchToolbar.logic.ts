@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type {
   EnvironmentId,
   EnvironmentMachineKind,
@@ -51,6 +52,20 @@ export function resolveEnvironmentOptionLabel(input: {
   }
 
   return runtimeLabel ?? savedLabel ?? input.environmentId;
+}
+
+export function shouldIncludeEnvironmentOption(input: {
+  enabled: boolean;
+  connectionPhase: EnvironmentConnectionPhase;
+}): boolean {
+  return input.enabled && input.connectionPhase === "connected";
+}
+
+export function shouldShowEnvironmentPicker(input: {
+  environmentCount: number;
+  isScratchDraft: boolean;
+}): boolean {
+  return input.environmentCount > 1 || (input.isScratchDraft && input.environmentCount > 0);
 }
 
 // A remote (non-primary) environment is always surfaced, even when it is the

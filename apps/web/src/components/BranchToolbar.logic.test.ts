@@ -1,9 +1,11 @@
 import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
+  shouldIncludeEnvironmentOption,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
   resolveDraftEnvModeAfterBranchChange,
@@ -20,6 +22,7 @@ import {
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
+  shouldShowEnvironmentPicker,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -383,6 +386,61 @@ describe("resolveEnvironmentOptionLabel", () => {
       }),
     ).toBe("Build box");
   });
+});
+
+describe("shouldIncludeEnvironmentOption", () => {
+  it("includes an enabled, connected machine", () => {
+    expect(
+      shouldIncludeEnvironmentOption({
+        enabled: true,
+        connectionPhase: "connected",
+      }),
+    ).toBe(true);
+  });
+
+  it("excludes a disabled machine even if its connection has not closed yet", () => {
+    expect(
+      shouldIncludeEnvironmentOption({
+        enabled: false,
+        connectionPhase: "connected",
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    "available",
+    "connecting",
+    "reconnecting",
+    "offline",
+    "error",
+    "unsupported",
+  ] satisfies EnvironmentConnectionPhase[])(
+    "excludes a machine whose connection is %s",
+    (connectionPhase) => {
+      expect(
+        shouldIncludeEnvironmentOption({
+          enabled: true,
+          connectionPhase,
+        }),
+      ).toBe(false);
+    },
+  );
+});
+
+describe("shouldShowEnvironmentPicker", () => {
+  it.each([
+    { environmentCount: 0, isScratchDraft: true, expected: false },
+    { environmentCount: 1, isScratchDraft: true, expected: true },
+    { environmentCount: 2, isScratchDraft: true, expected: true },
+    { environmentCount: 0, isScratchDraft: false, expected: false },
+    { environmentCount: 1, isScratchDraft: false, expected: false },
+    { environmentCount: 2, isScratchDraft: false, expected: true },
+  ])(
+    "resolves machine selection for $environmentCount machines, scratch draft $isScratchDraft",
+    ({ environmentCount, isScratchDraft, expected }) => {
+      expect(shouldShowEnvironmentPicker({ environmentCount, isScratchDraft })).toBe(expected);
+    },
+  );
 });
 
 describe("shouldShowEnvironmentIndicator", () => {

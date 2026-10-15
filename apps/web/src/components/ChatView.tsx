@@ -474,8 +474,10 @@ import {
   type EnvironmentOption,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
+  shouldIncludeEnvironmentOption,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
+  shouldShowEnvironmentPicker,
 } from "./BranchToolbar.logic";
 import {
   getProviderStatusBannerKey,
@@ -2766,6 +2768,14 @@ export default function ChatView(props: ChatViewProps) {
     const envs: EnvironmentOption[] = [];
     const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
       const environment = environmentById.get(environmentId) ?? null;
+      if (
+        !environment ||
+        !shouldIncludeEnvironmentOption({
+          enabled: environment.entry.enabled,
+          connectionPhase: environment.connection.phase,
+        })
+      )
+        return;
       envs.push({
         environmentId,
         projectId,
@@ -2775,13 +2785,9 @@ export default function ChatView(props: ChatViewProps) {
       });
     };
     if (activeProjectIsScratch && draftId) {
-      // Each machine keeps its own "No project" folder at its own path, so they
-      // never group as one logical project. Offer every machine that has one.
       for (const environment of environments) {
         const scratchRoot = scratchWorkspaceRootFor(environment.environmentId);
-        // Keep the current machine visible so an offline source can still switch away.
-        if (scratchRoot === null && environment.environmentId !== activeProject.environmentId)
-          continue;
+        if (scratchRoot === null) continue;
         const scratchProject =
           environment.environmentId === activeProject.environmentId
             ? activeProject
@@ -2823,6 +2829,10 @@ export default function ChatView(props: ChatViewProps) {
     scratchWorkspaceRootFor,
   ]);
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
+  const canPickEnvironment = shouldShowEnvironmentPicker({
+    environmentCount: logicalProjectEnvironments.length,
+    isScratchDraft: activeProjectIsScratch && Boolean(draftId),
+  });
   // Auto balance retargets to an existing project; a machine's "No project"
   // folder may not exist until it is picked.
   const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
@@ -2832,7 +2842,7 @@ export default function ChatView(props: ChatViewProps) {
     ) ?? null;
   const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
     activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: hasMultipleEnvironments,
+    canPickEnvironment,
   });
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -11982,7 +11992,7 @@ export default function ChatView(props: ChatViewProps) {
                                 {...(canCheckoutPullRequestIntoThread
                                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                                   : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                                {...(canPickEnvironment ? { onEnvironmentChange } : {})}
                                 autoEnvironmentLabel={autoEnvironmentLabel}
                                 onAutoEnvironment={
                                   draftId &&
