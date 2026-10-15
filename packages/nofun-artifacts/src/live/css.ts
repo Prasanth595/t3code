@@ -92,7 +92,10 @@ function stylesheetInput(dir: string, brand: string | null, cssImports: Readonly
     /@import\s+["'][^"']*themes\/brands\/index\.css["'];?/,
     brandImport,
   );
-  const extra = cssImports.map((file) => `@import ${JSON.stringify(file)};`).join("\n");
+  const extra = [...cssImports]
+    .sort()
+    .map((file) => `@import ${JSON.stringify(file)};`)
+    .join("\n");
   return `${swapped}\n${extra}`;
 }
 
@@ -122,7 +125,7 @@ const nextFonts = perStamp(async (dir): Promise<NextFonts> => {
   const chunks = NodePath.join(dir, ".next", "static", "chunks");
   let best: { file: string; size: number } | undefined;
   try {
-    for (const name of NodeFs.readdirSync(chunks)) {
+    for (const name of NodeFs.readdirSync(chunks).sort()) {
       if (!name.endsWith(".css")) continue;
       const file = NodePath.join(chunks, name);
       const size = NodeFs.statSync(file).size;
@@ -209,12 +212,14 @@ export async function buildCss(dir: string, input: PageCssInput): Promise<string
       },
     },
   );
-  const tailwindCss = dropNonLatinFaces(compiler.build([...input.candidates]));
+  const tailwindCss = dropNonLatinFaces(compiler.build([...input.candidates].sort()));
   const fonts = await nextFontCss(dir, tailwindCss);
   const minified = await esbuild.transform(fonts + tailwindCss, {
     loader: "css",
     minify: true,
+    charset: "utf8",
     target: CSS_TARGET,
+    legalComments: "none",
     logLevel: "silent",
   });
   return inlineCssUrls(dir, minified.code);

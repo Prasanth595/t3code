@@ -120,7 +120,9 @@ export function inlineAssets(
 ): AssetMap {
   const rank = (path: string) =>
     brand && path.startsWith(`/brands/${brand}/`) ? 0 : path.startsWith("/brands/") ? 2 : 1;
-  const ordered = [...new Set(paths)].sort((a, b) => rank(a) - rank(b));
+  const ordered = [...new Set(paths)].sort(
+    (a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0),
+  );
   const map: Record<string, string> = {};
   const skipped: string[] = [];
   let bytes = 0;
@@ -305,7 +307,9 @@ export function inlineStageAssets(html: string, files: readonly StageAssetFile[]
     map = {};
   }
   for (const file of inlined) map[file.mapKey] = file.dataUri!;
-  const json = JSON.stringify(map).replace(/</g, "\\u003c");
+  const sorted: Record<string, string> = {};
+  for (const key of Object.keys(map).sort()) sorted[key] = map[key]!;
+  const json = JSON.stringify(sorted).replace(/</g, "\\u003c");
   return html.replace(pattern, `<script type="application/json" id="nf-assets">${json}</script>`);
 }
 

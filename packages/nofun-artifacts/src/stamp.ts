@@ -1,4 +1,5 @@
 // The revision line baked into every compiled page, and the parser agents use to read it back.
+import { createHash } from "node:crypto";
 import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +33,16 @@ export function compilerVersion(): string {
 /** ISO-8601 instant Canvas accepts (`withInternetDateTime`, no fractional seconds). */
 export function stampInstant(date = new Date()): string {
   return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+/**
+ * Stamp instant for a compile. Derived from the components commit and the source bytes, not the
+ * wall clock, so compiling the same input again yields the same `at` and the same bundle hash.
+ * The result is still `YYYY-MM-DDTHH:mm:ssZ`.
+ */
+export function deterministicStampInstant(source: Buffer | string, components: string): string {
+  const digest = createHash("sha256").update(components).update("\0").update(source).digest();
+  return stampInstant(new Date(digest.readUInt32BE(0) * 1000));
 }
 
 export function formatStamp(stamp: ArtifactStamp): string {
