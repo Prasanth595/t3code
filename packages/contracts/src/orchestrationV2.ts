@@ -2993,6 +2993,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+    /** Shown in the thread when the workspace differs from the request. */
+    notice: Schema.optional(Schema.String),
   }),
   /** Provider acceptance of a mailbox delivery; distinct from the agent reading its result. */
   Schema.Struct({

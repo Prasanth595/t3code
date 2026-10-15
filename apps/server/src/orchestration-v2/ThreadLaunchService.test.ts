@@ -182,7 +182,7 @@ function makeHarness(options: HarnessOptions = {}) {
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
-      isRepository: () => Effect.succeed(true),
+      isOutsideRepository: () => Effect.succeed(false),
       remoteExists: () => Effect.succeed(true),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
@@ -1127,7 +1127,7 @@ it.effect.each([
   Effect.gen(function* () {
     // Only `projectId` stands in for the Scratch project here.
     const harness = makeHarness({
-      git: { isRepository: () => Effect.succeed(false) },
+      git: { isOutsideRepository: () => Effect.succeed(true) },
       managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         folderForThread: () => Effect.succeed(testCase.scratchFolder),
@@ -1154,6 +1154,33 @@ it.effect.each([
         (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
         Option.getOrNull(testCase.scratchFolder),
       );
+      // Only the project folder case differs from the request in a way to report.
+      yield* waitUntil(() =>
+        threads
+          .getThreadRecords(launched.threadId, ["runs"])
+          .pipe(Effect.map(({ runs }) => runs[0]?.status !== "preparing")),
+      );
+      const notices = (yield* threads.getThreadRecords(launched.threadId, ["turnItems"]))
+        .turnItems.filter((item) => item.type === "system_notice");
+      assert.equal(notices.length, Option.isSome(testCase.scratchFolder) ? 0 : 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("refuses a new worktree in a folder outside any repository", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      git: { isOutsideRepository: () => Effect.succeed(true) },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const error = yield* launches
+        .checkWorktreeBase({
+          projectId,
+          workspaceStrategy: { type: "worktree", baseRef: "main" },
+        })
+        .pipe(Effect.flip);
+      assert.deepInclude(error, { _tag: "ThreadLaunchNotRepositoryError", projectId });
     }).pipe(Effect.provide(harness.layer));
   }),
 );
@@ -2625,6 +2652,31 @@ it.effect.each([
         error.message,
         `Base ref "${testCase.baseRef}" does not resolve to a commit in project "Project" (/repo).`,
       );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect.each([
+  { name: "already exists", branches: ["main", "docs/taken"] },
+  { name: "a branch blocks", branches: ["main", "docs"] },
+])("refuses a new worktree whose branch $name", (testCase) =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      git: { listLocalBranchNames: () => Effect.succeed(testCase.branches) },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const error = yield* launches
+        .checkWorktreeBase({
+          projectId,
+          workspaceStrategy: { type: "worktree", baseRef: "main", branch: "docs/taken" },
+        })
+        .pipe(Effect.flip);
+      assert.deepInclude(error, {
+        _tag: "ThreadLaunchBranchExistsError",
+        projectId,
+        branch: "docs/taken",
+      });
     }).pipe(Effect.provide(harness.layer));
   }),
 );

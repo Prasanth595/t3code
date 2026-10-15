@@ -3493,6 +3493,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           gitCommonDir: repositoryPaths?.gitCommonDir ?? path.join(input.cwd, ".git"),
           checkoutRoot: repositoryPaths?.worktreeRoot ?? input.cwd,
           branch: targetBranch,
+          defaultPath: (branch) => path.join(parentDir, repoName, branch.replaceAll("/", "-")),
           pickFreeName: newRefName !== undefined && options?.pickFreeName === true,
           listBranchRefs: runGitStdout("GitVcsDriver.createWorktree.listBranches", input.cwd, [
             "for-each-ref",

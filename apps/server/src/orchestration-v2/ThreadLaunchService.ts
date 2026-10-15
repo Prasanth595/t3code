@@ -44,6 +44,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { branchConflicts } from "../worktreePathTemplate.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
@@ -164,6 +165,35 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
   }
 }
 
+/** A new worktree was asked to create a branch that already exists. */
+export class ThreadLaunchBranchExistsError extends Schema.TaggedError<ThreadLaunchBranchExistsError>()(
+  "ThreadLaunchBranchExistsError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    workspaceRoot: Schema.String,
+    branch: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Branch "${this.branch}" already exists in project "${this.projectTitle}" (${this.workspaceRoot}).`;
+  }
+}
+
+/** A new worktree was asked for in a folder that Git reports as outside any repository. */
+export class ThreadLaunchNotRepositoryError extends Schema.TaggedError<ThreadLaunchNotRepositoryError>()(
+  "ThreadLaunchNotRepositoryError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    workspaceRoot: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Project "${this.projectTitle}" (${this.workspaceRoot}) is not a Git repository, so it cannot have a worktree.`;
+  }
+}
+
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
@@ -174,13 +204,18 @@ export class ThreadLaunchService extends Context.Service<
       ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
     /**
-     * Fails when a new worktree's base ref cannot give provisioning a commit.
+     * Fails when a new worktree's base ref cannot give provisioning a commit,
+     * when its requested branch already exists, or when the project is not a
+     * Git repository.
      * `launch` accepts such a launch and reports the failure inside the
      * thread; a caller that needs it before a thread exists checks first.
      */
     readonly checkWorktreeBase: (
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
-    ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
+    ) => Effect.Effect<
+      void,
+      ThreadLaunchBaseRefError | ThreadLaunchBranchExistsError | ThreadLaunchNotRepositoryError
+    >;
     /** Dispatches prepared-run.retry and prepares the run's workspace again. */
     readonly retryPreparation: (input: ThreadLaunchPreparationInput) => Effect.Effect<
       Orchestrator.OrchestratorV2DispatchResult,
@@ -266,11 +301,42 @@ const make = Effect.gen(function* () {
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
     const strategy = input.workspaceStrategy;
+    if (strategy.type !== "worktree") return;
+    const { baseRef, branch } = strategy;
+    // `git worktree add -b` refuses a branch that exists or that a branch
+    // blocks, as `docs` blocks `docs/x`. Limit: short names read a branch that
+    // shares its name with a tag as `heads/<name>`, so the launch reports that
+    // case instead. Revisit if agents name branches after tags.
+    if (branch !== undefined) {
+      const taken = yield* Effect.gen(function* () {
+        const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
+        if (project === undefined) return undefined;
+        const branches = yield* git.listLocalBranchNames(project.workspaceRoot);
+        return branchConflicts(branch, branches) ? project : undefined;
+      }).pipe(Effect.orElseSucceed(() => undefined));
+      if (taken !== undefined)
+        return yield* new ThreadLaunchBranchExistsError({
+          projectId: taken.id,
+          projectTitle: taken.title,
+          workspaceRoot: taken.workspaceRoot,
+          branch,
+        });
+    }
+    const outside = yield* Effect.gen(function* () {
+      const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
+      if (project === undefined) return undefined;
+      return (yield* git.isOutsideRepository(project.workspaceRoot)) ? project : undefined;
+    }).pipe(Effect.orElseSucceed(() => undefined));
+    if (outside !== undefined)
+      return yield* new ThreadLaunchNotRepositoryError({
+        projectId: outside.id,
+        projectTitle: outside.title,
+        workspaceRoot: outside.workspaceRoot,
+      });
     // `:/text` is a commit search, which cannot be asked for a commit type.
-    if (strategy.type !== "worktree" || strategy.baseRef.startsWith(":")) return;
-    const { baseRef } = strategy;
+    if (baseRef.startsWith(":")) return;
     // Anything this cannot establish is left for the launch to report: a
-    // missing project, a folder that is not a repository, a failing Git.
+    // missing project, a repository that Git cannot read, a failing Git.
     const unresolved = yield* Effect.gen(function* () {
       const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
       if (project === undefined) return undefined;
@@ -316,31 +382,34 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
-    // A folder that is not a Git repository cannot hold a worktree. A worktree
-    // request there (a stale composer mode, an agent, a scheduled task, or a
-    // retry of one) runs like a root launch, as the composer already does.
-    // Scratch gives each such thread a folder of its own.
-    const input: PreparationInput =
+    // A worktree needs a Git repository. Scratch gives a worktree request (a
+    // stale composer mode, an agent, a scheduled task, or a retry of one) a
+    // folder of its own. In another folder that Git reports as outside any
+    // repository, the request runs in the project folder, as the composer
+    // does, and the thread says so. Two such runs then share that folder.
+    const scratchFolder =
+      requested.workspaceStrategy.type === "worktree"
+        ? yield* managedFolders
+            .folderForThread({
+              projectId: requested.projectId,
+              threadId,
+              text: requested.initialMessage?.text ?? "",
+            })
+            .pipe(Effect.mapError(mapError(requested, "provision-worktree", threadId)))
+        : Option.none<string>();
+    const runsInProjectFolder =
       requested.workspaceStrategy.type === "worktree" &&
-      !(yield* git
-        .isRepository(project.workspaceRoot)
-        .pipe(Effect.mapError(mapError(requested, "provision-worktree", threadId))))
-        ? Option.match(
-            yield* managedFolders
-              .folderForThread({
-                projectId: requested.projectId,
-                threadId,
-                text: requested.initialMessage?.text ?? "",
-              })
-              .pipe(Effect.mapError(mapError(requested, "provision-worktree", threadId))),
-            {
-              onNone: () => ({ ...requested, workspaceStrategy: { type: "root" } }),
-              onSome: (worktreePath) => ({
-                ...requested,
-                workspaceStrategy: { type: "existing_worktree", worktreePath },
-              }),
-            },
-          )
+      Option.isNone(scratchFolder) &&
+      (yield* git
+        .isOutsideRepository(project.workspaceRoot)
+        .pipe(Effect.mapError(mapError(requested, "provision-worktree", threadId))));
+    const input: PreparationInput = Option.isSome(scratchFolder)
+      ? {
+          ...requested,
+          workspaceStrategy: { type: "existing_worktree", worktreePath: scratchFolder.value },
+        }
+      : runsInProjectFolder
+        ? { ...requested, workspaceStrategy: { type: "root" } }
         : requested;
 
     const reused = input.reusedWorktree;
@@ -676,6 +745,9 @@ const make = Effect.gen(function* () {
             commandId: CommandId.make(`${input.commandId}:release`),
             threadId,
             runId,
+            ...(runsInProjectFolder
+              ? { notice: "Not a Git repository: running in the project folder, not a worktree" }
+              : {}),
           })
           .pipe(
             Effect.mapError(mapError(input, "release-run", threadId)),

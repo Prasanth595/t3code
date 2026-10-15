@@ -36,6 +36,11 @@ export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
   {
     readonly isRepository: (cwd: string) => Effect.Effect<boolean, GitManagerServiceError>;
+    /**
+     * True only when Git reports that no repository holds `cwd`. A repository
+     * that Git cannot read, such as one with dubious ownership, gives false.
+     */
+    readonly isOutsideRepository: (cwd: string) => Effect.Effect<boolean, GitCommandError>;
     readonly hasCommit: (input: {
       readonly cwd: string;
       readonly refName: string;
@@ -284,6 +289,21 @@ export const make = Effect.gen(function* () {
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
   return GitWorkflowService.of({
+    isOutsideRepository: (cwd) =>
+      git
+        .execute({
+          operation: "GitWorkflowService.isOutsideRepository",
+          cwd,
+          args: ["rev-parse", "--git-dir"],
+          env: { ...process.env, LC_ALL: "C" },
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+        })
+        .pipe(
+          Effect.map(
+            (result) => result.exitCode !== 0 && result.stderr.includes("not a git repository"),
+          ),
+        ),
     isRepository: (cwd) =>
       registry.detect({ cwd }).pipe(
         Effect.map((handle) => handle?.kind === "git"),
