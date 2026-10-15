@@ -376,6 +376,32 @@ describe("acpPerTurnPromptUsage", () => {
     );
   });
 
+  it("caps cache writes at the input left over after cache reads", () => {
+    // PR review case: each counter fits under input alone, but together they exceed it.
+    assert.deepEqual(
+      acpPerTurnPromptUsage(
+        {
+          inputTokens: 100,
+          outputTokens: 10,
+          totalTokens: 110,
+          cachedReadTokens: 80,
+          cachedWriteTokens: 80,
+        },
+        false,
+        "completed",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 100,
+        outputTokens: 10,
+        cachedInputTokens: 80,
+        cacheCreationTokens: 20,
+      },
+    );
+  });
+
   it("marks present usage partial on a non-completed terminal and missing usage unavailable", () => {
     assert.deepEqual(
       acpPerTurnPromptUsage(
