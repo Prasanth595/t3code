@@ -24,6 +24,7 @@ Fork main only moves forward. Nothing rebases or force-pushes it.
 - Fork CI compares the push with the commit of the last green run. When only `docs`, `*.md` or `apps/machine-map` changed, only the Lint job runs, and it checks only the changed files. A change in `apps/machine-map` also runs the Machine map job: its typecheck and tests. A manual run always runs every job.
 - To see all fork changes, run `git diff upstream/main...main`.
 - The top of `README.md` lists the fork features and fixes, up to the first `---` line. A pull request that adds, removes or changes a fork feature or fix updates its line in that list.
+- Settings > Fork shows every fork setting and each upstream setting that the fork changed, with the same rows as their usual pages. A pull request that adds a fork setting adds it to `FORK_SETTING_GROUPS` in `apps/web/src/components/settings/forkSettingsCatalog.ts` and its row component to `FORK_SETTING_ROWS` in `ForkSettings.tsx`. The catalog imports no components, because the settings search on every route reads it.
 - If a Fork Sync merge conflicts in `README.md`, keep the fork section on top and take the upstream text below the `---` line.
 - A merge without conflicts can still break a fork feature. Each fork feature that changes upstream behaviour needs a test of that behaviour, so that the fork tests catch the break.
 
@@ -106,7 +107,7 @@ The script creates a prerelease on the fork. Installed fork apps offer it as an 
 
 A headless server that runs as the upstream background service (`t3 service install`) updates from the fork releases. The install is the upstream self-update: it unpacks the release into `<T3 home>/runtime/versions/<version>`, and the service launcher starts it on trial. If the new version does not start, the launcher goes back to the old version.
 
-- Turn on the server setting `forkAutoUpdate` (default `false`). Then the server checks the fork releases every 5 minutes. When a newer release is ready and no agent turn runs, it installs the release.
+- Turn on Settings > General > About > Server auto-update, the server setting `forkAutoUpdate` (default `false`). Then the server checks the fork releases every 5 minutes. When a newer release is ready and no agent turn runs, it installs the release.
 - A release is ready when it has `SHA256SUMS`. A version that rolled back or failed is not tried again. A newer release is tried.
 - The machine map command Install update (`installUpdate`) works on such a server too (MM-505). `whenIdle: false` installs the newest fork release now. `whenIdle: true` installs it at the first check with no running agent turn, also when `forkAutoUpdate` is off.
 - A restart stops the running turns. The upstream setting "Continue threads after restarts" (`continueThreadsAfterServerUpdate`, on by default) and "Recover interrupted agents" continue them after the update.

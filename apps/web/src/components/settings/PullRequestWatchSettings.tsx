@@ -35,6 +35,15 @@ const parseLogins = (text: string) => [
  * client of the environment edits the same filter.
  */
 export function PullRequestWatchSettingsSection() {
+  return (
+    <SettingsSection id="pull-request-watch" title="Pull request watch">
+      <PullRequestWatchSettingsRows />
+    </SettingsSection>
+  );
+}
+
+/** Fork: the three rows of `pullRequestWatchRemarkFilter`. */
+export function PullRequestWatchSettingsRows() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { targets } = useSettingsScope();
@@ -57,7 +66,7 @@ export function PullRequestWatchSettingsSection() {
   const logins = filter.authorLogins.join(", ");
 
   return (
-    <SettingsSection id="pull-request-watch" title="Pull request watch">
+    <>
       <SettingsRow
         serverScoped
         settingKeys={["pullRequestWatchRemarkFilter"]}
@@ -69,7 +78,9 @@ export function PullRequestWatchSettingsSection() {
             <SettingResetButton
               label="roles that wake agents"
               onClick={() =>
-                updateSettings({ pullRequestWatchRemarkFilter: { authorAssociations: [] } })
+                updateSettings({
+                  pullRequestWatchRemarkFilter: { authorAssociations: [] },
+                })
               }
             />
           ) : null
@@ -87,7 +98,9 @@ export function PullRequestWatchSettingsSection() {
                 ? []
                 : filter.authorAssociations.filter((role) => !isOfferedRole(role));
               updateSettings({
-                pullRequestWatchRemarkFilter: { authorAssociations: [...kept, ...offered] },
+                pullRequestWatchRemarkFilter: {
+                  authorAssociations: [...kept, ...offered],
+                },
               });
             }}
           >
@@ -109,7 +122,11 @@ export function PullRequestWatchSettingsSection() {
           loginsMixed || filter.authorLogins.length > 0 ? (
             <SettingResetButton
               label="logins that wake agents"
-              onClick={() => updateSettings({ pullRequestWatchRemarkFilter: { authorLogins: [] } })}
+              onClick={() =>
+                updateSettings({
+                  pullRequestWatchRemarkFilter: { authorLogins: [] },
+                })
+              }
             />
           ) : null
         }
@@ -127,7 +144,9 @@ export function PullRequestWatchSettingsSection() {
             onBlur={(event) => {
               const next = parseLogins(event.target.value);
               if (loginsEdited.current && (loginsMixed || next.join(", ") !== logins))
-                updateSettings({ pullRequestWatchRemarkFilter: { authorLogins: next } });
+                updateSettings({
+                  pullRequestWatchRemarkFilter: { authorLogins: next },
+                });
               loginsEdited.current = false;
             }}
           />
@@ -143,7 +162,11 @@ export function PullRequestWatchSettingsSection() {
           markerMixed || filter.agentMarker !== "" ? (
             <SettingResetButton
               label="agent remark marker"
-              onClick={() => updateSettings({ pullRequestWatchRemarkFilter: { agentMarker: "" } })}
+              onClick={() =>
+                updateSettings({
+                  pullRequestWatchRemarkFilter: { agentMarker: "" },
+                })
+              }
             />
           ) : null
         }
@@ -161,12 +184,14 @@ export function PullRequestWatchSettingsSection() {
             onBlur={(event) => {
               const value = event.target.value.trim();
               if (markerEdited.current && (markerMixed || value !== filter.agentMarker))
-                updateSettings({ pullRequestWatchRemarkFilter: { agentMarker: value } });
+                updateSettings({
+                  pullRequestWatchRemarkFilter: { agentMarker: value },
+                });
               markerEdited.current = false;
             }}
           />
         }
       />
-    </SettingsSection>
+    </>
   );
 }

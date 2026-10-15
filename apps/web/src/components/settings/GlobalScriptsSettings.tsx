@@ -19,6 +19,7 @@ import {
 import { Button } from "../ui/button";
 import { ProjectActionsList } from "./ProjectActionsList";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 
@@ -27,6 +28,16 @@ import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
  * environment scope only, because they belong to the environment.
  */
 export function GlobalScriptsSettings() {
+  const { scope, target } = useSettingsScope();
+  if (scope.kind === "project" || scope.kind === "checkout" || !target) return null;
+  return (
+    <SettingsSection title="Global scripts">
+      <GlobalScriptsSettingsRows />
+    </SettingsSection>
+  );
+}
+
+export function GlobalScriptsSettingsRows() {
   const { scope, targets, target } = useSettingsScope();
   const canWriteSettings = useScopedSettingsWriteAllowed();
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "global scripts update");
@@ -92,12 +103,12 @@ export function GlobalScriptsSettings() {
   }
 
   return (
-    <SettingsSection id="global-scripts" title="Global scripts">
+    <>
       <SettingsRow
         serverScoped
         settingKeys={["globalScripts"]}
         mixed={mixed}
-        title="Global scripts"
+        {...searchableSetting("global-scripts")}
         description="Commands available in every project. They run in the thread's worktree, or else the project folder. Right-click the sidebar toggle or the chat header to pin them."
         control={
           <Button
@@ -138,6 +149,6 @@ export function GlobalScriptsSettings() {
         }
         onClose={() => setRequest(null)}
       />
-    </SettingsSection>
+    </>
   );
 }
