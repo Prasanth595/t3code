@@ -151,19 +151,30 @@ export const makeDiscovery = Effect.gen(function* () {
       }) {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
         if (!remote) return null;
+        // Both CLIs claim Forgejo, so one failing does not stop the other from claiming the host.
+        let failure: ForgejoCli.ForgejoCliError | undefined;
         for (const command of ["fj", "tea"] as const) {
           const logins = yield* listLogins({
             cwd: input.cwd,
             command,
             remoteUrl: input.context.remoteUrl,
           }).pipe(
-            // A CLI that is not installed holds no login; any other failure propagates.
+            // A CLI that is not installed holds no login.
             Effect.catchIf(
               (error) => isMissingExecutable(error.cause),
               () => Effect.succeed([]),
             ),
+            Effect.result,
           );
-          const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
+          if (Result.isFailure(logins)) {
+            failure ??= logins.failure;
+            continue;
+          }
+          const login = ForgejoCli.matchForgejoLogin(
+            logins.success,
+            remote,
+            input.context.requestedHost,
+          );
           if (login)
             return {
               kind: SourceControlProviderKind.make("forgejo"),
@@ -171,6 +182,7 @@ export const makeDiscovery = Effect.gen(function* () {
               baseUrl: login.url,
             };
         }
+        if (failure) return yield* failure;
         return null;
       },
     ),
