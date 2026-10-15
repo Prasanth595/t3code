@@ -567,6 +567,8 @@ function readInitialWordWrapSetting(): boolean {
  * briefly unwrapped and restores it before the browser paints.
  */
 function tableHasClippedCells(container: HTMLElement, table: HTMLTableElement): boolean {
+  const viewport = table.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  const scrollLeft = viewport?.scrollLeft ?? 0;
   const previous = container.dataset.expanded;
   container.dataset.expanded = "false";
   try {
@@ -579,6 +581,8 @@ function tableHasClippedCells(container: HTMLElement, table: HTMLTableElement): 
   } finally {
     if (previous === undefined) delete container.dataset.expanded;
     else container.dataset.expanded = previous;
+    // The unwrapped layout can be narrower and clamp a sideways scroll.
+    if (viewport && scrollLeft > 0) viewport.scrollLeft = scrollLeft;
   }
 }
 
@@ -589,24 +593,49 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
   const [hasClippedCells, setHasClippedCells] = useState(false);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrapButtonRef = useRef<HTMLButtonElement | null>(null);
+  const copyButtonRef = useRef<HTMLButtonElement | null>(null);
   const wrapLabel = expanded ? "Disable cell wrap" : "Wrap long cells";
   const copyLabel = copied ? "Copied" : "Copy table";
 
   const measureClippedCells = useCallback(() => {
     const container = containerRef.current;
     const table = tableRef.current;
-    if (container && table) setHasClippedCells(tableHasClippedCells(container, table));
+    if (!container || !table) return;
+    const clipped = tableHasClippedCells(container, table);
+    // Hiding the focused wrap button would drop keyboard focus to the page.
+    if (!clipped && wrapButtonRef.current === document.activeElement) {
+      copyButtonRef.current?.focus();
+    }
+    setHasClippedCells(clipped);
   }, []);
 
   // A streamed cell can grow until it clips while the table keeps its size,
   // so remeasure after every render, not only on resize.
   useLayoutEffect(measureClippedCells);
 
-  // Font loads and column width changes resize the table without a render.
+  // Column width changes, late fonts, and images settling inside cells can
+  // clip a cell without rendering this table.
   useLayoutEffect(() => {
     const table = tableRef.current;
     if (!table) return;
-    return observeResize(table, measureClippedCells);
+    let frame = 0;
+    const measureNextFrame = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measureClippedCells);
+    };
+    // Media load and error events don't bubble, so listen in the capture phase.
+    table.addEventListener("load", measureNextFrame, true);
+    table.addEventListener("error", measureNextFrame, true);
+    document.fonts?.addEventListener("loadingdone", measureNextFrame);
+    const stopObserving = observeResize(table, measureClippedCells);
+    return () => {
+      cancelAnimationFrame(frame);
+      table.removeEventListener("load", measureNextFrame, true);
+      table.removeEventListener("error", measureNextFrame, true);
+      document.fonts?.removeEventListener("loadingdone", measureNextFrame);
+      stopObserving();
+    };
   }, [measureClippedCells]);
 
   function toggleExpanded() {
@@ -686,6 +715,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
             <TooltipTrigger
               render={
                 <Button
+                  ref={wrapButtonRef}
                   type="button"
                   variant={expanded ? "secondary" : "ghost-muted"}
                   size="icon-xs"
@@ -709,6 +739,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
                 <MenuTrigger
                   render={
                     <Button
+                      ref={copyButtonRef}
                       type="button"
                       variant="ghost-muted"
                       size="icon-xs"
