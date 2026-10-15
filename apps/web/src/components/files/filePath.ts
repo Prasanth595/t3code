@@ -58,3 +58,15 @@ export function fileBreadcrumbParent(directoryPath: string): string | null {
   const separatorIndex = directoryPath.lastIndexOf("/");
   return separatorIndex === -1 ? "" : directoryPath.slice(0, separatorIndex);
 }
+
+/**
+ * The host path of a tree entry in a tree rooted outside the workspace. Entry
+ * names are literal, so a leading `~` or a `:12` suffix is not link syntax.
+ */
+export function hostEntryPath(root: string, treePath: string): string {
+  const base = root.replace(/[\\/]+$/, "");
+  const entryPath = treePath.replace(/\/+$/, "");
+  return isWindowsAbsolutePath(root)
+    ? `${base}\\${entryPath.replaceAll("/", "\\")}`
+    : `${base}/${entryPath}`;
+}

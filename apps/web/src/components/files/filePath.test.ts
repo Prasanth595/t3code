@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { fileBreadcrumbChildren, fileBreadcrumbParent, fileBreadcrumbs } from "./filePath";
+import {
+  fileBreadcrumbChildren,
+  fileBreadcrumbParent,
+  fileBreadcrumbs,
+  hostEntryPath,
+} from "./filePath";
 
 describe("fileBreadcrumbs", () => {
   it("builds project, directory, and file crumbs", () => {
@@ -93,5 +98,19 @@ describe("fileBreadcrumbParent", () => {
     ["", null],
   ])("returns the parent of %j", (path, expected) => {
     expect(fileBreadcrumbParent(path)).toBe(expected);
+  });
+});
+
+describe("hostEntryPath", () => {
+  it("joins tree entries literally, so link syntax in a name stays part of the name", () => {
+    expect(hostEntryPath("/home/me/voices/", "~/sarah.mp3")).toBe("/home/me/voices/~/sarah.mp3");
+    expect(hostEntryPath("/home/me/voices", "notes:12")).toBe("/home/me/voices/notes:12");
+    expect(hostEntryPath("/home/me/voices", "takes/")).toBe("/home/me/voices/takes");
+  });
+
+  it("uses backslashes under a Windows root", () => {
+    expect(hostEntryPath("C:\\Users\\me\\voices\\", "takes/sarah.mp3")).toBe(
+      "C:\\Users\\me\\voices\\takes\\sarah.mp3",
+    );
   });
 });

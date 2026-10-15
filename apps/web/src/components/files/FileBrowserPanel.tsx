@@ -23,6 +23,7 @@ import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
+import { hostEntryPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
@@ -33,6 +34,8 @@ interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  /** Set when `cwd` is a host folder outside the chat's workspace. Opened and mentioned paths are then absolute. */
+  hostRoot?: boolean;
   /** Entry currently open in the surface; revealed and selected in the tree. A directory is expanded. */
   selectedPath: string | null;
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
@@ -99,6 +102,7 @@ export default function FileBrowserPanel({
   environmentId,
   cwd,
   projectName,
+  hostRoot = false,
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
@@ -108,6 +112,7 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
+  const chatPath = (entryPath: string) => (hostRoot ? hostEntryPath(cwd, entryPath) : entryPath);
   const {
     entries: directoryEntries,
     load,
@@ -172,7 +177,7 @@ export default function FileBrowserPanel({
       return;
     }
     const relativePath = item.path.replace(/\/$/, "");
-    const mention = serializeComposerFileLink(relativePath);
+    const mention = serializeComposerFileLink(chatPath(relativePath));
     const pointer = contextMenuPointerRef.current;
     const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
     const anchorRect = context.anchorElement.getBoundingClientRect();
@@ -248,8 +253,9 @@ export default function FileBrowserPanel({
     () =>
       createFileTreeDragMentionController({
         deselect: (path) => treeModelRef.current?.getItem(path)?.deselect(),
+        mentionPath: (path) => (hostRoot ? hostEntryPath(cwd, path) : path),
       }),
-    [],
+    [cwd, hostRoot],
   );
   const { model } = useFileTree({
     composition: {
@@ -283,7 +289,7 @@ export default function FileBrowserPanel({
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
         treeSelectionPathRef.current = selectedPath;
-        onOpenFile(selectedPath);
+        onOpenFile(chatPath(selectedPath));
       }
     },
     paths: [],
