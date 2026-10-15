@@ -359,6 +359,15 @@ it.layer(NodeServices.layer)("machine map pause lock (MM-718)", (it) => {
     }).pipe(Effect.provide(layerAuth("on"))),
   );
 
+  it.effect("while paused, a valid Cloudflare Access login gets no new session", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      yield* saveDesired(desiredState({ paused: true }));
+      const login = accessRequest(yield* signAccessJwt({ email: "dev@example.com" }));
+      expect(yield* pausedReason(auth.issueCloudflareAccessPairingCredential(login))).toBe(true);
+    }).pipe(withCertsFetch, Effect.provide(layerAuth("on"))),
+  );
+
   it.effect("paused false or an absent flag unlocks at once, and open sockets close on pause", () =>
     Effect.gen(function* () {
       const { auth, mobile, cookieRequest } = yield* sessionsOfEachKind;

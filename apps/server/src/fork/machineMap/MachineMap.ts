@@ -95,6 +95,7 @@ const STATUS_MIN_INTERVAL = Duration.seconds(5);
 /** Host load can change without any event, so the status is checked this often too. */
 const STATUS_IDLE_CHECK = Duration.minutes(1);
 /** MM-1501: one resource sample a minute, and one on request at most every 10 seconds. */
+const REVOKE_RETRY_INTERVAL = Duration.seconds(30);
 const RESOURCE_INTERVAL = Duration.minutes(1);
 const RESOURCE_REQUEST_GAP_MS = 10_000;
 const TOOL_CALL_TIMEOUT = Duration.seconds(30);
@@ -341,14 +342,37 @@ const make = Effect.gen(function* () {
       );
     });
 
+  /** Ends the sessions of the saved `pendingRevokes`, then clears the ones that ended. */
+  const revokePending = Effect.gen(function* () {
+    const pending = new Set((yield* state.snapshot).saved.pendingRevokes);
+    if (pending.size === 0) return;
+    yield* revokeSessions((subject) => pending.has(subject));
+    yield* state.updateSaved((saved) => ({
+      ...saved,
+      pendingRevokes: saved.pendingRevokes.filter((subject) => !pending.has(subject)),
+    }));
+  });
+
+  /**
+   * MM-1306: ends the sessions of these subjects. They stay in `pendingRevokes` until that works,
+   * so a failure runs again with the next desired state or the retry loop.
+   */
+  const endSessionsOf = (subjects: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      if (subjects.length > 0) {
+        yield* state.updateSaved((saved) => ({
+          ...saved,
+          pendingRevokes: [...new Set([...saved.pendingRevokes, ...subjects])],
+        }));
+      }
+      yield* revokePending;
+    });
+
   const applyDesired = (desired: MachineDesiredState) =>
     Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
       const { desired: before, desiredAtMs: beforeAtMs } = (yield* state.snapshot).saved;
-      // Save first: the auth hooks read the saved state, so the new levels hold before any
-      // session of a changed peer ends and it pairs again.
-      yield* state.updateSaved((saved) => ({ ...saved, desired, desiredAtMs: nowMs }));
-      const changed = new Set([
+      const changed = [
         ...peersWithChangedLevel(before, beforeAtMs, desired, nowMs).map((peer) =>
           machineSessionSubject(peer),
         ),
@@ -356,10 +380,17 @@ const make = Effect.gen(function* () {
         ...clientsWithChangedLevel(before, beforeAtMs, desired, nowMs).map((id) =>
           clientSessionSubject(id),
         ),
-      ]);
-      if (changed.size > 0) {
-        yield* revokeSessions((subject) => changed.has(subject));
-      }
+      ];
+      // Save first: the auth hooks read the saved state, so the new levels hold before any
+      // session of a changed peer ends and it pairs again. The subjects to end are saved in the
+      // same write, so a failed revocation is not lost.
+      yield* state.updateSaved((saved) => ({
+        ...saved,
+        desired,
+        desiredAtMs: nowMs,
+        pendingRevokes: [...new Set([...saved.pendingRevokes, ...changed])],
+      }));
+      yield* revokePending;
       yield* applyServerSettings(desired.settings.server);
       // Client settings reach the desktop app through the client stream (MM-403).
     });
@@ -692,7 +723,7 @@ const make = Effect.gen(function* () {
         const subjects = new Set(
           (desired?.browserClients ?? []).map((client) => clientSessionSubject(client.id)),
         );
-        if (subjects.size > 0) yield* revokeSessions((subject) => subjects.has(subject));
+        yield* endSessionsOf([...subjects]);
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Machine map could not end browser client sessions.", {
@@ -726,8 +757,7 @@ const make = Effect.gen(function* () {
             if (next === undefined) return;
             const waitMs = next.atMs - (yield* Clock.currentTimeMillis);
             if (waitMs > 0) yield* Effect.sleep(Duration.millis(waitMs));
-            const subjects = new Set(next.subjects);
-            yield* revokeSessions((subject) => subjects.has(subject)).pipe(
+            yield* endSessionsOf(next.subjects).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Machine map could not end the sessions of an expired arrow.", {
                   cause: Cause.pretty(cause),
@@ -1185,6 +1215,19 @@ const make = Effect.gen(function* () {
   yield* forkParked(superviseConnection);
   yield* forkParked(watchLocalSettings);
   yield* forkParked(watchExpiries);
+  // MM-1306: a revocation that failed runs again until it works.
+  yield* forkParked(
+    Effect.forever(
+      revokePending.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Machine map could not end sessions; it tries again.", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+        Effect.andThen(Effect.sleep(REVOKE_RETRY_INTERVAL)),
+      ),
+    ),
+  );
   yield* forkParked(watchClientAccess);
   // MM-906: browser keys that signed in and wait for approval. The outbox keeps them while offline.
   yield* forkParked(Effect.forever(Queue.take(state.clientSeen).pipe(Effect.flatMap(sendOrQueue))));

@@ -76,6 +76,11 @@ const SavedState = Schema.Struct({
   desktopCommands: Schema.Array(MachineCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /**
+   * MM-1306: session subjects whose sessions must end. Saved with the desired state that ends
+   * them, and cleared only after the revocation worked, so a failed one runs again.
+   */
+  pendingRevokes: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type SavedState = typeof SavedState.Type;
 const EMPTY_SAVED_STATE: SavedState = {
@@ -84,6 +89,7 @@ const EMPTY_SAVED_STATE: SavedState = {
   handledCommandIds: [],
   pausedTaskIds: [],
   desktopCommands: [],
+  pendingRevokes: [],
 };
 const decodeSavedState = Schema.decodeUnknownEffect(fromLenientJson(SavedState));
 const encodeSavedState = Schema.encodeEffect(fromJsonStringPretty(SavedState));

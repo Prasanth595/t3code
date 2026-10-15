@@ -269,7 +269,15 @@ const createCloudflareAccessBrowserSession = Effect.fn(
 )(function* (request: HttpServerRequest.HttpServerRequest, unauthenticated: AuthSessionState) {
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const sessions = yield* SessionStore.SessionStore;
-  const issued = yield* serverAuth.issueCloudflareAccessPairingCredential(request);
+  const issued = yield* serverAuth
+    .issueCloudflareAccessPairingCredential(request)
+    .pipe(
+      Effect.catchTags({ ServerAuthMachinePausedError: () => Effect.succeed("paused" as const) }),
+    );
+  // Fork (MM-718): the pause shows the lock page, with no new session.
+  if (issued === "paused") {
+    return { ...unauthenticated, machinePaused: true } satisfies AuthSessionState;
+  }
   if (issued === undefined) {
     return unauthenticated;
   }
@@ -309,9 +317,11 @@ export const layer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
             const sessionState = yield* serverAuth.getSessionState(request);
-            const result = sessionState.authenticated
-              ? sessionState
-              : yield* createCloudflareAccessBrowserSession(request, sessionState);
+            // Fork (MM-718): a session that the pause refused gets no new Access session.
+            const result =
+              sessionState.authenticated || sessionState.machinePaused === true
+                ? sessionState
+                : yield* createCloudflareAccessBrowserSession(request, sessionState);
             const credential = EnvironmentAuth.selectRequestCredential(
               request,
               sessions.cookieName,
@@ -499,7 +509,11 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            const issued = yield* serverAuth.issueCloudflareAccessPairingCredential(request);
+            const issued = yield* serverAuth.issueCloudflareAccessPairingCredential(request).pipe(
+              Effect.catchTags({
+                ServerAuthMachinePausedError: () => failEnvironmentAuthInvalid("machine_paused"),
+              }),
+            );
             if (issued === undefined) {
               return yield* failEnvironmentAuthInvalid("invalid_credential");
             }
