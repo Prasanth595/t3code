@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests write pid files to a temp dir and probe process liveness with kill(pid, 0).
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -79,7 +80,7 @@ it.live("a timeout kills the whole process group, grandchild included", () =>
   Effect.gen(function* () {
     const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "factory-process-"));
     const pidFile = NodePath.join(dir, "pid");
-    const started = Date.now();
+    const started = yield* Clock.currentTimeMillis;
     const result = yield* run({
       command: `sleep 100 & echo $! > "$0"; sleep 100`,
       args: [pidFile],
@@ -88,7 +89,7 @@ it.live("a timeout kills the whole process group, grandchild included", () =>
     });
     assert.strictEqual(result.timedOut, true);
     assert.strictEqual(result.exitCode, null);
-    assert.isBelow(Date.now() - started, 5000);
+    assert.isBelow((yield* Clock.currentTimeMillis) - started, 5000);
 
     const pid = Number(NodeFS.readFileSync(pidFile, "utf8").trim());
     assert.isAbove(pid, 0);
@@ -100,7 +101,7 @@ it.live("a timeout kills the whole process group, grandchild included", () =>
 
 it.live("escalates to SIGKILL when SIGTERM is ignored", () =>
   Effect.gen(function* () {
-    const started = Date.now();
+    const started = yield* Clock.currentTimeMillis;
     const result = yield* run({
       command: `trap '' TERM; sleep 100`,
       shell: true,
@@ -108,7 +109,7 @@ it.live("escalates to SIGKILL when SIGTERM is ignored", () =>
       termGraceMs: 300,
     });
     assert.strictEqual(result.timedOut, true);
-    assert.isBelow(Date.now() - started, 5000);
+    assert.isBelow((yield* Clock.currentTimeMillis) - started, 5000);
   }),
 );
 
