@@ -323,6 +323,8 @@ export interface SampleResponse {
 /** Every error response has this shape. */
 export interface ApiError {
   readonly error: string;
+  /** MM-1207: the approval path needs a fresh passkey check first. */
+  readonly stepUp?: true;
 }
 
 /** Results of the agent tools that run through the portal (`toolResult.result`, MM-801). */

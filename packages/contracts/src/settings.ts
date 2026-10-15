@@ -373,10 +373,11 @@ export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 /**
  * Fork: client access of the machine map (MM-916). `off`: a browser that passes Cloudflare
  * Access as the owner gets the owner access, as before. `observe`: the browser proves its key; a
- * key that an approved client holds gets that client's arrow, and any other key keeps the owner
- * access and waits in the portal for approval.
+ * key that an approved client holds gets that client's arrow, at most `standard`, and any other
+ * key keeps the owner access and waits in the portal for approval. `enforce` (MM-918): only a key
+ * of an approved client gets in, with the full level of its arrow.
  */
-export const ClientAccessMode = Schema.Literals(["off", "observe"]);
+export const ClientAccessMode = Schema.Literals(["off", "observe", "enforce"]);
 export type ClientAccessMode = typeof ClientAccessMode.Type;
 
 /** Maximum width of the chat timeline and composer on wide screens. */

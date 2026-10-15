@@ -8,6 +8,7 @@ import { RESOURCE_RANGES } from "@t3tools/contracts/machineMapResources";
 
 import { approvalEmail, clientTokenId, machineClientId, ownerEmail } from "./access.ts";
 import {
+  type ApiError,
   AddMachineRequest,
   ApproveClientRequest,
   ChangesRequest,
@@ -85,7 +86,15 @@ async function grant(request: Request, env: Env, url: URL): Promise<Response> {
   const stub = mapObject(env);
   const email = await approvalEmail(request, env, await stub.approvalsAud(), APPROVALS_MAX_SECONDS);
   const owner = await ownerContext(request, email);
-  if (!owner) return fail(403, "Approvals need a fresh passkey check. Confirm with it again.");
+  if (!owner) {
+    return json(
+      {
+        error: "Approvals need a fresh passkey check. Confirm with it again.",
+        stepUp: true,
+      } satisfies ApiError,
+      403,
+    );
+  }
   if (crossOrigin(request, url)) return fail(403, "Wrong origin.");
   const route = `${request.method} ${url.pathname.slice(APPROVALS_PATH.length)}`;
   switch (route) {
@@ -107,6 +116,11 @@ async function grant(request: Request, env: Env, url: URL): Promise<Response> {
       return body instanceof Response
         ? body
         : toResponse(await stub.createInvite(owner, url.host, body));
+    }
+    // MM-919: a change of an owner-only setting, such as clientAccess.
+    case "POST /changes": {
+      const body = await readBody(request, ChangesRequest);
+      return body instanceof Response ? body : toResponse(await stub.changes(owner, body, true));
     }
     default:
       return fail(404, `No route ${request.method} ${url.pathname}.`);

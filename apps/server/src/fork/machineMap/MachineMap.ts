@@ -22,6 +22,7 @@ import {
   type MachineMapDesktopReport,
   type MachineMapJoinInput,
   type MachineMapPanelState,
+  ClientAccessMode,
   type MachineMapShareSettingsInput,
   type MachineMapShareSettingsResult,
   MachinesReadResult,
@@ -243,6 +244,9 @@ const make = Effect.gen(function* () {
 
   // --- Portal messages -----------------------------------------------------------------------
 
+  /** MM-919: whether the portal received the saved `pendingClientAccess`. */
+  const pendingClientAccessSeen = yield* Ref.make(false);
+
   const sendOrQueue = (message: MachineToPortal) =>
     Effect.gen(function* () {
       const send = yield* Ref.get(currentSend);
@@ -254,6 +258,7 @@ const make = Effect.gen(function* () {
               Effect.orElseSucceed(() => false),
             );
       if (!sent) yield* Ref.update(outbox, (queued) => [...queued, message]);
+      return sent;
     });
 
   const statusInput = Effect.gen(function* () {
@@ -411,11 +416,14 @@ const make = Effect.gen(function* () {
       // same write, so a failed revocation is not lost.
       yield* revokeLock.withPermits(1)(
         Effect.gen(function* () {
+          // MM-919: once the portal saw a local clientAccess value, its desired state decides.
+          const clientAccessSeen = yield* Ref.getAndSet(pendingClientAccessSeen, false);
           yield* state.updateSaved((saved) => ({
             ...saved,
             desired,
             desiredAtMs: nowMs,
             pendingRevokes: [...new Set([...saved.pendingRevokes, ...changed])],
+            ...(clientAccessSeen ? { pendingClientAccess: null } : {}),
           }));
           // A stuck revocation must not hold back the settings; the retry loop runs it again.
           yield* revokePendingUnlocked.pipe(
@@ -585,7 +593,11 @@ const make = Effect.gen(function* () {
           server,
           client: withoutMachineLocalSettings("client", report.clientSettings ?? {}),
         },
+        ...(local.saved.pendingClientAccess === null
+          ? {}
+          : { localClientAccess: local.saved.pendingClientAccess }),
       });
+      if (local.saved.pendingClientAccess !== null) yield* Ref.set(pendingClientAccessSeen, true);
       yield* Ref.set(lastSentStatus, statusKey(status));
       yield* Ref.set(currentSend, send);
       const openedAt = DateTime.formatIso(yield* DateTime.now);
@@ -768,26 +780,49 @@ const make = Effect.gen(function* () {
   // --- MM-304, MM-912: an arrow that expires ends its sessions at its expiry -----------------
 
   /**
-   * MM-916: when `clientAccess` leaves `observe`, the sessions of browser clients end, so `off`
-   * is the owner login of MM-308 again. A client that also holds an app token pairs again with it.
+   * MM-916, MM-921: a change of the `clientAccess` mode in force ends the sessions that the old
+   * mode gave. Browser clients sign in again with the level of the new mode; a client that also
+   * holds an app token pairs again with it. Entering `enforce`, also at start, ends the owner
+   * sessions of Cloudflare Access.
+   * Known limit: those match on the label `cloudflare-access <subject>`. Revisit if it changes.
    */
   const watchClientAccess = state.changes.pipe(
-    Stream.map((local) => local.clientAccess),
+    // The mode in force: turning the map off ends `enforce` as well.
+    Stream.map((local) => (local.enabled ? local.clientAccess : "off")),
     Stream.changes,
     Stream.mapAccum(
       (): MachineMapState.LocalState["clientAccess"] | undefined => undefined,
-      (previous, next) => [next, previous === "observe" && next !== "observe" ? [next] : []],
+      // At start, only `enforce` acts: it may have been set while the server was stopped.
+      (previous, next) => [
+        next,
+        previous === undefined && next !== "enforce" ? [] : [{ previous, next }],
+      ],
     ),
-    Stream.runForEach(() =>
+    Stream.runForEach(({ previous, next }) =>
       Effect.gen(function* () {
-        const desired = (yield* state.snapshot).saved.desired;
-        const subjects = new Set(
-          (desired?.browserClients ?? []).map((client) => clientSessionSubject(client.id)),
-        );
-        yield* endSessionsOf([...subjects]);
+        if (previous !== undefined && previous !== "off") {
+          const desired = (yield* state.snapshot).saved.desired;
+          yield* endSessionsOf(
+            (desired?.browserClients ?? []).map((client) => clientSessionSubject(client.id)),
+          );
+        }
+        if (next === "enforce") {
+          // By session, not by subject: pairing-link sessions share the subject `one-time-token`,
+          // and they keep working under `enforce` (MM-918).
+          const sessions = yield* auth.listSessions();
+          yield* Effect.forEach(
+            sessions.filter(
+              (session) =>
+                session.subject === "one-time-token" &&
+                session.client.label?.startsWith("cloudflare-access ") === true,
+            ),
+            (session) => auth.revokeSession(session.sessionId),
+            { discard: true },
+          );
+        }
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("Machine map could not end browser client sessions.", {
+          Effect.logWarning("Machine map could not end sessions after a clientAccess change.", {
             cause: Cause.pretty(cause),
           }),
         ),
@@ -860,7 +895,20 @@ const make = Effect.gen(function* () {
           changed[key] = value;
         }
         if (Object.keys(changed).length > 0) {
-          yield* sendOrQueue({ _tag: "localSettings", scope: "server", values: changed });
+          // MM-919: the way back in must reach the portal also across a restart (`hello`).
+          const clientAccess = Schema.is(ClientAccessMode)(changed.clientAccess)
+            ? changed.clientAccess
+            : undefined;
+          if (clientAccess !== undefined) {
+            yield* state.updateSaved((saved) => ({ ...saved, pendingClientAccess: clientAccess }));
+            yield* Ref.set(pendingClientAccessSeen, false);
+          }
+          const sent = yield* sendOrQueue({
+            _tag: "localSettings",
+            scope: "server",
+            values: changed,
+          });
+          if (sent && clientAccess !== undefined) yield* Ref.set(pendingClientAccessSeen, true);
         }
       }).pipe(
         Effect.catchCause((cause) =>
@@ -1036,7 +1084,16 @@ const make = Effect.gen(function* () {
 
   const join: MachineMap["Service"]["join"] = (input) =>
     Effect.gen(function* () {
-      const portalUrl = input.portalUrl ?? (yield* state.snapshot).portalUrl;
+      const local = yield* state.snapshot;
+      // MM-919: a joined machine with the map on joins again only after "Leave", which only its
+      // desktop app does, so no other caller can point it at another portal.
+      if (local.enabled && local.token !== null) {
+        return yield* new MachineMapRequestError({
+          reason: "join-refused",
+          detail: "This machine is on the map already. Leave the map first.",
+        });
+      }
+      const portalUrl = input.portalUrl ?? local.portalUrl;
       const enrollUrl = yield* Effect.try({
         try: () => {
           const url = new URL("/enroll", portalUrl);

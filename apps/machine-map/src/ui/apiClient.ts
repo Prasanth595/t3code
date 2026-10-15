@@ -43,6 +43,7 @@ export async function callApi<T>(
     throw new Error("Your sign-in ended. Reload the page to sign in again.");
   }
   const data: unknown = await response.json().catch(() => null);
+  if (!response.ok && isApiError(data) && data.stepUp === true) throw new StepUpNeeded();
   if (!response.ok)
     throw new Error(isApiError(data) ? data.error : `The portal answered ${response.status}.`);
   return data as T;

@@ -34,6 +34,7 @@ import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkC
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { DesktopUpdateIdleInstall } from "../components/desktop/DesktopUpdateIdleInstall";
 import { MachineMapDesktop } from "../components/desktop/MachineMapDesktop";
+import { ClientPendingSurface } from "../components/auth/ClientPendingSurface";
 import { MachinePausedSurface, MachinePauseWatcher } from "../components/auth/MachinePausedSurface";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { DesktopUpdateLaunchNotice } from "../components/sidebar/updateEverythingRun";
@@ -178,6 +179,15 @@ function RootRouteView() {
       <>
         <DocumentTitleSync />
         <MachinePausedSurface />
+      </>
+    );
+  }
+
+  if (authGateState.status === "client-pending") {
+    return (
+      <>
+        <DocumentTitleSync />
+        <ClientPendingSurface pending={authGateState.pending} />
       </>
     );
   }

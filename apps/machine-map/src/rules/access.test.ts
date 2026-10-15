@@ -8,6 +8,7 @@ import {
   gateTool,
   raisesAnyAccess,
   raisesOwnAccess,
+  touchesOwnerOnlySettings,
 } from "./access.ts";
 import { applyChanges, findArrow, findClientArrow } from "./map.ts";
 import { client, MAC, machine, PHONE, threeMachines, VPS } from "./testMap.ts";
@@ -157,5 +158,23 @@ describe("raisesAnyAccess (MM-711)", () => {
     expect(raisesAnyAccess(withClient, [raise])).toBe(true);
     expect(raisesAnyAccess(withClient, [newKey])).toBe(true);
     expect(raisesAnyAccess(withClient, [{ _tag: "removeClient", clientId: PHONE }])).toBe(false);
+  });
+});
+
+describe("clientAccess is owner-only (MM-919)", () => {
+  it("is a change that agents cannot make, and leaving enforce raises access", () => {
+    const set = (value: string) => ({
+      _tag: "setSetting" as const,
+      machineId: MAC,
+      scope: "server" as const,
+      key: "clientAccess",
+      present: true,
+      value,
+    });
+    expect(touchesOwnerOnlySettings([set("enforce")])).toBe(true);
+    expect(touchesOwnerOnlySettings([{ ...set("x"), key: "preferOriginRemote" }])).toBe(false);
+    // MM-711: while paused, only a move to enforce goes through.
+    expect(raisesAnyAccess(threeMachines(), [set("off")])).toBe(true);
+    expect(raisesAnyAccess(threeMachines(), [set("enforce")])).toBe(false);
   });
 });
