@@ -725,6 +725,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  sourceControlProviderKind?: SourceControlProviderKind;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -819,6 +820,7 @@ function makeManager(input?: {
       return (
         input?.sourceControlProvider ?? {
           ...fakeGitHubProvider,
+          kind: input?.sourceControlProviderKind ?? fakeGitHubProvider.kind,
           readChangeRequestTemplate: ({ cwd, treeish }: { cwd: string; treeish: string }) =>
             GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
         }
@@ -2627,7 +2629,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
           GitLabCli.layer.pipe(
-            Layer.provide(
+            Layer.provideMerge(
               TestSourceControlHost.layer({
                 process: {
                   run: (input) =>
@@ -4903,7 +4905,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("creates PR when one does not already exist", () =>
+  it.effect.each(["github", "gitlab", "azure-devops"] as const)("%s PR templates", (kind) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -4926,6 +4928,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       let generatedChangeRequestTemplate: string | undefined;
 
       const { manager, ghCalls } = yield* makeManager({
+        sourceControlProviderKind: SourceControlProviderKind.make(kind),
         serverSettings: {
           sourceControlWritingStyle: {
             mode: "custom" as const,
