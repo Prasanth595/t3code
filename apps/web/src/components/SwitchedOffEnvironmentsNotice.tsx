@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { switchedOffSavedEnvironments } from "@t3tools/client-runtime/state/connections";
+import {
+  summarizeEnvironmentLabels,
+  switchedOffSavedEnvironments,
+} from "@t3tools/client-runtime/state/connections";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
@@ -75,12 +78,12 @@ export function SwitchedOffEnvironmentsNotice() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Could not switch on ${failed.map(({ environment }) => environment.label).join(", ")}`,
+          title: `Could not switch on ${summarizeEnvironmentLabels(failed.map(({ environment }) => environment))}`,
           description: `Switch ${failed.length === 1 ? "it" : "them"} on in Settings → Connections.`,
         }),
       );
     };
-    const names = switchedOff.map(({ label }) => label).join(", ");
+    const names = summarizeEnvironmentLabels(switchedOff);
     const id = toastManager.add({
       title:
         switchedOff.length === 1

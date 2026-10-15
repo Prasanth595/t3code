@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { switchedOffSavedEnvironments } from "@t3tools/client-runtime/state/connections";
+import {
+  summarizeEnvironmentLabels,
+  switchedOffSavedEnvironments,
+} from "@t3tools/client-runtime/state/connections";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as SecureStore from "expo-secure-store";
 import { useEffect, useState } from "react";
@@ -51,7 +54,7 @@ export function SwitchedOffEnvironmentsNotice() {
       return;
     }
     const one = switchedOff.length === 1;
-    const names = switchedOff.map(({ label }) => label).join(", ");
+    const names = summarizeEnvironmentLabels(switchedOff);
     Alert.alert(
       one ? `${names} is switched off` : `${switchedOff.length} computers are switched off`,
       `${one ? "" : `${names}. `}An earlier update could switch computers off by mistake. Turn ${one ? "it" : "them"} back on to see ${one ? "its" : "their"} threads again.`,
@@ -81,7 +84,7 @@ export function SwitchedOffEnvironmentsNotice() {
             // An interrupted switch stays unanswered but is not an error to show.
             if (failed.length === 0) return;
             Alert.alert(
-              `Could not switch on ${failed.map(({ environment }) => environment.label).join(", ")}`,
+              `Could not switch on ${summarizeEnvironmentLabels(failed.map(({ environment }) => environment))}`,
               `Switch ${failed.length === 1 ? "it" : "them"} on in Settings → Environments.`,
             );
           },

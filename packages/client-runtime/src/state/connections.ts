@@ -55,6 +55,16 @@ export function switchedOffSavedEnvironments(
     .map(([environmentId, entry]) => ({ environmentId, label: entry.target.label }));
 }
 
+/** Names for a notice line: the first few, then how many more. */
+export function summarizeEnvironmentLabels(
+  environments: ReadonlyArray<{ readonly label: string }>,
+  shown = 3,
+): string {
+  const names = environments.slice(0, shown).map(({ label }) => label);
+  const rest = environments.length - names.length;
+  return rest > 0 ? `${names.join(", ")} and ${rest} more` : names.join(", ");
+}
+
 const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({
   isReady: false,
   entries: new Map(),
