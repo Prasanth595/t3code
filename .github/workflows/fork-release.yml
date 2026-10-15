@@ -9,9 +9,15 @@ name: Fork Release
 # main: .github/workflows/fork-sync.yml merges upstream. See docs/fork.md.
 
 on:
-  # Every push to main, so that servers get each change from a release.
+  # Every push to main, so that servers get each change from a release. A push
+  # that changes only docs, markdown or the portal builds no release. The next
+  # release lists its commits, because the notes start at the previous tag.
   push:
     branches: [main]
+    paths-ignore:
+      - docs/**
+      - "**/*.md"
+      - apps/machine-map/**
   workflow_dispatch:
     inputs:
       notify_agent:

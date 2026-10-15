@@ -13,7 +13,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 **Updates and releases**
 
-- **Fork releases:** nightly desktop builds for macOS (signed with a self-made certificate), Windows and Linux, plus Linux server archives and `SHA256SUMS` for machines without a display. A release builds on each push to main. The upstream server updaters (`t3 update`, "Update everything", `scripts/install.sh`) install from the fork releases.
+- **Fork releases:** nightly desktop builds for macOS (signed with a self-made certificate), Windows and Linux, plus Linux server archives and `SHA256SUMS` for machines without a display. A release builds on each push to main that changes more than docs or the portal. The upstream server updaters (`t3 update`, "Update everything", `scripts/install.sh`) install from the fork releases.
 - **Fork installers:** one command installs the fork on macOS, Windows or Linux and joins the machine map. On Linux it installs the AppImage, or the server archive with a systemd user service on a machine without a display.
 - **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now", also at the end of "update everything".
 - **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`). The machine map Install update works on it too, now or when idle.
