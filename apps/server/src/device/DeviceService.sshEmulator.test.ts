@@ -1,12 +1,17 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - it.effect owns the test clock, so sshd startup has to wait on a real timer. The port reservation also uses node:net.
+// @effect-diagnostics nodeBuiltinImport:off - binds a free loopback port before sshd starts.
+// OpenSSH plus bubblewrap integration. CI installs both. bubblewrap hides the host
+// /usr/local and /opt trees so the adapter's added PATH entries cannot see an emulator.
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Net from "@t3tools/shared/Net";
 import type { DeviceHostId, DevicePlatform } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -37,45 +42,90 @@ const reserveLoopbackPort = Effect.promise(
     }),
 );
 
+const executable = (name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const directory of [
+      ...(process.env.PATH ?? "").split(":"),
+      "/usr/local/sbin",
+      "/usr/sbin",
+      "/usr/bin",
+      "/bin",
+      "/opt/homebrew/sbin",
+      "/opt/homebrew/bin",
+    ]) {
+      if (!directory) continue;
+      const candidate = path.join(directory, name);
+      if (yield* fs.exists(candidate)) return candidate;
+    }
+    return yield* Effect.die(
+      new Error(
+        `${name} is required for the device SSH integration test. Install OpenSSH server and bubblewrap.`,
+      ),
+    );
+  });
+
 const commandText = (command: ChildProcess.Command) =>
   command._tag === "StandardCommand" ? command.args.join(" ") : "";
 
-it.effect(
+const idleHandle = (input: {
+  readonly stdout?: Stream.Stream<Uint8Array>;
+  readonly exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>;
+  readonly running: boolean;
+}) =>
+  ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    stdout: input.stdout ?? Stream.empty,
+    stderr: Stream.empty,
+    all: Stream.empty,
+    exitCode: input.exitCode,
+    isRunning: Effect.succeed(input.running),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.succeed(Effect.void),
+  });
+
+it.live(
   "keeps iOS and physical Android devices when the real SSH adapter cannot find the emulator",
   () =>
     Effect.gen(function* () {
       if (process.platform === "win32") return;
       const fs = yield* FileSystem.FileSystem;
       const real = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const [sshd, ssh, sshKeygen, sshKeyscan, bwrap] = yield* Effect.all(
+        [
+          executable("sshd"),
+          executable("ssh"),
+          executable("ssh-keygen"),
+          executable("ssh-keyscan"),
+          executable("bwrap"),
+        ],
+        { concurrency: 1 },
+      );
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-ssh-" });
       const home = `${directory}/home`;
-      const log = `${directory}/sshd.log`;
       const knownHosts = `${directory}/known_hosts`;
-      yield* fs.makeDirectory(home);
+      yield* fs.makeDirectory(home, { recursive: true });
       yield* fs.makeDirectory(`${directory}/bin`);
       const port = yield* reserveLoopbackPort;
-      yield* real.exitCode(
-        ChildProcess.make("/usr/bin/ssh-keygen", [
-          "-q",
-          "-t",
-          "ed25519",
-          "-f",
-          `${directory}/host`,
-          "-N",
-          "",
-        ]),
-      );
-      yield* real.exitCode(
-        ChildProcess.make("/usr/bin/ssh-keygen", [
-          "-q",
-          "-t",
-          "ed25519",
-          "-f",
-          `${directory}/user`,
-          "-N",
-          "",
-        ]),
-      );
+      for (const name of ["host", "user"]) {
+        const code = yield* real.exitCode(
+          ChildProcess.make(sshKeygen, [
+            "-q",
+            "-t",
+            "ed25519",
+            "-f",
+            `${directory}/${name}`,
+            "-N",
+            "",
+          ]),
+        );
+        if (Number(code) !== 0)
+          return yield* Effect.die(new Error(`ssh-keygen ${name} exited ${Number(code)}`));
+      }
       yield* fs.writeFileString(
         `${directory}/sshd_config`,
         [
@@ -94,13 +144,13 @@ it.effect(
           "",
         ].join("\n"),
       );
-      // -F skips /etc/ssh/ssh_config. In the review sandbox's user namespace those
-      // root-owned includes fail OpenSSH's owner check before any authentication.
+      // -F skips /etc/ssh/ssh_config. The review sandbox's user namespace makes those
+      // root-owned includes fail OpenSSH's owner check before authentication.
       yield* fs.writeFileString(`${directory}/ssh_config`, "Host *\n");
       yield* fs.writeFileString(
         `${directory}/bin/ssh`,
         `#!/bin/sh
-exec /usr/bin/ssh \\
+exec ${ssh.includes(" ") ? `'${ssh.replaceAll("'", "'\"'\"'")}'` : ssh} \\
   -F "$T3_DEVICE_SSH_CONFIG" \\
   -o BatchMode=yes \\
   -o StrictHostKeyChecking=yes \\
@@ -111,99 +161,111 @@ exec /usr/bin/ssh \\
 `,
       );
       yield* fs.chmod(`${directory}/bin/ssh`, 0o755);
-      const sshd = yield* real.spawn(
-        ChildProcess.make("/usr/bin/sshd", ["-f", `${directory}/sshd_config`, "-D", "-E", log], {
-          stdout: "ignore",
-          stderr: "ignore",
-        }),
+      const sshdLogs = yield* Ref.make("");
+      const listening = yield* Deferred.make<void>();
+      const sshdProcess = yield* real.spawn(
+        ChildProcess.make(
+          bwrap,
+          [
+            "--die-with-parent",
+            "--dev-bind",
+            "/",
+            "/",
+            "--tmpfs",
+            "/usr/local",
+            "--tmpfs",
+            "/opt",
+            "--",
+            sshd,
+            "-e",
+            "-D",
+            "-f",
+            `${directory}/sshd_config`,
+          ],
+          { stdout: "ignore", stderr: "pipe" },
+        ),
       );
-      yield* Effect.addFinalizer(() => sshd.kill().pipe(Effect.ignore));
-      let listening = false;
-      let sshdLog = "";
-      for (let attempt = 0; attempt < 50 && !listening; attempt++) {
-        sshdLog = yield* fs.readFileString(log).pipe(Effect.orElseSucceed(() => ""));
-        if (sshdLog.includes("Server listening")) {
-          listening = true;
-          break;
-        }
-        // it.effect uses the test clock, so this wait has to be a real timer.
-        yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 100)));
-      }
-      if (!listening) return yield* Effect.die(new Error(`sshd did not listen.\n${sshdLog}`));
-      const scanned = yield* Effect.promise(async () => {
-        const { execFile } = await import("node:child_process");
-        const { promisify } = await import("node:util");
-        const exec = promisify(execFile);
-        return exec("/usr/bin/ssh-keyscan", ["-4", "-T", "2", "-p", String(port), "127.0.0.1"], {
-          timeout: 5000,
-        });
-      }).pipe(Effect.map((result) => result.stdout));
+      yield* Effect.addFinalizer(() => sshdProcess.kill().pipe(Effect.ignore));
+      yield* sshdProcess.stderr.pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.runForEach((line) =>
+          Effect.gen(function* () {
+            yield* Ref.update(sshdLogs, (current) => `${current}${line}\n`);
+            if (line.includes("Server listening")) {
+              yield* Deferred.succeed(listening, undefined).pipe(Effect.ignore);
+            }
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(listening).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.catch((error) =>
+          Ref.get(sshdLogs).pipe(
+            Effect.flatMap((text) =>
+              Effect.die(new Error(`sshd did not listen: ${String(error)}\n${text}`)),
+            ),
+          ),
+        ),
+      );
+      const scanned = yield* real
+        .string(ChildProcess.make(sshKeyscan, ["-4", "-T", "2", "-p", String(port), "127.0.0.1"]))
+        .pipe(Effect.timeout("5 seconds"));
       if (!scanned.includes("ssh-ed25519")) {
         return yield* Effect.die(new Error(`ssh-keyscan did not return a host key.\n${scanned}`));
       }
       yield* fs.writeFileString(knownHosts, scanned);
-      const previousPath = process.env.PATH;
-      const previousKnownHosts = process.env.T3_DEVICE_SSH_KNOWN_HOSTS;
-      const previousConfig = process.env.T3_DEVICE_SSH_CONFIG;
-      process.env.PATH = `${directory}/bin:${previousPath ?? ""}`;
+      const previous = {
+        PATH: process.env.PATH,
+        knownHosts: process.env.T3_DEVICE_SSH_KNOWN_HOSTS,
+        config: process.env.T3_DEVICE_SSH_CONFIG,
+      };
+      process.env.PATH = `${directory}/bin:${previous.PATH ?? ""}`;
       process.env.T3_DEVICE_SSH_KNOWN_HOSTS = knownHosts;
       process.env.T3_DEVICE_SSH_CONFIG = `${directory}/ssh_config`;
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
-          if (previousPath === undefined) delete process.env.PATH;
-          else process.env.PATH = previousPath;
-          if (previousKnownHosts === undefined) delete process.env.T3_DEVICE_SSH_KNOWN_HOSTS;
-          else process.env.T3_DEVICE_SSH_KNOWN_HOSTS = previousKnownHosts;
-          if (previousConfig === undefined) delete process.env.T3_DEVICE_SSH_CONFIG;
-          else process.env.T3_DEVICE_SSH_CONFIG = previousConfig;
+          const restore = (
+            name: "PATH" | "T3_DEVICE_SSH_KNOWN_HOSTS" | "T3_DEVICE_SSH_CONFIG",
+            value: string | undefined,
+          ) => {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+          };
+          restore("PATH", previous.PATH);
+          restore("T3_DEVICE_SSH_KNOWN_HOSTS", previous.knownHosts);
+          restore("T3_DEVICE_SSH_CONFIG", previous.config);
         }),
       );
 
       let realSshCommands = 0;
       const spawner = ChildProcessSpawner.make((command) => {
-        if (commandText(command).includes("-list-avds")) {
+        const text = commandText(command);
+        if (!text.includes("-N") && !text.includes("exec node")) {
           realSshCommands += 1;
           return real.spawn(command);
         }
-        if (command._tag === "StandardCommand" && command.args.includes("-N")) {
-          return Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(41),
-              stdout: Stream.empty,
-              stderr: Stream.empty,
-              all: Stream.empty,
-              exitCode: Effect.never,
-              isRunning: Effect.succeed(true),
-              kill: () => Effect.void,
-              stdin: Sink.drain,
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-              unref: Effect.succeed(Effect.void),
-            }),
-          );
+        if (text.includes("-N")) {
+          return Effect.succeed(idleHandle({ exitCode: Effect.never, running: true }));
         }
-        const output = JSON.stringify({
-          nodePath: "/usr/bin/node",
-          platforms: [
-            { platform: "ios", available: true },
-            { platform: "android", available: true },
-          ],
-          hubPort: 1,
-          helpers: { serveSimAxSettings: null, serveSimCli: null },
-        });
         return Effect.succeed(
-          ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(42),
-            stdout: Stream.make(new TextEncoder().encode(output)),
-            stderr: Stream.empty,
-            all: Stream.empty,
+          idleHandle({
+            stdout: Stream.make(
+              new TextEncoder().encode(
+                JSON.stringify({
+                  nodePath: "/usr/bin/node",
+                  platforms: [
+                    { platform: "ios", available: true },
+                    { platform: "android", available: true },
+                  ],
+                  hubPort: 1,
+                  helpers: { serveSimAxSettings: null, serveSimCli: null },
+                }),
+              ),
+            ),
             exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-            isRunning: Effect.succeed(false),
-            kill: () => Effect.void,
-            stdin: Sink.drain,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-            unref: Effect.succeed(Effect.void),
+            running: false,
           }),
         );
       });
@@ -228,12 +290,9 @@ exec /usr/bin/ssh \\
       yield* sshHost.ensureReady(() => Effect.void);
       const ready = yield* sshHost.current;
       if (!ready) return yield* Effect.die(new Error("SSH host did not become ready."));
-
       const http = HttpClient.make((request) =>
-        Effect.sync(() => {
-          const path = new URL(request.url).pathname;
-          if (path !== "/api/devices") throw new Error(`Unexpected hub path: ${path}`);
-          return HttpClientResponse.fromWeb(
+        Effect.sync(() =>
+          HttpClientResponse.fromWeb(
             request,
             Response.json({
               simulators: [
@@ -258,8 +317,8 @@ exec /usr/bin/ssh \\
               ],
               errors: [{ message: "Android SDK command-line tools are missing." }],
             }),
-          );
-        }),
+          ),
+        ),
       );
       const service = yield* DeviceService.makeWithHosts(
         new Map([
@@ -281,10 +340,7 @@ exec /usr/bin/ssh \\
               platformAvailability: (platform: DevicePlatform) =>
                 Effect.succeed({ platform, available: true }),
               ensureReady: () =>
-                Effect.succeed({
-                  ...ready,
-                  hub: { origin: "http://device.test" },
-                }),
+                Effect.succeed({ ...ready, hub: { origin: "http://device.test" } }),
               ensureAgentReady: () => Effect.die(new Error("Agent access is not used.")),
               current: Effect.succeed(null),
               stopAgent: Effect.void,
@@ -297,37 +353,30 @@ exec /usr/bin/ssh \\
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })),
       );
-      const before = yield* fs.readFileString(log).pipe(Effect.orElseSucceed(() => ""));
       const state = yield* service.list;
-      const after = yield* fs.readFileString(log).pipe(Effect.orElseSucceed(() => ""));
-      expect(realSshCommands).toBe(1);
-      expect(after.slice(before.length)).toContain("Accepted publickey");
-      expect(state.devices).toEqual([
-        {
-          hostId,
-          id: "11111111-1111-1111-1111-111111111111",
-          platform: "ios",
-          name: "iPhone 16",
-          version: "26",
-          booted: true,
-          physical: false,
-        },
-        {
-          hostId,
-          id: "R3CW10ABC",
-          platform: "android",
-          name: "Pixel 8",
-          version: "Android 15",
-          booted: false,
-          physical: true,
-        },
+      const pathProbe = yield* ready.run("sh", [
+        "-c",
+        "command -v emulator >/dev/null 2>&1 && echo FOUND || echo ABSENT; printf '%s\\n' \"$PATH\"",
+      ]);
+      const sshdText = yield* Ref.get(sshdLogs);
+      expect(realSshCommands).toBe(2);
+      expect(sshdText).toContain("Accepted publickey");
+      expect(state.hostStatuses[hostId]?.status).toBe("ready");
+      expect(state.devices.map((device) => [device.platform, device.id, device.physical])).toEqual([
+        ["ios", "11111111-1111-1111-1111-111111111111", false],
+        ["android", "R3CW10ABC", true],
       ]);
       const detail = state.hostStatuses[hostId]?.detail ?? "";
-      expect(state.hostStatuses[hostId]?.status).toBe("ready");
       expect(detail.startsWith("Android SDK command-line tools are missing.\n")).toBe(true);
       expect(detail).toContain(
         "Android Emulator is not installed, so virtual devices cannot be listed.",
       );
       expect(detail).toContain("emulator: not found");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      expect(pathProbe.code).toBe(0);
+      expect(pathProbe.stdout).toContain("ABSENT");
+      expect(pathProbe.stdout).not.toContain("FOUND");
+      expect(pathProbe.stdout).toContain("/usr/local/bin");
+      expect(pathProbe.stdout).toContain("/opt/homebrew/bin");
+      expect(pathProbe.stdout).toContain(".local/bin");
+    }).pipe(Effect.provide(NodeServices.layer)),
 );

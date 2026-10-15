@@ -258,6 +258,9 @@ jobs:
       - name: Install Chromium for server browser integration tests
         run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
 
+      - name: Install OpenSSH server and bubblewrap for device SSH tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openssh-server bubblewrap
+
       - name: Test
         env:
           T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
