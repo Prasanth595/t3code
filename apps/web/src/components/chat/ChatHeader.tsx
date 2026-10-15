@@ -58,8 +58,6 @@ interface ChatHeaderProps {
   projectScripts: readonly ProjectScript[];
   /** Undefined when this client cannot run terminal commands. */
   onRunPinnedScript: ((script: ProjectScript) => void) | undefined;
-  /** Runs a pinned global script. Undefined when this client cannot run terminal commands. */
-  onRunPinnedGlobalScript: ((script: ProjectScript) => void) | undefined;
 }
 
 /**
@@ -96,7 +94,6 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenProjectSettings,
   projectScripts,
   onRunPinnedScript,
-  onRunPinnedGlobalScript,
 }: ChatHeaderProps) {
   const pins = usePinnedScripts({
     environmentId: activeThreadEnvironmentId,
@@ -465,16 +462,7 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      {/* Next to the thread details toggle: global pins, which the title bar also shows, then
-          project pins, which only show here. */}
-      <PinnedScriptsArea
-        area="header"
-        scripts={pins.pinnedGlobalScripts}
-        canReorder={pins.canWrite}
-        onRun={onRunPinnedGlobalScript}
-        onMove={pins.moveGlobalPin}
-        onOpenMenu={(position) => void pins.openPinMenu(position)}
-      />
+      {/* Next to the thread details toggle: project pins. Global pins show in the title bar. */}
       <PinnedScriptsArea
         area="header"
         scripts={pins.pinnedProjectScripts}

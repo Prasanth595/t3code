@@ -11573,7 +11573,6 @@ export default function ChatView(props: ChatViewProps) {
             onNewThreadInProject={handleNewThreadInActiveProject}
             projectScripts={activeProjectScripts}
             onRunPinnedScript={canOperateTerminal ? runPinnedProjectScript : undefined}
-            onRunPinnedGlobalScript={canOperateTerminal ? runGlobalScript : undefined}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
               : {})}
