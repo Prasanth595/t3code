@@ -60,15 +60,17 @@ export const TERMINAL_RUN_STATUSES: ReadonlySet<Sessions.RunStatus> = new Set([
 ]);
 
 /**
- * The statuses a thread's run goes through, from its `run.created` on, each
- * change once, up to its terminal one. Waits until the run ends.
+ * The statuses the thread's run with `ordinal` goes through, from its
+ * `run.created` on, each change once, up to its terminal one. Waits until the
+ * run ends.
  */
-export const runStatusesUntilTerminal = (threadId: ThreadId) =>
+export const runStatusesUntilTerminal = (threadId: ThreadId, ordinal = 1) =>
   Effect.gen(function* () {
     const sink = yield* EventSink.EventSinkV2;
     const statuses = yield* sink.stream({ threadId }).pipe(
       Stream.filterMap(({ event }) =>
-        event.type === "run.created" || event.type === "run.updated"
+        (event.type === "run.created" || event.type === "run.updated") &&
+        event.payload.ordinal === ordinal
           ? Result.succeed<Sessions.RunStatus>(event.payload.status)
           : Result.failVoid,
       ),
@@ -105,13 +107,26 @@ export const initRepoWithCommit = (cwd: string) =>
     return yield* git(cwd, ["branch", "--show-current"]);
   });
 
-/** The real orchestration runtime plus the launch service over a real repo. */
-export const layerRuntime = (input: { readonly repo: string; readonly worktreesDir: string }) =>
+/** Two turns: the replies are "first fixture turn complete" and "second fixture turn complete". */
+export const MULTI_TURN_TRANSCRIPT = new URL(
+  "../../orchestration-v2/testkit/fixtures/multi_turn/claude_transcript.ndjson",
+  import.meta.url,
+);
+
+/**
+ * The real orchestration runtime plus the launch service over a real repo,
+ * with `transcript` (the simple one unless given) as the provider.
+ */
+export const layerRuntime = (input: {
+  readonly repo: string;
+  readonly worktreesDir: string;
+  readonly transcript?: URL;
+}) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const transcript = yield* ClaudeOrchestratorReplayHarness.decodeTranscript(
-        yield* readProviderReplayTranscript(SIMPLE_TRANSCRIPT),
+        yield* readProviderReplayTranscript(input.transcript ?? SIMPLE_TRANSCRIPT),
       );
       const project: Project = {
         id: projectId,
@@ -193,7 +208,9 @@ export const layerRuntime = (input: { readonly repo: string; readonly worktreesD
         Layer.provide(layerDatabase),
       );
       return Layer.mergeAll(
-        Sessions.layer.pipe(Layer.provide(Layer.merge(layerLaunch, layerStores))),
+        Sessions.layer.pipe(
+          Layer.provide(Layer.mergeAll(layerLaunch, layerStores, layerThreadManagement)),
+        ),
         // Reads the same event sink the orchestrator writes to.
         Events.layer.pipe(Layer.provide(layerOrchestrator)),
         layerStores,
