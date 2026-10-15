@@ -299,7 +299,8 @@ The client setting `snoozeQuickOptions` holds the choices of the snooze menus. I
 The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the sidebar search. It is off by default. Turn it on in Settings > General > Sidebar groups.
 
 - The first tab, "Threads", holds every thread that is in no group. A thread lives in one group, so the groups act like folders.
-- Drag a thread onto a tab to move it into that group. Drag it onto "Threads" to take it out of every group. Drag it onto the empty end of the tab bar to make a new group. A drop on the tab that already holds the thread changes nothing.
+- Drag a thread onto a tab to move it into that group. Drag it onto "Threads" to take it out of every group. During a drag, the + slot at the end of the bar turns into a drop target for a new group. A drop on the tab that already holds the thread changes nothing.
+- Tabs that do not fit the bar go to a "+N" menu. The open tab always shows. A drag over "+N" opens the menu, and its rows take a drop.
 - Click + to make an empty group. Right-click a tab, or click the sliders button of the open tab, to rename it, edit its rules, move it or delete it.
 - Rules put threads in a group automatically. A thread matches a group when it matches every rule. Rules compare the repository, the repository owner, the status, the provider, who created the thread, its background work and its title.
 - A repository rule compares the repository of the project, such as `github.com/yarden-zamir/t3code`. The same repository matches on every machine, also where its project has another id or path. A project without a remote has no repository.
