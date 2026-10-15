@@ -115,7 +115,9 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
       yield* insertRow(sql, { ...row, prompt: secret }, now);
     }
     const warnings: unknown[] = [];
-    const tasks = yield* ScheduledTaskService.listDueTasks(DateTime.makeUnsafe(now)).pipe(
+    const tasks = yield* ScheduledTaskService.listDueTasks(DateTime.makeUnsafe(now), () => {
+      throw new Error("No project default task in this test.");
+    }).pipe(
       Effect.provide(
         Logger.layer([
           Logger.make(({ message }) => {

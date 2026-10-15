@@ -177,9 +177,10 @@ export const ScheduledTaskProjectDefaultModel = Schema.TaggedStruct("projectDefa
 });
 
 /**
- * The model a task runs on: the project default, or one explicit selection.
- * Rows saved before this union hold a bare `ModelSelection` and still decode
- * as the explicit member, so the stored shape of explicit tasks is unchanged.
+ * The model choice of an agent tool call and of a stored task row: the
+ * project default, or one explicit selection. The client wire shape is
+ * `modelSelection` plus `useProjectDefaultModel` instead, which older
+ * clients decode.
  */
 export const ScheduledTaskModelSelection = Schema.Union([
   ScheduledTaskProjectDefaultModel,
@@ -200,7 +201,10 @@ export const ScheduledTask = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.NullOr(ThreadId),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
-  modelSelection: ScheduledTaskModelSelection,
+  /** With `useProjectDefaultModel`, the model the next run resolves. */
+  modelSelection: ModelSelection,
+  /** Follow the project default model at each run. Older clients ignore it. */
+  useProjectDefaultModel: Schema.optional(Schema.Boolean),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: OrchestrationV2Actor,
@@ -239,7 +243,9 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
-  modelSelection: ScheduledTaskModelSelection,
+  /** A server without `useProjectDefaultModel` saves this model. */
+  modelSelection: ModelSelection,
+  useProjectDefaultModel: Schema.optional(Schema.Boolean),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),

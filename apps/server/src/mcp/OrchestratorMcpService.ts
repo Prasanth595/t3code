@@ -55,7 +55,6 @@ import {
   type RuntimeMode,
   isScheduledTaskProjectDefaultModel,
   type ScheduledTask,
-  type ScheduledTaskModelSelection,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
   ThreadId,
@@ -259,7 +258,8 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     projectId: task.projectId,
     boundThreadId: task.threadId,
     schedule: task.schedule,
-    modelSelection: task.modelSelection,
+    modelSelection:
+      task.useProjectDefaultModel === true ? { _tag: "projectDefault" } : task.modelSelection,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
     // A bare path is not a URL anyone can call, so agents never get one to share.
@@ -1148,9 +1148,8 @@ const make = Effect.gen(function* () {
    * An explicit scheduled task model must name a provider instance and model
    * from the live catalog, so a wrong id fails on save instead of on every run.
    */
-  const checkScheduledTaskModelSelection = (selection: ScheduledTaskModelSelection) =>
+  const checkScheduledTaskModelSelection = (selection: ModelSelection) =>
     Effect.gen(function* () {
-      if (isScheduledTaskProjectDefaultModel(selection)) return selection;
       const providers = yield* loadProviders;
       const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
       if (provider === undefined) {
@@ -1698,10 +1697,17 @@ const make = Effect.gen(function* () {
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
-        const modelSelection =
+        const inherited = () =>
+          parent === undefined
+            ? projectDefaultModelSelection(project)
+            : Effect.succeed(parent.thread.modelSelection);
+        // A project-default task also carries a model, for servers and clients without the flag.
+        const modelFields =
           input.modelSelection === undefined
-            ? (parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project)))
-            : yield* checkScheduledTaskModelSelection(input.modelSelection);
+            ? { modelSelection: yield* inherited() }
+            : isScheduledTaskProjectDefaultModel(input.modelSelection)
+              ? { modelSelection: yield* inherited(), useProjectDefaultModel: true }
+              : { modelSelection: yield* checkScheduledTaskModelSelection(input.modelSelection) };
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1713,7 +1719,7 @@ const make = Effect.gen(function* () {
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
           workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
-          modelSelection,
+          ...modelFields,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
           createdBy: "agent",
@@ -1795,10 +1801,16 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
-          modelSelection:
-            input.modelSelection === undefined
-              ? existing.modelSelection
-              : yield* checkScheduledTaskModelSelection(input.modelSelection),
+          ...(input.modelSelection === undefined
+            ? {
+                modelSelection: existing.modelSelection,
+                ...(existing.useProjectDefaultModel === true
+                  ? { useProjectDefaultModel: true }
+                  : {}),
+              }
+            : isScheduledTaskProjectDefaultModel(input.modelSelection)
+              ? { modelSelection: existing.modelSelection, useProjectDefaultModel: true }
+              : { modelSelection: yield* checkScheduledTaskModelSelection(input.modelSelection) }),
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,

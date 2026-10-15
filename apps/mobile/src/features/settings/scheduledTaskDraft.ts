@@ -8,7 +8,7 @@ import type {
   ScheduledTaskWebhookSignature,
 } from "@t3tools/contracts";
 
-import { DEFAULT_SERVER_SETTINGS, isScheduledTaskProjectDefaultModel } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   resolveProjectSettings,
@@ -210,13 +210,9 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     title: task.title,
     prompt: task.prompt,
     projectId: task.projectId,
-    ...(isScheduledTaskProjectDefaultModel(task.modelSelection)
-      ? { modelSelection: null, modelSelectionIsExplicit: false, useProjectDefaultModel: true }
-      : {
-          modelSelection: task.modelSelection,
-          modelSelectionIsExplicit: true,
-          useProjectDefaultModel: false,
-        }),
+    modelSelection: task.modelSelection,
+    modelSelectionIsExplicit: task.useProjectDefaultModel !== true,
+    useProjectDefaultModel: task.useProjectDefaultModel === true,
     schedule: scheduleDraftForTask(task),
     workspace: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
