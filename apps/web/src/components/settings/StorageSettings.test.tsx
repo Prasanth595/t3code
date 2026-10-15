@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { RegistryProvider } from "@effect/atom-react";
-import { DEFAULT_SERVER_SETTINGS, ProjectId, type StorageCleanupReport } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  ThreadId,
+  type StorageCleanupReport,
+} from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -57,8 +62,17 @@ vi.mock("./useScopedSettings", () => ({
 vi.mock("./settingsLayout", () => ({
   SettingsPageContainer: ({ children }: { children: ReactNode }) => children,
   SettingsSection: ({ children }: { children: ReactNode }) => children,
-  SettingsRow: ({ description, control }: { description: ReactNode; control: ReactNode }) => (
+  SettingsRow: ({
+    title,
+    description,
+    control,
+  }: {
+    title: ReactNode;
+    description: ReactNode;
+    control: ReactNode;
+  }) => (
     <div>
+      <h3>{title}</h3>
       {description}
       {control}
     </div>
@@ -171,7 +185,7 @@ it("keeps cleanup disabled when settled retention and all other rules are off", 
   expect(state.run).not.toHaveBeenCalled();
 });
 
-it("shows a kept folder's measured size without counting it as recovered", async () => {
+it("shows an orphan's full path and size while keeping thread row titles unchanged", async () => {
   state.settings = {
     ...state.settings,
     storageCleanup: { ...state.settings.storageCleanup, worktreeSettledAfterDays: 0 },
@@ -191,8 +205,18 @@ it("shows a kept folder's measured size without counting it as recovered", async
         bytes: 6600000,
         files: null,
       },
+      {
+        kind: "worktree",
+        outcome: "kept",
+        path: "/worktrees/repo/thread-checkout",
+        threadId: ThreadId.make("thread"),
+        threadTitle: "Thread title",
+        reason: "Thread is running or has pending work",
+        bytes: null,
+        files: null,
+      },
     ],
-    counts: { removed: 0, kept: 1, failed: 0 },
+    counts: { removed: 0, kept: 2, failed: 0 },
     omittedCount: 0,
     bytesFreed: 0,
   };
@@ -201,6 +225,10 @@ it("shows a kept folder's measured size without counting it as recovered", async
     button.textContent?.includes("Last run"),
   )!;
   await act(async () => lastRun.click());
+  const titles = Array.from(container.querySelectorAll("h3"), (heading) => heading.textContent);
+  expect(titles).toContain("/worktrees/repo/orphan");
+  expect(titles).toContain("thread-checkout");
+  expect(titles).not.toContain("/worktrees/repo/thread-checkout");
   expect(container.textContent).toContain(
     "No thread uses this folder, and it isn't a git worktree",
   );

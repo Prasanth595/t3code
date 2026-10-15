@@ -183,7 +183,9 @@ function CleanupResults({
       {report.entries.map((entry, index) => {
         const name =
           entry.kind === "worktree"
-            ? (entry.path?.split(/[\\/]/).findLast(Boolean) ?? "Worktrees")
+            ? ((entry.threadId === null
+                ? entry.path
+                : entry.path?.split(/[\\/]/).findLast(Boolean)) ?? "Worktrees")
             : entry.kind === "logs"
               ? "Rotated logs"
               : "Browser artifacts";

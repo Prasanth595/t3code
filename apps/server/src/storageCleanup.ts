@@ -60,6 +60,8 @@ const DAY_MS = 86_400_000;
 // After a settle, the project's settle script needs time to open its
 // terminal, which then protects the worktree.
 const SETTLE_SCRIPT_GRACE_MS = 60_000;
+// Worktree creation can precede its thread row, including review-guide checkouts.
+const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const REPORT_ENTRY_LIMIT = 200;
@@ -210,6 +212,7 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
+  const orphanSizes = new Map<string, number | null>();
   const noteTerminal = (terminal: TerminalSummary) => {
     const threadTerminals =
       liveTerminals.get(terminal.threadId) ?? new Map<string, TerminalSummary>();
@@ -336,7 +339,9 @@ const make = Effect.gen(function* () {
       );
     }
     const projectRoots = (yield* Effect.forEach(
-      yield* Effect.filter(projects, (project) => fs.exists(path.resolve(project.workspaceRoot))),
+      yield* Effect.filter(projects, (project) =>
+        fs.exists(path.resolve(project.workspaceRoot)).pipe(Effect.orElseSucceed(() => true)),
+      ),
       (project) => {
         const resolved = path.resolve(project.workspaceRoot);
         return fs.realPath(resolved).pipe(
@@ -366,7 +371,8 @@ const make = Effect.gen(function* () {
     });
     // Share one walk budget across all orphans, instead of 30 seconds per folder.
     // Unmeasured folders still appear with an unknown size.
-    const measurementDeadline = (yield* Clock.currentTimeMillis) + 30_000;
+    const now = yield* Clock.currentTimeMillis;
+    const measurementDeadline = now + 30_000;
     const reported = new Set<string>();
     const report = Effect.fnUntraced(
       function* (worktreePath: string) {
@@ -374,20 +380,26 @@ const make = Effect.gen(function* () {
         if (
           reported.has(key) ||
           referenced.has(key) ||
+          [...referenced].some((reference) => inside(worktreePath, reference)) ||
           projectRoots.some((root) => pathKey(root) === key || inside(worktreePath, root))
         )
           return;
+        const modified = Option.getOrNull((yield* fs.stat(worktreePath)).mtime);
+        if (modified !== null && modified.getTime() > now - ORPHAN_WORKTREE_GRACE_MS) return;
         const gitPath = path.join(worktreePath, ".git");
         const linked = (yield* fs.exists(gitPath)) && (yield* fs.stat(gitPath)).type === "File";
         reported.add(key);
         const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
-        const bytes =
-          remaining > 0
-            ? yield* measureWorktree(worktreePath).pipe(
-                Effect.timeout(remaining),
-                Effect.orElseSucceed(() => null),
-              )
-            : null;
+        if (!orphanSizes.has(key) && remaining > 0) {
+          orphanSizes.set(
+            key,
+            yield* measureWorktree(worktreePath).pipe(
+              Effect.timeout(remaining),
+              Effect.orElseSucceed(() => null),
+            ),
+          );
+        }
+        const bytes = orphanSizes.get(key) ?? null;
         entries.push({
           kind: "worktree",
           outcome: "kept",
@@ -418,6 +430,9 @@ const make = Effect.gen(function* () {
           }
         }).pipe(Effect.orElseSucceed(() => undefined));
       }
+    }
+    for (const key of orphanSizes.keys()) {
+      if (!reported.has(key)) orphanSizes.delete(key);
     }
   });
 
@@ -973,14 +988,19 @@ const make = Effect.gen(function* () {
       counts[entry.outcome]++;
       if (entry.outcome !== "kept") bytesFreed += entry.bytes ?? 0;
     }
-    const priority = { failed: 0, removed: 1, kept: 2 };
+    const priority = (entry: StorageCleanupReportEntry) =>
+      entry.outcome === "failed"
+        ? 0
+        : entry.outcome === "removed"
+          ? 1
+          : entry.kind === "worktree" && entry.threadId === null
+            ? 2
+            : 3;
     const latestReport: StorageCleanupReport = {
       trigger,
       startedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
       finishedAt: DateTime.formatIso(yield* DateTime.now),
-      entries: entries
-        .sort((a, b) => priority[a.outcome] - priority[b.outcome])
-        .slice(0, REPORT_ENTRY_LIMIT),
+      entries: entries.sort((a, b) => priority(a) - priority(b)).slice(0, REPORT_ENTRY_LIMIT),
       counts,
       bytesFreed,
       omittedCount: Math.max(0, entries.length - REPORT_ENTRY_LIMIT),
