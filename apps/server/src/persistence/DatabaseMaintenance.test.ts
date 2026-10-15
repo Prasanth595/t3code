@@ -16,6 +16,21 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
   "DatabaseMaintenance",
   (it) => {
+    it.effect("reports an unreadable database as an inspection failure", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
+        const dbPath = path.join(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-inspect-" }),
+          "statev2.sqlite",
+        );
+        yield* fs.writeFileString(dbPath, "not a database");
+        const failure = yield* Effect.flip(maintenance.inspect(dbPath));
+        assert.equal(failure.reason, "inspect");
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("compacts an existing database offline only once its server has stopped", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

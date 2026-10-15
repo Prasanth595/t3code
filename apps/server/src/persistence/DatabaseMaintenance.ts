@@ -14,7 +14,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 export class DatabaseMaintenanceError extends Schema.TaggedError<DatabaseMaintenanceError>()(
   "DatabaseMaintenanceError",
   {
-    reason: Schema.Literals(["running", "missing", "invalid-projections", "compact"]),
+    reason: Schema.Literals(["running", "missing", "invalid-projections", "inspect", "compact"]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -26,6 +26,8 @@ export class DatabaseMaintenanceError extends Schema.TaggedError<DatabaseMainten
         return "No existing T3 Code database was found in this data directory.";
       case "invalid-projections":
         return "Database projections need repair before compaction. Start T3 Code once so it rebuilds them, then run doctor again. If this CLI is older than the one that wrote the database, update T3 Code first.";
+      case "inspect":
+        return "Could not read the database. Check that this user can open it.";
       case "compact":
         return "Database compaction failed. Check that no other process has the database open and enough disk space is available.";
     }
@@ -82,18 +84,17 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const asMaintenanceError = Effect.mapError((cause: unknown) =>
-    isDatabaseMaintenanceError(cause)
-      ? cause
-      : new DatabaseMaintenanceError({ reason: "compact", cause }),
-  );
+  const asMaintenanceError = (reason: "inspect" | "compact") =>
+    Effect.mapError((cause: unknown) =>
+      isDatabaseMaintenanceError(cause) ? cause : new DatabaseMaintenanceError({ reason, cause }),
+    );
 
   const inspect = Effect.fn("DatabaseMaintenance.inspect")(function* (databasePath: string) {
     yield* locate(databasePath);
     return yield* readStorage.pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: databasePath, readonly: true })),
     );
-  }, asMaintenanceError);
+  }, asMaintenanceError("inspect"));
 
   const compact = Effect.fn("DatabaseMaintenance.compact")(function* (databasePath: string) {
     yield* locate(databasePath);
@@ -142,7 +143,7 @@ const make = Effect.gen(function* () {
       deletedEventCount: result.deletedEventCount,
       deletedReceiptCount: result.deletedReceiptCount,
     };
-  }, asMaintenanceError);
+  }, asMaintenanceError("compact"));
 
   return DatabaseMaintenance.of({ inspect, compact });
 });

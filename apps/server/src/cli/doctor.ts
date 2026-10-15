@@ -12,7 +12,9 @@ import * as CliService from "./service.ts";
 const formatBytes = (bytes: number) =>
   bytes >= 1024 ** 3
     ? `${(bytes / 1024 ** 3).toFixed(2)} GiB`
-    : `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
+    : bytes >= 1024 ** 2
+      ? `${(bytes / 1024 ** 2).toFixed(1)} MiB`
+      : `${Math.ceil(bytes / 1024)} KiB`;
 
 export const runDoctor = Effect.fn("runDoctor")(function* (
   databasePath: string,
@@ -69,7 +71,11 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
         }),
       ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed([]) }));
   if (selected.length === 0) {
-    yield* Console.log("No repairs selected; nothing changed.");
+    yield* Console.log(
+      options.fix
+        ? "No recommended repairs; nothing changed."
+        : "No repairs selected; nothing changed.",
+    );
     return;
   }
   const service = yield* BootService.BootService;

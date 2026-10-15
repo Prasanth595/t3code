@@ -960,7 +960,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       // `is-active` fails while a crash-looping unit sits in `activating
       // (auto-restart)`, and a throttled launchd job is loaded without a pid;
       // both would start the server mid-repair. So the unit is always
-      // stopped, and started again when it was enabled or loaded before.
+      // stopped, and started again when it was active, enabled or loaded
+      // before; a disabled unit caught crash-looping stays stopped.
       const restore =
         manager.kind === "systemd"
           ? yield* Effect.map(
