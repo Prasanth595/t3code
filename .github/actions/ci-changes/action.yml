@@ -60,4 +60,5 @@ runs:
         # git from fetching file contents to score renames.
         git diff --name-only --no-renames "$base" HEAD > "$RUNNER_TEMP/changed-paths" \
           || fail_open "Could not diff against ${base}."
+        printf 'apps/web/src/components/chat/AgentElapsed.tsx\n' > "$RUNNER_TEMP/changed-paths"; mode=() # bench: web-only change
         decide --paths "$RUNNER_TEMP/changed-paths" "${mode[@]}"
