@@ -23,7 +23,7 @@ const templateError = (cwd: string, detail: string) =>
   });
 
 /** Git stores refs as paths, so `t3` blocks `t3/x`, and `t3/x/y` blocks `t3/x`. */
-const branchConflicts = (candidate: string, branches: ReadonlyArray<string>) =>
+export const branchConflicts = (candidate: string, branches: ReadonlyArray<string>) =>
   branches.some(
     (branch) =>
       branch === candidate ||

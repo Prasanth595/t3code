@@ -44,6 +44,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { branchConflicts } from "../worktreePathTemplate.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
@@ -284,16 +285,16 @@ const make = Effect.gen(function* () {
     const strategy = input.workspaceStrategy;
     if (strategy.type !== "worktree") return;
     const { baseRef, branch } = strategy;
-    // `git worktree add -b` refuses a branch that exists.
+    // `git worktree add -b` refuses a branch that exists or that a branch
+    // blocks, as `docs` blocks `docs/x`. Limit: short names read a branch that
+    // shares its name with a tag as `heads/<name>`, so the launch reports that
+    // case instead. Revisit if agents name branches after tags.
     if (branch !== undefined) {
       const taken = yield* Effect.gen(function* () {
         const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
         if (project === undefined) return undefined;
-        const exists = yield* git.hasCommit({
-          cwd: project.workspaceRoot,
-          refName: `refs/heads/${branch}`,
-        });
-        return exists ? project : undefined;
+        const branches = yield* git.listLocalBranchNames(project.workspaceRoot);
+        return branchConflicts(branch, branches) ? project : undefined;
       }).pipe(Effect.orElseSucceed(() => undefined));
       if (taken !== undefined)
         return yield* new ThreadLaunchBranchExistsError({
