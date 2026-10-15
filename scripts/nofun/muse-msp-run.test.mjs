@@ -45,8 +45,10 @@ createInterface({input:process.stdin}).on('line', line => {
   if(!process.env.MSP_ABSENT) send({method:'usage/changed',params:{...usage,SENTINEL_SECRET:'do not retain'}});
   send({method:'item/started',params:{sessionId:'s',item:{itemId:'a',kind:'agentMessage',status:'inProgress',revision:0}}});
   send({method:'item/delta',params:{sessionId:'s',itemId:'a',delta:'useful answer'}});
-  send({method:'item/completed',params:{sessionId:'s',item:{itemId:'a',kind:'agentMessage',status:'completed',revision:1,text:'useful answer'}}});
-  send({method:'turn/completed',params:{sessionId:'s',turnId:'t',terminal:'completed'}});
+  const cursor = process.env.MSP_SHARED_CURSOR ? {viewCursor:'same-transaction'} : {};
+  send({method:'item/completed',params:{...cursor,sessionId:'s',item:{itemId:'a',kind:'agentMessage',status:'completed',revision:1,text:'useful answer'}}});
+  send({method:'turn/completed',params:{...cursor,sessionId:'s',turnId:'t',terminal:'completed'}});
+  if(process.env.MSP_SHARED_CURSOR) setTimeout(() => process.exit(0),500);
  }
 });`;
 
@@ -126,6 +128,12 @@ test("absent last-observed data never becomes a made-up reading or an extra turn
   assert.equal(result, 0);
   assert.ok(!events.some((e) => e.payload_type === "t3.muse.usage"));
   assert.equal(calls.filter((m) => m.method === "turn/start").length, 1);
+});
+
+test("different projected events sharing a cursor do not hide turn completion", async () => {
+  const { result, events } = await fixture({ MSP_SHARED_CURSOR: "1" });
+  assert.equal(result, 0);
+  assert.ok(events.some((e) => e.payload_type === "run.terminal.completed"));
 });
 
 test("wrong login or API billing lane stops before useful inference", async () => {

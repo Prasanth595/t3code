@@ -293,8 +293,11 @@ export async function runMsp({ executable, argv, env, expectedLogin, emit }) {
         }
         if (!message.method || p.sessionId !== sessionId) return;
         if (typeof p.viewCursor === "string" && p.viewCursor) {
-          if (seenCursors.has(p.viewCursor)) return;
-          seenCursors.add(p.viewCursor);
+          // One retained source range can project several different events.
+          // Replaying a notification is duplicate; another event at that cursor is not.
+          const key = `${message.method}:${p.viewCursor}:${p.itemId ?? p.item?.itemId ?? ""}`;
+          if (seenCursors.has(key)) return;
+          seenCursors.add(key);
         }
         if (message.id !== undefined) {
           // No unhandled interactive approval/user-input hangs.
