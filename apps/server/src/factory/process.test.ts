@@ -72,6 +72,12 @@ it.live("passes PATH, LC_* and the env argument through", () =>
         env: { FACTORY_PROCESS_TEST_EXTRA: "yes" },
       });
       assert.strictEqual(extra.tail, "yes");
+      const home = yield* run({
+        command: `printf %s "$HOME"`,
+        shell: true,
+        env: { HOME: "/factory-test-home" },
+      });
+      assert.strictEqual(home.tail, "/factory-test-home");
     }),
   ),
 );
@@ -90,6 +96,29 @@ it.live("a timeout kills the whole process group, grandchild included", () =>
     assert.strictEqual(result.timedOut, true);
     assert.strictEqual(result.exitCode, null);
     assert.isBelow((yield* Clock.currentTimeMillis) - started, 5000);
+
+    const pid = Number(NodeFS.readFileSync(pidFile, "utf8").trim());
+    assert.isAbove(pid, 0);
+    for (let i = 0; i < 40 && isAlive(pid); i++) yield* Effect.sleep("50 millis");
+    assert.strictEqual(isAlive(pid), false);
+    NodeFS.rmSync(dir, { recursive: true, force: true });
+  }),
+);
+
+it.live("kills what a finished command left behind, without waiting", () =>
+  Effect.gen(function* () {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "factory-process-"));
+    const pidFile = NodePath.join(dir, "pid");
+    const started = yield* Clock.currentTimeMillis;
+    const result = yield* run({
+      command: `sleep 100 & echo $! > "$0"; echo done`,
+      args: [pidFile],
+      shell: true,
+    });
+    assert.strictEqual(result.tail, "done\n");
+    assert.strictEqual(result.exitCode, 0);
+    assert.strictEqual(result.timedOut, false);
+    assert.isBelow((yield* Clock.currentTimeMillis) - started, 1000);
 
     const pid = Number(NodeFS.readFileSync(pidFile, "utf8").trim());
     assert.isAbove(pid, 0);
@@ -147,6 +176,13 @@ it.live("runs argv without a shell", () =>
   Effect.gen(function* () {
     const result = yield* run({ command: "printf", args: ["%s-%s", "a", "b"] });
     assert.strictEqual(result.tail, "a-b");
+  }),
+);
+
+it.live("merges stderr into the tail without a shell", () =>
+  Effect.gen(function* () {
+    const result = yield* run({ command: "sh", args: ["-c", "echo e >&2"] });
+    assert.strictEqual(result.tail, "e\n");
   }),
 );
 
