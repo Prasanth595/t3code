@@ -419,14 +419,19 @@ export function SettingInheritance({
                           key={`${project.environmentId}:${project.projectId}`}
                           className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-2 py-1"
                         >
-                          <InlineButton className="min-w-0 justify-start" onClick={project.open}>
-                            <span className="truncate">
-                              {project.label}
-                              {hasMultipleEnvironments
-                                ? ` · ${machineLabelFor(project.environmentId)}`
-                                : ""}
-                            </span>
-                          </InlineButton>
+                          <span className="flex min-w-0 flex-col items-start">
+                            <InlineButton
+                              className="min-w-0 max-w-full justify-start"
+                              onClick={project.open}
+                            >
+                              <span className="truncate">{project.label}</span>
+                            </InlineButton>
+                            {hasMultipleEnvironments ? (
+                              <span className="max-w-full truncate text-xs text-muted-foreground">
+                                {machineLabelFor(project.environmentId)}
+                              </span>
+                            ) : null}
+                          </span>
                           <span className="max-w-32 truncate text-muted-foreground tabular-nums">
                             {isProjectScopedSettingKey(key)
                               ? formatValue(
