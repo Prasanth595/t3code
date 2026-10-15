@@ -11,10 +11,13 @@ import {
 import { composerDraftEnvironmentId } from "../lib/composerAttachmentUploadQueue";
 import { isQueuedEditDraftKey, queuedEditDraftKey } from "./queued-edit-draft-key";
 import {
-  queuedRunEditIsDirty,
+  beginQueuedRunEdit,
+  getQueuedRunEdit,
+  recoverQueuedRunEdit,
   resolveQueuedEditPayload,
   type QueuedRunEdit,
 } from "./queued-run-edit";
+import { getComposerDraftSnapshot, setComposerDraftText } from "./use-composer-drafts";
 
 const image = (id: string): ChatAttachment => ({
   type: "image",
@@ -109,13 +112,36 @@ describe("resolveQueuedEditPayload", () => {
   });
 });
 
-describe("queuedRunEditIsDirty", () => {
-  it("treats an untouched edit as clean so a steered message is not restored", () => {
-    expect(queuedRunEditIsDirty(edit([]), { text: "original", attachments: [] })).toBe(false);
+describe("recoverQueuedRunEdit", () => {
+  const threadKey = "env:thread-recover";
+  const runId = RunId.make("run-1");
+  const editKey = queuedEditDraftKey(threadKey, runId);
+
+  it("drops an untouched edit without restoring the sent message", () => {
+    beginQueuedRunEdit(threadKey, edit([]));
+
+    expect(recoverQueuedRunEdit(threadKey, runId)).toBe("clean");
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(getComposerDraftSnapshot(threadKey).text).toBe("");
+    expect(getComposerDraftSnapshot(editKey).text).toBe("");
   });
 
-  it("treats changed text or a new attachment as an edit worth keeping", () => {
-    expect(queuedRunEditIsDirty(edit([]), { text: "revised", attachments: [] })).toBe(true);
-    expect(queuedRunEditIsDirty(edit([]), { text: "original", attachments: [{}] })).toBe(true);
+  it("discards a changed edit when the thread draft already has content", () => {
+    setComposerDraftText(threadKey, "unsent draft");
+    beginQueuedRunEdit(threadKey, edit([]));
+    setComposerDraftText(editKey, "revised");
+
+    expect(recoverQueuedRunEdit(threadKey, runId)).toBe("discarded");
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(getComposerDraftSnapshot(threadKey).text).toBe("unsent draft");
+    setComposerDraftText(threadKey, "");
+  });
+
+  it("ignores a run the composer is no longer editing", () => {
+    beginQueuedRunEdit(threadKey, edit([]));
+
+    expect(recoverQueuedRunEdit(threadKey, RunId.make("run-2"))).toBeNull();
+    expect(getQueuedRunEdit(threadKey)?.runId).toBe(runId);
+    expect(recoverQueuedRunEdit(threadKey, runId)).toBe("clean");
   });
 });

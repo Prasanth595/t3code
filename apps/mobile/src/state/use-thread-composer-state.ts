@@ -96,7 +96,7 @@ import { environmentThreadDetails } from "./threads";
 import {
   endQueuedRunEdit,
   getQueuedRunEdit,
-  queuedRunEditIsDirty,
+  recoverQueuedRunEdit,
   queuedEditDraftKey,
   removeQueuedRunEditAttachment,
   resolveQueuedEditPayload,
@@ -435,34 +435,15 @@ export function useThreadComposerState() {
       (run) => run.id === editedRunId && run.status === "queued",
     );
     if (stillQueued) return;
-    const edit = getQueuedRunEdit(selectedThreadKey);
-    const editDraftKey = queuedEditDraftKey(selectedThreadKey, editedRunId);
-    const editDraft = getComposerDraftSnapshot(editDraftKey);
-    // An untouched edit is just the message that was sent (or steered), so
-    // there is nothing to recover and nothing to tell the user.
-    if (edit === null || !queuedRunEditIsDirty(edit, editDraft)) {
-      endQueuedRunEdit(selectedThreadKey);
-      return;
+    const recovery = recoverQueuedRunEdit(selectedThreadKey, editedRunId);
+    if (recovery === "kept" || recovery === "discarded") {
+      setThreadComposerError(
+        selectedThreadKey,
+        recovery === "kept"
+          ? "That message already started. Your edit is back in the composer."
+          : "That message already started, so the edit was discarded.",
+      );
     }
-    const threadDraft = getComposerDraftSnapshot(selectedThreadKey);
-    const keepable =
-      editDraft.text.trim().length > 0 &&
-      threadDraft.text.trim().length === 0 &&
-      threadDraft.attachments.length === 0;
-    if (keepable) {
-      void mergeComposerDraftContent(selectedThreadKey, {
-        text: editDraft.text,
-        attachments: editDraft.attachments,
-        ...(editDraft.context ? { context: editDraft.context } : {}),
-      });
-    }
-    endQueuedRunEdit(selectedThreadKey, { deferAttachmentCleanup: keepable });
-    setThreadComposerError(
-      selectedThreadKey,
-      keepable
-        ? "That message already started. Your edit is back in the composer."
-        : "That message already started, so the edit was discarded.",
-    );
   }, [editedRunId, selectedThreadKey, selectedThreadRuns]);
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
