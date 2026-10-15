@@ -1750,13 +1750,14 @@ it.effect("keeps branch deletion on the credential that passed source repository
             body = {
               data: {
                 node: {
+                  __typename: "Repository",
                   defaultBranchRef: { name: "main" },
-                  ref: { target: { oid: "abc123" } },
+                  ref: { target: { __typename: "Commit", oid: "abc123" } },
                 },
               },
             };
           } else if (operation.includes("updateRefs(")) {
-            body = { data: { updateRefs: {} } };
+            body = { data: { updateRefs: { clientMutationId: null } } };
           } else {
             activeToken = "account-b";
             body = {
@@ -1775,18 +1776,24 @@ it.effect("keeps branch deletion on the credential that passed source repository
               },
             };
           }
-          return HttpClientResponse.fromWeb(request, new Response(JSON.stringify(body)));
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              headers: { "content-type": "application/json" },
+            }),
+          );
         }),
       ),
     );
     const provider = yield* GitHubPullRequestProvider.make.pipe(
       Effect.provide(
         GitHubPullRequestApi.layer.pipe(
+          // GraphQL reads go over `http` too, through the same credential and quota as REST.
           Layer.provide(
             GitHubApi.layer.pipe(
-              Layer.provide(Layer.mergeAll(credentials, http)),
-              Layer.provide(GitHubQuota.layer),
-              Layer.provide(SourceControlRateLimit.layer),
+              Layer.provideMerge(Layer.mergeAll(credentials, http)),
+              Layer.provideMerge(GitHubQuota.layer),
+              Layer.provideMerge(SourceControlRateLimit.layer),
             ),
           ),
           Layer.provide(TestSourceControlHost.layer()),
