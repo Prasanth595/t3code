@@ -1,6 +1,18 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+  type ProviderOptionSelection,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
+import {
+  buildExplicitProviderOptionSelectionsFromDescriptors,
+  buildProviderOptionSelectionsFromDescriptors,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -28,7 +40,10 @@ import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/session
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
-import { CLINE_SECONDARY_MODEL_SELECTION } from "../testkit/fixtures/acp_secondary_model/input.ts";
+import {
+  CLINE_SECONDARY_MODEL_SELECTION,
+  clineConfigOptionsAnsweredAt,
+} from "../testkit/fixtures/acp_secondary_model/input.ts";
 import {
   decodeAcpReplayTranscript,
   makeAcpReplayCompletenessAssertion,
@@ -39,6 +54,9 @@ import { BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2 } from "../builtInProviderAda
 import { AcpRegistryAdapterV2Driver } from "@t3tools/provider-acp-registry/server";
 import {
   ACP_REGISTRY_PROVIDER,
+  acpRegistryProbeResult,
+  applyAcpRegistryLiveConfiguration,
+  buildCheckedAcpRegistrySnapshot,
   makeAcpRegistryAdapterV2,
   acpRegistryPromptFailure,
 } from "@t3tools/provider-acp-registry/testing";
@@ -47,6 +65,7 @@ const registryUrl = "https://registry.test/registry.json";
 const decodeAcpRegistryAdapterSettings = Schema.decodeUnknownEffect(
   AcpRegistryAdapterV2Driver.configSchema,
 );
+const decodeRegistrySettings = Schema.decodeSync(AcpRegistrySettings);
 
 const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
@@ -346,6 +365,185 @@ describe("AcpRegistryAdapterV2", () => {
         receivedValue: staleModel,
       });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  // Cline's later `model` option and its default belong to the provider that
+  // reported them. Options stored while on one provider, including that
+  // provider's default model, must not constrain another provider's open.
+  it.effect(
+    "starts an unseen Cline provider on its own default model, then offers its catalog",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const replayDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-provider-switch-",
+        });
+        const recorded = yield* readProviderReplayTranscript(
+          new URL(
+            "../testkit/fixtures/acp_secondary_model/registry_transcript.ndjson",
+            import.meta.url,
+          ),
+        );
+        const instanceId = ProviderInstanceId.make("acp-registry-provider-switch");
+
+        // Discovery ran on Cline's default provider, `cline`.
+        const discovered = buildCheckedAcpRegistrySnapshot({
+          instanceId,
+          displayName: "Cline",
+          accentColor: undefined,
+          continuationKey: `acpRegistry:instance:${instanceId}`,
+          settings: decodeRegistrySettings({ agentId: "cline" }),
+          checkedAt: "2026-10-15T00:00:00.000Z",
+          inspection: {
+            status: "ready",
+            agentId: "cline",
+            version: "3.0.70",
+            distribution: "binary",
+          },
+          probe: {
+            probe: acpRegistryProbeResult(instanceId, {
+              sessionId: "cline-replay-session-1",
+              initializeResult: { protocolVersion: 1 },
+              sessionSetupResult: {
+                sessionId: "cline-replay-session-1",
+                configOptions: clineConfigOptionsAnsweredAt(recorded, "session.created"),
+              },
+              modelConfigId: "provider",
+            }),
+            slashCommands: [],
+            skills: [],
+          },
+        });
+        // The composer's options for one model with stored picks applied, as the
+        // web traits picker and mobile provider options resolve them.
+        const descriptorsOn = (
+          provider: ServerProvider,
+          slug: string,
+          stored: ReadonlyArray<ProviderOptionSelection> | undefined,
+        ) =>
+          getProviderOptionDescriptors({
+            caps: provider.models.find((model) => model.slug === slug)?.capabilities ?? {},
+            selections: stored,
+          });
+        // What a send dispatches for `slug` (web composer and mobile send path).
+        const dispatched = (
+          provider: ServerProvider,
+          slug: string,
+          stored: ReadonlyArray<ProviderOptionSelection> | undefined,
+        ) =>
+          buildExplicitProviderOptionSelectionsFromDescriptors(
+            descriptorsOn(provider, slug, stored),
+            stored,
+          );
+        // Toggling one trait stores every option's current value.
+        const toggleAutoApprove = (provider: ServerProvider, slug: string) =>
+          buildProviderOptionSelectionsFromDescriptors(
+            descriptorsOn(provider, slug, undefined).map((descriptor) =>
+              descriptor.id === "auto_approve" && descriptor.type === "boolean"
+                ? { ...descriptor, currentValue: true }
+                : descriptor,
+            ),
+          );
+
+        const storedOnCline = toggleAutoApprove(discovered, "cline");
+        assert.deepEqual(storedOnCline, [
+          { id: "model", value: "cline-free/step-5-preview" },
+          { id: "mode", value: "act" },
+          { id: "auto_approve", value: true },
+        ]);
+        // Nothing has described ClinePass yet, so Cline's picks do not reach it.
+        assert.deepEqual(descriptorsOn(discovered, "cline-pass", storedOnCline), []);
+        assert.strictEqual(dispatched(discovered, "cline-pass", storedOnCline), undefined);
+
+        // The first ClinePass send writes only the provider and opens on the
+        // agent's own ClinePass default. The script ends after the provider
+        // write, so any later option write would be rejected.
+        const providerApplied = recorded.entries.findIndex(
+          (entry) => entry.type === "emit_inbound" && entry.label === "provider.applied",
+        );
+        const transcript = yield* decodeAcpReplayTranscript(
+          { ...recorded, entries: recorded.entries.slice(0, providerApplied + 1) },
+          ACP_REGISTRY_PROVIDER,
+        );
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings({
+            agentId: "fixture-agent",
+            authMethodId: "replay",
+          }),
+          environment: {},
+          makeRuntime: makeAcpReplayRuntime({
+            transcript,
+            statusPath: path.join(replayDir, "status.json"),
+            scriptPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+            ),
+            childProcessSpawner,
+            fileSystem,
+          }),
+        }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+        yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread-acp-registry-provider-switch"),
+            providerSessionId: ProviderSessionId.make("provider-session-provider-switch"),
+            modelSelection: { instanceId, model: "cline-pass" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: replayDir,
+            }),
+          })
+          .pipe(Effect.scoped);
+
+        // That session described ClinePass: its catalog and default now belong
+        // to ClinePass, Cline keeps its own, and OpenAI stays undescribed.
+        const live = applyAcpRegistryLiveConfiguration(
+          discovered,
+          Option.getOrThrow(yield* coordinator.getLiveConfiguration(instanceId)),
+          [],
+        );
+        const passModels = [
+          "cline-pass/mimo-v2.6-flash",
+          "cline-pass/deepseek-v4.1-flash",
+          "cline-pass/muse-spark-1.3-contributor",
+        ];
+        const modelChoices = (slug: string) =>
+          descriptorsOn(live, slug, undefined).flatMap((descriptor) =>
+            descriptor.id === "model" && descriptor.type === "select"
+              ? descriptor.options.map((choice) => choice.id)
+              : [],
+          );
+        assert.deepEqual(modelChoices("cline-pass"), passModels);
+        assert.deepEqual(modelChoices("cline"), [
+          "cline-free/step-5-preview",
+          "cline-free/mimo-v2.6-flash",
+          "cline-free/muse-spark-1.3-contributor",
+        ]);
+        assert.deepEqual(descriptorsOn(live, "openai-codex", storedOnCline), []);
+
+        // Toggling Auto-approve on ClinePass stores ClinePass's own default.
+        const storedOnPass = [
+          { id: "model", value: "cline-pass/mimo-v2.6-flash" },
+          { id: "mode", value: "act" },
+          { id: "auto_approve", value: true },
+        ];
+        assert.deepEqual(toggleAutoApprove(live, "cline-pass"), storedOnPass);
+        // Cline's stored picks resolve to ClinePass's values there, an explicit
+        // ClinePass model is kept, and switching back keeps Cline's own picks.
+        assert.deepEqual(dispatched(live, "cline-pass", storedOnCline), storedOnPass);
+        assert.deepEqual(dispatched(live, "cline-pass", CLINE_SECONDARY_MODEL_SELECTION.options), [
+          ...CLINE_SECONDARY_MODEL_SELECTION.options,
+        ]);
+        assert.deepEqual(dispatched(live, "cline", storedOnCline), storedOnCline);
+        assert.deepEqual(dispatched(live, "cline", storedOnPass), storedOnCline);
+      }).pipe(
+        Effect.provide(Layer.merge(layerTest, AcpRegistryRuntimeCoordinator.layer)),
+        Effect.scoped,
+      ),
   );
 
   it.effect("offers client terminals to Devin only and client fs to no registry agent", () =>

@@ -25,48 +25,15 @@ import {
 } from "@t3tools/provider-acp-registry/testing";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
-import { CLINE_SECONDARY_MODEL_SELECTION } from "../orchestration-v2/testkit/fixtures/acp_secondary_model/input.ts";
+import {
+  CLINE_SECONDARY_MODEL_SELECTION,
+  clineConfigOptionsAnsweredAt,
+} from "../orchestration-v2/testkit/fixtures/acp_secondary_model/input.ts";
 
 const instanceId = ProviderInstanceId.make("acpRegistry_codex");
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
-
-const OptionalText = Schema.optionalKey(Schema.String);
-// The config options of a recorded `session/new` or `session/set_config_option` answer.
-const decodeClineAnswer = Schema.decodeUnknownSync(
-  Schema.Struct({
-    result: Schema.Struct({
-      configOptions: Schema.Array(
-        Schema.Union([
-          Schema.Struct({
-            id: Schema.String,
-            name: Schema.String,
-            description: OptionalText,
-            category: OptionalText,
-            type: Schema.Literal("select"),
-            currentValue: Schema.String,
-            options: Schema.Array(
-              Schema.Struct({
-                value: Schema.String,
-                name: Schema.String,
-                description: OptionalText,
-              }),
-            ),
-          }),
-          Schema.Struct({
-            id: Schema.String,
-            name: Schema.String,
-            description: OptionalText,
-            category: OptionalText,
-            type: Schema.Literal("boolean"),
-            currentValue: Schema.Boolean,
-          }),
-        ]),
-      ),
-    }),
-  }),
-);
 
 describe("ACP Registry probe", () => {
   it("returns advertised auth methods and de-duplicated models", () => {
@@ -245,13 +212,8 @@ describe("ACP Registry probe", () => {
           import.meta.url,
         ),
       );
-      const configOptionsAnsweredAt = (label: string) => {
-        const entry = transcript.entries.find(
-          (candidate) => candidate.type === "emit_inbound" && candidate.label === label,
-        );
-        return decodeClineAnswer(entry?.type === "emit_inbound" ? entry.frame : undefined).result
-          .configOptions;
-      };
+      const configOptionsAnsweredAt = (label: string) =>
+        clineConfigOptionsAnsweredAt(transcript, label);
       const discover = (configOptions: ReturnType<typeof configOptionsAnsweredAt>) =>
         acpRegistryProbeResult(instanceId, {
           sessionId: "cline-replay-session-1",
