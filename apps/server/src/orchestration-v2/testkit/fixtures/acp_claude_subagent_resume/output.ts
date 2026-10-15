@@ -2,6 +2,7 @@ import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
+import { ACP_CLAUDE_SUBAGENT_RESUME_THREAD_TITLE } from "./input.ts";
 import {
   assertBaseProjection,
   assertSemanticProjectionIntegrity,
@@ -35,6 +36,8 @@ export function assertAcpClaudeSubagentResumeOutput(
   assert.equal(subagent?.prompt, "Now fix it.");
   const child =
     subagent?.childThreadId == null ? undefined : result.projections.get(subagent.childThreadId);
+  // Moving the subagent to the run that resumed it keeps the user's title.
+  assert.equal(child?.thread.title, ACP_CLAUDE_SUBAGENT_RESUME_THREAD_TITLE);
   assert.deepEqual(
     child?.turnItems.flatMap((item) =>
       item.type === "assistant_message" || item.type === "user_message"

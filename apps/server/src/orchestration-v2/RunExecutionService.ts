@@ -442,21 +442,32 @@ export function routeProviderEvent(
         return [false, { ...state, ownedThreadIds }];
       }
       const belongs = ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId);
+      // The run that shows a subagent takes its child thread while the run's
+      // root turn works, as it does when the thread is created. This is how
+      // a moved subagent's thread reaches its new run.
+      const routed =
+        !state.rootTurnEnded &&
+        moved.threadId === input.threadId &&
+        ownsRun(moved.runId) &&
+        moved.childThreadId !== null &&
+        !ownsThread(moved.childThreadId)
+          ? { ...state, ownedThreadIds: new Set([...state.ownedThreadIds, moved.childThreadId]) }
+          : state;
       const coordinator = event.subagent;
       if (
         !ownsRun(coordinator.runId) ||
         coordinator.workflow === undefined ||
         coordinator.childThreadId === null
       ) {
-        return [belongs, state];
+        return [belongs, routed];
       }
-      const workflowMemberParents = new Map(state.workflowMemberParents);
+      const workflowMemberParents = new Map(routed.workflowMemberParents);
       for (const member of coordinator.workflow.agents) {
         if (member.childThreadId !== undefined) {
           workflowMemberParents.set(member.childThreadId, coordinator.childThreadId);
         }
       }
-      return [true, { ...state, workflowMemberParents }];
+      return [true, { ...routed, workflowMemberParents }];
     }
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];

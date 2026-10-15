@@ -33,6 +33,7 @@ import { acpClaudeSubagentFailedInput } from "./acp_claude_subagent_failed/input
 import { assertAcpClaudeSubagentFailedOutput } from "./acp_claude_subagent_failed/output.ts";
 import { assertAcpClaudeSubagentLateToolOutput } from "./acp_claude_subagent_late_tool/output.ts";
 import { assertAcpClaudeNestedSubagentOutput } from "./acp_claude_nested_subagent/output.ts";
+import { assertAcpClaudeNestedSubagentFailedOutput } from "./acp_claude_nested_subagent_failed/output.ts";
 import { acpClaudeStopBackgroundSubagentInput } from "./acp_claude_stop_background_subagent/input.ts";
 import { assertAcpClaudeStopBackgroundSubagentOutput } from "./acp_claude_stop_background_subagent/output.ts";
 import { acpClaudeSubagentLineageInput } from "./acp_claude_subagent_lineage/input.ts";
@@ -789,6 +790,38 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runContinuationWorker: true,
         assertOutput: assertAcpClaudeNestedBackgroundSubagentOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_nested_subagent_failed",
+    buildInput: acpClaudeNestedSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_nested_subagent_failed/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeNestedSubagentFailedOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_nested_subagent_cancelled",
+    buildInput: acpClaudeNestedSubagentInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_nested_subagent_cancelled/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeNestedSubagentFailedOutput,
       },
     ],
   },

@@ -322,7 +322,7 @@ it("routes only enrolled workflow members after the root turn ends", () => {
   );
 });
 
-it("lets a child thread go once another run shows its subagent", () => {
+it("moves a child thread to the run that shows its subagent now", () => {
   const threadId = ThreadId.make("thread:handoff");
   const rootProviderTurnId = ProviderTurnId.make("provider-turn:handoff");
   const identity: RunExecutionService.ProviderEventRouteIdentity = {
@@ -407,6 +407,28 @@ it("lets a child thread go once another run shows its subagent", () => {
       identity,
       afterMove,
     )[0],
+  );
+  // The run that resumed it takes the child thread from the same update.
+  const resuming: RunExecutionService.ProviderEventRouteIdentity = {
+    ...identity,
+    runId: RunId.make("run:handoff:2"),
+    attemptId: RunAttemptId.make("attempt:handoff:2"),
+  };
+  const resumingState = RunExecutionService.makeProviderEventRoutingState({
+    identity: resuming,
+    providerTurnId: ProviderTurnId.make("provider-turn:handoff:2"),
+  });
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(childMessage(resumedChild), resuming, resumingState)[0],
+  );
+  const [moveAccepted, afterTake] = RunExecutionService.routeProviderEvent(
+    { type: "subagent.updated", driver, subagent: subagent(resumedChild, resuming.runId) },
+    resuming,
+    resumingState,
+  );
+  assert.isTrue(moveAccepted);
+  assert.isTrue(
+    RunExecutionService.routeProviderEvent(childMessage(resumedChild), resuming, afterTake)[0],
   );
 });
 

@@ -3,7 +3,6 @@
 import {
   type ChatAttachment,
   type ModelSelection,
-  type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
@@ -1432,8 +1431,6 @@ export function acpCompletedTurnShouldTerminalizeTool(
 interface ActiveAcpSubagent {
   task: OrchestrationV2Subagent;
   readonly childThreadId: ThreadId;
-  /** The child thread as announced, for announcing it again to a later run. */
-  childThread: OrchestrationV2AppThread | null;
   /** The child thread's root turn: each run of the child (a resume reopens it) has its own. */
   childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly turnItemId: OrchestrationV2TurnItem["id"];
@@ -1448,6 +1445,8 @@ interface ActiveAcpSubagent {
   nextChildOrdinal: number;
   /** The child session's tools, kept with the subagent across turns. */
   readonly toolState: AcpToolUpdateState;
+  /** The session that opened each tool of `toolState`: its child's, or a nested child's. */
+  readonly toolSessionIds: Map<string, string>;
   /**
    * Whether a terminal carryover status has been projected to events.
    * Completed roots project post-settle terminals immediately while their
@@ -2234,14 +2233,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* terminalizeOpenRunOwnedItems(context, { terminalizeSubagents: true });
                 yield* finalizeTurn(context, "failed", exited);
               }
-              // Work the agent started itself died with it: a continuation not
-              // dispatched yet is dropped, and one already dispatched shows that
-              // the work failed, not that it ended.
+              // Work the agent started itself died with it: its own, a
+              // subagent's, or a request it awaited while idle. A continuation
+              // not dispatched yet is dropped, and one already dispatched shows
+              // that the work failed, not that it ended.
               const work = yield* Ref.get(agentWork);
+              const workDied =
+                work.state === "running" ||
+                agentRequests.size > 0 ||
+                [...agentChildren.values()].some((child) => child.running);
               yield* resetAgentWorkState(
-                work.state === "running"
-                  ? { state: "idle", status: "failed", failure: exited }
-                  : work,
+                workDied ? { state: "idle", status: "failed", failure: exited } : work,
               );
               yield* continuationPermit.withPermit(
                 Effect.gen(function* () {
@@ -2921,6 +2923,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const previous = subagent.toolState.tools.get(key);
           const merged = mergeToolCallState(previous, toolCall);
           subagent.toolState.tools.set(key, merged);
+          subagent.toolSessionIds.set(key, childSessionId);
           if (!shouldPersistToolUpdate(subagent.toolState, key, previous, merged, merged.status)) {
             return;
           }
@@ -2933,16 +2936,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
-        /** Interrupts the open tools of a subagent's child session, which end with it. */
-        const terminalizeSubagentTools = Effect.fnUntraced(function* (subagent: ActiveAcpSubagent) {
+        /**
+         * Interrupts the open tools of a subagent's child session, which end
+         * with it, or only those `sessionId` opened: a nested child's, which
+         * end with that child while the rest of the row works on.
+         */
+        const terminalizeSubagentTools = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          sessionId?: string,
+        ) {
           const rootSessionId = yield* Ref.get(activeSessionId);
           for (const [key, tool] of subagent.toolState.tools) {
             const status = toolStatus(tool.status);
             if (status !== "pending" && status !== "running" && status !== "waiting") continue;
+            const openedBy = subagent.toolSessionIds.get(key);
+            if (sessionId !== undefined && openedBy !== sessionId) continue;
             subagent.toolState.tools.delete(key);
+            subagent.toolSessionIds.delete(key);
             yield* emitSubagentTool(subagent, key, tool, "interrupted", [
-              ...(subagent.childSessionId === null ? [] : [subagent.childSessionId]),
-              ...(rootSessionId === null ? [] : [rootSessionId]),
+              ...new Set(
+                [openedBy, subagent.childSessionId, rootSessionId].filter(
+                  (candidate) => candidate != null,
+                ),
+              ),
             ]);
           }
         });
@@ -3081,7 +3097,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             turnItemOrdinal,
             providerTurnId: context.providerTurnId,
             parentProviderThreadId: context.input.providerThread.id,
-            childThread: null,
             childSessionId: null,
             assistantText: "",
             assistantMessages: new Map(),
@@ -3092,36 +3107,36 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolStartedAt: new Map(),
               toolUpdatesSkipped: new Map(),
             },
+            toolSessionIds: new Map(),
             terminalStatusProjected: false,
           };
           subagent.task = task;
           context.subagents.set(nativeTaskId, subagent);
 
           if (existing === undefined) {
-            subagent.childThread = makeSubagentChildThread({
-              parentThread: context.input.appThread,
-              childThreadId,
-              parentNodeId: nodeId,
-              activeProviderThreadId: null,
-              providerInstanceId: context.input.modelSelection.instanceId,
-              modelSelection: {
-                ...context.input.modelSelection,
-                model: task.model ?? context.input.modelSelection.model,
-              },
-              title: subagentThreadTitle({
-                parentTitle: context.input.appThread.title,
-                title: update.title,
-                prompt: update.prompt,
-                ordinal: context.subagents.size,
-              }),
-              now,
-              createdBy: "agent",
-              creationSource: "provider",
-            });
             yield* emitProviderEvent({
               type: "app_thread.created",
               driver,
-              appThread: subagent.childThread,
+              appThread: makeSubagentChildThread({
+                parentThread: context.input.appThread,
+                childThreadId,
+                parentNodeId: nodeId,
+                activeProviderThreadId: null,
+                providerInstanceId: context.input.modelSelection.instanceId,
+                modelSelection: {
+                  ...context.input.modelSelection,
+                  model: task.model ?? context.input.modelSelection.model,
+                },
+                title: subagentThreadTitle({
+                  parentTitle: context.input.appThread.title,
+                  title: update.title,
+                  prompt: update.prompt,
+                  ordinal: context.subagents.size,
+                }),
+                now,
+                createdBy: "agent",
+                creationSource: "provider",
+              }),
             });
             const promptNativeItemId = `${nativeTaskId}:prompt`;
             const promptArtifacts = makeSubagentConversationArtifacts({
@@ -4639,11 +4654,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         /**
          * Hands a row no run shows (`awaitsRun`) to `context`, the turn that
          * runs, as a resumed native Claude subagent moves to the run that
-         * resumes it. Naming that run on the row lets the run that showed it
-         * go of its child thread, and announcing the unchanged thread again
-         * gives the thread to this run, so one run takes its events. A child
-         * that works in another run than before (a resume always does) gets
-         * its own child root turn there. Then replays what `linked` held.
+         * resumes it. The row naming that run moves its child thread to it
+         * (`routeProviderEvent`), so one run takes its events. A child that
+         * works in another run than before (a resume always does) gets its
+         * own child root turn there. Then replays what `linked` held.
          */
         const handAgentRow = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
@@ -4678,13 +4692,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (linked !== undefined) context.subagentsBySessionId.set(linked.sessionId, subagent);
           if (movesRun)
             yield* emitProviderEvent({ type: "subagent.updated", driver, subagent: subagent.task });
-          if (subagent.childThread !== null) {
-            yield* emitProviderEvent({
-              type: "app_thread.created",
-              driver,
-              appThread: subagent.childThread,
-            });
-          }
           if (!acpSubagentStatusIsTerminal(subagent.task.status)) {
             yield* projectCarryoverSubagentStatus(subagent, subagent.task.status);
           }
@@ -4859,6 +4866,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               agentChildren.delete(childSessionId);
               return;
             }
+            // A nested child shows in its ancestor's row, which can work on:
+            // only the tools this child left open end with it.
+            const owner = shownBy.child.subagent;
+            if (status !== "completed" && owner !== null) {
+              yield* terminalizeSubagentTools(owner, childSessionId);
+            }
             return yield* settleAgentRow(shownBy.sessionId, shownBy.child);
           }
           if (acpSubagentStatusIsTerminal(subagent.task.status)) {
@@ -4971,7 +4984,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           if (!followsAgentWorkState) return false;
           const update = notification.update;
-          // Children, and their work states on the root, ended with a stopped run.
+          // A stopped run's children, and their work states on the root, show
+          // nowhere: Stop ended them, or failed to and says so.
           const isChildState =
             update.sessionUpdate === "_t3_unknown" &&
             update.originalSessionUpdate === "subagent_update";
@@ -7454,25 +7468,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
          * background subagents running), and its ACP v2 surface has no request
          * that stops one. Closing the session tears down its query, which ends
          * every subagent and background task, and the agent answers once it
-         * did. The next turn starts a new process that resumes the session.
+         * did. Only that answer forgets the agent's work: without it (an
+         * error, or no answer within the interrupt timeout) the work stays
+         * running and pinned, and a retried Stop closes again. The next turn
+         * starts a new process that resumes the session.
          */
         const closeAgentSession = Effect.gen(function* () {
           yield* Ref.set(runtimeRestartRequired, true);
           const sessionId = yield* Ref.get(activeSessionId);
-          yield* runtime.closeSession(sessionId ?? undefined).pipe(
+          const detail =
+            "The agent did not confirm it closed its session, so its background work may still run";
+          const closed = yield* runtime.closeSession(sessionId ?? undefined).pipe(
+            Effect.timeoutOption("10 seconds"),
             Effect.mapError(
               (cause) =>
-                new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver,
-                  detail:
-                    "The agent did not confirm it closed its session, so its background work may still run",
-                  payload: cause,
-                }),
+                new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail, cause }),
             ),
           );
+          if (Option.isNone(closed)) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail });
+          }
+          yield* runtimeCallbackPermit.withPermit(resetAgentWorkState(agentWorkCompleted));
         });
 
-        const quarantineStoppedRun = Effect.fnUntraced(function* () {
+        /**
+         * Fences the stopped run's events off later runs. With
+         * `agentWorkEndsWithClose`, the agent's work stays known until
+         * `closeAgentSession` confirmed it ended.
+         */
+        const quarantineStoppedRun = Effect.fnUntraced(function* (agentWorkEndsWithClose = false) {
           yield* continuationPermit.withPermit(
             Effect.gen(function* () {
               yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -7484,7 +7508,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
               yield* Ref.set(lastTurnRoute, null);
-              yield* resetAgentWorkState(agentWorkCompleted);
+              if (!agentWorkEndsWithClose) yield* resetAgentWorkState(agentWorkCompleted);
             }),
           );
         });
@@ -8512,7 +8536,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       if (context === null && closesAgentSession) {
                         // Stop of the work a settled run left running. Once the
                         // agent confirmed, the orchestrator ends what still shows.
-                        yield* quarantineStoppedRun();
+                        yield* quarantineStoppedRun(true);
                         yield* cancelPendingRuntimeRequests();
                         yield* closeAgentSession;
                         return undefined;
@@ -8658,7 +8682,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       // carryoverSubagents so a still-running subagent can
                       // complete into the replacement turn.
                       if (hardRestart || turnInput.requestRuntimeRestart === true) {
-                        yield* quarantineStoppedRun();
+                        yield* quarantineStoppedRun(closesAgentSession && !hardRestart);
                       }
                       yield* cancelPendingRuntimeRequests();
                       // Closing the session cancels its turn too; if it fails,
