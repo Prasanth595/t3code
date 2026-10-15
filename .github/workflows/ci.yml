@@ -69,6 +69,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Reject repository-owned PR assets
@@ -105,6 +106,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - uses: ./.github/actions/setup-apt-mirrors
@@ -185,6 +187,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       # Blacksmith boots GitHub's Ubuntu runner image (gcc is usually present),
@@ -256,6 +259,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
@@ -289,6 +293,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Detect affected jobs
@@ -368,22 +373,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  transfer-report:
-    name: Transfer report artifact
-    needs: [changes, test_server]
-    if: needs.changes.outputs.test_server != 'false'
-    # On Blacksmith like every other job here: the GitHub-hosted queue is shared
-    # with the PR bots and can leave this job waiting until it is abandoned,
-    # which fails `Check` on an otherwise green run.
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 5
-    steps:
-      - name: Require transfer measurements
-        uses: actions/download-artifact@v8
-        with:
-          name: thread-transfer-results
-          path: ${{ runner.temp }}/thread-transfer
-
   # Split out of Check and Test: both paid ~7-9s to install a Rust toolchain
   # for checks that take under 3s, on the critical path of every PR.
   rust:
@@ -399,6 +388,7 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup Rust
@@ -461,13 +451,12 @@ jobs:
           sparse-checkout: |
             /*
             !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: ./.github/actions/setup-ci-deps
         with:
-          node-version-file: package.json
-          cache: true
           run-install: |
             args:
               - --filter=@t3tools/scripts...
@@ -491,7 +480,6 @@ jobs:
         test,
         test_web,
         test_server,
-        transfer-report,
         rust,
         mobile_native_static_analysis,
         release_smoke,
@@ -505,11 +493,20 @@ jobs:
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           # A job may skip only when `changes` said every gate it represents was
-          # not needed. Gates are keyed by job name, except merged Build, the
-          # macOS lint, and the transfer report.
+          # not needed. Gates are keyed by job name, except merged Build and the
+          # macOS lint.
           echo "$RESULTS" | jq -e '.changes.outputs as $gates
-            | {build: ["build", "typecheck"], mobile_native_static_analysis: ["mobile_native"], "transfer-report": ["test_server"]} as $renamed
+            | {build: ["build", "typecheck"], mobile_native_static_analysis: ["mobile_native"]} as $renamed
             | all(to_entries[];
                 .value.result == "success"
                 or (.value.result == "skipped"
                   and (($renamed[.key] // [.key]) | all(.[]; $gates[.] == "false"))))' > /dev/null
+
+      # thread-transfer-report.yml reads this artifact after CI, so a run whose
+      # server tests ran must have produced it.
+      - name: Require transfer measurements
+        if: needs.test_server.result == 'success' && needs.changes.outputs.test_server != 'false'
+        uses: actions/download-artifact@v8
+        with:
+          name: thread-transfer-results
+          path: ${{ runner.temp }}/thread-transfer

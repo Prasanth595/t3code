@@ -8,6 +8,21 @@ inputs:
 runs:
   using: composite
   steps:
+    # setup-vp reuses an installed exact version, so restoring its home skips the
+    # installer download on every job.
+    - name: Resolve Vite+ version
+      id: vp
+      shell: bash
+      run: |
+        echo "version=$(sed -nE 's/^  vite-plus: ([0-9][^ ]*)$/\1/p' pnpm-workspace.yaml)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Vite+
+      if: steps.vp.outputs.version != ''
+      uses: actions/cache@v6
+      with:
+        path: ~/.vite-plus
+        key: vite-plus-home-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.vp.outputs.version }}
+
     # Cache packages only; node_modules and prepare scripts stay fresh each job.
     - name: Mount pnpm store
       id: sticky
