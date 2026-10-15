@@ -9,7 +9,7 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
-  HourglassIcon,
+  CircleDotDashedIcon,
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
   type LucideIcon,
@@ -21,13 +21,13 @@ export interface SidebarGroupTabStatus {
   readonly kind: SidebarV2TopStatusKind;
   readonly label: string;
   readonly className: string;
-  /** Every status has an icon on a tab. A row shows Waiting as a label only. */
+  /** Every status has an icon on a tab. */
   readonly Icon: LucideIcon;
 }
 
 const TAB_STATUS: Record<SidebarV2TopStatusKind, Omit<SidebarGroupTabStatus, "kind">> = {
   working: { label: "Working", className: "text-info", Icon: CircleDashedIcon },
-  waiting: { label: "Waiting", className: "text-muted-foreground", Icon: HourglassIcon },
+  waiting: { label: "Waiting", className: "text-muted-foreground", Icon: CircleDotDashedIcon },
   approval: { label: "Approval", className: "text-warning-foreground", Icon: ShieldQuestionIcon },
   input: {
     label: "Input",

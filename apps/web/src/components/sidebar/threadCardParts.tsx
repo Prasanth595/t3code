@@ -8,6 +8,7 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
+  CircleDotDashedIcon,
   ClockIcon,
   GitForkIcon,
   LayersIcon,
@@ -48,7 +49,14 @@ export const THREAD_CARD_STATUS_LABEL_CLASS =
   "flex items-center self-center justify-self-end tabular-nums text-secondary-label transition-opacity";
 export const THREAD_CARD_PIN_CLASS = "size-3 shrink-0 text-muted-foreground/65";
 
-export type ThreadCardStatusIcon = "working" | "input" | "approval" | "failed" | "done" | "woke";
+export type ThreadCardStatusIcon =
+  | "working"
+  | "waiting"
+  | "input"
+  | "approval"
+  | "failed"
+  | "done"
+  | "woke";
 
 export interface ThreadCardStatus {
   readonly label: string;
@@ -63,6 +71,8 @@ export function ThreadCardStatusBadge(props: { status: ThreadCardStatus; trailin
     <span className={cn("inline-flex items-center gap-1 font-medium", status.className)}>
       {status.icon === "working" ? (
         <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+      ) : status.icon === "waiting" ? (
+        <CircleDotDashedIcon aria-hidden className="size-4 shrink-0" />
       ) : status.icon === "input" ? (
         <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
       ) : status.icon === "approval" ? (
