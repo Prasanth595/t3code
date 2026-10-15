@@ -322,6 +322,35 @@ describe("FactorySessions.findProject", () => {
       assert.strictEqual(yield* sessions.findProject("/tmp/t3-spike-repo"), null);
     }).pipe(Effect.provide(layerSessions())),
   );
+
+  it.effect("fails as a sessions error when the project store fails, not as no project", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      const error = yield* Effect.flip(sessions.findProject("/tmp/t3-spike-repo"));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      assert.strictEqual(error.operation, "find-project");
+    }).pipe(
+      Effect.provide(
+        Sessions.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(ProjectStore.ProjectStoreV2)({
+                findActiveByWorkspaceRoot: () =>
+                  Effect.fail(
+                    new ProjectStore.ProjectStoreV2Error({
+                      operation: "findActiveByWorkspaceRoot",
+                      cause: new Error("database is locked"),
+                    }),
+                  ),
+              }),
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+              Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 });
 
 describe("FactorySessions.launch", () => {
@@ -415,12 +444,12 @@ describe("FactorySessions.launch", () => {
     ),
   );
 
-  it.effect("rejects a blank command id as a sessions error without reaching T3", () =>
+  const rejectsWithoutLaunching = (blank: Sessions.LaunchRequest) =>
     Effect.gen(function* () {
       let launches = 0;
       const error = yield* Effect.gen(function* () {
         const sessions = yield* Sessions.FactorySessions;
-        return yield* Effect.flip(sessions.launch({ ...request, commandId: "  " }));
+        return yield* Effect.flip(sessions.launch(blank));
       }).pipe(
         Effect.provide(
           layerSessions(
@@ -444,7 +473,14 @@ describe("FactorySessions.launch", () => {
       assert.strictEqual(error._tag, "FactorySessionsError");
       assert.strictEqual(error.operation, "launch");
       assert.strictEqual(launches, 0);
-    }),
+    });
+
+  it.effect.each([
+    { name: "command id", blank: { ...request, commandId: "  " } },
+    { name: "project id", blank: { ...request, projectId: "  " } },
+    { name: "provider instance id", blank: { ...request, model: { instanceId: "", model: "m" } } },
+  ])("rejects a blank $name as a sessions error without reaching T3", ({ blank }) =>
+    rejectsWithoutLaunching(blank),
   );
 
   it.effect("fails as a sessions error when T3 rejects the launch", () =>
@@ -495,7 +531,7 @@ describe("FactorySessions.status and thread", () => {
     }).pipe(
       Effect.provide(
         layerSessions({
-          getThreadProjection: (id) =>
+          getThreadRecords: (id) =>
             Effect.succeed({
               thread: appThread(thread("t3/abc", "/tmp/wt/t3-abc")),
               runs: [run(1, "completed"), run(2, "completed")].map((r) => ({
@@ -506,7 +542,7 @@ describe("FactorySessions.status and thread", () => {
                 message(1, "assistant", "first"),
                 message(2, "assistant", "FACTORY-DONE: https://example.test/pr/1"),
               ],
-            } as unknown as OrchestrationV2ThreadProjection),
+            } as never),
         }),
       ),
     ),
@@ -523,7 +559,7 @@ describe("FactorySessions.status and thread", () => {
     }).pipe(
       Effect.provide(
         layerSessions({
-          getThreadProjection: (id) =>
+          getThreadRecords: (id) =>
             Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId: id })),
         }),
       ),
@@ -545,7 +581,7 @@ describe("FactorySessions.status and thread", () => {
         layerSessions({
           getThread: () =>
             Effect.succeed(appThread(thread("t3/abc", "/tmp/wt/t3-abc", "2026-10-05T00:00:00Z"))),
-          getThreadProjection: (id) =>
+          getThreadRecords: (id) =>
             Effect.fail(
               new ProjectionStore.ProjectionStoreReadError({
                 threadId: id,
@@ -572,7 +608,30 @@ describe("FactorySessions.status and thread", () => {
       Effect.provide(
         layerSessions({
           getThread: () => Effect.die("a blank id must not reach the store"),
-          getThreadProjection: () => Effect.die("a blank id must not reach the store"),
+          getThreadRecords: () => Effect.die("a blank id must not reach the store"),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("thread fails as a sessions error when the thread cannot be read", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      const error = yield* Effect.flip(sessions.thread(threadId));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      if (error._tag === "FactorySessionsError") {
+        assert.strictEqual(error.operation, "thread");
+      }
+    }).pipe(
+      Effect.provide(
+        layerSessions({
+          getThread: (id) =>
+            Effect.fail(
+              new ProjectionStore.ProjectionStoreReadError({
+                threadId: id,
+                cause: new Error("the thread row did not decode"),
+              }),
+            ),
         }),
       ),
     ),

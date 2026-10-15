@@ -261,11 +261,13 @@ export const make = Effect.gen(function* () {
       };
     }).pipe(Effect.mapError((cause) => new SessionsError({ operation: "launch", cause })));
 
+  // The factory polls this per session, so it reads only the rows
+  // `threadStatusOf` uses, not the whole projection of a long thread.
   const status: FactorySessions["Service"]["status"] = (threadId) =>
     requireThreadId(threadId).pipe(
       Effect.flatMap((id) =>
         projections
-          .getThreadProjection(id)
+          .getThreadRecords(id, ["runs", "messages"], { messageRoles: ["assistant"] })
           .pipe(Effect.map(threadStatusOf), Effect.mapError(mapReadError("status", threadId))),
       ),
     );
