@@ -15,15 +15,27 @@ fi
 
 target=$(readlink "$root/previous")
 ln -sfn "$target" "$root/current"
-rm -f "$root/previous"
 
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/t3fac" "$HOME/.config/t3fac"
 sed "s|@HOME@|$HOME|g" "$template" > "$plist"
 
 uid=$(id -u)
+wait_unloaded() {
+  local i
+  for ((i = 0; i < 50; i++)); do
+    launchctl print "gui/$uid/$label" > /dev/null 2>&1 || return 0
+    sleep 0.2
+  done
+  echo "job $label is still loaded 10s after bootout" >&2
+  return 1
+}
 if launchctl print "gui/$uid/$label" > /dev/null 2>&1; then
   launchctl bootout "gui/$uid/$label"
+  wait_unloaded
 fi
 launchctl bootstrap "gui/$uid" "$plist"
+
+# Only now is the rollback done; a failed restart above leaves `previous` for a rerun.
+rm -f "$root/previous"
 
 echo "rolled back to ${target#versions/}"
