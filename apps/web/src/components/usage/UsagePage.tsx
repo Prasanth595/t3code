@@ -49,6 +49,7 @@ import {
   formatUsageContractMismatch,
   formatUsd,
   makeWindow,
+  resolutionForWindow,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -128,7 +129,7 @@ export function UsagePage() {
     window: makeWindow(
       preferences.windowDays,
       undefined,
-      preferences.windowDays === 1 ? "hour" : "day",
+      resolutionForWindow(preferences.windowDays),
     ),
   }));
   const metric = preferences.metric;
@@ -146,7 +147,6 @@ export function UsagePage() {
     [preferences.hiddenProviders],
   );
   const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
   const {
     merged: answeredUsage,
     environments,
@@ -217,6 +217,7 @@ export function UsagePage() {
         : enumerateHourStarts(shownWindow.sinceTime, shownWindow.untilTime),
     [shownWindow.sinceTime, shownWindow.untilTime],
   );
+  const formatPeriodHour = hours.length > 24 ? formatDateTimeShort : formatHourShort;
   // Newest first: the window can run 90 periods, so the interesting end
   // belongs at the top of the table.
   const breakdownPeriods = useMemo<readonly (DailyTotals | HourlyTotals)[]>(
@@ -279,7 +280,7 @@ export function UsagePage() {
     updatePreferences({ windowDays: days });
     setWindowSelection({
       days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+      window: makeWindow(days, undefined, resolutionForWindow(days)),
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
@@ -343,7 +344,7 @@ export function UsagePage() {
       });
       return;
     }
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = makeWindow(windowDays, undefined, resolutionForWindow(windowDays));
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
@@ -936,7 +937,7 @@ export function UsagePage() {
                             >
                               <td className="py-2 text-foreground">
                                 {"hourStart" in period
-                                  ? formatHourShort(period.hourStart, shownWindow.timeZone)
+                                  ? formatPeriodHour(period.hourStart, shownWindow.timeZone)
                                   : formatDayShort(period.day)}
                               </td>
                               {activeProviders.map((provider) => (
