@@ -274,6 +274,17 @@ describe("PullRequestCapabilities", () => {
     expect(decodeCapabilities(base).deleteBranch).toBeUndefined();
     expect(decodeCapabilities({ ...base, deleteBranch: true }).deleteBranch).toBe(true);
   });
+
+  it("drops actions and verdicts from a newer server instead of failing", () => {
+    const decoded = decodeCapabilities({
+      ...base,
+      actions: ["merge", "archive", "close"],
+      review: { ...base.review, verdicts: ["approve", "block"] },
+    });
+
+    expect(decoded.actions).toEqual(["merge", "close"]);
+    expect(decoded.review.verdicts).toEqual(["approve"]);
+  });
 });
 
 describe("naming the reader as the author to narrow by", () => {
