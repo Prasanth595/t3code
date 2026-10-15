@@ -18,10 +18,10 @@ it.effect(
       Effect.provide(
         Paths.layer.pipe(
           Layer.provide(
-            Layer.mock(ServerConfig.ServerConfig)({
+            Layer.succeed(ServerConfig.ServerConfig, {
               baseDir: "/srv/t3fac",
               worktreesDir: "/srv/t3fac/worktrees",
-            }),
+            } as ServerConfig.ServerConfig["Service"]),
           ),
           Layer.provide(NodeServices.layer),
         ),

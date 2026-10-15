@@ -6,10 +6,12 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   EventId,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -355,7 +357,7 @@ describe("FactorySessions.launch", () => {
         assert.strictEqual(input.projectId, projectId);
         assert.strictEqual(input.title, "Build issue 5");
         assert.deepStrictEqual(input.modelSelection, {
-          instanceId: "claudeAgent",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
           model: "claude-sonnet-5-5",
         });
         assert.strictEqual(input.runtimeMode, "full-access");
@@ -431,7 +433,7 @@ describe("FactorySessions.status and thread", () => {
   const appThread = (fields: ReturnType<typeof thread>) =>
     ({
       ...fields,
-      archivedAt: fields.archivedAt === null ? null : new Date(fields.archivedAt),
+      archivedAt: fields.archivedAt === null ? null : DateTime.makeUnsafe(fields.archivedAt),
     }) as unknown as OrchestrationV2AppThread;
 
   it.effect("status reads the run, its last assistant message and the thread fields", () =>

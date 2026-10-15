@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../../config.ts";
 import * as GitWorkflow from "../../git/GitWorkflowService.ts";
 import { ClaudeOrchestratorReplayHarness } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts";
 import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
@@ -88,6 +89,7 @@ const initRepoWithCommit = (cwd: string) =>
 const layerRuntime = (input: { readonly repo: string; readonly worktreesDir: string }) =>
   Layer.unwrap(
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const transcript = yield* ClaudeOrchestratorReplayHarness.decodeTranscript(
         yield* readProviderReplayTranscript(SIMPLE_TRANSCRIPT),
       );
@@ -153,7 +155,8 @@ const layerRuntime = (input: { readonly repo: string; readonly worktreesDir: str
         layerServerSettings,
         ProviderRegistryMock.layer(),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-          folderForThread: () => Effect.succeed(Option.none()),
+          namedProjectsRoot: path.join(input.worktreesDir, "..", "projects"),
+          folderForThread: () => Effect.succeedNone,
         }),
       );
       const layerLaunch = ThreadLaunch.layer.pipe(
@@ -179,10 +182,11 @@ const layerRuntime = (input: { readonly repo: string; readonly worktreesDir: str
 
 const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(VcsProcess.layer),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-sessions-config-" })),
   Layer.provide(NodeServices.layer),
 );
 
-it.effect(
+it.live(
   "launches a thread in a new worktree, reads its status to completion, and starts one thread per command id",
   () =>
     Effect.scoped(
@@ -240,16 +244,16 @@ it.effect(
           // returns; the run's own events say when it is over.
           const sink = yield* EventSink.EventSinkV2;
           const terminal = yield* sink.stream({ threadId, eventType: "run.updated" }).pipe(
-            Stream.filterMap((stored) =>
-              stored.event.type === "run.updated" &&
-              TERMINAL_RUN_STATUSES.has(stored.event.payload.status)
-                ? Option.some(stored.event.payload)
-                : Option.none(),
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "run.updated" &&
+                TERMINAL_RUN_STATUSES.has(stored.event.payload.status),
             ),
-            Stream.runHead,
+            Stream.map((stored) => stored.event.payload as { readonly status: Sessions.RunStatus }),
+            Stream.take(1),
+            Stream.runCollect,
           );
-          assert.isTrue(Option.isSome(terminal));
-          assert.strictEqual(Option.getOrThrow(terminal).status, "completed");
+          assert.strictEqual(terminal[0]?.status, "completed");
 
           const status = yield* sessions.status(launched.threadId);
           assert.strictEqual(status.run, "completed");
