@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -17,6 +18,12 @@ import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
 // Same cold-open budget as the full snapshot path; bounded payloads should fit.
 const DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS = 6_000;
+
+// A client can open a thread it just created before the server commits the
+// thread projection, and `missing` parks the thread as deleted for good. Recheck
+// a 404 for about a second before trusting it.
+const MISSING_THREAD_RECHECK_DELAY = "250 millis";
+const MISSING_THREAD_RECHECKS = 4;
 
 /**
  * Load a bounded recent-window thread snapshot over HTTP. Opts into compact
@@ -63,7 +70,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
  * Seeds from the bounded HTTP snapshot when available. Older servers that lack
  * the bounded route (plain/generic 404) fall back to the existing full HTTP
  * thread snapshot. Structured EnvironmentResourceNotFoundError from either
- * endpoint still means missing. Transient failures report `unavailable` so the
+ * endpoint still means missing once it survives a short recheck. Transient failures report `unavailable` so the
  * socket path remains a last resort for connectivity issues.
  */
 export const layer: Layer.Layer<
@@ -114,7 +121,7 @@ export const layer: Layer.Layer<
           ),
         );
 
-        return fetchEnvironmentBoundedThreadSnapshot({
+        const loadOnce = fetchEnvironmentBoundedThreadSnapshot({
           prepared,
           threadId,
           signer,
@@ -168,6 +175,14 @@ export const layer: Layer.Layer<
               } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
             ),
           ),
+        );
+
+        return loadOnce.pipe(
+          Effect.repeat({
+            schedule: Schedule.spaced(MISSING_THREAD_RECHECK_DELAY),
+            while: (result) => result._tag === "missing",
+            times: MISSING_THREAD_RECHECKS,
+          }),
         );
       },
     });

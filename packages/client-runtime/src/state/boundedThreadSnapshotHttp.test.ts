@@ -1,7 +1,9 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
 import * as RpcHttp from "../rpc/http.ts";
@@ -119,6 +121,26 @@ const boundedBody = (compact: boolean) => ({
   ...(compact ? { turnItemsOmitLocalVisible: true } : {}),
 });
 
+const threadNotFoundResponse = (traceId: string) =>
+  Response.json(
+    {
+      _tag: "EnvironmentResourceNotFoundError",
+      code: "not_found",
+      reason: "thread_not_found",
+      traceId,
+    },
+    { status: 404 },
+  );
+
+const loadAfterRechecks = Effect.gen(function* () {
+  const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
+  const fiber = yield* Effect.forkChild(loader.load(PREPARED, THREAD_ID));
+  for (let step = 0; step < 5; step += 1) {
+    yield* TestClock.adjust("250 millis");
+  }
+  return yield* Fiber.join(fiber);
+});
+
 describe("boundedThreadSnapshotLoader", () => {
   it.effect.each([
     ["an older server that ignores the opt-in", false],
@@ -193,26 +215,40 @@ describe("boundedThreadSnapshotLoader", () => {
   });
 
   it.effect("treats structured EnvironmentResourceNotFoundError from bounded as missing", () => {
+    let boundedCalls = 0;
     const fetchFn = ((input: RequestInfo | URL) => {
       const url = String(input);
       expect(url).toContain(`/api/orchestration/threads/${THREAD_ID}/bounded`);
+      boundedCalls += 1;
+      return Promise.resolve(threadNotFoundResponse("trace-bounded-missing"));
+    }) satisfies typeof fetch;
+
+    return Effect.gen(function* () {
+      const result = yield* loadAfterRechecks;
+      expect(result).toEqual({ _tag: "missing" });
+      expect(boundedCalls).toBe(5);
+    }).pipe(
+      Effect.provide(
+        Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
+      ),
+    );
+  });
+
+  it.effect("loads a thread that the server commits after the first 404", () => {
+    let boundedCalls = 0;
+    const fetchFn = ((input: RequestInfo | URL) => {
+      boundedCalls += 1;
       return Promise.resolve(
-        Response.json(
-          {
-            _tag: "EnvironmentResourceNotFoundError",
-            code: "not_found",
-            reason: "thread_not_found",
-            traceId: "trace-bounded-missing",
-          },
-          { status: 404 },
-        ),
+        boundedCalls === 1
+          ? threadNotFoundResponse("trace-bounded-not-yet-committed")
+          : Response.json(boundedBody(true)),
       );
     }) satisfies typeof fetch;
 
     return Effect.gen(function* () {
-      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
-      const result = yield* loader.load(PREPARED, THREAD_ID);
-      expect(result).toEqual({ _tag: "missing" });
+      const result = yield* loadAfterRechecks;
+      expect(result._tag).toBe("present");
+      expect(boundedCalls).toBe(2);
     }).pipe(
       Effect.provide(
         Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
@@ -233,24 +269,13 @@ describe("boundedThreadSnapshotLoader", () => {
         );
       }
       fullCalls += 1;
-      return Promise.resolve(
-        Response.json(
-          {
-            _tag: "EnvironmentResourceNotFoundError",
-            code: "not_found",
-            reason: "thread_not_found",
-            traceId: "trace-full-missing",
-          },
-          { status: 404 },
-        ),
-      );
+      return Promise.resolve(threadNotFoundResponse("trace-full-missing"));
     }) satisfies typeof fetch;
 
     return Effect.gen(function* () {
-      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
-      const result = yield* loader.load(PREPARED, THREAD_ID);
+      const result = yield* loadAfterRechecks;
       expect(result).toEqual({ _tag: "missing" });
-      expect(fullCalls).toBe(1);
+      expect(fullCalls).toBe(5);
     }).pipe(
       Effect.provide(
         Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
