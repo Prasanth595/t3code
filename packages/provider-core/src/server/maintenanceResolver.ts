@@ -199,7 +199,9 @@ export function normalizeCommandPath(commandPath: string): string {
  * on Windows.
  */
 function isVitePlusGlobalCommandPath(commandPath: string): boolean {
-  return /\/\.?vite-plus\/bin\//.test(normalizeCommandPath(commandPath));
+  return /\/(?:\.vite-plus|\.local\/share\/vite-plus|appdata\/local\/vite-plus)\/bin\//.test(
+    normalizeCommandPath(commandPath),
+  );
 }
 
 function isBunGlobalCommandPath(commandPath: string): boolean {

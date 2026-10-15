@@ -379,6 +379,23 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           lockKey: "vite-plus-global",
         });
       }
+
+      // A project checkout named vite-plus is not a VP_HOME.
+      const projectLocal = yield* resolvePackageManagedProviderMaintenance(
+        {
+          provider: driver("claudeAgent"),
+          npmPackageName: "@anthropic-ai/claude-code",
+          nativeUpdate: null,
+        },
+        {
+          binaryPath: "claude",
+          resolvedCommandPath: "/work/vite-plus/bin/claude",
+          realCommandPath: "/work/vite-plus/node_modules/@anthropic-ai/claude-code/cli.js",
+          env: {},
+          platform: "linux",
+        },
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+      expect(projectLocal.update).toBeNull();
     }),
   );
 
