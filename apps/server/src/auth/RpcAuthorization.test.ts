@@ -220,7 +220,14 @@ describe("RPC scope middleware", () => {
   it.effect("requires filesystem read access to resolve a project cwd before running Git", () =>
     Effect.gen(function* () {
       const group = WsRpcGroup.omit(
-        ...[...WsRpcGroup.requests.keys()].filter((tag) => tag !== WS_METHODS.projectsResolveCwd),
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.projectsResolveCwd
+          > => tag !== WS_METHODS.projectsResolveCwd,
+        ),
       );
       let handled = false;
       const client = yield* RpcTest.makeClient(group).pipe(

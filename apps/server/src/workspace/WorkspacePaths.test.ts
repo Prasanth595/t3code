@@ -243,8 +243,9 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
     }),
   );
 
-  for (const directory of ["ios", "nested/ios", "ios\\release", " ios "]) {
-    it.effect(`uses the existing project directory ${JSON.stringify(directory)}`, () =>
+  it.effect.each(["ios", "nested/ios", "ios\\release", " ios "])(
+    "uses the existing project directory %s",
+    (directory) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -256,8 +257,7 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
           candidate,
         );
       }),
-    );
-  }
+  );
 
   for (const state of ["missing", "file", "file-parent", "escaping-symlink"] as const) {
     it.effect.skipIf(state === "escaping-symlink" && !symlinksSupported)(
@@ -298,16 +298,16 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
     }),
   );
 
-  for (const prefix of ["../outside/", "ios/../../outside/", "/absolute/escape/"]) {
-    it.effect(`rejects an escaping prefix ${prefix}`, () =>
+  it.effect.each(["../outside/", "ios/../../outside/", "/absolute/escape/"])(
+    "rejects an escaping prefix %s",
+    (prefix) =>
       Effect.gen(function* () {
         const paths = yield* pathsWithPrefix(prefix);
         expect(
           yield* paths.resolveProjectCwd({ cwd: "/repo/ios", worktreePath: "/worktree" }),
         ).toBe("/worktree");
       }),
-    );
-  }
+  );
 
   it.effect("keeps local and repository-root project cwd unchanged", () =>
     Effect.gen(function* () {
@@ -319,8 +319,9 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
     }),
   );
 
-  for (const operation of ["stat", "realPath"] as const) {
-    it.effect(`preserves permission errors from ${operation}`, () =>
+  it.effect.each(["stat", "realPath"] as const)(
+    "preserves permission errors from %s",
+    (operation) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -344,11 +345,11 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
         expect(error).toBeInstanceOf(WorkspacePaths.WorkspaceProjectCwdError);
         expect(error.cause).toBe(cause);
       }),
-    );
-  }
+  );
 
-  for (const root of ["C:\\worktrees\\feature", "\\\\host\\share\\feature"]) {
-    it.effect(`uses native Windows semantics for ${root}`, () =>
+  it.effect.each(["C:\\worktrees\\feature", "\\\\host\\share\\feature"])(
+    "uses native Windows semantics for %s",
+    (root) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const directory = yield* fs.stat(yield* makeTempDir());
@@ -364,8 +365,7 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
           yield* paths.resolveProjectCwd({ cwd: "C:\\repo\\packages\\ios", worktreePath: root }),
         ).toBe(`${root}\\packages\\ios`);
       }),
-    );
-  }
+  );
 
   it.effect("rejects a Windows symlink resolved onto a different drive", () =>
     Effect.gen(function* () {
