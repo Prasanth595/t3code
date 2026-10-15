@@ -1,113 +1,81 @@
 import { describe, expect, it } from "@effect/vitest";
-import {
-  EnvironmentId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  type OrchestrationV2ThreadShell,
-} from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { vi } from "vite-plus/test";
 
+import { v2Now, v2ShellSnapshot, v2ThreadShell } from "../state/orchestrationV2TestFixtures.ts";
 import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
 } from "./orchestrationCache.ts";
 import { makeStoredShellSnapshotEncoder } from "./shellCacheEncoding.ts";
 
-const NOW = DateTime.makeUnsafe("2026-07-29T12:00:00.000Z");
-const PROJECT_ID = ProjectId.make("project-1");
-const PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
+const encodeWithSchema = Schema.encodeEffect(
+  Schema.fromJsonString(StoredOrchestrationShellSnapshot),
+);
 
-const makeThread = (index: number): OrchestrationV2ThreadShell => {
-  const id = ThreadId.make(`thread-${index}`);
-  return {
-    id,
-    projectId: PROJECT_ID,
-    title: `Thread ${index}`,
-    providerInstanceId: PROVIDER_INSTANCE_ID,
-    modelSelection: { instanceId: PROVIDER_INSTANCE_ID, model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    activeProviderThreadId: null,
-    lineage: { rootThreadId: id, parentThreadId: null, relationshipToParent: null },
-    forkedFrom: null,
-    createdBy: "user",
-    creationSource: "web",
-    latestRunId: null,
-    activeRunId: null,
-    status: "idle",
-    pendingRuntimeRequest: null,
-    latestVisibleMessage: null,
-    latestUserMessageAt: NOW,
-    activityRunStartedAt: null,
-    activityRunStatus: null,
-    hasActionableProposedPlan: false,
-    itemCount: 0,
-    visibleItemCount: 0,
-    createdAt: NOW,
-    updatedAt: NOW,
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: NOW,
-    unsettledAt: null,
-    lastVisitedAt: null,
-    deletedAt: null,
-  };
-};
-
-const makeStored = (threads: ReadonlyArray<OrchestrationV2ThreadShell>) => ({
+const stored = (
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+  archivedThreads: ReadonlyArray<OrchestrationV2ThreadShell> = [],
+) => ({
   schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
   environmentId: EnvironmentId.make("environment-1"),
-  snapshot: {
-    schemaVersion: 1 as const,
-    snapshotSequence: 3,
-    projects: [],
-    threads,
-    archivedThreads: [],
-  },
+  snapshot: { ...v2ShellSnapshot, threads, archivedThreads },
 });
 
-describe("shell cache encoder with a caller-supplied yield", () => {
-  const encodeOriginal = Schema.encodeEffect(
-    Schema.fromJsonString(StoredOrchestrationShellSnapshot),
-  );
+// Rows mix dates, omitted optional fields, and a branch the row codec trims.
+const row = (index: number): OrchestrationV2ThreadShell => ({
+  ...v2ThreadShell,
+  id: ThreadId.make(`thread-${index}`),
+  title: `Thread ${index}`,
+  branch: index % 2 === 0 ? "  main  " : null,
+  latestUserMessageAt: DateTime.add(v2Now, { minutes: index }),
+  ...(index % 3 === 0 ? { pinnedAt: v2Now, snoozedUntil: null } : {}),
+});
 
-  it.effect("keeps output identical to the full encode when only one row changes", () =>
+// More rows than fit in one encoding chunk.
+const manyRows = () => Array.from({ length: 70 }, (_, index) => row(index));
+
+describe("makeStoredShellSnapshotEncoder", () => {
+  it.effect("writes exactly what the schema codec writes, before and after rows change", () =>
     Effect.gen(function* () {
-      let yields = 0;
-      const encode = makeStoredShellSnapshotEncoder({
-        yieldToHost: Effect.sync(() => {
-          yields += 1;
-        }),
-      });
-      const threads = Array.from({ length: 70 }, (_, index) => makeThread(index));
-      const first = makeStored(threads);
-      expect(yield* encode(first)).toBe(yield* encodeOriginal(first));
-      // 70 rows are three 32-row chunks, so the first save yields between them.
-      expect(yields).toBeGreaterThanOrEqual(2);
+      const encode = makeStoredShellSnapshotEncoder();
+      const threads = manyRows();
+      const first = stored(threads, [row(100)]);
+      expect(yield* encode(first)).toBe(yield* encodeWithSchema(first));
 
-      const second = makeStored([{ ...threads[0]!, title: "Renamed" }, ...threads.slice(1)]);
-      expect(yield* encode(second)).toBe(yield* encodeOriginal(second));
+      const [renamed, archived, ...rest] = threads;
+      const next = stored(
+        [{ ...renamed!, title: "Renamed" }, ...rest, row(70)],
+        [...first.snapshot.archivedThreads, { ...archived!, archivedAt: v2Now }],
+      );
+      expect(yield* encode(next)).toBe(yield* encodeWithSchema(next));
     }),
   );
 
-  it.effect("does not yield again when every row was already encoded", () =>
+  it.effect("reuses the encoding of a row it has already saved", () =>
     Effect.gen(function* () {
-      let yields = 0;
-      const encode = makeStoredShellSnapshotEncoder({
-        yieldToHost: Effect.sync(() => {
-          yields += 1;
-        }),
-      });
-      const stored = makeStored(Array.from({ length: 70 }, (_, index) => makeThread(index)));
-      yield* encode(stored);
-      const afterFirst = yields;
-      yield* encode(makeStored(stored.snapshot.threads));
-      expect(yields).toBe(afterFirst);
+      const encode = makeStoredShellSnapshotEncoder();
+      const kept = { ...row(0) };
+      yield* encode(stored([kept]));
+
+      // The encoder trusts rows to be immutable, so an in-place edit shows whether it re-encoded.
+      kept.title = "Edited in place";
+      expect(yield* encode(stored([kept]))).toBe(yield* encodeWithSchema(stored([row(0)])));
+    }),
+  );
+
+  it.effect("yields to a host timer between chunks by default", () =>
+    Effect.gen(function* () {
+      const setTimer = vi.spyOn(globalThis, "setTimeout");
+      try {
+        yield* makeStoredShellSnapshotEncoder()(stored(manyRows()));
+        expect(setTimer).toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+      }
     }),
   );
 });
