@@ -6,6 +6,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  ClientId,
   CommandDelivery,
   MachineCommandInput,
   MachineId,
@@ -194,8 +195,19 @@ export type PauseState = typeof PauseState.Type;
 export const CutArrow = Schema.Struct({ from: MachineId, to: MachineId, level: MachineLevel });
 export type CutArrow = typeof CutArrow.Type;
 
+/** MM-717: a client arrow that the pause set to `none`. */
+const CutClientArrow = Schema.Struct({
+  client: ClientId,
+  to: MachineId,
+  level: MachineLevel,
+});
+
 /** The pause as pages see it: the stored state plus the arrows it cut (MM-717). */
-export const PauseView = Schema.Struct({ ...PauseState.fields, cut: Schema.Array(CutArrow) });
+export const PauseView = Schema.Struct({
+  ...PauseState.fields,
+  cut: Schema.Array(CutArrow),
+  cutClients: Schema.Array(CutClientArrow),
+});
 export type PauseView = typeof PauseView.Type;
 
 /** Page event: the pause began (`pause` set) or ended (`pause` null). */
@@ -230,6 +242,44 @@ export type ResourceSampleEvent = typeof ResourceSampleEvent.Type;
 /** MM-212: page event when a machine used its join code. It holds no part of the code. */
 export const EnrolledEvent = Schema.TaggedStruct("enrolled", { machineId: MachineId });
 export type EnrolledEvent = typeof EnrolledEvent.Type;
+
+/** MM-906: a browser key that signed in and waits for the owner, or that the owner rejected. */
+export const PendingClient = Schema.Struct({
+  thumbprint: Text,
+  describedAs: Schema.String,
+  email: Schema.NullOr(Text),
+  /** The machine that reported the sign-in. */
+  seenOn: MachineId,
+  firstSeenAt: Text,
+  lastSeenAt: Text,
+  state: Schema.Literals(["pending", "rejected"]),
+});
+export type PendingClient = typeof PendingClient.Type;
+
+/** Page event with every waiting and rejected key, on connection and on each change. */
+export const PendingClientsEvent = Schema.TaggedStruct("pendingClients", {
+  pending: Schema.Array(PendingClient),
+});
+export type PendingClientsEvent = typeof PendingClientsEvent.Type;
+
+/**
+ * POST /api/grant/approve (MM-907): the key joins a new client or an existing one. The arrows
+ * of a new client start at `none` unless listed.
+ */
+export const ApproveClientRequest = Schema.Struct({
+  thumbprint: Text,
+  client: Schema.Union([
+    Schema.TaggedStruct("new", { name: Text }),
+    Schema.TaggedStruct("existing", { clientId: ClientId }),
+  ]),
+  arrows: Schema.Array(Schema.Struct({ to: MachineId, level: MachineLevel })),
+});
+export type ApproveClientRequest = typeof ApproveClientRequest.Type;
+
+/** GET /api/clients/approvals (MM-1208): whether approvals work, and why not. */
+export type ApprovalsStatus =
+  | { readonly _tag: "ready" }
+  | { readonly _tag: "missing"; readonly reason: string };
 
 /** POST /api/machines/:id/thresholds (MM-1504). Null returns the machine to the defaults. */
 export const ThresholdsRequest = Schema.Struct({ thresholds: Schema.NullOr(HealthThresholds) });

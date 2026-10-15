@@ -57,6 +57,9 @@ export const DANGEROUS_COMMANDS: ReadonlySet<MachineCommandInput["_tag"]> = new 
 export const machineName = (map: MachineMapDocument, id: string): string =>
   map.machines.find((m) => m.id === id)?.name ?? id;
 
+export const clientName = (map: MachineMapDocument, id: string): string =>
+  map.clients.find((c) => c.id === id)?.name ?? id;
+
 export function timeAgo(iso: string | null, now: number): string {
   if (iso === null) return "never";
   const seconds = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));

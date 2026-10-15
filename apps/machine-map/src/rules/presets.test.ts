@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { MachineId, type MachineMapDocument } from "@t3tools/contracts/machineMap";
 
-import { applyChanges, findArrow } from "./map.ts";
+import { applyChanges, findArrow, findClientArrow } from "./map.ts";
 import {
   applyPresetChanges,
   cutArrows,
@@ -11,7 +11,7 @@ import {
   resumeChanges,
   savePresetChange,
 } from "./presets.ts";
-import { MAC, machine, threeMachines, VPS, WIN } from "./testMap.ts";
+import { client, MAC, machine, PHONE, threeMachines, VPS, WIN } from "./testMap.ts";
 
 const AT = "2026-10-13T08:00:00.000Z";
 
@@ -164,6 +164,21 @@ describe("emergency pause and resume (MM-710, MM-712)", () => {
     expect(findArrow(resumed, WIN, MAC)).toEqual(findArrow(map, WIN, MAC));
     expect(findArrow(resumed, NEW, MAC).level).toBe("none");
     expect(resumed.arrows.some((a) => a.from === VPS || a.to === VPS)).toBe(false);
+  });
+
+  it("drops client arrows at the pause and resume returns them (MM-309)", () => {
+    const map = applyChanges(busyMap(), [
+      { _tag: "putClient", client: client() },
+      {
+        _tag: "setClientArrow",
+        arrow: { client: PHONE, to: VPS, level: "admin", expiresAt: null, revertLevel: null },
+      },
+    ]).map;
+    const before = pausedAccess(map);
+    const paused = applyChanges(map, lockdownChanges(map)).map;
+    expect(paused.clientArrows).toEqual([]);
+    const resumed = applyChanges(paused, resumeChanges(paused, before)).map;
+    expect(findClientArrow(resumed, PHONE, VPS).level).toBe("admin");
   });
 
   it("lists the arrows that the pause cut, with their old level, for the map (MM-717)", () => {

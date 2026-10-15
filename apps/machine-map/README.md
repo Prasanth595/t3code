@@ -29,12 +29,22 @@ Create these Access apps before the first deploy:
 
 The Worker refuses every owner and machine request while a value in `wrangler.jsonc` starts with `REPLACE_`.
 
+### Client approvals (MM-1207, MM-1208)
+
+The portal makes the Access app of `t3.yarden-zamir.com/api/grant` itself: "Set up approvals" on a waiting sign-in creates it with the owner emails, a 10-minute session and independent MFA. Do one step by hand first:
+
+1. In Zero Trust, go to **Access controls** > **Access settings** > **Allow multi-factor authentication (MFA)**.
+2. Allow "Biometrics" (a passkey such as Touch ID or Face ID), "Security key", or both.
+3. Do not turn on **Apply global MFA settings by default**. Only the approval path needs MFA.
+
+Cloudflare asks you to register the passkey at the first approval.
+
 ## Secrets
 
 Set secrets with `wrangler secret put <NAME>` in this folder.
 
 - `SECRET_KEY` (required for joins and rotations). The AES-GCM key that encrypts a token secret while it waits for its machine (MM-1201). Make it with `openssl rand -base64 32`. A new key makes waiting join codes and rotations unreadable. Make new join codes after you change it.
-- `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with "Access: Service Tokens Edit", "Access: Apps and Policies Edit" and "Cloudflare Tunnel: Edit" on the account, and "DNS: Edit" on the zone of `MACHINE_ZONE_ID`. With it, "Add machine" creates the machine token and its tunnel (MM-213), "Rotate token" works, "Remove machine" deletes what "Add machine" made, and the Clients view lists Access sessions. Without the tunnel and DNS permissions, "Add machine" makes no tunnel and the join dialog says why. Without the token, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
+- `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with "Access: Service Tokens Edit", "Access: Apps and Policies Edit", "Access: Organizations, Identity Providers, and Groups Read" and "Cloudflare Tunnel: Edit" on the account, and "DNS: Edit" on the zone of `MACHINE_ZONE_ID`. Client approvals need the organization read permission (MM-1207). With it, "Add machine" creates the machine token and its tunnel (MM-213), "Rotate token" works, "Remove machine" deletes what "Add machine" made, and the Clients view lists Access sessions. Without the tunnel and DNS permissions, "Add machine" makes no tunnel and the join dialog says why. Without the token, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
 - `MACHINE_ACCESS_SUBJECTS` (optional, MM-213). Access subjects that a joined machine allows next to the owner emails, comma separated, for example the client id of the desktop service token. A secret keeps the client id out of the repository.
 
 - `VAPID_JWK` (optional, MM-1807). The P-256 private key that signs push messages, as a JSON Web Key. Without it, push is off and the Clients view says so. Make it and set it in one step:

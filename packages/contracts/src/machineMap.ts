@@ -88,6 +88,49 @@ export const ArrowRecord = Schema.Struct({
 });
 export type ArrowRecord = typeof ArrowRecord.Type;
 
+/** A browser profile that the owner approved (MM-904). */
+export const ClientId = TrimmedNonEmptyString.pipe(Schema.brand("ClientId"));
+export type ClientId = typeof ClientId.Type;
+
+/** One browser key of a client (MM-905): the JWK thumbprint of its DPoP key. */
+const ClientKey = Schema.Struct({
+  thumbprint: TrimmedNonEmptyString,
+  addedAt: MapTime,
+  /** The browser and system that the key came from, for example "Safari on iPhone". */
+  describedAs: Schema.String,
+});
+
+export const ClientRecord = Schema.Struct({
+  id: ClientId,
+  name: TrimmedNonEmptyString,
+  /** The Cloudflare Access email that the client signed in with. */
+  email: Schema.NullOr(TrimmedNonEmptyString),
+  keys: Schema.Array(ClientKey),
+  position: MapPosition,
+  createdAt: MapTime,
+});
+export type ClientRecord = typeof ClientRecord.Type;
+
+/**
+ * MM-906: the short code of a browser key, for example `K7-PQ-3M`. The waiting browser and the
+ * portal both show it, so the owner can tell that they approve the right sign-in.
+ */
+export const clientKeyCode = (thumbprint: string): string => {
+  const letters = thumbprint.slice(0, 6).toUpperCase();
+  return [letters.slice(0, 2), letters.slice(2, 4), letters.slice(4, 6)].join("-");
+};
+
+/** What one client can do on one machine (MM-309). A client never gets agent tools. */
+export const ClientArrowRecord = Schema.Struct({
+  client: ClientId,
+  to: MachineId,
+  level: MachineLevel,
+  /** MM-304: at this time the arrow returns to `revertLevel`. */
+  expiresAt: Schema.NullOr(MapTime),
+  revertLevel: Schema.NullOr(MachineLevel),
+});
+export type ClientArrowRecord = typeof ClientArrowRecord.Type;
+
 export const SettingScope = Schema.Literals(["server", "client"]);
 export type SettingScope = typeof SettingScope.Type;
 
@@ -205,6 +248,12 @@ export const MachineMapDocument = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
   notes: Schema.Array(MapNote).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  /** MM-904. Older maps decode with none. */
+  clients: Schema.Array(ClientRecord).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  /** MM-309: only arrows above the default `none` are stored. */
+  clientArrows: Schema.Array(ClientArrowRecord).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type MachineMapDocument = typeof MachineMapDocument.Type;
 
@@ -247,6 +296,13 @@ export const MapChange = Schema.Union([
   }),
   Schema.TaggedStruct("putNote", { note: MapNote }),
   Schema.TaggedStruct("removeNote", { id: TrimmedNonEmptyString }),
+  Schema.TaggedStruct("putClient", { client: ClientRecord }),
+  Schema.TaggedStruct("removeClient", { clientId: ClientId }),
+  /** MM-907: only an approval adds a key. No owner change and no undo can add one. */
+  Schema.TaggedStruct("addClientKey", { clientId: ClientId, key: ClientKey }),
+  /** MM-909: removes one browser key. Its undo refuses, because the inverse adds a key. */
+  Schema.TaggedStruct("removeClientKey", { clientId: ClientId, thumbprint: TrimmedNonEmptyString }),
+  Schema.TaggedStruct("setClientArrow", { arrow: ClientArrowRecord }),
 ]);
 export type MapChange = typeof MapChange.Type;
 
@@ -532,6 +588,12 @@ export const MachineToPortal = Schema.Union([
   }),
   /** MM-207: the machine saved the new token secret. */
   Schema.TaggedStruct("rotated", { tokenClientId: TrimmedNonEmptyString }),
+  /** MM-906: a browser key that no client holds signed in through Cloudflare Access. */
+  Schema.TaggedStruct("clientSeen", {
+    thumbprint: TrimmedNonEmptyString,
+    describedAs: Schema.String.check(Schema.isMaxLength(200)),
+    email: Schema.NullOr(TrimmedNonEmptyString),
+  }),
 ]);
 export type MachineToPortal = typeof MachineToPortal.Type;
 

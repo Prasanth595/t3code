@@ -1715,7 +1715,8 @@ td .stickers,
 .item.hk-lockdown {
   border-left-color: var(--ink);
 }
-.item.hk-machines {
+.item.hk-machines,
+.item.hk-clients {
   border-left-color: var(--green);
 }
 .item.hk-settings,
@@ -1779,7 +1780,8 @@ td .stickers,
   background: #000000;
   color: var(--yellow);
 }
-.sticker.hk-machines {
+.sticker.hk-machines,
+.sticker.hk-clients {
   background: var(--green);
 }
 .sticker.hk-settings {
@@ -2866,4 +2868,15 @@ ul.alerts li.ended {
 /* MM-602: a wait under a pair card opens the Queue of its machine, in the warning colour. */
 .pair-wait a {
   color: inherit;
+}
+/* MM-904: a client card is a browser, not a machine, so it is smaller and has a dashed border. */
+.node.client {
+  width: 190px;
+  border-style: dashed;
+}
+/* MM-309: a client arrow is a dotted line. The client card lists its levels. */
+.map path.client-line {
+  stroke-width: 2;
+  stroke-dasharray: 1 7;
+  stroke-linecap: round;
 }

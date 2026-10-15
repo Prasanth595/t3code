@@ -95,7 +95,7 @@ function SignInAgain() {
   );
 }
 
-/** MM-1805: the app icon counts what needs the owner: Inbox proposals and active health alerts. */
+/** MM-1805: the app icon counts what needs the owner: proposals, waiting sign-ins and alerts. */
 function useAppBadge(count: number) {
   useEffect(() => {
     if (!("setAppBadge" in navigator)) return;
@@ -174,7 +174,10 @@ export function App() {
 
   const snapshot = state.snapshot;
   const proposals = snapshot?.proposals.length ?? 0;
-  useAppBadge(proposals + state.health.alerts.filter((alert) => alert.endedAt === null).length);
+  const waiting = (state.pending ?? []).filter((p) => p.state === "pending").length;
+  useAppBadge(
+    proposals + waiting + state.health.alerts.filter((alert) => alert.endedAt === null).length,
+  );
   useEffect(() => {
     const parts = [VIEW_LABEL[route.view], "T3 machines"];
     if (state.pause) parts.unshift("Paused");
@@ -319,6 +322,7 @@ export function App() {
     pause: state.pause,
     health: state.health,
     joins: state.joins,
+    pending: state.pending,
     draft,
     now,
     route,
@@ -371,7 +375,11 @@ export function App() {
     (sum, m) => sum + machineQueue(snapshot, state.rotations, m).count,
     0,
   );
-  const counts: Partial<Record<View, number>> = { queue: queued, inbox: proposals };
+  const counts: Partial<Record<View, number>> = {
+    queue: queued,
+    inbox: proposals,
+    clients: waiting,
+  };
   const hasPanel = route.selection._tag !== "none";
 
   const view = (() => {

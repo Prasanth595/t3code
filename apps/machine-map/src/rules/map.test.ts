@@ -18,8 +18,10 @@ import {
   machinesTouched,
   MapRuleError,
   pairOffset,
+  keepClientKeys,
+  undoChanges,
 } from "./map.ts";
-import { MAC, machine, threeMachines, VPS, WIN } from "./testMap.ts";
+import { client, MAC, machine, PHONE, threeMachines, VPS, WIN } from "./testMap.ts";
 
 const managed = (map: MachineMapDocument): MachineMapDocument =>
   applyChanges(map, [
@@ -143,6 +145,59 @@ describe("checkEditableChanges", () => {
       checkEditableChanges(map, [
         { _tag: "putMachine", machine: { ...machine(MAC), name: "Mac" } },
       ]),
+    ).not.toThrow();
+  });
+
+  it("keeps keys from a stale record, and an undo never adds a key back (MM-720, MM-909)", () => {
+    const later = { thumbprint: "key-2", addedAt: "2026-10-02T00:00:00.000Z", describedAs: "x" };
+    const map = applyChanges(threeMachines(), [
+      { _tag: "putClient", client: client() },
+      { _tag: "addClientKey", clientId: PHONE, key: later },
+    ]).map;
+    // A draft or an open panel built before the second key was approved.
+    const stale = keepClientKeys(map, [{ _tag: "putClient", client: client({ name: "iPhone" }) }]);
+    const renamed = applyChanges(map, stale).map.clients[0];
+    expect(renamed?.name).toBe("iPhone");
+    expect(renamed?.keys.map((k) => k.thumbprint)).toEqual(["key-1", "key-2"]);
+    const removal = applyChanges(map, [
+      { _tag: "removeClientKey", clientId: PHONE, thumbprint: "key-2" },
+    ]);
+    expect(() =>
+      checkEditableChanges(removal.map, undoChanges(removal.map, removal.inverse)),
+    ).toThrow();
+  });
+
+  it("skips the arrows of a client that left in the undo of an old machine removal", () => {
+    const map = applyChanges(threeMachines(), [
+      { _tag: "putClient", client: client() },
+      {
+        _tag: "setClientArrow",
+        arrow: { client: PHONE, to: WIN, level: "read", expiresAt: null, revertLevel: null },
+      },
+    ]).map;
+    const removed = applyChanges(map, [{ _tag: "removeMachine", machineId: WIN }]);
+    const clientGone = applyChanges(removed.map, [{ _tag: "removeClient", clientId: PHONE }]).map;
+    const undo = undoChanges(clientGone, removed.inverse);
+    expect(undo.some((c) => c._tag === "setClientArrow")).toBe(false);
+    expect(applyChanges(clientGone, undo).map.machines.map((m) => m.id)).toContain(WIN);
+  });
+
+  it("lets a browser key in only through an approval (MM-907)", () => {
+    const map = applyChanges(threeMachines(), [{ _tag: "putClient", client: client() }]).map;
+    const newKey = { thumbprint: "key-2", addedAt: "2026-10-02T00:00:00.000Z", describedAs: "x" };
+    expect(() =>
+      checkEditableChanges(threeMachines(), [{ _tag: "putClient", client: client() }]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(map, [{ _tag: "addClientKey", clientId: PHONE, key: newKey }]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(map, [
+        { _tag: "putClient", client: client({ keys: [...client().keys, newKey] }) },
+      ]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(map, [{ _tag: "putClient", client: client({ name: "iPhone" }) }]),
     ).not.toThrow();
   });
 });

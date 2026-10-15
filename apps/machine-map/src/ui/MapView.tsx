@@ -8,6 +8,8 @@ import {
   type PointerEvent,
 } from "react";
 import type {
+  ClientArrowRecord,
+  ClientRecord,
   MachineId,
   MachineMapDocument,
   MachineRecord,
@@ -18,7 +20,7 @@ import type {
 } from "@t3tools/contracts/machineMap";
 
 import { usesText } from "../rules/access.ts";
-import { findArrow, findNote, pairOffset } from "../rules/map.ts";
+import { findArrow, findClientArrow, findNote, pairOffset } from "../rules/map.ts";
 import { NO_SELECTION, type Route } from "./route.ts";
 import { usePortalContext } from "./context.ts";
 import { buildStandings } from "./build.ts";
@@ -36,11 +38,12 @@ import {
   LEVEL_LABEL,
   PRESENCE_STICKER,
   presenceState,
+  shortTime,
   timeAgo,
   TOWARD_TEXT,
   towardGlyph,
 } from "./format.ts";
-import { ClockIcon, KindIcon } from "./icons.tsx";
+import { ClientIcon, ClockIcon, KindIcon } from "./icons.tsx";
 import {
   anyInView,
   fitView,
@@ -131,9 +134,10 @@ interface Size {
   readonly h: number;
 }
 
-/** What a drag moves: a machine (MM-206), the card of a pair (MM-1108) or a note (MM-1109). */
+/** What a drag moves: a machine (MM-206), a client (MM-904), a pair card (MM-1108) or a note (MM-1109). */
 type DragSubject =
   | { readonly _tag: "machine"; readonly machine: MachineRecord }
+  | { readonly _tag: "client"; readonly client: ClientRecord }
   | { readonly _tag: "pair"; readonly a: MachineRecord; readonly b: MachineRecord }
   | { readonly _tag: "note"; readonly note: MapNote }
   /** MM-1104: a line from a handle of a machine. Dropping it on another machine connects them. */
@@ -166,6 +170,8 @@ interface Drag {
 }
 
 const pairKey = (a: MachineRecord, b: MachineRecord) => `${a.id}>${b.id}`;
+const clientLineKey = (arrow: Pick<ClientArrowRecord, "client" | "to">) =>
+  `${arrow.client}>${arrow.to}`;
 const samePosition = (a: MapPosition, b: MapPosition) => a.x === b.x && a.y === b.y;
 const sameOffset = (a: PairOffset, b: PairOffset) => a.along === b.along && a.aside === b.aside;
 const sameSizes = (a: Record<string, Size>, b: Record<string, Size>) =>
@@ -320,6 +326,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const width = Math.min(size.width, MAX_WIDTH);
   const cardArea = [
     ...machines.map((m) => sizes[`node:${m.id}`] ?? estimate.node),
+    ...map.clients.map((c) => sizes[`client:${c.id}`] ?? estimate.node),
     ...pairs.map((pair) => sizes[`pair:${pairKey(...pair)}`] ?? estimate.pair),
     ...map.notes.map((note) => sizes[`note:${note.id}`] ?? estimate.note),
   ].reduce((sum, { w, h }) => sum + w * h, 0);
@@ -333,6 +340,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     (key) =>
       (
         map.machines.find((m) => `machine:${m.id}` === key) ??
+        map.clients.find((c) => `client:${c.id}` === key) ??
         map.notes.find((n) => `note:${n.id}` === key)
       )?.position,
     samePosition,
@@ -374,22 +382,46 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     };
   };
 
+  const clients = map.clients;
+  const clientPlace = (c: ClientRecord): MapPosition => heldPlace(`client:${c.id}`) ?? c.position;
+  const clientBox = (c: ClientRecord, p: Point): Box => ({
+    ...p,
+    ...(sizes[`client:${c.id}`] ?? estimate.node),
+  });
+
   /**
-   * The machines and notes where the page shows them: saved places, pushed apart (see
-   * `layout.ts`), so a note never covers a machine card on a narrow map.
+   * Machines, clients and notes where the page shows them: saved places, pushed apart (see
+   * `layout.ts`), so no card covers another on a narrow map (MM-1114).
    */
   const spread = separate(
     [
       ...machines.map((m) => nodeBox(m, toPixels(position(m)))),
+      ...clients.map((c) => clientBox(c, toPixels(clientPlace(c)))),
       ...map.notes.map((note) => ({ ...savedNoteAt(note), ...noteSize(note) })),
     ],
     width,
     height,
   );
   const nodes = spread.slice(0, machines.length);
-  const noteBoxes = spread.slice(machines.length);
+  const clientBoxes = spread.slice(machines.length, machines.length + clients.length);
+  const noteBoxes = spread.slice(machines.length + clients.length);
   const noteAt = (note: MapNote): Point =>
     noteBoxes[map.notes.findIndex((n) => n.id === note.id)] ?? savedNoteAt(note);
+  const clientCenter = (c: ClientRecord): Point =>
+    clientBoxes[clients.indexOf(c)] ?? toPixels(clientPlace(c));
+  /** MM-309, MM-717: client arrows above `none`, and while paused the ones the pause cut. */
+  const clientLines = [
+    ...map.clientArrows.map((arrow) => ({ arrow, cut: false })),
+    ...(portal.pause?.cutClients ?? []).flatMap((cut) =>
+      findClientArrow(map, cut.client, cut.to).level === "none"
+        ? [{ arrow: { ...findClientArrow(map, cut.client, cut.to), level: cut.level }, cut: true }]
+        : [],
+    ),
+  ].flatMap(({ arrow, cut }) => {
+    const client = clients.find((c) => c.id === arrow.client);
+    const machine = machines.find((m) => m.id === arrow.to);
+    return client && machine ? [{ arrow, cut, client, machine }] : [];
+  });
 
   /**
    * Where each card goes. During a drag the dragged machine follows the pointer and the other
@@ -415,7 +447,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           fixed: offset ? offsetPoint(pa, pb, offset, scale) : null,
         };
       }),
-      boxes,
+      [...boxes, ...clientBoxes],
       width,
       height,
       noteBoxes,
@@ -436,10 +468,24 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       .querySelector<SVGPathElement>(`path[data-pair="${CSS.escape(key)}"]`)
       ?.setAttribute("d", pairPath(a, b, through));
 
+  /** MM-309: redraws the line of one client arrow. */
+  const drawClientLine = (root: HTMLElement, key: string, a: Point, b: Point) =>
+    root
+      .querySelector<SVGPathElement>(`path[data-client-line="${CSS.escape(key)}"]`)
+      ?.setAttribute("d", pairPath(a, b, null));
+
   /** Writes the place of the dragged card straight to the page, with every line it moves. */
   const paint = (subject: DragSubject, p: Point, element: HTMLElement) => {
     const root = ref.current;
     if (!root) return;
+    if (subject._tag === "client") {
+      moveElement(element, p);
+      for (const line of clientLines) {
+        if (line.client.id === subject.client.id)
+          drawClientLine(root, clientLineKey(line.arrow), p, centerOf(line.machine));
+      }
+      return;
+    }
     if (subject._tag === "connect") {
       const line = root.querySelector<SVGLineElement>("line.live");
       const from = centerOf(subject.machine);
@@ -473,6 +519,11 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
         `.pair[data-pair="${CSS.escape(pairKey(a, b))}"]`,
       );
       if (card && spot) moveElement(card, spot);
+    }
+    for (const line of clientLines) {
+      const to = at.get(line.machine.id);
+      if (line.machine.id === id && to)
+        drawClientLine(root, clientLineKey(line.arrow), clientCenter(line.client), to);
     }
   };
 
@@ -588,6 +639,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       const box = shown.at.get(m.id);
       return box ? [box] : [];
     }),
+    ...clientBoxes,
     ...pairs.map((pair, i) => ({
       ...(shown.spots[i] ?? { x: 0, y: 0 }),
       ...(sizes[`pair:${pairKey(...pair)}`] ?? estimate.pair),
@@ -609,7 +661,8 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   // shows no card. It waits for the measured card sizes, which come before the first paint.
   // Until the user zooms or pans, "Fit" runs again when a card, the layer or the map changes size,
   // for example when a machine comes online and its card grows. A drop of a card keeps the view. React never writes the transform, so each render puts it back.
-  const measured = machines.length + map.notes.length === 0 || Object.keys(sizes).length > 0;
+  const measured =
+    machines.length + clients.length + map.notes.length === 0 || Object.keys(sizes).length > 0;
   useLayoutEffect(() => {
     if (size.width > 0 && measured) {
       const boxes = cardBoxes();
@@ -797,20 +850,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const toggle = (machine: MachineRecord) =>
     portal.select(focus === machine.id ? NO_SELECTION : { _tag: "machine", id: machine.id });
 
-  /** A dropped machine settles beside the others, not on top of one. The others stay. */
-  const settle = (id: MachineId, p: Point): MapPosition => {
-    const index = machines.findIndex((m) => m.id === id);
-    const machine = machines[index];
-    if (!machine) return toPosition(p);
-    const boxes = [
-      ...machines.map((m, i) =>
-        i === index ? nodeBox(m, p) : (nodes[i] ?? nodeBox(m, toPixels(m.position))),
-      ),
-      ...noteBoxes,
-    ];
+  /**
+   * A dropped machine or client settles beside the other cards, not on top of one. The others
+   * stay. `index` counts in the order of `spread`: machines, then clients, then notes.
+   */
+  const settle = (index: number, dropped: Box): MapPosition => {
+    const boxes = spread.map((box, i) => (i === index ? dropped : box));
     const fixed = new Set([...boxes.keys()].filter((i) => i !== index));
-    const box = separate(boxes, width, height, fixed)[index];
-    return toPosition(box ?? p);
+    return toPosition(separate(boxes, width, height, fixed)[index] ?? dropped);
   };
 
   /**
@@ -855,6 +902,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     const { subject } = finished;
     if (!finished.moved) {
       if (subject._tag === "machine") toggle(subject.machine);
+      if (subject._tag === "client") portal.select({ _tag: "client", id: subject.client.id });
       // A tap on a handle opens the machine, where "Connect to" works without a drag.
       if (subject._tag === "connect") portal.select({ _tag: "machine", id: subject.machine.id });
       return;
@@ -862,12 +910,29 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     switch (subject._tag) {
       case "machine": {
         const machine = subject.machine;
-        const settled = settle(machine.id, finished.at);
+        const settled = settle(
+          machines.findIndex((m) => m.id === machine.id),
+          nodeBox(machine, finished.at),
+        );
         paint(subject, toPixels(settled), finished.element);
         if (samePosition(settled, toPosition(finished.from))) return;
         save(setHeldPlaces, `machine:${machine.id}`, settled, `Moved ${machine.name}`, {
           _tag: "putMachine",
           machine: { ...machine, position: settled },
+        });
+        return;
+      }
+      case "client": {
+        const client = subject.client;
+        const placed = settle(
+          machines.length + clients.findIndex((c) => c.id === client.id),
+          clientBox(client, finished.at),
+        );
+        paint(subject, toPixels(placed), finished.element);
+        if (samePosition(placed, toPosition(finished.from))) return;
+        save(setHeldPlaces, `client:${client.id}`, placed, `Moved ${client.name}`, {
+          _tag: "putClient",
+          client: { ...client, position: placed },
         });
         return;
       }
@@ -1208,6 +1273,20 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                 />
               );
             })}
+            {clientLines.map(({ arrow, cut, machine, client }) => (
+              <path
+                key={clientLineKey(arrow)}
+                data-client-line={clientLineKey(arrow)}
+                d={pairPath(clientCenter(client), centerOf(machine), null)}
+                className={[
+                  "client-line",
+                  cut && "cut",
+                  focus && (focus === machine.id ? "hot" : "dim"),
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              />
+            ))}
             {linking !== null && <line className="live" />}
           </svg>
           {size.width > 0 &&
@@ -1260,6 +1339,56 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                       ))}
                     </div>
                   )}
+                </div>
+              );
+            })}
+          {size.width > 0 &&
+            clients.map((client) => {
+              const p = clientCenter(client);
+              const on = selection._tag === "client" && selection.id === client.id;
+              return (
+                <div
+                  key={client.id}
+                  data-size-key={`client:${client.id}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={on}
+                  aria-label={`${client.name}, client`}
+                  className={`card node client${on ? " on" : ""}${readOnly ? " readonly" : ""}`}
+                  style={{ left: p.x, top: p.y }}
+                  onPointerDown={(event) => startDrag(event, { _tag: "client", client }, p)}
+                  onClick={
+                    readOnly ? () => portal.select({ _tag: "client", id: client.id }) : undefined
+                  }
+                  onKeyDown={onPressKey(() => portal.select({ _tag: "client", id: client.id }))}
+                >
+                  <span className="sticker state">client</span>
+                  <div className="name">
+                    <span className="icon">
+                      <ClientIcon />
+                    </span>
+                    <span className="label">
+                      {client.name}
+                      <span className="sub">
+                        {client.keys.length === 1 ? "1 browser" : `${client.keys.length} browsers`}
+                      </span>
+                    </span>
+                  </div>
+                  {/* MM-309: the level on each machine sits on the card, so no card covers it. */}
+                  <div className="tags">
+                    {clientLines
+                      .filter((line) => line.client.id === client.id)
+                      .map(({ arrow, cut, machine }) => (
+                        <span
+                          key={machine.id}
+                          className={`sticker lvl-${arrow.level}${cut ? " was" : ""}`}
+                          data-tip={`${usesText(client.name, machine.name)}: ${cut ? `cut by the pause, was ${LEVEL_LABEL[arrow.level]}` : LEVEL_LABEL[arrow.level]}${arrow.expiresAt ? `, until ${shortTime(arrow.expiresAt)}` : ""}`}
+                        >
+                          {machine.name} · {LEVEL_LABEL[arrow.level]}
+                          {arrow.expiresAt && " · temp"}
+                        </span>
+                      ))}
+                  </div>
                 </div>
               );
             })}

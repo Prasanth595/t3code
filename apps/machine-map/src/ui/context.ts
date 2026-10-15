@@ -11,7 +11,13 @@ import type {
 } from "@t3tools/contracts/machineMap";
 import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
-import type { PauseView, PendingRotation, TunnelSetup, WriteResult } from "../api.ts";
+import type {
+  PauseView,
+  PendingClient,
+  PendingRotation,
+  TunnelSetup,
+  WriteResult,
+} from "../api.ts";
 import type { Route, Selection, View } from "./route.ts";
 
 /** One held change of a draft (MM-707). */
@@ -67,6 +73,8 @@ export interface Portal {
   readonly health: ResourcesOverview;
   /** MM-212: join codes used per machine while this page was open. */
   readonly joins: Readonly<Record<string, number>>;
+  /** MM-906: browser keys that wait for approval or that the owner rejected. Null until the first list. */
+  readonly pending: ReadonlyArray<PendingClient> | null;
   readonly draft: ReadonlyArray<DraftChange> | null;
   readonly now: number;
   readonly route: Route;

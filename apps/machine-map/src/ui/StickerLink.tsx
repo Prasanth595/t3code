@@ -49,6 +49,16 @@ export function RouteLink(props: {
   );
 }
 
+/** A client name that opens the client panel and keeps the current view (MM-1115). */
+export function ClientLink(props: { readonly id: string; readonly children: ReactNode }) {
+  const { route } = usePortalContext();
+  return (
+    <RouteLink route={{ view: route.view, selection: { _tag: "client", id: props.id } }}>
+      {props.children}
+    </RouteLink>
+  );
+}
+
 /** A machine name that opens the machine panel and keeps the current view. */
 export function MachineLink(props: { readonly id: string; readonly children: ReactNode }) {
   const { route } = usePortalContext();

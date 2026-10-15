@@ -6,9 +6,10 @@ import * as Schema from "effect/Schema";
 import { MachineId } from "@t3tools/contracts/machineMap";
 import { RESOURCE_RANGES } from "@t3tools/contracts/machineMapResources";
 
-import { machineClientId, ownerEmail } from "./access.ts";
+import { approvalEmail, machineClientId, ownerEmail } from "./access.ts";
 import {
   AddMachineRequest,
+  ApproveClientRequest,
   ChangesRequest,
   CommandRequest,
   EnrollRequest,
@@ -18,6 +19,7 @@ import {
   RevisionRequest,
   ThresholdsRequest,
 } from "./api.ts";
+import { APPROVALS_MAX_SECONDS, APPROVALS_PATH } from "./cloudflare.ts";
 import type { Env } from "./env.ts";
 import { MACHINE_CLIENT_ID_HEADER, type Outcome, type OwnerContext } from "./MachineMapObject.ts";
 import { fetchNewestRelease } from "./releases.ts";
@@ -35,7 +37,7 @@ const toResponse = <T>(outcome: Outcome<T>): Response =>
 const mapObject = (env: Env) => env.MAP.getByName("map");
 
 /** API paths of the form `/api/<resource>/<id>/...`. */
-const ID_RESOURCES = new Set(["commands", "proposals", "machines", "presets"]);
+const ID_RESOURCES = new Set(["commands", "proposals", "machines", "presets", "pending"]);
 
 async function readBody<T>(
   request: Request,
@@ -52,8 +54,7 @@ async function readBody<T>(
   }
 }
 
-async function ownerContext(request: Request, env: Env): Promise<OwnerContext | null> {
-  const email = await ownerEmail(request, env);
+async function ownerContext(request: Request, email: string | null): Promise<OwnerContext | null> {
   if (!email) return null;
   const userAgent = request.headers.get("User-Agent");
   const { device, browser } = describeUserAgent(userAgent);
@@ -69,6 +70,42 @@ async function ownerContext(request: Request, env: Env): Promise<OwnerContext | 
   };
 }
 
+/** A write from another site. A page of the portal sends its own origin, or none. */
+const crossOrigin = (request: Request, url: URL): boolean =>
+  request.method !== "GET" &&
+  request.headers.get("Origin") !== null &&
+  request.headers.get("Origin") !== url.origin;
+
+/**
+ * MM-1207: the approval path. Its own Access app asks for a fresh MFA, so its JWT has another
+ * audience than the pages. Only actions that let a browser key in run here.
+ */
+async function grant(request: Request, env: Env, url: URL): Promise<Response> {
+  const stub = mapObject(env);
+  const email = await approvalEmail(request, env, await stub.approvalsAud(), APPROVALS_MAX_SECONDS);
+  const owner = await ownerContext(request, email);
+  if (!owner) return fail(403, "Approvals need a fresh passkey check. Confirm with it again.");
+  if (crossOrigin(request, url)) return fail(403, "Wrong origin.");
+  const route = `${request.method} ${url.pathname.slice(APPROVALS_PATH.length)}`;
+  switch (route) {
+    case "GET /start": {
+      // The page comes here for the MFA, then goes back to its own route. Only a hash route.
+      const then = url.searchParams.get("then") ?? "";
+      return Response.redirect(new URL(`/${then.startsWith("#/") ? then : ""}`, url).href, 303);
+    }
+    case "GET /check":
+      return json({ ok: true });
+    case "POST /approve": {
+      const body = await readBody(request, ApproveClientRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.approveClient(owner, url.host, body));
+    }
+    default:
+      return fail(404, `No route ${request.method} ${url.pathname}.`);
+  }
+}
+
 const integer = (value: string | null): number | null => {
   if (value === null || value.trim() === "") return null;
   const parsed = Number(value);
@@ -76,7 +113,7 @@ const integer = (value: string | null): number | null => {
 };
 
 async function api(request: Request, env: Env, url: URL): Promise<Response> {
-  const owner = await ownerContext(request, env);
+  const owner = await ownerContext(request, await ownerEmail(request, env));
   // MM-102: fail closed.
   if (!owner) return fail(403, "Only the owner can use the portal.");
   const stub = mapObject(env);
@@ -95,13 +132,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     if (request.headers.get("Origin") !== url.origin) return fail(403, "Wrong origin.");
     return stub.fetch(new Request(new URL("/api/events", url), request));
   }
-  if (
-    request.method !== "GET" &&
-    request.headers.get("Origin") !== null &&
-    request.headers.get("Origin") !== url.origin
-  ) {
-    return fail(403, "Wrong origin.");
-  }
+  if (crossOrigin(request, url)) return fail(403, "Wrong origin.");
 
   switch (route) {
     case "GET /snapshot":
@@ -177,6 +208,14 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.resume(owner));
     case "GET /fork-release":
       return json(await fetchNewestRelease());
+    case "GET /clients/approvals":
+      return toResponse(await stub.approvalsStatus(owner, url.host));
+    case "POST /clients/approvals":
+      return toResponse(await stub.setUpApprovals(owner, url.host));
+    case "POST /pending/:id/reject":
+      return toResponse(await stub.rejectPendingClient(owner, id));
+    case "POST /pending/:id/unblock":
+      return toResponse(await stub.unblockPendingClient(owner, id));
     case "GET /devices":
       return toResponse(await stub.devices(owner));
     case "POST /devices/sign-out-everywhere":
@@ -221,6 +260,7 @@ export default {
       forwarded.headers.set(MACHINE_CLIENT_ID_HEADER, clientId);
       return mapObject(env).fetch(forwarded);
     }
+    if (url.pathname.startsWith(`${APPROVALS_PATH}/`)) return grant(request, env, url);
     if (url.pathname.startsWith("/api/")) return api(request, env, url);
     return fail(404, "Not found.");
   },

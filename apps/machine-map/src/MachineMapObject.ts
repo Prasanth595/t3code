@@ -7,6 +7,7 @@
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 import {
+  ClientId,
   MACHINE_MAP_PROTOCOL,
   machineSessionSubject,
   MachineCommand,
@@ -19,6 +20,7 @@ import {
   MapRevision,
   MapToolInputs,
   ScopedSettingValues,
+  type ClientRecord,
   type CommandDelivery,
   type MachineCommandInput,
   type MachineRecord,
@@ -42,6 +44,8 @@ import {
 
 import type {
   AddMachineRequest,
+  ApprovalsStatus,
+  ApproveClientRequest,
   ChangesRequest,
   CommandRequest,
   DevicesResponse,
@@ -52,6 +56,8 @@ import type {
   MapToolResult,
   PauseEvent,
   PauseResponse,
+  PendingClient,
+  PendingClientsEvent,
   PendingRotation,
   PortalSignIn,
   PushEndpointRequest,
@@ -73,13 +79,20 @@ import { PauseState } from "./api.ts";
 import { configured, ownerEmails } from "./access.ts";
 import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
 import { sendPush, vapidKey, type PushTarget, type VapidKey } from "./push.ts";
-import { CloudflareApi, tunnelTarget } from "./cloudflare.ts";
+import {
+  approvalsAppProblem,
+  CloudflareApi,
+  tunnelTarget,
+  type ApprovalsApp,
+} from "./cloudflare.ts";
 import type { Env } from "./env.ts";
 import {
   arrowChange,
+  clientArrowChange,
   decideAgentWrite,
   gateTool,
   raisesAnyAccess,
+  touchesClients,
   usesText,
 } from "./rules/access.ts";
 import {
@@ -100,9 +113,13 @@ import {
 import {
   applyChanges,
   checkEditableChanges,
+  clientWithKey,
   desiredState,
   emptyMap,
+  findClient,
   findMachine,
+  keepClientKeys,
+  undoChanges,
   freePosition,
   hasJoined,
   machinesTouched,
@@ -111,6 +128,7 @@ import {
 import {
   applyPresetChanges,
   cutArrows,
+  cutClientArrows,
   lockdownChanges,
   PAUSE_SUMMARY,
   PausedAccess,
@@ -195,6 +213,7 @@ const encodeTunnelGrant = (grant: MachineTunnelGrant): string => JSON.stringify(
 const PauseRecord = Schema.Struct({ state: PauseState, before: PausedAccess });
 type PauseRecord = typeof PauseRecord.Type;
 const decodePause = decodeJson(PauseRecord);
+const decodeApprovalsApp = decodeJson(Schema.Struct({ id: Schema.String, aud: Schema.String }));
 const decodeHelloProtocol = Schema.decodeUnknownOption(
   Schema.TaggedStruct("hello", { protocol: Schema.Number }),
 );
@@ -236,6 +255,13 @@ const SNAPSHOT_FINISHED_COMMANDS = 100;
 const SIGN_IN_WRITE_MS = 60_000;
 /** MM-709: an offline machine stops its agents if it connects within 7 days of the pause. */
 const PAUSE_STOP_MINUTES = 7 * 24 * 60;
+/** MM-906: waiting and rejected keys per reporting machine. A full list drops its oldest. */
+const PENDING_PER_MACHINE = 20;
+/** MM-906: new keys that one machine can report in `PENDING_WINDOW_MS`. More wait for the next window. */
+const PENDING_NEW_PER_WINDOW = 5;
+const PENDING_WINDOW_MS = 10 * MINUTE_MS;
+/** MM-906: a waiting or rejected key that stops signing in leaves after this time. */
+const PENDING_KEEP_MS = 14 * 24 * HOUR_MS;
 /** MM-1501: the portal asks a machine for a sample at most this often. */
 const SAMPLE_REQUEST_GAP_MS = 10_000;
 /** MM-1506: pages get the active alerts and this many ended ones. */
@@ -361,6 +387,7 @@ export class MachineMapObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS enroll_attempts (ip TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sign_ins (id TEXT PRIMARY KEY, device TEXT NOT NULL, browser TEXT NOT NULL, place TEXT NOT NULL, first_seen TEXT NOT NULL, last_used TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS machine_tunnels (machine_id TEXT PRIMARY KEY, tunnel_id TEXT NOT NULL, hostname TEXT NOT NULL, created_tunnel INTEGER NOT NULL, dns_record_id TEXT, access_host_added INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS pending_clients (thumbprint TEXT PRIMARY KEY, described_as TEXT NOT NULL, email TEXT, seen_on TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, state TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, sign_in_id TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
     // MM-213: the sealed tunnel grant of a join code. Null for a code without a tunnel.
@@ -523,7 +550,148 @@ export class MachineMapObject extends DurableObject<Env> {
   #pauseEvent(): PauseEvent {
     const pause = this.#pause;
     if (!pause) return { _tag: "pause", pause: null };
-    return { _tag: "pause", pause: { ...pause.state, cut: cutArrows(this.#map, pause.before) } };
+    return {
+      _tag: "pause",
+      pause: {
+        ...pause.state,
+        cut: cutArrows(this.#map, pause.before),
+        cutClients: cutClientArrows(this.#map, pause.before),
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------- clients
+
+  #pendingClients(): Array<PendingClient> {
+    return this.#sql<{
+      thumbprint: string;
+      described_as: string;
+      email: string | null;
+      seen_on: string;
+      first_seen: string;
+      last_seen: string;
+      state: string;
+    }>("SELECT * FROM pending_clients ORDER BY last_seen DESC").map((row) => ({
+      thumbprint: row.thumbprint,
+      describedAs: row.described_as,
+      email: row.email,
+      seenOn: MachineId.make(row.seen_on),
+      firstSeenAt: row.first_seen,
+      lastSeenAt: row.last_seen,
+      state: row.state === "rejected" ? "rejected" : "pending",
+    }));
+  }
+
+  #pendingEvent(): PendingClientsEvent {
+    return { _tag: "pendingClients", pending: this.#pendingClients() };
+  }
+
+  #pendingClient(thumbprint: string): PendingClient {
+    const found = this.#pendingClients().find((p) => p.thumbprint === thumbprint);
+    if (!found) throw new PortalError(404, "This sign-in no longer waits.");
+    return found;
+  }
+
+  /**
+   * MM-906: a machine saw a browser key that no client holds. The first report keeps its machine,
+   * so another machine cannot take over a row and push it out of the list.
+   */
+  #recordClientSeen(
+    machine: MachineRecord,
+    seen: { thumbprint: string; describedAs: string; email: string | null },
+  ): void {
+    if (clientWithKey(this.#map, seen.thumbprint)) return;
+    const now = Date.now();
+    const at = new Date(now).toISOString();
+    const known = this.#sql<{ seen_on: string; last_seen: string }>(
+      "SELECT seen_on, last_seen FROM pending_clients WHERE thumbprint = ?",
+      seen.thumbprint,
+    )[0];
+    if (known) {
+      // Only the first machine updates a row, at most once a minute per key.
+      if (known.seen_on !== machine.id || now - Date.parse(known.last_seen) < MINUTE_MS) return;
+      this.#sql(
+        "UPDATE pending_clients SET described_as = ?, email = ?, last_seen = ? WHERE thumbprint = ?",
+        seen.describedAs,
+        seen.email,
+        at,
+        seen.thumbprint,
+      );
+    } else {
+      const recent = this.#sql<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM pending_clients WHERE seen_on = ? AND first_seen > ?",
+        machine.id,
+        new Date(now - PENDING_WINDOW_MS).toISOString(),
+      )[0];
+      if ((recent?.count ?? 0) >= PENDING_NEW_PER_WINDOW) {
+        console.error("too many new sign-ins", machine.id);
+        return;
+      }
+      this.#sql(
+        "INSERT INTO pending_clients (thumbprint, described_as, email, seen_on, first_seen, last_seen, state) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+        seen.thumbprint,
+        seen.describedAs,
+        seen.email,
+        machine.id,
+        at,
+        at,
+      );
+      this.#sql(
+        `DELETE FROM pending_clients WHERE seen_on = ? AND thumbprint NOT IN
+         (SELECT thumbprint FROM pending_clients WHERE seen_on = ? ORDER BY last_seen DESC LIMIT ?)`,
+        machine.id,
+        machine.id,
+        PENDING_PER_MACHINE,
+      );
+    }
+    this.#broadcast(this.#pendingEvent());
+    if (known) return;
+    this.#notify({
+      title: "A new device waits for approval",
+      body: `${seen.describedAs || "A browser"} signed in to ${machine.name}.`,
+      url: `/#/clients/pending/${encodeURIComponent(seen.thumbprint)}`,
+      tag: `pending:${seen.thumbprint}`,
+    });
+  }
+
+  /** MM-1208: the stored approvals app, or null before the owner set it up. */
+  #approvalsApp(): { id: string; aud: string } | null {
+    const row = this.#sql<{ value: string }>(
+      "SELECT value FROM meta WHERE key = 'approvals_app'",
+    )[0];
+    return row ? decodeApprovalsApp(row.value) : null;
+  }
+
+  /**
+   * MM-1207: the reason approvals do not work now, or null. It reads the app and the organization
+   * from Cloudflare each time, so an edit in the dashboard stops approvals at once.
+   */
+  async #approvalsProblem(host: string): Promise<string | null> {
+    // Local development only, like `DEV_FAKE_ACCESS` in `access.ts`: no Cloudflare on loopback.
+    const { hostname } = new URL(`http://${host}`);
+    if (this.env.DEV_FAKE_ACCESS === "1" && (hostname === "localhost" || hostname === "127.0.0.1"))
+      return null;
+    const api = this.#cloudflare();
+    if (!api) return "Approvals need the CF_API_TOKEN secret (MM-1205).";
+    const stored = this.#approvalsApp();
+    if (!stored) return "Set up approvals first.";
+    let app: ApprovalsApp;
+    let methods: ReadonlyArray<string>;
+    try {
+      [app, methods] = await Promise.all([
+        api.approvalsApp(stored.id),
+        api.organizationMfaMethods(),
+      ]);
+    } catch (error) {
+      return `Cloudflare did not confirm the approvals app: ${errorMessage(error)}`;
+    }
+    if (app.aud !== stored.aud) return "The approvals app changed. Set up approvals again.";
+    const problem = approvalsAppProblem(app, host, ownerEmails(this.env));
+    if (problem) return `${problem} Set up approvals again.`;
+    const allowed = app.mfa_config?.allowed_authenticators ?? [];
+    if (!methods.some((method) => allowed.includes(method)))
+      return "Turn on independent MFA with passkeys or security keys in Zero Trust, Access settings.";
+    return null;
   }
 
   // ---------------------------------------------------------------- sockets
@@ -535,7 +703,8 @@ export class MachineMapObject extends DurableObject<Env> {
       | PauseEvent
       | HealthEvent
       | ResourceSampleEvent
-      | EnrolledEvent,
+      | EnrolledEvent
+      | PendingClientsEvent,
   ): void {
     const text = JSON.stringify(event);
     for (const ws of this.ctx.getWebSockets(PAGE_TAG)) {
@@ -604,6 +773,7 @@ export class MachineMapObject extends DurableObject<Env> {
       server.send(JSON.stringify(this.#rotationsEvent()));
       server.send(JSON.stringify(this.#pauseEvent()));
       server.send(JSON.stringify(this.#healthEvent()));
+      server.send(JSON.stringify(this.#pendingEvent()));
       return new Response(null, { status: 101, webSocket: client });
     }
     if (pathname === "/connect") {
@@ -774,6 +944,10 @@ export class MachineMapObject extends DurableObject<Env> {
         this.#recordSample(id, message.sample);
         return;
       }
+      case "clientSeen": {
+        this.#recordClientSeen(machine, message);
+        return;
+      }
       case "rotated": {
         const row = this.#sql<{ token_client_id: string }>(
           "SELECT token_client_id FROM rotations WHERE machine_id = ?",
@@ -934,6 +1108,12 @@ export class MachineMapObject extends DurableObject<Env> {
     );
   }
 
+  /** MM-1805: what needs the owner: proposals, waiting sign-ins and active health alerts. */
+  #badgeCount(): number {
+    const waiting = this.#pendingClients().filter((p) => p.state === "pending").length;
+    return this.#proposals().length + waiting + this.#alerts("active").length;
+  }
+
   /**
    * MM-1807, MM-1808: sends one message to every subscribed device, with the badge count of
    * MM-1805. `skipSignIn` leaves out the device that caused it. A gone subscription is deleted.
@@ -941,7 +1121,7 @@ export class MachineMapObject extends DurableObject<Env> {
   #notify(message: Omit<PushMessage, "badge">, skipSignIn: string | null = null): void {
     const targets = this.#pushTargets(skipSignIn);
     if (targets.length === 0) return;
-    const badge = this.#proposals().length + this.#alerts("active").length;
+    const badge = this.#badgeCount();
     this.ctx.waitUntil(this.#deliver(targets, { ...message, badge }));
   }
 
@@ -1081,6 +1261,9 @@ export class MachineMapObject extends DurableObject<Env> {
     summary: string,
     changes: ReadonlyArray<MapChange>,
   ): WriteResult {
+    // MM-807: only the owner changes clients, never through a proposal either.
+    if (touchesClients(changes))
+      throw new PortalError(403, "Only the owner changes clients, in the portal.");
     checkEditableChanges(this.#map, changes);
     const decision = decideAgentWrite(this.#map, actor.machineId, changes);
     if (decision._tag === "apply") {
@@ -1159,11 +1342,9 @@ export class MachineMapObject extends DurableObject<Env> {
   #undoChanges(revisionNumber: number): { summary: string; changes: ReadonlyArray<MapChange> } {
     const revision = this.#revision(revisionNumber);
     if (!revision) throw new PortalError(404, `Unknown revision ${revisionNumber}.`);
-    checkEditableChanges(this.#map, revision.inverse);
-    return {
-      summary: `Undo rev ${revision.revision}: ${revision.summary}`,
-      changes: revision.inverse,
-    };
+    const changes = undoChanges(this.#map, revision.inverse);
+    checkEditableChanges(this.#map, changes);
+    return { summary: `Undo rev ${revision.revision}: ${revision.summary}`, changes };
   }
 
   #presetChanges(
@@ -1510,6 +1691,10 @@ export class MachineMapObject extends DurableObject<Env> {
   async #scheduleAlarm(): Promise<void> {
     const times = [
       ...this.#map.arrows.flatMap((arrow) => (arrow.expiresAt ? [arrow.expiresAt] : [])),
+      ...this.#map.clientArrows.flatMap((arrow) => (arrow.expiresAt ? [arrow.expiresAt] : [])),
+      ...this.#sql<{ last_seen: string }>("SELECT last_seen FROM pending_clients").map((r) =>
+        new Date(Date.parse(r.last_seen) + PENDING_KEEP_MS).toISOString(),
+      ),
       ...this.#commandsWithStatus("queued").map((command) => command.expiresAt),
       ...this.#proposals().map((proposal) => proposal.expiresAt),
       ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM join_codes").map(
@@ -1567,6 +1752,27 @@ export class MachineMapObject extends DurableObject<Env> {
         ],
       );
     }
+    for (const arrow of this.#map.clientArrows) {
+      if (arrow.expiresAt === null || arrow.revertLevel === null || !isDue(arrow.expiresAt, now))
+        continue;
+      const client = findClient(this.#map, arrow.client)?.name ?? arrow.client;
+      const to = findMachine(this.#map, arrow.to)?.name ?? arrow.to;
+      this.#commit(
+        { _tag: "portal", reason: "expiry" },
+        `${usesText(client, to)}: back to ${arrow.revertLevel}`,
+        [
+          {
+            _tag: "setClientArrow",
+            arrow: { ...arrow, level: arrow.revertLevel, expiresAt: null, revertLevel: null },
+          },
+        ],
+      );
+    }
+    const stale = this.#sql<{ thumbprint: string }>(
+      "DELETE FROM pending_clients WHERE last_seen < ? RETURNING thumbprint",
+      new Date(now - PENDING_KEEP_MS).toISOString(),
+    );
+    if (stale.length > 0) this.#broadcast(this.#pendingEvent());
     for (const command of this.#commandsWithStatus("queued")) {
       if (!isDue(command.expiresAt, now)) continue;
       this.#saveCommand({
@@ -1647,10 +1853,12 @@ export class MachineMapObject extends DurableObject<Env> {
   /** POST /api/changes: owner changes apply at once (MM-701). */
   changes(owner: OwnerContext, request: ChangesRequest) {
     return this.#run(owner, (): WriteResult => {
-      checkEditableChanges(this.#map, request.changes);
+      // MM-909: a held draft or an open panel can send an older client record. It keeps the keys.
+      const changes = keepClientKeys(this.#map, request.changes);
+      checkEditableChanges(this.#map, changes);
       return {
         _tag: "applied",
-        revision: this.#commit(ownerActor(owner), request.summary, request.changes).revision,
+        revision: this.#commit(ownerActor(owner), request.summary, changes).revision,
       };
     });
   }
@@ -2062,7 +2270,7 @@ export class MachineMapObject extends DurableObject<Env> {
         body: "Health alerts, proposals and the emergency pause show here.",
         url: "/#/clients",
         tag: "test",
-        badge: this.#proposals().length + this.#alerts("active").length,
+        badge: this.#badgeCount(),
       };
       const subject = `mailto:${ownerEmails(this.env)[0] ?? "owner@invalid"}`;
       const result = await sendPush(target, message, key, subject).catch((error: unknown) => {
@@ -2146,6 +2354,129 @@ export class MachineMapObject extends DurableObject<Env> {
       this.#sql("DELETE FROM sign_ins");
       return { accessMessage, revokeCommands };
     });
+  }
+
+  /** MM-1208: whether approvals work. `host` is the portal hostname of the page. */
+  approvalsStatus(owner: OwnerContext, host: string) {
+    return this.#run(owner, async (): Promise<ApprovalsStatus> => {
+      const problem = await this.#approvalsProblem(host);
+      return problem === null ? { _tag: "ready" } : { _tag: "missing", reason: problem };
+    });
+  }
+
+  /** MM-1208: creates the approvals app, or makes it again when it drifted. */
+  setUpApprovals(owner: OwnerContext, host: string) {
+    return this.#run(owner, async (): Promise<ApprovalsStatus> => {
+      const api = this.#cloudflare();
+      if (!api) throw new PortalError(503, "Approvals need the CF_API_TOKEN secret (MM-1205).");
+      const app = await api.ensureApprovalsApp(host, ownerEmails(this.env));
+      this.#sql(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('approvals_app', ?)",
+        JSON.stringify({ id: app.id, aud: app.aud }),
+      );
+      const problem = await this.#approvalsProblem(host);
+      return problem === null ? { _tag: "ready" } : { _tag: "missing", reason: problem };
+    });
+  }
+
+  /** The audience that the Worker checks on the approval path (MM-1207). No owner: it runs first. */
+  approvalsAud(): string | null {
+    return this.#approvalsApp()?.aud ?? null;
+  }
+
+  /**
+   * MM-907: the waiting key joins a client. The Worker checked the fresh MFA, and the portal checks
+   * again that Cloudflare still requires it, so a changed app cannot approve.
+   */
+  approveClient(owner: OwnerContext, host: string, request: ApproveClientRequest) {
+    return this.#run(owner, async (): Promise<WriteResult> => {
+      const problem = await this.#approvalsProblem(host);
+      if (problem) throw new PortalError(409, problem);
+      const pending = this.#pendingClient(request.thumbprint);
+      if (pending.state === "rejected") throw new PortalError(409, "Unblock this sign-in first.");
+      const holder = clientWithKey(this.#map, pending.thumbprint);
+      if (holder) throw new PortalError(409, `${holder.name} already holds this key.`);
+      const at = nowIso();
+      const key = { thumbprint: pending.thumbprint, addedAt: at, describedAs: pending.describedAs };
+      let client: ClientRecord;
+      let joins: MapChange;
+      if (request.client._tag === "existing") {
+        const existing = findClient(this.#map, request.client.clientId);
+        if (!existing) throw new PortalError(404, "This client is gone.");
+        // MM-907: the key gets the access of the client. Change arrows in the client panel.
+        if (request.arrows.length > 0)
+          throw new PortalError(400, "An existing client keeps its own arrows.");
+        // MM-711: Resume returns the arrows that the pause cut, so a key added now would get them.
+        if (this.#pause?.before.clientArrows.some((a) => a.client === existing.id)) {
+          throw new PortalError(
+            423,
+            `Everything is paused, and Resume gives ${existing.name} access again. Resume first.`,
+          );
+        }
+        if (existing.email !== null && existing.email !== pending.email) {
+          throw new PortalError(
+            409,
+            `${existing.name} signs in as ${existing.email}, but this sign-in used ${pending.email ?? "no email"}.`,
+          );
+        }
+        client = existing;
+        joins = { _tag: "addClientKey", clientId: existing.id, key };
+      } else {
+        const name = request.client.name;
+        if (this.#map.clients.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+          throw new PortalError(409, `A client named ${name} is already on the map.`);
+        }
+        client = {
+          id: ClientId.make(`client-${slug(name)}-${randomHex(2)}`),
+          name,
+          email: pending.email,
+          keys: [key],
+          position: freePosition([
+            ...this.#map.machines.map((m) => m.position),
+            ...this.#map.clients.map((c) => c.position),
+          ]),
+          createdAt: at,
+        };
+        joins = { _tag: "putClient", client };
+      }
+      const arrows: Array<MapChange> = request.arrows
+        .filter((arrow) => arrow.level !== "none")
+        .map((arrow) => {
+          if (!findMachine(this.#map, arrow.to))
+            throw new PortalError(404, `Unknown machine ${arrow.to}.`);
+          return clientArrowChange(this.#map, {
+            client: client.id,
+            to: arrow.to,
+            level: arrow.level,
+            expiresAt: null,
+          });
+        });
+      const revision = this.#commit(
+        ownerActor(owner),
+        `Approved ${pending.describedAs || "a browser"} as ${client.name}`,
+        [joins, ...arrows],
+      );
+      this.#sql("DELETE FROM pending_clients WHERE thumbprint = ?", pending.thumbprint);
+      this.#broadcast(this.#pendingEvent());
+      return { _tag: "applied", revision: revision.revision };
+    });
+  }
+
+  /** MM-908: a rejected key gets nothing and stays in the list as rejected. */
+  rejectPendingClient(owner: OwnerContext, thumbprint: string) {
+    return this.#run(owner, () => this.#setPendingState(thumbprint, "rejected"));
+  }
+
+  /** MM-908: the way back from a rejection. The key waits for approval again. */
+  unblockPendingClient(owner: OwnerContext, thumbprint: string) {
+    return this.#run(owner, () => this.#setPendingState(thumbprint, "pending"));
+  }
+
+  #setPendingState(thumbprint: string, state: PendingClient["state"]): PendingClient {
+    this.#pendingClient(thumbprint);
+    this.#sql("UPDATE pending_clients SET state = ? WHERE thumbprint = ?", state, thumbprint);
+    this.#broadcast(this.#pendingEvent());
+    return this.#pendingClient(thumbprint);
   }
 
   #saveThresholds(thresholds: Readonly<Record<string, HealthThresholds>>): void {
