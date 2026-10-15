@@ -1,4 +1,5 @@
 {
-  "platforms": ["android"],
+  "platforms": ["apple", "android"],
+  "apple": { "appDelegateSubscribers": ["T3AgentAlertDismissSubscriber"] },
   "android": { "modules": ["expo.modules.t3agentnotifications.T3AgentNotificationsModule"] }
 }
