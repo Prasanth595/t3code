@@ -592,6 +592,13 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     status: "completed",
                     rawOutput: "Render revenue chart",
                   });
+                  // A repeated completion keeps the call's page and takes no other.
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:1",
+                    status: "completed",
+                    rawOutput: "Render revenue chart",
+                  });
                   // A call with no page published for its arguments stays as reported.
                   yield* send({
                     sessionUpdate: "tool_call_update",

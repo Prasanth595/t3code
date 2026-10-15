@@ -75,11 +75,14 @@ const make = Effect.gen(function* () {
       ),
     takeHtmlRender: (threadId, input) =>
       Ref.modify(htmlRenders, (kept) => {
+        // Agents can report a numeric argument as a string, e.g. "240".
+        const height =
+          typeof input.height === "string" && input.height.trim() !== ""
+            ? Number(input.height)
+            : input.height;
         const index = kept.findIndex(
           (page) =>
-            page.threadId === threadId &&
-            page.title === input.title &&
-            page.height === input.height,
+            page.threadId === threadId && page.title === input.title && page.height === height,
         );
         return index === -1
           ? [undefined, kept]

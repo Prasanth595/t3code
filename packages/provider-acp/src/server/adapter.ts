@@ -3365,12 +3365,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // Antigravity reports its own summary of an MCP call in place of
             // the result, so a completed html_render can arrive without its
             // page. The MCP server kept the page for the thread; storing it on
-            // the tool keeps it through later updates of this call.
+            // the tool keeps it through later updates of this call. A repeated
+            // completion replaces that stored output with the summary again,
+            // so it reuses the call's page instead of taking another one.
             const page =
               status === "completed" &&
               resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME &&
               htmlRenderFromToolItem({ toolName, output }) === undefined
-                ? yield* mcpSessions.takeHtmlRender(context.input.threadId, input)
+                ? (htmlRenderFromToolItem({
+                    toolName,
+                    output:
+                      previous?.data.rawOutput === undefined
+                        ? undefined
+                        : acpMcpToolCallOutput(previous.data.rawOutput),
+                  }) ?? (yield* mcpSessions.takeHtmlRender(context.input.threadId, input)))
                 : undefined;
             if (page !== undefined) {
               context.tools.set(toolCall.toolCallId, {
