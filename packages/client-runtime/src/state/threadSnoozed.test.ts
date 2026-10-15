@@ -330,6 +330,25 @@ describe("threadWokeAt", () => {
     },
   );
 
+  it.each([
+    ["error", "2026-04-10T10:00:00.000Z", "2026-04-10T11:00:00.000Z"],
+    ["failed", "2026-04-10T10:00:00.000Z", "2026-04-10T11:00:00.000Z"],
+    ["failed", "2026-04-10T11:30:00.000Z", "2026-04-10T11:30:00.000Z"],
+    ["running", "2026-04-10T10:00:00.000Z", "2026-04-10T10:00:00.000Z"],
+  ] as const)(
+    "uses the latest wake event for a %s runtime and a question at %s",
+    (status, pendingUserInputAt, expectedWakeAt) => {
+      const shell = {
+        ...makeShell({ snoozedUntil: FUTURE_WAKE, pending: "user-input", pendingUserInputAt }),
+        runtime: { status, updatedAt: "2026-04-10T11:00:00.000Z" },
+      };
+      const lastVisitedAt = "2026-04-10T10:30:00.000Z";
+      const wokeAt = threadWokeAt(shell, { now: NOW });
+      expect(wokeAt).toBe(expectedWakeAt);
+      expect(Date.parse(wokeAt!) > Date.parse(lastVisitedAt)).toBe(status !== "running");
+    },
+  );
+
   it("keeps the early wake authoritative after the scheduled time passes", () => {
     // Woke early at 10:30 via run-completed; the scheduled wake (PAST_WAKE
     // 10:00 relative to a later now) has ALSO passed. Reporting the

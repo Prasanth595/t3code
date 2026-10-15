@@ -225,6 +225,13 @@ export function threadWokeAt(
       shell.snoozedAt != null &&
       Date.parse(shell.pendingUserInputAt) > Date.parse(shell.snoozedAt)
     ) {
+      if (
+        (runtime?.status === "error" || runtime?.status === "failed") &&
+        runtime.updatedAt != null &&
+        Date.parse(runtime.updatedAt) > Date.parse(shell.pendingUserInputAt)
+      ) {
+        return runtime.updatedAt;
+      }
       return shell.pendingUserInputAt;
     }
     return runtime?.updatedAt ?? shell.snoozedAt ?? null;
