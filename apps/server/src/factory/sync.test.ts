@@ -14,19 +14,29 @@ const NEWEST = "v0.0.10-nightly.20261015.3145";
 const ROUTE_TREE = "apps/web/src/routeTree.gen.ts";
 
 // Every stub appends its invocation to $SYNC_TEST_LOG. `gh` answers the calls
-// sync.sh reads from: `pr create` prints a URL, `issue list` prints the JSON in
-// $SYNC_TEST_ISSUES. `check.sh` fails with $SYNC_TEST_CHECK_OUTPUT when set.
+// sync.sh reads from: `pr create` prints a URL, and `issue list` prints the
+// number of the issue in $SYNC_TEST_ISSUES whose title is the quoted --search
+// text, as the real command does with its --jq filter. `check.sh` fails with
+// $SYNC_TEST_CHECK_OUTPUT when set.
 const ghStub = `#!/usr/bin/env bash
 echo "gh $*" >> "$SYNC_TEST_LOG"
 for ((i = 1; i <= $#; i++)); do
-  if [[ \${!i} == --body-file ]]; then
-    j=$((i + 1))
-    cp "\${!j}" "$SYNC_TEST_LOG.body"
-  fi
+  j=$((i + 1))
+  case "\${!i}" in
+    --body-file) cp "\${!j}" "$SYNC_TEST_LOG.body" ;;
+    --search) search=\${!j} ;;
+  esac
 done
 case "$1 $2" in
   "pr create") echo "https://example.test/pr/1" ;;
-  "issue list") echo "\${SYNC_TEST_ISSUES:-[]}" ;;
+  "issue list")
+    node -e '
+      const title = process.argv[1].replace(/^"(.*)" in:title$/, "$1");
+      const issues = JSON.parse(process.env.SYNC_TEST_ISSUES || "[]");
+      const hit = issues.find((issue) => issue.title === title);
+      if (hit) console.log(hit.number);
+    ' "$search"
+    ;;
 esac
 exit 0
 `;
@@ -215,7 +225,7 @@ describe("sync.sh", () => {
     );
     expect(calls).not.toContainEqual(expect.stringMatching(/^(vp|check\.sh|gh pr)/));
     expect(body).toContain("- README.md");
-    expect(body).not.toContain(ROUTE_TREE);
+    expect(body).not.toContain(`- ${ROUTE_TREE}`);
   });
 
   it("comments on the open conflicts issue instead of opening another", () => {
