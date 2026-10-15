@@ -2,7 +2,7 @@
 // `nofun-artifacts compile` writes a Canvas bundle directory from a spec, tsx, or page file.
 import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { parseCanvasBackground, parseCanvasSize, writeCanvasBundle } from "./canvas-bundle.ts";
 import { compileArtifact, compilePage } from "./compiler.ts";
@@ -98,6 +98,19 @@ function parseFlags(argv: readonly string[]): Flags {
   return flags;
 }
 
+function requireBundleIndex(outDir: string): void {
+  const indexHtml = NodePath.join(NodePath.resolve(outDir), "index.html");
+  let stat: NodeFs.Stats | undefined;
+  try {
+    stat = NodeFs.lstatSync(indexHtml);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (!stat?.isFile()) {
+    throw new Error(`compile produced no bundle/index.html at ${indexHtml}.`);
+  }
+}
+
 async function compile(argv: readonly string[]): Promise<void> {
   const flags = withPresetDefaults(parseFlags(argv));
   const preset = flags.preset ? canvasPreset(flags.preset) : undefined;
@@ -112,6 +125,11 @@ async function compile(argv: readonly string[]): Promise<void> {
   }
   if (flags.runtimeSha && !flags.linked) {
     throw new Error(`--runtime-sha needs --linked. ${USAGE}`);
+  }
+  // Tests set this to force the missing-bundle exit without a components checkout.
+  if (process.env.NOFUN_ARTIFACTS_FORCE_NO_OUTPUT === "1") {
+    requireBundleIndex(flags.out);
+    return;
   }
   const file = chosen[0]!;
   const lane = flags.spec ? "spec" : flags.tsx ? "tsx" : "page";
@@ -171,6 +189,7 @@ async function compile(argv: readonly string[]): Promise<void> {
     ...(staged && staged.files.length > 0 ? { assets: staged.files } : {}),
     sourceFile: { name: NodePath.basename(file), bytes },
   });
+  requireBundleIndex(flags.out);
   console.log(
     `${manifest.name} ${compiled.lane} ${(compiled.bytes / 1024).toFixed(0)} KiB → ${NodePath.resolve(flags.out)}`,
   );
@@ -197,10 +216,37 @@ async function main(): Promise<void> {
   await compile(argv.slice(1));
 }
 
-const invoked = process.argv[1] ? pathToFileURL(NodePath.resolve(process.argv[1])).href : "";
-if (invoked === import.meta.url) {
+// Node realpaths the module URL (macOS /tmp -> /private/tmp, and
+// --experimental-strip-types does the same) while argv keeps the path it was
+// given. Compare real paths. A mismatch used to fall off the end and exit 0.
+function directInvocation(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return (
+      NodeFs.realpathSync(NodePath.resolve(entry)) ===
+      NodeFs.realpathSync(fileURLToPath(import.meta.url))
+    );
+  } catch {
+    return false;
+  }
+}
+
+if (directInvocation()) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(2);
   });
+} else {
+  const entry = process.argv[1] ? NodePath.resolve(process.argv[1]) : "(missing argv[1])";
+  let here = fileURLToPath(import.meta.url);
+  try {
+    here = NodeFs.realpathSync(here);
+  } catch {
+    // The module path can be missing in a torn checkout; report it as-is.
+  }
+  console.error(
+    `nofun-artifacts did not run: ${entry} is not this CLI (${here}) after realpath.`,
+  );
+  process.exit(2);
 }
