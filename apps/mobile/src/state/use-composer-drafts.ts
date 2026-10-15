@@ -330,6 +330,8 @@ export interface ComposerDraft {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly importedShareIds?: ReadonlyArray<string>;
   readonly modelSelection?: ModelSelection;
+  /** Shared thread model when the local model choice was made. */
+  readonly modelSelectionBase?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
@@ -365,7 +367,12 @@ export interface ComposerDraftWorkspaceSelection {
 
 export type ComposerDraftSettingsUpdate = Pick<
   ComposerDraft,
-  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection" | "project"
+  | "modelSelection"
+  | "modelSelectionBase"
+  | "runtimeMode"
+  | "interactionMode"
+  | "workspaceSelection"
+  | "project"
 >;
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
@@ -395,6 +402,7 @@ const ComposerDraftSchema = Schema.Struct({
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),
+  modelSelectionBase: Schema.optional(ModelSelectionSchema),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
@@ -1508,6 +1516,7 @@ export function updateComposerDraftSettings(
   updateComposerDrafts((current) => {
     const draft = {
       ...normalizeDraft(current[draftKey]),
+      ...("modelSelection" in settings ? { modelSelectionBase: undefined } : {}),
       ...settings,
     };
     return withComposerDraft(current, draftKey, draft);
@@ -1533,6 +1542,7 @@ export function clearComposerDraftContentState(
     importedShareIds: _importedShareIds,
     context: _context,
     modelSelection,
+    modelSelectionBase,
     workspaceSelection,
     project: _project,
     ...retained
@@ -1540,6 +1550,9 @@ export function clearComposerDraftContentState(
   const draft = {
     ...retained,
     ...(options?.clearModelSelection || modelSelection === undefined ? {} : { modelSelection }),
+    ...(options?.clearModelSelection || modelSelectionBase === undefined
+      ? {}
+      : { modelSelectionBase }),
     ...(options?.clearWorkspaceSelection || workspaceSelection === undefined
       ? {}
       : { workspaceSelection }),
@@ -1721,6 +1734,7 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
     a.context === b.context &&
     a.importedShareIds === b.importedShareIds &&
     a.modelSelection === b.modelSelection &&
+    a.modelSelectionBase === b.modelSelectionBase &&
     a.runtimeMode === b.runtimeMode &&
     a.interactionMode === b.interactionMode &&
     a.workspaceSelection === b.workspaceSelection
@@ -1756,7 +1770,12 @@ export function undoComposerDraftMergeState(
   // A setting still holding the merge's value is the merge's doing: restore
   // the snapshot's. One the user changed since the merge stays theirs.
   const undoSetting = <
-    K extends "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection",
+    K extends
+      | "modelSelection"
+      | "modelSelectionBase"
+      | "runtimeMode"
+      | "interactionMode"
+      | "workspaceSelection",
   >(
     key: K,
   ): ComposerDraft[K] => (existing[key] === merged[key] ? snapshot[key] : existing[key]);
@@ -1774,6 +1793,7 @@ export function undoComposerDraftMergeState(
       (attachment) => !insertedAttachmentIds.has(attachment.id),
     ),
     modelSelection: undoSetting("modelSelection"),
+    modelSelectionBase: undoSetting("modelSelectionBase"),
     runtimeMode: undoSetting("runtimeMode"),
     interactionMode: undoSetting("interactionMode"),
     workspaceSelection: undoSetting("workspaceSelection"),

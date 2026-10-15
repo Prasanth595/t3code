@@ -109,6 +109,8 @@ import {
 } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import { modelSelectionsEqual } from "./thread-outbox-model";
+import { resolveThreadComposerModelSelection } from "./thread-composer-model";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
@@ -334,7 +336,28 @@ export function useThreadComposerState() {
   const draftAttachments = editedDraft?.attachments ?? [];
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
-  const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
+  const modelSelection = resolveThreadComposerModelSelection(
+    selectedDraft,
+    selectedThread?.modelSelection,
+  );
+  useEffect(() => {
+    if (!selectedThreadKey || !selectedThread?.modelSelection || !selectedDraft?.modelSelection)
+      return;
+    const draft = getComposerDraftSnapshot(selectedThreadKey);
+    const resolved = resolveThreadComposerModelSelection(draft, selectedThread.modelSelection);
+    if (
+      draft.modelSelection &&
+      resolved &&
+      modelSelectionsEqual(resolved, selectedThread.modelSelection)
+    ) {
+      updateComposerDraftSettings(selectedThreadKey, { modelSelection: undefined });
+    } else if (draft.modelSelection && draft.modelSelectionBase === undefined) {
+      // Anchor recovered messages and legacy unsent drafts on first use too.
+      updateComposerDraftSettings(selectedThreadKey, {
+        modelSelectionBase: selectedThread.modelSelection,
+      });
+    }
+  }, [selectedThreadKey, selectedThread?.modelSelection, selectedDraft?.modelSelection]);
   const pendingHandoff = useMemo(
     () =>
       resolvePendingHandoff(
@@ -625,7 +648,8 @@ export function useThreadComposerState() {
         return null;
       }
 
-      const modelSelection = draft.modelSelection ?? thread.modelSelection;
+      const modelSelection =
+        resolveThreadComposerModelSelection(draft, thread.modelSelection) ?? thread.modelSelection;
       const serverConfig = selectedEnvironmentRuntime?.serverConfig;
       if (
         selectedEnvironmentRuntime?.connectionState === "connected" &&
@@ -1043,12 +1067,13 @@ export function useThreadComposerState() {
       );
       updateComposerDraftSettings(selectedThreadKey, {
         modelSelection: value,
+        modelSelectionBase: selectedThread?.modelSelection,
         ...(provider?.showInteractionModeToggle === false
           ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
           : {}),
       });
     },
-    [selectedEnvironmentRuntime?.serverConfig, selectedThreadKey],
+    [selectedEnvironmentRuntime?.serverConfig, selectedThreadKey, selectedThread?.modelSelection],
   );
 
   const onUpdateRuntimeMode = useCallback(
@@ -1066,9 +1091,10 @@ export function useThreadComposerState() {
       if (!selectedThreadKey) {
         return;
       }
-      const modelSelection =
-        getComposerDraftSnapshot(selectedThreadKey).modelSelection ??
-        selectedThread?.modelSelection;
+      const modelSelection = resolveThreadComposerModelSelection(
+        getComposerDraftSnapshot(selectedThreadKey),
+        selectedThread?.modelSelection,
+      );
       const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
         (candidate) => candidate.instanceId === modelSelection?.instanceId,
       );
