@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - the tests lay out real run files to list.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 

@@ -1,5 +1,5 @@
-// @effect-diagnostics globalDate:off
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalDate:off - one test checks lines are stamped with the wall clock.
+// @effect-diagnostics nodeBuiltinImport:off - the tests read and lay out a real machine log.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -258,25 +258,45 @@ describe("open", () => {
     expect(synced).toEqual([dataDir, NodePath.join(root, "fresh")]);
   });
 
-  it("open in an existing data dir leaves its mode alone and syncs only that directory", () => {
+  it("open in an existing data dir leaves its mode alone and still syncs it and its parent", () => {
     const dataDir = tempDir();
     NodeFS.chmodSync(dataDir, 0o755);
     const synced: Array<string> = [];
     open(dataDir, ticking(T0, 1), { syncDir: (dir) => void synced.push(dir) });
     expect(NodeFS.statSync(dataDir).mode & 0o777).toBe(0o755);
-    expect(synced).toEqual([dataDir]);
+    expect(synced).toEqual([dataDir, NodePath.dirname(dataDir)]);
   });
 
-  it("open on an existing log syncs no directory and leaves the bytes alone", () => {
+  it("open on an existing log syncs the data dir and its parent and leaves the bytes alone", () => {
     const dataDir = tempDir();
     const content = lineAtT0("pass_started", `{}`);
     NodeFS.writeFileSync(logFile(dataDir), content);
     NodeFS.chmodSync(logFile(dataDir), 0o644);
     const synced: Array<string> = [];
     open(dataDir, ticking(T0, 1), { syncDir: (dir) => void synced.push(dir) });
-    expect(synced).toEqual([]);
+    expect(synced).toEqual([dataDir, NodePath.dirname(dataDir)]);
     expect(readText(logFile(dataDir))).toBe(content);
     expect(NodeFS.statSync(logFile(dataDir)).mode & 0o777).toBe(0o644);
+  });
+
+  it("an open whose directory sync fails is an Io error, and the retry syncs and appends", () => {
+    const root = tempDir();
+    const dataDir = NodePath.join(root, "data");
+    const error = catchLedgerError(() =>
+      open(dataDir, ticking(T0, 1), {
+        syncDir: () => {
+          throw new Error("injected disk error");
+        },
+      }),
+    );
+    expect(error.kind).toBe("Io");
+    expect(error.path).toBe(dataDir);
+
+    const synced: Array<string> = [];
+    const log = open(dataDir, ticking(T0, 1), { syncDir: (dir) => void synced.push(dir) });
+    expect(synced).toEqual([dataDir, root]);
+    log.append(passStarted);
+    expect(readText(logFile(dataDir))).toBe(lineAtT0("pass_started", `{}`));
   });
 
   it("open ends an incomplete last line with a newline and leaves one that ends in a newline alone", () => {
@@ -338,6 +358,17 @@ describe("append", () => {
     const lines = readText(logFile(dataDir)).split("\n");
     expect(lines[0]).toContain(`"data":{"repo":"a/b","issue":8,"reason":"limit"}`);
     expect(lines[1]).toContain(`"data":{"repo":"a/b","issue":"ENG-42","outcome":"released"}`);
+  });
+
+  it("append writes an issue number above 2^53 digit for digit", () => {
+    const dataDir = tempDir();
+    const log = open(dataDir, ticking(T0, 1000));
+    for (const issue of ["9007199254740993", "18446744073709551615"]) {
+      log.append({ event: "claim_skipped", data: { repo: "a/b", issue, reason: "limit" } });
+    }
+    const lines = readText(logFile(dataDir)).split("\n");
+    expect(lines[0]).toContain(`"issue":9007199254740993,`);
+    expect(lines[1]).toContain(`"issue":18446744073709551615,`);
   });
 
   it("append writes the five example lines of the doc as exact bytes, with no cause", () => {
@@ -466,6 +497,34 @@ describe("append", () => {
     expect(readText(logFile(dataDir))).toBe(`${line}{"ts":"202\n${line}${line}`);
     // The reader skips the fragment and gets the three whole lines.
     expect(scanMachineLog(dataDir)).toHaveLength(3);
+  });
+
+  it("a line another handle's failed write cut off gets a line break before this handle's event", () => {
+    const dataDir = tempDir();
+    let failAfter: number | null = null;
+    const io: AppendIo = {
+      writeSync(fd, buffer) {
+        if (failAfter !== null) {
+          const keep = failAfter;
+          failAfter = null;
+          NodeFS.writeSync(fd, buffer.subarray(0, keep));
+          throw new Error("injected disk error");
+        }
+        return NodeFS.writeSync(fd, buffer);
+      },
+      fsyncSync: (fd) => NodeFS.fsyncSync(fd),
+    };
+    const first = open(dataDir, ticking(T0, 0), { io });
+    const second = open(dataDir, ticking(T0, 0));
+    failAfter = 10;
+    expect(catchLedgerError(() => first.append(passStarted)).kind).toBe("Io");
+    second.append(passStarted);
+    const line = lineAtT0("pass_started", `{}`);
+    expect(readText(logFile(dataDir))).toBe(`{"ts":"202\n${line}`);
+    // The first handle still adds its own break after its failure, as softfac does: a blank line.
+    first.append(passStarted);
+    expect(readText(logFile(dataDir))).toBe(`{"ts":"202\n${line}\n${line}`);
+    expect(scanMachineLog(dataDir)).toHaveLength(2);
   });
 
   it("a failed sync gets a line break before the next event", () => {

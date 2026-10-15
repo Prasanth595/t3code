@@ -1,5 +1,5 @@
-// @effect-diagnostics globalDate:off
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalDate:off - one test checks lines are stamped with the wall clock.
+// @effect-diagnostics nodeBuiltinImport:off - the tests read and lay out real run files.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -518,7 +518,7 @@ describe("create", () => {
     expect(NodeFS.statSync(NodePath.join(dataDir, "runs")).mode & 0o777).toBe(0o700);
   });
 
-  it("create syncs runs, then the data dir when runs is new, then its parent when the data dir is new", () => {
+  it("create syncs runs, then the data dir, then its parent, whether or not it made them", () => {
     const root = tempDir();
     const dataDir = NodePath.join(root, "data");
     const synced: Array<string> = [];
@@ -528,7 +528,25 @@ describe("create", () => {
     synced.length = 0;
     const second: RunId = { ...softfacRun, attempt: 2 };
     create(dataDir, ticking(T0, 1), second, { syncDir: (dir) => void synced.push(dir) });
-    expect(synced).toEqual([NodePath.join(dataDir, "runs")]);
+    expect(synced).toEqual([NodePath.join(dataDir, "runs"), dataDir, root]);
+  });
+
+  it("a create retried after a failed sync still syncs the directories the first try made", () => {
+    const root = tempDir();
+    const dataDir = NodePath.join(root, "data");
+    let failing = true;
+    const synced: Array<string> = [];
+    const syncDir = (dir: string) => {
+      if (failing && dir === dataDir) throw new Error("injected disk error");
+      synced.push(dir);
+    };
+    expect(
+      catchLedgerError(() => create(dataDir, ticking(T0, 1), softfacRun, { syncDir })).path,
+    ).toBe(dataDir);
+    failing = false;
+    synced.length = 0;
+    create(dataDir, ticking(T0, 1), softfacRun, { syncDir });
+    expect(synced).toEqual([NodePath.join(dataDir, "runs"), dataDir, root]);
   });
 
   it("create removes the file it just made if the directory sync fails", () => {
@@ -728,6 +746,35 @@ describe("append", () => {
     });
   });
 
+  it("a cause attempt that is not a u32 is left out, so the cause still reads back", () => {
+    const dataDir = tempDir();
+    const ledger = create(dataDir, ticking(T0, 0));
+    const handBuilt = (attempt: number): Cause => ({
+      step: "gate",
+      reason: "gate-regated",
+      attempt,
+    });
+    const causes = [
+      makeCause("gate", "gate-regated", { attempt: -1 }),
+      handBuilt(1.5),
+      handBuilt(2 ** 32),
+      handBuilt(Number.NaN),
+      handBuilt(4294967295),
+    ];
+    for (const cause of causes) ledger.append(step("s"), cause);
+    expect(readSoftfacRun(dataDir).entries.map((entry) => entry.cause)).toEqual([
+      { step: "gate", reason: "gate-regated" },
+      { step: "gate", reason: "gate-regated" },
+      { step: "gate", reason: "gate-regated" },
+      { step: "gate", reason: "gate-regated" },
+      { step: "gate", reason: "gate-regated", attempt: 4294967295 },
+    ]);
+    expect(makeCause("gate", "gate-regated", { attempt: -1 })).toEqual({
+      step: "gate",
+      reason: "gate-regated",
+    });
+  });
+
   it("a cause cleans actor and label of control and bidi characters and cuts them at 100, and cuts a command at 1000", () => {
     const actor = makeCause("start", "approved", { actor: "al\u0007i‮ce⁦\u0000\n\u007f\u0085" });
     expect(actor.actor).toBe("alice");
@@ -861,6 +908,9 @@ describe("open", () => {
         line(`{"attempt":6,"command":"c","exit_code":2147483648,"duration_ms":5}`),
         // A missing command.
         line(`{"attempt":7,"exit_code":0,"duration_ms":5}`),
+        // An attempt below or above u32.
+        line(`{"attempt":-1,"command":"c","exit_code":0,"duration_ms":5}`),
+        line(`{"attempt":4294967296,"command":"c","exit_code":0,"duration_ms":5}`),
       ].join(""),
     );
     const ledger = reopen(dataDir, ticking(T0 + 5000, 1000));
@@ -905,6 +955,54 @@ describe("open", () => {
     NodeFS.mkdirSync(runFileFor(dataDir), { recursive: true });
     expect(catchLedgerError(() => readSoftfacRun(dataDir)).kind).toBe("NotFound");
     expect(catchLedgerError(() => reopen(dataDir)).kind).toBe("NotFound");
+  });
+
+  it("open counts a whole finished line that a crash left without its newline", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, `${RED}${finishedSample.line.trimEnd()}`);
+    const ledger = reopen(dataDir);
+    const before = NodeFS.readFileSync(runFileFor(dataDir));
+    expect(catchLedgerError(() => ledger.append(step("green"), testCause())).kind).toBe(
+      "AlreadyFinished",
+    );
+    expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(before);
+  });
+
+  it("open counts a whole gate command line that a crash left without its newline", () => {
+    const dataDir = tempDir();
+    writeRun(
+      dataDir,
+      `{"ts":"2026-10-04T10:13:16.123Z","ms":1791108796123,"event":"gate_command","data":{"attempt":1,"command":"c","exit_code":0,"duration_ms":5}}`,
+    );
+    const ledger = reopen(dataDir, ticking(T0 + 5000, 1000));
+    ledger.finish("stuck", null, null, testCause());
+    expect(lastLine(dataDir)).toContain(`"total_ms":5000,"gate_attempts":1,`);
+  });
+
+  it("a handle refuses to append after another handle finished the run", () => {
+    const dataDir = tempDir();
+    const first = create(dataDir);
+    const second = reopen(dataDir);
+    first.finish("stuck", null, null, testCause());
+    const before = NodeFS.readFileSync(runFileFor(dataDir));
+    expect(catchLedgerError(() => second.append(step("green"), testCause())).kind).toBe(
+      "AlreadyFinished",
+    );
+    expect(catchLedgerError(() => second.finish("stuck", null, null, testCause())).kind).toBe(
+      "AlreadyFinished",
+    );
+    expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(before);
+  });
+
+  it("a handle's finish counts the lines another handle wrote after it opened", () => {
+    const dataDir = tempDir();
+    const first = create(dataDir, scripted([T0, T0 + 1000]));
+    const second = reopen(dataDir, scripted([T0 + 2000, T0 + 9000]));
+    first.append(step("red"), testCause());
+    first.append(gate(1, "cargo test"), testCause());
+    second.append(gate(2, "cargo test"), testCause());
+    second.finish("stuck", null, null, testCause());
+    expect(lastLine(dataDir)).toContain(`"total_ms":9000,"gate_attempts":2,`);
   });
 
   it("a created ledger and a reopened one interleave appends without overwriting", () => {

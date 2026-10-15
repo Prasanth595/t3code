@@ -4,42 +4,37 @@
  * of the fields in softfac's `Event` enum, which is the order serde writes them in.
  */
 
+import { isU32 } from "./limits.ts";
+
 /** Which part of the factory wrote a line. */
-export const CAUSE_STEPS = [
-  "start",
-  "watch",
-  "forward",
-  "advance",
-  "gate",
-  "pass",
-  "retro",
-  "operator",
-] as const;
-export type CauseStep = (typeof CAUSE_STEPS)[number];
+export type CauseStep =
+  | "start"
+  | "watch"
+  | "forward"
+  | "advance"
+  | "gate"
+  | "pass"
+  | "retro"
+  | "operator";
 
 /** How a run ended. */
-export const OUTCOMES = ["pr-open", "stuck", "needs-info"] as const;
-export type Outcome = (typeof OUTCOMES)[number];
+export type Outcome = "pr-open" | "stuck" | "needs-info";
 
 /** How a run's pull request ended, for a run that ended because it did. */
-export const PR_ENDS = ["merged", "closed"] as const;
-export type PrEnd = (typeof PR_ENDS)[number];
+export type PrEnd = "merged" | "closed";
 
 /** The label names without their `factory:` prefix. */
-export const STATE_NAMES = [
-  "proposed",
-  "ready",
-  "triage",
-  "needs-info",
-  "building",
-  "pr-open",
-  "stuck",
-] as const;
-export type StateName = (typeof STATE_NAMES)[number];
+export type StateName =
+  | "proposed"
+  | "ready"
+  | "triage"
+  | "needs-info"
+  | "building"
+  | "pr-open"
+  | "stuck";
 
 /** What an `error` line was about. */
-export const ERROR_KINDS = ["github", "tracker", "t3", "git", "gate", "ledger", "config"] as const;
-export type ErrorKind = (typeof ERROR_KINDS)[number];
+export type ErrorKind = "github" | "tracker" | "t3" | "git" | "gate" | "ledger" | "config";
 
 /** One required check in a `checks_read` line. */
 export type CheckRead = { readonly name: string; readonly state: string };
@@ -50,8 +45,11 @@ export type ResumedFrom = { readonly run: string; readonly branch: string };
 /**
  * Something that happened in a run, as `{ event, data }`. A field that softfac omits when it is
  * absent is optional here and left out of the line when `undefined`; every other field is
- * written, as `null` when softfac writes `null`. No event holds a token, a comment body or a
- * prompt.
+ * written, as `null` when softfac writes `null`. No event holds a token. Two kinds of field do
+ * hold text the factory sent elsewhere, written as given, not cleaned or cut: the `questions`
+ * of `questions_posted` (what was posted to the issue), and the `message` of
+ * `regate_relaunching`, `feedback_relaunching` and `feedback_forwarding` (what was sent to the
+ * agent session).
  */
 export type RunEvent =
   | { readonly event: "claimed"; readonly data: { machine: string; github_user: string } }
@@ -311,9 +309,10 @@ const cleanCauseText = (text: string, limit: number): string => {
 };
 
 /**
- * A cause. `actor` and `label` are cleaned and cut at 100 characters, and `command` is cleaned
- * and cut at 1000; the keys come in the order step, reason, actor, command, attempt, label, and
- * only when set.
+ * A cause. `actor` and `label` are cleaned and cut at 100 characters, `command` is cleaned and
+ * cut at 1000, and an `attempt` that is not a u32 is left out, since softfac would read the
+ * whole cause as none; the keys come in the order step, reason, actor, command, attempt, label,
+ * and only when set.
  */
 export const makeCause = (step: CauseStep, reason: string, extras: CauseExtras = {}): Cause => ({
   step,
@@ -322,14 +321,15 @@ export const makeCause = (step: CauseStep, reason: string, extras: CauseExtras =
   ...(extras.command !== undefined && {
     command: cleanCauseText(extras.command, CAUSE_COMMAND_LIMIT),
   }),
-  ...(extras.attempt !== undefined && { attempt: extras.attempt }),
+  ...(isU32(extras.attempt) && { attempt: extras.attempt }),
   ...(extras.label !== undefined && { label: cleanCauseText(extras.label, CAUSE_FIELD_LIMIT) }),
 });
 
 /**
  * The cause as written to a line: the keys in softfac's order, whatever order they were built in,
  * with the text fields cleaned and cut here too, so a `Cause` built by hand cannot put session
- * or comment text in the file. `reason`, `actor` and `label` are cut at 100, `command` at 1000.
+ * or comment text in the file. `reason`, `actor` and `label` are cut at 100, `command` at 1000,
+ * and an `attempt` that is not a u32 is left out.
  */
 export const causeObject = (cause: Cause): Record<string, unknown> => {
   const clean = (text: string | undefined, limit: number) =>
@@ -338,42 +338,36 @@ export const causeObject = (cause: Cause): Record<string, unknown> => {
     reason: clean(cause.reason, CAUSE_FIELD_LIMIT),
     actor: clean(cause.actor, CAUSE_FIELD_LIMIT),
     command: clean(cause.command, CAUSE_COMMAND_LIMIT),
+    attempt: isU32(cause.attempt) ? cause.attempt : undefined,
     label: clean(cause.label, CAUSE_FIELD_LIMIT),
   });
 };
 
 /** How a retro ended. */
-export const RETRO_RESULTS = [
-  "thread-gone",
-  "done",
-  "stopped",
-  "failed",
-  "interrupted",
-  "cancelled",
-  "rolled_back",
-  "timed-out",
-] as const;
-export type RetroResult = (typeof RETRO_RESULTS)[number];
+export type RetroResult =
+  | "thread-gone"
+  | "done"
+  | "stopped"
+  | "failed"
+  | "interrupted"
+  | "cancelled"
+  | "rolled_back"
+  | "timed-out";
 
 /** How a half-made claim was put right. */
-export const CLAIM_REPAIRS = ["finished", "released", "reconciled"] as const;
-export type ClaimRepair = (typeof CLAIM_REPAIRS)[number];
+export type ClaimRepair = "finished" | "released" | "reconciled";
 
 /** Where a self-update failed. */
-export const UPDATE_STEPS = ["check", "checkout", "install", "verify", "config"] as const;
-export type UpdateStep = (typeof UPDATE_STEPS)[number];
+export type UpdateStep = "check" | "checkout" | "install" | "verify" | "config";
 
 /** Which report to the fleet app failed. */
-export const FLEET_CALLS = ["token", "heartbeat", "events", "desired"] as const;
-export type FleetCall = (typeof FLEET_CALLS)[number];
+export type FleetCall = "token" | "heartbeat" | "events" | "desired";
 
 /** What the fleet app asked this machine for. */
-export const DESIRED_WHATS = ["target-commit", "config"] as const;
-export type DesiredWhat = (typeof DESIRED_WHATS)[number];
+export type DesiredWhat = "target-commit" | "config";
 
 /** What came of a request from the fleet app. */
-export const DESIRED_STATES = ["applied", "refused", "failed"] as const;
-export type DesiredState = (typeof DESIRED_STATES)[number];
+export type DesiredState = "applied" | "refused" | "failed";
 
 /**
  * Something that happened that belongs to no run, as `{ event, data }`. `reason` is a code from
@@ -457,9 +451,9 @@ export type MachineEventName = MachineEvent["event"];
 /**
  * An issue key as softfac's `IssueKey` serialises it: a GitHub number as a JSON number, a Linear
  * identifier as its capitalised string. The key is the canonical form `parseIssueKey` returns.
+ * The number is written from its digits, so a key above 2^53 is not rounded.
  */
-export const issueKeyJson = (key: string): number | string =>
-  /^\d+$/.test(key) ? Number(key) : key;
+export const issueKeyJson = (key: string): unknown => (/^\d+$/.test(key) ? JSON.rawJSON(key) : key);
 
 type KeysOfEach<T> = T extends unknown ? keyof T : never;
 type MachineDataKeys<N extends MachineEventName> = KeysOfEach<

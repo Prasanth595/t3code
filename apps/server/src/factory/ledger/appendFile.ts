@@ -1,8 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - softfac's write rules need raw fds: O_NOFOLLOW, one write per line and fsync.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { LedgerError, errnoCode, ioError } from "./errors.ts";
+import { NEWLINE } from "./limits.ts";
 
 /**
  * The two file operations an append performs. A seam so a test can make them fail the way a full
@@ -32,25 +33,23 @@ export const syncDir: SyncDir = (dir) => {
 };
 
 /**
- * Create `path` if it is missing, owner-only (`0o700`); true if it did not exist before. Missing
- * parents are made the ordinary way, and a directory that already exists is left as it is,
- * whatever its mode. Throws what `node:fs` throws.
+ * Create `path` if it is missing, owner-only (`0o700`). Missing parents are made the ordinary
+ * way, and a directory that already exists is left as it is, whatever its mode. Throws what
+ * `node:fs` throws.
  */
-export const ensureDir = (path: string): boolean => {
+export const ensureDir = (path: string): void => {
   try {
     NodeFS.statSync(path);
-    return false;
+    return;
   } catch (error) {
     if (errnoCode(error) !== "ENOENT") throw error;
   }
   NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
   try {
     NodeFS.mkdirSync(path, { mode: 0o700 });
-    return true;
   } catch (error) {
     // Someone else made it between the check and here.
-    if (errnoCode(error) === "EEXIST") return false;
-    throw error;
+    if (errnoCode(error) !== "EEXIST") throw error;
   }
 };
 
@@ -63,7 +62,14 @@ export const syncAt = (sync: SyncDir, dir: string): void => {
   }
 };
 
-const NEWLINE = 0x0a;
+/** True when the file is empty or its last byte is a newline. Throws what `node:fs` throws. */
+const endsInNewline = (fd: number): boolean => {
+  const size = NodeFS.fstatSync(fd).size;
+  if (size === 0) return true;
+  const last = Buffer.alloc(1);
+  NodeFS.readSync(fd, last, 0, 1, size - 1);
+  return last[0] === NEWLINE;
+};
 
 /**
  * Open an existing regular file for append, never creating it and never following a symlink
@@ -88,15 +94,10 @@ export const openForAppend = (
   }
   let repaired = false;
   try {
-    const size = NodeFS.fstatSync(fd).size;
-    if (size > 0) {
-      const last = Buffer.alloc(1);
-      NodeFS.readSync(fd, last, 0, 1, size - 1);
-      if (last[0] !== NEWLINE) {
-        NodeFS.writeSync(fd, "\n");
-        NodeFS.fsyncSync(fd);
-        repaired = true;
-      }
+    if (!endsInNewline(fd)) {
+      NodeFS.writeSync(fd, "\n");
+      NodeFS.fsyncSync(fd);
+      repaired = true;
     }
   } catch (error) {
     NodeFS.closeSync(fd);
@@ -110,7 +111,8 @@ export const parentOf = (dir: string): string => NodePath.dirname(dir);
 
 /**
  * An open file that lines are appended to, one write each: the part a run file and the machine
- * log have in common.
+ * log have in common. The fd must be open for reading too. Several handles may append to one
+ * file; nothing locks it, so two appends made at the same instant are not ordered.
  */
 export class AppendFile {
   readonly path: string;
@@ -121,6 +123,8 @@ export class AppendFile {
    * next append starts with a `\n` so it cannot be glued onto that fragment.
    */
   private dirty = false;
+  /** How far `readNewLines` has read: always the end of a whole line. */
+  private seen = 0;
 
   constructor(path: string, fd: number, io: AppendIo = nodeIo) {
     this.path = path;
@@ -128,16 +132,49 @@ export class AppendFile {
     this.io = io;
   }
 
+  private openFd(): number {
+    if (this.fd === null) throw ioError(this.path, new Error("the file is closed"));
+    return this.fd;
+  }
+
+  /**
+   * The whole lines added to the file since the last call, by this handle or any other, and on
+   * the first call every whole line. A last line with no newline yet is left for a later call.
+   */
+  readNewLines(): Buffer {
+    const fd = this.openFd();
+    try {
+      const size = NodeFS.fstatSync(fd).size;
+      if (size <= this.seen) return Buffer.alloc(0);
+      const bytes = Buffer.alloc(size - this.seen);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const count = NodeFS.readSync(fd, bytes, offset, bytes.length - offset, this.seen + offset);
+        if (count === 0) break;
+        offset += count;
+      }
+      const whole = bytes.subarray(0, bytes.subarray(0, offset).lastIndexOf(NEWLINE) + 1);
+      this.seen += whole.length;
+      return whole;
+    } catch (error) {
+      throw ioError(this.path, error);
+    }
+  }
+
   /**
    * Append `line` (which ends in a newline) as one write of the whole line, then sync, so a
-   * crash loses at most the line in flight. `written` runs once the whole line is in the file,
-   * before it is known to be durable: the line counts even if making it durable fails.
+   * crash loses at most the line in flight. When the file does not end in a newline (a write of
+   * this handle or another one was cut off), the write starts with one.
    */
-  writeLine(line: string, written: () => void = () => {}): void {
-    const fd = this.fd;
-    if (fd === null) throw ioError(this.path, new Error("the file is closed"));
-    // After a failed write, end whatever fragment is in the file first, in the same write.
-    const bytes = Buffer.from(this.dirty ? `\n${line}` : line, "utf8");
+  writeLine(line: string): void {
+    const fd = this.openFd();
+    let breakFirst: boolean;
+    try {
+      breakFirst = this.dirty || !endsInNewline(fd);
+    } catch (error) {
+      throw ioError(this.path, error);
+    }
+    const bytes = Buffer.from(breakFirst ? `\n${line}` : line, "utf8");
     try {
       let offset = 0;
       while (offset < bytes.length) {
@@ -149,7 +186,6 @@ export class AppendFile {
       this.dirty = true;
       throw ioError(this.path, error);
     }
-    written();
     try {
       this.io.fsyncSync(fd);
     } catch (error) {

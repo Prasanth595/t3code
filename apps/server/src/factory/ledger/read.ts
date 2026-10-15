@@ -1,7 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - a run file is read the way softfac reads it: lstat first, then the bytes.
 import * as NodeFS from "node:fs";
 
 import { LedgerError, errnoCode, ioError } from "./errors.ts";
+import { NEWLINE, isU32 } from "./limits.ts";
 import { runPath, type RunId } from "./runId.ts";
 
 /**
@@ -33,9 +34,7 @@ export type RunRecord = {
   readonly skipped: number;
 };
 
-const NEWLINE = 0x0a;
 const CARRIAGE_RETURN = 0x0d;
-const U32_MAX = 4294967295;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -80,18 +79,7 @@ const readCause = (value: unknown): ReadCause | null => {
   for (const text of [actor, command, label]) {
     if (text !== undefined && text !== null && typeof text !== "string") return null;
   }
-  if (
-    attempt !== undefined &&
-    attempt !== null &&
-    !(
-      typeof attempt === "number" &&
-      Number.isInteger(attempt) &&
-      attempt >= 0 &&
-      attempt <= U32_MAX
-    )
-  ) {
-    return null;
-  }
+  if (attempt !== undefined && attempt !== null && !isU32(attempt)) return null;
   return value as ReadCause;
 };
 
@@ -132,12 +120,12 @@ export const parseLines = (
 };
 
 /**
- * Read a run file, refusing anything that is not a regular file: a symlink or directory named
- * like a run is reported as not found, so nothing ever reads (or appends to) some other file.
- * The check and the read are separate calls, so a swap in between is not caught; the data
+ * Refuse anything at a run's path that is not a regular file: a symlink or directory named like
+ * a run is reported as not found, so nothing ever reads (or appends to) some other file. The
+ * check and what follows are separate calls, so a swap in between is not caught; the data
  * directory is private to its owner, which is who could make that swap.
  */
-export const readRunBytes = (path: string): Buffer => {
+export const requireRegularFile = (path: string): void => {
   const notFound = () => new LedgerError({ kind: "NotFound", path });
   try {
     if (!NodeFS.lstatSync(path).isFile()) throw notFound();
@@ -146,10 +134,15 @@ export const readRunBytes = (path: string): Buffer => {
     if (errnoCode(error) === "ENOENT") throw notFound();
     throw ioError(path, error);
   }
+};
+
+/** Read a run file's bytes, once `requireRegularFile` accepts it. */
+const readRunBytes = (path: string): Buffer => {
+  requireRegularFile(path);
   try {
     return NodeFS.readFileSync(path);
   } catch (error) {
-    if (errnoCode(error) === "ENOENT") throw notFound();
+    if (errnoCode(error) === "ENOENT") throw new LedgerError({ kind: "NotFound", path });
     throw ioError(path, error);
   }
 };

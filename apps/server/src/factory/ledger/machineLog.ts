@@ -1,5 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off
-// @effect-diagnostics globalDate:off
+// @effect-diagnostics nodeBuiltinImport:off - softfac's write rules need raw fds: O_NOFOLLOW, O_NONBLOCK and fsync.
+// @effect-diagnostics globalDate:off - the default clock is the wall clock softfac stamps lines with.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -16,13 +16,13 @@ import {
 } from "./appendFile.ts";
 import { LedgerError, errnoCode, ioError } from "./errors.ts";
 import { MACHINE_EVENT_FIELDS, buildData, issueKeyJson, type MachineEvent } from "./events.ts";
+import { NEWLINE } from "./limits.ts";
 import { decodeLine, isBlankLine, lineHead } from "./read.ts";
 import { formatTs } from "./time.ts";
 
 /** The file in the data dir that takes the events that belong to no run. */
 export const MACHINE_LOG = "events.jsonl";
 
-const NEWLINE = 0x0a;
 const NOT_REGULAR = "not a regular file, so it is not followed";
 
 export type MachineLogOptions = {
@@ -50,41 +50,29 @@ export class MachineLog {
     this.clock = clock;
   }
 
-  /** Open the log for append, making it (and the data dir) if they are missing. */
+  /**
+   * Open the log for append, making it (and the data dir) if they are missing. The data dir and
+   * its parent are synced on every open, not only when this call made them, so an open that
+   * made them and then failed to sync leaves them for the retry to sync.
+   */
   static open(dataDir: string, options: MachineLogOptions = {}): MachineLog {
     const path = NodePath.join(dataDir, MACHINE_LOG);
     const sync = options.syncDir ?? syncDir;
-    let dataDirCreated: boolean;
     try {
-      dataDirCreated = ensureDir(dataDir);
+      ensureDir(dataDir);
     } catch (error) {
       throw ioError(dataDir, error);
     }
     const io = options.io ?? nodeIo;
-    const clock = options.clock ?? Date.now;
-    if (existingRegularFile(path)) return new MachineLog(openForAppend(path, io).file, clock);
-    let fd: number;
-    try {
-      // The check above and the open are two calls, so the open refuses a symlink itself.
-      fd = NodeFS.openSync(
-        path,
-        NodeFS.constants.O_WRONLY |
-          NodeFS.constants.O_APPEND |
-          NodeFS.constants.O_CREAT |
-          NodeFS.constants.O_NOFOLLOW,
-        0o600,
-      );
-    } catch (error) {
-      throw ioError(path, error);
-    }
+    const file = existingRegularFile(path) ? openForAppend(path, io).file : createLog(path, io);
     try {
       syncAt(sync, dataDir);
-      if (dataDirCreated) syncAt(sync, parentOf(dataDir));
+      syncAt(sync, parentOf(dataDir));
     } catch (error) {
-      NodeFS.closeSync(fd);
+      file.close();
       throw error;
     }
-    return new MachineLog(new AppendFile(path, fd, io), clock);
+    return new MachineLog(file, options.clock ?? Date.now);
   }
 
   /**
@@ -113,6 +101,24 @@ export class MachineLog {
     this.out.close();
   }
 }
+
+/** Make the log, owner-only. Read access lets an append check how the file ends. */
+const createLog = (path: string, io: AppendIo): AppendFile => {
+  try {
+    // The check before this and the open are two calls, so the open refuses a symlink itself.
+    const fd = NodeFS.openSync(
+      path,
+      NodeFS.constants.O_RDWR |
+        NodeFS.constants.O_APPEND |
+        NodeFS.constants.O_CREAT |
+        NodeFS.constants.O_NOFOLLOW,
+      0o600,
+    );
+    return new AppendFile(path, fd, io);
+  } catch (error) {
+    throw ioError(path, error);
+  }
+};
 
 /** True when `path` is a regular file, false when it is missing; anything else is refused. */
 const existingRegularFile = (path: string): boolean => {

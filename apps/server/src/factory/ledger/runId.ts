@@ -1,8 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - nextAttempt lists the runs directory synchronously, like the rest of the ledger.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { LedgerError } from "./errors.ts";
+import { U32_MAX } from "./limits.ts";
 
 /** The directory under the data dir that holds the run files. */
 export const RUNS_DIR = "runs";
@@ -17,7 +18,6 @@ const ATTEMPT_REASON =
   "the attempt must be a number without a sign or leading zero, up to 4294967295";
 
 const U64_MAX = 18446744073709551615n;
-const U32_MAX = 4294967295;
 
 /**
  * One run: a repo, an issue in it, and which attempt at that issue this is.

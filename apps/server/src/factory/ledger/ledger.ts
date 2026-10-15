@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off - softfac's write rules need raw fds: O_EXCL, O_NOFOLLOW and fsync.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -14,6 +14,7 @@ import {
   type SyncDir,
 } from "./appendFile.ts";
 import { LedgerError, errnoCode, ioError } from "./errors.ts";
+import { isU32 } from "./limits.ts";
 import {
   RUN_EVENT_FIELDS,
   causeObject,
@@ -23,14 +24,10 @@ import {
   type PrEnd,
   type RunEvent,
 } from "./events.ts";
-import { parseLines, readRunBytes } from "./read.ts";
+import { parseLines, requireRegularFile } from "./read.ts";
 import { RUNS_DIR, runPath, type RunId } from "./runId.ts";
 import { formatTs } from "./time.ts";
 
-export { LedgerError } from "./errors.ts";
-export type { AppendIo } from "./appendFile.ts";
-
-const U32_MAX = 4294967295;
 // The largest u64 reads as 2^64 once JSON.parse has made it a double.
 const U64_MAX = 2 ** 64;
 const I32_MIN = -2147483648;
@@ -77,22 +74,32 @@ export class Ledger {
     const path = runPath(dataDir, id);
     const runs = NodePath.join(dataDir, RUNS_DIR);
     const sync = options.syncDir ?? syncDir;
-    const dataDirCreated = ensureDirAt(dataDir);
-    const runsCreated = ensureDirAt(runs);
+    ensureDirAt(dataDir);
+    ensureDirAt(runs);
     let fd: number;
     try {
-      // The ledger holds issue and PR details, so keep it to the owner.
-      fd = NodeFS.openSync(path, "ax", 0o600);
+      // The ledger holds issue and PR details, so keep it to the owner. Read access lets an
+      // append see what other handles wrote; O_EXCL never follows a symlink.
+      fd = NodeFS.openSync(
+        path,
+        NodeFS.constants.O_RDWR |
+          NodeFS.constants.O_APPEND |
+          NodeFS.constants.O_CREAT |
+          NodeFS.constants.O_EXCL,
+        0o600,
+      );
     } catch (error) {
       if (errnoCode(error) === "EEXIST") throw new LedgerError({ kind: "AlreadyExists", path });
       throw ioError(path, error);
     }
     // The new file's directory entry must be durable too, or a crash could lose the whole file
-    // and the events synced into it.
+    // and the events synced into it. Every directory on the way is synced each time, not only
+    // the ones this call made: a call that made them and then failed to sync leaves them for
+    // the retry to sync.
     try {
       syncAt(sync, runs);
-      if (runsCreated) syncAt(sync, dataDir);
-      if (dataDirCreated) syncAt(sync, parentOf(dataDir));
+      syncAt(sync, dataDir);
+      syncAt(sync, parentOf(dataDir));
     } catch (error) {
       NodeFS.closeSync(fd);
       try {
@@ -108,21 +115,26 @@ export class Ledger {
   /**
    * Reopen an existing run for append after a restart. If the last line is incomplete (a crash
    * mid-write), it is terminated with a newline first, so the next event starts on its own
-   * line. The fragment stays in the file and readers skip it.
+   * line. The fragment stays in the file and readers skip it. A symlink or anything else that
+   * is not a regular file is `NotFound`.
    */
   static open(dataDir: string, id: RunId, options: LedgerOptions = {}): Ledger {
     const path = runPath(dataDir, id);
-    let content: Uint8Array = readRunBytes(path);
-    const { file, repaired } = openForAppend(path, options.io);
-    if (repaired) content = Buffer.concat([content, Buffer.from("\n")]);
-    const ledger = new Ledger(file, options.clock ?? Date.now);
-    for (const entry of parseLines(content).entries) {
-      ledger.observe(entry.ms, entry.event, entry.data);
-    }
-    return ledger;
+    requireRegularFile(path);
+    return new Ledger(openForAppend(path, options.io).file, options.clock ?? Date.now);
   }
 
-  /** Fold a line that is now in the file into what the summary needs. */
+  /**
+   * Fold the lines written since the last append, by this handle or another one, into what the
+   * summary needs, so `finished` and the counts are what the file says.
+   */
+  private catchUp(): void {
+    for (const entry of parseLines(this.out.readNewLines()).entries) {
+      this.observe(entry.ms, entry.event, entry.data);
+    }
+  }
+
+  /** Fold a line that is in the file into what the summary needs. */
   private observe(ms: number, event: string, data: unknown): void {
     this.firstMs ??= ms;
     // Only a `gate_command` that softfac would read as a whole counts: it falls back to an
@@ -130,7 +142,7 @@ export class Ledger {
     if (event === "gate_command" && typeof data === "object" && data !== null) {
       const { attempt, command, exit_code, duration_ms } = data as Record<string, unknown>;
       if (
-        isIntegerIn(attempt, 0, U32_MAX) &&
+        isU32(attempt) &&
         typeof command === "string" &&
         isIntegerIn(exit_code, I32_MIN, I32_MAX) &&
         isIntegerIn(duration_ms, 0, U64_MAX)
@@ -145,11 +157,12 @@ export class Ledger {
   /**
    * Append one event as one line, with why it was written: a single write of the whole line,
    * then a sync, so a crash loses at most the event in flight. A `finished` event has its
-   * `total_ms` and `gate_attempts` replaced with the ledger's own count; use `finish`. Throws
-   * `AlreadyFinished` after a `finished` line, and `UnknownEvent` for an event name that
-   * ledger.md does not list; neither writes anything.
+   * `total_ms` and `gate_attempts` replaced with the ledger's own count, taken from the file;
+   * use `finish`. Throws `AlreadyFinished` after a `finished` line, whichever handle wrote it,
+   * and `UnknownEvent` for an event name that ledger.md does not list; neither writes anything.
    */
   append(event: RunEvent, cause: Cause): void {
+    this.catchUp();
     if (this.finished) throw new LedgerError({ kind: "AlreadyFinished", path: this.out.path });
     if (!Object.hasOwn(RUN_EVENT_FIELDS, event.event)) {
       throw new LedgerError({ kind: "UnknownEvent", event: String(event.event) });
@@ -170,9 +183,9 @@ export class Ledger {
     } catch (error) {
       throw ioError(this.out.path, error);
     }
-    // The line is in the file once `written` runs, so it counts even if making it durable
-    // fails: a failed sync on `finished` must not allow a second `finished` line.
-    this.out.writeLine(line, () => this.observe(ms, event.event, data));
+    // A line whose sync fails is still in the file, so the next append's catch-up counts it: a
+    // failed sync on `finished` does not allow a second `finished` line.
+    this.out.writeLine(line);
   }
 
   /**
@@ -210,9 +223,9 @@ export class Ledger {
 }
 
 /** `ensureDir` with its failure reported as an `Io` error for `dir`. */
-const ensureDirAt = (dir: string): boolean => {
+const ensureDirAt = (dir: string): void => {
   try {
-    return ensureDir(dir);
+    ensureDir(dir);
   } catch (error) {
     throw ioError(dir, error);
   }
