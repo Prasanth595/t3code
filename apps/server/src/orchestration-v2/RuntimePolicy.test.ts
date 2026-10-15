@@ -183,7 +183,7 @@ it.layer(
     ),
   ),
 )("RuntimePolicyV2 without a project", (it) => {
-  it.effect("reports a structured missing-project cause for a local thread", () =>
+  it.effect("preserves the existing missing-project error for a local thread", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;
       const now = yield* DateTime.now;
@@ -191,7 +191,7 @@ it.layer(
         .resolve({ thread: makeThread({ now, worktreePath: null }), modelSelection })
         .pipe(Effect.flip);
       assert.instanceOf(error, RuntimePolicy.RuntimePolicyResolveError);
-      assert.deepInclude(error.cause, { _tag: "RuntimePolicyProjectNotFoundError", projectId });
+      assert.equal(error.cause, "Project not found.");
     }),
   );
 
