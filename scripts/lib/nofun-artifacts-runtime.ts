@@ -86,6 +86,11 @@ export async function prebuildNofunArtifactsRuntime(input: {
   if (NodeFs.existsSync(generatedDir)) {
     NodeFs.cpSync(generatedDir, NodePath.join(input.outDir, "generated"), { recursive: true });
   }
+  // The compiler reads the nofun-components sha from here at server startup.
+  NodeFs.copyFileSync(
+    NodePath.join(packageDir, "components.pin"),
+    NodePath.join(input.outDir, "components.pin"),
+  );
   const shimPath = NodePath.join(input.outDir, "esbuild-shim.mjs");
   NodeFs.writeFileSync(shimPath, ESBUILD_SHIM);
 
