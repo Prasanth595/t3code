@@ -18,7 +18,7 @@ import {
   PlusIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
@@ -253,7 +253,10 @@ function MoreTabsMenu(props: {
  * The width that each tab needs, from an invisible copy of the tabs, and the width that the bar
  * has. Both update with the tabs and with the sidebar width.
  */
-function useTabWidths(tabCount: number) {
+function useTabWidths(tabIds: readonly string[]) {
+  const tabCount = tabIds.length;
+  // The copies re-render as new elements when the set of tabs changes.
+  const tabIdsKey = tabIds.join("\n");
   const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
   const [measureElement, setMeasureElement] = useState<HTMLDivElement | null>(null);
   const [available, setAvailable] = useState<number | null>(null);
@@ -265,18 +268,21 @@ function useTabWidths(tabCount: number) {
       if (entry !== undefined) setAvailable(entry.contentRect.width);
     });
   }, [listElement]);
-  // Before paint, so a tab that does not fit never flashes in the bar.
-  useLayoutEffect(() => {
+  // The copies of the tabs change size when a name, count or status changes. The observer
+  // reports each change, and `observeResize` commits it before paint, so a tab that does not
+  // fit never flashes in the bar. Sidebar renders that change nothing measure nothing.
+  useEffect(() => {
     if (measureElement === null) return;
-    const next = Array.from(measureElement.children, (child) =>
-      Math.ceil(child.getBoundingClientRect().width),
-    );
-    setWidths((current) =>
-      current.length === next.length && current.every((width, index) => width === next[index])
-        ? current
-        : next,
-    );
-  });
+    const children = Array.from(measureElement.children);
+    return observeResize(children, () => {
+      const next = children.map((child) => Math.ceil(child.getBoundingClientRect().width));
+      setWidths((current) =>
+        current.length === next.length && current.every((width, index) => width === next[index])
+          ? current
+          : next,
+      );
+    });
+  }, [measureElement, tabIdsKey]);
   // The last measured child is a sample of the "more" button.
   const measured = widths.length === tabCount + 1;
   return {
@@ -305,7 +311,7 @@ export function SidebarGroupTabs(props: {
   const selected = state.tabs.find((tab) => tab.id === state.tabId) ?? null;
 
   const { setListElement, setMeasureElement, available, tabWidths, moreWidth } = useTabWidths(
-    state.tabs.length,
+    state.tabs.map((tab) => tab.id),
   );
   const visibleIndexes = useMemo(
     () =>
@@ -417,10 +423,13 @@ export function SidebarGroupTabs(props: {
       ) : (
         <SidebarHeaderIconButton
           label="New group"
+          disabled={!state.ready}
           onClick={() => {
             const id = state.createGroup([]);
             // The new tab renders on the next frame; anchor the editor to the bar until then.
-            if (barRef.current !== null) setEditing({ groupId: id, anchor: barRef.current });
+            if (id !== null && barRef.current !== null) {
+              setEditing({ groupId: id, anchor: barRef.current });
+            }
           }}
         >
           <PlusIcon />

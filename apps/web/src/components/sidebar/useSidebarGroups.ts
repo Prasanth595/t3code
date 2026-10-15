@@ -263,8 +263,10 @@ export function useSidebarGroups(input: {
   // does not undo the first before the server echoes it. Edits from two devices at the same
   // moment still keep only the last one; revisit with per-group commands if that bites.
   const latestSettingsRef = useRef(savedSettings);
+  const savedSettingsRef = useRef(savedSettings);
   useEffect(() => {
     latestSettingsRef.current = savedSettings;
+    savedSettingsRef.current = savedSettings;
   }, [savedSettings]);
   const update = useCallback(
     (change: (current: SidebarGroups) => SidebarGroups) => {
@@ -281,6 +283,10 @@ export function useSidebarGroups(input: {
           shareToMachineMap(primaryEnvironmentId, ["sidebarGroups"]);
           return;
         }
+        // The next edit starts from the saved groups, not from the edit that failed. An edit made
+        // on top of it in the meantime stays: its own save reports its own result.
+        if (latestSettingsRef.current === next)
+          latestSettingsRef.current = savedSettingsRef.current;
         if (isAtomCommandInterrupted(result)) return;
         const error = squashAtomCommandFailure(result);
         toastManager.add({
@@ -302,8 +308,10 @@ export function useSidebarGroups(input: {
     [liveThreads],
   );
 
+  /** The id of the new group, or null before the groups load, when no edit can save. */
   const createGroup = useCallback(
-    (threadKeys: readonly string[]) => {
+    (threadKeys: readonly string[]): string | null => {
+      if (!ready) return null;
       const id = randomUUID();
       update((current) =>
         moveSidebarThreads(
@@ -316,7 +324,7 @@ export function useSidebarGroups(input: {
       setTabId(id);
       return id;
     },
-    [projects, setTabId, threadsForRefs, update],
+    [projects, ready, setTabId, threadsForRefs, update],
   );
 
   // The tab or the new-group area under a dragged thread. A view takes no drop: it holds no threads.
@@ -327,7 +335,8 @@ export function useSidebarGroups(input: {
   }, [tabs]);
   const dropTargetAt = useCallback(
     (point: { x: number; y: number }) => {
-      if (!enabled) return null;
+      // Before the groups load, no edit can save, so the tab bar takes no drop.
+      if (!enabled || !ready) return null;
       const target =
         document
           .elementFromPoint(point.x, point.y)
@@ -339,7 +348,7 @@ export function useSidebarGroups(input: {
         ? target
         : null;
     },
-    [enabled],
+    [enabled, ready],
   );
   /** Tracks the drop target under a dragged thread. True when the tab bar takes the move. */
   const moveDrag = useCallback(
@@ -411,6 +420,8 @@ export function useSidebarGroups(input: {
 
   return {
     enabled,
+    /** The groups have loaded, so edits can save. */
+    ready,
     emptyMessage,
     settings,
     tabId,

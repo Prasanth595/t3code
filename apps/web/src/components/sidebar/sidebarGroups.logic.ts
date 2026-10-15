@@ -326,7 +326,8 @@ export function moveSidebarGroup(
 /**
  * Checks or unchecks one value of a field in the rule editor. A field has one rule. Checking a
  * group in an "any group" view turns it into "group is X". Unchecking the last value removes the
- * rule, so no rule is left with no values: "is not (nothing)" would match every thread.
+ * rule, so no rule is left with no values: "is not (nothing)" would match every thread. A view
+ * keeps its group rule as "any group", so it does not turn into a group that takes threads.
  */
 export function toggleSidebarGroupRuleValue(
   rules: SidebarGroup["rules"],
@@ -344,9 +345,15 @@ export function toggleSidebarGroupRuleValue(
       ? { field, operator: "is", values: [value] }
       : { ...current, values: [...current.values, value] }
     : { ...current, values: current.values.filter((candidate) => candidate !== value) };
-  return next.values.length === 0
+  const kept: SidebarGroupRule | null =
+    next.values.length > 0
+      ? next
+      : field === "group"
+        ? { field, operator: "is_not", values: [] }
+        : null;
+  return kept === null
     ? rules.filter((_, candidate) => candidate !== index)
-    : rules.map((rule, candidate) => (candidate === index ? next : rule));
+    : rules.map((rule, candidate) => (candidate === index ? kept : rule));
 }
 
 // Highest first. A tab shows the status of its most urgent thread.

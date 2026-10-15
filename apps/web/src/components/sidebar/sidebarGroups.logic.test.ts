@@ -18,6 +18,7 @@ import {
   resolveSidebarThreadGroupId,
   sidebarGroupShowsThread,
   sidebarGroupThreadKey,
+  toggleSidebarGroupRuleValue,
 } from "./sidebarGroups.logic";
 
 const mac = EnvironmentId.make("environment-mac");
@@ -154,5 +155,16 @@ describe("fitSidebarGroupTabs", () => {
     expect(
       fitSidebarGroupTabs({ widths, available: 200, gap: 4, moreWidth: 40, selectedIndex: 3 }),
     ).toEqual([3]);
+  });
+});
+
+describe("toggleSidebarGroupRuleValue", () => {
+  it("keeps a view a view when its last group is unchecked, and drops other empty rules", () => {
+    const view: SidebarGroup["rules"] = [{ field: "group", operator: "is", values: ["monitors"] }];
+    expect(toggleSidebarGroupRuleValue(view, "group", "monitors", false)).toEqual([
+      { field: "group", operator: "is_not", values: [] },
+    ]);
+    const status: SidebarGroup["rules"] = [{ field: "status", operator: "is", values: ["input"] }];
+    expect(toggleSidebarGroupRuleValue(status, "status", "input", false)).toEqual([]);
   });
 });
