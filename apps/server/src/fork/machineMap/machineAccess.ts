@@ -6,6 +6,7 @@ import {
   type ArrowRecord,
   type AuthEnvironmentScope,
   clientSessionSubject,
+  type DesiredBrowserClient,
   type DesiredClient,
   type AuthMcpClientAccess,
   MACHINE_LEVEL_SCOPES,
@@ -78,8 +79,9 @@ export const clientGrantFor = (
 };
 
 /**
- * MM-912: the clients whose level on this machine changed between two desired states, read like
- * `sourcesWithChangedLevel`. A client that left the desired state counts as a change to `none`.
+ * MM-912, MM-909: the clients whose sessions on this machine must end: the level changed between
+ * two desired states, read like `sourcesWithChangedLevel`, or a browser key left the client. A
+ * client that left the desired state counts as a change to `none`.
  */
 export const clientsWithChangedLevel = (
   previous: MachineDesiredState | null,
@@ -87,10 +89,48 @@ export const clientsWithChangedLevel = (
   next: MachineDesiredState | null,
   nowMs: number,
 ): ReadonlyArray<DesiredClient["id"]> => {
-  const clients = (desired: MachineDesiredState | null) =>
-    (desired?.clients ?? []).map((client) => [client.id, client] as const);
-  return sourcesWithChangedLevel(clients(previous), previousAtMs, clients(next), nowMs);
+  const lostKey = (previous?.browserClients ?? []).flatMap((before) => {
+    const after = next?.browserClients?.find((client) => client.id === before.id);
+    return after !== undefined && before.thumbprints.some((key) => !after.thumbprints.includes(key))
+      ? [before.id]
+      : [];
+  });
+  return [
+    ...new Set([
+      ...sourcesWithChangedLevel(clientArrows(previous), previousAtMs, clientArrows(next), nowMs),
+      ...lostKey,
+    ]),
+  ];
 };
+
+/**
+ * MM-917: the grant for a browser that proved a key that an approved client holds, at most
+ * `standard`, or undefined for an unknown key, `none` or an expired arrow.
+ */
+export const browserGrantFor = (
+  desired: MachineDesiredState,
+  thumbprint: string,
+  nowMs: number,
+): MachineGrant | undefined => {
+  const client = desired.browserClients?.find((candidate) =>
+    candidate.thumbprints.includes(thumbprint),
+  );
+  if (client === undefined) return undefined;
+  const level = effectiveLevel(client, nowMs);
+  if (level === "none") return undefined;
+  return {
+    subject: clientSessionSubject(client.id),
+    // `observe` never gives more than the owner login of today. Revisit when machines enforce.
+    scopes: MACHINE_LEVEL_SCOPES[level === "admin" ? "standard" : level],
+    label: `client ${client.name}`,
+  };
+};
+
+/** Every client of a desired state with its arrow: app tokens (MM-912) and browser keys (MM-917). */
+const clientArrows = (desired: MachineDesiredState | null) =>
+  [...(desired?.clients ?? []), ...(desired?.browserClients ?? [])].map(
+    (client: DesiredClient | DesiredBrowserClient) => [client.id, client] as const,
+  );
 
 const MACHINE_SUBJECT_PREFIX = "machine:";
 const CLIENT_SUBJECT_PREFIX = "client:";
@@ -207,7 +247,7 @@ export const nextExpiry = (
     ...desired.arrowsIn
       .filter((arrow) => arrow.to === desired.self.id)
       .map((arrow) => [machineSessionSubject(arrow.from), arrow] as const),
-    ...(desired.clients ?? []).map((client) => [clientSessionSubject(client.id), client] as const),
+    ...clientArrows(desired).map(([id, client]) => [clientSessionSubject(id), client] as const),
   ].flatMap(([subject, arrow]) => {
     if (arrow.expiresAt === null || (arrow.revertLevel ?? "none") === arrow.level) return [];
     const atMs = Date.parse(arrow.expiresAt);

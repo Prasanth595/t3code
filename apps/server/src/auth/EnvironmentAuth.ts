@@ -45,6 +45,7 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { deriveAuthClientMetadata } from "./utils.ts";
 import { makeCloudflareAccessVerifier } from "./CloudflareAccess.ts";
 import * as MachineMapState from "../fork/machineMap/MachineMapState.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
@@ -1241,6 +1242,49 @@ export const make = Effect.gen(function* () {
       ? undefined
       : makeCloudflareAccessVerifier(config.cloudflareAccess);
 
+  /**
+   * Fork (MM-917): an owner browser that proves its key may get the arrow of its client instead of
+   * the owner access. The proof is read only while `clientAccess` observes, so `off` stays the
+   * path of today. A missing or bad proof keeps the owner access.
+   */
+  const loggedProofFailures = new Set<string>();
+  const ownerBrowserGrant = (request: HttpServerRequest.HttpServerRequest, subject: string) => {
+    const dpop = request.headers.dpop;
+    if (Option.isNone(machineMap) || dpop === undefined) return Effect.succeed(undefined);
+    const map = machineMap.value;
+    return map.observesBrowserKeys.pipe(
+      Effect.flatMap((observes) =>
+        !observes
+          ? Effect.succeed(undefined)
+          : verifyRequestDpopProof({ request }).pipe(
+              Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.flatMap((thumbprint) => {
+                const client = deriveAuthClientMetadata({ request });
+                return map.browserGrant({
+                  thumbprint,
+                  subject,
+                  describedAs: [client.browser, client.os].filter(Boolean).join(" on "),
+                });
+              }),
+              // Once per reason, so a proof that never verifies, for example a URL that the
+              // tunnel rewrites, shows in the log without a line per sign-in.
+              Effect.catch((error) => {
+                const reason =
+                  error._tag === "ServerAuthInvalidCredentialError"
+                    ? (error.dpopFailureReason ?? error.diagnostic ?? "invalid")
+                    : error._tag;
+                if (loggedProofFailures.has(reason)) return Effect.succeed(undefined);
+                loggedProofFailures.add(reason);
+                return Effect.logWarning("Machine map could not verify a browser key proof.", {
+                  reason,
+                }).pipe(Effect.as(undefined));
+              }),
+            ),
+      ),
+    );
+  };
+
   const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
     (request) =>
       verifyCloudflareAccess === undefined
@@ -1250,12 +1294,18 @@ export const make = Effect.gen(function* () {
               identity === undefined
                 ? Effect.succeed(undefined)
                 : identity.kind === "owner"
-                  ? issuePairingCredentialForSubject({
-                      scopes: AuthStandardClientScopes,
-                      subject: "one-time-token",
-                      label: `cloudflare-access ${identity.subject}`,
-                      ttl: Duration.minutes(2),
-                    })
+                  ? ownerBrowserGrant(request, identity.subject).pipe(
+                      Effect.flatMap((grant) =>
+                        issuePairingCredentialForSubject({
+                          ...(grant ?? {
+                            scopes: AuthStandardClientScopes,
+                            subject: "one-time-token",
+                            label: `cloudflare-access ${identity.subject}`,
+                          }),
+                          ttl: Duration.minutes(2),
+                        }),
+                      ),
+                    )
                   : Option.isNone(machineMap)
                     ? Effect.succeed(undefined)
                     : machineMap.value.machineGrant(identity.commonName).pipe(

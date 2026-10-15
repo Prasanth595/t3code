@@ -676,6 +676,34 @@ const make = Effect.gen(function* () {
   // --- MM-304, MM-912: an arrow that expires ends its sessions at its expiry -----------------
 
   /**
+   * MM-916: when `clientAccess` leaves `observe`, the sessions of browser clients end, so `off`
+   * is the owner login of MM-308 again. A client that also holds an app token pairs again with it.
+   */
+  const watchClientAccess = state.changes.pipe(
+    Stream.map((local) => local.clientAccess),
+    Stream.changes,
+    Stream.mapAccum(
+      (): MachineMapState.LocalState["clientAccess"] | undefined => undefined,
+      (previous, next) => [next, previous === "observe" && next !== "observe" ? [next] : []],
+    ),
+    Stream.runForEach(() =>
+      Effect.gen(function* () {
+        const desired = (yield* state.snapshot).saved.desired;
+        const subjects = new Set(
+          (desired?.browserClients ?? []).map((client) => clientSessionSubject(client.id)),
+        );
+        if (subjects.size > 0) yield* revokeSessions((subject) => subjects.has(subject));
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Machine map could not end browser client sessions.", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      ),
+    ),
+  );
+
+  /**
    * Sleeps until the next arrow expiry of the saved desired state, then ends the sessions of that
    * source, also while the portal is unreachable. A new desired state starts it again from its
    * arrival, because `applyDesired` handled every expiry before that. After a restart it starts
@@ -1157,6 +1185,9 @@ const make = Effect.gen(function* () {
   yield* forkParked(superviseConnection);
   yield* forkParked(watchLocalSettings);
   yield* forkParked(watchExpiries);
+  yield* forkParked(watchClientAccess);
+  // MM-906: browser keys that signed in and wait for approval. The outbox keeps them while offline.
+  yield* forkParked(Effect.forever(Queue.take(state.clientSeen).pipe(Effect.flatMap(sendOrQueue))));
   yield* forkParked(statusLoop);
   yield* forkParked(joinPendingCode);
 

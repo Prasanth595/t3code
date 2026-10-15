@@ -200,6 +200,11 @@ describe("checkEditableChanges", () => {
       "phone.access",
     ]);
     expect(desiredState(withApp, VPS, false)?.clients).toEqual([]);
+    // MM-917: the browser keys of the same client go to the same machines.
+    expect(desiredState(withApp, MAC, false)?.browserClients?.map((c) => c.thumbprints)).toEqual([
+      client().keys.map((k) => k.thumbprint),
+    ]);
+    expect(desiredState(withApp, VPS, false)?.browserClients).toEqual([]);
     expect(() =>
       checkEditableChanges(withApp, [
         { _tag: "putClient", client: client({ serviceToken: { clientId: "other.access" } }) },

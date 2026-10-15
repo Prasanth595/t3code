@@ -10,17 +10,21 @@ import {
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   AuthStandardClientScopes,
+  type ClientAccessMode,
+  ClientId,
   EnvironmentId,
   MACHINE_LEVEL_SCOPES,
   type MachineDesiredState,
   WS_METHODS,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { HttpServerRequest } from "effect/http";
+import { computeDpopJwkThumbprint, type DpopPublicJwk } from "@t3tools/shared/dpop";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -78,9 +82,9 @@ const layerConfig = Layer.effect(
   }),
 ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-machine-map-auth-" })));
 
-const layerState = (enabled: boolean) =>
+const layerState = (enabled: boolean, clientAccess: ClientAccessMode = "off") =>
   MachineMapState.layer.pipe(
-    Layer.provide(ServerSettings.layerTest({ machineMap: { enabled } })),
+    Layer.provide(ServerSettings.layerTest({ machineMap: { enabled }, clientAccess })),
     Layer.provide(ServerSecretStore.layer),
   );
 
@@ -91,22 +95,58 @@ const layerAuthWithoutState = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerConfig),
 );
 
-const layerAuth = (state: "on" | "off") =>
+const layerAuth = (state: "on" | "off", clientAccess: ClientAccessMode = "off") =>
   EnvironmentAuth.layer.pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(layerState(state === "on")),
+    Layer.provideMerge(layerState(state === "on", clientAccess)),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.layerIdentity),
     Layer.provideMerge(layerConfig),
   );
 
-const accessRequest = (jwt: string) =>
+const PAIRING_URL = "http://127.0.0.1/api/auth/cloudflare-access/pairing-credential";
+const accessRequest = (jwt: string, dpop?: string) =>
   HttpServerRequest.fromWeb(
-    new Request("http://127.0.0.1/api/auth/cloudflare-access/pairing-credential", {
+    new Request(PAIRING_URL, {
       method: "POST",
-      headers: { "cf-access-jwt-assertion": jwt },
+      headers: {
+        host: "127.0.0.1",
+        "cf-access-jwt-assertion": jwt,
+        ...(dpop === undefined ? {} : { dpop }),
+      },
     }),
   );
+
+// A browser key, as `apps/web/src/cloud/dpop.ts` makes it.
+const browserKeys = await generateKeyPair("ES256");
+const browserJwk = (await exportJWK(browserKeys.publicKey)) as DpopPublicJwk;
+let proofCount = 0;
+// The proof time comes from the test clock, which the server checks it against.
+const browserProof = () =>
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap((nowMs) =>
+      Effect.promise(() =>
+        new SignJWT({ htm: "POST", htu: PAIRING_URL, jti: `proof-${++proofCount}` })
+          .setProtectedHeader({ typ: "dpop+jwt", alg: "ES256", jwk: browserJwk })
+          .setIssuedAt(Math.floor(nowMs / 1000))
+          .sign(browserKeys.privateKey),
+      ),
+    ),
+  );
+const LAPTOP = ClientId.make("client-laptop");
+const withLaptopAdmin = {
+  ...desiredState({}),
+  browserClients: [
+    {
+      id: LAPTOP,
+      name: "Laptop",
+      thumbprints: [computeDpopJwkThumbprint(browserJwk)],
+      level: "admin" as const,
+      expiresAt: null,
+      revertLevel: null,
+    },
+  ],
+};
 const bearerRequest = (token: string) =>
   HttpServerRequest.fromWeb(
     new Request("http://127.0.0.1/mcp", { headers: { authorization: `Bearer ${token}` } }),
@@ -119,11 +159,11 @@ const saveDesired = (desired: MachineDesiredState) =>
   });
 
 /** Pairs through Cloudflare Access like a peer, then exchanges the credential for a session. */
-const pairAs = (claims: Record<string, unknown>) =>
+const pairAs = (claims: Record<string, unknown>, dpop?: string) =>
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const issued = yield* auth.issueCloudflareAccessPairingCredential(
-      accessRequest(yield* signAccessJwt(claims)),
+      accessRequest(yield* signAccessJwt(claims), dpop),
     );
     if (issued === undefined) return undefined;
     const token = yield* auth.exchangeBootstrapCredentialForAccessToken(
@@ -183,6 +223,26 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
       expect(yield* pairAs({ common_name: PEER_TOKEN })).toBeUndefined();
       expect((yield* pairAs({ email: "dev@example.com" }))?.subject).toBe("one-time-token");
     }).pipe(withCertsFetch, Effect.provide(layerAuthWithoutState)),
+  );
+
+  it.effect(
+    "an approved browser key gets its client, at most standard, under observe (MM-917)",
+    () =>
+      Effect.gen(function* () {
+        yield* saveDesired(withLaptopAdmin);
+        const session = yield* pairAs({ email: "dev@example.com" }, yield* browserProof());
+        expect(session?.subject).toBe(`client:${LAPTOP}`);
+        expect(session?.scopes).toEqual(AuthStandardClientScopes);
+      }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "observe"))),
+  );
+
+  it.effect("with clientAccess off, an approved browser key keeps the owner login (MM-916)", () =>
+    Effect.gen(function* () {
+      yield* saveDesired(withLaptopAdmin);
+      const session = yield* pairAs({ email: "dev@example.com" }, yield* browserProof());
+      expect(session?.subject).toBe("one-time-token");
+      expect(session?.scopes).toEqual(AuthStandardClientScopes);
+    }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "off"))),
   );
 
   it.effect("/mcp admits a machine session only while its arrow has agent tools (MM-1307)", () =>

@@ -645,7 +645,7 @@ export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineI
         if (previous.mapRole !== change.machine.mapRole) touched.add(change.machine.id);
         break;
       }
-      // MM-912: machines apply the clients that hold an app token. A browser client has none yet.
+      // MM-912, MM-917: machines apply client arrows for app tokens and browser keys.
       case "setClientArrow":
         touched.add(change.arrow.to);
         break;
@@ -666,9 +666,10 @@ export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineI
       }
       case "putPreset":
       case "removePreset":
-      // Browser keys reach machines through Cloudflare Access until machines enforce them.
+      // MM-917: machines grant browser keys. A key change is rare, so it goes to every machine.
       case "addClientKey":
       case "removeClientKey":
+        return "all";
       // MM-1108, MM-1109: display data. No machine applies it.
       case "placePair":
       case "putNote":
@@ -744,6 +745,21 @@ export function desiredState(
           id: client.id,
           name: client.name,
           tokenClientId: client.serviceToken.clientId,
+          level: arrow.level,
+          expiresAt: arrow.expiresAt,
+          revertLevel: arrow.revertLevel,
+        },
+      ];
+    }),
+    browserClients: map.clients.flatMap((client) => {
+      const arrow = findClientArrow(map, client.id, machineId);
+      if (client.keys.length === 0 || (arrow.level === "none" && arrow.revertLevel === null))
+        return [];
+      return [
+        {
+          id: client.id,
+          name: client.name,
+          thumbprints: client.keys.map((key) => key.thumbprint),
           level: arrow.level,
           expiresAt: arrow.expiresAt,
           revertLevel: arrow.revertLevel,

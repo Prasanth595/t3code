@@ -370,6 +370,15 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+/**
+ * Fork: client access of the machine map (MM-916). `off`: a browser that passes Cloudflare
+ * Access as the owner gets the owner access, as before. `observe`: the browser proves its key; a
+ * key that an approved client holds gets that client's arrow, and any other key keeps the owner
+ * access and waits in the portal for approval.
+ */
+export const ClientAccessMode = Schema.Literals(["off", "observe"]);
+export type ClientAccessMode = typeof ClientAccessMode.Type;
+
 /** Maximum width of the chat timeline and composer on wide screens. */
 export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
@@ -1530,6 +1539,8 @@ export const ServerSettings = Schema.Struct({
   preferOriginRemote: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: machine map connection. See `MachineMapSettings`. */
   machineMap: MachineMapSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Fork: how a Cloudflare Access sign-in of a browser meets the clients of the map. See `ClientAccessMode`. */
+  clientAccess: ClientAccessMode.pipe(Schema.withDecodingDefault(Effect.succeed("off"))),
   /** Fork: user-built thread card layouts. See `ThreadCardLayouts`. */
   threadCardLayouts: ThreadCardLayouts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
@@ -1861,6 +1872,7 @@ export const ServerSettingsPatch = Schema.Struct({
       mobile: Schema.optionalKey(Schema.NullOr(MobileThreadCardLayout)),
     }),
   ),
+  clientAccess: Schema.optionalKey(ClientAccessMode),
   /** Merges per field: a patched field replaces the saved one. */
   machineMap: Schema.optionalKey(
     Schema.Struct({
