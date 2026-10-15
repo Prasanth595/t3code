@@ -22,7 +22,7 @@ export function normalizeSearchQuery(
 export function scoreSubsequenceMatch(
   value: string,
   query: string,
-  options?: { ignoreLength?: boolean },
+  options?: { ignorePosition?: boolean },
 ): number | null {
   if (!query) return 0;
 
@@ -47,7 +47,10 @@ export function scoreSubsequenceMatch(
     queryIndex += 1;
     if (queryIndex === query.length) {
       const spanPenalty = valueIndex - firstMatchIndex + 1 - query.length;
-      const lengthPenalty = options?.ignoreLength ? 0 : Math.min(64, value.length - query.length);
+      if (options?.ignorePosition) {
+        return gapPenalty * 3 + spanPenalty;
+      }
+      const lengthPenalty = Math.min(64, value.length - query.length);
       return firstMatchIndex * 2 + gapPenalty * 3 + spanPenalty + lengthPenalty;
     }
   }
@@ -96,10 +99,15 @@ export function scoreQueryMatch(input: {
   includesBase?: number;
   fuzzyBase?: number;
   boundaryMarkers?: readonly string[];
-  ignoreLength?: boolean;
+  /**
+   * Score by match tier alone, ignoring where the match lands and how long the
+   * value is, so callers can keep their own order among equal matches.
+   */
+  ignorePosition?: boolean;
 }): number | null {
   const { value, query } = input;
-  const penalty = input.ignoreLength ? 0 : lengthPenalty(value, query);
+  const ignorePosition = input.ignorePosition === true;
+  const penalty = ignorePosition ? 0 : lengthPenalty(value, query);
 
   if (!value || !query) {
     return null;
@@ -120,21 +128,19 @@ export function scoreQueryMatch(input: {
       input.boundaryMarkers ?? [" ", "-", "_", "/"],
     );
     if (boundaryIndex !== null) {
-      return input.boundaryBase + boundaryIndex * 2 + penalty;
+      return input.boundaryBase + (ignorePosition ? 0 : boundaryIndex * 2) + penalty;
     }
   }
 
   if (input.includesBase !== undefined) {
     const includesIndex = value.indexOf(query);
     if (includesIndex !== -1) {
-      return input.includesBase + includesIndex * 2 + penalty;
+      return input.includesBase + (ignorePosition ? 0 : includesIndex * 2) + penalty;
     }
   }
 
   if (input.fuzzyBase !== undefined) {
-    const fuzzyScore = scoreSubsequenceMatch(value, query, {
-      ignoreLength: input.ignoreLength === true,
-    });
+    const fuzzyScore = scoreSubsequenceMatch(value, query, { ignorePosition });
     if (fuzzyScore !== null) {
       return input.fuzzyBase + fuzzyScore;
     }

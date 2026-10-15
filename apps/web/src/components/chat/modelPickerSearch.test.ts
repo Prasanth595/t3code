@@ -287,6 +287,10 @@ describe("rankModelPickerSearch", () => {
     expect(search("Grok 4.6")[0]).toBe("Grok 4.6");
   });
 
+  it("matches an exact name regardless of extra whitespace in the query", () => {
+    expect(search("  claude   opus 5 ")[0]).toBe("Claude Opus 5");
+  });
+
   it("ranks an exact name above a favorite partial match", () => {
     const models = catalog.map((model) =>
       model.name === "Claude Opus 5.5" ? { ...model, isFavorite: true } : model,

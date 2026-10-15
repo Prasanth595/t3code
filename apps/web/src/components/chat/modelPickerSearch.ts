@@ -43,8 +43,12 @@ function scoreModelPickerSearchToken(
     boundaryBase: fieldBase + 4,
     includesBase: fieldBase + 6,
     ...(token.length >= 3 ? { fuzzyBase: fieldBase + 100 } : {}),
-    ignoreLength: true,
+    ignorePosition: true,
   });
+}
+
+function normalizeModelName(name: string): string {
+  return normalizeSearchQuery(name).replace(/\s+/gu, " ");
 }
 
 export function buildModelPickerSearchText(model: ModelPickerSearchableModel): string {
@@ -59,16 +63,18 @@ export function scoreModelPickerSearch(
   model: ModelPickerSearchableModel,
   query: string,
 ): number | null {
-  const normalizedQuery = normalizeSearchQuery(query);
-  const tokens = normalizedQuery.split(/\s+/u).filter((token) => token.length > 0);
+  const tokens = normalizeSearchQuery(query)
+    .split(/\s+/u)
+    .filter((token) => token.length > 0);
 
   if (tokens.length === 0) {
     return 0;
   }
 
+  const normalizedQuery = tokens.join(" ");
   if (
-    normalizedQuery === normalizeSearchQuery(model.name) ||
-    normalizedQuery === normalizeSearchQuery(model.shortName ?? "")
+    normalizedQuery === normalizeModelName(model.name) ||
+    normalizedQuery === normalizeModelName(model.shortName ?? "")
   ) {
     return MODEL_PICKER_EXACT_NAME_SCORE;
   }
