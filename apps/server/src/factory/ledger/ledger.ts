@@ -37,6 +37,15 @@ const I32_MAX = 2147483647;
 const isIntegerIn = (value: unknown, min: number, max: number): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 
+export type LedgerOptions = {
+  /** Returns the current time as Unix epoch milliseconds. Defaults to the system clock. */
+  readonly clock?: () => number;
+  /** The write and fsync an append performs. Defaults to `node:fs`; a test injects failures. */
+  readonly io?: AppendIo;
+  /** Flushes a directory to disk after `create` makes the file. Defaults to an fsync. */
+  readonly syncDir?: SyncDir;
+};
+
 /** An open run file that events are appended to. */
 export class Ledger {
   private readonly out: AppendFile;
