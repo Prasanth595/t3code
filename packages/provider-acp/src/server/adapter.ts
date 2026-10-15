@@ -8125,11 +8125,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (followsAgentWorkState) {
                 // Drain before live frames can project, then let the agent's
                 // live state decide: an idle seen meanwhile ended the work.
+                // The drained frames record work the agent reported already,
+                // so a user_message among them must not mark it running again.
                 yield* runtimeCallbackPermit.withPermit(
                   Effect.gen(function* () {
+                    const liveWork = yield* Ref.get(agentWork);
                     yield* Effect.forEach(yield* takeWakeBuffer, handleSessionUpdate, {
                       discard: true,
                     });
+                    yield* Ref.set(agentWork, liveWork);
                     context.workTakenIn = true;
                     yield* endIdleTurn(context);
                   }),

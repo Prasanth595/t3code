@@ -805,6 +805,101 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  const cycleIdle = {
+    completed: claudeFrames.idle("end_turn"),
+    cancelled: claudeFrames.idle("cancelled"),
+    failed: claudeFrames.update(CLAUDE_ROOT_SESSION, {
+      sessionUpdate: "state_update",
+      state: "idle",
+      stopReason: "error",
+      error: { code: -32603, message: "API Error: 529 overloaded" },
+    }),
+  };
+  const cycleEcho = {
+    user_message: claudeFrames.update(CLAUDE_ROOT_SESSION, {
+      sessionUpdate: "user_message",
+      messageId: "user-cycle",
+      content: [{ type: "text", text: "Background work ended." }],
+    }),
+    user_message_chunk: claudeFrames.update(CLAUDE_ROOT_SESSION, {
+      sessionUpdate: "user_message_chunk",
+      messageId: "user-cycle",
+      content: { type: "text", text: "Background work ended." },
+    }),
+  };
+
+  it.effect.each([
+    { ended: "completed", echo: "user_message", idleBeforeAttach: true },
+    { ended: "completed", echo: "user_message_chunk", idleBeforeAttach: true },
+    { ended: "cancelled", echo: "user_message_chunk", idleBeforeAttach: true },
+    { ended: "failed", echo: "user_message_chunk", idleBeforeAttach: true },
+    { ended: "completed", echo: "user_message_chunk", idleBeforeAttach: false },
+  ] as const)(
+    "ends a continuation $ended at Claude's own cycle idle (echo $echo, idle before attach: $idleBeforeAttach)",
+    (testCase) =>
+      Effect.gen(function* () {
+        const { update, idle, prompt } = claudeFrames;
+        // A session_info_update shows as provider_thread.updated once the
+        // adapter handled it and every frame before it.
+        const marker = (title: string) =>
+          update(CLAUDE_ROOT_SESSION, { sessionUpdate: "session_info_update", title });
+        const replayGate = makeProviderReplayGate(["attached"]);
+        const session = yield* openClaudeReplaySession({
+          scenario: `claude-cycle-${testCase.ended}-${testCase.echo}-${testCase.idleBeforeAttach}`,
+          replayGate,
+          entries: [
+            ...claudeFrames.open,
+            ...prompt(1),
+            idle("end_turn"),
+            // Claude's own cycle, with no turn to show it yet.
+            update(CLAUDE_ROOT_SESSION, { sessionUpdate: "state_update", state: "running" }),
+            cycleEcho[testCase.echo],
+            update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "agent_message_chunk",
+              messageId: "msg-cycle",
+              content: { type: "text", text: "Reporting the result." },
+            }),
+            ...(testCase.idleBeforeAttach ? [cycleIdle[testCase.ended]] : []),
+            marker("cycle seen"),
+            { ...marker("attached"), label: "attached" },
+            ...(testCase.idleBeforeAttach ? [] : [cycleIdle[testCase.ended]]),
+          ],
+        });
+        const { runtime, events, turnInput, turnEnd } = session;
+        /** The turn ends seen until the marker titled `title`. */
+        const terminalsUntil = (title: string) =>
+          Effect.gen(function* () {
+            const terminals: Array<string> = [];
+            while (true) {
+              const event = yield* Queue.take(events);
+              if (event.type === "turn.terminal") terminals.push(event.status);
+              if (
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeMetadata?.title === title
+              ) {
+                return terminals;
+              }
+            }
+          });
+
+        yield* runtime.startTurn(turnInput(1));
+        assert.equal((yield* turnEnd).status, "completed");
+        yield* session.offered;
+        assert.deepEqual(yield* terminalsUntil("cycle seen"), []);
+        yield* runtime.startTurn(turnInput(2, { continuation: true }));
+        replayGate.release("attached");
+        // An idle the cycle reported before the attach ends the run now; one
+        // still ahead ends it when it arrives.
+        assert.deepEqual(
+          yield* terminalsUntil("attached"),
+          testCase.idleBeforeAttach ? [testCase.ended] : [],
+        );
+        if (!testCase.idleBeforeAttach) {
+          assert.equal((yield* turnEnd).status, testCase.ended);
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   const backgroundRequests = {
     approval: {
       type: "emit_inbound",
