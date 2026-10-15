@@ -4,8 +4,6 @@ factory:
   instructors: [tomkaczocha, rawphp]
   base: main
   provision: [vp i]
-  gate:
-    - vp test run apps/server/src/factory
-    - vp run --filter t3 typecheck
+  gate: [factory/scripts/check.sh]
   limits: { gate_retries: 2 }
   autonomy: pr
