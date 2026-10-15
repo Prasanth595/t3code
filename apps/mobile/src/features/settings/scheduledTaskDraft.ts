@@ -139,7 +139,10 @@ export type ScheduledTaskDraft = {
   readonly projectId: ProjectId | null;
   readonly modelSelection: ModelSelection | null;
   readonly modelSelectionIsExplicit: boolean;
-  /** Runs resolve the project default model at run time; `modelSelection` is then unused. */
+  /**
+   * Runs resolve the project default model at run time. `modelSelection` is still sent: a
+   * server or client without this flag saves or shows it.
+   */
   readonly useProjectDefaultModel: boolean;
   readonly schedule: ScheduleDraft;
   readonly workspace: Workspace;
