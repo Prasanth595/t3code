@@ -303,6 +303,12 @@ describe("htmlRenderOutlineBoxes", () => {
 
   it("drops a malformed or unmeasured outline", () => {
     expect(readHtmlRenderReference({ ...outlined, outline: "x1,2" })?.outline).toBeUndefined();
+    expect(
+      readHtmlRenderReference({ ...outlined, outline: "t0,0,10,10,0" })?.outline,
+    ).toBeUndefined();
+    expect(
+      readHtmlRenderReference({ ...outlined, outline: "m0,0,0,10,1" })?.outline,
+    ).toBeUndefined();
     expect(readHtmlRenderReference({ ...reference, outline })?.outline).toBeUndefined();
     expect(htmlRenderOutlineBoxes(reference, 728)).toEqual([]);
     expect(htmlRenderReferencesEqual(outlined, { ...outlined, outline: "m0,0,1,1,1" })).toBe(false);

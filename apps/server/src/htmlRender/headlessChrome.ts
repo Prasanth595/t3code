@@ -168,6 +168,7 @@ const MEASURE_EXPRESSION =
 // Past the detail budget, remaining blocks are kept whole, and once the outline
 // is full, one block of text lines stands in for the rest of the page, so the
 // skeleton still reaches the bottom.
+const OUTLINE_MAX_VISITS = 2_000;
 const OUTLINE_EXPRESSION = `(() => {
   const boxes = [], detail = ${HTML_RENDER_OUTLINE_MAX_BOXES - 12}, max = ${HTML_RENDER_OUTLINE_MAX_BOXES};
   const media = "canvas,svg,img,video,picture,iframe,object,embed,input,select,textarea,button";
@@ -183,16 +184,28 @@ const OUTLINE_EXPRESSION = `(() => {
     const box = t.width >= 2 && t.height >= 2 ? t : r;
     add("text", box, lineCount(s, box));
   };
-  let full = false;
-  const walk = (parent) => {
-    for (const el of parent.children) {
+  // Visits are capped too, so a huge generated DOM costs no more than a page.
+  let full = false, visits = 0;
+  const walk = (parent, ps) => {
+    for (const el of parent.childNodes) {
       // The last slot is kept for whatever the outline has no room left for.
-      if (boxes.length >= max - 1) { full = true; return; }
+      if (boxes.length >= max - 1 || ++visits > ${OUTLINE_MAX_VISITS}) { full = true; return; }
+      // Bare text only reaches here under body or a display: contents element.
+      if (el.nodeType === 3) {
+        if (el.data.trim() === "") continue;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const t = range.getBoundingClientRect();
+        if (t.width >= 2 && t.height >= 2) add("text", t, lineCount(ps, t));
+        continue;
+      }
+      if (el.nodeType !== 1) continue;
       const s = getComputedStyle(el);
       if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") continue;
-      if (s.display === "contents") { walk(el); continue; }
+      if (s.display === "contents") { walk(el, s); continue; }
       const r = el.getBoundingClientRect();
-      if (r.width < 2 || r.height < 2) continue;
+      // A zero-size box can still show positioned children, unless it clips them.
+      if (r.width < 2 || r.height < 2) { if (s.overflow === "visible") walk(el, s); continue; }
       const tag = el.localName;
       if (el.matches(media)) { add("media", r, 1); continue; }
       if (tag === "table") { add("table", r, el.rows.length); continue; }
@@ -201,13 +214,14 @@ const OUTLINE_EXPRESSION = `(() => {
       if (text) { addText(el, s, r); continue; }
       if (el.children.length === 0) { if (filled(s)) add("media", r, 1); continue; }
       if (filled(s) && r.height >= 24) add("panel", r, 1);
-      walk(el);
+      walk(el, s);
     }
   };
-  walk(document.body);
+  walk(document.body, getComputedStyle(document.body));
   if (full) {
-    const top = Math.max(...boxes.map((b) => b[2] + b[4]));
-    const rest = document.documentElement.scrollHeight - top;
+    const top = Math.max(0, ...boxes.map((b) => b[2] + b[4]));
+    const root = document.documentElement;
+    const rest = (root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height) - top;
     if (rest >= 8) boxes.push(["text", 0, top, document.documentElement.clientWidth, rest, Math.max(1, Math.round(rest / 28))]);
   }
   return boxes;

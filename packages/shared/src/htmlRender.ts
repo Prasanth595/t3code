@@ -161,8 +161,10 @@ const OUTLINE_LETTERS = { text: "t", media: "m", table: "g", panel: "p" } as con
 // Coordinates travel in 4px units, which keeps the tool result an agent reads short.
 const OUTLINE_UNIT = 4;
 export const HTML_RENDER_OUTLINE_MAX_BOXES = 48;
+// Sizes and line counts are never zero, so a client never divides by one.
+const OUTLINE_BOX = "[tmgp]\\d{1,4},\\d{1,4},[1-9]\\d{0,3},[1-9]\\d{0,3},[1-9]\\d{0,2}";
 const OUTLINE_PATTERN = new RegExp(
-  `^[tmgp]\\d{1,4},\\d{1,4},\\d{1,4},\\d{1,4},\\d{1,3}(?:;[tmgp]\\d{1,4},\\d{1,4},\\d{1,4},\\d{1,4},\\d{1,3}){0,${HTML_RENDER_OUTLINE_MAX_BOXES - 1}}$`,
+  `^${OUTLINE_BOX}(?:;${OUTLINE_BOX}){0,${HTML_RENDER_OUTLINE_MAX_BOXES - 1}}$`,
 );
 
 /** Packs measured boxes, in CSS pixels at the column width, into an outline string. */
