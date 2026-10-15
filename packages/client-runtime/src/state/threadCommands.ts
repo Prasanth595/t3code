@@ -52,6 +52,7 @@ import {
   type UnlinkThreadPullRequestInput,
   type UnpinThreadInput,
   type WatchThreadPullRequestInput,
+  type StopThreadCommandWatchInput,
   type UnsettleThreadInput,
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
@@ -94,6 +95,7 @@ import {
   updateThreadMetadata,
   visitThread,
   watchThreadPullRequest,
+  stopThreadCommandWatch,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -141,6 +143,7 @@ export type {
   UpdateThreadMetadataInput,
   VisitThreadInput,
   WatchThreadPullRequestInput,
+  StopThreadCommandWatchInput,
 } from "../operations/commands.ts";
 
 export function createThreadEnvironmentAtoms<R, E>(
@@ -316,6 +319,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     watchPullRequest: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:watch-pull-request",
       execute: (input: WatchThreadPullRequestInput) => watchThreadPullRequest(input),
+      scheduler,
+      concurrency,
+    }),
+    stopCommandWatch: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:stop-command-watch",
+      execute: (input: StopThreadCommandWatchInput) => stopThreadCommandWatch(input),
       scheduler,
       concurrency,
     }),

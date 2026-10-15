@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
+  commandWatchIdOfTask,
   derivePendingBackgroundWork,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
@@ -416,6 +417,33 @@ describe("derivePendingBackgroundWork kinds", () => {
           pullRequests,
         }).map((task) => task.taskId),
       ).toEqual(["pull-request-watch:github.com/acme/app#1"]);
+    });
+
+    it("lists command watches as monitors a client can stop, only when passed", () => {
+      const commandWatches = [{ id: "command-watch:1", label: "Maintainer reply" }];
+      const tasks = derivePendingBackgroundWork({
+        latestRun: null,
+        providerThreads: [],
+        turnItems: [],
+        commandWatches,
+      });
+      expect(tasks).toEqual([
+        { taskId: "command-watch:1", description: "Watching: Maintainer reply", kind: "monitor" },
+      ]);
+      expect(tasks.map(commandWatchIdOfTask)).toEqual(["command-watch:1"]);
+      expect(
+        derivePendingBackgroundWork({
+          latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+          providerThreads: [],
+          turnItems: [],
+        }),
+      ).toEqual([]);
+      expect(
+        commandWatchIdOfTask({
+          taskId: "pull-request-watch:github.com/acme/app#1",
+          kind: "monitor",
+        }),
+      ).toBeNull();
     });
 
     it("lists no watch while a run is active", () => {
