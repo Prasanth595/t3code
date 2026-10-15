@@ -1099,7 +1099,10 @@ export default function FilePreviewPanel({
   // kept for the way back down. The explorer (`""`) shows crumbs only then.
   const breadcrumbPath =
     attachment !== undefined ? null : (relativePath ?? (folderTrail === undefined ? null : ""));
-  const breadcrumbTrail = folderTrail ?? breadcrumbPath;
+  // A host trail that walked up to the workspace root (`/repo/project` is `""`) no
+  // longer passes through the current path, so the crumbs start over there.
+  const breadcrumbTrail =
+    breadcrumbPath === null ? null : retainedBreadcrumbTrail(folderTrail, breadcrumbPath);
   // The trail only continues below folders, so a surface with one is a folder
   // before its read settles, and walking up never flashes a file preview.
   const isFolder =
