@@ -3,7 +3,13 @@ import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import { GraphQLClient, GraphQLClientError, GraphQLResolver } from "effect/graphql";
+import {
+  GraphQL,
+  GraphQLClient,
+  GraphQLClientError,
+  GraphQLGroup,
+  GraphQLResolver,
+} from "effect/graphql";
 import * as Option from "effect/Option";
 import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
@@ -58,10 +64,29 @@ import { readSourceControlHostSettings } from "@t3tools/source-control-core/clie
 
 import * as GitHubClient from "../client/definition.ts";
 import {
-  SourceControlProviderGraphQLGroup,
-  type PullRequestNode,
-  type PullRequestsByHead,
+  PullRequestByNumber,
+  PullRequestNode,
+  PullRequestsByHead,
 } from "./sourceControlProvider.graphql.ts";
+
+/**
+ * The generated head lookup with its rows left undecoded, so `listByHead` decodes them one at a
+ * time: a row whose fields no longer decode is skipped rather than failing every lookup that
+ * shared its document.
+ */
+const LenientPullRequestsByHead = GraphQL.query(PullRequestsByHead.name, {
+  // The template, not the joined text: `GraphQLResolver.aliased` repeats it per lookup.
+  document: PullRequestsByHead.template!,
+  variables: PullRequestsByHead.variables,
+  result: Schema.Struct({
+    repository: Schema.NullOr(
+      Schema.Struct({
+        pullRequests: Schema.Struct({ nodes: Schema.NullOr(Schema.Array(Schema.Unknown)) }),
+      }),
+    ),
+  }),
+});
+const decodePullRequestNode = Schema.decodeUnknownOption(PullRequestNode);
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -515,7 +540,9 @@ export const make = Effect.gen(function* () {
   );
 
   const client = yield* GraphQLClient.make(
-    SourceControlProviderGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+    GraphQLGroup.make(LenientPullRequestsByHead, PullRequestByNumber).middleware(
+      GitHubGraphQlClient.GitHubGraphQlAuth,
+    ),
   ).pipe(Effect.provide(GitHubGraphQlClient.layer));
 
   /**
@@ -599,7 +626,8 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (result.repository === null) return yield* notFound("The repository could not be read.");
-    const rows = (result.repository.pullRequests.nodes ?? []).flatMap((node) => {
+    const rows = (result.repository.pullRequests.nodes ?? []).flatMap((entry) => {
+      const node = Option.getOrNull(decodePullRequestNode(entry));
       const record = node === null ? null : toPullRequestRecord(node);
       return record === null ? [] : [record];
     });

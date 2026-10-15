@@ -415,6 +415,45 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("skips a row that does not decode and keeps the rest of the batch", () => {
+    const { layer, graphqlCalls } = harness({
+      remotes,
+      graphql: (lookup) => ({
+        pullRequests: {
+          nodes:
+            lookup.head === "feature/a"
+              ? [{ ...node(8, "feature/a"), number: "eight" }, node(7, "feature/a")]
+              : [node(9, "feature/b")],
+        },
+      }),
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const lookup = (headSelector: string) =>
+        gh.listChangeRequests({
+          cwd: "/repo",
+          headSelector,
+          state: "all",
+          limit: 100,
+          context: githubContext("github.com"),
+        });
+      const both = yield* Effect.all([lookup("feature/a"), lookup("feature/b")], {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("500 millis");
+      const [first, second] = yield* Fiber.join(both);
+      assert.strictEqual(graphqlCalls.length, 1);
+      assert.deepStrictEqual(
+        first.map((pr) => pr.number),
+        [7],
+      );
+      assert.deepStrictEqual(
+        second.map((pr) => pr.number),
+        [9],
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("caps a background document at twenty-five heads", () => {
     const { layer, graphqlCalls } = harness({
       remotes,
