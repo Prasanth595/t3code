@@ -170,6 +170,27 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 
+/** Follow the project's default model, resolved when each run starts. */
+export const ScheduledTaskProjectDefaultModel = Schema.TaggedStruct("projectDefault", {}).annotate({
+  description:
+    "Use the project's default model at run time, then the app default. A task bound to a thread keeps that thread's model.",
+});
+
+/**
+ * The model a task runs on: the project default, or one explicit selection.
+ * Rows saved before this union hold a bare `ModelSelection` and still decode
+ * as the explicit member, so the stored shape of explicit tasks is unchanged.
+ */
+export const ScheduledTaskModelSelection = Schema.Union([
+  ScheduledTaskProjectDefaultModel,
+  ModelSelection,
+]).annotate({
+  description:
+    "Pass {_tag:'projectDefault'} to follow the project default, or {instanceId, model, options?} for one provider instance and model.",
+});
+export type ScheduledTaskModelSelection = typeof ScheduledTaskModelSelection.Type;
+export const isScheduledTaskProjectDefaultModel = Schema.is(ScheduledTaskProjectDefaultModel);
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -179,7 +200,7 @@ export const ScheduledTask = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.NullOr(ThreadId),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
-  modelSelection: ModelSelection,
+  modelSelection: ScheduledTaskModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: OrchestrationV2Actor,
@@ -218,7 +239,7 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
-  modelSelection: ModelSelection,
+  modelSelection: ScheduledTaskModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),

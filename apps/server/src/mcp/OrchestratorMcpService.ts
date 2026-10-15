@@ -53,7 +53,9 @@ import {
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type RuntimeMode,
+  isScheduledTaskProjectDefaultModel,
   type ScheduledTask,
+  type ScheduledTaskModelSelection,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
   ThreadId,
@@ -256,6 +258,7 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     projectId: task.projectId,
     boundThreadId: task.threadId,
     schedule: task.schedule,
+    modelSelection: task.modelSelection,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
     // A bare path is not a URL anyone can call, so agents never get one to share.
@@ -1141,6 +1144,33 @@ const make = Effect.gen(function* () {
   const loadProviders = providerRegistry.getProviders;
 
   /**
+   * An explicit scheduled task model must name a provider instance and model
+   * from the live catalog, so a wrong id fails on save instead of on every run.
+   */
+  const checkScheduledTaskModelSelection = (selection: ScheduledTaskModelSelection) =>
+    Effect.gen(function* () {
+      if (isScheduledTaskProjectDefaultModel(selection)) return selection;
+      const providers = yield* loadProviders;
+      const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+      if (provider === undefined) {
+        return yield* failure(
+          "invalid_request",
+          `Provider instance ${selection.instanceId} is not configured. Use one of: ${providers.map((candidate) => candidate.instanceId).join(", ")}.`,
+        );
+      }
+      if (
+        provider.models.length > 0 &&
+        !provider.models.some((candidate) => candidate.slug === selection.model)
+      ) {
+        return yield* failure(
+          "model_unavailable",
+          `Model ${selection.model} is not advertised by provider ${selection.instanceId}.`,
+        );
+      }
+      return selection;
+    });
+
+  /**
    * Instance ids the adapter registry resolves — the same lookup a
    * `delegated_task.request` performs when it runs. Capability reporting and
    * target resolution must not advertise a set narrower (or wider) than what
@@ -1650,7 +1680,9 @@ const make = Effect.gen(function* () {
           );
         }
         const modelSelection =
-          parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+          input.modelSelection === undefined
+            ? (parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project)))
+            : yield* checkScheduledTaskModelSelection(input.modelSelection);
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1744,7 +1776,10 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
-          modelSelection: existing.modelSelection,
+          modelSelection:
+            input.modelSelection === undefined
+              ? existing.modelSelection
+              : yield* checkScheduledTaskModelSelection(input.modelSelection),
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
