@@ -621,6 +621,10 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
+  const resolveProjectCwd = useAtomQueryRunner(projectEnvironment.resolveCwd, {
+    reportFailure: false,
+    refresh: true,
+  });
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -1994,11 +1998,16 @@ function OpenCommandPaletteDialog(props: {
         });
         const project = projectByKey.get(`${environmentId}:${thread.projectId}`);
         if (!project) return;
+        const resolved = await resolveProjectCwd({
+          environmentId,
+          input: { cwd: project.workspaceRoot, worktreePath: thread.worktreePath },
+        });
+        if (resolved._tag === "Failure") throw squashAtomCommandFailure(resolved);
         const refreshed = await refreshProviders({
           environmentId,
           input: {
             instanceId: thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId,
-            cwd: thread.worktreePath ?? project.workspaceRoot,
+            cwd: resolved.value.cwd,
             fresh: true,
           },
         });

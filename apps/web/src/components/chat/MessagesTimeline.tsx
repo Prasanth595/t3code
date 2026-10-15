@@ -4350,7 +4350,7 @@ function UserMessageMentionChip(props: {
             <WorkspaceEntryIcon
               path={props.record.path}
               environmentId={ctx.activeThreadEnvironmentId}
-              cwd={ctx.workspaceRoot}
+              cwd={ctx.markdownCwd}
               theme={ctx.resolvedTheme}
             />
             <ContextChipLabel>{props.record.label}</ContextChipLabel>
@@ -4361,7 +4361,7 @@ function UserMessageMentionChip(props: {
         <WorkspaceEntryTooltip
           path={props.record.path}
           environmentId={ctx.activeThreadEnvironmentId}
-          cwd={ctx.workspaceRoot}
+          cwd={ctx.markdownCwd}
         />
       </TooltipPopup>
     </Tooltip>

@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 /**
  * ERRORS
@@ -87,11 +88,14 @@ function providerRuntimeMode(
 export const layerFromProjectStore: Layer.Layer<
   RuntimePolicyV2,
   never,
-  ProjectStore.ProjectStoreV2 | ProviderInstanceRegistry.ProviderInstanceRegistry
+  | ProjectStore.ProjectStoreV2
+  | ProviderInstanceRegistry.ProviderInstanceRegistry
+  | WorkspacePaths.WorkspacePaths
 > = Layer.effect(
   RuntimePolicyV2,
   Effect.gen(function* () {
     const projects = yield* ProjectStore.ProjectStoreV2;
+    const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
@@ -100,31 +104,26 @@ export const layerFromProjectStore: Layer.Layer<
           instance === undefined
             ? undefined
             : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
-        const cwd =
-          input.thread.worktreePath ??
-          (yield* projects.get(input.thread.projectId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new RuntimePolicyResolveError({
-                  projectId: input.thread.projectId,
-                  providerInstanceId: input.modelSelection.instanceId,
-                  cause,
-                }),
-            ),
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(
-                    new RuntimePolicyResolveError({
-                      projectId: input.thread.projectId,
-                      providerInstanceId: input.modelSelection.instanceId,
-                      cause: "Project not found.",
-                    }),
-                  ),
-                onSome: (project) => Effect.succeed(project.workspaceRoot),
+        const cwd = yield* Effect.gen(function* () {
+          const project = yield* projects.get(input.thread.projectId);
+          if (Option.isNone(project)) {
+            if (input.thread.worktreePath !== null) return input.thread.worktreePath;
+            return yield* Effect.fail("Project not found.");
+          }
+          return yield* workspacePaths.resolveProjectCwd({
+            cwd: project.value.workspaceRoot,
+            worktreePath: input.thread.worktreePath,
+          });
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RuntimePolicyResolveError({
+                projectId: input.thread.projectId,
+                providerInstanceId: input.modelSelection.instanceId,
+                cause,
               }),
-            ),
-          ));
+          ),
+        );
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,

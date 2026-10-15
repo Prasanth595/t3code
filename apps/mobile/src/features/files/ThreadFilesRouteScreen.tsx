@@ -30,6 +30,7 @@ import { useMediaActions } from "../../state/mediaActions";
 import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useProjectCwd } from "../../state/use-project-cwd";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { projectEnvironment } from "../../state/projects";
@@ -361,7 +362,12 @@ function useThreadFilesWorkspace(params: {
   const routeCwd = firstRouteParam(params.cwd);
   const routeProjectName = firstRouteParam(params.projectName);
   const { selectedThread, selectedThreadProject } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const selectedThreadCwd = useProjectCwd({
+    environmentId: selectedThread?.environmentId ?? null,
+    projectCwd: selectedThreadProject?.workspaceRoot ?? null,
+    worktreePath: selectedThreadWorktreePath,
+  });
   const environmentId =
     routeEnvironmentId !== null
       ? EnvironmentId.make(routeEnvironmentId)
@@ -373,7 +379,7 @@ function useThreadFilesWorkspace(params: {
   } | null;
 
   return {
-    cwd: routeCwd ?? selectedThreadCwd ?? project?.workspaceRoot ?? null,
+    cwd: routeCwd ?? selectedThreadCwd,
     environmentId,
     projectName: routeProjectName ?? project?.title ?? "Files",
     selectedThread,

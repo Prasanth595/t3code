@@ -16,6 +16,20 @@ import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ProcessRunner from "../processRunner.ts";
+
+export class WorkspaceProjectCwdError extends Schema.TaggedError<WorkspaceProjectCwdError>()(
+  "WorkspaceProjectCwdError",
+  {
+    cwd: Schema.String,
+    worktreePath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not resolve the project working directory in worktree '${this.worktreePath}'.`;
+  }
+}
 
 export class WorkspaceRootNotExistsError extends Schema.TaggedError<WorkspaceRootNotExistsError>()(
   "WorkspaceRootNotExistsError",
@@ -93,6 +107,11 @@ export type WorkspacePathsError = typeof WorkspacePathsError.Type;
 export class WorkspacePaths extends Context.Service<
   WorkspacePaths,
   {
+    /** Resolve the project's directory inside a checkout without changing the checkout root. */
+    readonly resolveProjectCwd: (input: {
+      readonly cwd: string;
+      readonly worktreePath?: string | null | undefined;
+    }) => Effect.Effect<string, WorkspaceProjectCwdError>;
     /** Normalize a user-provided workspace root and verify it exists as a directory. */
     readonly normalizeWorkspaceRoot: (
       workspaceRoot: string,
@@ -126,6 +145,52 @@ function toPosixRelativePath(input: string): string {
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+
+  const isWithinRoot = (root: string, target: string) => {
+    const relative = path.relative(root, target);
+    return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+
+  const resolveProjectCwd: WorkspacePaths["Service"]["resolveProjectCwd"] = Effect.fn(
+    "WorkspacePaths.resolveProjectCwd",
+  )(function* (input) {
+    if (!input.worktreePath) return input.cwd;
+    const worktreePath = input.worktreePath;
+    return yield* Effect.gen(function* () {
+      // Git knows the subdirectory even without a remote and through a symlinked checkout.
+      const prefix = yield* processRunner.run({
+        command: "git",
+        args: ["-C", input.cwd, "rev-parse", "--show-prefix"],
+        timeout: "5 seconds",
+      });
+      // Scratch threads also use worktreePath for their independent, non-Git folder.
+      if (prefix.code !== 0) {
+        if (prefix.stderr.toLowerCase().includes("not a git repository")) return worktreePath;
+        return yield* Effect.fail({ exitCode: prefix.code, stderr: prefix.stderr });
+      }
+      const relative = prefix.stdout.replace(/\r?\n$/, "");
+      if (relative === "") return worktreePath;
+      const candidate = path.resolve(worktreePath, relative);
+      if (!isWithinRoot(worktreePath, candidate)) return worktreePath;
+
+      return yield* Effect.gen(function* () {
+        if ((yield* fileSystem.stat(candidate)).type !== "Directory") return worktreePath;
+        const root = yield* fileSystem.realPath(worktreePath);
+        const resolved = yield* fileSystem.realPath(candidate);
+        return isWithinRoot(root, resolved) ? resolved : worktreePath;
+      }).pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound" || error.reason._tag === "BadResource",
+          () => Effect.succeed(worktreePath),
+        ),
+      );
+    }).pipe(
+      Effect.mapError(
+        (cause) => new WorkspaceProjectCwdError({ cwd: input.cwd, worktreePath, cause }),
+      ),
+    );
+  });
 
   const statWorkspaceRoot = Effect.fn("WorkspacePaths.statWorkspaceRoot")(function* (
     workspaceRoot: string,
@@ -224,7 +289,11 @@ export const make = Effect.gen(function* () {
       };
     });
 
-  return WorkspacePaths.of({ normalizeWorkspaceRoot, resolveRelativePathWithinRoot });
+  return WorkspacePaths.of({
+    resolveProjectCwd,
+    normalizeWorkspaceRoot,
+    resolveRelativePathWithinRoot,
+  });
 });
 
-export const layer = Layer.effect(WorkspacePaths, make);
+export const layer = Layer.effect(WorkspacePaths, make).pipe(Layer.provide(ProcessRunner.layer));

@@ -27,6 +27,7 @@ import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const layerWorkspacePaths = Layer.succeed(WorkspacePaths.WorkspacePaths, {
+  resolveProjectCwd: (input) => Effect.succeed(input.worktreePath ?? input.cwd),
   normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot.replace(/\/$/, "")),
   resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
     Effect.succeed({ absolutePath: `${workspaceRoot}/${relativePath}`, relativePath }),

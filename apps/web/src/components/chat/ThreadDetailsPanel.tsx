@@ -39,6 +39,7 @@ export interface ThreadDetailsPanelProps extends Pick<
   availableEditors: ReadonlyArray<EditorId>;
   showOpenInPicker: boolean;
   gitCwd: string | null;
+  projectCwd: string | null;
   isGitRepo: boolean;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
@@ -67,7 +68,7 @@ export interface ThreadDetailsPanelProps extends Pick<
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
-    props.activeProjectScripts ? props.gitCwd : null,
+    props.activeProjectScripts ? props.projectCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
   const branchToolbarProps = {
@@ -126,7 +127,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   keybindings={props.keybindings}
                   environmentId={props.environmentId}
                   availableEditors={props.availableEditors}
-                  openInCwd={props.gitCwd}
+                  openInCwd={props.projectCwd}
                   displayMode="panel"
                 />
               ) : null}

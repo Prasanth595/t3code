@@ -45,6 +45,7 @@ const layerServices = Layer.mergeAll(
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
   Layer.succeed(WorkspacePaths.WorkspacePaths, {
+    resolveProjectCwd: (input) => Effect.succeed(input.worktreePath ?? input.cwd),
     normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
     resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
       Effect.succeed({ absolutePath: `${workspaceRoot}/${relativePath}`, relativePath }),

@@ -58,7 +58,8 @@ import {
   useKnownTerminalSessions,
 } from "../../state/use-terminal-session";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useSelectedThreadProjection } from "../../state/use-thread-detail";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useProjectCwd } from "../../state/use-project-cwd";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { getMobileTerminalTheme } from "./terminalTheme";
@@ -267,9 +268,12 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const params = props.route.params;
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
-  const selectedThreadDetail = useSelectedThreadProjection();
-  const selectedThreadDetailWorktreePath =
-    selectedThreadDetail?.projection.thread.worktreePath ?? null;
+  const { selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const selectedThreadCwd = useProjectCwd({
+    environmentId: selectedThread?.environmentId ?? null,
+    projectCwd: selectedThreadProject?.workspaceRoot ?? null,
+    worktreePath: selectedThreadWorktreePath,
+  });
   const routeEnvironmentIdRaw = firstRouteParam(params.environmentId);
   const routeThreadIdRaw = firstRouteParam(params.threadId);
   const routeEnvironmentId = routeEnvironmentIdRaw
@@ -391,7 +395,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     runningSession !== null &&
     runningSession.target.terminalId !== terminalId;
   const launchLocationCandidate = useMemo(() => {
-    if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+    if (!selectedThread || !hasResolvedPendingLaunch) {
       return null;
     }
     if (pendingLaunch) {
@@ -400,19 +404,27 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         worktreePath: pendingLaunch.worktreePath,
       };
     }
+    // The launch location is retained after the first result, so allow existing
+    // session metadata to supply its authoritative location before using a default.
+    if (canReadTerminal && knownSessions === null && sessionsError === null) {
+      return null;
+    }
     return resolveTerminalOpenLocation({
       terminalLocation: activeKnownSession?.state.summary ?? null,
       activeSessionLocation: activeKnownSession?.state.summary ?? null,
-      workspaceRoot: selectedThreadProject.workspaceRoot,
-      threadShellWorktreePath: selectedThread.worktreePath ?? null,
-      threadDetailWorktreePath: selectedThreadDetailWorktreePath,
+      projectCwd: selectedThreadCwd,
+      worktreePath: selectedThreadWorktreePath,
     });
   }, [
     activeKnownSession?.state.summary,
+    canReadTerminal,
+    hasResolvedPendingLaunch,
+    knownSessions,
     pendingLaunch,
     selectedThread,
-    selectedThreadDetailWorktreePath,
-    selectedThreadProject?.workspaceRoot,
+    selectedThreadCwd,
+    selectedThreadWorktreePath,
+    sessionsError,
   ]);
   const [initialLaunchLocationEntry, setInitialLaunchLocationEntry] = useState(() => ({
     key: launchTargetKey,
@@ -541,7 +553,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       preview: terminal.buffer.slice(0, 160),
     });
   }, [terminal.buffer, terminal.buffer.length, terminalKey]);
-  const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
+  const cwd = terminal.summary?.cwd ?? launchLocation?.cwd ?? selectedThreadCwd;
   const serverConfigs = useServerConfigs();
   const hostOs =
     routeEnvironmentId === null

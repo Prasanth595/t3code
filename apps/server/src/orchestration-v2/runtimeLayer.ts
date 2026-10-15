@@ -43,6 +43,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
@@ -60,6 +61,7 @@ export const layerEventInfrastructure = Layer.mergeAll(
 
 const layerRuntimePolicyProvided = RuntimePolicy.layerFromProjectStore.pipe(
   Layer.provide(ProjectStore.layer),
+  Layer.provide(WorkspacePaths.layer),
 );
 
 const layerEventStoreProvided = EventStore.layerFromOrchestrationEventStore.pipe(
@@ -121,6 +123,7 @@ const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
 const layerProviderAdapterRegistryProvided =
   ProviderAdapterRegistry.layerFromProviderInstanceRegistry;
 const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
+  Layer.provide(layerRuntimePolicyProvided),
   Layer.provide(layerProviderAdapterRegistryProvided),
 );
 

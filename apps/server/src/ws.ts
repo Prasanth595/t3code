@@ -69,6 +69,7 @@ import {
   type ProjectMutation,
   ProjectListEntriesError,
   ProjectReadFileError,
+  ProjectResolveCwdError,
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
@@ -1303,6 +1304,7 @@ const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2664,6 +2666,11 @@ const layerWsRpc = (
                   cause,
                 }),
             ),
+          ),
+        [WS_METHODS.projectsResolveCwd]: (input) =>
+          workspacePaths.resolveProjectCwd(input).pipe(
+            Effect.map((cwd) => ({ cwd })),
+            Effect.mapError((cause) => new ProjectResolveCwdError({ ...input, cause })),
           ),
         [WS_METHODS.projectsListEntries]: (input) =>
           workspaceEntries.list(input).pipe(

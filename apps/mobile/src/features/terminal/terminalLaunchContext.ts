@@ -58,27 +58,19 @@ export function resolvePreferredThreadWorktreePath(input: {
 export function resolveTerminalOpenLocation(input: {
   readonly terminalLocation: TerminalLocationLike | null;
   readonly activeSessionLocation: TerminalLocationLike | null;
-  readonly workspaceRoot: string;
-  readonly threadShellWorktreePath: string | null;
-  readonly threadDetailWorktreePath: string | null;
-}): {
-  readonly cwd: string;
+  readonly projectCwd: string | null;
   readonly worktreePath: string | null;
-} {
-  const preferredThreadWorktreePath = resolvePreferredThreadWorktreePath({
-    threadShellWorktreePath: input.threadShellWorktreePath,
-    threadDetailWorktreePath: input.threadDetailWorktreePath,
-  });
+}): TerminalLocationLike | null {
+  const existingLocation = input.terminalLocation ?? input.activeSessionLocation;
+  if (existingLocation !== null) {
+    return existingLocation;
+  }
+  if (input.projectCwd === null) {
+    return null;
+  }
 
   return {
-    cwd:
-      input.terminalLocation?.cwd ??
-      input.activeSessionLocation?.cwd ??
-      preferredThreadWorktreePath ??
-      input.workspaceRoot,
-    worktreePath:
-      input.terminalLocation?.worktreePath ??
-      input.activeSessionLocation?.worktreePath ??
-      preferredThreadWorktreePath,
+    cwd: input.projectCwd,
+    worktreePath: input.worktreePath,
   };
 }

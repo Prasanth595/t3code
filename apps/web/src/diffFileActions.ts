@@ -91,10 +91,15 @@ export function openDiffFilePrimaryAction({
   });
   if (!workspaceFilePath) return;
 
+  // Diff paths are relative to their checkout; the file panel may be rooted in a
+  // nested project, so preserve the resolved location when opening it there.
+  const targetPath = activeCwd
+    ? resolvePathLinkTarget(workspaceFilePath, activeCwd)
+    : workspaceFilePath;
   if (threadRef) {
-    useRightPanelStore.getState().openFile(threadRef, workspaceFilePath);
+    useRightPanelStore.getState().openFile(threadRef, targetPath);
     return;
   }
 
-  openInEditor(activeCwd ? resolvePathLinkTarget(workspaceFilePath, activeCwd) : workspaceFilePath);
+  openInEditor(targetPath);
 }

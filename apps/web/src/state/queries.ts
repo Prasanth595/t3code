@@ -57,6 +57,23 @@ const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
   labelPrefix: "web:thread-search",
 });
 
+/** Worktree paths are checkout roots; only the server can resolve a project's subdirectory. */
+export function useProjectCwd(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly cwd: string | null;
+  readonly worktreePath: string | null;
+}): string | null {
+  const result = useEnvironmentQuery(
+    input.environmentId !== null && input.cwd !== null && input.worktreePath !== null
+      ? projectEnvironment.resolveCwd({
+          environmentId: input.environmentId,
+          input: { cwd: input.cwd, worktreePath: input.worktreePath },
+        })
+      : null,
+  );
+  return input.worktreePath === null ? input.cwd : (result.data?.cwd ?? null);
+}
+
 export function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
 

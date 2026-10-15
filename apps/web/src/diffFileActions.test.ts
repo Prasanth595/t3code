@@ -29,7 +29,7 @@ describe("openDiffFilePrimaryAction", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
     ).toMatchObject({
       isOpen: true,
-      activeSurfaceId: "file:apps/web/src/components/DiffPanel.tsx",
+      activeSurfaceId: "file:/repo/project/apps/web/src/components/DiffPanel.tsx",
     });
     expect(openInEditor).not.toHaveBeenCalled();
   });
@@ -64,7 +64,7 @@ describe("openDiffFilePrimaryAction", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
     ).toMatchObject({
       isOpen: true,
-      activeSurfaceId: "file:Dockerfile",
+      activeSurfaceId: "file:/repo/frontend/Dockerfile",
     });
     expect(openInEditor).not.toHaveBeenCalled();
   });
@@ -77,6 +77,19 @@ describe("openDiffFilePrimaryAction", () => {
         repositoryRoot: "/repo",
       }),
     ).toBe("frontend/Dockerfile");
+
+    openDiffFilePrimaryAction({
+      threadRef: THREAD_REF,
+      filePath: "frontend/Dockerfile",
+      activeCwd: "/worktrees/feature",
+      openInEditor: vi.fn(),
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toMatchObject({
+      isOpen: true,
+      activeSurfaceId: "file:/worktrees/feature/frontend/Dockerfile",
+    });
   });
 
   it("handles Windows roots and mixed diff separators", () => {

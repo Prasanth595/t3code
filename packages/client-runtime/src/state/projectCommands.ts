@@ -116,6 +116,25 @@ export function createProjectEnvironmentAtoms<R, E>(
             ),
         ),
     }),
+    resolveCwd: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:resolve-cwd",
+      tag: WS_METHODS.projectsResolveCwd,
+      execute: (input) =>
+        request(WS_METHODS.projectsResolveCwd, input).pipe(
+          // Older servers use Effect RPC's exact unknown-tag defect. Keep their
+          // checkout-root behavior without hiding permission or filesystem failures.
+          Effect.catchCauseIf(
+            (cause) =>
+              cause.reasons.length === 1 &&
+              cause.reasons[0]?._tag === "Die" &&
+              cause.reasons[0].defect === `Unknown request tag: ${WS_METHODS.projectsResolveCwd}`,
+            () => Effect.succeed({ cwd: input.worktreePath ?? input.cwd }),
+          ),
+        ),
+      // Directory availability can change between visits, including during setup.
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:search-entries",
       tag: WS_METHODS.projectsSearchEntries,

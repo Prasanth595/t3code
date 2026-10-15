@@ -21,11 +21,7 @@ import {
   ThreadId,
   type ProjectScript,
 } from "@t3tools/contracts";
-import {
-  projectScriptCwd,
-  projectScriptRuntimeEnv,
-  resolveProjectScripts,
-} from "@t3tools/shared/projectScripts";
+import { projectScriptRuntimeEnv, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConnectionsReady } from "../../state/workspace";
@@ -57,10 +53,7 @@ import {
   nextOpenTerminalId,
   resolveProjectScriptTerminalId,
 } from "../terminal/terminalMenu";
-import {
-  resolvePreferredThreadWorktreePath,
-  stagePendingTerminalLaunch,
-} from "../terminal/terminalLaunchContext";
+import { stagePendingTerminalLaunch } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
@@ -69,6 +62,7 @@ import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useProjectCwd } from "../../state/use-project-cwd";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
@@ -291,7 +285,13 @@ function ThreadRouteContent(
   );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadCwd: selectedThreadGitCwd, selectedThreadWorktreePath } =
+    useSelectedThreadWorktree();
+  const selectedThreadCwd = useProjectCwd({
+    environmentId: selectedThread?.environmentId ?? null,
+    projectCwd: selectedThreadProject?.workspaceRoot ?? null,
+    worktreePath: selectedThreadWorktreePath,
+  });
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -448,10 +448,10 @@ function ThreadRouteContent(
     .join(" · ");
   /* ─── Git status for native header trigger ───────────────────────── */
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
+    selectedThread !== null && selectedThreadGitCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: selectedThreadGitCwd },
         })
       : null,
   );
@@ -467,7 +467,6 @@ function ThreadRouteContent(
       }),
     [knownTerminalSessions, selectedThreadProject?.workspaceRoot],
   );
-  const selectedThreadDetailWorktreePath = selectedThreadDetail?.thread.worktreePath ?? null;
   const handleReconnectEnvironment = useCallback(() => {
     if (!environmentId) {
       return;
@@ -479,9 +478,9 @@ function ThreadRouteContent(
   const gitActionProgressTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadCwd,
+      cwd: selectedThreadGitCwd,
     }),
-    [selectedThread?.environmentId, selectedThreadCwd],
+    [selectedThread?.environmentId, selectedThreadGitCwd],
   );
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 
@@ -719,6 +718,7 @@ function ThreadRouteContent(
       if (
         !selectedThread ||
         !selectedThreadProject?.workspaceRoot ||
+        selectedThreadCwd === null ||
         !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
       ) {
         terminalDebugLog("project-script:abort", {
@@ -738,17 +738,10 @@ function ThreadRouteContent(
           (session) => session.status === "running" || session.status === "starting",
         ),
       });
-      const preferredWorktreePath = resolvePreferredThreadWorktreePath({
-        threadShellWorktreePath: selectedThread.worktreePath ?? null,
-        threadDetailWorktreePath: selectedThreadDetailWorktreePath,
-      });
-      const cwd = projectScriptCwd({
-        project: { cwd: selectedThreadProject.workspaceRoot },
-        worktreePath: preferredWorktreePath,
-      });
+      const cwd = selectedThreadCwd;
       const env = projectScriptRuntimeEnv({
         project: { cwd: selectedThreadProject.workspaceRoot },
-        worktreePath: preferredWorktreePath,
+        worktreePath: selectedThreadWorktreePath,
       });
       stagePendingTerminalLaunch({
         target: {
@@ -758,7 +751,7 @@ function ThreadRouteContent(
         },
         launch: {
           cwd,
-          worktreePath: preferredWorktreePath,
+          worktreePath: selectedThreadWorktreePath,
           env,
           initialInput: `${script.command}\r`,
         },
@@ -767,7 +760,7 @@ function ThreadRouteContent(
         scriptId: script.id,
         terminalId: targetTerminalId,
         cwd,
-        worktreePath: preferredWorktreePath,
+        worktreePath: selectedThreadWorktreePath,
       });
 
       void navigation.navigate("ThreadTerminal", {
@@ -779,7 +772,8 @@ function ThreadRouteContent(
     [
       navigation,
       selectedThread,
-      selectedThreadDetailWorktreePath,
+      selectedThreadCwd,
+      selectedThreadWorktreePath,
       selectedThreadProject,
       terminalMenuSessions,
       knownTerminalSessions,
@@ -807,8 +801,8 @@ function ThreadRouteContent(
     gitOperationLabel: gitState.gitOperationLabel,
     canOpenTerminal:
       Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
-    canOperateTerminal,
-    canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
+    canOperateTerminal: canOperateTerminal && selectedThreadCwd !== null,
+    canOpenFiles: selectedThreadCwd !== null,
     projectScripts: selectedThreadProject
       ? resolveProjectScripts(
           routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
@@ -1049,7 +1043,6 @@ function ThreadRouteContent(
           onCancelQueuedRunEdit={composer.cancelQueuedRunEdit}
           onRemoveQueuedEditAttachment={composer.onRemoveQueuedEditAttachment}
           environmentId={selectedThread.environmentId}
-          projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           queuedMessages={composer.selectedThreadQueuedMessages}

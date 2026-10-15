@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 import {
   decideProviderSessionTransition,
   type ProviderSessionTransition,
@@ -60,11 +61,12 @@ const isLiveProviderSession = (
 export const layer: Layer.Layer<
   ProviderSwitchServiceV2,
   never,
-  ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  ProviderAdapterRegistry.ProviderAdapterRegistryV2 | RuntimePolicy.RuntimePolicyV2
 > = Layer.effect(
   ProviderSwitchServiceV2,
   Effect.gen(function* () {
     const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+    const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     return ProviderSwitchServiceV2.of({
       plan: ({ projection, targetModelSelection }) =>
         Effect.gen(function* () {
@@ -120,6 +122,10 @@ export const layer: Layer.Layer<
                   sessionCapabilities: negotiatedCapabilities ?? currentInstance.value.capabilities,
                 })
               : undefined;
+          const targetPolicy = yield* runtimePolicy.resolve({
+            thread: projection.thread,
+            modelSelection: targetModelSelection,
+          });
           const transition =
             Option.isNone(targetInstance) || Option.isNone(targetAdapter)
               ? ({
@@ -156,10 +162,7 @@ export const layer: Layer.Layer<
                     modelSelection: targetModelSelection,
                     runtimeMode: projection.thread.runtimeMode,
                     interactionMode: projection.thread.interactionMode,
-                    workspace:
-                      projection.thread.worktreePath ??
-                      currentSession?.cwd ??
-                      "<unresolved-workspace>",
+                    workspace: targetPolicy.cwd ?? "<unresolved-workspace>",
                     capabilities: targetInstance.value.capabilities,
                     available: targetInstance.value.enabled,
                   },

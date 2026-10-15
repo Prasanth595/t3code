@@ -15,6 +15,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
@@ -69,6 +70,7 @@ function layerTest(
   metadata: Readonly<Record<string, { continuationKey: string }>>,
   planSelectionTransition: ProviderAdapter.ProviderAdapterV2["Service"]["planSelectionTransition"] = () =>
     Effect.succeed({ type: "restart_session" }),
+  cwd?: string,
 ) {
   const adapter = (
     instanceId: ProviderInstanceId,
@@ -101,7 +103,14 @@ function layerTest(
           });
     },
   });
-  return ProviderSwitch.layer.pipe(Layer.provide(layerRegistry));
+  return ProviderSwitch.layer.pipe(
+    Layer.provide(layerRegistry),
+    Layer.provide(
+      cwd === undefined
+        ? RuntimePolicy.layer
+        : RuntimePolicy.layerWithOverride({ cwd }).pipe(Layer.provide(RuntimePolicy.layer)),
+    ),
+  );
 }
 
 it.effect(
@@ -342,4 +351,33 @@ it.effect("distinguishes compatible and incompatible instances of the same drive
       }),
     ),
   ),
+);
+
+it.effect(
+  "compares a subdirectory session with the resolved project cwd when switching models",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const current = projection();
+      const nested = {
+        ...current,
+        providerSessions: current.providerSessions.map((session) => ({
+          ...session,
+          cwd: "/repo/ios",
+        })),
+      };
+      const result = yield* service.plan({
+        projection: nested,
+        targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+      });
+      assert.equal(result.transition.type, "restart_and_resume");
+    }).pipe(
+      Effect.provide(
+        layerTest(
+          { [currentInstanceId]: { continuationKey: "codex:primary" } },
+          undefined,
+          "/repo/ios",
+        ),
+      ),
+    ),
 );

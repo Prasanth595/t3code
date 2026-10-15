@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useProjectCwd } from "../../state/use-project-cwd";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
@@ -492,10 +493,11 @@ export function NewTaskDraftScreen(props: {
       selectedEnvironmentServerConfig?.providers ?? [],
       selectedEnvironmentServerConfig?.usageLimitSources ?? [],
     );
-  const composerWorkspaceCwd =
-    (flow.workspaceMode === "worktree"
-      ? selectedProject?.workspaceRoot
-      : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
+  const composerWorkspaceCwd = useProjectCwd({
+    environmentId: selectedProject?.environmentId ?? null,
+    projectCwd: selectedProject?.workspaceRoot ?? null,
+    worktreePath: flow.workspaceMode === "worktree" ? null : flow.selectedWorktreePath,
+  });
   // Media needs its thumbnail; every other file already reads as its inline chip.
   const stripAttachments = useMemo(
     () => composerStripAttachments(flow.attachments),

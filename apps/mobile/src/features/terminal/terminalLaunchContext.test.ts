@@ -29,19 +29,29 @@ describe("resolvePreferredThreadWorktreePath", () => {
 });
 
 describe("resolveTerminalOpenLocation", () => {
-  it("uses the thread detail worktree path before the workspace root for a fresh mobile open", () => {
+  it("opens in the server-resolved project directory while preserving the worktree root", () => {
     expect(
       resolveTerminalOpenLocation({
         terminalLocation: null,
         activeSessionLocation: null,
-        workspaceRoot: "/repo/root",
-        threadShellWorktreePath: null,
-        threadDetailWorktreePath: "/repo/worktrees/feature",
+        projectCwd: "/repo/worktrees/feature/ios",
+        worktreePath: "/repo/worktrees/feature",
       }),
     ).toEqual({
-      cwd: "/repo/worktrees/feature",
+      cwd: "/repo/worktrees/feature/ios",
       worktreePath: "/repo/worktrees/feature",
     });
+  });
+
+  it("does not choose a launch directory while the project directory is resolving", () => {
+    expect(
+      resolveTerminalOpenLocation({
+        terminalLocation: null,
+        activeSessionLocation: null,
+        projectCwd: null,
+        worktreePath: "/repo/worktrees/feature",
+      }),
+    ).toBeNull();
   });
 
   it("preserves the running terminal snapshot cwd when attaching to an existing session", () => {
@@ -52,14 +62,24 @@ describe("resolveTerminalOpenLocation", () => {
           cwd: "/repo/worktrees/feature",
           worktreePath: "/repo/worktrees/feature",
         },
-        workspaceRoot: "/repo/root",
-        threadShellWorktreePath: null,
-        threadDetailWorktreePath: "/repo/worktrees/other",
+        projectCwd: null,
+        worktreePath: "/repo/worktrees/other",
       }),
     ).toEqual({
       cwd: "/repo/worktrees/feature",
       worktreePath: "/repo/worktrees/feature",
     });
+  });
+
+  it("keeps an existing terminal's explicit local workspace when the thread changes worktrees", () => {
+    expect(
+      resolveTerminalOpenLocation({
+        terminalLocation: { cwd: "/repo/ios", worktreePath: null },
+        activeSessionLocation: { cwd: "/other", worktreePath: "/other" },
+        projectCwd: "/repo/worktrees/feature/ios",
+        worktreePath: "/repo/worktrees/feature",
+      }),
+    ).toEqual({ cwd: "/repo/ios", worktreePath: null });
   });
 });
 

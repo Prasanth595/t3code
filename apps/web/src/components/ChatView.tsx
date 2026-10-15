@@ -133,11 +133,7 @@ import {
   resolvePromptInjectedEffort,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
-import {
-  projectScriptCwd,
-  projectScriptRuntimeEnv,
-  resolveProjectScripts,
-} from "@t3tools/shared/projectScripts";
+import { projectScriptRuntimeEnv, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
@@ -225,6 +221,7 @@ import {
 import { seedUserInputDraftAnswers } from "@t3tools/client-runtime/state/thread-requests";
 import { useUiStateStore } from "../uiStateStore";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
+import { useProjectCwd } from "../state/queries";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -1139,17 +1136,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     }
     return worktreePath;
   }, [launchContext, worktreePath]);
-  const cwd = useMemo(
-    () =>
-      launchContext?.cwd ??
-      (project
-        ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
-            worktreePath: effectiveWorktreePath,
-          })
-        : null),
-    [effectiveWorktreePath, launchContext?.cwd, project],
-  );
+  const projectCwd = useProjectCwd({
+    environmentId: threadRef.environmentId,
+    cwd: project?.workspaceRoot ?? null,
+    worktreePath: effectiveWorktreePath,
+  });
+  const cwd = launchContext?.cwd ?? projectCwd;
   const runtimeEnv = useMemo(
     () =>
       project
@@ -1427,18 +1419,12 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       ?.state.summary ?? null;
   const worktreePath =
     launchContext?.worktreePath ?? activeSummary?.worktreePath ?? threadWorktreePath;
-  const cwd = useMemo(
-    () =>
-      launchContext?.cwd ??
-      activeSummary?.cwd ??
-      (project
-        ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
-            worktreePath,
-          })
-        : null),
-    [activeSummary?.cwd, launchContext?.cwd, project, worktreePath],
-  );
+  const projectCwd = useProjectCwd({
+    environmentId: threadRef.environmentId,
+    cwd: project?.workspaceRoot ?? null,
+    worktreePath: threadWorktreePath,
+  });
+  const cwd = launchContext?.cwd ?? activeSummary?.cwd ?? projectCwd;
   const runtimeEnv = useMemo(
     () =>
       project
@@ -1474,15 +1460,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
           .summary ?? null;
       const terminalWorktreePath =
         launchContext?.worktreePath ?? summary?.worktreePath ?? threadWorktreePath;
-      const terminalCwd =
-        launchContext?.cwd ??
-        summary?.cwd ??
-        (project
-          ? projectScriptCwd({
-              project: { cwd: project.workspaceRoot },
-              worktreePath: terminalWorktreePath,
-            })
-          : null);
+      const terminalCwd = launchContext?.cwd ?? summary?.cwd ?? projectCwd;
       if (!terminalCwd || !project) continue;
       locations.set(terminalId, {
         cwd: terminalCwd,
@@ -1499,6 +1477,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     launchContext?.cwd,
     launchContext?.worktreePath,
     project,
+    projectCwd,
     surface.terminalIds,
     threadWorktreePath,
   ]);
@@ -4137,13 +4116,12 @@ export default function ChatView(props: ChatViewProps) {
       : JSON.stringify([itemId, latestCheckpointCompletedAt]);
   }, [serverVisibleTurnItems, turnDiffSummaries]);
 
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const projectCwd = useProjectCwd({
+    environmentId,
+    cwd: activeProject?.workspaceRoot ?? null,
+    worktreePath: activeThread?.worktreePath ?? null,
+  });
+  const gitStatusCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot ?? null;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
       ? null
@@ -4175,7 +4153,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId: activeThread?.environmentId ?? environmentId,
     keybindings,
     availableEditors,
-    openInCwd: gitCwd,
+    openInCwd: projectCwd,
   });
   const manualCompactionProviderAvailable = useMemo(
     () =>
@@ -4253,10 +4231,10 @@ export default function ChatView(props: ChatViewProps) {
     rememberReadyThreadTimeline({
       threadKey: activeThreadKey,
       entries: timelineEntries,
-      markdownCwd: gitCwd,
+      markdownCwd: projectCwd,
       workspaceRoot: activeWorkspaceRoot ?? null,
     });
-  }, [activeThreadKey, activeWorkspaceRoot, gitCwd, threadDetailLoading, timelineEntries]);
+  }, [activeThreadKey, activeWorkspaceRoot, projectCwd, threadDetailLoading, timelineEntries]);
   const heldPaintContext = paintOnlyDisplayedTimeline
     ? peekHeldThreadTimeline<typeof timelineEntries>()
     : null;
@@ -4827,7 +4805,7 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadId || !activeProject) {
         return;
       }
-      const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+      const cwdForOpen = projectCwd;
       if (!cwdForOpen) {
         return;
       }
@@ -4857,7 +4835,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadWorktreePath,
     allocateTerminalId,
     environmentId,
-    gitCwd,
+    projectCwd,
     openTerminal,
     panelTerminalIds,
     runningTerminalIds,
@@ -4878,7 +4856,7 @@ export default function ChatView(props: ChatViewProps) {
       ) {
         return;
       }
-      const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+      const cwdForOpen = projectCwd;
       if (!cwdForOpen) {
         return;
       }
@@ -4912,7 +4890,7 @@ export default function ChatView(props: ChatViewProps) {
       hasTerminalWriteAccess,
       activeThreadWorktreePath,
       environmentId,
-      gitCwd,
+      projectCwd,
       hasReachedSplitLimit,
       storeSplitTerminal,
       storeSplitTerminalVertical,
@@ -4922,7 +4900,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!hasTerminalWriteAccess() || !activeThreadRef || !activeThreadId || !activeProject) {
       return;
     }
-    const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+    const cwdForOpen = projectCwd;
     if (!cwdForOpen) {
       return;
     }
@@ -4951,7 +4929,7 @@ export default function ChatView(props: ChatViewProps) {
     hasTerminalWriteAccess,
     activeThreadWorktreePath,
     environmentId,
-    gitCwd,
+    projectCwd,
     storeNewTerminal,
   ]);
   const closeTerminal = useCallback(
@@ -5010,7 +4988,8 @@ export default function ChatView(props: ChatViewProps) {
           return { ...current, [activeProject.id]: script.id };
         });
       }
-      const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
+      const targetCwd = options?.cwd ?? projectCwd;
+      if (!targetCwd) return;
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
@@ -5118,7 +5097,7 @@ export default function ChatView(props: ChatViewProps) {
       activeThread,
       activeThreadId,
       activeThreadRef,
-      gitCwd,
+      projectCwd,
       setTerminalOpen,
       setThreadError,
       storeNewTerminal,
@@ -5930,7 +5909,8 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const addTerminalSurface = useCallback(() => {
     if (!hasTerminalWriteAccess() || !activeThreadRef || !activeThreadId || !activeProject) return;
-    const cwd = gitCwd ?? activeProject.workspaceRoot;
+    const cwd = projectCwd;
+    if (!cwd) return;
     const terminalId = allocateTerminalId();
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
@@ -5953,7 +5933,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef,
     activeThreadWorktreePath,
     allocateTerminalId,
-    gitCwd,
+    projectCwd,
     openTerminal,
     hasTerminalWriteAccess,
   ]);
@@ -5970,7 +5950,8 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       const terminalId = allocateTerminalId();
-      const cwd = gitCwd ?? activeProject.workspaceRoot;
+      const cwd = projectCwd;
+      if (!cwd) return;
       useRightPanelStore
         .getState()
         .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
@@ -5996,7 +5977,7 @@ export default function ChatView(props: ChatViewProps) {
       activeThreadRef,
       activeThreadWorktreePath,
       allocateTerminalId,
-      gitCwd,
+      projectCwd,
       openTerminal,
       hasTerminalWriteAccess,
     ],
@@ -7993,10 +7974,7 @@ export default function ChatView(props: ChatViewProps) {
       if (!current || current.threadId !== activeThreadId) {
         return current;
       }
-      const settledCwd = projectScriptCwd({
-        project: { cwd: activeProjectCwd },
-        worktreePath: activeThreadWorktreePath,
-      });
+      const settledCwd = projectCwd;
       if (
         settledCwd === current.cwd &&
         (activeThreadWorktreePath ?? null) === current.worktreePath
@@ -8005,7 +7983,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return current;
     });
-  }, [activeProjectCwd, activeThreadId, activeThreadWorktreePath]);
+  }, [activeProjectCwd, activeThreadId, activeThreadWorktreePath, projectCwd]);
 
   useEffect(() => {
     if (terminalUiState.terminalOpen) {
@@ -8055,7 +8033,7 @@ export default function ChatView(props: ChatViewProps) {
     [composerRef, previewPanelOpen, terminalUiState.terminalOpen, routeKind, phase],
   );
   const timelineSkills = activeProviderStatus
-    ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
+    ? resolveProviderSkillsForCwd(activeProviderStatus, projectCwd)
     : EMPTY_PROVIDER_SKILLS;
   const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
@@ -11244,17 +11222,17 @@ export default function ChatView(props: ChatViewProps) {
       </Suspense>
     ) : (renderedRightPanelSurface?.kind === "files" ||
         renderedRightPanelSurface?.kind === "file") &&
-      ((activeProject && activeWorkspaceRoot) ||
+      ((activeProject && projectCwd) ||
         (renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment)) ? (
       <Suspense fallback={null}>
         <FilePreviewPanel
           key={`${activeThread.environmentId}:${
             renderedRightPanelSurface.kind === "file" && renderedRightPanelSurface.attachment
               ? `attachment:${renderedRightPanelSurface.attachment.id}`
-              : activeWorkspaceRoot
+              : projectCwd
           }`}
           environmentId={activeThread.environmentId}
-          cwd={activeWorkspaceRoot ?? ""}
+          cwd={projectCwd ?? ""}
           projectName={activeProject?.title ?? ""}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
@@ -11305,7 +11283,8 @@ export default function ChatView(props: ChatViewProps) {
     keybindings,
     availableEditors,
     showOpenInPicker,
-    gitCwd,
+    projectCwd,
+    gitCwd: gitStatusCwd,
     isGitRepo,
     envLocked,
     availableEnvironments: logicalProjectEnvironments,
@@ -11640,7 +11619,7 @@ export default function ChatView(props: ChatViewProps) {
                 markdownCwd={
                   paintOnlyDisplayedTimeline
                     ? (heldPaintContext?.markdownCwd ?? undefined)
-                    : (gitCwd ?? undefined)
+                    : (projectCwd ?? undefined)
                 }
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
@@ -11875,7 +11854,7 @@ export default function ChatView(props: ChatViewProps) {
                               settings={settings}
                               keybindings={keybindings}
                               terminalOpen={Boolean(terminalUiState.terminalOpen)}
-                              gitCwd={gitCwd}
+                              gitCwd={projectCwd}
                               pullRequestProjectId={
                                 supportsPullRequests ? (activeProject?.id ?? null) : null
                               }

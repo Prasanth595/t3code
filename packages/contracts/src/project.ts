@@ -308,6 +308,31 @@ export const ProjectSearchContentsResult = Schema.Struct({
 });
 export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Type;
 
+/** Resolves a project's working directory inside another checkout on the server. */
+export const ProjectResolveCwdInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type ProjectResolveCwdInput = typeof ProjectResolveCwdInput.Type;
+
+export const ProjectResolveCwdResult = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+});
+export type ProjectResolveCwdResult = typeof ProjectResolveCwdResult.Type;
+
+export class ProjectResolveCwdError extends Schema.TaggedError<ProjectResolveCwdError>()(
+  "ProjectResolveCwdError",
+  {
+    cwd: TrimmedNonEmptyString,
+    worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to resolve the project's working directory.";
+  }
+}
+
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Present for immediate filesystem children, including ignored entries; empty means root.

@@ -211,7 +211,6 @@ export interface ThreadDetailScreenProps {
   readonly onCancelQueuedRunEdit: () => void;
   readonly onRemoveQueuedEditAttachment: (attachmentId: string) => void;
   readonly environmentId: EnvironmentId;
-  readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
@@ -878,10 +877,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     const provider = props.serverConfig?.providers.find(
       (candidate) => candidate.instanceId === selectedInstanceId,
     );
-    return provider
-      ? resolveProviderSkillsForCwd(provider, props.threadCwd ?? props.projectWorkspaceRoot)
-      : [];
-  }, [props.projectWorkspaceRoot, props.serverConfig, props.threadCwd, selectedInstanceId]);
+    return provider ? resolveProviderSkillsForCwd(provider, props.threadCwd) : [];
+  }, [props.serverConfig, props.threadCwd, selectedInstanceId]);
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
@@ -1445,7 +1442,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         activeThreadBusy={props.activeThreadBusy}
                         canStopThread={props.canStopThread}
                         environmentId={props.environmentId}
-                        projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
+                        projectCwd={props.threadCwd}
                         // Follow-ups typed before the server creates the thread wait in
                         // the draft: queueing them against a thread id the server may
                         // still reject would strand them in the outbox.

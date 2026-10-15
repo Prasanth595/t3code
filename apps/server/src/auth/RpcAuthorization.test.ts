@@ -217,6 +217,38 @@ it("requires operate permission for tool updates even alongside a read-only chec
 });
 
 describe("RPC scope middleware", () => {
+  it.effect("requires filesystem read access to resolve a project cwd before running Git", () =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter((tag) => tag !== WS_METHODS.projectsResolveCwd),
+      );
+      let handled = false;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.projectsResolveCwd, () =>
+              Effect.sync(() => {
+                handled = true;
+                return { cwd: "/worktree/ios" };
+              }),
+            ),
+            RpcAuthorization.layer([AuthOrchestrationReadScope]),
+          ),
+        ),
+      );
+      expect(
+        yield* client[WS_METHODS.projectsResolveCwd]({
+          cwd: "/repo/ios",
+          worktreePath: "/worktree",
+        }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthFilesystemReadScope,
+      });
+      expect(handled).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
   const tested = [WS_METHODS.serverProbe, WS_METHODS.serverRetryResourceTelemetry] as const;
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(

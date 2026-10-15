@@ -1,3 +1,9 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as ProcessRunner from "../processRunner.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { discoverClaudeSkills } from "../provider/Drivers/ClaudeSkills.ts";
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
@@ -76,35 +82,44 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
-const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
+const layerForProject = (workspaceRoot: string) =>
+  RuntimePolicy.layerFromProjectStore.pipe(
+    Layer.provide(
+      Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+        getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
+        listInstances: Effect.succeed([]),
+        listUnavailable: Effect.succeed([]),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.never,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(ProjectStore.ProjectStoreV2)({
+        get: () =>
+          Effect.succeed(
+            Option.some({
+              projectId,
+              title: "Project",
+              workspaceRoot,
+              defaultModelSelection: null,
+              defaultThreadEnvMode: null,
+              autoPull: false,
+              faviconPath: null,
+              projectIcon: null,
+              scripts: [],
+              createdAt: "2026-06-21T00:00:00.000Z",
+              updatedAt: "2026-06-21T00:00:00.000Z",
+              deletedAt: null,
+            }),
+          ),
+      }),
+    ),
+  );
+
+const layerTest = layerForProject("/project-root").pipe(
   Layer.provide(
-    Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
-      getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
-      listInstances: Effect.succeed([]),
-      listUnavailable: Effect.succeed([]),
-      streamChanges: Stream.empty,
-      subscribeChanges: Effect.never,
-    }),
-  ),
-  Layer.provide(
-    Layer.mock(ProjectStore.ProjectStoreV2)({
-      get: () =>
-        Effect.succeed(
-          Option.some({
-            projectId,
-            title: "Project",
-            workspaceRoot: "/project-root",
-            defaultModelSelection: null,
-            defaultThreadEnvMode: null,
-            autoPull: false,
-            faviconPath: null,
-            projectIcon: null,
-            scripts: [],
-            createdAt: "2026-06-21T00:00:00.000Z",
-            updatedAt: "2026-06-21T00:00:00.000Z",
-            deletedAt: null,
-          }),
-        ),
+    Layer.mock(WorkspacePaths.WorkspacePaths)({
+      resolveProjectCwd: (input) => Effect.succeed(input.worktreePath ?? input.cwd),
     }),
   ),
 );
@@ -154,3 +169,60 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 });
+
+it.effect("starts a subdirectory worktree with its project-scoped skills", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const base = yield* fs
+      .makeTempDirectoryScoped({ prefix: "t3-worktree-project-cwd-" })
+      .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+    const repo = path.join(base, "repo");
+    const project = path.join(repo, "ios");
+    const worktree = path.join(base, "worktree");
+    const skill = path.join(project, ".claude", "skills", "ios-release");
+    yield* fs.makeDirectory(skill, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(skill, "SKILL.md"),
+      "---\nname: ios-release\ndescription: Project scoped release skill.\n---\nRelease this project.\n",
+    );
+    for (const args of [
+      ["init", "-q", repo],
+      ["-C", repo, "add", "."],
+      [
+        "-C",
+        repo,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "fixture",
+      ],
+      ["-C", repo, "worktree", "add", "-qb", "feature", worktree],
+    ]) {
+      const result = yield* runner.run({ command: "git", args });
+      assert.equal(result.code, 0);
+    }
+    const now = yield* DateTime.now;
+    const resolved = yield* Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      return yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: worktree }),
+        modelSelection,
+      });
+    }).pipe(Effect.provide(layerForProject(project).pipe(Layer.provide(WorkspacePaths.layer))));
+    assert.equal(resolved.cwd, path.join(worktree, "ios"));
+    const skills = yield* discoverClaudeSkills(
+      { homePath: path.join(base, "empty-config") },
+      resolved.cwd ?? undefined,
+      {},
+    );
+    assert.deepEqual(
+      skills.map((entry) => entry.name),
+      ["ios-release"],
+    );
+  }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);

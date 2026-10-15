@@ -717,6 +717,43 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps a subdirectory project inside the checkout asset boundary after a symlink swap",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-project-cwd-" });
+        const root = path.join(base, "worktree");
+        const projectCwd = path.join(root, "ios");
+        const outside = path.join(base, "outside");
+        yield* fs.makeDirectory(projectCwd, { recursive: true });
+        yield* fs.makeDirectory(outside);
+        yield* fs.writeFileString(path.join(projectCwd, "report.html"), "<p>inside</p>");
+        yield* fs.writeFileString(path.join(outside, "report.html"), "<p>outside</p>");
+        const input = {
+          resource: {
+            _tag: "workspace-file" as const,
+            threadId: ThreadId.make("thread-1"),
+            path: path.join(projectCwd, "report.html"),
+          },
+          workspaceRoot: root,
+        };
+        const result = yield* issueAssetUrl(input);
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        expect(yield* resolveAsset(token, "report.html")).toEqual({
+          kind: "file",
+          path: yield* fs.realPath(input.resource.path),
+        });
+        yield* fs.remove(projectCwd, { recursive: true });
+        yield* fs.symlink(outside, projectCwd);
+        expect(yield* resolveAsset(token, "report.html")).toBeNull();
+        const error = yield* issueAssetUrl(input).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("rejects workspace files outside the authorized root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
