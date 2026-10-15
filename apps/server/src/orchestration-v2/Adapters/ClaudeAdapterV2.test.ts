@@ -132,6 +132,12 @@ const CLAUDE_TEST_MODEL_SELECTION = {
   model: "claude-sonnet-4-6",
   options: [{ id: "effort", value: "ultrathink" }],
 } satisfies ModelSelection;
+// A model the catalog does not know, e.g. one served behind ANTHROPIC_BASE_URL.
+const CLAUDE_TEST_CUSTOM_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+  model: "local-model-without-catalog-entry",
+  options: [],
+} satisfies ModelSelection;
 // Thinking is a launch flag, so switching to this selection needs a new process.
 const CLAUDE_TEST_RESTART_MODEL_SELECTION = {
   ...CLAUDE_TEST_MODEL_SELECTION,
@@ -909,6 +915,23 @@ describe("ClaudeAdapterV2 context usage", () => {
       reasoningOutputTokens: 0,
       updatedAt: "2026-08-29T00:00:00.000Z",
     });
+  });
+
+  it("falls back to the CLI-reported window for a model outside the catalog", () => {
+    const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+      { input_tokens: 150_000, output_tokens: 1_000 },
+      CLAUDE_TEST_CUSTOM_MODEL_SELECTION,
+      "2026-08-29T00:00:00.000Z",
+      new Map([[CLAUDE_TEST_CUSTOM_MODEL_SELECTION.model, 524_288]]),
+    );
+    assert.strictEqual(usage.maxTokens, 524_288);
+    assert.isNull(
+      ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+        { input_tokens: 1, output_tokens: 1 },
+        CLAUDE_TEST_CUSTOM_MODEL_SELECTION,
+        "2026-08-29T00:00:00.000Z",
+      ).maxTokens,
+    );
   });
 
   it("reports the prompt cache TTL the response wrote", () => {
@@ -2253,6 +2276,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readonly cache_creation_input_tokens: number;
       readonly cache_read_input_tokens: number;
     };
+    readonly modelUsage?: SDKResultMessage["modelUsage"];
   }) =>
     claudeSdkFrame({
       type: "result",
@@ -2270,7 +2294,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
       },
-      modelUsage: {},
+      modelUsage: input.modelUsage ?? {},
       permission_denials: [],
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
@@ -3693,6 +3717,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
         ),
       );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
+  it.effect("learns a custom model's context window from the CLI's result", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const contextWindowOf = harness.runtime.getModelContextWindow;
+      assert.isDefined(contextWindowOf);
+      if (contextWindowOf === undefined) return;
+      assert.isUndefined(contextWindowOf(CLAUDE_TEST_CUSTOM_MODEL_SELECTION));
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-reported-context-window"),
+          text: "hello",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000401",
+          result: "Hello.",
+          modelUsage: {
+            [CLAUDE_TEST_CUSTOM_MODEL_SELECTION.model]: {
+              inputTokens: 1,
+              outputTokens: 1,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              webSearchRequests: 0,
+              costUSD: 0,
+              contextWindow: 524_288,
+              maxOutputTokens: 32_768,
+            },
+          },
+        }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+
+      assert.strictEqual(contextWindowOf(CLAUDE_TEST_CUSTOM_MODEL_SELECTION), 524_288);
+      // A catalog window still wins over a reported one.
+      assert.strictEqual(contextWindowOf(CLAUDE_TEST_MODEL_SELECTION), 200_000);
     }).pipe(
       Effect.scoped,
       Effect.provide(
