@@ -435,7 +435,17 @@ export function matchesBranchHeadContext(
   if (expectedHead.repositoryNameWithOwner) {
     if (pullRequestHead.repositoryNameWithOwner) {
       if (expectedHead.repositoryNameWithOwner !== pullRequestHead.repositoryNameWithOwner) {
-        return false;
+        // A remote URL can keep a stale repository slug after a rename or transfer (the host
+        // redirects it), while the provider reports the canonical name. When neither side is
+        // cross-repository and the owner is unchanged, that is the same repository.
+        const sameOwner =
+          expectedHead.ownerLogin !== null &&
+          expectedHead.ownerLogin === pullRequestHead.ownerLogin;
+        const sameRepositoryUnderRename =
+          sameOwner && !headContext.isCrossRepository && pr.isCrossRepository === false;
+        if (!sameRepositoryUnderRename) {
+          return false;
+        }
       }
     }
     if (expectedHead.ownerLogin && pullRequestHead.ownerLogin) {

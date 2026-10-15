@@ -4903,6 +4903,51 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "matches same-repo PR metadata when the remote URL uses a renamed repository slug",
+    () =>
+      Effect.sync(() => {
+        const pr = {
+          number: 142,
+          title: "Renamed repository PR",
+          url: "https://github.com/octo/new-name/pull/142",
+          baseRefName: "main",
+          headRefName: "feature/rename",
+          state: "open" as const,
+          updatedAt: Option.none(),
+          isCrossRepository: false,
+          headRepositoryNameWithOwner: "octo/new-name",
+          headRepositoryOwnerLogin: "octo",
+        };
+        const headContext = {
+          headBranch: "feature/rename",
+          headRepositoryNameWithOwner: "octo/old-name",
+          headRepositoryOwnerLogin: "octo",
+          isCrossRepository: false,
+        };
+
+        expect(GitManager.matchesBranchHeadContext(pr, headContext)).toBe(true);
+        // A different owner is never a rename.
+        expect(
+          GitManager.matchesBranchHeadContext(pr, {
+            ...headContext,
+            headRepositoryNameWithOwner: "someone-else/old-name",
+            headRepositoryOwnerLogin: "someone-else",
+          }),
+        ).toBe(false);
+        // Cross-repository heads keep the strict repository comparison.
+        expect(
+          GitManager.matchesBranchHeadContext(
+            { ...pr, isCrossRepository: true },
+            { ...headContext, isCrossRepository: true },
+          ),
+        ).toBe(false);
+        expect(
+          GitManager.matchesBranchHeadContext({ ...pr, isCrossRepository: true }, headContext),
+        ).toBe(false);
+      }),
+  );
+
   it.effect("creates PR when one does not already exist", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
