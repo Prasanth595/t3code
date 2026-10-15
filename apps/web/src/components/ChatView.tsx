@@ -2768,14 +2768,6 @@ export default function ChatView(props: ChatViewProps) {
     const envs: EnvironmentOption[] = [];
     const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
       const environment = environmentById.get(environmentId) ?? null;
-      if (
-        !environment ||
-        !shouldIncludeEnvironmentOption({
-          enabled: environment.entry.enabled,
-          connectionPhase: environment.connection.phase,
-        })
-      )
-        return;
       envs.push({
         environmentId,
         projectId,
@@ -2786,6 +2778,13 @@ export default function ChatView(props: ChatViewProps) {
     };
     if (activeProjectIsScratch && draftId) {
       for (const environment of environments) {
+        if (
+          !shouldIncludeEnvironmentOption({
+            enabled: environment.entry.enabled,
+            connectionPhase: environment.connection.phase,
+          })
+        )
+          continue;
         const scratchRoot = scratchWorkspaceRootFor(environment.environmentId);
         if (scratchRoot === null) continue;
         const scratchProject =
