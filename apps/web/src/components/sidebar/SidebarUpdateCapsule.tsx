@@ -121,33 +121,25 @@ export function SidebarUpdateCapsule({
           }
         />
         <span className="pointer-events-none relative min-w-0 flex-1 truncate pl-3 text-xs">
-          <span
-            className={cn(
-              view.tone === "slow" && "text-warning",
-              view.tone === "failed" && "text-destructive",
-            )}
-          >
-            {view.label}
-          </span>
+          <span className={cn(view.tone === "failed" && "text-destructive")}>{view.label}</span>
           {view.slow ? (
-            <span className="text-muted-foreground">
-              {` ${view.slow.status} `}
-              <span className="text-warning tabular-nums">{view.slow.elapsed}</span>
-            </span>
+            <span className="text-warning tabular-nums"> {view.slow.elapsed}</span>
           ) : null}
         </span>
+        {/* The footer leaves little room, so an action takes the icon's place. */}
         {view.action !== null ? (
           <button
             type="button"
-            className="relative shrink-0 cursor-pointer px-1 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
+            className="relative shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
             onClick={runAction}
           >
             {actionLabel}
           </button>
-        ) : null}
-        <span className="pointer-events-none relative grid size-8 shrink-0 place-items-center">
-          {icon}
-        </span>
+        ) : (
+          <span className="pointer-events-none relative grid size-8 shrink-0 place-items-center">
+            {icon}
+          </span>
+        )}
       </div>
       <PopoverPopup side="top" align="end" padding="compact" width="sm">
         <div className="flex flex-col gap-1 text-xs">

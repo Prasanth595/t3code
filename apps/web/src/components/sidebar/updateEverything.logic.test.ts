@@ -256,7 +256,7 @@ describe("update capsule", () => {
         { status: "waiting" },
         1_200,
       ),
-    ).toEqual({ tone: "default", label: "Restarting in 4s", action: "later" });
+    ).toEqual({ tone: "default", label: "Restart in 4s", action: "later" });
   });
 
   it("names the slowest machine once it passes the slow threshold", () => {
