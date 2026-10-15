@@ -500,7 +500,7 @@ function PoolBar({
   return (
     <div className="min-w-0">
       {/* Empty so its size never changes with the layout: measuring the bar itself would loop. */}
-      <div ref={observeWidth} aria-hidden />
+      <div ref={observeWidth} />
       <div
         ref={gridRef}
         className="grid gap-x-1 gap-y-1"
