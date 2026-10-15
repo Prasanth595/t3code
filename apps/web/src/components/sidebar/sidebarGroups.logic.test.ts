@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { makeThreadFixture } from "../../test-fixtures";
 import {
   buildSidebarGroupProjectFacts,
+  compileSidebarGroups,
   DEFAULT_SIDEBAR_GROUP_ID,
   moveSidebarThreads,
   pruneSidebarGroupAssignments,
@@ -66,7 +67,7 @@ const settings = (
   assignments: SidebarGroups["assignments"] = {},
 ): SidebarGroups => ({ groups, assignments });
 const groupOf = (subject: typeof conductor, value: SidebarGroups) =>
-  resolveSidebarThreadGroupId(subject, value, projects);
+  resolveSidebarThreadGroupId(subject, compileSidebarGroups(value), projects);
 
 describe("sidebar group resolution", () => {
   it("prefers a drag assignment, then the first matching group, then the default tab", () => {
@@ -101,7 +102,7 @@ describe("sidebar group resolution", () => {
         tabId: "all",
         thread: subject,
         threadGroupId: groupOf(subject, value),
-        settings: value,
+        compiled: compileSidebarGroups(value),
         projects,
       });
     expect([shows(conductor), shows(other)]).toEqual([true, true]);
@@ -122,16 +123,18 @@ describe("sidebar group assignments", () => {
     ).toEqual({ [sidebarGroupThreadKey(conductor)]: DEFAULT_SIDEBAR_GROUP_ID });
   });
 
-  it("prunes entries of gone threads on loaded environments and keeps offline ones", () => {
+  it("prunes entries of gone threads only, also when the rules agree with an entry", () => {
     const value = settings([monitors], {
       [sidebarGroupThreadKey(other)]: "monitors",
       "environment-mac:deleted-thread": "monitors",
       "environment-offline:thread": "monitors",
       [sidebarGroupThreadKey(conductor)]: "monitors",
     });
-    expect(pruneSidebarGroupAssignments(value, [conductor, other], projects).assignments).toEqual({
+    // The rules put Conductor in Monitors now, but a title or status can change: the drag holds.
+    expect(pruneSidebarGroupAssignments(value, [conductor, other]).assignments).toEqual({
       [sidebarGroupThreadKey(other)]: "monitors",
       "environment-offline:thread": "monitors",
+      [sidebarGroupThreadKey(conductor)]: "monitors",
     });
   });
 });

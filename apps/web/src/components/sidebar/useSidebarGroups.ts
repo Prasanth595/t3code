@@ -43,7 +43,7 @@ import {
   DEFAULT_SIDEBAR_GROUP_ID,
   DEFAULT_SIDEBAR_GROUP_NAME,
   deleteSidebarGroup,
-  isSidebarGroupView,
+  compileSidebarGroups,
   moveSidebarGroup,
   moveSidebarThreads,
   pruneSidebarGroupAssignments,
@@ -120,15 +120,17 @@ export function useSidebarGroups(input: {
     [input.ownerVisibleProjectKeys, input.scopedProjectKeys, input.threads],
   );
 
+  // Known rules and view flags, once per change of the groups, not once per thread.
+  const compiled = useMemo(() => compileSidebarGroups(settings), [settings]);
   const groupIdByThreadKey = useMemo(
     () =>
       new Map(
         threads.map((thread) => [
           sidebarGroupThreadKey(thread),
-          resolveSidebarThreadGroupId(thread, settings, projects),
+          resolveSidebarThreadGroupId(thread, compiled, projects),
         ]),
       ),
-    [projects, settings, threads],
+    [compiled, projects, threads],
   );
 
   const showsThread = useCallback(
@@ -138,10 +140,10 @@ export function useSidebarGroups(input: {
         thread,
         threadGroupId:
           groupIdByThreadKey.get(sidebarGroupThreadKey(thread)) ?? DEFAULT_SIDEBAR_GROUP_ID,
-        settings,
+        compiled,
         projects,
       }),
-    [groupIdByThreadKey, projects, settings],
+    [compiled, groupIdByThreadKey, projects],
   );
 
   /** The threads of the open tab. Search and a disabled feature see every thread. */
@@ -199,7 +201,7 @@ export function useSidebarGroups(input: {
         id,
         name,
         isDefault: group === null,
-        isView: group !== null && isSidebarGroupView(group),
+        isView: group !== null && compiled.byId.get(group.id)?.isView === true,
         threadCount: open.length,
         status: kind === null ? null : sidebarGroupTabStatus(kind),
         needsAttention: kind !== null && SIDEBAR_GROUP_ATTENTION_STATUSES.has(kind),
@@ -212,6 +214,7 @@ export function useSidebarGroups(input: {
       ...settings.groups.map((group) => describe(group.id, group.name, group)),
     ];
   }, [
+    compiled,
     enabled,
     localLastVisitedAt,
     settings.groups,
@@ -265,7 +268,7 @@ export function useSidebarGroups(input: {
     (change: (current: SidebarGroups) => SidebarGroups) => {
       if (primaryEnvironmentId === null || !ready) return;
       const current = latestSettingsRef.current;
-      const next = pruneSidebarGroupAssignments(change(current), liveThreads, projects);
+      const next = pruneSidebarGroupAssignments(change(current), liveThreads);
       if (JSON.stringify(next) === JSON.stringify(current)) return;
       latestSettingsRef.current = next;
       void persist({
@@ -286,7 +289,7 @@ export function useSidebarGroups(input: {
         });
       });
     },
-    [liveThreads, persist, primaryEnvironmentId, projects, ready, shareToMachineMap],
+    [liveThreads, persist, primaryEnvironmentId, ready, shareToMachineMap],
   );
 
   const threadsForRefs = useCallback(

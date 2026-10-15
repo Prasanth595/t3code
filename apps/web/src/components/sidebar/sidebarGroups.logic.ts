@@ -88,12 +88,40 @@ const projectFactsOf = (thread: SidebarGroupThread, projects: SidebarGroupProjec
 const knownSidebarGroupRules = (group: Pick<SidebarGroup, "rules">) =>
   group.rules.filter(isKnownSidebarGroupRule);
 
-export const isSidebarGroupView = (group: Pick<SidebarGroup, "rules">) =>
+const isSidebarGroupView = (group: Pick<SidebarGroup, "rules">) =>
   knownSidebarGroupRules(group).some((rule) => rule.field === "group");
 
-/** A group that takes threads by its rules: it has a known rule and is not a view. */
-const takesThreadsByRules = (group: SidebarGroup) =>
-  knownSidebarGroupRules(group).length > 0 && !isSidebarGroupView(group);
+interface CompiledSidebarGroup {
+  readonly id: string;
+  readonly rules: readonly SidebarGroupRule[];
+  readonly isView: boolean;
+  /** It has a known rule and is not a view, so its rules claim threads. */
+  readonly takesThreadsByRules: boolean;
+}
+
+/**
+ * The groups with their known rules and view flags, checked once per change of the groups. The
+ * per-thread loops read this, so the rule guard does not run for every thread.
+ */
+interface CompiledSidebarGroups {
+  readonly assignments: SidebarGroups["assignments"];
+  /** In tab order, which is the order rules claim threads in. */
+  readonly groups: readonly CompiledSidebarGroup[];
+  readonly byId: ReadonlyMap<string, CompiledSidebarGroup>;
+}
+
+export function compileSidebarGroups(settings: SidebarGroups): CompiledSidebarGroups {
+  const groups = settings.groups.map((group): CompiledSidebarGroup => {
+    const rules = knownSidebarGroupRules(group);
+    const isView = rules.some((rule) => rule.field === "group");
+    return { id: group.id, rules, isView, takesThreadsByRules: rules.length > 0 && !isView };
+  });
+  return {
+    assignments: settings.assignments,
+    groups,
+    byId: new Map(groups.map((group) => [group.id, group])),
+  };
+}
 
 /** "Group is not (no group)": the rule of an "All" view. */
 export const isAnyGroupRule = (rule: SidebarGroupRule) =>
@@ -144,41 +172,40 @@ function ruleMatches(
 }
 
 const matchesEveryRule = (
-  group: SidebarGroup,
+  group: CompiledSidebarGroup,
   thread: SidebarGroupThread,
   projects: SidebarGroupProjectLookup,
   groupId: string,
-) => knownSidebarGroupRules(group).every((rule) => ruleMatches(rule, thread, projects, groupId));
+) => group.rules.every((rule) => ruleMatches(rule, thread, projects, groupId));
 
 /** The group that the rules alone give a thread: the first group whose rules match it. */
 function resolveRuleGroupId(
   thread: SidebarGroupThread,
-  settings: SidebarGroups,
+  compiled: CompiledSidebarGroups,
   projects: SidebarGroupProjectLookup,
 ): string {
-  const group = settings.groups.find(
+  const group = compiled.groups.find(
     (candidate) =>
-      takesThreadsByRules(candidate) &&
+      candidate.takesThreadsByRules &&
       matchesEveryRule(candidate, thread, projects, DEFAULT_SIDEBAR_GROUP_ID),
   );
   return group?.id ?? DEFAULT_SIDEBAR_GROUP_ID;
 }
 
 /** Whether a drag assignment can hold a thread: the default tab, or a group that is not a view. */
-const canHold = (settings: SidebarGroups, groupId: string) =>
-  groupId === DEFAULT_SIDEBAR_GROUP_ID ||
-  settings.groups.some((group) => group.id === groupId && !isSidebarGroupView(group));
+const canHold = (compiled: CompiledSidebarGroups, groupId: string) =>
+  groupId === DEFAULT_SIDEBAR_GROUP_ID || compiled.byId.get(groupId)?.isView === false;
 
 /** The group that holds a thread. A drag assignment wins over the rules. */
 export function resolveSidebarThreadGroupId(
   thread: SidebarGroupThread,
-  settings: SidebarGroups,
+  compiled: CompiledSidebarGroups,
   projects: SidebarGroupProjectLookup,
 ): string {
-  const assigned = settings.assignments[sidebarGroupThreadKey(thread)];
-  return assigned !== undefined && canHold(settings, assigned)
+  const assigned = compiled.assignments[sidebarGroupThreadKey(thread)];
+  return assigned !== undefined && canHold(compiled, assigned)
     ? assigned
-    : resolveRuleGroupId(thread, settings, projects);
+    : resolveRuleGroupId(thread, compiled, projects);
 }
 
 /** Whether a tab shows a thread, given the group that holds the thread. */
@@ -186,15 +213,15 @@ export function sidebarGroupShowsThread(input: {
   readonly tabId: string;
   readonly thread: SidebarGroupThread;
   readonly threadGroupId: string;
-  readonly settings: SidebarGroups;
+  readonly compiled: CompiledSidebarGroups;
   readonly projects: SidebarGroupProjectLookup;
 }): boolean {
   if (input.tabId === DEFAULT_SIDEBAR_GROUP_ID) {
     return input.threadGroupId === DEFAULT_SIDEBAR_GROUP_ID;
   }
-  const group = input.settings.groups.find((candidate) => candidate.id === input.tabId);
+  const group = input.compiled.byId.get(input.tabId);
   if (group === undefined) return false;
-  if (!isSidebarGroupView(group)) return input.threadGroupId === group.id;
+  if (!group.isView) return input.threadGroupId === group.id;
   return matchesEveryRule(group, input.thread, input.projects, input.threadGroupId);
 }
 
@@ -209,36 +236,38 @@ export function moveSidebarThreads(
   groupId: string,
   projects: SidebarGroupProjectLookup,
 ): SidebarGroups {
-  if (!canHold(settings, groupId)) return settings;
+  const compiled = compileSidebarGroups(settings);
+  if (!canHold(compiled, groupId)) return settings;
   const assignments = { ...settings.assignments };
   for (const thread of threads) {
-    if (resolveSidebarThreadGroupId(thread, settings, projects) === groupId) continue;
+    if (resolveSidebarThreadGroupId(thread, compiled, projects) === groupId) continue;
     const key = sidebarGroupThreadKey(thread);
-    if (resolveRuleGroupId(thread, settings, projects) === groupId) delete assignments[key];
+    if (resolveRuleGroupId(thread, compiled, projects) === groupId) delete assignments[key];
     else assignments[key] = groupId;
   }
   return { ...settings, assignments };
 }
 
 /**
- * Drops assignments that do nothing: a thread that is gone or archived on an environment whose
- * threads are loaded, a group that cannot hold threads, or the group that the rules give anyway.
- * An offline environment keeps its entries, because its threads are not known.
+ * Drops assignments that can do nothing any more: a thread that is gone or archived on an
+ * environment whose threads are loaded, or a group that cannot hold threads. An entry that the
+ * rules agree with stays: rules on status, background work or title change over time, and the
+ * drag must still hold when they stop matching. An offline environment keeps its entries,
+ * because its threads are not known.
  */
 export function pruneSidebarGroupAssignments(
   settings: SidebarGroups,
   liveThreads: ReadonlyArray<SidebarGroupThread>,
-  projects: SidebarGroupProjectLookup,
 ): SidebarGroups {
-  const threadByKey = new Map(liveThreads.map((thread) => [sidebarGroupThreadKey(thread), thread]));
+  const compiled = compileSidebarGroups(settings);
+  const liveKeys = new Set(liveThreads.map(sidebarGroupThreadKey));
   const loadedEnvironments = new Set<string>(liveThreads.map((thread) => thread.environmentId));
   const assignments = Object.fromEntries(
-    Object.entries(settings.assignments).filter(([key, groupId]) => {
-      if (!canHold(settings, groupId)) return false;
-      const thread = threadByKey.get(key);
-      if (thread === undefined) return !loadedEnvironments.has(key.slice(0, key.indexOf(":")));
-      return resolveRuleGroupId(thread, settings, projects) !== groupId;
-    }),
+    Object.entries(settings.assignments).filter(
+      ([key, groupId]) =>
+        canHold(compiled, groupId) &&
+        (liveKeys.has(key) || !loadedEnvironments.has(key.slice(0, key.indexOf(":")))),
+    ),
   );
   return { ...settings, assignments };
 }
