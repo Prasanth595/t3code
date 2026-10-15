@@ -324,6 +324,19 @@ describe("open", () => {
 });
 
 describe("append", () => {
+  it("append writes a numeric issue key as a JSON number and an identifier as a string", () => {
+    const dataDir = tempDir();
+    const log = open(dataDir, ticking(T0, 1000));
+    log.append({ event: "claim_skipped", data: { repo: "a/b", issue: "8", reason: "limit" } });
+    log.append({
+      event: "claim_repaired",
+      data: { repo: "a/b", issue: "ENG-42", outcome: "released" },
+    });
+    const lines = readText(logFile(dataDir)).split("\n");
+    expect(lines[0]).toContain(`"data":{"repo":"a/b","issue":8,"reason":"limit"}`);
+    expect(lines[1]).toContain(`"data":{"repo":"a/b","issue":"ENG-42","outcome":"released"}`);
+  });
+
   it("append writes the five example lines of the doc as exact bytes, with no cause", () => {
     const dataDir = tempDir();
     const log = open(
