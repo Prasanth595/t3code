@@ -8,7 +8,17 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 
 import { FactoryRuntime } from "./index.ts";
+import { scanMachineLog } from "./ledger/machineLog.ts";
+import { FactoryProcess, RunSpawnError } from "./process.ts";
 import * as Paths from "./t3/paths.ts";
+
+/** A process runner on a machine with no `gh`: every call fails to start. */
+const noGh = Layer.succeed(
+  FactoryProcess,
+  FactoryProcess.of({
+    run: () => Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
+  }),
+);
 
 const messageText = (message: unknown): string => {
   const first = Array.isArray(message) ? message[0] : message;
@@ -57,6 +67,7 @@ const logsFor = (
                 machineConfigPath,
               }),
             ),
+            Layer.provide(noGh),
           ),
         ),
       ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
@@ -64,21 +75,30 @@ const logsFor = (
       const gates = yield* fs
         .readDirectory(join(factoryDir, "gates"))
         .pipe(Effect.orElseSucceed(() => []));
-      return { logs, machineConfigPath, gates };
+      const events = scanMachineLog(factoryDir).map((entry) => entry.event);
+      return { logs, machineConfigPath, gates, events };
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
 it.effect("logs that there is no config when the machine file does not exist", () =>
   Effect.gen(function* () {
-    const { logs, machineConfigPath } = yield* logsFor(undefined);
+    const { logs, machineConfigPath, events } = yield* logsFor(undefined);
     assert.deepStrictEqual(logs, [`no factory config at ${machineConfigPath}`]);
+    assert.deepStrictEqual(events, []);
   }),
 );
 
-it.effect("logs factory started once for a valid machine file", () =>
+it.effect("logs factory started once for a valid machine file, then runs the first pass", () =>
   Effect.gen(function* () {
-    const { logs } = yield* logsFor(VALID);
-    assert.deepStrictEqual(logs, ["factory started"]);
+    const { logs, events } = yield* logsFor(VALID);
+    assert.strictEqual(logs[0], "factory started");
+    // The pass found no gh: the repo's config could not be read, and the pass said so and ended.
+    assert.ok(
+      logs.some((line) => line.startsWith("error: a/b: project config not loaded")),
+      logs.join("\n"),
+    );
+    assert.strictEqual(logs.at(-1), "pass done: 0 runs, 0 claimed, 1 errors, 0 need attention");
+    assert.deepStrictEqual(events, ["pass_started", "repo_skipped", "pass_finished"]);
   }),
 );
 
@@ -104,7 +124,7 @@ it.effect("clears the gate locks a dead server left and nothing else under gates
         yield* fs.writeFileString(join(gatesDir, "notes.txt"), "keep");
       }),
     );
-    assert.deepStrictEqual(logs, ["cleared 2 gate lock(s)", "factory started"]);
+    assert.deepStrictEqual(logs.slice(0, 2), ["cleared 2 gate lock(s)", "factory started"]);
     assert.deepStrictEqual(gates, ["notes.txt"]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
