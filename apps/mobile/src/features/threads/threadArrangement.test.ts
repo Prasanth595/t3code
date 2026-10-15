@@ -2,7 +2,12 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadShellFixture } from "../../test-fixtures";
-import { applyThreadMove, threadArrangementCommands, withThreadDrafts } from "./threadOrder";
+import {
+  applyThreadMove,
+  recordThreadMove,
+  threadArrangementCommands,
+  withThreadDrafts,
+} from "./threadOrder";
 
 const NOW = "2026-10-15T12:00:00.000Z";
 
@@ -136,7 +141,9 @@ describe("thread arrangement drafts", () => {
 
   it("keeps live fields current under a draft", () => {
     const saved = [thread("a", { activeOrderKey: "a0" })];
-    const drafts = new Map(
+    const drafts = recordThreadMove(
+      new Map(),
+      saved,
       applyThreadMove(
         saved,
         key(saved[0]!),
@@ -145,10 +152,38 @@ describe("thread arrangement drafts", () => {
           assignments: [{ id: key(saved[0]!), orderKey: "a7" }],
         },
         NOW,
-      ).map((shell) => [key(shell), shell]),
+      ),
     );
     const [shown] = withThreadDrafts([{ ...saved[0]!, title: "Renamed" }], drafts);
 
     expect(shown).toMatchObject({ title: "Renamed", activeOrderKey: "a7" });
+  });
+
+  it("does not revert server changes to fields the draft never touched", () => {
+    const opened = [thread("a", { activeOrderKey: "a0" }), thread("b", { activeOrderKey: "a1" })];
+    const drafts = recordThreadMove(
+      new Map(),
+      opened,
+      applyThreadMove(
+        opened,
+        key(opened[1]!),
+        {
+          section: "active",
+          assignments: [
+            { id: key(opened[1]!), orderKey: "a0" },
+            { id: key(opened[0]!), orderKey: "a1" },
+          ],
+        },
+        NOW,
+      ),
+    );
+    // While the sheet is open, the server auto-settles "a".
+    const live = [{ ...opened[0]!, settledOverride: "settled" as const }, opened[1]!];
+    const draft = withThreadDrafts(live, drafts);
+
+    expect(commandsFor(live, draft)).toEqual({
+      a: [],
+      b: [{ type: "reorderActive", orderKey: "a0" }],
+    });
   });
 });

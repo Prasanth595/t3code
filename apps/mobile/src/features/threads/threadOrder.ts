@@ -380,26 +380,50 @@ export function applyThreadMove<T extends EnvironmentThreadShell>(
   });
 }
 
+const ARRANGEMENT_FIELDS = [
+  "pinnedAt",
+  "pinOrderKey",
+  "activeOrderKey",
+  "settledOverride",
+  "unsettledAt",
+  "snoozedUntil",
+] as const;
+
+/** The arrangement fields a draft changed. Fields it never touched stay live,
+ * so a server change made while the sheet is open (an auto-settle, an unpin
+ * from another device) is not reverted on save. */
+export type ThreadArrangementPatch = Partial<
+  Pick<EnvironmentThreadShell, (typeof ARRANGEMENT_FIELDS)[number]>
+>;
+
+/** Fold one move into the drafts, recording only the fields it changed. */
+export function recordThreadMove(
+  drafts: ReadonlyMap<string, ThreadArrangementPatch>,
+  before: readonly EnvironmentThreadShell[],
+  after: readonly EnvironmentThreadShell[],
+): Map<string, ThreadArrangementPatch> {
+  const next = new Map(drafts);
+  after.forEach((shell, index) => {
+    const previous = before[index]!;
+    if (shell === previous) return;
+    const patch: Record<string, unknown> = { ...next.get(rowId(shell)) };
+    for (const field of ARRANGEMENT_FIELDS)
+      if (shell[field] !== previous[field]) patch[field] = shell[field];
+    next.set(rowId(shell), patch);
+  });
+  return next;
+}
+
 /** Lay drafted arrangement fields over the live shells, keeping everything
- * else (title, runtime) current. */
+ * else (title, runtime, untouched lifecycle fields) current. */
 export function withThreadDrafts<T extends EnvironmentThreadShell>(
   threads: readonly T[],
-  drafts: ReadonlyMap<string, EnvironmentThreadShell>,
+  drafts: ReadonlyMap<string, ThreadArrangementPatch>,
 ): readonly T[] {
   if (drafts.size === 0) return threads;
   return threads.map((thread) => {
-    const draft = drafts.get(rowId(thread));
-    return draft === undefined
-      ? thread
-      : {
-          ...thread,
-          pinnedAt: draft.pinnedAt,
-          pinOrderKey: draft.pinOrderKey,
-          activeOrderKey: draft.activeOrderKey,
-          settledOverride: draft.settledOverride,
-          unsettledAt: draft.unsettledAt,
-          snoozedUntil: draft.snoozedUntil,
-        };
+    const patch = drafts.get(rowId(thread));
+    return patch === undefined ? thread : { ...thread, ...patch };
   });
 }
 

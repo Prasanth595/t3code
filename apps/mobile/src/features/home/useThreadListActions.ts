@@ -1,4 +1,8 @@
-import type { ThreadArrangementCommand, ThreadMoveDestination } from "../threads/threadOrder";
+import type {
+  ThreadArrangementCommand,
+  ThreadArrangementPatch,
+  ThreadMoveDestination,
+} from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -27,6 +31,7 @@ import {
   applyThreadMove,
   createPendingThreadOrder,
   createThreadMovePlanner,
+  recordThreadMove,
   threadArrangementCommands,
   threadDropLifecycle,
   withThreadDrafts,
@@ -349,12 +354,12 @@ export function useThreadListActions(): {
     direction: ThreadMoveDestination,
   ) => Promise<boolean>;
   readonly previewThreadMove: (
-    drafts: ReadonlyMap<string, EnvironmentThreadShell>,
+    drafts: ReadonlyMap<string, ThreadArrangementPatch>,
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
-  ) => ReadonlyMap<string, EnvironmentThreadShell> | null;
+  ) => ReadonlyMap<string, ThreadArrangementPatch> | null;
   readonly saveThreadArrangement: (
-    drafts: ReadonlyMap<string, EnvironmentThreadShell>,
+    drafts: ReadonlyMap<string, ThreadArrangementPatch>,
   ) => Promise<boolean>;
   readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -789,7 +794,7 @@ export function useThreadListActions(): {
   /** The arrange sheet's drafts after one more move, or null when it cannot run. */
   const previewThreadMove = useCallback(
     (
-      drafts: ReadonlyMap<string, EnvironmentThreadShell>,
+      drafts: ReadonlyMap<string, ThreadArrangementPatch>,
       thread: EnvironmentThreadShell,
       direction: ThreadMoveDestination,
     ) => {
@@ -800,17 +805,16 @@ export function useThreadListActions(): {
       const plan = planThreadMove(shells, thread, direction);
       if (plan === null) return null;
       selectionHaptic();
-      const next = new Map(drafts);
-      applyThreadMove(
+      return recordThreadMove(
+        drafts,
         shells,
-        scopedThreadKey(plan.thread.environmentId, plan.thread.id),
-        plan,
-        new Date().toISOString(),
-      ).forEach((shell, index) => {
-        if (shell !== shells[index])
-          next.set(scopedThreadKey(shell.environmentId, shell.id), shell);
-      });
-      return next;
+        applyThreadMove(
+          shells,
+          scopedThreadKey(plan.thread.environmentId, plan.thread.id),
+          plan,
+          new Date().toISOString(),
+        ),
+      );
     },
     [],
   );
@@ -838,16 +842,16 @@ export function useThreadListActions(): {
   /** Send the arrange sheet's drafts. Threads save independently; resolves
    * false if any write failed, leaving that thread at its last saved state. */
   const saveThreadArrangement = useCallback(
-    async (drafts: ReadonlyMap<string, EnvironmentThreadShell>) => {
+    async (drafts: ReadonlyMap<string, ThreadArrangementPatch>) => {
       if (drafts.size === 0) return true;
       appAtomRegistry.set(threadDropBusyAtom, true);
       try {
         const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
         const results = await Promise.all(
           shells.map(async (thread) => {
-            const draft = drafts.get(scopedThreadKey(thread.environmentId, thread.id));
-            if (draft === undefined || thread.archivedAt !== null) return true;
-            for (const command of threadArrangementCommands(thread, draft)) {
+            const patch = drafts.get(scopedThreadKey(thread.environmentId, thread.id));
+            if (patch === undefined || thread.archivedAt !== null) return true;
+            for (const command of threadArrangementCommands(thread, { ...thread, ...patch })) {
               if (!(await runArrangementCommand(thread, command))) return false;
             }
             return true;

@@ -26,6 +26,7 @@ import {
   createThreadMovePlanner,
   threadDragAction,
   withThreadDrafts,
+  type ThreadArrangementPatch,
   type ThreadMoveDestination,
 } from "./threadOrder";
 import { getThreadListV2OrderedSection, threadListInboxReturns } from "./threadListV2";
@@ -159,7 +160,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const { previewThreadMove, saveThreadArrangement } = useThreadListActions();
   // Moves stack up as drafts and are sent together on Done, so a drop never
   // waits on the network.
-  const [drafts, setDrafts] = useState<ReadonlyMap<string, EnvironmentThreadShell>>(new Map());
+  const [drafts, setDrafts] = useState<ReadonlyMap<string, ThreadArrangementPatch>>(new Map());
   const [saving, setSaving] = useState(false);
   const threads = useMemo(() => withThreadDrafts(savedThreads, drafts), [savedThreads, drafts]);
   const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
