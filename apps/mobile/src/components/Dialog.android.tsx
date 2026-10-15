@@ -10,7 +10,7 @@ import {
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
 
 export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
@@ -31,12 +31,15 @@ export function prompt(request: TextInputDialogRequest): void {
 
 /** Android presenter for Dialog.confirm and Dialog.prompt; mounted once at the app root. */
 export function Host() {
-  const [presented, setPresented] = useState<DialogRequest | null>(null);
+  const [presented, setPresented] = useState<(DialogRequest & { readonly id: number }) | null>(
+    null,
+  );
   const [inputValue, setInputValue] = useState("");
+  const nextPresentationId = useRef(0);
   useEffect(() => {
     presentRequest = (request) => {
       setInputValue(request.kind === "text-input" ? request.request.initialValue : "");
-      setPresented(request);
+      setPresented({ ...request, id: ++nextPresentationId.current });
     };
     return () => {
       presentRequest = null;
@@ -62,7 +65,7 @@ export function Host() {
 
   return presented ? (
     <DialogPresentation
-      key={`${presented.kind}:${presented.request.title}:${presented.kind === "text-input" ? presented.request.initialValue : ""}`}
+      key={presented.id}
       request={presented.request}
       inputInitialValue={
         presented.kind === "text-input" ? presented.request.initialValue : undefined
