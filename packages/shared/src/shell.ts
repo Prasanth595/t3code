@@ -805,11 +805,7 @@ function readWindowsEnvironmentSafely(
   }
 }
 
-/**
- * Windows resolves env keys case-insensitively, but a copied env object does
- * not: the inherited `Path` and a written `PATH` would coexist and the child
- * would inherit whichever one Node picks. Drop every spelling before writing.
- */
+/** Keep one PATH spelling in copied Windows environment records. */
 export function setWindowsPath(env: NodeJS.ProcessEnv, value: string): void {
   for (const key of Object.keys(env)) {
     if (key.toUpperCase() === "PATH") {
