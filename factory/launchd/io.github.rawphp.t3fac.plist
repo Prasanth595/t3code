@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.github.rawphp.t3fac</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@HOME@/.local/share/t3fac/current/t3</string>
+		<string>serve</string>
+		<string>--base-dir</string>
+		<string>@HOME@/.config/t3fac</string>
+		<string>--port</string>
+		<string>3876</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>@HOME@</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:@HOME@/.local/bin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>StandardOutPath</key>
+	<string>@HOME@/Library/Logs/t3fac/t3fac.log</string>
+	<key>StandardErrorPath</key>
+	<string>@HOME@/Library/Logs/t3fac/t3fac.log</string>
+</dict>
+</plist>

@@ -14,6 +14,7 @@ it.effect(
       assert.strictEqual(paths.baseDir, "/srv/t3fac");
       assert.strictEqual(paths.worktreesDir, "/srv/t3fac/worktrees");
       assert.strictEqual(paths.factoryDir, "/srv/t3fac/factory");
+      assert.strictEqual(paths.machineConfigPath, "/srv/t3fac/factory/config.yml");
     }).pipe(
       Effect.provide(
         Paths.layer.pipe(

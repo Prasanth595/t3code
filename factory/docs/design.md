@@ -36,7 +36,7 @@ This is an experiment. The Rust softfac keeps running and keeps building its rep
 │  EventSinkV2 ─────── stream(run.updated) ──► factory/t3/events.ts ─┐             │
 │  ProjectionStoreV2 ◄─ read thread/run ─────── factory/t3/sessions.ts│            │
 │  ThreadLaunchService ◄ launch ─────────────── factory/t3/sessions.ts│            │
-│  ProcessRunner ◄──── gh, git, gate cmds ───── factory/t3/process.ts │            │
+│  node:child_process ◄ gh, git, gate cmds ──── factory/process.ts    │            │
 │  ServerConfig ─────── base dir, worktrees ──► factory/t3/paths.ts   │            │
 │                                                                     ▼            │
 │  server.ts  +1 line: FactoryLayer ──────────► factory/index.ts ─► pass loop      │
@@ -56,10 +56,10 @@ One process, one binary, one LaunchAgent, one log. Agent sessions are ordinary T
 ```
 apps/server/src/factory/
   index.ts          FactoryLayer: the only symbol server.ts imports
+  process.ts        node:child_process with env allowlist, process group kill and a bounded output tail
   t3/               the adapter: the only factory code that imports T3 internals
     sessions.ts     launch, send, archive, status over ThreadLaunchService, OrchestratorV2, ProjectionStoreV2
     events.ts       EventSinkV2.stream → wake the run that owns the thread
-    process.ts      ProcessRunner (or node:child_process) with env allowlist and process groups
     paths.ts        ServerConfig → base dir, worktrees dir, factory dir
   domain/           pure: lifecycle states, result-line parsing, approval, limits, fairness
   ledger/           JSONL ledger, same format as softfac docs/reference/ledger.md
@@ -231,7 +231,7 @@ The fork replaces Rust softfac if its output is at least as good and the sync co
 ## Open questions to settle in step 1 or 2
 
 1. Do routes added through `layerMakeRoutes` get T3's auth? The Factory page needs it. If they don't, the page has to use T3's RPC, which means more seams.
-2. Does `ProcessRunner` kill the whole process group on timeout, and can it clear the environment? If not, `process.ts` uses `node:child_process` directly, which needs no seam.
+2. Answered (#8): `ProcessRunner` spawns through Effect's Node spawner, which does put the child in its own process group (`detached: true` on POSIX) and sends the group `SIGTERM` when the effect is interrupted. It cannot do the rest: it always extends the parent environment (`extendEnv` is true whenever `env` is set), it reads stdout and stderr on separate pipes, and on timeout it drops the partial output and never escalates to `SIGKILL`. `apps/server/src/factory/process.ts` therefore uses `node:child_process` directly, outside `factory/t3/`, and needs no seam.
 3. Is a YAML parser already a server dependency? If not, adding one touches `package.json` and the lockfile, so they join the seam list.
 4. How does T3 handle a thread's worktree on archive? It leaves it on disk. `thread.archive` detaches the thread's provider sessions and revokes its MCP credential, and touches nothing on disk. Storage cleanup (Settings → Storage, off by default) only considers active threads, so an archived thread's worktree is never a candidate; only "Delete worktrees with deleted threads" removes one, when the thread is deleted. So the factory removes the worktree itself with git after archiving, as softfac does: `FactorySessions.removeWorktree`, which keeps the branch.
 5. Is the installed 0.0.46 nightly already on orchestration v2? The Rust factory works against it with protocol 2, so probably yes. It only affects which upstream tag the first sync starts from.

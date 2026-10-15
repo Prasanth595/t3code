@@ -9,7 +9,7 @@ import * as ServerConfig from "../../config.ts";
  * Where the factory keeps and finds things on this machine, from the server's
  * base dir: the worktrees T3 makes for agent threads, and the factory's own
  * data under `<base>/factory` (the same layout as softfac's data dir, so its
- * retro can read both).
+ * retro can read both), including its machine config, `<base>/factory/config.yml`.
  */
 export class FactoryPaths extends Context.Service<
   FactoryPaths,
@@ -17,6 +17,7 @@ export class FactoryPaths extends Context.Service<
     readonly baseDir: string;
     readonly worktreesDir: string;
     readonly factoryDir: string;
+    readonly machineConfigPath: string;
   }
 >()("t3/factory/t3/paths/FactoryPaths") {}
 
@@ -25,10 +26,12 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
+    const factoryDir = path.join(config.baseDir, "factory");
     return {
       baseDir: config.baseDir,
       worktreesDir: config.worktreesDir,
-      factoryDir: path.join(config.baseDir, "factory"),
+      factoryDir,
+      machineConfigPath: path.join(factoryDir, "config.yml"),
     };
   }),
 );
