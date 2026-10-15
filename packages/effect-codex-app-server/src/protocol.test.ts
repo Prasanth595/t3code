@@ -371,6 +371,49 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       }),
   );
 
+  it.effect("ends the session before parsing an incoming message over the length limit", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const notifications: Array<CodexProtocol.CodexAppServerIncomingNotification> = [];
+      const logged: Array<unknown> = [];
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        maxIncomingMessageLength: 16,
+        logIncoming: true,
+        logger: (event) =>
+          Effect.sync(() => {
+            logged.push(event.payload);
+          }),
+        onNotification: (notification) =>
+          Effect.sync(() => {
+            notifications.push(notification);
+          }),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+      const response = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      // The first line is exactly 16 characters; the second reaches 22 across two chunks.
+      yield* Queue.offer(input, encoder.encode('{"method":"x/a"}\n{"method":"x/b",'));
+      yield* Queue.offer(input, encoder.encode('"p":1}\n'));
+      yield* Queue.end(input);
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, CodexError.CodexAppServerTransportError);
+      assert.equal(error.operation, "read-input-stream");
+      const responseError = yield* Fiber.join(response).pipe(
+        Effect.match({
+          onFailure: (failure) => failure,
+          onSuccess: () => assert.fail("Expected the oversized message to fail the request"),
+        }),
+      );
+      assert.strictEqual(responseError, error);
+      assert.deepEqual(notifications, [{ method: "x/a" }]);
+      assert.deepEqual(logged, ['{"method":"x/a"}', { method: "x/a" }]);
+    }),
+  );
+
   it.effect("reports a malformed fragmented final line before input stream termination", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
