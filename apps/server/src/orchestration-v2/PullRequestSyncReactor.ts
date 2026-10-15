@@ -177,7 +177,15 @@ export const make = Effect.gen(function* () {
     // Settled threads stop watching their pull requests. Unsettling one makes its links due on
     // the next sweep, since the cadence clock below kept running while it was settled.
     const active = entries.filter((entry) => isUnsettled(entry.thread));
-    if (active.every((entry) => entry.link.snapshot?.state === "merged")) return false;
+    // A merged snapshot without its merge time cannot settle the thread, so it keeps the slow
+    // cadence until the host supplies one (Bitbucket snapshots saved before it was read).
+    if (
+      active.every(
+        (entry) => entry.link.snapshot?.state === "merged" && entry.link.snapshot.mergedAt != null,
+      )
+    ) {
+      return false;
+    }
     if (active.some((entry) => entry.link.snapshot?.state === "open")) return true;
     // Closed requests can reopen on the host.
     const last = lastSyncedAt.get(key);
