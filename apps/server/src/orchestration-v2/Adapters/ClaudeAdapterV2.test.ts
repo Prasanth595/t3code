@@ -3851,6 +3851,49 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("ignores snapshot usage from before a compaction without stream usage", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-snapshot-usage-compaction"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const usage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 75 };
+      const frames = [
+        usageSnapshotFrame("msg_fallback", "00000000-0000-4000-8000-000000000790", usage),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 1_075, post_tokens: 400 },
+          uuid: "00000000-0000-4000-8000-000000000791",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        usageSnapshotFrame("msg_fallback", "00000000-0000-4000-8000-000000000792", usage),
+        // A new request after the boundary reports the compacted context.
+        usageSnapshotFrame("msg_after", "00000000-0000-4000-8000-000000000793", {
+          ...zeroUsage,
+          input_tokens: 450,
+          output_tokens: 10,
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000794", result: "Done." }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      assert.deepEqual(reportedContextTokens(harness.events), [1_075, 400, 460]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("surfaces a Claude safety model fallback without failing the turn", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
