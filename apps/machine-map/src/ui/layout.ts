@@ -233,3 +233,76 @@ export function pairPath(a: Point, b: Point, through: Point | null): string {
   const [start, ...rest] = pairCurve(a, b, through).map((q) => `${q.x},${q.y}`);
   return `M${start}C${rest.slice(0, 3).join(" ")}C${rest.slice(3).join(" ")}`;
 }
+
+/**
+ * MM-1116: the view of the map on one device. The map layer moves by `x` and `y` screen pixels
+ * and scales by `k`: a map point `p` shows at `p * k + (x, y)`.
+ */
+export interface MapViewport {
+  readonly x: number;
+  readonly y: number;
+  readonly k: number;
+}
+
+/** MM-1116: the zoom limits. */
+export const MIN_ZOOM = 0.25;
+export const MAX_ZOOM = 2;
+export const clampZoom = (k: number) => clamp(k, MIN_ZOOM, MAX_ZOOM);
+
+export const toMapPoint = (view: MapViewport, screen: Point): Point => ({
+  x: (screen.x - view.x) / view.k,
+  y: (screen.y - view.y) / view.k,
+});
+
+export const toScreenPoint = (view: MapViewport, point: Point): Point => ({
+  x: point.x * view.k + view.x,
+  y: point.y * view.k + view.y,
+});
+
+/** Zooms by `factor`. The map point under the screen point `at` stays under it. */
+export function zoomAt(view: MapViewport, at: Point, factor: number): MapViewport {
+  const k = clampZoom(view.k * factor);
+  const p = toMapPoint(view, at);
+  return { k, x: at.x - p.x * k, y: at.y - p.y * k };
+}
+
+/** The margin around the cards after "Fit", in screen pixels. */
+const FIT_MARGIN = 24;
+
+/**
+ * MM-1116 "Fit": every box shows inside a `width` x `height` screen, centered, at most at 100%.
+ * Null without boxes.
+ */
+export function fitView(
+  boxes: ReadonlyArray<Box>,
+  width: number,
+  height: number,
+): MapViewport | null {
+  if (boxes.length === 0 || width <= 0 || height <= 0) return null;
+  const left = Math.min(...boxes.map((b) => b.x - b.w / 2));
+  const right = Math.max(...boxes.map((b) => b.x + b.w / 2));
+  const top = Math.min(...boxes.map((b) => b.y - b.h / 2));
+  const bottom = Math.max(...boxes.map((b) => b.y + b.h / 2));
+  const k = clampZoom(
+    Math.min(
+      1,
+      (width - 2 * FIT_MARGIN) / Math.max(1, right - left),
+      (height - 2 * FIT_MARGIN) / Math.max(1, bottom - top),
+    ),
+  );
+  return { k, x: width / 2 - ((left + right) / 2) * k, y: height / 2 - ((top + bottom) / 2) * k };
+}
+
+/** Whether at least one box shows, in part, on a `width` x `height` screen. */
+export function anyInView(
+  view: MapViewport,
+  boxes: ReadonlyArray<Box>,
+  width: number,
+  height: number,
+): boolean {
+  return boxes.some((b) => {
+    const a = toScreenPoint(view, { x: b.x - b.w / 2, y: b.y - b.h / 2 });
+    const z = toScreenPoint(view, { x: b.x + b.w / 2, y: b.y + b.h / 2 });
+    return a.x < width && z.x > 0 && a.y < height && z.y > 0;
+  });
+}

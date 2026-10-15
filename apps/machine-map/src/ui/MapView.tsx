@@ -42,12 +42,19 @@ import {
 } from "./format.ts";
 import { ClockIcon, KindIcon } from "./icons.tsx";
 import {
+  anyInView,
+  fitView,
   offsetPoint,
   pairPath,
   placePairs,
   pointOffset,
   separate,
+  toMapPoint,
+  toScreenPoint,
+  zoomAt,
+  clampZoom,
   type Box,
+  type MapViewport,
   type Point,
 } from "./layout.ts";
 import { NoteCard } from "./NoteCard.tsx";
@@ -71,9 +78,51 @@ const ESTIMATE = {
   compact: { node: { w: 156, h: 100 }, pair: { w: 200, h: 84 }, note: { w: 140, h: 60 } },
 } as const;
 
+/** MM-1116: the zoom and pan of this device. Each device keeps its own; the map never holds it. */
+const VIEW_KEY = "machine-map:view";
+/** Each "+" or "−" press zooms by this factor. */
+const ZOOM_STEP = 1.25;
+/** Wheel pixels to zoom: a trackpad pinch sends small steps, a mouse wheel big ones. */
+const WHEEL_ZOOM_RATE = 0.005;
+const WHEEL_ZOOM_MAX_DELTA = 50;
+/** A wheel `deltaMode` of lines scrolls this many pixels per line. */
+const LINE_PIXELS = 16;
+
+function loadView(): MapViewport | null {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "null");
+    if (typeof value !== "object" || value === null) return null;
+    const { x, y, k } = value as Record<string, unknown>;
+    if (typeof x !== "number" || typeof y !== "number" || typeof k !== "number") return null;
+    if (![x, y, k].every(Number.isFinite) || k <= 0) return null;
+    return { x, y, k: clampZoom(k) };
+  } catch {
+    return null;
+  }
+}
+
+function storeView(view: MapViewport): void {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(view));
+  } catch {
+    // Private windows can refuse storage. The view then lasts until the page closes.
+  }
+}
+
+/** A key press or a wheel in a text field or a select types or scrolls it; it never pans or zooms the map. */
+const isTyping = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+
+/** Space on a button, a link, a card or in a dialog presses or types; it never pans the map. */
+const keepsSpace = (target: EventTarget | null) =>
+  document.querySelector("dialog[open]") !== null ||
+  (target instanceof Element &&
+    target.closest("button, a[href], [role='button'], summary, dialog") !== null);
+
 /**
- * Cards cover at most this share of the map, so they fit apart. A narrow map with many cards grows
- * taller than the screen, and the page scrolls through it.
+ * Cards cover at most this share of the map layer, so they fit apart. A narrow map with many cards
+ * gets a layer taller than the map, and zoom and pan reach the rest (MM-1114).
  */
 const CARD_SHARE = 0.3;
 
@@ -135,9 +184,9 @@ const onPressKey = (press: () => void) => (event: KeyboardEvent) => {
   }
 };
 
-/** The map itself or its line layer, not a card on it. */
-const isEmptySpot = (target: EventTarget, map: EventTarget) =>
-  target === map || (target instanceof Element && target.tagName === "svg");
+/** The map, its moving layer or its line layer, not a card on it. */
+const isEmptySpot = (target: EventTarget, map: EventTarget, world: EventTarget | null) =>
+  target === map || target === world || (target instanceof Element && target.tagName === "svg");
 
 /** MM-602: one arrow end that did not apply the arrow, in words, and where it opens. */
 interface Wait {
@@ -155,6 +204,32 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const portal = usePortalContext();
   const { snapshot, route, now } = portal;
   const ref = useRef<HTMLDivElement>(null);
+  /** MM-1116: the layer that holds every card. One CSS transform on it pans and zooms. */
+  const worldRef = useRef<HTMLDivElement>(null);
+  const view = useRef<MapViewport>({ x: 0, y: 0, k: 1 });
+  const viewReady = useRef(false);
+  const storeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** A pan of the view: a drag on empty map, Space and a drag, or one finger on empty map. */
+  const pan = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    from: MapViewport;
+    moved: boolean;
+  } | null>(null);
+  /** The fingers on the map, by pointer id, in client pixels. Two of them pinch. */
+  const touches = useRef(new Map<number, Point>());
+  const pinch = useRef<{ distance: number; middle: Point; from: MapViewport } | null>(null);
+  const spaceHeld = useRef(false);
+  const hovered = useRef(false);
+  /**
+   * MM-1117: a plain wheel pans the live map only after a click, a drag or keyboard focus on it.
+   * Before that, and after the pointer leaves or Esc, the wheel scrolls the page.
+   */
+  const engaged = useRef(false);
+  /** False until the user zooms or pans, so the first "Fit" follows cards that grow (MM-1118). */
+  const userMoved = useRef(false);
+  const fittedFor = useRef("");
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [sizes, setSizes] = useState<Record<string, Size>>({});
   const drag = useRef<Drag | null>(null);
@@ -170,8 +245,11 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const [target, setTarget] = useState<MachineId | null>(null);
   /** MM-1104: the source machine of the connection line that follows the pointer. */
   const [linking, setLinking] = useState<MachineId | null>(null);
-  /** MM-1110: the add menu, at a point on the map. */
-  const [menu, setMenu] = useState<Point | null>(null);
+  /**
+   * MM-1110: the add menu, at a point on the map and the screen point where it opened. A pan or
+   * zoom closes it, so the screen point stays true.
+   */
+  const [menu, setMenu] = useState<{ readonly at: Point; readonly screen: Point } | null>(null);
   const [editing, setEditing] = useState<EditingNote | null>(null);
   // Each state keeps at most one entry per card. The save answer gives each entry its revision,
   // which the map then reaches, or removes the entry. So the page does not prune the state.
@@ -220,10 +298,6 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
 
   const compact = size.width < COMPACT_WIDTH;
   const estimate = compact ? ESTIMATE.compact : ESTIMATE.wide;
-  const width = Math.min(size.width, MAX_WIDTH);
-  const left = (size.width - width) / 2;
-  /** MM-1108: pair offsets beside the line scale with the shorter side of the map. */
-  const scale = Math.min(width, size.height);
   const machines = map.machines;
   const standings = buildStandings(snapshot.presence);
   const selection = route.selection;
@@ -240,6 +314,18 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
         pairs.push([a, b]);
     }
   }
+
+  // The map layer: the width of the screen up to MAX_WIDTH, and taller than the screen when its
+  // cards need the room (MM-1114). Zoom and pan show the rest (MM-1116).
+  const width = Math.min(size.width, MAX_WIDTH);
+  const cardArea = [
+    ...machines.map((m) => sizes[`node:${m.id}`] ?? estimate.node),
+    ...pairs.map((pair) => sizes[`pair:${pairKey(...pair)}`] ?? estimate.pair),
+    ...map.notes.map((note) => sizes[`note:${note.id}`] ?? estimate.note),
+  ].reduce((sum, { w, h }) => sum + w * h, 0);
+  const height = Math.max(size.height, width > 0 ? Math.ceil(cardArea / CARD_SHARE / width) : 0);
+  /** MM-1108: pair offsets beside the line scale with the shorter side of the map. */
+  const scale = Math.min(width, height);
 
   const heldPlaces = settleHeld(
     heldPlaceState,
@@ -267,10 +353,10 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const position = (m: MachineRecord): MapPosition => heldPlace(`machine:${m.id}`) ?? m.position;
   const offsetOf = (a: MachineRecord, b: MachineRecord): PairOffset | null =>
     heldOffsets.find((h) => h.key === pairKey(a, b))?.value ?? pairOffset(map, a.id, b.id);
-  const toPixels = (p: MapPosition): Point => ({ x: left + p.x * width, y: p.y * size.height });
+  const toPixels = (p: MapPosition): Point => ({ x: p.x * width, y: p.y * height });
   const toPosition = (p: Point): MapPosition => ({
-    x: clamp((p.x - left) / width, 0.02, 0.98),
-    y: clamp(p.y / size.height, 0.02, 0.98),
+    x: clamp(p.x / width, 0.02, 0.98),
+    y: clamp(p.y / height, 0.02, 0.98),
   });
   const nodeBox = (m: MachineRecord, p: Point): Box => ({
     ...p,
@@ -283,8 +369,8 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     const p = toPixels(heldPlace(`note:${note.id}`) ?? note.position);
     const { w, h } = noteSize(note);
     return {
-      x: clamp(p.x, w / 2, Math.max(w / 2, size.width - w / 2)),
-      y: clamp(p.y, h / 2, Math.max(h / 2, size.height - h / 2)),
+      x: clamp(p.x, w / 2, Math.max(w / 2, width - w / 2)),
+      y: clamp(p.y, h / 2, Math.max(h / 2, height - h / 2)),
     };
   };
 
@@ -297,8 +383,8 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       ...machines.map((m) => nodeBox(m, toPixels(position(m)))),
       ...map.notes.map((note) => ({ ...savedNoteAt(note), ...noteSize(note) })),
     ],
-    size.width,
-    size.height,
+    width,
+    height,
   );
   const nodes = spread.slice(0, machines.length);
   const noteBoxes = spread.slice(machines.length);
@@ -330,8 +416,8 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
         };
       }),
       boxes,
-      size.width,
-      size.height,
+      width,
+      height,
       noteBoxes,
     );
     return { at, spots };
@@ -390,15 +476,29 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     }
   };
 
+  /** A point on the screen in pixels of the map element, inside its border. */
+  const screenAt = (clientX: number, clientY: number): Point => {
+    const element = ref.current;
+    if (!element) return { x: 0, y: 0 };
+    const rect = element.getBoundingClientRect();
+    return {
+      x: clientX - rect.left - element.clientLeft,
+      y: clientY - rect.top - element.clientTop,
+    };
+  };
+  /** MM-1116: a client point in map pixels, through the zoom and pan, so drops save map places. */
+  const mapAt = (clientX: number, clientY: number): Point =>
+    toMapPoint(view.current, screenAt(clientX, clientY));
+
   /** Moves the drag to the last pointer. Runs at most once per frame. */
   const step = () => {
     const current = drag.current;
-    const rect = ref.current?.getBoundingClientRect();
-    if (!current || !rect || width === 0 || !current.moved) return;
+    if (!current || width === 0 || !current.moved) return;
     const { clientX, clientY } = current;
+    const p = mapAt(clientX, clientY);
     current.at = {
-      x: clamp(clientX - rect.left - current.grab.x, 0, rect.width),
-      y: clamp(clientY - rect.top - current.grab.y, 0, rect.height),
+      x: clamp(p.x - current.grab.x, 0, width),
+      y: clamp(p.y - current.grab.y, 0, height),
     };
     if (current.subject._tag === "connect") {
       const id = current.subject.machine.id;
@@ -435,15 +535,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   };
 
   /** The pointer in map pixels. */
-  const pointerAt = (event: PointerEvent<HTMLElement>): Point => {
-    const rect = ref.current?.getBoundingClientRect();
-    return rect ? { x: event.clientX - rect.left, y: event.clientY - rect.top } : { x: 0, y: 0 };
-  };
+  const pointerAt = (event: PointerEvent<HTMLElement>): Point =>
+    mapAt(event.clientX, event.clientY);
 
   const startDrag = (event: PointerEvent<HTMLElement>, subject: DragSubject, center: Point) => {
-    if (readOnly || event.button !== 0) return;
-    const rect = ref.current?.getBoundingClientRect();
-    if (!rect) return;
+    if (readOnly || event.button !== 0 || touches.current.size > 1) return;
+    const grabAt = pointerAt(event);
     swallowClick.current = false;
     drag.current = {
       subject,
@@ -451,7 +548,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      grab: { x: event.clientX - rect.left - center.x, y: event.clientY - rect.top - center.y },
+      grab: { x: grabAt.x - center.x, y: grabAt.y - center.y },
       from: center,
       clientX: event.clientX,
       clientY: event.clientY,
@@ -461,13 +558,162 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     };
   };
 
+  /** MM-1116: writes the view to the map layer. No render: one transform moves every card. */
+  const applyView = () => {
+    const { x, y, k } = view.current;
+    if (worldRef.current)
+      worldRef.current.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+  };
+  /** Keeps the view of this device, after the gesture settles. A history map keeps none. */
+  const keepView = () => {
+    if (readOnly) return;
+    if (storeTimer.current !== null) clearTimeout(storeTimer.current);
+    storeTimer.current = setTimeout(() => {
+      storeTimer.current = null;
+      storeView(view.current);
+    }, 250);
+  };
+  /** A user change of the view. Fit and the first view set `view` directly instead. */
+  const setView = (next: MapViewport) => {
+    userMoved.current = true;
+    view.current = { ...next, k: clampZoom(next.k) };
+    applyView();
+    // The add menu sits at a screen point, so a pan or zoom closes it.
+    if (menu) setMenu(null);
+  };
+
+  /** Every card as a box in map pixels. */
+  const cardBoxes = (): Array<Box> => [
+    ...machines.flatMap((m) => {
+      const box = shown.at.get(m.id);
+      return box ? [box] : [];
+    }),
+    ...pairs.map((pair, i) => ({
+      ...(shown.spots[i] ?? { x: 0, y: 0 }),
+      ...(sizes[`pair:${pairKey(...pair)}`] ?? estimate.pair),
+    })),
+    ...noteBoxes,
+  ];
+  /** MM-1116 "Fit": every card in view. An empty map shows its middle at 100%. */
+  const fitted = (): MapViewport =>
+    fitView(cardBoxes(), size.width, size.height) ?? {
+      x: (size.width - width) / 2,
+      y: (size.height - height) / 2,
+      k: 1,
+    };
+  const fit = () => setView(fitted());
+  const zoomBy = (factor: number) =>
+    setView(zoomAt(view.current, { x: size.width / 2, y: size.height / 2 }, factor));
+
+  // The first view: the one this device kept, or "Fit" on a first visit and when the kept view
+  // shows no card. It waits for the measured card sizes, which come before the first paint.
+  // Until the user zooms or pans, "Fit" runs again when a card, the layer or the map changes size,
+  // for example when a machine comes online and its card grows. A drop of a card keeps the view. React never writes the transform, so each render puts it back.
+  const measured = machines.length + map.notes.length === 0 || Object.keys(sizes).length > 0;
+  useLayoutEffect(() => {
+    if (size.width > 0 && measured) {
+      const boxes = cardBoxes();
+      // Card area changes when a card grows, never on a drop.
+      const layout = [size.width, size.height, width, height, boxes.length, cardArea / 100]
+        .map(Math.round)
+        .join(",");
+      if (!viewReady.current) {
+        viewReady.current = true;
+        const kept = readOnly ? null : loadView();
+        if (kept && anyInView(kept, boxes, size.width, size.height)) {
+          view.current = kept;
+          userMoved.current = true;
+        } else view.current = fitted();
+        fittedFor.current = layout;
+      } else if (!userMoved.current && fittedFor.current !== layout) {
+        view.current = fitted();
+        fittedFor.current = layout;
+      }
+    }
+    applyView();
+  });
+
+  /** Saves a waiting view at once: on unmount and when the page hides (MM-1118). */
+  const flushView = () => {
+    if (storeTimer.current === null) return;
+    clearTimeout(storeTimer.current);
+    storeTimer.current = null;
+    storeView(view.current);
+  };
+  const latestFlush = useRef(flushView);
+  useEffect(() => {
+    const listener = () => latestFlush.current();
+    addEventListener("pagehide", listener);
+    return () => {
+      removeEventListener("pagehide", listener);
+      latestFlush.current();
+    };
+  }, []);
+
+  const startPan = (event: PointerEvent<HTMLDivElement>) => {
+    pan.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      from: view.current,
+      moved: false,
+    };
+  };
+
+  /** Ends a pan. True when the event belonged to it. */
+  const endPan = (event: PointerEvent<HTMLDivElement>): boolean => {
+    const current = pan.current;
+    if (!current || current.pointerId !== event.pointerId) return false;
+    pan.current = null;
+    cancelLongPress();
+    ref.current?.classList.remove("panning");
+    // A pan that moved ends with a click on the map. That click is not a tap.
+    if (current.moved) {
+      swallowClick.current = true;
+      keepView();
+    }
+    return true;
+  };
+
+  /**
+   * MM-1116: fingers and Space. A second finger starts a pinch and stops the drag or pan of the
+   * first. Space and a drag pan from anywhere, also over a card.
+   */
+  const onMapPointerDownCapture = (event: PointerEvent<HTMLDivElement>) => {
+    engaged.current = true;
+    if (event.pointerType === "touch") {
+      touches.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (touches.current.size === 2) {
+        const [a, b] = [...touches.current.values()];
+        if (!a || !b) return;
+        abortDrag();
+        pan.current = null;
+        cancelLongPress();
+        pinch.current = {
+          distance: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)),
+          middle: screenAt((a.x + b.x) / 2, (a.y + b.y) / 2),
+          from: view.current,
+        };
+        event.stopPropagation();
+        return;
+      }
+      if (touches.current.size > 2) event.stopPropagation();
+    }
+    if (spaceHeld.current && event.button === 0) {
+      startPan(event);
+      event.stopPropagation();
+    }
+  };
+
   /** MM-1110: a long press on empty map opens the add menu. A finger has no double click. */
   const onMapPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     swallowClick.current = false;
+    if (event.button !== 0 || !isEmptySpot(event.target, event.currentTarget, worldRef.current))
+      return;
+    // MM-1116: a drag on empty map pans.
+    startPan(event);
     if (readOnly || event.pointerType === "mouse") return;
-    if (!isEmptySpot(event.target, event.currentTarget)) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const point = pointerAt(event);
     cancelLongPress();
     longPress.current = {
       x: event.clientX,
@@ -475,12 +721,38 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       timer: setTimeout(() => {
         longPress.current = null;
         swallowClick.current = true;
-        setMenu(point);
+        setMenu({ at: point, screen: toScreenPoint(view.current, point) });
       }, LONG_PRESS_MS),
     };
   };
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const pinching = pinch.current;
+    if (pinching && touches.current.has(event.pointerId)) {
+      touches.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const [a, b] = [...touches.current.values()];
+      if (!a || !b) return;
+      const middle = screenAt((a.x + b.x) / 2, (a.y + b.y) / 2);
+      const k = clampZoom((pinching.from.k * Math.hypot(b.x - a.x, b.y - a.y)) / pinching.distance);
+      // The map point under the first middle follows the fingers.
+      const p = toMapPoint(pinching.from, pinching.middle);
+      setView({ k, x: middle.x - p.x * k, y: middle.y - p.y * k });
+      return;
+    }
+    const panning = pan.current;
+    if (panning && panning.pointerId === event.pointerId) {
+      const dx = event.clientX - panning.startX;
+      const dy = event.clientY - panning.startY;
+      if (!panning.moved && Math.hypot(dx, dy) > TAP_PIXELS) {
+        panning.moved = true;
+        cancelLongPress();
+        ref.current?.setPointerCapture(event.pointerId);
+        ref.current?.classList.add("panning");
+      }
+      if (panning.moved)
+        setView({ ...panning.from, x: panning.from.x + dx, y: panning.from.y + dy });
+      return;
+    }
     const press = longPress.current;
     if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > TAP_PIXELS)
       cancelLongPress();
@@ -537,7 +809,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       ...noteBoxes,
     ];
     const fixed = new Set([...boxes.keys()].filter((i) => i !== index));
-    const box = separate(boxes, size.width, size.height, fixed)[index];
+    const box = separate(boxes, width, height, fixed)[index];
     return toPosition(box ?? p);
   };
 
@@ -565,7 +837,19 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       );
   };
 
+  /** Forgets a finger. A pinch ends when fewer than two stay; its click is not a tap. */
+  const releaseTouch = (event: PointerEvent<HTMLDivElement>) => {
+    touches.current.delete(event.pointerId);
+    if (pinch.current && touches.current.size < 2) {
+      pinch.current = null;
+      swallowClick.current = true;
+      keepView();
+    }
+  };
+
   const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    releaseTouch(event);
+    if (endPan(event)) return;
     const finished = endDrag(event);
     if (!finished) return;
     const { subject } = finished;
@@ -619,9 +903,9 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     }
   };
 
-  const onPointerCancel = (event: PointerEvent<HTMLDivElement>) => {
-    const finished = endDrag(event);
-    if (!finished?.moved) return;
+  /** Puts a dragged card back where it was, for a cancelled drag. */
+  const putBack = (finished: Drag) => {
+    if (!finished.moved) return;
     paint(finished.subject, finished.from, finished.element);
     const { subject } = finished;
     // A card in its automatic place goes back to a straight line.
@@ -635,18 +919,151 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       );
   };
 
+  const onPointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    releaseTouch(event);
+    if (endPan(event)) return;
+    const finished = endDrag(event);
+    if (finished) putBack(finished);
+  };
+
+  /** MM-1116: a pinch stops a card drag that the first finger started. */
+  const abortDrag = () => {
+    const current = drag.current;
+    if (!current) return;
+    cancelFrame();
+    drag.current = null;
+    current.element.classList.remove("dragging");
+    setTarget(null);
+    setLinking(null);
+    putBack(current);
+  };
+
+  /**
+   * MM-1116, MM-1117: Ctrl or Cmd and the wheel, or a trackpad pinch (the browser sends it with
+   * Ctrl), zoom at the pointer. A plain wheel or a two-finger scroll pans the live map once it is
+   * engaged; otherwise, and on the History map, it scrolls the page. A note in edit mode scrolls.
+   */
+  const onWheel = (event: WheelEvent) => {
+    if (isTyping(event.target)) return;
+    const zoom = event.ctrlKey || event.metaKey;
+    if (!zoom && (readOnly || !engaged.current)) return;
+    event.preventDefault();
+    const unit = event.deltaMode === 1 ? LINE_PIXELS : 1;
+    if (zoom) {
+      const delta = clamp(event.deltaY * unit, -WHEEL_ZOOM_MAX_DELTA, WHEEL_ZOOM_MAX_DELTA);
+      setView(
+        zoomAt(
+          view.current,
+          screenAt(event.clientX, event.clientY),
+          Math.exp(-delta * WHEEL_ZOOM_RATE),
+        ),
+      );
+    } else {
+      setView({
+        ...view.current,
+        x: view.current.x - event.deltaX * unit,
+        y: view.current.y - event.deltaY * unit,
+      });
+    }
+    keepView();
+  };
+  const latestWheel = useRef(onWheel);
+  // React adds wheel listeners as passive, and a passive listener cannot stop the page scroll.
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const listener = (event: WheelEvent) => latestWheel.current(event);
+    element.addEventListener("wheel", listener, { passive: false });
+    return () => element.removeEventListener("wheel", listener);
+  }, []);
+
+  // A finger that lifts outside the map never reaches its handlers. Forget it there too, so a
+  // later single finger does not count as a pinch.
+  useEffect(() => {
+    const forget = (event: globalThis.PointerEvent) => {
+      touches.current.delete(event.pointerId);
+      if (touches.current.size < 2) pinch.current = null;
+      // A fast flick can leave the map before the pan takes the pointer. End that pan here, so
+      // hovering later does not pan the map.
+      if (pan.current?.pointerId === event.pointerId) {
+        pan.current = null;
+        ref.current?.classList.remove("panning");
+      }
+    };
+    addEventListener("pointerup", forget);
+    addEventListener("pointercancel", forget);
+    return () => {
+      removeEventListener("pointerup", forget);
+      removeEventListener("pointercancel", forget);
+    };
+  }, []);
+
+  /** MM-1116: Space held over the map pans with a drag. "0" fits every card. */
+  const onKey = (event: globalThis.KeyboardEvent) => {
+    if (isTyping(event.target)) return;
+    if (event.key === "Escape") engaged.current = false;
+    if (event.key === " ") {
+      // A button presses on key up, so only a Space that the map took ends with the map.
+      if (event.type === "keyup") {
+        if (!spaceHeld.current) return;
+        event.preventDefault();
+        spaceHeld.current = false;
+        ref.current?.classList.remove("space-pan");
+        return;
+      }
+      if (keepsSpace(event.target)) {
+        // A modal over the map gets no pointer leave, so the map forgets the hover here.
+        if (document.querySelector("dialog[open]")) hovered.current = false;
+        return;
+      }
+      if (!hovered.current && !spaceHeld.current) return;
+      event.preventDefault();
+      spaceHeld.current = true;
+      ref.current?.classList.add("space-pan");
+      return;
+    }
+    const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+    if (event.type === "keydown" && event.key === "0" && plain) {
+      fit();
+      keepView();
+    }
+  };
+  const latestKey = useRef(onKey);
+  useLayoutEffect(() => {
+    latestWheel.current = onWheel;
+    latestKey.current = onKey;
+    latestFlush.current = flushView;
+  });
+  useEffect(() => {
+    const listener = (event: globalThis.KeyboardEvent) => latestKey.current(event);
+    const release = () => {
+      spaceHeld.current = false;
+      ref.current?.classList.remove("space-pan");
+    };
+    addEventListener("keydown", listener);
+    addEventListener("keyup", listener);
+    addEventListener("blur", release);
+    return () => {
+      removeEventListener("keydown", listener);
+      removeEventListener("keyup", listener);
+      removeEventListener("blur", release);
+    };
+  }, []);
+
   /** MM-1103: a tap on the empty map ends the focus and closes the add menu. */
   const onMapClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (!isEmptySpot(event.target, event.currentTarget)) return;
+    if (!isEmptySpot(event.target, event.currentTarget, worldRef.current)) return;
     setMenu(null);
     if (selection._tag !== "none") portal.select(NO_SELECTION);
   };
 
   /** MM-1110: a double click on empty map opens the add menu there. */
   const onMapDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (readOnly || !isEmptySpot(event.target, event.currentTarget)) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    setMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+    if (readOnly || !isEmptySpot(event.target, event.currentTarget, worldRef.current)) return;
+    setMenu({
+      at: mapAt(event.clientX, event.clientY),
+      screen: screenAt(event.clientX, event.clientY),
+    });
   };
 
   const saveNote = (note: MapNote, saved: boolean) => {
@@ -707,13 +1124,6 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     );
   };
 
-  const cardArea = [
-    ...machines.map((m) => sizes[`node:${m.id}`] ?? estimate.node),
-    ...pairs.map((pair) => sizes[`pair:${pairKey(...pair)}`] ?? estimate.pair),
-    ...map.notes.map(noteSize),
-  ].reduce((sum, { w, h }) => sum + w * h, 0);
-  const fitHeight = size.width > 0 ? Math.ceil(cardArea / CARD_SHARE / size.width) : 0;
-
   const notes: ReadonlyArray<EditingNote> = [
     ...map.notes.map((note) => (editing?.note.id === note.id ? editing : { note, saved: true })),
     ...(editing && !editing.saved ? [editing] : []),
@@ -741,16 +1151,15 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           ) : (
             <span className="muted">
               {compact
-                ? "Tap a machine to focus it. Drag a dot to connect. Hold empty space to add."
-                : "Tap a machine to focus it. Drag a dot on its edge onto another machine to connect them. Double-click empty space to add a machine or a note."}
+                ? "Tap a machine to focus it. Drag a dot to connect. Hold empty space to add. Pinch to zoom."
+                : "Tap a machine to focus it. Drag a dot on its edge onto another machine to connect them. Double-click empty space to add a machine or a note. Drag empty space to pan, Ctrl or Cmd and the wheel to zoom."}
             </span>
           )}
         </div>
       )}
       <div
-        className={`card map${compact ? " compact" : ""}${focus ? " focused" : ""}`}
+        className={`card map${compact ? " compact" : ""}${focus ? " focused" : ""}${readOnly ? " map-readonly" : ""}`}
         ref={ref}
-        style={{ minHeight: fitHeight }}
         onClick={onMapClick}
         onClickCapture={(event) => {
           if (!swallowClick.current) return;
@@ -758,171 +1167,187 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           event.stopPropagation();
         }}
         onDoubleClick={onMapDoubleClick}
+        onPointerDownCapture={onMapPointerDownCapture}
         onPointerDown={onMapPointerDown}
+        onPointerEnter={() => {
+          hovered.current = true;
+        }}
+        onPointerLeave={() => {
+          hovered.current = false;
+          engaged.current = false;
+        }}
+        onFocus={() => {
+          engaged.current = true;
+        }}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) engaged.current = false;
+        }}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
       >
-        <svg aria-hidden>
-          {pairs.map(([a, b], i) => {
-            const pa = centerOf(a);
-            const pb = centerOf(b);
-            const spot = shown.spots[i];
-            const touches = focus === a.id || focus === b.id;
-            const empty =
-              findArrow(map, a.id, b.id).level === "none" &&
-              findArrow(map, b.id, a.id).level === "none";
-            const cut = empty && pairCut(portal.pause, a.id, b.id);
-            return (
-              <path
-                key={pairKey(a, b)}
-                data-pair={pairKey(a, b)}
-                d={pairPath(pa, pb, offsetOf(a, b) && spot ? spot : null)}
-                className={[empty && "empty", cut && "cut", focus && (touches ? "hot" : "dim")]
-                  .filter(Boolean)
-                  .join(" ")}
+        <div className="map-world" ref={worldRef} style={{ width, height }}>
+          <svg aria-hidden>
+            {pairs.map(([a, b], i) => {
+              const pa = centerOf(a);
+              const pb = centerOf(b);
+              const spot = shown.spots[i];
+              const touches = focus === a.id || focus === b.id;
+              const empty =
+                findArrow(map, a.id, b.id).level === "none" &&
+                findArrow(map, b.id, a.id).level === "none";
+              const cut = empty && pairCut(portal.pause, a.id, b.id);
+              return (
+                <path
+                  key={pairKey(a, b)}
+                  data-pair={pairKey(a, b)}
+                  d={pairPath(pa, pb, offsetOf(a, b) && spot ? spot : null)}
+                  className={[empty && "empty", cut && "cut", focus && (touches ? "hot" : "dim")]
+                    .filter(Boolean)
+                    .join(" ")}
+                />
+              );
+            })}
+            {linking !== null && <line className="live" />}
+          </svg>
+          {size.width > 0 &&
+            notes.map(({ note, saved }) => (
+              <NoteCard
+                key={note.id}
+                note={note}
+                saved={saved}
+                at={noteAt(note)}
+                readOnly={readOnly}
+                editing={editing?.note.id === note.id}
+                onPointerDown={(event) => startDrag(event, { _tag: "note", note }, noteAt(note))}
+                onEdit={() => setEditing({ note, saved: true })}
+                onCancel={() => setEditing(null)}
+                onSave={(text, color) => saveNote({ ...note, text, color }, saved)}
+                onDelete={() => {
+                  setEditing(null);
+                  void portal.submit("Deleted a note", [{ _tag: "removeNote", id: note.id }]);
+                }}
               />
-            );
-          })}
-          {linking !== null && <line className="live" />}
-        </svg>
-        {size.width > 0 &&
-          notes.map(({ note, saved }) => (
-            <NoteCard
-              key={note.id}
-              note={note}
-              saved={saved}
-              at={noteAt(note)}
-              readOnly={readOnly}
-              editing={editing?.note.id === note.id}
-              onPointerDown={(event) => startDrag(event, { _tag: "note", note }, noteAt(note))}
-              onEdit={() => setEditing({ note, saved: true })}
-              onCancel={() => setEditing(null)}
-              onSave={(text, color) => saveNote({ ...note, text, color }, saved)}
-              onDelete={() => {
-                setEditing(null);
-                void portal.submit("Deleted a note", [{ _tag: "removeNote", id: note.id }]);
-              }}
-            />
-          ))}
-        {size.width > 0 &&
-          pairs.map(([a, b], i) => {
-            const spot = shown.spots[i] ?? { x: 0, y: 0 };
-            const dim = focus !== null && focus !== a.id && focus !== b.id;
-            const placed = offsetOf(a, b) !== null;
-            const cut = pairCut(portal.pause, a.id, b.id);
-            const waitsAB = waitOf(a, b);
-            const waitsBA = waitOf(b, a);
-            // Each machine that did not apply a direction, named once under the rows.
-            const waits = [...new Map([...waitsAB, ...waitsBA].map((w) => [w.text, w])).values()];
-            return (
-              <div
-                key={`pair:${pairKey(a, b)}`}
-                data-pair={pairKey(a, b)}
-                data-size-key={`pair:${pairKey(a, b)}`}
-                className={`card pair${dim ? " dim" : ""}${placed ? " placed" : ""}${cut ? " cut" : ""}${readOnly ? " readonly" : ""}`}
-                style={{ left: spot.x, top: spot.y }}
-                onPointerDown={(event) => startDrag(event, { _tag: "pair", a, b }, spot)}
-              >
-                {dirRow(a, b, waitsAB)}
-                {dirRow(b, a, waitsBA)}
-                {waits.length > 0 && (
-                  <div className="pair-wait">
-                    {waits.map((w, i) => (
-                      <span key={w.text}>
-                        {i > 0 && " · "}
-                        <RouteLink route={w.route}>{sentence(w.text)}</RouteLink>
-                      </span>
+            ))}
+          {size.width > 0 &&
+            pairs.map(([a, b], i) => {
+              const spot = shown.spots[i] ?? { x: 0, y: 0 };
+              const dim = focus !== null && focus !== a.id && focus !== b.id;
+              const placed = offsetOf(a, b) !== null;
+              const cut = pairCut(portal.pause, a.id, b.id);
+              const waitsAB = waitOf(a, b);
+              const waitsBA = waitOf(b, a);
+              // Each machine that did not apply a direction, named once under the rows.
+              const waits = [...new Map([...waitsAB, ...waitsBA].map((w) => [w.text, w])).values()];
+              return (
+                <div
+                  key={`pair:${pairKey(a, b)}`}
+                  data-pair={pairKey(a, b)}
+                  data-size-key={`pair:${pairKey(a, b)}`}
+                  className={`card pair${dim ? " dim" : ""}${placed ? " placed" : ""}${cut ? " cut" : ""}${readOnly ? " readonly" : ""}`}
+                  style={{ left: spot.x, top: spot.y }}
+                  onPointerDown={(event) => startDrag(event, { _tag: "pair", a, b }, spot)}
+                >
+                  {dirRow(a, b, waitsAB)}
+                  {dirRow(b, a, waitsBA)}
+                  {waits.length > 0 && (
+                    <div className="pair-wait">
+                      {waits.map((w, i) => (
+                        <span key={w.text}>
+                          {i > 0 && " · "}
+                          <RouteLink route={w.route}>{sentence(w.text)}</RouteLink>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          {size.width > 0 &&
+            machines.map((machine) => {
+              const p = centerOf(machine);
+              const presence = snapshot.presence[machine.id];
+              const state = presenceState(presence);
+              const status = presence?.status ?? null;
+              const on = focus === machine.id;
+              const dropTarget = target === machine.id;
+              // MM-1002: the build gets its own line under the name, so it never cuts off.
+              const build = state === "online" && status ? status : null;
+              const sub =
+                state === "waiting"
+                  ? "Waiting to join"
+                  : state === "offline"
+                    ? `Seen ${timeAgo(presence?.lastSeenAt ?? null, now)}`
+                    : build
+                      ? null
+                      : (machine.hostname ?? "No status yet");
+              return (
+                <div
+                  key={machine.id}
+                  data-machine-id={machine.id}
+                  data-size-key={`node:${machine.id}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={on}
+                  aria-label={`${machine.name}, ${state}`}
+                  className={`card node${on ? " on" : ""}${dropTarget ? " target" : ""}${linking === machine.id ? " linking" : ""}${readOnly ? " readonly" : ""}`}
+                  style={{ left: p.x, top: p.y }}
+                  onPointerDown={(event) =>
+                    startDrag(event, { _tag: "machine", machine }, centerOf(machine))
+                  }
+                  onClick={
+                    readOnly ? () => portal.select({ _tag: "machine", id: machine.id }) : undefined
+                  }
+                  onKeyDown={onPressKey(() => toggle(machine))}
+                >
+                  <span className={`sticker state ${PRESENCE_STICKER[state]}`}>{state}</span>
+                  {!readOnly &&
+                    HANDLE_SIDES.map((side) => (
+                      // Pointer only: the machine panel has "Connect to" for the keyboard.
+                      <span
+                        key={side}
+                        className={`handle ${side}`}
+                        aria-hidden
+                        data-tip="Drag onto a machine to connect"
+                        data-tip-side={side}
+                        onPointerDown={(event) => {
+                          // The handle starts a line, not a move of its machine.
+                          event.stopPropagation();
+                          startDrag(event, { _tag: "connect", machine }, pointerAt(event));
+                        }}
+                      />
                     ))}
+                  <div className="name">
+                    <span className="icon">
+                      <KindIcon kind={machine.kind} />
+                    </span>
+                    <span className="label">
+                      {machine.name}
+                      {sub !== null && <span className="sub">{sub}</span>}
+                    </span>
                   </div>
-                )}
-              </div>
-            );
-          })}
-        {size.width > 0 &&
-          machines.map((machine) => {
-            const p = centerOf(machine);
-            const presence = snapshot.presence[machine.id];
-            const state = presenceState(presence);
-            const status = presence?.status ?? null;
-            const on = focus === machine.id;
-            const dropTarget = target === machine.id;
-            // MM-1002: the build gets its own line under the name, so it never cuts off.
-            const build = state === "online" && status ? status : null;
-            const sub =
-              state === "waiting"
-                ? "Waiting to join"
-                : state === "offline"
-                  ? `Seen ${timeAgo(presence?.lastSeenAt ?? null, now)}`
-                  : build
-                    ? null
-                    : (machine.hostname ?? "No status yet");
-            return (
-              <div
-                key={machine.id}
-                data-machine-id={machine.id}
-                data-size-key={`node:${machine.id}`}
-                role="button"
-                tabIndex={0}
-                aria-pressed={on}
-                aria-label={`${machine.name}, ${state}`}
-                className={`card node${on ? " on" : ""}${dropTarget ? " target" : ""}${linking === machine.id ? " linking" : ""}${readOnly ? " readonly" : ""}`}
-                style={{ left: p.x, top: p.y }}
-                onPointerDown={(event) =>
-                  startDrag(event, { _tag: "machine", machine }, centerOf(machine))
-                }
-                onClick={
-                  readOnly ? () => portal.select({ _tag: "machine", id: machine.id }) : undefined
-                }
-                onKeyDown={onPressKey(() => toggle(machine))}
-              >
-                <span className={`sticker state ${PRESENCE_STICKER[state]}`}>{state}</span>
-                {!readOnly &&
-                  HANDLE_SIDES.map((side) => (
-                    // Pointer only: the machine panel has "Connect to" for the keyboard.
-                    <span
-                      key={side}
-                      className={`handle ${side}`}
-                      aria-hidden
-                      data-tip="Drag onto a machine to connect"
-                      data-tip-side={side}
-                      onPointerDown={(event) => {
-                        // The handle starts a line, not a move of its machine.
-                        event.stopPropagation();
-                        startDrag(event, { _tag: "connect", machine }, pointerAt(event));
-                      }}
-                    />
-                  ))}
-                <div className="name">
-                  <span className="icon">
-                    <KindIcon kind={machine.kind} />
-                  </span>
-                  <span className="label">
-                    {machine.name}
-                    {sub !== null && <span className="sub">{sub}</span>}
-                  </span>
-                </div>
-                {build && (
-                  <div className="build-line">
-                    <BuildLabel status={build} />
+                  {build && (
+                    <div className="build-line">
+                      <BuildLabel status={build} />
+                    </div>
+                  )}
+                  {!readOnly && <CardMeters machineId={machine.id} />}
+                  <div className="tags">
+                    <BuildSticker standing={standings.get(machine.id)} />
+                    {!readOnly && <MachineStickers machine={machine} />}
                   </div>
-                )}
-                {!readOnly && <CardMeters machineId={machine.id} />}
-                <div className="tags">
-                  <BuildSticker standing={standings.get(machine.id)} />
-                  {!readOnly && <MachineStickers machine={machine} />}
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+        </div>
         {menu && (
           <div
             className="card map-menu"
             role="menu"
             aria-label="Add here"
             style={{
-              left: clamp(menu.x, 8, Math.max(8, size.width - 220)),
-              top: clamp(menu.y, 8, Math.max(8, size.height - 130)),
+              left: clamp(menu.screen.x, 8, Math.max(8, size.width - 220)),
+              top: clamp(menu.screen.y, 8, Math.max(8, size.height - 130)),
             }}
           >
             <button
@@ -932,7 +1357,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
               autoFocus
               onClick={() => {
                 setMenu(null);
-                portal.open({ _tag: "addMachine", position: toPosition(menu) });
+                portal.open({ _tag: "addMachine", position: toPosition(menu.at) });
               }}
             >
               Add machine here
@@ -949,7 +1374,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                     // The editor opens empty. An empty note is never saved.
                     text: "",
                     color: "yellow",
-                    position: toPosition(menu),
+                    position: toPosition(menu.at),
                   },
                   saved: false,
                 });
@@ -975,6 +1400,45 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             )}
           </div>
         )}
+        {/* MM-1116: zoom in, zoom out and fit, in a corner over the map. */}
+        <div className="map-zoom" role="group" aria-label="Zoom">
+          <button
+            type="button"
+            className="btn small"
+            aria-label="Zoom in"
+            data-tip="Zoom in (Ctrl or Cmd and the wheel)"
+            onClick={() => {
+              zoomBy(ZOOM_STEP);
+              keepView();
+            }}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="btn small"
+            aria-label="Zoom out"
+            data-tip="Zoom out"
+            onClick={() => {
+              zoomBy(1 / ZOOM_STEP);
+              keepView();
+            }}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className="btn small"
+            aria-keyshortcuts="0"
+            data-tip="Show every card (0)"
+            onClick={() => {
+              fit();
+              keepView();
+            }}
+          >
+            Fit
+          </button>
+        </div>
       </div>
     </div>
   );
