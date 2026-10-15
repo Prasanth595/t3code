@@ -25,3 +25,11 @@ The same script is the factory gate (`gate` in `.dw/config.yml`) and the `factor
 vp i
 factory/scripts/check.sh
 ```
+
+## Syncing with upstream
+
+`factory/scripts/sync.sh` merges upstream's newest `v*-nightly.*` tag into `main` through a pull request. `.github/workflows/factory-sync.yml` runs it daily at 03:17 UTC and on `workflow_dispatch`; it also runs from a checkout with `git`, `gh` and `vp` on the path and `SYNC_UPSTREAM` pointing at another repo when needed.
+
+It picks the newest tag by version order and exits with `up to date` when [UPSTREAM](UPSTREAM) already names it. Otherwise it merges the tag on `sync/<tag>` from `origin/main`, regenerates the route tree with `factory/scripts/regenerate-routes.sh` when only that file conflicts, records `<tag> <sha>` in `UPSTREAM`, commits and runs `check.sh`. Green checks open `sync: <tag>` and merge it with a merge commit. Red checks open it as a draft and file `Sync to <tag> fails checks`, labelled `factory:proposed`, with the failing step and the last 200 lines of its output. A conflict in any other file aborts the merge, pushes nothing, and files `Sync to <tag> conflicts` listing the paths, or comments on that issue when it is already open.
+
+Pull requests opened with `GITHUB_TOKEN` trigger no workflows, which is why the script runs the checks itself and merges only when they pass.
