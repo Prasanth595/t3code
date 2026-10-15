@@ -21,6 +21,7 @@ import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { DeviceSetup, deviceHubReadiness } from "./DeviceSetup";
+import { DeviceHostDiagnostics } from "./DeviceHostDiagnostics";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
@@ -154,14 +155,13 @@ export function DevicePanel(props: {
 
   return (
     <PreviewPanelShell mode={props.mode}>
-      {hostReady && !activeDevice && state.hostStatusDetail ? (
+      {!activeDevice ? (
         <div
-          role="status"
           aria-label="Device host diagnostics"
           tabIndex={0}
-          className="max-h-32 shrink-0 overflow-y-auto whitespace-pre-line break-words border-b px-3 py-2 text-xs text-muted-foreground"
+          className="max-h-32 shrink-0 overflow-y-auto border-b px-3 py-2 empty:hidden"
         >
-          {state.hostStatusDetail}
+          <DeviceHostDiagnostics hosts={state.hosts} hostStatuses={state.hostStatuses} />
         </div>
       ) : null}
       <DeviceHostUpdates state={state} environmentId={environmentId} />

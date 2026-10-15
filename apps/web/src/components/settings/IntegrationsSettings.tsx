@@ -57,6 +57,7 @@ import {
   deviceHubDescription,
   agentDeviceDescription,
 } from "~/components/device/DeviceSetup";
+import { DeviceHostDiagnostics } from "~/components/device/DeviceHostDiagnostics";
 import { isElectron } from "../../env";
 
 import { Badge } from "../ui/badge";
@@ -902,12 +903,22 @@ export function DeviceIntegrationControls({
                 : undefined
             }
             status={
-              <div className="flex flex-wrap gap-x-5 gap-y-2">
-                <PlatformStatus compact platform="iOS" status={platformSetupStatus(state, "ios")} />
-                <PlatformStatus
-                  compact
-                  platform="Android"
-                  status={platformSetupStatus(state, "android")}
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  <PlatformStatus
+                    compact
+                    platform="iOS"
+                    status={platformSetupStatus(state, "ios")}
+                  />
+                  <PlatformStatus
+                    compact
+                    platform="Android"
+                    status={platformSetupStatus(state, "android")}
+                  />
+                </div>
+                <DeviceHostDiagnostics
+                  hosts={state.hosts.filter((host) => host.kind === "local")}
+                  hostStatuses={state.hostStatuses}
                 />
               </div>
             }
