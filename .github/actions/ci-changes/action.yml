@@ -25,8 +25,7 @@ runs:
     - id: detect
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
+        EVENT_NAME: ${{ github.event_name }}
         BEFORE_SHA: ${{ github.event.before }}
       run: |
         set -uo pipefail
@@ -41,41 +40,24 @@ runs:
           decide
         }
 
-        count_rows() {
-          printf '%s\n' "$1" | grep -c . || true
-        }
-
-        # One row per changed file, holding the new path and, for a rename,
-        # the path it replaced: renaming a file out of a package changes that
-        # package just like editing it.
-        row='[.filename, (.previous_filename // empty)] | @tsv'
-
-        if [[ -n "${PR_NUMBER}" ]]; then
-          # The PR files endpoint stops at 3000 files and pagination cannot
-          # extend it, so cross-check against the count the PR itself reports.
-          expected=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.changed_files') \
-            || fail_open "Could not read the pull request."
-          rows=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq ".[] | ${row}") \
-            || fail_open "Could not resolve changed files."
-
-          listed=$(count_rows "$rows")
-          if [[ "$listed" -lt "$expected" ]]; then
-            fail_open "GitHub listed only ${listed} of ${expected} changed files."
-          fi
+        # Reads the change from git rather than the REST API: every job that
+        # runs this shares the repository's 1,000 requests/hour GITHUB_TOKEN quota.
+        if [[ "$EVENT_NAME" == pull_request ]]; then
+          # A pull request checks out GitHub's merge commit with fetch-depth: 2,
+          # so its first parent is the base branch and the diff is the PR's change.
+          base=HEAD^1
           mode=()
         else
-          rows=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${BEFORE_SHA}...${GITHUB_SHA}" --jq ".files[]? | ${row}") \
-            || fail_open "Could not resolve changed files."
-
-          # The compare endpoint reports at most 300 files and pagination does
-          # not extend that list, so a full list may be hiding changes.
-          listed=$(count_rows "$rows")
-          if [[ "$listed" -ge 300 ]]; then
-            fail_open "GitHub listed ${listed} changed files, the compare endpoint maximum."
-          fi
+          base=$BEFORE_SHA
+          git fetch --quiet --no-tags --depth=1 --filter=blob:none origin "$base" \
+            || fail_open "Could not fetch ${base}."
           # main keeps a full run as the backstop for anything the gate misses.
           mode=(--full)
         fi
 
-        tr '\t' '\n' <<< "$rows" > "$RUNNER_TEMP/changed-paths"
+        # --no-renames lists a rename as its old and new path: renaming a file out
+        # of a package changes that package just like editing it. It also keeps
+        # git from fetching file contents to score renames.
+        git diff --name-only --no-renames "$base" HEAD > "$RUNNER_TEMP/changed-paths" \
+          || fail_open "Could not diff against ${base}."
         decide --paths "$RUNNER_TEMP/changed-paths" "${mode[@]}"
