@@ -86,7 +86,34 @@ export function useIsMobile(): boolean {
   return useMediaQuery("max-md");
 }
 
-/** A portrait touch phone, as opposed to a narrow desktop window. */
+function subscribeToScreenOrientation(onChange: () => void): () => void {
+  const orientation = window.screen?.orientation;
+  if (orientation) {
+    orientation.addEventListener("change", onChange);
+    return () => orientation.removeEventListener("change", onChange);
+  }
+  const mql = window.matchMedia("(orientation: portrait)");
+  mql.addEventListener("change", onChange);
+  return () => mql.removeEventListener("change", onChange);
+}
+
+/** The device's orientation, not the viewport's: under interactive-widget=resizes-content an
+    Android keyboard shrinks the viewport until it is wider than tall, which an
+    `(orientation: portrait)` query would read as landscape mid-typing. Safari before 16.4 has no
+    screen.orientation, and iOS never resizes the layout viewport, so the query is safe there. */
+function readScreenIsPortrait(): boolean {
+  const type = window.screen?.orientation?.type;
+  if (type) return type.startsWith("portrait");
+  return window.matchMedia("(orientation: portrait)").matches;
+}
+
+/** A portrait touch phone, as opposed to a narrow desktop window or a small phone on its side. */
 export function useIsPhoneViewport(): boolean {
-  return useMediaQuery("(max-width: 639px) and (pointer: coarse)");
+  const isPhoneSized = useMediaQuery("(max-width: 639px) and (pointer: coarse)");
+  const isPortrait = useSyncExternalStore(
+    subscribeToScreenOrientation,
+    readScreenIsPortrait,
+    getServerSnapshot,
+  );
+  return isPhoneSized && isPortrait;
 }
