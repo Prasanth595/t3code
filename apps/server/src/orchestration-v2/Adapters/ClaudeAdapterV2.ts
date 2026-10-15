@@ -3069,6 +3069,9 @@ interface ActiveClaudeTurnContext {
   // Usage of the results that steers ended, oldest first. The final result's
   // usage covers only its own segment, so the turn bills these as well.
   readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
+  // Context usage last emitted for this turn, so a window the result reports
+  // can be applied to it.
+  lastTokenUsage?: OrchestrationV2ProviderTurn["tokenUsage"];
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -7222,6 +7225,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message.message.usage !== undefined &&
               message.message.model !== "<synthetic>"
             ) {
+              const tokenUsage = claudeProviderTurnTokenUsage(
+                message.message.usage,
+                context.input.modelSelection,
+                DateTime.formatIso(now),
+                reportedContextWindows,
+              );
+              context.lastTokenUsage = tokenUsage;
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -7240,12 +7250,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   status: "running",
                   startedAt: context.startedAt,
                   completedAt: null,
-                  tokenUsage: claudeProviderTurnTokenUsage(
-                    message.message.usage,
-                    context.input.modelSelection,
-                    DateTime.formatIso(now),
-                    reportedContextWindows,
-                  ),
+                  tokenUsage,
                 },
               });
             }
@@ -7845,6 +7850,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (message.type === "result") {
             rememberReportedContextWindows(reportedContextWindows, message.modelUsage);
+            // The first turn of a session emits usage before its result reports
+            // the window; apply it so the turn persists maxTokens.
+            const lastTokenUsage = context.lastTokenUsage;
+            const reportedMaxTokens = claudeContextWindow(
+              context.input.modelSelection,
+              reportedContextWindows,
+            );
+            if (
+              lastTokenUsage != null &&
+              lastTokenUsage.maxTokens == null &&
+              reportedMaxTokens !== null
+            ) {
+              context.lastTokenUsage = { ...lastTokenUsage, maxTokens: reportedMaxTokens };
+              yield* emitProviderEvent({
+                type: "provider_turn.updated",
+                driver: CLAUDE_PROVIDER,
+                threadId: context.input.threadId,
+                providerTurn: {
+                  ...providerTurnPayload({ context, status: "running", completedAt: null }),
+                  tokenUsage: context.lastTokenUsage,
+                },
+              });
+            }
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);

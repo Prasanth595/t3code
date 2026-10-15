@@ -3740,7 +3740,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attemptId: RunAttemptId.make("attempt-reported-context-window"),
           text: "hello",
           attachments: [],
+          modelSelection: CLAUDE_TEST_CUSTOM_MODEL_SELECTION,
         }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000400", text: "Hello." }),
       );
       yield* Queue.offer(
         harness.sdkMessages,
@@ -3764,6 +3769,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.take(harness.terminalReceipts);
 
       assert.strictEqual(contextWindowOf(CLAUDE_TEST_CUSTOM_MODEL_SELECTION), 524_288);
+      // The first turn emitted usage before the result reported the window;
+      // its persisted usage still ends with the window.
+      const turnUsage = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+          ? [event.providerTurn.tokenUsage]
+          : [],
+      );
+      assert.isNull(turnUsage[0]?.maxTokens);
+      assert.strictEqual(turnUsage.at(-1)?.maxTokens, 524_288);
+      assert.strictEqual(turnUsage.at(-1)?.usedTokens, turnUsage[0]?.usedTokens);
       // A catalog window still wins over a reported one.
       assert.strictEqual(contextWindowOf(CLAUDE_TEST_MODEL_SELECTION), 200_000);
     }).pipe(
