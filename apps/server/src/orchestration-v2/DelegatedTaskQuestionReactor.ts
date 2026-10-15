@@ -67,13 +67,7 @@ const make = Effect.gen(function* () {
   const handle: DelegatedTaskQuestionReactor["Service"]["handle"] = (event) =>
     Effect.gen(function* () {
       if (event.type === "run.updated") {
-        if (
-          event.payload.status === "preparing" ||
-          event.payload.status === "starting" ||
-          event.payload.status === "running"
-        ) {
-          return;
-        }
+        if (!["completed", "failed", "waiting"].includes(event.payload.status)) return;
         const parent = yield* projections.getThreadRecords(event.threadId, ["subagents"]);
         if (parent.thread.archivedAt !== null || parent.thread.deletedAt !== null) return;
         for (const task of parent.subagents) {
@@ -81,18 +75,14 @@ const make = Effect.gen(function* () {
             task.origin !== "app_owned" ||
             task.runId !== event.payload.id ||
             task.completionWake !== "settled_only" ||
+            task.completionDelivery?.state === "disposed" ||
             task.childThreadId === null ||
-            task.status === "completed" ||
-            task.status === "failed" ||
-            task.status === "cancelled" ||
-            task.status === "interrupted"
+            ["completed", "failed", "cancelled", "interrupted"].includes(task.status)
           ) {
             continue;
           }
           const child = yield* projections.getThreadRecords(task.childThreadId, [
             "runtimeRequests",
-            "nodes",
-            "runs",
           ]);
           for (const request of child.runtimeRequests) {
             if (
@@ -102,17 +92,15 @@ const make = Effect.gen(function* () {
             ) {
               continue;
             }
-            // Follow-ups share the child thread, so scope each request to its run's task.
-            const node = child.nodes.find((node) => node.id === request.nodeId);
-            const run = child.runs.find((run) => run.id === node?.runId);
-            if (run === undefined) continue;
-            const taskId =
-              run.delegatedTaskId ??
-              (child.thread.forkedFrom?.type === "node"
-                ? child.thread.forkedFrom.nodeId
-                : undefined);
-            if (taskId !== task.id) continue;
-            yield* wakeParent(task, request);
+            yield* wakeParent(task, request).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("catching up a delegated task question failed", {
+                  taskId: task.id,
+                  requestId: request.id,
+                  cause,
+                }),
+              ),
+            );
           }
         }
         return;

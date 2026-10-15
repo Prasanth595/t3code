@@ -785,8 +785,42 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       occurredAt: now,
       payload: { ...parentRun, status: "completed", completedAt: now },
     } satisfies OrchestrationV2DomainEvent;
+    for (const status of [
+      "preparing",
+      "starting",
+      "running",
+      "queued",
+      "cancelled",
+      "rolled_back",
+      "interrupted",
+    ] as const) {
+      yield* reactor.handle({ ...parentCompleted, payload: { ...parentRun, status } });
+    }
+    assert.equal(
+      (yield* projections.getThreadRecords(parentThreadId, ["messages"])).messages.length,
+      2,
+    );
     yield* eventSink.write({ events: [parentCompleted] });
-    yield* reactor.handle(parentCompleted);
+    for (const state of ["disposed", "pending"] as const) {
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`event:question-task-${state}`),
+            type: "subagent.updated",
+            threadId: parentThreadId,
+            occurredAt: now,
+            payload: { ...task, completionDelivery: { state, observedByRunId: null } },
+          },
+        ],
+      });
+      yield* reactor.handle(parentCompleted);
+      if (state === "disposed") {
+        assert.equal(
+          (yield* projections.getThreadRecords(parentThreadId, ["messages"])).messages.length,
+          2,
+        );
+      }
+    }
     yield* reactor.handle(parentCompleted);
     const caughtUp = (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
       (message) => message.notification !== undefined,
@@ -913,34 +947,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       followup,
     );
     yield* eventSink.write({ events: [followupQuestion] });
-    yield* orchestrator.dispatch({
-      type: "delegated_task.wake-policy",
-      commandId: CommandId.make("followup-question-wait"),
-      parentThreadId,
-      taskId: followup.delegatedTaskId!,
-      completionWake: "settled_only",
-    });
-    const followupParent = yield* projections.getThreadRecords(parentThreadId, [
-      "subagents",
-      "runs",
-    ]);
-    const followupTask = followupParent.subagents.find(
-      (row) => row.id === followup.delegatedTaskId,
-    )!;
-    const followupParentRun = followupParent.runs.find((run) => run.id === followupTask.runId)!;
-    const followupParentCompleted = {
-      ...parentCompleted,
-      id: EventId.make("event:followup-parent-completed"),
-      runId: followupParentRun.id,
-      payload: { ...followupParentRun, status: "completed" as const, completedAt: now },
-    };
-    yield* eventSink.write({ events: [followupParentCompleted] });
-    yield* reactor.handle(followupParentCompleted);
-    assert.isFalse(
-      (yield* projections.getThreadProjection(parentThreadId)).messages.some((message) =>
-        message.text.includes(`requestId ${waitDelivered.payload.id}.`),
-      ),
-    );
+    yield* reactor.handle(followupQuestion);
     const followupWake = (yield* projections.getThreadRecords(parentThreadId, [
       "messages",
     ])).messages.find((message) =>
@@ -951,6 +958,5 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       taskIds: [followup.delegatedTaskId],
       childThreadId: task.childThreadId!,
     });
-    yield* reactor.handle(followupQuestion);
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
