@@ -1184,11 +1184,91 @@ it.effect("renames a temporary t3/<hash> branch off the provisioning critical pa
         (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
         "t3/abcd1234",
       );
+      const parent = yield* threads.getThreadProjection(launched.threadId);
+      const run = parent.runs[0]!;
+      assert.isNotNull(run.rootNodeId);
+      yield* threads.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("command:launch:temp-branch:delegate"),
+        parentThreadId: launched.threadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        task: "Work in the parent's checkout",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const delegated = yield* threads.getThreadProjection(launched.threadId);
+      const childThreadId = delegated.subagents[0]!.childThreadId!;
+      const child = yield* threads.getThreadProjection(childThreadId);
+      assert.equal(child.thread.branch, "t3/abcd1234");
+      assert.equal(child.thread.worktreePath, "/repo-worktrees/temp");
+      assert.equal(child.thread.lineage.parentThreadId, launched.threadId);
+
+      const otherThreadId = ThreadId.make("thread:launch:other-branch");
+      const otherPathThreadId = ThreadId.make("thread:launch:other-worktree");
+      for (const [threadId, branch, worktreePath] of [
+        [otherThreadId, "other-feature", "/repo-worktrees/temp"],
+        [otherPathThreadId, "t3/abcd1234", "/repo-worktrees/other"],
+      ] as const) {
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`command:create:${threadId}`),
+          threadId,
+          projectId,
+          title: "Unrelated thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch,
+          worktreePath,
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      const unrelated = yield* threads.getThreadProjection(otherThreadId);
+      const otherPath = yield* threads.getThreadProjection(otherPathThreadId);
       yield* Deferred.succeed(allowBranchName, undefined);
-      yield* waitUntil(() =>
-        threads
-          .getThreadProjection(launched.threadId)
-          .pipe(Effect.map((projection) => projection.thread.branch === "generated-branch")),
+      yield* threads.streamStoredEventsFrom({ threadId: childThreadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "thread.metadata-updated" &&
+            stored.event.payload.branch === "generated-branch",
+        ),
+        Stream.runHead,
+      );
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
+        "generated-branch",
+      );
+      assert.equal(
+        (yield* threads.getThreadProjection(childThreadId)).thread.branch,
+        "generated-branch",
+      );
+      assert.deepEqual(
+        (yield* threads.getThreadProjection(otherThreadId)).thread,
+        unrelated.thread,
+      );
+      assert.deepEqual(
+        (yield* threads.getThreadProjection(otherPathThreadId)).thread,
+        otherPath.thread,
+      );
+      const staleUpdate = yield* threads
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("command:launch:stale-branch-update"),
+          threadId: otherThreadId,
+          branch: "generated-branch",
+          expectedBranch: "t3/abcd1234",
+          expectedWorktreePath: "/repo-worktrees/temp",
+        })
+        .pipe(Effect.flip);
+      assert.equal(staleUpdate._tag, "OrchestratorDispatchError");
+      assert.deepEqual(
+        (yield* threads.getThreadProjection(otherThreadId)).thread,
+        unrelated.thread,
       );
       assert.deepEqual(harness.renameBranch.mock.calls[0]?.[0], {
         cwd: "/repo-worktrees/temp",
