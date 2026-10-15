@@ -938,7 +938,8 @@ const make = Effect.gen(function* () {
             const cwd = yield* fs
               .realPath(session.cwd)
               .pipe(Effect.orElseSucceed(() => path.resolve(session.cwd)));
-            if (cwd === root || inside(root, cwd)) return true;
+            if ((cwd === root || inside(root, cwd)) && (yield* providerSessions.isLive(session.id)))
+              return true;
           }
           return yield* branchChanged(root, thread.branch);
         });
@@ -951,7 +952,19 @@ const make = Effect.gen(function* () {
         while (pending.length > 0) {
           const directory = pending.pop()!;
           for (const name of yield* fs.readDirectory(directory)) {
-            if (++visited > 100_000) return;
+            if (++visited > 100_000) {
+              entries.push({
+                kind: "worktree-artifacts",
+                outcome: "kept",
+                reason: "Too many entries to inspect (limit: 100000)",
+                path: worktreePath,
+                threadId: thread.id,
+                threadTitle: thread.title,
+                bytes: null,
+                files: null,
+              });
+              return;
+            }
             if (name === ".git") continue;
             const target = path.join(directory, name);
             const canonical = yield* fs.realPath(target).pipe(Effect.orElseSucceed(() => null));
@@ -1088,7 +1101,21 @@ const make = Effect.gen(function* () {
       ),
     );
     yield* cleanSettledArtifacts(serverSettings, now, entries, threadSnapshot).pipe(
-      Effect.catch((error) => Effect.logWarning("settled artifact cleanup failed", { error })),
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          entries.push({
+            kind: "worktree-artifacts",
+            outcome: "failed",
+            reason: cleanupFailureReason(error),
+            path: null,
+            threadId: null,
+            threadTitle: null,
+            bytes: null,
+            files: null,
+          });
+          yield* Effect.logWarning("settled artifact cleanup failed", { error });
+        }),
+      ),
     );
     for (const category of [
       {

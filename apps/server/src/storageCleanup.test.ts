@@ -272,6 +272,7 @@ const cleanupFixture = (
     let sessionLive = true;
     let fullStatusCalls = 0;
     let snapshotReads = 0;
+    let snapshotError: Error | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
@@ -304,9 +305,11 @@ const cleanupFixture = (
       } as unknown as ProjectStore.ProjectStoreV2["Service"]),
       Effect.provideService(ProjectionStore.ProjectionStoreV2, {
         getShellSnapshot: (input?: { location?: string }) =>
-          Effect.sync(() => {
+          Effect.suspend(() => {
             snapshotReads++;
-            return { threads: input?.location === "archive" ? [] : threads };
+            return snapshotError
+              ? Effect.fail(snapshotError)
+              : Effect.succeed({ threads: input?.location === "archive" ? [] : threads });
           }),
         getThreadWorktreePaths: () =>
           Effect.sync(() =>
@@ -418,6 +421,9 @@ const cleanupFixture = (
       },
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
+      failSnapshot: () => {
+        snapshotError = new Error("snapshot unavailable");
+      },
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
         return Deferred.succeed(activated, undefined);
@@ -1314,6 +1320,97 @@ describe("storage cleanup reports and local file policies", () => {
         setArtifacts({ settledArtifactsAfterDays: 14, settledArtifactDirectories: [] });
         yield* service.runNow;
         expect(yield* fs.exists(`${worktree}/node_modules/data`)).toBe(true);
+      }),
+    ),
+  );
+  it.live("cleans artifacts held by a released provider session", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.disable();
+        fixture.setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: fixture.worktree,
+            settledOverride: "settled",
+            settledAt: at(-30 * DAY_MS),
+          }),
+        ]);
+        const target = `${fixture.worktree}/node_modules`;
+        yield* fixture.fs.makeDirectory(target);
+        yield* fixture.fs.writeFileString(`${target}/data`, "cache");
+        fixture.setOpenSessionCwd(target);
+        yield* fixture.service.runNow;
+        expect(yield* fixture.fs.exists(target)).toBe(true);
+        fixture.setSessionLive(false);
+        const report = yield* fixture.service.runNow;
+        expect(yield* fixture.fs.exists(target)).toBe(false);
+        expect(report.entries).toContainEqual(
+          expect.objectContaining({
+            kind: "worktree-artifacts",
+            outcome: "removed",
+            path: target,
+          }),
+        );
+      }),
+    ),
+  );
+  it.live("reports and preserves artifacts when discovery exceeds the entry limit", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let root: string | undefined;
+        const fixture = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: (directory) =>
+              directory === root
+                ? Effect.succeed(["node_modules", ...Array.from({ length: 100_000 }, () => ".git")])
+                : fs.readDirectory(directory),
+          }),
+        );
+        fixture.disable();
+        root = yield* fs.realPath(fixture.worktree);
+        fixture.setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: fixture.worktree,
+            settledOverride: "settled",
+            settledAt: at(-30 * DAY_MS),
+          }),
+        ]);
+        yield* fs.makeDirectory(`${root}/node_modules`);
+        yield* fs.writeFileString(`${root}/node_modules/data`, "keep");
+        const report = yield* fixture.service.runNow;
+        expect(yield* fs.readFileString(`${root}/node_modules/data`)).toBe("keep");
+        expect(report.entries).toContainEqual(
+          expect.objectContaining({
+            kind: "worktree-artifacts",
+            outcome: "kept",
+            path: fixture.worktree,
+            reason: "Too many entries to inspect (limit: 100000)",
+          }),
+        );
+      }),
+    ),
+  );
+  it.live("reports artifact cleanup failures before thread discovery", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.disable();
+        fixture.failSnapshot();
+        const report = yield* fixture.service.runNow;
+        expect(report.entries).toContainEqual({
+          kind: "worktree-artifacts",
+          outcome: "failed",
+          reason: "snapshot unavailable",
+          path: null,
+          threadId: null,
+          threadTitle: null,
+          bytes: null,
+          files: null,
+        });
       }),
     ),
   );
