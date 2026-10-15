@@ -34,6 +34,7 @@ import {
   type OrchestratorMcpUpdateScheduledTaskInput,
   type OrchestratorMcpListScheduledTasksInput,
   type ProjectId,
+  type ProviderDriverKind,
   type OrchestratorMcpThreadDetail,
   type OrchestratorMcpThreadInterruptInput,
   type OrchestratorMcpThreadInterruptResult,
@@ -82,6 +83,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as RequiredSkillContext from "../provider/RequiredSkillContext.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import {
   type McpInvocationScope,
@@ -113,6 +115,7 @@ const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
+  readonly driver: ProviderDriverKind;
 }
 
 type TerminalTaskStatus = Extract<
@@ -219,6 +222,10 @@ function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+/** A reference that cannot be delivered exactly as declared; its message begins `BLOCKED reference`. */
+const requiredContextFailure = (error: RequiredSkillContext.RequiredContextBlockedError) =>
+  Effect.fail(failure("invalid_request", error.message));
 
 /**
  * Workspace strategy for a scheduled task created/updated over MCP: bound runs
@@ -951,6 +958,24 @@ const make = Effect.gen(function* () {
       return { branch: worktree.worktree.refName, worktreePath: worktree.worktree.path };
     });
 
+  /**
+   * Checks every inline reference and reads each `path` reference once from
+   * the thread's bound workspace, so a missing, altered, or unreadable one
+   * fails before a worktree, child thread, or provider exists. Project lookup
+   * happens only when a path must be read.
+   */
+  const deliverRequiredContext = (
+    parent: Pick<OrchestrationV2ThreadProjection, "thread">,
+    references: ReadonlyArray<RequiredSkillContext.DeclaredReference>,
+  ) =>
+    Effect.gen(function* () {
+      const workspaceRoot = references.some((reference) => reference.delivery === "path")
+        ? (parent.thread.worktreePath ??
+          (yield* requireProject(parent.thread.projectId)).workspaceRoot)
+        : undefined;
+      return yield* RequiredSkillContext.resolveRequiredContext({ references, workspaceRoot });
+    }).pipe(Effect.catchTags({ RequiredContextBlockedError: requiredContextFailure }));
+
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
       ? Effect.void
@@ -1279,6 +1304,7 @@ const make = Effect.gen(function* () {
       }
 
       return {
+        driver: provider.driver,
         modelSelection:
           instanceId === inheritedSelection.instanceId &&
           model === inheritedSelection.model &&
@@ -1858,6 +1884,18 @@ const make = Effect.gen(function* () {
     delegateTask: (callerScope, input) =>
       Effect.gen(function* () {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
+        const task = taskPrompt(input);
+        // Declared references are checked before anything else, retries
+        // included, so a bad one never reaches a key, a lookup, or a dispatch.
+        const declaredContext =
+          input.requiredContext === undefined
+            ? undefined
+            : yield* RequiredSkillContext.assertTaskIsFreeOfRequiredContextMarkup(input.task).pipe(
+                Effect.andThen(
+                  RequiredSkillContext.normalizeRequiredContext(input.requiredContext),
+                ),
+                Effect.catchTags({ RequiredContextBlockedError: requiredContextFailure }),
+              );
         // Without a clientRequestId, a retry after a client-side timeout would
         // mint a fresh key and start a duplicate child. Derive the key from the
         // request content within the parent's current run so an identical retry
@@ -1875,7 +1913,10 @@ const make = Effect.gen(function* () {
                     input.target?.providerInstanceId ?? "",
                     input.target?.model ?? "",
                     input.title ?? "",
-                    taskPrompt(input),
+                    task,
+                    ...(declaredContext === undefined
+                      ? []
+                      : [RequiredSkillContext.requiredContextBinding(declaredContext)]),
                   ].join("\u0000"),
                 )}`;
               });
@@ -1890,6 +1931,30 @@ const make = Effect.gen(function* () {
         const existingTask = parent.subagents.find(
           (task) => task.id === taskId && task.origin === "app_owned",
         );
+        if (existingTask !== undefined) {
+          // A retry reuses the admitted task and never reopens a file. With
+          // required context on either side it must be the same request:
+          // the same task text and, per reference, the same path, step,
+          // length, hash, and revision, with the admitted bytes still hashing
+          // to that hash.
+          const sameRequest =
+            declaredContext === undefined
+              ? existingTask.prompt === task ||
+                !RequiredSkillContext.hasRequiredContextSection(existingTask.prompt)
+              : RequiredSkillContext.admittedPromptMatches(
+                  existingTask.prompt,
+                  task,
+                  declaredContext,
+                );
+          if (!sameRequest) {
+            return yield* requiredContextFailure(
+              RequiredSkillContext.RequiredContextBlockedError.forList(
+                `clientRequestId ${key} already started task ${existingTask.id} with different task text or required context; use a new clientRequestId to deliver changed context`,
+              ),
+            );
+          }
+        }
+        let dispatchedTask = task;
         if (existingTask === undefined) {
           const parentRun = parent.runs
             .filter(ThreadManagementService.isActiveRun)
@@ -1904,12 +1969,26 @@ const make = Effect.gen(function* () {
               "Delegated tasks require an active run owned by this MCP provider session.",
             );
           }
+          const deliveredContext =
+            declaredContext === undefined
+              ? undefined
+              : yield* deliverRequiredContext(parent, declaredContext);
           const providers = yield* loadProviders;
           const target = yield* resolveTargetRechecking({
             parent,
             target: input.target,
             providers,
           });
+          if (deliveredContext !== undefined) {
+            yield* RequiredSkillContext.assertSkillMentionBytesSurvive(
+              deliveredContext,
+              target.driver,
+            ).pipe(Effect.catchTags({ RequiredContextBlockedError: requiredContextFailure }));
+            dispatchedTask = RequiredSkillContext.renderTaskWithRequiredContext(
+              task,
+              deliveredContext,
+            );
+          }
           const runtimeMode = yield* resolveRuntimeMode(
             parent.thread.runtimeMode,
             input.runtimeMode,
@@ -1931,7 +2010,7 @@ const make = Effect.gen(function* () {
               parentThreadId: scope.thread.threadId,
               parentRunId: parentRun.id,
               parentNodeId: parentRun.rootNodeId,
-              task: taskPrompt(input),
+              task: dispatchedTask,
               ...(input.title === undefined ? {} : { title: input.title }),
               modelSelection: target.modelSelection,
               runtimeMode,

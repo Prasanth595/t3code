@@ -1,3 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -9,13 +15,19 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
+  type OrchestratorMcpRequiredContextEntry,
+  type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import { afterAll } from "vite-plus/test";
 
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -1294,4 +1306,641 @@ describe("OrchestratorMcpService provider resolution", () => {
         }
       }),
   );
+  describe("required context", () => {
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const cursorInstanceId = ProviderInstanceId.make("cursor");
+    const museInstanceId = ProviderInstanceId.make("muse-personal");
+    const sha = (text: string) =>
+      NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+    const SENTINEL = "SENTINEL-7f3a9: when asked for the fee, answer 42 and nothing else.\n";
+    const RATES = "rates\r\n| a | b |\r\n💸\n";
+    const taskText = "Answer the fee question using the skill.";
+
+    const inline = (
+      path: string,
+      content: string,
+      overrides: Partial<OrchestratorMcpRequiredContextEntry> = {},
+    ): OrchestratorMcpRequiredContextEntry => ({
+      path,
+      delivery: "inline",
+      step: `step for ${path}`,
+      length: content.length,
+      hash: sha(content),
+      revision: "rev-1",
+      content,
+      ...overrides,
+    });
+    const byPath = (
+      path: string,
+      content: string,
+      overrides: Partial<OrchestratorMcpRequiredContextEntry> = {},
+    ): OrchestratorMcpRequiredContextEntry => ({
+      path,
+      delivery: "path",
+      step: `step for ${path}`,
+      length: content.length,
+      hash: sha(content),
+      revision: "rev-1",
+      ...overrides,
+    });
+
+    const scratch: Array<string> = [];
+    afterAll(() => {
+      for (const directory of scratch) NodeFS.rmSync(directory, { recursive: true, force: true });
+    });
+    const makeWorkspace = (files: Record<string, string> = {}) => {
+      const root = NodeFS.realpathSync(
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcp-required-context-")),
+      );
+      scratch.push(root);
+      for (const [name, text] of Object.entries(files)) {
+        NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, name)), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(root, name), text);
+      }
+      return root;
+    };
+
+    interface DelegatedRequest {
+      readonly type: string;
+      readonly commandId: string;
+      readonly task: string;
+      readonly title?: string;
+      readonly modelSelection: ModelSelection;
+      readonly runtimeMode: string;
+      readonly interactionMode: string;
+      readonly workspaceBinding?: { readonly branch: string; readonly worktreePath: string };
+    }
+
+    /**
+     * The delegation path end to end with the real service: dispatch stores a
+     * task whose prompt is the command's task, as the orchestrator does, so a
+     * retry finds the admitted task and its bytes.
+     */
+    const delegation = (options: {
+      readonly workspaceRoot?: string;
+      readonly worktreePath?: string | null;
+    }) => {
+      const providers = [
+        providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: "gpt-5.4",
+        }),
+        providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          model: "claude-opus-5-5",
+        }),
+        providerSnapshot({
+          instanceId: cursorInstanceId,
+          driver: ProviderDriverKind.make("cursor"),
+          model: "cursor-model",
+        }),
+        providerSnapshot({
+          instanceId: museInstanceId,
+          driver: ProviderDriverKind.make("acpRegistry"),
+          model: "muse-spark",
+        }),
+      ];
+      const dispatched: Array<DelegatedRequest> = [];
+      const tasks: Array<unknown> = [];
+      const worktrees: Array<string> = [];
+      const projectLookups = { count: 0 };
+      const probes = { count: 0 };
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? ({
+                    ...parentProjection(tasks),
+                    thread: {
+                      ...parentProjection(tasks).thread,
+                      worktreePath: options.worktreePath ?? null,
+                    },
+                  } as unknown as OrchestrationV2ThreadProjection)
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              const request = command as unknown as DelegatedRequest;
+              const task = {
+                id: IdAllocator.delegatedTaskNodeId({ commandId: request.commandId as never }),
+                threadId: parentThreadId,
+                runId: parentRunId,
+                parentNodeId,
+                origin: "app_owned",
+                createdBy: "agent",
+                driver: ProviderDriverKind.make("codex"),
+                providerInstanceId: request.modelSelection.instanceId,
+                providerThreadId: null,
+                childThreadId,
+                nativeTaskRef: null,
+                prompt: request.task,
+                title: null,
+                model: request.modelSelection.model,
+                status: "running",
+                result: null,
+                startedAt: null,
+                completedAt: null,
+              };
+              dispatched.push(request);
+              tasks.push(task);
+              return {
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never;
+            }),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed(providers),
+          refreshInstance: () =>
+            Effect.sync(() => {
+              probes.count += 1;
+              return providers;
+            }),
+        }),
+        adapterRegistryLayer(providers.map((provider) => provider.instanceId)),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.sync(() => {
+              projectLookups.count += 1;
+              return Option.some({
+                id: projectId,
+                workspaceRoot: options.workspaceRoot ?? "/no/such/workspace",
+              } as never);
+            }),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const git = Layer.mock(GitWorkflowService.GitWorkflowService)({
+        listRefs: () => Effect.succeed({ refs: [] } as never),
+        localStatus: () => Effect.succeed({ refName: "main" } as never),
+        createWorktree: (input) =>
+          Effect.sync(() => {
+            worktrees.push(String(input.newRefName));
+            return {
+              worktree: { refName: String(input.newRefName), path: "/future/worktree" },
+            } as never;
+          }),
+      });
+      const worktreeScope: McpInvocationScope = {
+        ...scope,
+        capabilities: new Set(["orchestration", "worktree"]),
+      };
+      const run = <A, E>(
+        effect: Effect.Effect<
+          A,
+          E,
+          OrchestratorMcpService.OrchestratorMcpService | GitWorkflowService.GitWorkflowService
+        >,
+      ) =>
+        effect.pipe(
+          Effect.provide(git),
+          Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))),
+        );
+      return { dispatched, worktrees, projectLookups, probes, worktreeScope, run };
+    };
+
+    const delegate = (
+      scopeToUse: McpInvocationScope,
+      input: Parameters<OrchestratorMcpService.OrchestratorMcpServiceShape["delegateTask"]>[1],
+    ) =>
+      Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.delegateTask(scopeToUse, input);
+      });
+
+    it.effect(
+      "delivers the declared bytes, identity, and sentinel to the child prompt and leaves task, role, modes, and options alone",
+      () =>
+        Effect.gen(function* () {
+          const harness = delegation({});
+          const result = yield* harness.run(
+            delegate(scope, {
+              task: taskText,
+              role: "review",
+              mode: "async",
+              clientRequestId: "rc-deliver",
+              target: {
+                providerInstanceId: museInstanceId,
+                model: "muse-spark",
+                options: [{ id: "profile", value: "muse-review" }],
+              },
+              requiredContext: [
+                inline("skills/fee/SKILL.md", SENTINEL, {
+                  revision: "git:5d16d577",
+                  step: "step 2",
+                }),
+                inline("skills/fee/references/rates.md", RATES, { revision: "v2", step: "step 3" }),
+              ],
+            }),
+          );
+          assert.equal(result.status, "running");
+          assert.equal(harness.dispatched.length, 1);
+          const [request] = harness.dispatched;
+          assert.equal(
+            request!.task,
+            [
+              `Act as the review sub-agent for this task.\n\n${taskText}`,
+              [
+                "required_references:",
+                "  - skills/fee/SKILL.md | inline | step 2",
+                "  - skills/fee/references/rates.md | inline | step 3",
+              ].join("\n"),
+              `=== BEGIN REQUIRED CONTEXT kind=skill-entry uri=skills/fee/SKILL.md chars=${SENTINEL.length} sha256=${sha(SENTINEL)} revision=git:5d16d577 ===\n${SENTINEL}\n=== END REQUIRED CONTEXT uri=skills/fee/SKILL.md ===`,
+              `=== BEGIN REQUIRED CONTEXT kind=reference uri=skills/fee/references/rates.md chars=${RATES.length} sha256=${sha(RATES)} revision=v2 ===\n${RATES}\n=== END REQUIRED CONTEXT uri=skills/fee/references/rates.md ===`,
+            ].join("\n\n"),
+          );
+          // Nothing about the child's authority moved: a read-only profile stays
+          // read-only, and the parent's modes are inherited, not tightened or widened.
+          assert.deepEqual(request!.modelSelection, {
+            instanceId: museInstanceId,
+            model: "muse-spark",
+            options: [{ id: "profile", value: "muse-review" }],
+          });
+          assert.equal(request!.runtimeMode, "full-access");
+          assert.equal(request!.interactionMode, "default");
+          assert.equal(harness.projectLookups.count, 0);
+        }),
+    );
+
+    it.effect("leaves a task without requiredContext byte-for-byte as before", () =>
+      Effect.gen(function* () {
+        const harness = delegation({});
+        yield* harness.run(
+          Effect.gen(function* () {
+            yield* delegate(scope, {
+              task: taskText,
+              mode: "async",
+              clientRequestId: "rc-legacy-1",
+            });
+            yield* delegate(scope, {
+              task: taskText,
+              role: "research",
+              mode: "async",
+              clientRequestId: "rc-legacy-2",
+            });
+          }),
+        );
+        assert.deepEqual(
+          harness.dispatched.map((request) => request.task),
+          [taskText, `Act as the research sub-agent for this task.\n\n${taskText}`],
+        );
+        assert.equal(harness.projectLookups.count, 0);
+      }),
+    );
+
+    it.effect("reads a path reference once from the project workspace and admits its bytes", () =>
+      Effect.gen(function* () {
+        const workspaceRoot = makeWorkspace({ "docs/rates.md": RATES });
+        const harness = delegation({ workspaceRoot });
+        yield* harness.run(
+          delegate(scope, {
+            task: taskText,
+            mode: "async",
+            clientRequestId: "rc-path",
+            requiredContext: [byPath("docs/rates.md", RATES, { revision: "wt:abc" })],
+          }),
+        );
+        assert.equal(harness.projectLookups.count, 1);
+        assert.include(
+          harness.dispatched[0]!.task,
+          `=== BEGIN REQUIRED CONTEXT kind=reference uri=docs/rates.md chars=${RATES.length} sha256=${sha(RATES)} revision=wt:abc ===\n${RATES}\n=== END REQUIRED CONTEXT uri=docs/rates.md ===`,
+        );
+        assert.include(
+          harness.dispatched[0]!.task,
+          "required_references:\n  - docs/rates.md | path | step for docs/rates.md",
+        );
+      }),
+    );
+
+    it.effect("prefers the thread's bound worktree and never asks the project", () =>
+      Effect.gen(function* () {
+        const worktreePath = makeWorkspace({ "docs/rates.md": RATES });
+        const harness = delegation({ worktreePath });
+        yield* harness.run(
+          delegate(scope, {
+            task: taskText,
+            mode: "async",
+            clientRequestId: "rc-bound",
+            requiredContext: [byPath("docs/rates.md", RATES)],
+          }),
+        );
+        assert.equal(harness.projectLookups.count, 0);
+        assert.equal(harness.dispatched.length, 1);
+      }),
+    );
+
+    it.effect("does not reopen a path reference on a retry, even after the file is gone", () =>
+      Effect.gen(function* () {
+        const workspaceRoot = makeWorkspace({ "docs/rates.md": RATES });
+        const harness = delegation({ workspaceRoot });
+        const input = {
+          task: taskText,
+          mode: "async",
+          clientRequestId: "rc-replay",
+          requiredContext: [
+            inline("skills/fee/SKILL.md", SENTINEL),
+            byPath("docs/rates.md", RATES),
+          ],
+        } as const;
+        yield* harness.run(
+          Effect.gen(function* () {
+            const first = yield* delegate(scope, input);
+            NodeFS.rmSync(NodePath.join(workspaceRoot, "docs/rates.md"));
+            const second = yield* delegate(scope, input);
+            assert.equal(second.taskId, first.taskId);
+          }),
+        );
+        assert.equal(harness.dispatched.length, 1);
+        assert.equal(harness.projectLookups.count, 1);
+      }),
+    );
+
+    it.effect("refuses a changed request that reuses a clientRequestId", () =>
+      Effect.gen(function* () {
+        const harness = delegation({});
+        const base = {
+          task: taskText,
+          mode: "async",
+          clientRequestId: "rc-conflict",
+          requiredContext: [inline("skills/fee/SKILL.md", SENTINEL, { revision: "r1" })],
+        } as const;
+        const changed = SENTINEL.replace("42", "43");
+        const attempts = {
+          "one byte of content": {
+            ...base,
+            requiredContext: [inline("skills/fee/SKILL.md", changed, { revision: "r1" })],
+          },
+          "the revision": {
+            ...base,
+            requiredContext: [inline("skills/fee/SKILL.md", SENTINEL, { revision: "r2" })],
+          },
+          "the step": {
+            ...base,
+            requiredContext: [
+              inline("skills/fee/SKILL.md", SENTINEL, { revision: "r1", step: "other" }),
+            ],
+          },
+          "the task text": { ...base, task: `${taskText} Also tip.` },
+          "an added reference": {
+            ...base,
+            requiredContext: [...base.requiredContext, inline("extra.md", "extra")],
+          },
+          "dropping the context": { task: taskText, mode: "async", clientRequestId: "rc-conflict" },
+        } as const;
+        yield* harness.run(
+          Effect.gen(function* () {
+            const first = yield* delegate(scope, base);
+            for (const [name, attempt] of Object.entries(attempts)) {
+              const error = yield* delegate(scope, attempt).pipe(Effect.flip);
+              assert.equal(error.code, "invalid_request", name);
+              assert.equal(
+                error.message,
+                `BLOCKED reference <declaration>: clientRequestId rc-conflict already started task ${first.taskId} with different task text or required context; use a new clientRequestId to deliver changed context`,
+                name,
+              );
+            }
+            // The identical request is still just a retry.
+            assert.equal((yield* delegate(scope, base)).taskId, first.taskId);
+          }),
+        );
+        assert.equal(harness.dispatched.length, 1);
+      }),
+    );
+
+    it.effect("keeps today's retry behavior when neither request carries required context", () =>
+      Effect.gen(function* () {
+        const harness = delegation({});
+        yield* harness.run(
+          Effect.gen(function* () {
+            const first = yield* delegate(scope, {
+              task: taskText,
+              mode: "async",
+              clientRequestId: "rc-plain",
+            });
+            const second = yield* delegate(scope, {
+              task: "A different task text.",
+              mode: "async",
+              clientRequestId: "rc-plain",
+            });
+            assert.equal(second.taskId, first.taskId);
+          }),
+        );
+        assert.equal(harness.dispatched.length, 1);
+      }),
+    );
+
+    it.effect(
+      "finds the same task for an identical retry without a clientRequestId, and a new one for changed context",
+      () =>
+        Effect.gen(function* () {
+          const harness = delegation({});
+          const request = (content: string) =>
+            ({
+              task: taskText,
+              mode: "async",
+              requiredContext: [inline("skills/fee/SKILL.md", content)],
+            }) as const;
+          yield* harness.run(
+            Effect.gen(function* () {
+              const first = yield* delegate(scope, request(SENTINEL));
+              assert.equal((yield* delegate(scope, request(SENTINEL))).taskId, first.taskId);
+              assert.equal(harness.dispatched.length, 1);
+              const changed = yield* delegate(scope, request(SENTINEL.replace("42", "43")));
+              assert.notEqual(changed.taskId, first.taskId);
+            }),
+          );
+          assert.equal(harness.dispatched.length, 2);
+        }),
+    );
+
+    const refusals: ReadonlyArray<
+      readonly [string, () => OrchestratorMcpRequiredContextEntry, string]
+    > = [
+      [
+        "a missing path reference",
+        () => byPath("docs/gone.md", "x"),
+        "BLOCKED reference docs/gone.md: does not exist in this thread's workspace; deliver it inline",
+      ],
+      [
+        "a hash mismatch",
+        () => inline("a.md", "body text", { hash: sha("other text") }),
+        `BLOCKED reference a.md: content hashes to ${sha("body text")} but hash declares ${sha("other text")}`,
+      ],
+      [
+        "truncated inline content",
+        () => inline("a.md", "body text", { length: 10 }),
+        "BLOCKED reference a.md: content has 9 UTF-16 code units but length declares 10; it was truncated, altered, or the declaration is stale",
+      ],
+      [
+        "a path that escapes the workspace",
+        () => byPath("../escape.md", "x"),
+        "BLOCKED reference ../escape.md: resolves outside this thread's workspace",
+      ],
+      [
+        "a credential-shaped path",
+        () => inline(".env", "SECRET=1"),
+        "BLOCKED reference requiredContext[1]: path names a credential-shaped file",
+      ],
+    ];
+    it.effect.each(refusals)(
+      "refuses %s before any worktree, probe, or dispatch exists",
+      ([name, entry, message]) =>
+        Effect.gen(function* () {
+          const workspaceRoot = makeWorkspace();
+          NodeFS.writeFileSync(NodePath.join(NodePath.dirname(workspaceRoot), "escape.md"), "x");
+          const harness = delegation({ workspaceRoot });
+          const error = yield* harness
+            .run(
+              delegate(harness.worktreeScope, {
+                task: taskText,
+                mode: "async",
+                clientRequestId: `rc-refuse-${name}`,
+                workspace: { strategy: "worktree" },
+                requiredContext: [inline("skills/fee/SKILL.md", SENTINEL), entry()],
+              }),
+            )
+            .pipe(Effect.flip);
+          assert.equal(error.code, "invalid_request");
+          assert.equal(error.message, message);
+          assert.deepEqual(harness.dispatched, []);
+          assert.deepEqual(harness.worktrees, []);
+          assert.equal(harness.probes.count, 0);
+        }),
+    );
+
+    it.effect("prepares the worktree only after every reference verified", () =>
+      Effect.gen(function* () {
+        const workspaceRoot = makeWorkspace({ "docs/rates.md": RATES });
+        const harness = delegation({ workspaceRoot });
+        yield* harness.run(
+          delegate(harness.worktreeScope, {
+            task: taskText,
+            mode: "async",
+            clientRequestId: "rc-worktree",
+            workspace: { strategy: "worktree", branch: "t3/required" },
+            requiredContext: [byPath("docs/rates.md", RATES)],
+          }),
+        );
+        assert.deepEqual(harness.worktrees, ["t3/required"]);
+        assert.equal(harness.dispatched[0]!.workspaceBinding?.branch, "t3/required");
+        assert.include(harness.dispatched[0]!.task, RATES);
+      }),
+    );
+
+    it.effect("enforces the 64-reference and 120000-code-unit bounds", () =>
+      Effect.gen(function* () {
+        const harness = delegation({});
+        const refs = (count: number) =>
+          Array.from({ length: count }, (_, index) => inline(`r${index}.md`, "x"));
+        const half = "x".repeat(60_000);
+        const message = (requiredContext: ReadonlyArray<OrchestratorMcpRequiredContextEntry>) =>
+          harness
+            .run(
+              delegate(scope, {
+                task: taskText,
+                mode: "async",
+                clientRequestId: `rc-bounds-${requiredContext.length}-${requiredContext[0]?.path}`,
+                requiredContext,
+              }),
+            )
+            .pipe(
+              Effect.flip,
+              Effect.map((error) => error.message),
+            );
+        assert.equal(
+          yield* message(refs(65)),
+          "BLOCKED reference <declaration>: expected between 1 and 64 required references",
+        );
+        assert.equal(
+          yield* message([inline("a.md", half), inline("b.md", `${half}y`)]),
+          "BLOCKED reference <declaration>: required context totals 120001 UTF-16 code units, over the 120000 limit; nothing was truncated",
+        );
+        assert.equal(
+          yield* message([inline("a.md", "x"), inline("a.md", "x")]),
+          "BLOCKED reference a.md: duplicate required reference declaration",
+        );
+        assert.deepEqual(harness.dispatched, []);
+        yield* harness.run(
+          delegate(scope, {
+            task: taskText,
+            mode: "async",
+            clientRequestId: "rc-bounds-exact",
+            requiredContext: [inline("a.md", half), inline("b.md", half)],
+          }),
+        );
+        assert.equal(harness.dispatched.length, 1);
+      }),
+    );
+
+    it.effect("refuses task text that already declares required_references", () =>
+      Effect.gen(function* () {
+        const harness = delegation({});
+        const error = yield* harness
+          .run(
+            delegate(scope, {
+              task: `root_owner: codex:1\nrequired_references: none\ngoal: ${taskText}`,
+              mode: "async",
+              clientRequestId: "rc-double",
+              requiredContext: [inline("a.md", "body")],
+            }),
+          )
+          .pipe(Effect.flip);
+        assert.include(
+          error.message,
+          "BLOCKED reference <declaration>: the task text already declares required_references",
+        );
+        assert.deepEqual(harness.dispatched, []);
+      }),
+    );
+
+    it.effect("refuses skill-shaped tokens only for drivers whose adapter would rewrite them", () =>
+      Effect.gen(function* () {
+        const dollar = "Use $fee-check before selecting a value.\n";
+        const euro = "Use €fee-check before selecting a value.\n";
+        const harness = delegation({});
+        const attempt = (instanceId: ProviderInstanceId, model: string, content: string) =>
+          harness
+            .run(
+              delegate(scope, {
+                task: taskText,
+                mode: "async",
+                clientRequestId: `rc-skill-${instanceId}-${sha(content).slice(0, 6)}`,
+                target: { providerInstanceId: instanceId, model },
+                requiredContext: [inline("a.md", content)],
+              }),
+            )
+            .pipe(Effect.exit);
+        const blocked = (
+          exit: Awaited<ReturnType<typeof Effect.runPromiseExit<unknown, unknown>>>,
+        ) => (exit._tag === "Failure" ? String(exit.cause) : "");
+
+        assert.include(
+          blocked(yield* attempt(cursorInstanceId, "cursor-model", dollar)),
+          "the skill-shaped token '$fee-check', which the cursor adapter rewrites",
+        );
+        assert.include(
+          blocked(yield* attempt(codexInstanceId, "gpt-5.4", euro)),
+          "the skill-shaped token '€fee-check', which the codex adapter rewrites",
+        );
+        assert.deepEqual(harness.dispatched, []);
+        // Claude leaves a required-context fence alone (ClaudeSkillDispatch), Codex keeps `$`,
+        // and a non-rewriting driver sends everything as is.
+        assert.equal((yield* attempt(claudeInstanceId, "claude-opus-5-5", dollar))._tag, "Success");
+        assert.equal((yield* attempt(codexInstanceId, "gpt-5.4", dollar))._tag, "Success");
+        assert.equal((yield* attempt(museInstanceId, "muse-spark", euro))._tag, "Success");
+        assert.equal(harness.dispatched.length, 3);
+      }),
+    );
+  });
 });

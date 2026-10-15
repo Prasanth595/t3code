@@ -167,9 +167,69 @@ export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
 export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
+/** Most references one delegated task can require. */
+export const ORCHESTRATOR_MCP_REQUIRED_CONTEXT_MAX_ENTRIES = 64;
+/** Most UTF-16 code units of required content one delegated task can carry, summed over its references. */
+export const ORCHESTRATOR_MCP_REQUIRED_CONTEXT_MAX_CODE_UNITS = 120_000;
+
+/**
+ * One file the child must have in full before it starts, such as a SKILL.md
+ * and the references it depends on. The server delivers the exact content in
+ * a length-checked fence ahead of the child's first turn or refuses the whole
+ * dispatch; it never truncates or edits what it delivers. Delivery proves the
+ * child received the bytes, not that it applied them.
+ */
+export const OrchestratorMcpRequiredContextEntry = Schema.Struct({
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(1_024)).annotate({
+    description:
+      "Identity of the reference, as the child should name it. No whitespace, '|' or '?'. For delivery 'path' it is also the file the server reads, relative to this thread's workspace (symlinks leaving it and credential-shaped names are refused).",
+  }),
+  delivery: Schema.Literals(["inline", "path"]).annotate({
+    description:
+      "'inline': you supply the full text in content (preferred). 'path': the server reads path once from this thread's workspace; content must be omitted. Both are checked against length, hash, and revision before anything is created.",
+  }),
+  step: TrimmedNonEmptyString.check(Schema.isMaxLength(512)).annotate({
+    description:
+      "The task step that needs this reference. No newline or '|'; it is listed in the child's required_references.",
+  }),
+  length: Schema.Int.check(
+    Schema.isBetween({ minimum: 1, maximum: ORCHESTRATOR_MCP_REQUIRED_CONTEXT_MAX_CODE_UNITS }),
+  ).annotate({
+    description:
+      "Exact length of the content in UTF-16 code units (JavaScript String.length), not bytes or characters.",
+  }),
+  hash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/)).annotate({
+    description: "Lowercase hex SHA-256 of the content encoded as UTF-8.",
+  }),
+  revision: Schema.String.check(Schema.isPattern(/^\S{1,128}$/)).annotate({
+    description:
+      "Opaque pointer to the version the content came from (for example a git commit or skill version). Carried verbatim and never interpreted. 1-128 characters, no whitespace.",
+  }),
+  content: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(ORCHESTRATOR_MCP_REQUIRED_CONTEXT_MAX_CODE_UNITS)),
+  ).annotate({
+    description: "The complete text. Required when delivery is 'inline'; omit it for 'path'.",
+  }),
+});
+export type OrchestratorMcpRequiredContextEntry = typeof OrchestratorMcpRequiredContextEntry.Type;
+
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt.annotate({
     description: "Self-contained task for one delegated child agent/subagent.",
+  }),
+  /**
+   * Skill and reference files the child must receive in full. Omitting it
+   * leaves the task text exactly as before. When present, the task text must
+   * not carry its own `required_references:` line; the server renders the
+   * canonical declaration and the fences from these entries.
+   */
+  requiredContext: Schema.optional(
+    Schema.Array(OrchestratorMcpRequiredContextEntry).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(ORCHESTRATOR_MCP_REQUIRED_CONTEXT_MAX_ENTRIES),
+    ),
+  ).annotate({
+    description: `Up to ${ORCHESTRATOR_MCP_REQUIRED_CONTEXT_MAX_ENTRIES} references totalling at most ${ORCHESTRATOR_MCP_REQUIRED_CONTEXT_MAX_CODE_UNITS} UTF-16 code units. A missing, altered, truncated, or unreadable reference fails the call with 'BLOCKED reference <path>: <reason>' before any child, worktree, or provider is created. Resend it on every delegate_task, follow-up round included.`,
   }),
   target: Schema.optional(OrchestratorMcpTarget),
   title: Schema.optional(OrchestratorMcpTitle),

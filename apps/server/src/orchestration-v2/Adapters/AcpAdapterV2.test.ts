@@ -5,8 +5,10 @@ import {
 } from "./DevinAcp.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -57,6 +59,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import * as RequiredSkillContext from "../../provider/RequiredSkillContext.ts";
 import {
   extractXAiAcpSubagentEndNotice,
   extractXAiAcpSubagentUpdate,
@@ -525,6 +528,22 @@ function rawProtocolPromptText(event: EffectAcpProtocol.AcpProtocolLogEvent): st
     .join("\n");
 }
 
+/** Each text block of a `session/prompt` request, in order. */
+function rawProtocolPromptTextBlocks(
+  event: EffectAcpProtocol.AcpProtocolLogEvent,
+): ReadonlyArray<string> {
+  const prompt = rawProtocolRequestParam(event, "prompt");
+  if (!Array.isArray(prompt)) return [];
+  return prompt.flatMap((block) =>
+    typeof block === "object" &&
+    block !== null &&
+    Reflect.get(block, "type") === "text" &&
+    typeof Reflect.get(block, "text") === "string"
+      ? [Reflect.get(block, "text") as string]
+      : [],
+  );
+}
+
 const pollProtocolMethods = (events: Queue.Queue<EffectAcpProtocol.AcpProtocolLogEvent>) =>
   Effect.gen(function* () {
     const methods: string[] = [];
@@ -905,6 +924,173 @@ describe("AcpAdapterV2", () => {
         "Build should restore the native mode that T3 temporarily replaced for Plan",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live(
+    "sends required-context fences through session/prompt byte-for-byte and in a form the Muse bridge accepts",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        const instanceId = ProviderInstanceId.make("acp-test-required-context");
+        const threadId = ThreadId.make("thread-acp-required-context");
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+          },
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          selfInvocation,
+        });
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-required-context"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const runTurn = Effect.fnUntraced(function* (ordinal: number, messageText: string) {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now,
+              ordinal,
+              messageText,
+            }),
+          );
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runDrain,
+          );
+          while (true) {
+            const event = yield* Queue.take(protocolEvents);
+            if (event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt") {
+              return rawProtocolPromptTextBlocks(event);
+            }
+          }
+        });
+
+        // What delegate_task renders into the child's first message.
+        const sentinel = "SENTINEL-7f3a9: when asked for the fee, answer 42 and nothing else.\n";
+        const rates = "rates\r\n| a | b |\r\n💸\n";
+        const sha256 = (text: string) =>
+          NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
+        const entry = (path: string, content: string, revision: string) => ({
+          path,
+          delivery: "inline" as const,
+          step: `step for ${path}`,
+          length: content.length,
+          hash: sha256(content),
+          revision,
+          content,
+        });
+        const declared = yield* RequiredSkillContext.normalizeRequiredContext([
+          entry("skills/fee/SKILL.md", sentinel, "git:5d16d577"),
+          entry("skills/fee/references/rates.md", rates, "v2"),
+        ]);
+        const delivered = yield* RequiredSkillContext.resolveRequiredContext({
+          references: declared,
+          workspaceRoot: undefined,
+        });
+        const rendered = RequiredSkillContext.renderTaskWithRequiredContext(
+          "Answer the fee question using the skill.",
+          delivered,
+        );
+
+        const blocks = yield* runTurn(1, rendered);
+        // The adapter wraps the message in its instruction envelope but leaves its bytes alone.
+        assert.isTrue(
+          blocks.some((block) => block.includes(`<user_request>\n${rendered}\n</user_request>`)),
+          "the rendered task, fences included, is sent verbatim in one text block",
+        );
+        assert.equal(
+          blocks.filter((block) => block.includes("=== BEGIN REQUIRED CONTEXT")).length,
+          1,
+          "required context is not duplicated into the runtime-instruction block",
+        );
+
+        // The Muse bridge reads these exact blocks: same length, hash, revision, and bytes.
+        const bridge = (yield* Effect.promise(
+          () =>
+            import(
+              /* @vite-ignore */ NodeURL.fileURLToPath(
+                new URL("../../../../../scripts/nofun/muse-acp.logic.mjs", import.meta.url),
+              )
+            ),
+        )) as {
+          readonly splitPrompt: (parts: ReadonlyArray<{ type: string; text: string }>) => {
+            readonly required: ReadonlyArray<{
+              readonly kind: string;
+              readonly uri: string;
+              readonly text: string;
+              readonly sha256: string;
+              readonly revision?: string;
+            }>;
+            readonly problems: ReadonlyArray<string>;
+          };
+        };
+        const split = bridge.splitPrompt(blocks.map((text) => ({ type: "text", text })));
+        assert.deepEqual(split.problems, []);
+        assert.deepEqual(
+          split.required.map((required) => [
+            required.kind,
+            required.uri,
+            required.text.length,
+            required.sha256,
+            required.revision,
+          ]),
+          [
+            [
+              "skill-entry",
+              "skills/fee/SKILL.md",
+              sentinel.length,
+              sha256(sentinel),
+              "git:5d16d577",
+            ],
+            ["reference", "skills/fee/references/rates.md", rates.length, sha256(rates), "v2"],
+          ],
+        );
+        assert.deepEqual(
+          split.required.map((required) => required.text),
+          [sentinel, rates],
+        );
+
+        // A follow-up reaches the same session as plain text: the adapter neither
+        // resends nor rewrites context, so retention is the bridge session's job.
+        const followUp = yield* runTurn(2, "Follow-up: what was the fee again?");
+        assert.deepEqual(
+          followUp.filter((block) => block.includes("Follow-up: what was the fee again?")),
+          ["Follow-up: what was the fee again?"],
+        );
+        assert.isFalse(followUp.some((block) => block.includes("REQUIRED CONTEXT")));
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("starts a new replay message after ACP v2 plan boundaries", () =>
