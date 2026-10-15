@@ -207,6 +207,8 @@ export interface GateOptions {
   readonly checkoutTimeoutMs?: number;
   /** The ledger's clock (epoch milliseconds). */
   readonly clock?: () => number;
+  /** The most a git call may print, on stdout or on stderr. Default 1 MiB. */
+  readonly gitTailBytes?: number;
   /** Test only: variables set on every git call after the others, so a test can give git another HOME or PATH. */
   readonly env?: Readonly<Record<string, string>>;
 }
@@ -444,6 +446,7 @@ const unexpected = (what: string) => new WorkspaceUnexpectedError({ what });
 export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
   const remoteBase = (options.remoteBase ?? DEFAULT_REMOTE_BASE).replace(/\/+$/, "");
   const gitTimeoutMs = options.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
+  const gitTailBytes = options.gitTailBytes ?? GIT_TAIL_BYTES;
   const checkoutTimeoutMs = options.checkoutTimeoutMs ?? DEFAULT_CHECKOUT_TIMEOUT_MS;
   const fileTransport = remoteBase.startsWith("file://") ? "always" : "never";
   const hardening = [
@@ -489,7 +492,9 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
         cwd: dir,
         env: gitEnv(call.fetch === true),
         timeoutMs: call.timeoutMs,
-        tailBytes: GIT_TAIL_BYTES,
+        tailBytes: gitTailBytes,
+        // What git prints on stdout is data to parse; its stderr (warnings) only explains a failure.
+        separateStderr: true,
       })
       .pipe(
         Effect.mapError((error) => new WorkspaceSpawnError({ cause: error.cause })),
@@ -499,9 +504,13 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
           if (result.timedOut) {
             return failed(null, `it did not finish within ${call.timeoutMs}ms and was killed`);
           }
+          // Output cut at the cap would be parsed from a truncated front.
+          if (result.truncated) {
+            return failed(null, `it printed more than ${gitTailBytes} bytes and was killed`);
+          }
           return result.exitCode === 0
             ? Effect.succeed(result.tail)
-            : failed(result.exitCode, result.tail);
+            : failed(result.exitCode, result.stderrTail);
         }),
       );
 
