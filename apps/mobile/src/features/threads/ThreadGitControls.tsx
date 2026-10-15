@@ -258,6 +258,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 
   return {
+    gitStatus,
     currentBranchLabel,
     isRepo,
     openFiles,
@@ -351,7 +352,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       menu: {
         items: [
           {
-            description: compactMenuStatus(props.gitStatus),
+            description: compactMenuStatus(model.gitStatus),
             disabled: true,
             icon: {
               name: "point.topleft.down.curvedto.point.bottomright.up",
@@ -499,7 +500,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
+      {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(model)) : null}
     </Toolbar>
   );
 }
@@ -516,11 +517,10 @@ export function ThreadGitMenu(props: ThreadGitMenuProps) {
 
 /** Returns menu data because native toolbars serialize direct items rather than rendering component children. */
 export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
-  return threadGitMenuDefinition(props, useThreadGitControlModel(props));
+  return threadGitMenuDefinition(useThreadGitControlModel(props));
 }
 
 function threadGitMenuDefinition(
-  props: ThreadGitMenuProps,
   model: ReturnType<typeof useThreadGitControlModel>,
 ): AppBarMenu {
   return {
@@ -533,7 +533,7 @@ function threadGitMenuDefinition(
         title: compactMenuBranchLabel(model.currentBranchLabel),
         icon: "point.topleft.down.curvedto.point.bottomright.up",
         disabled: true,
-        subtitle: compactMenuStatus(props.gitStatus),
+        subtitle: compactMenuStatus(model.gitStatus),
         onPress: () => {},
       },
       {
