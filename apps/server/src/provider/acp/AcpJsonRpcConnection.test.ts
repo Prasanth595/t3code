@@ -397,8 +397,11 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  // A child's self `process.kill` is TerminateProcess(handle, 1) on Windows, so
-  // the parent sees exit code 1 there and SIGKILL only on POSIX.
+  // The child reads the whole initialize line before it dies, so the write has
+  // landed and only the exit can end the connection. Dying before that read
+  // lets the write fail first, which is a transport error. A child's self
+  // `process.kill` is TerminateProcess(handle, 1) on Windows, so the parent sees
+  // exit code 1 there and SIGKILL only on POSIX.
   it.effect("reports how a self-killed ACP process ended with its stderr", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;
@@ -408,7 +411,7 @@ describe("AcpSessionRuntime", () => {
           command: process.execPath,
           args: [
             "-e",
-            'process.stderr.write("runtime aborted during startup\\n", () => process.kill(process.pid, "SIGKILL"));',
+            'require("node:readline").createInterface({ input: process.stdin }).once("line", (line) => process.stderr.write("runtime aborted after " + JSON.parse(line).method + "\\n", () => process.kill(process.pid, "SIGKILL")));',
           ],
         },
       });
@@ -421,7 +424,7 @@ describe("AcpSessionRuntime", () => {
               message: "ACP process was terminated by signal SIGKILL",
             };
       expect(error).toMatchObject({ _tag: "AcpProcessExitedError", ...expected.exit });
-      expect(error.message).toBe(`${expected.message}\nruntime aborted during startup`);
+      expect(error.message).toBe(`${expected.message}\nruntime aborted after initialize`);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
