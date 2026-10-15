@@ -2,14 +2,19 @@
 # Merges upstream's newest nightly tag into main through a pull request.
 #
 # Picks the newest v*-nightly.* tag at the upstream repo by version order and
-# exits 0 with "up to date" when factory/UPSTREAM already names it. Otherwise it
-# creates sync/<tag> from origin/main, merges the tag with --no-ff, regenerates
+# exits 0 with "up to date" when factory/UPSTREAM already names it, or when
+# sync/<tag> is already on origin. Otherwise it creates sync/<tag> from
+# origin/main, merges the tag with --no-ff, regenerates
 # apps/web/src/routeTree.gen.ts when that file conflicts, records <tag> <sha> in
 # factory/UPSTREAM, commits, and runs factory/scripts/check.sh. Green: push, open
 # the pull request `sync: <tag>` and merge it with a merge commit. Red: push, open
 # it as a draft, and file `Sync to <tag> fails checks` with the failing step and
-# the last 200 lines of its output. A conflict in any other file aborts the merge,
-# pushes nothing, files or comments on `Sync to <tag> conflicts`, and exits 1.
+# the last 200 lines of its output. A conflict in any other file, or a failing
+# `vp i` or generator, aborts the merge and pushes nothing; a refused push stops
+# too. Each files its own issue (`conflicts`, `fails checks`, `cannot be pushed`)
+# and exits 1; an open issue of the same kind gets a comment and the new tag in
+# its title instead, so a lasting problem keeps one issue. gh targets origin's
+# GitHub repository, never the fork's parent.
 #
 # Run daily by .github/workflows/factory-sync.yml with GITHUB_TOKEN. Pull
 # requests opened with that token trigger no workflows, which is why the checks
@@ -21,6 +26,16 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$root"
+
+# Every gh call targets origin's repository. Without this, gh run in a fork's
+# checkout opens pull requests and issues on the parent.
+origin_url=$(git config --get remote.origin.url || true)
+if [[ $origin_url =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+  export GH_REPO=${BASH_REMATCH[1]%.git}
+else
+  echo "sync: origin is not a GitHub repository: $origin_url" >&2
+  exit 1
+fi
 
 upstream=${SYNC_UPSTREAM:-https://github.com/pingdotgg/t3code}
 base=main
@@ -45,23 +60,70 @@ if [[ $current == "$tag" ]]; then
 fi
 
 branch="sync/$tag"
+if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+  echo "sync: $branch is already on origin, so $tag waits on it; delete the branch to retry"
+  exit 0
+fi
+
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-# Files or comments on the open issue with this exact title, with the body file.
-# The search is fuzzy, so the exact match happens here, not in gh.
+# Files `Sync to <tag> <kind>`, or comments on the open issue of that kind and
+# retitles it to this tag, so a problem that lasts across tags keeps one issue.
+# The search is fuzzy, so the exact match happens here, not in gh. Extra
+# arguments go to `gh issue create`.
 file_issue() {
-  local title=$1 body=$2
+  local kind=$1 body=$2
   shift 2
-  local number
-  number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title \
+  local title="Sync to $tag $kind" number
+  number=$(gh issue list --state open --search "\"$kind\" in:title" --json number,title \
     --jq '.[] | "\(.number)\t\(.title)"' |
-    awk -F '\t' -v title="$title" '$2 == title { print $1; exit }')
+    awk -F '\t' -v kind="$kind" '
+      $2 ~ ("^Sync to v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]+\\.[0-9]+ " kind "$") { print $1; exit }')
   if [[ -n $number ]]; then
+    gh issue edit "$number" --title "$title"
     gh issue comment "$number" --body-file "$body"
   else
     gh issue create --title "$title" "$@" --body-file "$body"
   fi
+}
+
+# Runs upstream's code without the token, printing its output and keeping it in
+# $scratch/<log>. Dropping the token is hygiene, not isolation (see the top).
+run_untrusted() {
+  local log=$1 status
+  shift
+  set +e
+  env -u GH_TOKEN -u GITHUB_TOKEN "$@" 2>&1 | tee "$scratch/$log"
+  status=${PIPESTATUS[0]}
+  set -e
+  return "$status"
+}
+
+# Files `Sync to <tag> fails checks` with a summary naming the failed step and
+# the last 200 lines of its output, then exits 1.
+fails_checks() {
+  local summary=$1 output=$2
+  {
+    echo "$summary"
+    echo
+    echo "Last 200 lines of its output:"
+    echo
+    echo '```'
+    tail -n 200 "$output"
+    echo '```'
+  } > "$scratch/fails.md"
+  file_issue "fails checks" "$scratch/fails.md" --label factory:proposed
+  exit 1
+}
+
+# A step that fails before anything is committed: abort the merge, push
+# nothing, and file the step's output.
+fails_before_commit() {
+  local step=$1 status=$2 log=$3
+  git merge --abort
+  echo "sync: $step failed with exit $status; $tag is not synced" >&2
+  fails_checks "Merging \`$tag\` ($sha) into \`$base\` stopped: \`$step\` failed with exit $status, so nothing was pushed." "$scratch/$log"
 }
 
 git fetch --quiet origin "$base"
@@ -90,29 +152,40 @@ if ! git merge --no-ff --no-commit "$tag" > "$scratch/merge.log" 2>&1; then
       echo "these paths, run \`factory/scripts/regenerate-routes.sh\` if \`$route_tree\`"
       echo "conflicts too, write \`$tag $sha\` to \`factory/UPSTREAM\`, and open the pull request."
     } > "$scratch/conflicts.md"
-    file_issue "Sync to $tag conflicts" "$scratch/conflicts.md"
+    file_issue conflicts "$scratch/conflicts.md"
     exit 1
   fi
   route_tree_conflicted=1
 fi
 
-untrusted=(env -u GH_TOKEN -u GITHUB_TOKEN)
-"${untrusted[@]}" vp i
+status=0
+run_untrusted install.log vp i || status=$?
+[[ $status == 0 ]] || fails_before_commit "vp i" "$status" install.log
 if [[ $route_tree_conflicted == 1 ]]; then
-  "${untrusted[@]}" factory/scripts/regenerate-routes.sh
+  run_untrusted regenerate.log factory/scripts/regenerate-routes.sh || status=$?
+  [[ $status == 0 ]] || fails_before_commit factory/scripts/regenerate-routes.sh "$status" regenerate.log
   git add "$route_tree"
 fi
 echo "$tag $sha" > factory/UPSTREAM
 git add factory/UPSTREAM
 git commit --quiet -m "sync: $tag"
 
-set +e
-"${untrusted[@]}" factory/scripts/check.sh 2>&1 | tee "$scratch/check.log"
-check_status=${PIPESTATUS[0]}
-set -e
+check_status=0
+run_untrusted check.log factory/scripts/check.sh || check_status=$?
 
-if ! git push --quiet origin "$branch"; then
+if ! git push --quiet origin "$branch" 2> "$scratch/push.log"; then
+  cat "$scratch/push.log" >&2
   echo "sync: push of $branch failed; $tag is not synced" >&2
+  {
+    echo "\`$branch\` merges \`$tag\` ($sha), but pushing it failed, so nothing reached \`$base\`."
+    echo "\`GITHUB_TOKEN\` cannot push changes under \`.github/workflows/\`; when the tag changes"
+    echo "upstream's workflows, the push needs a token with the workflows permission."
+    echo
+    echo '```'
+    tail -n 50 "$scratch/push.log"
+    echo '```'
+  } > "$scratch/push.md"
+  file_issue "cannot be pushed" "$scratch/push.md"
   exit 1
 fi
 
@@ -134,16 +207,7 @@ step=$(awk '/^check: / { step = substr($0, 8) } END { print step }' "$scratch/ch
   echo "\`$step\` failed (exit $check_status), so this stays a draft."
 } > "$scratch/pr.md"
 pr_url=$(gh pr create --draft --base "$base" --head "$branch" --title "sync: $tag" --body-file "$scratch/pr.md")
-{
-  echo "\`$branch\` merges \`$tag\` ($sha) cleanly, but \`$step\` failed with exit $check_status."
-  echo "Pull request: $pr_url"
-  echo
-  echo "Last 200 lines of its output:"
-  echo
-  echo '```'
-  awk '/^check: / { out = "" ; next } { out = out $0 "\n" } END { printf "%s", out }' "$scratch/check.log" |
-    tail -n 200
-  echo '```'
-} > "$scratch/fails.md"
-gh issue create --title "Sync to $tag fails checks" --label factory:proposed --body-file "$scratch/fails.md"
-exit 1
+awk '/^check: / { out = "" ; next } { out = out $0 "\n" } END { printf "%s", out }' \
+  "$scratch/check.log" > "$scratch/step.log"
+fails_checks "\`$branch\` merges \`$tag\` ($sha) cleanly, but \`$step\` failed with exit $check_status.
+Pull request: $pr_url" "$scratch/step.log"
