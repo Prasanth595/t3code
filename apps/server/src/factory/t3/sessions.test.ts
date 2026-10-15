@@ -197,6 +197,19 @@ describe("threadStatusOf", () => {
     assert.strictEqual(status.lastAssistantMessage, null);
   });
 
+  it("reports the last of the run's assistant messages, not the first", () => {
+    // A real run says something on the way ("looking") before its result line.
+    const status = statusOf(
+      [run(1, "completed")],
+      [
+        message(1, "assistant", "looking"),
+        message(1, "user", "carry on"),
+        message(1, "assistant", "FACTORY-DONE: ready"),
+      ],
+    );
+    assert.strictEqual(status.lastAssistantMessage, "FACTORY-DONE: ready");
+  });
+
   it("reports the thread's branch, worktree path and whether it is archived", () => {
     const status = statusOf([], [], thread("t3/abc", "/tmp/wt", "2026-10-05T06:39:38.376Z"));
     assert.strictEqual(status.branch, "t3/abc");
@@ -402,6 +415,38 @@ describe("FactorySessions.launch", () => {
     ),
   );
 
+  it.effect("rejects a blank command id as a sessions error without reaching T3", () =>
+    Effect.gen(function* () {
+      let launches = 0;
+      const error = yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        return yield* Effect.flip(sessions.launch({ ...request, commandId: "  " }));
+      }).pipe(
+        Effect.provide(
+          layerSessions(
+            {},
+            {
+              launch: () =>
+                Effect.sync(() => {
+                  launches += 1;
+                  return {
+                    threadId,
+                    resumed: false,
+                    projection: {
+                      thread: { branch: null, worktreePath: null },
+                    } as OrchestrationV2ThreadProjection,
+                  };
+                }),
+            },
+          ),
+        ),
+      );
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      assert.strictEqual(error.operation, "launch");
+      assert.strictEqual(launches, 0);
+    }),
+  );
+
   it.effect("fails as a sessions error when T3 rejects the launch", () =>
     Effect.gen(function* () {
       const sessions = yield* Sessions.FactorySessions;
@@ -507,6 +552,27 @@ describe("FactorySessions.status and thread", () => {
                 cause: new Error("a run row did not decode"),
               }),
             ),
+        }),
+      ),
+    ),
+  );
+
+  it.effect("a blank thread id names no thread", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      assert.strictEqual(
+        (yield* Effect.flip(sessions.status("")))._tag,
+        "FactoryThreadNotFoundError",
+      );
+      assert.strictEqual(
+        (yield* Effect.flip(sessions.thread("  ")))._tag,
+        "FactoryThreadNotFoundError",
+      );
+    }).pipe(
+      Effect.provide(
+        layerSessions({
+          getThread: () => Effect.die("a blank id must not reach the store"),
+          getThreadProjection: () => Effect.die("a blank id must not reach the store"),
         }),
       ),
     ),
