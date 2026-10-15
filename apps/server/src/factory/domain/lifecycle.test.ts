@@ -215,6 +215,12 @@ describe("lifecycle transitions", () => {
     expect(t.actions).toEqual(stuckActions("timeout"));
   });
 
+  it("needs info approved", () => {
+    const t = ok("needs-info", { kind: "approved" });
+    expect(t.next).toBe("ready");
+    expect(t.actions).toEqual([]);
+  });
+
   it("stuck approved", () => {
     const t = ok("stuck", { kind: "approved" });
     expect(t.next).toBe("ready");
@@ -270,6 +276,7 @@ const VALID: ReadonlyArray<readonly [State, string]> = [
   ["pr-open", "failed"],
   ["pr-open", "regate-failed"],
   ["pr-open", "instructor-feedback"],
+  ["needs-info", "approved"],
   ["stuck", "approved"],
 ];
 
@@ -299,8 +306,8 @@ describe("lifecycle transition table", () => {
         }
       }
     }
-    expect(validSeen).toBe(16);
-    expect(VALID).toHaveLength(16);
+    expect(validSeen).toBe(17);
+    expect(VALID).toHaveLength(17);
   });
 
   it("pr open accepts only failed, regate failed and instructor feedback", () => {
@@ -338,9 +345,9 @@ describe("lifecycle transition table", () => {
           action.kind === "set-label" ? [action.state] : [],
         );
         if (labels.length === 0) {
-          // Self-loops keep their label; a person already moved proposed/stuck to ready.
+          // Self-loops keep their label; a person already moved proposed/needs-info/stuck to ready.
           expect(
-            t.next === state || state === "proposed" || state === "stuck",
+            t.next === state || state === "proposed" || state === "needs-info" || state === "stuck",
             `${state} -> ${t.next} must set a label`,
           ).toBe(true);
         } else {

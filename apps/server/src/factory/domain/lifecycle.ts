@@ -127,7 +127,11 @@ const setLabel = (state: State): Action => ({ kind: "set-label", state });
 const tableRow = (state: State, event: Event): Transition | undefined => {
   switch (event.kind) {
     case "approved":
-      if (state === "proposed" || state === "stuck") return { next: "ready", actions: [] };
+      // softfac's table has no needs-info pair; its docs say an answered issue leaves needs-info
+      // when a person sets `factory:ready`. This deliberately follows the docs, not the table.
+      if (state === "proposed" || state === "needs-info" || state === "stuck") {
+        return { next: "ready", actions: [] };
+      }
       break;
     case "unapproved":
       if (state === "ready") {
