@@ -679,6 +679,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     const requestEvent = (
       eventId: string,
       requestId: string,
+      responseCapability: "live" | "message" = "message",
       kind: "user_input" | "command" = "user_input",
     ) =>
       ({
@@ -693,18 +694,23 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
           nativeRequestRef: null,
           kind,
           status: "pending",
-          responseCapability: { type: "message" },
+          responseCapability:
+            responseCapability === "live"
+              ? { type: "live", providerSessionId: ProviderSessionId.make("session:question") }
+              : { type: "message" },
           createdAt: now,
           resolvedAt: null,
         },
       }) satisfies OrchestrationV2DomainEvent;
-    const question = requestEvent("event:question", "request:question");
+    const question = requestEvent("event:question", "request:question", "live");
+    const asyncQuestion = requestEvent("event:async-question", "request:async-question");
     const answered = requestEvent("event:answered", "request:answered");
-    const approval = requestEvent("event:approval", "request:approval", "command");
+    const approval = requestEvent("event:approval", "request:approval", "message", "command");
     const eventSink = yield* EventSink.EventSinkV2;
     yield* eventSink.write({
       events: [
         question,
+        asyncQuestion,
         {
           ...answered,
           id: EventId.make("event:answered-resolved"),
@@ -720,16 +726,14 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
         (message) => message.notification !== undefined,
       ),
     );
-    yield* orchestrator.dispatch({
-      type: "delegated_task.wake-policy",
-      commandId: CommandId.make("question-wait-ended"),
-      parentThreadId,
-      taskId: task.id,
-      completionWake: "always",
-    });
-
-    yield* reactor.handle(question);
-    yield* reactor.handle(question);
+    yield* reactor.handle(asyncQuestion);
+    assert.equal(
+      (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
+        (message) => message.notification !== undefined,
+      ).length,
+      1,
+    );
+    yield* reactor.handle(asyncQuestion);
     yield* reactor.handle(answered);
     yield* reactor.handle(approval);
 
@@ -757,9 +761,9 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     )!;
     assert.equal(wakeRun.status, "queued");
     const resolved = {
-      ...question,
+      ...asyncQuestion,
       id: EventId.make("event:question-resolved"),
-      payload: { ...question.payload, status: "resolved" as const, resolvedAt: now },
+      payload: { ...asyncQuestion.payload, status: "resolved" as const, resolvedAt: now },
     };
     yield* eventSink.write({ events: [resolved] });
     yield* reactor.handle(resolved);
@@ -769,7 +773,63 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       )?.status,
       "cancelled",
     );
-
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:question-parent-completed"),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId: parentRun.id,
+          occurredAt: now,
+          payload: { ...parentRun, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    const terminalQuestion = requestEvent(
+      "event:terminal-question",
+      "request:terminal-question",
+      "live",
+    );
+    yield* eventSink.write({ events: [terminalQuestion] });
+    yield* reactor.handle(terminalQuestion);
+    assert.equal(
+      (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
+        (message) => message.notification !== undefined,
+      ).length,
+      2,
+    );
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:question-parent-running-again"),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId: parentRun.id,
+          occurredAt: now,
+          payload: { ...parentRun, status: "running", completedAt: null },
+        },
+      ],
+    });
+    yield* orchestrator.dispatch({
+      type: "delegated_task.wake-policy",
+      commandId: CommandId.make("terminal-question-wait-ended"),
+      parentThreadId,
+      taskId: task.id,
+      completionWake: "always",
+    });
+    const upgradedQuestion = requestEvent(
+      "event:upgraded-question",
+      "request:upgraded-question",
+      "live",
+    );
+    yield* eventSink.write({ events: [upgradedQuestion] });
+    yield* reactor.handle(upgradedQuestion);
+    assert.equal(
+      (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
+        (message) => message.notification !== undefined,
+      ).length,
+      3,
+    );
     const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs[0]!;
     yield* eventSink.write({
       commandId: CommandId.make("command:runtime-reconcile:question-followup"),
