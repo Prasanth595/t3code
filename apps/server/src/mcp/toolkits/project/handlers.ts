@@ -200,7 +200,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   message:
                     error._tag === "ThreadLaunchBranchExistsError"
                       ? `${error.message} No thread was created. Pass a new branch name, or omit branch to let T3 Code name it.`
-                      : `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
+                      : error._tag === "ThreadLaunchNotRepositoryError"
+                        ? `${error.message} No thread was created. Use workspaceStrategy type "root" to run in the project folder.`
+                        : `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
                           strategy.startFromOrigin === true
                             ? "; the project has no origin remote to fetch it from."
                             : ", or set startFromOrigin:true if it exists only on origin."
