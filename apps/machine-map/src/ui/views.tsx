@@ -1165,7 +1165,16 @@ function ApprovedClients() {
           ))}
         </ul>
       )}
-      <h3>Approved clients</h3>
+      <div className="row">
+        <h3 className="grow">Approved clients</h3>
+        <button
+          type="button"
+          className="btn small"
+          onClick={() => portal.open({ _tag: "inviteApp" })}
+        >
+          Invite an app
+        </button>
+      </div>
       {map.clients.length === 0 ? (
         <p className="small muted">No clients yet. Approve a waiting sign-in to add one.</p>
       ) : (

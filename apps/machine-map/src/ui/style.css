@@ -2880,3 +2880,15 @@ ul.alerts li.ended {
   stroke-dasharray: 1 7;
   stroke-linecap: round;
 }
+
+/* MM-913: the invite QR stays white in dark mode, so phone cameras read it. */
+.qr-box {
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background: #fff;
+  border: 3px solid var(--ink);
+}
+.break {
+  overflow-wrap: anywhere;
+}

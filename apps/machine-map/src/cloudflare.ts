@@ -182,8 +182,20 @@ export type ApprovalsApp = ReturnType<typeof decodeApprovalsApp>;
 /** The CNAME target of a tunnel. */
 export const tunnelTarget = (tunnelId: string): string => `${tunnelId}.cfargotunnel.com`;
 
-/** The app policy that holds every machine token. The portal edits no other policy. */
+/** The app policy that holds every machine token. */
 export const MACHINE_POLICY_NAME = "t3 machine map tokens";
+/**
+ * MM-911: the policy of the machine hostnames app that holds the app tokens of native clients.
+ * It is never on the `/connect` app, so a client token cannot connect as a machine. The portal
+ * edits no other policy.
+ */
+export const CLIENT_POLICY_NAME = "t3 client tokens";
+/** MM-914: the Access app of `/client`, where a native app reads its machines with its token. */
+const CLIENT_APP_NAME = "t3 portal client tokens";
+/** MM-914: the path of that app. */
+export const CLIENT_PATH = "/client";
+/** MM-913: the invite path. The Bypass Access app of `/enroll` covers it; the code is the credential. */
+export const INVITE_PATH = "/enroll/client";
 
 export interface OwnerSession {
   readonly name: string;
@@ -195,6 +207,23 @@ export interface OwnerSession {
 
 const isoFromSeconds = (seconds: number | undefined): string | null =>
   seconds === undefined ? null : new Date(seconds * 1000).toISOString();
+
+/** A refused Cloudflare API call, with its HTTP status. */
+export class CloudflareApiError extends Error {
+  override readonly name = "CloudflareApiError";
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** Runs a delete that may meet a resource that is gone already. A 404 counts as done. */
+export const goneIsDone = (work: Promise<void>): Promise<void> =>
+  work.catch((error: unknown) => {
+    if (error instanceof CloudflareApiError && error.status === 404) return;
+    throw error;
+  });
 
 export class CloudflareApi {
   readonly #token: string;
@@ -229,7 +258,10 @@ export class CloudflareApi {
     const envelope = decodeEnvelope(await response.json());
     if (!response.ok || !envelope.success) {
       const detail = envelope.errors.map((e) => `${e.code} ${e.message}`).join("; ");
-      throw new Error(`Cloudflare API ${method} ${path} failed: ${detail || response.status}`);
+      throw new CloudflareApiError(
+        response.status,
+        `Cloudflare API ${method} ${path} failed: ${detail || response.status}`,
+      );
     }
     return decode(envelope.result);
   }
@@ -277,18 +309,20 @@ export class CloudflareApi {
     return tokens.find((token) => token.client_id === clientId)?.id ?? null;
   }
 
-  async #machinePolicy(appId: string): Promise<Policy | undefined> {
+  async #tokenPolicy(appId: string, name: string): Promise<Policy | undefined> {
     const policies = await this.#call("GET", `/access/apps/${appId}/policies`, decodePolicies);
-    return policies.find((policy) => policy.name === MACHINE_POLICY_NAME);
+    return policies.find((policy) => policy.name === name);
   }
 
-  /** MM-201: adds the token to the machine token policy of the app. Creates the policy once. */
-  async addTokenToApp(appId: string, tokenId: string): Promise<void> {
+  /**
+   * MM-201, MM-911: adds the token to the token policy `name` of the app. Creates the policy once.
+   */
+  async addTokenToApp(appId: string, tokenId: string, name = MACHINE_POLICY_NAME): Promise<void> {
     const rule = { service_token: { token_id: tokenId } };
-    const policy = await this.#machinePolicy(appId);
+    const policy = await this.#tokenPolicy(appId, name);
     if (!policy) {
       await this.#call("POST", `/access/apps/${appId}/policies`, ignoreResult, {
-        name: MACHINE_POLICY_NAME,
+        name,
         decision: "non_identity",
         include: [rule],
       });
@@ -298,9 +332,13 @@ export class CloudflareApi {
     await this.#putPolicy(appId, policy, [...policy.include, rule]);
   }
 
-  /** MM-208: removes the token from the policy. An empty policy is deleted. */
-  async removeTokenFromApp(appId: string, tokenId: string): Promise<void> {
-    const policy = await this.#machinePolicy(appId);
+  /** MM-208, MM-915: removes the token from the policy `name`. An empty policy is deleted. */
+  async removeTokenFromApp(
+    appId: string,
+    tokenId: string,
+    name = MACHINE_POLICY_NAME,
+  ): Promise<void> {
+    const policy = await this.#tokenPolicy(appId, name);
     if (!policy) return;
     const include = policy.include.filter((rule) => ruleTokenId(rule) !== tokenId);
     if (include.length === policy.include.length) return;
@@ -473,6 +511,36 @@ export class CloudflareApi {
         },
       ],
     });
+  }
+
+  /**
+   * MM-914: creates the Access app of `/client` once. It lets in any service token of the account;
+   * the Worker then accepts only the token of a client. Returns its audience.
+   */
+  async ensureClientTokensApp(host: string): Promise<string> {
+    const found = await this.#call(
+      "GET",
+      `/access/apps?name=${encodeURIComponent(CLIENT_APP_NAME)}&exact=true`,
+      decodeApprovalsApps,
+    );
+    const existing = found.find((a) => a.name === CLIENT_APP_NAME);
+    if (existing) return (await this.approvalsApp(existing.id)).aud;
+    const domain = `${host}${CLIENT_PATH}`;
+    const app = await this.#call("POST", "/access/apps", decodeApprovalsApp, {
+      type: "self_hosted",
+      name: CLIENT_APP_NAME,
+      domain,
+      destinations: [{ type: "public", uri: domain }],
+      app_launcher_visible: false,
+      policies: [
+        {
+          name: CLIENT_POLICY_NAME,
+          decision: "non_identity",
+          include: [{ any_valid_service_token: {} }],
+        },
+      ],
+    });
+    return app.aud;
   }
 
   approvalsApp(appId: string): Promise<ApprovalsApp> {

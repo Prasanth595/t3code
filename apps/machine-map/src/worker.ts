@@ -3,15 +3,16 @@
  * `api.ts`, and calls the one Durable Object. Static pages come from Workers Static Assets.
  */
 import * as Schema from "effect/Schema";
-import { MachineId } from "@t3tools/contracts/machineMap";
+import { ClientEnrollRequest, ClientId, MachineId } from "@t3tools/contracts/machineMap";
 import { RESOURCE_RANGES } from "@t3tools/contracts/machineMapResources";
 
-import { approvalEmail, machineClientId, ownerEmail } from "./access.ts";
+import { approvalEmail, clientTokenId, machineClientId, ownerEmail } from "./access.ts";
 import {
   AddMachineRequest,
   ApproveClientRequest,
   ChangesRequest,
   CommandRequest,
+  InviteRequest,
   EnrollRequest,
   JoinCodeRequest,
   PushEndpointRequest,
@@ -19,7 +20,7 @@ import {
   RevisionRequest,
   ThresholdsRequest,
 } from "./api.ts";
-import { APPROVALS_MAX_SECONDS, APPROVALS_PATH } from "./cloudflare.ts";
+import { APPROVALS_MAX_SECONDS, APPROVALS_PATH, CLIENT_PATH, INVITE_PATH } from "./cloudflare.ts";
 import type { Env } from "./env.ts";
 import { MACHINE_CLIENT_ID_HEADER, type Outcome, type OwnerContext } from "./MachineMapObject.ts";
 import { fetchNewestRelease } from "./releases.ts";
@@ -101,10 +102,23 @@ async function grant(request: Request, env: Env, url: URL): Promise<Response> {
         ? body
         : toResponse(await stub.approveClient(owner, url.host, body));
     }
+    case "POST /invite": {
+      const body = await readBody(request, InviteRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.createInvite(owner, url.host, body));
+    }
     default:
       return fail(404, `No route ${request.method} ${url.pathname}.`);
   }
 }
+
+const RemoveClientRequest = Schema.Struct({ clientId: ClientId });
+
+/** MM-913: a phone browser that opens an invite link. The code is for the T3 app, not the page. */
+const INVITE_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>T3 invite</title><body style="font-family:system-ui;max-width:32rem;margin:3rem auto;padding:0 1rem">
+<h1>Open this invite in the T3 app</h1><p>Scan the QR code with the T3 app on your phone, or paste this link there. The page itself does nothing.</p>`;
 
 const integer = (value: string | null): number | null => {
   if (value === null || value.trim() === "") return null;
@@ -212,6 +226,18 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.approvalsStatus(owner, url.host));
     case "POST /clients/approvals":
       return toResponse(await stub.setUpApprovals(owner, url.host));
+    case "POST /clients/invites/cancel": {
+      const body = await readBody(request, RemoveClientRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.cancelInvites(owner, body.clientId));
+    }
+    case "POST /clients/remove": {
+      const body = await readBody(request, RemoveClientRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.removeClient(owner, body.clientId));
+    }
     case "POST /pending/:id/reject":
       return toResponse(await stub.rejectPendingClient(owner, id));
     case "POST /pending/:id/unblock":
@@ -249,6 +275,26 @@ export default {
       if (body instanceof Response) return body;
       const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
       return toResponse(await mapObject(env).enroll(ip, body.code));
+    }
+    if (url.pathname === INVITE_PATH) {
+      // MM-913: a Bypass Access app leaves this path open. The invite code is the credential.
+      if (request.method === "GET")
+        return new Response(INVITE_PAGE, {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      if (request.method !== "POST") return fail(405, "Use POST.");
+      const body = await readBody(request, ClientEnrollRequest);
+      if (body instanceof Response) return body;
+      const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      return toResponse(await mapObject(env).redeemInvite(ip, url.host, body));
+    }
+    if (url.pathname === `${CLIENT_PATH}/machines`) {
+      // MM-914: only the app token of a client gets its machines.
+      if (request.method !== "GET") return fail(405, "Use GET.");
+      const stub = mapObject(env);
+      const tokenId = await clientTokenId(request, env, await stub.clientAppAud());
+      if (!tokenId) return fail(403, "An app token of a client is required.");
+      return toResponse(await stub.machinesOfToken(tokenId));
     }
     if (url.pathname === "/connect") {
       // MM-104: only a valid machine token JWT of the /connect Access app connects.

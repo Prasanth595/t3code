@@ -94,6 +94,21 @@ export async function approvalEmail(
   return ownerEmails(env).includes(email) ? email : null;
 }
 
+/**
+ * MM-914: the client id of the service token that signed a `/client` request, or null. Its Access
+ * app lets in any token of the account; the portal then checks that a client holds it.
+ */
+export async function clientTokenId(
+  request: Request,
+  env: Env,
+  aud: string | null,
+): Promise<string | null> {
+  if (fakeAccess(request, env)) return request.headers.get("X-Dev-Client-Token-Id");
+  if (aud === null) return null;
+  const claims = decodeMachineClaims(await verify(request, env, aud));
+  return Option.isSome(claims) ? claims.value.common_name : null;
+}
+
 /** The client id of the machine token that signed a `/connect` request, or null. */
 export async function machineClientId(request: Request, env: Env): Promise<string | null> {
   if (fakeAccess(request, env)) return request.headers.get("X-Dev-Machine-Client-Id");

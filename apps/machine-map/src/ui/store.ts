@@ -7,12 +7,14 @@ import { MachineId, PortalEvent, type PortalSnapshot } from "@t3tools/contracts/
 import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
 import {
+  ClientInvitesEvent,
   EnrolledEvent,
   HealthEvent,
   PauseEvent,
   PendingClientsEvent,
   ResourceSampleEvent,
   type PauseView,
+  type ClientInvite,
   type PendingClient,
   type PendingRotation,
   type RotationsEvent,
@@ -29,6 +31,8 @@ export interface PortalState {
   readonly joins: Readonly<Record<string, number>>;
   /** MM-906: browser keys that wait for approval or that the owner rejected. Null until the first list. */
   readonly pending: ReadonlyArray<PendingClient> | null;
+  /** MM-913: invites of native apps that wait to be used. */
+  readonly invites: ReadonlyArray<ClientInvite>;
 }
 
 export type PageEvent =
@@ -38,7 +42,8 @@ export type PageEvent =
   | HealthEvent
   | ResourceSampleEvent
   | EnrolledEvent
-  | PendingClientsEvent;
+  | PendingClientsEvent
+  | ClientInvitesEvent;
 
 export const EMPTY_HEALTH: ResourcesOverview = { latest: {}, alerts: [], thresholds: {} };
 
@@ -49,6 +54,7 @@ export const INITIAL_STATE: PortalState = {
   health: EMPTY_HEALTH,
   joins: {},
   pending: null,
+  invites: [],
 };
 
 export function reduce(state: PortalState, event: PageEvent): PortalState {
@@ -57,6 +63,7 @@ export function reduce(state: PortalState, event: PageEvent): PortalState {
   if (event._tag === "pause") return { ...state, pause: event.pause };
   if (event._tag === "health") return { ...state, health: event.health };
   if (event._tag === "pendingClients") return { ...state, pending: event.pending };
+  if (event._tag === "clientInvites") return { ...state, invites: event.invites };
   if (event._tag === "resourceSample") {
     const latest = { ...state.health.latest, [event.machineId]: event.sample };
     return { ...state, health: { ...state.health, latest } };
@@ -151,6 +158,7 @@ const decodeEvent = Schema.decodeUnknownSync(
     ResourceSampleEvent,
     EnrolledEvent,
     PendingClientsEvent,
+    ClientInvitesEvent,
   ]),
 );
 

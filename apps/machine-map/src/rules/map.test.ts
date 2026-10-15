@@ -182,6 +182,41 @@ describe("checkEditableChanges", () => {
     expect(applyChanges(clientGone, undo).map.machines.map((m) => m.id)).toContain(WIN);
   });
 
+  it("sends app clients to their machines and keeps their token out of edits (MM-911, MM-912)", () => {
+    const withApp = applyChanges(threeMachines(), [
+      { _tag: "putClient", client: client({ serviceToken: { clientId: "phone.access" } }) },
+      {
+        _tag: "setClientArrow",
+        arrow: {
+          client: client().id,
+          to: MAC,
+          level: "standard",
+          expiresAt: null,
+          revertLevel: null,
+        },
+      },
+    ]).map;
+    expect(desiredState(withApp, MAC, false)?.clients?.map((c) => c.tokenClientId)).toEqual([
+      "phone.access",
+    ]);
+    expect(desiredState(withApp, VPS, false)?.clients).toEqual([]);
+    expect(() =>
+      checkEditableChanges(withApp, [
+        { _tag: "putClient", client: client({ serviceToken: { clientId: "other.access" } }) },
+      ]),
+    ).toThrow();
+    expect(() =>
+      checkEditableChanges(withApp, [{ _tag: "removeClient", clientId: client().id }]),
+    ).toThrow();
+    // Undo of a rename from before the app joined keeps the token (MM-720).
+    const rename = applyChanges(withApp, [
+      { _tag: "putClient", client: client({ name: "iPhone", serviceToken: null }) },
+    ]);
+    expect(() =>
+      checkEditableChanges(rename.map, undoChanges(rename.map, rename.inverse)),
+    ).not.toThrow();
+  });
+
   it("lets a browser key in only through an approval (MM-907)", () => {
     const map = applyChanges(threeMachines(), [{ _tag: "putClient", client: client() }]).map;
     const newKey = { thumbprint: "key-2", addedAt: "2026-10-02T00:00:00.000Z", describedAs: "x" };

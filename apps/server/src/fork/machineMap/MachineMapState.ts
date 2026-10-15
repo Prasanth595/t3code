@@ -34,6 +34,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import {
   type MachineGrant,
   isLocalDesktopSubject,
+  clientGrantFor,
   machineGrantFor,
   machineMcpAccessFor,
 } from "./machineAccess.ts";
@@ -59,6 +60,8 @@ const SavedState = Schema.Struct({
   desired: Schema.NullOr(MachineDesiredState).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** MM-1306: when `desired` arrived, in epoch milliseconds. Null in files from older builds. */
+  desiredAtMs: Schema.NullOr(Schema.Number).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** Commands this machine ran, newest last, so a command sent again does not run twice. */
   handledCommandIds: Schema.Array(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -73,6 +76,7 @@ const SavedState = Schema.Struct({
 export type SavedState = typeof SavedState.Type;
 const EMPTY_SAVED_STATE: SavedState = {
   desired: null,
+  desiredAtMs: null,
   handledCommandIds: [],
   pausedTaskIds: [],
   desktopCommands: [],
@@ -297,7 +301,10 @@ const make = Effect.gen(function* () {
     machineGrant: (tokenClientId) =>
       Effect.all([activeDesired, Clock.currentTimeMillis]).pipe(
         Effect.map(([desired, nowMs]) =>
-          desired === null ? undefined : machineGrantFor(desired, tokenClientId, nowMs),
+          desired === null
+            ? undefined
+            : (machineGrantFor(desired, tokenClientId, nowMs) ??
+              clientGrantFor(desired, tokenClientId, nowMs)),
         ),
       ),
     mcpClient: (session) =>

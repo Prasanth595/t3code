@@ -1,23 +1,33 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import type { MachineId, MachineKind, MapPosition } from "@t3tools/contracts/machineMap";
+import type {
+  ClientId,
+  MachineId,
+  MachineKind,
+  MachineLevel,
+  MapPosition,
+} from "@t3tools/contracts/machineMap";
 
 import {
   FORK_RELEASES_PAGE,
   type AddMachineRequest,
+  type ApprovalsStatus,
   type ForkRelease,
+  type InviteRequest,
+  type InviteResponse,
   type JoinCodeResponse,
   type WriteResult,
   type TunnelSetup,
 } from "../api.ts";
 import { usesText } from "../rules/access.ts";
-import { findArrow } from "../rules/map.ts";
+import { findArrow, LEVELS } from "../rules/map.ts";
 import { savePresetChange } from "../rules/presets.ts";
-import { callApi } from "./apiClient.ts";
+import { callApi, StepUpNeeded } from "./apiClient.ts";
 import { usePortalContext, type Dialog } from "./context.ts";
 import { confirmResume, EmergencyButton } from "./emergency.tsx";
 import { COMMAND_LABEL, LEVEL_LABEL, timeUntil } from "./format.ts";
 import { CopyIcon, KindIcon } from "./icons.tsx";
 import { playJoinSound, showJoinEffects } from "./panicEffects.ts";
+import { QrCodeSvg } from "./QrCode.tsx";
 import {
   INSTALL_TARGET_LABEL,
   INSTALL_TARGETS,
@@ -162,6 +172,13 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
       );
     case "savePreset":
       return <SavePresetDialog close={close} />;
+    case "inviteApp":
+      return (
+        <InviteAppDialog
+          close={close}
+          {...(dialog.clientId ? { clientId: dialog.clientId } : {})}
+        />
+      );
     case "importSettings":
       return <ImportSettingsDialog close={close} />;
     case "emergency":
@@ -583,6 +600,199 @@ function NewJoinCodeDialog(props: {
 }
 
 /** MM-705. */
+/**
+ * MM-913: an invite for a native app. Making it needs the passkey check of MM-1207, because the
+ * app gets the access of its client. The QR holds the only copy of the code.
+ */
+function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () => void }) {
+  const portal = usePortalContext();
+  const { map, now } = portal;
+  const existing = clientId === undefined ? undefined : map.clients.find((c) => c.id === clientId);
+  const [name, setName] = useState("");
+  const [arrows, setArrows] = useState<Record<string, MachineLevel>>({});
+  const [needsPasskey, setNeedsPasskey] = useState(false);
+  const [invite, setInvite] = useState<InviteResponse | null>(null);
+  const [status, setStatus] = useState<ApprovalsStatus | null>(null);
+  const { pending, error, run } = useAction();
+
+  // MM-1208: an invite needs the approvals app, so a fresh portal offers to set it up here too.
+  useEffect(() => {
+    let current = true;
+    callApi<ApprovalsStatus>("GET", "/api/clients/approvals")
+      .then((next) => current && setStatus(next))
+      .catch(
+        (reason: unknown) =>
+          current &&
+          setStatus({
+            _tag: "missing",
+            reason: reason instanceof Error ? reason.message : String(reason),
+          }),
+      );
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  const create = () =>
+    run(async () => {
+      const request: InviteRequest = existing
+        ? { client: { _tag: "existing", clientId: existing.id }, arrows: [] }
+        : {
+            client: { _tag: "new", name: name.trim() },
+            arrows: map.machines.flatMap((machine) => {
+              const level = arrows[machine.id] ?? "none";
+              return level === "none" ? [] : [{ to: machine.id, level }];
+            }),
+          };
+      try {
+        setInvite(await callApi<InviteResponse>("POST", "/api/grant/invite", request));
+      } catch (reason) {
+        if (reason instanceof StepUpNeeded) setNeedsPasskey(true);
+        throw reason;
+      }
+    });
+
+  return (
+    <Modal
+      title={existing ? `Invite an app into ${existing.name}` : "Invite an app"}
+      onClose={close}
+    >
+      {invite ? (
+        <div className="stack">
+          <div className="qr-box">
+            <QrCodeSvg value={invite.url} />
+          </div>
+          <p className="small">
+            Scan this with the T3 app on the phone. It works once and expires{" "}
+            {timeUntil(invite.expiresAt, now)}. Close this dialog when the phone joined.
+          </p>
+          <p className="small mono break">{invite.url}</p>
+          <div className="actions end">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void navigator.clipboard.writeText(invite.url)}
+            >
+              <CopyIcon />
+              Copy link
+            </button>
+            <button
+              type="button"
+              className="btn danger"
+              onClick={() =>
+                portal.call(async () => {
+                  await callApi("POST", "/api/clients/invites/cancel", {
+                    clientId: invite.clientId,
+                  });
+                  close();
+                }, "The invite no longer works.")
+              }
+            >
+              Cancel invite
+            </button>
+            <button type="button" className="btn primary" onClick={close}>
+              Done
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            create();
+          }}
+        >
+          <p className="small muted">
+            The app gets its own token. Remove the client to end the token at once.
+          </p>
+          {status?._tag === "missing" && (
+            <div className="row callout">
+              <div className="v">{status.reason}</div>
+              <button
+                type="button"
+                className="btn small"
+                disabled={pending}
+                onClick={() =>
+                  run(async () => {
+                    setStatus(await callApi<ApprovalsStatus>("POST", "/api/clients/approvals"));
+                  })
+                }
+              >
+                Set up approvals
+              </button>
+            </div>
+          )}
+          {!existing && (
+            <>
+              <label className="field">
+                Name
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  data-autofocus
+                  required
+                  autoComplete="off"
+                  placeholder="Pixel"
+                />
+              </label>
+              {map.machines.map((machine) => (
+                <label className="field inline" key={machine.id}>
+                  {machine.name}
+                  <select
+                    value={arrows[machine.id] ?? "none"}
+                    onChange={(e) => {
+                      const level = LEVELS.find((l) => l === e.target.value) ?? "none";
+                      setArrows({ ...arrows, [machine.id]: level });
+                    }}
+                  >
+                    {LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {LEVEL_LABEL[level]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </>
+          )}
+          {existing?.serviceToken && (
+            <p className="hint">
+              The app token of {existing.name} ends when the new invite is used.
+            </p>
+          )}
+          <ErrorLine error={error} />
+          <div className="actions end">
+            <button type="button" className="btn" onClick={close}>
+              Cancel
+            </button>
+            {needsPasskey ? (
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() => {
+                  location.href = `/api/grant/start?then=${encodeURIComponent(location.hash)}`;
+                }}
+              >
+                Confirm with passkey
+              </button>
+            ) : (
+              <button
+                type="submit"
+                className="btn primary"
+                disabled={pending || status?._tag !== "ready"}
+              >
+                Create invite
+              </button>
+            )}
+          </div>
+          {needsPasskey && <p className="hint">After the passkey, open this invite again.</p>}
+        </form>
+      )}
+    </Modal>
+  );
+}
+
 function SavePresetDialog({ close }: { close: () => void }) {
   const portal = usePortalContext();
   const [name, setName] = useState("");
@@ -752,6 +962,11 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
           ),
       });
     }
+    out.push({
+      label: "Invite an app",
+      kind: "action",
+      run: () => portal.open({ _tag: "inviteApp" }),
+    });
     // MM-904, MM-907: clients and the sign-ins that wait for approval.
     for (const client of map.clients) {
       out.push({

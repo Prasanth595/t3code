@@ -276,6 +276,33 @@ export const ApproveClientRequest = Schema.Struct({
 });
 export type ApproveClientRequest = typeof ApproveClientRequest.Type;
 
+/**
+ * POST /api/grant/invite (MM-913): an invite for a native app, into a new client with these
+ * arrows or into an existing client with its own arrows. A new invite ends the older ones.
+ */
+export const InviteRequest = Schema.Struct({
+  client: ApproveClientRequest.fields.client,
+  arrows: ApproveClientRequest.fields.arrows,
+});
+export type InviteRequest = typeof InviteRequest.Type;
+
+/** MM-913: a waiting invite of a native app, without its code. */
+export const ClientInvite = Schema.Struct({ clientId: ClientId, expiresAt: Text });
+export type ClientInvite = typeof ClientInvite.Type;
+
+/** Page event with every waiting invite, on connection and on each change. */
+export const ClientInvitesEvent = Schema.TaggedStruct("clientInvites", {
+  invites: Schema.Array(ClientInvite),
+});
+export type ClientInvitesEvent = typeof ClientInvitesEvent.Type;
+
+export interface InviteResponse {
+  readonly clientId: ClientId;
+  /** The QR and the link: `https://<portal>/enroll/client#code=<code>`. */
+  readonly url: string;
+  readonly expiresAt: string;
+}
+
 /** GET /api/clients/approvals (MM-1208): whether approvals work, and why not. */
 export type ApprovalsStatus =
   | { readonly _tag: "ready" }

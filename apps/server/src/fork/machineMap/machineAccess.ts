@@ -5,6 +5,8 @@
 import {
   type ArrowRecord,
   type AuthEnvironmentScope,
+  clientSessionSubject,
+  type DesiredClient,
   type AuthMcpClientAccess,
   MACHINE_LEVEL_SCOPES,
   type MachineDesiredState,
@@ -55,7 +57,43 @@ export const machineGrantFor = (
   };
 };
 
+/**
+ * MM-912: the grant for the native client whose app token signed the request. A client token is
+ * never an owner subject, so without this grant it gets nothing. Undefined for `none`.
+ */
+export const clientGrantFor = (
+  desired: MachineDesiredState,
+  tokenClientId: string,
+  nowMs: number,
+): MachineGrant | undefined => {
+  const client = desired.clients?.find((candidate) => candidate.tokenClientId === tokenClientId);
+  if (client === undefined) return undefined;
+  const level = effectiveLevel(client, nowMs);
+  if (level === "none") return undefined;
+  return {
+    subject: clientSessionSubject(client.id),
+    scopes: MACHINE_LEVEL_SCOPES[level],
+    label: `client ${client.name}`,
+  };
+};
+
+/**
+ * MM-912: the clients whose level on this machine changed between two desired states, read like
+ * `sourcesWithChangedLevel`. A client that left the desired state counts as a change to `none`.
+ */
+export const clientsWithChangedLevel = (
+  previous: MachineDesiredState | null,
+  previousAtMs: number | null,
+  next: MachineDesiredState | null,
+  nowMs: number,
+): ReadonlyArray<DesiredClient["id"]> => {
+  const clients = (desired: MachineDesiredState | null) =>
+    (desired?.clients ?? []).map((client) => [client.id, client] as const);
+  return sourcesWithChangedLevel(clients(previous), previousAtMs, clients(next), nowMs);
+};
+
 const MACHINE_SUBJECT_PREFIX = "machine:";
+const CLIENT_SUBJECT_PREFIX = "client:";
 
 /** The peer of a session subject `machine:<id>`, or undefined for any other subject. */
 const peerOfSubject = (desired: MachineDesiredState, subject: string): PeerMachine | undefined =>
@@ -66,6 +104,10 @@ const peerOfSubject = (desired: MachineDesiredState, subject: string): PeerMachi
     : undefined;
 
 export const isMachineSubject = (subject: string) => subject.startsWith(MACHINE_SUBJECT_PREFIX);
+
+/** A session that exists only through the map: a machine (MM-1305) or a client (MM-912). */
+export const isMapSubject = (subject: string) =>
+  isMachineSubject(subject) || subject.startsWith(CLIENT_SUBJECT_PREFIX);
 
 /**
  * MM-1307: the MCP access of a machine session, or undefined when its arrow has no agent tools.
@@ -107,16 +149,27 @@ export const isMachineRequestNamespace = (requestNamespace: string) =>
 type Leveled = Pick<ArrowRecord, "level" | "expiresAt" | "revertLevel">;
 
 /**
- * MM-1306: the sources whose sessions must end. A session got the level that its arrow had when the
- * desired state arrived, so the old side reads the raw level and the new side the level now. An
- * arrow that expired between the two states then counts as a change, and its sessions end.
+ * MM-1306: the sources whose sessions must end. A session got the level of its arrow at the time
+ * the old desired state arrived (`previousAtMs`), so the old side reads that level and the new
+ * side the level now. An arrow that expired between the two states then counts as a change, and
+ * an arrow that had expired before the old state arrived does not. A state saved before the time
+ * was kept (`null`) reads its raw level.
  */
 const sourcesWithChangedLevel = <K>(
   previous: ReadonlyArray<readonly [K, Leveled]>,
+  previousAtMs: number | null,
   next: ReadonlyArray<readonly [K, Leveled]>,
   nowMs: number,
 ): ReadonlyArray<K> => {
-  const before = new Map(previous.map(([source, arrow]) => [source, arrow.level] as const));
+  const before = new Map(
+    previous.map(
+      ([source, arrow]) =>
+        [
+          source,
+          previousAtMs === null ? arrow.level : effectiveLevel(arrow, previousAtMs),
+        ] as const,
+    ),
+  );
   const after = new Map(
     next.map(([source, arrow]) => [source, effectiveLevel(arrow, nowMs)] as const),
   );
@@ -131,6 +184,7 @@ const sourcesWithChangedLevel = <K>(
  */
 export const peersWithChangedLevel = (
   previous: MachineDesiredState | null,
+  previousAtMs: number | null,
   next: MachineDesiredState | null,
   nowMs: number,
 ): ReadonlyArray<MachineId> => {
@@ -138,7 +192,31 @@ export const peersWithChangedLevel = (
     (desired?.arrowsIn ?? [])
       .filter((arrow) => arrow.to === desired?.self.id)
       .map((arrow) => [arrow.from, arrow] as const);
-  return sourcesWithChangedLevel(arrowsIn(previous), arrowsIn(next), nowMs);
+  return sourcesWithChangedLevel(arrowsIn(previous), previousAtMs, arrowsIn(next), nowMs);
+};
+
+/**
+ * MM-304, MM-912: the next arrow into this machine that expires after `afterMs`, with the session
+ * subjects whose level drops at that time. Undefined when no arrow expires later.
+ */
+export const nextExpiry = (
+  desired: MachineDesiredState,
+  afterMs: number,
+): { readonly atMs: number; readonly subjects: ReadonlyArray<string> } | undefined => {
+  const expiring = [
+    ...desired.arrowsIn
+      .filter((arrow) => arrow.to === desired.self.id)
+      .map((arrow) => [machineSessionSubject(arrow.from), arrow] as const),
+    ...(desired.clients ?? []).map((client) => [clientSessionSubject(client.id), client] as const),
+  ].flatMap(([subject, arrow]) => {
+    if (arrow.expiresAt === null || (arrow.revertLevel ?? "none") === arrow.level) return [];
+    const atMs = Date.parse(arrow.expiresAt);
+    // A time that does not parse never fires, and the portal revision still ends the sessions.
+    return atMs > afterMs ? [{ subject, atMs }] : [];
+  });
+  if (expiring.length === 0) return undefined;
+  const atMs = Math.min(...expiring.map((e) => e.atMs));
+  return { atMs, subjects: expiring.filter((e) => e.atMs === atMs).map((e) => e.subject) };
 };
 
 /** MM-306: the peers this machine can use, with the origin of their T3 server. */

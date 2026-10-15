@@ -36,6 +36,7 @@ import {
   type SettingValues,
   TrimmedNonEmptyString,
   isMachineLocalSetting,
+  clientSessionSubject,
   machineSessionSubject,
   withoutMachineLocalSettings,
 } from "@t3tools/contracts";
@@ -70,7 +71,13 @@ import * as ServerConfig from "../../config.ts";
 import * as EnvironmentTheme from "../../environmentTheme.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { isMachineSubject, peersWithChangedLevel, reachablePeers } from "./machineAccess.ts";
+import {
+  clientsWithChangedLevel,
+  isMapSubject,
+  nextExpiry,
+  peersWithChangedLevel,
+  reachablePeers,
+} from "./machineAccess.ts";
 import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachineResources from "./MachineResources.ts";
@@ -337,13 +344,19 @@ const make = Effect.gen(function* () {
   const applyDesired = (desired: MachineDesiredState) =>
     Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
-      const before = (yield* state.snapshot).saved.desired;
+      const { desired: before, desiredAtMs: beforeAtMs } = (yield* state.snapshot).saved;
       // Save first: the auth hooks read the saved state, so the new levels hold before any
       // session of a changed peer ends and it pairs again.
-      yield* state.updateSaved((saved) => ({ ...saved, desired }));
-      const changed = new Set(
-        peersWithChangedLevel(before, desired, nowMs).map((peer) => machineSessionSubject(peer)),
-      );
+      yield* state.updateSaved((saved) => ({ ...saved, desired, desiredAtMs: nowMs }));
+      const changed = new Set([
+        ...peersWithChangedLevel(before, beforeAtMs, desired, nowMs).map((peer) =>
+          machineSessionSubject(peer),
+        ),
+        // MM-912: a client whose level changed pairs again with its app token, or not at all.
+        ...clientsWithChangedLevel(before, beforeAtMs, desired, nowMs).map((id) =>
+          clientSessionSubject(id),
+        ),
+      ]);
       if (changed.size > 0) {
         yield* revokeSessions((subject) => changed.has(subject));
       }
@@ -517,12 +530,18 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Forgets the token, the desired state and the desktop commands, and ends machine sessions.
+   * Forgets the token, the desired state and the desktop commands, and ends machine and client
+   * sessions.
    * The token goes last: its change restarts the connection fiber, which may be the caller.
    */
   const forgetMap = Effect.gen(function* () {
-    yield* state.updateSaved((saved) => ({ ...saved, desired: null, desktopCommands: [] }));
-    yield* revokeSessions(isMachineSubject).pipe(Effect.ignore({ log: true }));
+    yield* state.updateSaved((saved) => ({
+      ...saved,
+      desired: null,
+      desiredAtMs: null,
+      desktopCommands: [],
+    }));
+    yield* revokeSessions(isMapSubject).pipe(Effect.ignore({ log: true }));
     yield* state.setToken(null);
   });
 
@@ -630,8 +649,8 @@ const make = Effect.gen(function* () {
       Stream.fromEffect(
         Effect.gen(function* () {
           if (next.turnedOff) {
-            // MM-1301: off means no change to auth, so no machine session stays.
-            yield* revokeSessions(isMachineSubject).pipe(
+            // MM-1301: off means no change to auth, so no machine or client session stays.
+            yield* revokeSessions(isMapSubject).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Machine map could not end machine sessions.", {
                   cause: Cause.pretty(cause),
@@ -649,6 +668,47 @@ const make = Effect.gen(function* () {
                 }),
           ),
         ),
+      ),
+    ),
+    Stream.runDrain,
+  );
+
+  // --- MM-304, MM-912: an arrow that expires ends its sessions at its expiry -----------------
+
+  /**
+   * Sleeps until the next arrow expiry of the saved desired state, then ends the sessions of that
+   * source, also while the portal is unreachable. A new desired state starts it again from its
+   * arrival, because `applyDesired` handled every expiry before that. After a restart it starts
+   * from the arrival of the saved state, so an expiry during the downtime ends its sessions too;
+   * one that ended them before the restart ends the newer sessions of that source once more.
+   */
+  const watchExpiries = state.changes.pipe(
+    Stream.map((local) =>
+      local.enabled ? { desired: local.saved.desired, atMs: local.saved.desiredAtMs } : null,
+    ),
+    Stream.changesWith((left, right) => left?.desired === right?.desired),
+    Stream.switchMap((current) =>
+      Stream.fromEffect(
+        Effect.gen(function* () {
+          const desired = current?.desired ?? null;
+          if (desired === null) return;
+          let afterMs = current?.atMs ?? (yield* Clock.currentTimeMillis);
+          for (;;) {
+            const next = nextExpiry(desired, afterMs);
+            if (next === undefined) return;
+            const waitMs = next.atMs - (yield* Clock.currentTimeMillis);
+            if (waitMs > 0) yield* Effect.sleep(Duration.millis(waitMs));
+            const subjects = new Set(next.subjects);
+            yield* revokeSessions((subject) => subjects.has(subject)).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Machine map could not end the sessions of an expired arrow.", {
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
+            afterMs = next.atMs;
+          }
+        }),
       ),
     ),
     Stream.runDrain,
@@ -1096,6 +1156,7 @@ const make = Effect.gen(function* () {
   );
   yield* forkParked(superviseConnection);
   yield* forkParked(watchLocalSettings);
+  yield* forkParked(watchExpiries);
   yield* forkParked(statusLoop);
   yield* forkParked(joinPendingCode);
 

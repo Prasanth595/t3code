@@ -23,7 +23,7 @@ Create these Access apps before the first deploy:
 2. **Machine connections.** Self-hosted app for `t3.yarden-zamir.com/connect`. Give it no identity login. The portal adds a "Service Auth" policy named `t3 machine map tokens` for the machine tokens. Copy its audience tag into `CONNECT_AUD` and its app id into `CONNECT_ACCESS_APP_ID`.
 3. **Enrollment.** Self-hosted app for `t3.yarden-zamir.com/enroll` with one Bypass policy for everyone. The join code is the credential (MM-204).
 
-`MACHINE_ACCESS_APP_ID` is the Access app of the machine hostnames. The portal adds each new machine token to its `t3 machine map tokens` policy and edits no other policy. It also adds and removes the hostname of each machine tunnel (MM-213). That update sends back the whole app with its policies, and the portal checks that the app keeps each policy.
+`MACHINE_ACCESS_APP_ID` is the Access app of the machine hostnames. The portal adds each new machine token to its `t3 machine map tokens` policy, and each app token of a native client to its `t3 client tokens` policy (MM-911). It edits no other policy. It also adds and removes the hostname of each machine tunnel (MM-213). That update sends back the whole app with its policies, and the portal checks that the app keeps each policy.
 
 `MACHINE_DOMAIN` and `MACHINE_ZONE_ID` in `wrangler.jsonc` name the DNS zone of the machine hostnames. A new machine gets `t3-<slug>.<MACHINE_DOMAIN>`.
 
@@ -38,6 +38,8 @@ The portal makes the Access app of `t3.yarden-zamir.com/api/grant` itself: "Set 
 3. Do not turn on **Apply global MFA settings by default**. Only the approval path needs MFA.
 
 Cloudflare asks you to register the passkey at the first approval.
+
+"Set up approvals" also creates the Access app `t3 portal client tokens` for `t3.yarden-zamir.com/client` (MM-914). It lets in any service token of the account, and the Worker answers only for a token that a client holds. The `/enroll` Bypass app above also covers the app invite path `/enroll/client` (MM-913).
 
 ## Secrets
 

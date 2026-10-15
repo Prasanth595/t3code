@@ -16,6 +16,7 @@ import type {
 import {
   applyChanges,
   findArrow,
+  findClient,
   findClientArrow,
   findMachine,
   levelRank,
@@ -101,7 +102,7 @@ export const arrowRaises = (previous: ArrowRecord, next: ArrowRecord): boolean =
 export const clientArrowRaises = (previous: ClientArrowRecord, next: ClientArrowRecord): boolean =>
   levelRaises(previous, next);
 
-/** True when a client change gives a browser more access: a higher arrow or a new key. */
+/** True when a client change gives more access: a higher arrow, a new key or a new app token. */
 function clientRaises(map: MachineMapDocument, change: MapChange): boolean {
   if (change._tag === "setClientArrow") {
     return clientArrowRaises(
@@ -109,9 +110,15 @@ function clientRaises(map: MachineMapDocument, change: MapChange): boolean {
       change.arrow,
     );
   }
+  if (change._tag === "addClientKey")
+    return map.clientArrows.some((arrow) => arrow.client === change.clientId);
   // A new client has no arrows yet; its arrows count as their own changes.
-  if (change._tag !== "addClientKey") return false;
-  return map.clientArrows.some((arrow) => arrow.client === change.clientId);
+  if (change._tag !== "putClient") return false;
+  const previous = findClient(map, change.client.id);
+  const newToken =
+    change.client.serviceToken !== null &&
+    change.client.serviceToken.clientId !== previous?.serviceToken?.clientId;
+  return newToken && map.clientArrows.some((arrow) => arrow.client === change.client.id);
 }
 
 /** MM-807: client changes that only the owner makes. */

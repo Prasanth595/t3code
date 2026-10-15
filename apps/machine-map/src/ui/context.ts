@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type {
+  ClientId,
   CommandDelivery,
   MachineCommandInput,
   MachineId,
@@ -12,6 +13,7 @@ import type {
 import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
 import type {
+  ClientInvite,
   PauseView,
   PendingClient,
   PendingRotation,
@@ -48,6 +50,8 @@ export type Dialog =
   | { readonly _tag: "newJoinCode"; readonly machineId: MachineId; readonly machineName: string }
   | { readonly _tag: "savePreset" }
   | { readonly _tag: "importSettings" }
+  /** MM-913: an invite QR for a native app, for a new client or for `clientId`. */
+  | { readonly _tag: "inviteApp"; readonly clientId?: ClientId }
   /** MM-708: the big red button, opened from the command palette. */
   | { readonly _tag: "emergency" }
   | {
@@ -75,6 +79,8 @@ export interface Portal {
   readonly joins: Readonly<Record<string, number>>;
   /** MM-906: browser keys that wait for approval or that the owner rejected. Null until the first list. */
   readonly pending: ReadonlyArray<PendingClient> | null;
+  /** MM-913: invites of native apps that wait to be used. */
+  readonly invites: ReadonlyArray<ClientInvite>;
   readonly draft: ReadonlyArray<DraftChange> | null;
   readonly now: number;
   readonly route: Route;
