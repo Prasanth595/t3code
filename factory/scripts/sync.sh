@@ -14,6 +14,8 @@
 # Run daily by .github/workflows/factory-sync.yml with GITHUB_TOKEN. Pull
 # requests opened with that token trigger no workflows, which is why the checks
 # run here and the merge happens only when they pass. Needs git, gh and vp.
+# GH_TOKEN is kept from `vp i`, the generator and check.sh, which run upstream's
+# code; only git push and gh see it.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -27,6 +29,10 @@ tag=$(git ls-remote --refs --tags --sort=-version:refname "$upstream" 'v*-nightl
   awk 'NR == 1 { sub(".*refs/tags/", ""); print }')
 if [[ -z $tag ]]; then
   echo "sync: no v*-nightly.* tag at $upstream" >&2
+  exit 1
+fi
+if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]+\.[0-9]+$ ]]; then
+  echo "sync: unexpected tag name: $tag" >&2
   exit 1
 fi
 echo "newest nightly: $tag"
@@ -61,8 +67,13 @@ sha=$(git rev-parse "$tag^{commit}")
 git checkout --quiet -B "$branch" "origin/$base"
 
 route_tree_conflicted=0
-if ! git merge --no-ff --no-commit "$tag" > /dev/null 2>&1; then
+if ! git merge --no-ff --no-commit "$tag" > "$scratch/merge.log" 2>&1; then
   conflicts=$(git diff --name-only --diff-filter=U)
+  if [[ -z $conflicts ]]; then
+    echo "sync: git merge $tag failed:" >&2
+    cat "$scratch/merge.log" >&2
+    exit 1
+  fi
   others=$(grep -vxF "$route_tree" <<< "$conflicts" || true)
   if [[ -n $others ]]; then
     git merge --abort
@@ -82,9 +93,10 @@ if ! git merge --no-ff --no-commit "$tag" > /dev/null 2>&1; then
   route_tree_conflicted=1
 fi
 
-vp i
+untrusted=(env -u GH_TOKEN -u GITHUB_TOKEN)
+"${untrusted[@]}" vp i
 if [[ $route_tree_conflicted == 1 ]]; then
-  factory/scripts/regenerate-routes.sh
+  "${untrusted[@]}" factory/scripts/regenerate-routes.sh
   git add "$route_tree"
 fi
 echo "$tag $sha" > factory/UPSTREAM
@@ -92,11 +104,14 @@ git add factory/UPSTREAM
 git commit --quiet -m "sync: $tag"
 
 set +e
-factory/scripts/check.sh 2>&1 | tee "$scratch/check.log"
+"${untrusted[@]}" factory/scripts/check.sh 2>&1 | tee "$scratch/check.log"
 check_status=${PIPESTATUS[0]}
 set -e
 
-git push --quiet origin "$branch"
+if ! git push --quiet origin "$branch"; then
+  echo "sync: push of $branch failed; $tag is not synced" >&2
+  exit 1
+fi
 
 if [[ $check_status == 0 ]]; then
   {
@@ -128,3 +143,4 @@ pr_url=$(gh pr create --draft --base "$base" --head "$branch" --title "sync: $ta
   echo '```'
 } > "$scratch/fails.md"
 gh issue create --title "Sync to $tag fails checks" --label factory:proposed --body-file "$scratch/fails.md"
+exit 1
