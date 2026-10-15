@@ -129,4 +129,35 @@ describe("McpProviderSessions html_render pages", () => {
       assert.deepStrictEqual(yield* sessions.takeHtmlRender(threadId, revenue), page("second"));
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
+
+  it.effect("keeps the most recent 64 pages of each thread", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const otherThreadId = ThreadId.make("thread-mcp-provider-sessions-other");
+      yield* sessions.recordHtmlRender(threadId, revenue, page("pending"));
+      for (let index = 0; index < 64; index++) {
+        yield* sessions.recordHtmlRender(otherThreadId, revenue, page(`other-${index}`));
+      }
+
+      // Another thread's pages neither evict this thread's page nor match its call.
+      assert.deepStrictEqual(yield* sessions.takeHtmlRender(threadId, revenue), page("pending"));
+      assert.deepStrictEqual(
+        yield* sessions.takeHtmlRender(otherThreadId, revenue, page("other-0")),
+        page("other-0"),
+      );
+
+      for (let index = 0; index <= 64; index++) {
+        yield* sessions.recordHtmlRender(threadId, revenue, page(`own-${index}`));
+      }
+      // The thread's own newer pages evict its oldest page.
+      assert.strictEqual(
+        yield* sessions.takeHtmlRender(threadId, revenue, page("own-0")),
+        undefined,
+      );
+      assert.deepStrictEqual(
+        yield* sessions.takeHtmlRender(threadId, revenue, page("own-1")),
+        page("own-1"),
+      );
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
 });

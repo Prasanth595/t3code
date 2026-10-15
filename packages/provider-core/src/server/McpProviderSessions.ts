@@ -16,8 +16,8 @@ import * as Ref from "effect/Ref";
 
 import type { McpProviderSessionConfig } from "./mcpSession.ts";
 
-// Agents that report results never take their pages, so only the most recent
-// pages are kept. A page is taken as soon as its call completes.
+// Agents that report results never take their pages, so only each thread's
+// most recent pages are kept. A page is taken as soon as its call completes.
 const MAX_KEPT_HTML_RENDERS = 64;
 
 // Antigravity bounds each long string of a call's input to its last 8,000
@@ -29,7 +29,6 @@ const BOUNDED_TEXT_MARKER = "[Earlier output truncated]\n\n";
 const KEPT_HTML_END_LENGTH = 8_000;
 
 interface KeptHtmlRender {
-  readonly threadId: ThreadId;
   readonly title: string;
   readonly height: number;
   readonly htmlLength: number;
@@ -82,7 +81,6 @@ export class McpProviderSessions extends Context.Service<
 /** The one kept page these arguments match, or -1 when they match none or several. */
 const matchingPageIndex = (
   kept: ReadonlyArray<KeptHtmlRender>,
-  threadId: ThreadId,
   input: { readonly html?: unknown; readonly title?: unknown; readonly height?: unknown },
 ): number => {
   const html = input.html;
@@ -95,12 +93,7 @@ const matchingPageIndex = (
       ? Number(input.height)
       : input.height;
   const matches = kept.flatMap((page, index) =>
-    page.threadId === threadId &&
-    page.title === input.title &&
-    page.height === height &&
-    isPageHtml(page, html)
-      ? [index]
-      : [],
+    page.title === input.title && page.height === height && isPageHtml(page, html) ? [index] : [],
   );
   // Pages the arguments cannot tell apart could belong to any of their calls.
   return matches.length === 1 ? matches[0]! : -1;
@@ -108,7 +101,7 @@ const matchingPageIndex = (
 
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
-  const htmlRenders = yield* Ref.make<ReadonlyArray<KeptHtmlRender>>([]);
+  const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
   return McpProviderSessions.of({
     set: (config) =>
       Ref.update(sessions, (current) => new Map(current).set(config.threadId, config)),
@@ -120,36 +113,47 @@ const make = Effect.gen(function* () {
         return next;
       }).pipe(
         Effect.andThen(
-          Ref.update(htmlRenders, (kept) => kept.filter((page) => page.threadId !== threadId)),
+          Ref.update(htmlRenders, (current) => {
+            const next = new Map(current);
+            next.delete(threadId);
+            return next;
+          }),
         ),
       ),
     recordHtmlRender: (threadId, input, reference) =>
-      Ref.update(htmlRenders, (kept) =>
-        [
-          ...kept,
-          {
-            threadId,
-            title: input.title,
-            height: input.height,
-            htmlLength: input.html.length,
-            htmlEnd: copyText(input.html.slice(-KEPT_HTML_END_LENGTH)),
-            reference,
-          },
-        ].slice(-MAX_KEPT_HTML_RENDERS),
+      Ref.update(htmlRenders, (current) =>
+        new Map(current).set(
+          threadId,
+          [
+            ...(current.get(threadId) ?? []),
+            {
+              title: input.title,
+              height: input.height,
+              htmlLength: input.html.length,
+              htmlEnd: copyText(input.html.slice(-KEPT_HTML_END_LENGTH)),
+              reference,
+            },
+          ].slice(-MAX_KEPT_HTML_RENDERS),
+        ),
       ),
     takeHtmlRender: (threadId, input, reported) =>
-      Ref.modify(htmlRenders, (kept) => {
+      Ref.modify(htmlRenders, (current) => {
+        const kept = current.get(threadId) ?? [];
         const index =
           reported === undefined
-            ? matchingPageIndex(kept, threadId, input)
-            : kept.findIndex(
-                (page) =>
-                  page.threadId === threadId &&
-                  page.reference.attachmentId === reported.attachmentId,
-              );
-        return index === -1
-          ? [undefined, kept]
-          : [kept[index]!.reference, kept.filter((_, keptIndex) => keptIndex !== index)];
+            ? matchingPageIndex(kept, input)
+            : kept.findIndex((page) => page.reference.attachmentId === reported.attachmentId);
+        if (index === -1) {
+          return [undefined, current];
+        }
+        const rest = kept.filter((_, keptIndex) => keptIndex !== index);
+        const next = new Map(current);
+        if (rest.length === 0) {
+          next.delete(threadId);
+        } else {
+          next.set(threadId, rest);
+        }
+        return [kept[index]!.reference, next];
       }),
   });
 });
