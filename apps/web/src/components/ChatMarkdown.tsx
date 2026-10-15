@@ -2713,10 +2713,15 @@ function useChatMarkdownState({
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
-              ? () =>
-                  void resolveLink().then((resolved) =>
-                    openMarkdownMedia(mediaPath, resolved.filePath),
-                  )
+              ? () => {
+                  // Claim the request before the lookup, so a later click or a
+                  // thread switch during it drops this open.
+                  const requestId = ++mediaRequestId.current;
+                  void resolveLink().then((resolved) => {
+                    if (mediaRequestId.current !== requestId) return;
+                    openMarkdownMedia(mediaPath, resolved.filePath);
+                  });
+                }
               : undefined
           }
           openInEditorMenuLabel={preferredEditorMenuLabel}
