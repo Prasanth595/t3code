@@ -430,30 +430,28 @@ it.effect("a refused createLabel is the gh failure", () =>
   }),
 );
 
-it.effect("the factory labels are the seven lifecycle labels, in order", () =>
-  Effect.gen(function* () {
-    assert.deepStrictEqual(
-      FACTORY_LABELS.map((label) => [label.name, label.color, label.description]),
+it("the factory labels are the seven lifecycle labels, in order", () => {
+  assert.deepStrictEqual(
+    FACTORY_LABELS.map((label) => [label.name, label.color, label.description]),
+    [
       [
-        [
-          "factory:proposed",
-          "c5def5",
-          "A bot filed it. The factory ignores it until a person sets `factory:ready`.",
-        ],
-        ["factory:ready", "0e8a16", "Approved for the factory."],
-        ["factory:triage", "fbca04", "Claimed. The session is being launched."],
-        [
-          "factory:needs-info",
-          "d93f0b",
-          "The factory asked questions on the issue. Answer them, then set `factory:ready`.",
-        ],
-        ["factory:building", "1d76db", "A session is building it."],
-        ["factory:pr-open", "5319e7", "The PR is open and has passed the gate."],
-        ["factory:stuck", "b60205", "The factory gave up and said why in a comment."],
+        "factory:proposed",
+        "c5def5",
+        "A bot filed it. The factory ignores it until a person sets `factory:ready`.",
       ],
-    );
-  }),
-);
+      ["factory:ready", "0e8a16", "Approved for the factory."],
+      ["factory:triage", "fbca04", "Claimed. The session is being launched."],
+      [
+        "factory:needs-info",
+        "d93f0b",
+        "The factory asked questions on the issue. Answer them, then set `factory:ready`.",
+      ],
+      ["factory:building", "1d76db", "A session is building it."],
+      ["factory:pr-open", "5319e7", "The PR is open and has passed the gate."],
+      ["factory:stuck", "b60205", "The factory gave up and said why in a comment."],
+    ],
+  );
+});
 
 it.effect("ensureLabels creates only the missing factory labels, in table order", () =>
   Effect.gen(function* () {
@@ -869,8 +867,8 @@ it.effect("a non-zero exit carries args, status and stderr", () =>
   Effect.gen(function* () {
     const t = setup(fail(4, "HTTP 404: Not Found\n"));
     const error = yield* t.err(t.github.listIssues("factory:ready"));
-    assert.instanceOf(error, GitHubFailed);
-    if (!(error instanceof GitHubFailed)) return;
+    assert.strictEqual(error._tag, "GitHubFailed");
+    if (error._tag !== "GitHubFailed") return;
     assert.deepStrictEqual(error.args.slice(0, 2), ["issue", "list"]);
     assert.strictEqual(error.status, 4);
     assert.strictEqual(error.stderr, "HTTP 404: Not Found\n");
@@ -880,31 +878,29 @@ it.effect("a non-zero exit carries args, status and stderr", () =>
   }),
 );
 
-it.effect("only a failure with HTTP 404 in stderr is not found", () =>
-  Effect.gen(function* () {
-    const args = ["api", "repos/rawphp/softfac/branches/x"];
-    const failed = (stderr: string) => new GitHubFailed({ args, status: 1, stderr });
-    assert.isTrue(isNotFound(failed("gh: Not Found (HTTP 404)")));
-    assert.isTrue(isNotFound(failed("HTTP 404: Not Found\n")));
-    const others: ReadonlyArray<GitHubError> = [
-      failed("gh: Server Error (HTTP 500)"),
-      failed("gh: Forbidden (HTTP 403)"),
-      new GitHubTimedOut({ args, seconds: 30 }),
-      new GitHubSpawnError({ args, cause: new Error("HTTP 404") }),
-      new GitHubOutputTooLarge({ args, limit: 1024 }),
-      new GitHubParse({ args, expected: "HTTP 404" }),
-      new GitHubRateLimited({ args, stderr: "HTTP 404 API rate limit" }),
-    ];
-    for (const other of others) assert.isFalse(isNotFound(other), other._tag);
-  }),
-);
+it("only a failure with HTTP 404 in stderr is not found", () => {
+  const args = ["api", "repos/rawphp/softfac/branches/x"];
+  const failed = (stderr: string) => new GitHubFailed({ args, status: 1, stderr });
+  assert.isTrue(isNotFound(failed("gh: Not Found (HTTP 404)")));
+  assert.isTrue(isNotFound(failed("HTTP 404: Not Found\n")));
+  const others: ReadonlyArray<GitHubError> = [
+    failed("gh: Server Error (HTTP 500)"),
+    failed("gh: Forbidden (HTTP 403)"),
+    new GitHubTimedOut({ args, seconds: 30 }),
+    new GitHubSpawnError({ args, cause: new Error("HTTP 404") }),
+    new GitHubOutputTooLarge({ args, limit: 1024 }),
+    new GitHubParse({ args, expected: "HTTP 404" }),
+    new GitHubRateLimited({ args, stderr: "HTTP 404 API rate limit" }),
+  ];
+  for (const other of others) assert.isFalse(isNotFound(other), other._tag);
+});
 
 it.effect("a signal-killed gh is a failure with status -1", () =>
   Effect.gen(function* () {
     const t = setup(signalKilled());
     const error = yield* t.err(t.github.unassign(6, "rawphp"));
-    assert.instanceOf(error, GitHubFailed);
-    if (!(error instanceof GitHubFailed)) return;
+    assert.strictEqual(error._tag, "GitHubFailed");
+    if (error._tag !== "GitHubFailed") return;
     assert.strictEqual(error.status, -1);
     assert.include(error.message, "status -1");
   }),
@@ -914,8 +910,8 @@ it.effect("malformed JSON is a parse error carrying the args", () =>
   Effect.gen(function* () {
     const t = setup(reply("not json"));
     const error = yield* t.err(t.github.listIssues("factory:ready"));
-    assert.instanceOf(error, GitHubParse);
-    if (!(error instanceof GitHubParse)) return;
+    assert.strictEqual(error._tag, "GitHubParse");
+    if (error._tag !== "GitHubParse") return;
     assert.deepStrictEqual(error.args, t.calls()[0]);
     assert.include(error.expected, "JSON array of issues");
     assert.include(error.message, "unexpected output");
@@ -923,8 +919,8 @@ it.effect("malformed JSON is a parse error carrying the args", () =>
 
     const labels = setup(reply('{"labels":"nope"}'));
     const labelsError = yield* labels.err(labels.github.setState(6, "factory:ready"));
-    assert.instanceOf(labelsError, GitHubParse);
-    if (!(labelsError instanceof GitHubParse)) return;
+    assert.strictEqual(labelsError._tag, "GitHubParse");
+    if (labelsError._tag !== "GitHubParse") return;
     assert.deepStrictEqual(labelsError.args, viewLabelsCall);
     assert.strictEqual(labels.calls().length, 1);
   }),
@@ -934,16 +930,16 @@ it.effect("a spawn failure is a spawn error carrying the args", () =>
   Effect.gen(function* () {
     const t = setup(spawnError());
     const error = yield* t.err(t.github.listIssues("factory:ready"));
-    assert.instanceOf(error, GitHubSpawnError);
-    if (!(error instanceof GitHubSpawnError)) return;
+    assert.strictEqual(error._tag, "GitHubSpawnError");
+    if (error._tag !== "GitHubSpawnError") return;
     assert.deepStrictEqual(error.args, t.calls()[0]);
     assert.include(error.message, "gh issue list --repo rawphp/softfac");
     assert.include(error.message, "gh not found");
 
     const unassign = setup(spawnError());
     const unassignError = yield* unassign.err(unassign.github.unassign(6, "rawphp"));
-    assert.instanceOf(unassignError, GitHubSpawnError);
-    if (!(unassignError instanceof GitHubSpawnError)) return;
+    assert.strictEqual(unassignError._tag, "GitHubSpawnError");
+    if (unassignError._tag !== "GitHubSpawnError") return;
     assert.deepStrictEqual(unassignError.args, editCall("--remove-assignee", "rawphp"));
   }),
 );
@@ -952,8 +948,8 @@ it.effect("a timed out gh is a timeout error", () =>
   Effect.gen(function* () {
     const t = setup(timedOut());
     const error = yield* t.err(t.github.listIssues("factory:ready"));
-    assert.instanceOf(error, GitHubTimedOut);
-    if (!(error instanceof GitHubTimedOut)) return;
+    assert.strictEqual(error._tag, "GitHubTimedOut");
+    if (error._tag !== "GitHubTimedOut") return;
     assert.strictEqual(error.seconds, 60);
     assert.include(error.message, "timed out after 60 s");
   }),
@@ -963,8 +959,8 @@ it.effect("output past the cap is an error, never a truncation", () =>
   Effect.gen(function* () {
     const t = setup(truncated());
     const error = yield* t.err(t.github.listIssues("factory:ready"));
-    assert.instanceOf(error, GitHubOutputTooLarge);
-    if (!(error instanceof GitHubOutputTooLarge)) return;
+    assert.strictEqual(error._tag, "GitHubOutputTooLarge");
+    if (error._tag !== "GitHubOutputTooLarge") return;
     assert.strictEqual(error.limit, 8 * 1024 * 1024);
     assert.include(error.message, `printed more than ${8 * 1024 * 1024} bytes`);
   }),
@@ -980,8 +976,8 @@ it.effect("only the rate limit is read as a rate limit", () =>
     ]) {
       const t = setup(fail(1, stderr));
       const error = yield* t.err(t.github.listIssues("factory:ready"));
-      assert.instanceOf(error, GitHubRateLimited);
-      if (!(error instanceof GitHubRateLimited)) return;
+      assert.strictEqual(error._tag, "GitHubRateLimited");
+      if (error._tag !== "GitHubRateLimited") return;
       assert.strictEqual(error.stderr, stderr);
       assert.include(error.args, "list");
       assert.include(error.message, "gh issue list --repo rawphp/softfac");
@@ -1042,8 +1038,8 @@ it.effect("postComment errors carry the status and stderr", () =>
   Effect.gen(function* () {
     const t = setup(fail(1, "issue is locked"));
     const error = yield* t.err(t.github.postComment(6, "x"));
-    assert.instanceOf(error, GitHubFailed);
-    if (!(error instanceof GitHubFailed)) return;
+    assert.strictEqual(error._tag, "GitHubFailed");
+    if (error._tag !== "GitHubFailed") return;
     assert.strictEqual(error.status, 1);
     assert.strictEqual(error.stderr, "issue is locked");
     assert.include(error.message, "issue is locked");
@@ -1186,15 +1182,15 @@ it.effect("status comment errors", () =>
 
     const empty = setup(reply(""));
     const emptyError = yield* empty.err(empty.github.upsertStatusComment(6, "rawphp", "x"));
-    assert.instanceOf(emptyError, GitHubParse);
-    if (!(emptyError instanceof GitHubParse)) return;
+    assert.strictEqual(emptyError._tag, "GitHubParse");
+    if (emptyError._tag !== "GitHubParse") return;
     assert.deepStrictEqual(emptyError.args, listCommentsCall);
     assert.include(emptyError.expected, "output was empty");
 
     const failing = setup(reply("[]"), fail(1, "rate limited"));
     const failed = yield* failing.err(failing.github.upsertStatusComment(6, "rawphp", "x"));
-    assert.instanceOf(failed, GitHubFailed);
-    if (!(failed instanceof GitHubFailed)) return;
+    assert.strictEqual(failed._tag, "GitHubFailed");
+    if (failed._tag !== "GitHubFailed") return;
     assert.strictEqual(failed.stderr, "rate limited");
   }),
 );
@@ -1205,8 +1201,8 @@ it.effect("the status comment surfaces a failing patch", () =>
       '[{"id":12,"user":{"login":"rawphp"},"body":"state: triage\\n\\n<!-- softfac:status -->"}]';
     const t = setup(reply(listing), fail(1, "validation failed"));
     const error = yield* t.err(t.github.upsertStatusComment(6, "rawphp", "s"));
-    assert.instanceOf(error, GitHubFailed);
-    if (!(error instanceof GitHubFailed)) return;
+    assert.strictEqual(error._tag, "GitHubFailed");
+    if (error._tag !== "GitHubFailed") return;
     assert.strictEqual(error.stderr, "validation failed");
     assert.deepStrictEqual(error.args.slice(0, 3), ["api", "-X", "PATCH"]);
     assert.strictEqual(t.calls().length, 2);
@@ -1224,8 +1220,8 @@ it.effect("error text hides comment bodies but the error keeps them", () =>
       error.message,
       "`gh issue comment 6 --repo rawphp/softfac --body <29 bytes>` exited with status 1: boom",
     );
-    assert.instanceOf(error, GitHubFailed);
-    if (!(error instanceof GitHubFailed)) return;
+    assert.strictEqual(error._tag, "GitHubFailed");
+    if (error._tag !== "GitHubFailed") return;
     assert.strictEqual(error.args.at(-1), "hello\nworld\n\n<!-- softfac -->");
 
     // Counted in bytes, not characters: "héllo ✓" is 7 chars and 10 bytes, plus 18.
@@ -1248,15 +1244,13 @@ it.effect("error text hides raw field bodies", () =>
   }),
 );
 
-it.effect("error text escapes newlines in other arguments", () =>
-  Effect.gen(function* () {
-    assert.strictEqual(
-      new GitHubParse({ args: ["issue", "edit", "a\nb\r\nc"], expected: "x" }).message,
-      "`gh issue edit a\\nb\\r\\nc` returned unexpected output: x",
-    );
-    assert.strictEqual(
-      new GitHubSpawnError({ args: ["--body"], cause: new Error("nope") }).message,
-      "cannot start `gh --body`: nope",
-    );
-  }),
-);
+it("error text escapes newlines in other arguments", () => {
+  assert.strictEqual(
+    new GitHubParse({ args: ["issue", "edit", "a\nb\r\nc"], expected: "x" }).message,
+    "`gh issue edit a\\nb\\r\\nc` returned unexpected output: x",
+  );
+  assert.strictEqual(
+    new GitHubSpawnError({ args: ["--body"], cause: new Error("nope") }).message,
+    "cannot start `gh --body`: nope",
+  );
+});
