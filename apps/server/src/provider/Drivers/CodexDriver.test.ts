@@ -243,6 +243,8 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const blocked = yield* instance.snapshot.refresh;
         expect(blocked.message).toContain("Codex SQLite recovery is required");
         expect(blocked.message).toContain("Stop all Codex processes");
+        expect(blocked.message).not.toContain(sharedHome);
+        expect(blocked.message).not.toContain(launch.settings.homePath);
         // An explicitly configured shadow is checked during construction, not only
         // later runtime probes. The registry must receive the same recovery guidance.
         const explicit = yield* CodexDriver.create({
@@ -259,6 +261,14 @@ it.layer(layerTest)("CodexDriver", (it) => {
         }).pipe(Effect.scoped, Effect.flip);
         expect(explicit.detail).toContain("Codex SQLite recovery is required");
         expect(explicit.detail).toContain("Stop all Codex processes");
+        expect(explicit.detail).not.toContain(sharedHome);
+        expect(explicit.detail).not.toContain(launch.settings.homePath);
+        expect(explicit.cause).toMatchObject({
+          cause: {
+            _tag: "CodexShadowHomeSqliteRecoveryRequiredError",
+            linkPath: NodePath.join(launch.settings.homePath, "state_5.sqlite"),
+          },
+        });
         expect(yield* fs.readLink(NodePath.join(launch.settings.homePath, "state_5.sqlite"))).toBe(
           NodePath.join(sharedHome, "state_5.sqlite"),
         );

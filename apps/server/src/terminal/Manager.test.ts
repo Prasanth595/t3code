@@ -2394,6 +2394,14 @@ it.layer(
             expect(error._tag).toBe("TerminalProviderEnvironmentError");
             expect(error.message).toContain("Codex SQLite recovery is required");
             expect(error.message).toContain("Stop all Codex processes");
+            expect(error.message).not.toContain(sharedHome);
+            expect(error.message).not.toContain(shadowHome);
+            expect(error).toMatchObject({
+              cause: {
+                _tag: "CodexShadowHomeSqliteRecoveryRequiredError",
+                linkPath: orphan ? shadowWal : shadowDatabase,
+              },
+            });
             expect(ptyAdapter.spawnInputs).toHaveLength(0);
             if (orphan) {
               expect(yield* fs.exists(shadowDatabase)).toBe(false);

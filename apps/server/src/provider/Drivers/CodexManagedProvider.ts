@@ -2,6 +2,7 @@ import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@t3
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
@@ -21,10 +22,16 @@ import {
   type ProviderDriverCreateInput,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import { codexContinuationIdentity, mergeCodexEnvironment } from "./CodexHomeLayout.ts";
+import {
+  CODEX_SQLITE_RECOVERY_GUIDANCE,
+  CodexShadowHomeSqliteRecoveryRequiredError,
+  codexContinuationIdentity,
+  mergeCodexEnvironment,
+} from "./CodexHomeLayout.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { HttpClient } from "effect/http";
 const DRIVER = ProviderDriverKind.make("codex");
+const isSqliteRecoveryRequired = Schema.is(CodexShadowHomeSqliteRecoveryRequiredError);
 
 export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (
   input: ProviderDriverCreateInput<CodexSettings>,
@@ -239,7 +246,9 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         new ProviderDriverError({
           driver: DRIVER,
           instanceId,
-          detail: cause.message,
+          detail: isSqliteRecoveryRequired(cause.cause)
+            ? CODEX_SQLITE_RECOVERY_GUIDANCE
+            : "Failed to build Codex orchestration adapter.",
           cause,
         }),
     ),

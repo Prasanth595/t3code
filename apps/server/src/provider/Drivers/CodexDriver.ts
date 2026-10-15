@@ -67,6 +67,8 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
+  CODEX_SQLITE_RECOVERY_GUIDANCE,
+  CodexShadowHomeSqliteRecoveryRequiredError,
   codexContinuationIdentity,
   materializeCodexShadowHome,
   mergeCodexEnvironment,
@@ -82,6 +84,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
+const isSqliteRecoveryRequired = Schema.is(CodexShadowHomeSqliteRecoveryRequiredError);
 // The standalone installer lays out `<CODEX_HOME>/packages/standalone/…`;
 // CODEX_HOME is not always `~/.codex`.
 function isCodexStandaloneCommandPath(commandPath: string): boolean {
@@ -176,7 +179,10 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: cause.message,
+              detail:
+                cause._tag === "CodexShadowHomeSqliteRecoveryRequiredError"
+                  ? CODEX_SQLITE_RECOVERY_GUIDANCE
+                  : "Failed to prepare Codex shadow home.",
               cause,
             }),
         ),
@@ -217,7 +223,9 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: cause.message,
+              detail: isSqliteRecoveryRequired(cause.cause)
+                ? CODEX_SQLITE_RECOVERY_GUIDANCE
+                : "Failed to build Codex orchestration adapter.",
               cause,
             }),
         ),

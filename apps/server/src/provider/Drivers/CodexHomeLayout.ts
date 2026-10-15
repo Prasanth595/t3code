@@ -168,6 +168,9 @@ export class CodexShadowHomeEntryConflictError extends Schema.TaggedError<CodexS
   }
 }
 
+export const CODEX_SQLITE_RECOVERY_GUIDANCE =
+  "Codex SQLite recovery is required. Stop all Codex processes using the shared or shadow home, back up and checkpoint or recover any shadow WAL/journal data, then remove only the old shadow SQLite symlinks. Do not delete real SQLite files or sidecars.";
+
 export class CodexShadowHomeSqliteRecoveryRequiredError extends Schema.TaggedError<CodexShadowHomeSqliteRecoveryRequiredError>()(
   "CodexShadowHomeSqliteRecoveryRequiredError",
   {
@@ -177,7 +180,7 @@ export class CodexShadowHomeSqliteRecoveryRequiredError extends Schema.TaggedErr
   },
 ) {
   override get message(): string {
-    return `Codex SQLite recovery is required before switching '${this.linkPath}' to the shared home '${this.sharedHomePath}'. Stop all Codex processes using either home, back up and checkpoint or recover any shadow WAL/journal data, then remove only the old shadow SQLite symlinks. Do not delete real SQLite files or sidecars.`;
+    return CODEX_SQLITE_RECOVERY_GUIDANCE;
   }
 }
 

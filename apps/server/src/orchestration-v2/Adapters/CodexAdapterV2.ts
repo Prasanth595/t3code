@@ -105,6 +105,7 @@ import {
   toMcpElicitationResponse,
 } from "../../provider/CodexMcpElicitation.ts";
 import {
+  CODEX_SQLITE_RECOVERY_GUIDANCE,
   materializeCodexShadowHome,
   mergeCodexEnvironment,
   resolveCodexHomeLayout,
@@ -1617,7 +1618,10 @@ export const createCodexAdapterV2 = (
           new ProviderAdapterDriverCreateError({
             driver: CODEX_DRIVER_KIND,
             instanceId,
-            detail: cause.message,
+            detail:
+              cause._tag === "CodexShadowHomeSqliteRecoveryRequiredError"
+                ? CODEX_SQLITE_RECOVERY_GUIDANCE
+                : "Failed to prepare Codex shadow home.",
             cause,
           }),
       ),

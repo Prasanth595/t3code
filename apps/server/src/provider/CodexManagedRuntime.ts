@@ -7,7 +7,11 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
-import { materializeCodexShadowHome, withCodexSqliteHome } from "./Drivers/CodexHomeLayout.ts";
+import {
+  CODEX_SQLITE_RECOVERY_GUIDANCE,
+  materializeCodexShadowHome,
+  withCodexSqliteHome,
+} from "./Drivers/CodexHomeLayout.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export interface CodexEffectiveRuntime {
@@ -76,7 +80,11 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
           new ProviderSetupError({
             instanceId: options.instanceId,
             operation: "runtime",
-            detail: cause.message,
+            detail:
+              cause._tag === "CodexShadowHomeSqliteRecoveryRequiredError"
+                ? CODEX_SQLITE_RECOVERY_GUIDANCE
+                : "Could not prepare the managed Codex runtime.",
+            cause,
           }),
       ),
     );

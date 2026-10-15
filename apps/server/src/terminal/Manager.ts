@@ -67,6 +67,7 @@ import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { resolveManagedCodexHomeLayout } from "../provider/CodexManagedHome.ts";
 import {
+  CODEX_SQLITE_RECOVERY_GUIDANCE,
   inspectCodexShadowSqlite,
   mergeCodexEnvironment,
   normalizeCodexSqliteEnvironment,
@@ -1468,7 +1469,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
               providerInstanceId,
               cause,
               ...(cause._tag === "CodexShadowHomeSqliteRecoveryRequiredError"
-                ? { detail: cause.message }
+                ? { detail: CODEX_SQLITE_RECOVERY_GUIDANCE }
                 : {}),
             }),
         ),

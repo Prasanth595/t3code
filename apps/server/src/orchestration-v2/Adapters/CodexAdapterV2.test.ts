@@ -785,6 +785,58 @@ describe("CodexAdapterV2 process spawning", () => {
     }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
+  it.effect.each(["sqlite", "config"] as const)(
+    "keeps paths in the construction cause, not the public %s error detail",
+    (entry) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-safe-detail-" });
+        const sharedHome = path.join(root, "shared");
+        const shadowHome = path.join(root, "shadow");
+        yield* fs.makeDirectory(sharedHome);
+        yield* fs.makeDirectory(shadowHome);
+        const name = entry === "sqlite" ? "state_5.sqlite" : "config.toml";
+        const target = path.join(sharedHome, name);
+        const link = path.join(shadowHome, name);
+        yield* fs.writeFileString(target, "shared");
+        if (entry === "sqlite") yield* fs.symlink(target, link);
+        else yield* fs.writeFileString(link, "private config");
+        const error = yield* CodexAdapterV2.createCodexAdapterV2({
+          instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+          displayName: undefined,
+          environment: [],
+          enabled: true,
+          config: { ...DEFAULT_CODEX_SETTINGS, homePath: sharedHome, shadowHomePath: shadowHome },
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              CodexAdapterV2.layerAppServerClientFactory,
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-codex-safe-detail-config-" }),
+            ),
+          ),
+          Effect.provideService(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+          Effect.flip,
+        );
+        if (error._tag !== "ProviderAdapterDriverCreateError") return yield* error;
+        assert.notInclude(error.detail, sharedHome);
+        assert.notInclude(error.detail, shadowHome);
+        if (entry === "sqlite") assert.include(error.detail, "Stop all Codex processes");
+        else assert.equal(error.detail, "Failed to prepare Codex shadow home.");
+        assert.deepInclude(error.cause, { linkPath: link });
+        if (entry === "sqlite") assert.equal(yield* fs.readLink(link), target);
+        else assert.equal(yield* fs.readFileString(link), "private config");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    { skip: !symlinksSupported },
+  );
+
   it.effect.each([undefined, "/explicit/sqlite"])(
     "keeps shadow app-server SQLite together, honoring an explicit home: %s",
     (sqliteHome) =>

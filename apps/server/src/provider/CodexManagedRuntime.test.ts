@@ -185,6 +185,31 @@ it.effect.each(
           assert.equal(error._tag, "ProviderSetupError");
           assert.include(error.detail, "Codex SQLite recovery is required");
           assert.include(error.detail, "Stop all Codex processes");
+          assert.notInclude(error.detail, sharedHome);
+          assert.notInclude(error.detail, runtime.homePath);
+          assert.notInclude(error.message, sharedHome);
+          assert.notInclude(error.message, runtime.homePath);
+          assert.deepInclude(error.cause, {
+            _tag: "CodexShadowHomeSqliteRecoveryRequiredError",
+            sharedHomePath: sharedHome,
+            linkPath: path.join(runtime.homePath, "state_5.sqlite"),
+          });
+          assert.strictEqual(leases, 0);
+          yield* fs.remove(path.join(runtime.homePath, "state_5.sqlite"));
+          yield* fs.remove(path.join(runtime.homePath, "config.toml"));
+          yield* fs.writeFileString(path.join(runtime.homePath, "config.toml"), "private config");
+          const conflict = yield* runtime.resolve.pipe(Effect.scoped, Effect.flip);
+          assert.equal(conflict._tag, "ProviderSetupError");
+          assert.equal(conflict.detail, "Could not prepare the managed Codex runtime.");
+          assert.notInclude(conflict.detail, sharedHome);
+          assert.notInclude(conflict.detail, runtime.homePath);
+          assert.notInclude(conflict.message, sharedHome);
+          assert.notInclude(conflict.message, runtime.homePath);
+          assert.deepInclude(conflict.cause, {
+            _tag: "CodexShadowHomeEntryConflictError",
+            entryName: "config.toml",
+            linkPath: path.join(runtime.homePath, "config.toml"),
+          });
           assert.strictEqual(leases, 0);
         }
         yield* runtime.auth.controller.logout(Effect.void);
