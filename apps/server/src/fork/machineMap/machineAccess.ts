@@ -111,7 +111,7 @@ type Leveled = Pick<ArrowRecord, "level" | "expiresAt" | "revertLevel">;
  * desired state arrived, so the old side reads the raw level and the new side the level now. An
  * arrow that expired between the two states then counts as a change, and its sessions end.
  */
-export const sourcesWithChangedLevel = <K>(
+const sourcesWithChangedLevel = <K>(
   previous: ReadonlyArray<readonly [K, Leveled]>,
   next: ReadonlyArray<readonly [K, Leveled]>,
   nowMs: number,
