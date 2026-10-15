@@ -782,52 +782,71 @@ describe("orphan worktree reports", () => {
     ),
   );
 
-  it.effect("retries budget-cut orphan sizes and reuses completed measurements", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(NOW_MS);
-        const fs = yield* FileSystem.FileSystem;
-        const measuring = yield* Deferred.make<void>();
-        let orphan = "";
-        let walks = 0;
-        const fixture = yield* cleanupFixture().pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fs,
-            readDirectory: (directory, options) =>
-              Effect.gen(function* () {
-                if (directory.endsWith("/repository") && walks === 0)
-                  yield* TestClock.adjust("1 second");
-                if (directory === orphan) {
-                  walks++;
-                  if (walks === 1) {
-                    yield* Deferred.succeed(measuring, undefined);
-                    return yield* Effect.never;
+  it.effect.each(["walk-timeout", "sweep-budget"] as const)(
+    "caches walk timeouts and retries budget-cut orphan sizes (%s)",
+    (limit) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(NOW_MS);
+          const fs = yield* FileSystem.FileSystem;
+          const measuring = yield* Deferred.make<void>();
+          let orphan = "";
+          let walks = 0;
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              readDirectory: (directory, options) =>
+                Effect.gen(function* () {
+                  if (directory.endsWith("/repository") && walks === 0)
+                    yield* TestClock.adjust("1 second");
+                  if (directory === orphan) {
+                    walks++;
+                    if (limit === "walk-timeout" || walks === 1) {
+                      yield* Deferred.succeed(measuring, undefined);
+                      return yield* Effect.never;
+                    }
                   }
-                }
-                return yield* fs.readDirectory(directory, options);
-              }),
-          }),
-        );
-        fixture.setThreads([]);
-        orphan = `${fixture.config.worktreesDir}/repository/orphan`;
-        yield* fs.makeDirectory(orphan, { recursive: true });
-        yield* fs.writeFileString(`${orphan}/file`, "x");
-        yield* fs.utimes(orphan, 1, 1);
-        const sweep = yield* fixture.service.runNow.pipe(Effect.forkChild);
-        yield* Deferred.await(measuring);
-        yield* TestClock.adjust("29 seconds");
-        expect((yield* Fiber.join(sweep)).entries[0]?.bytes).toBeNull();
-        expect((yield* fixture.service.runNow).entries[0]?.bytes).toBe(1);
-        yield* fs.writeFileString(`${orphan}/file`, "changed");
-        expect((yield* fixture.service.runNow).entries[0]?.bytes).toBe(1);
-        expect(walks).toBe(2);
-        fixture.setStoredWorktreePaths([orphan]);
-        expect((yield* fixture.service.runNow).entries).toEqual([]);
-        fixture.setStoredWorktreePaths([]);
-        expect((yield* fixture.service.runNow).entries[0]?.bytes).toBe(7);
-        expect(walks).toBe(3);
-      }),
-    ),
+                  return (yield* fs.readDirectory(directory, options)).sort();
+                }),
+            }),
+          );
+          fixture.setThreads([]);
+          orphan = `${fixture.config.worktreesDir}/repository/orphan`;
+          yield* fs.makeDirectory(orphan, { recursive: true });
+          yield* fs.writeFileString(`${orphan}/file`, "x");
+          yield* fs.utimes(orphan, 1, 1);
+          const later = `${fixture.config.worktreesDir}/repository/z-later`;
+          yield* fs.makeDirectory(later);
+          yield* fs.utimes(later, 1, 1);
+          if (limit === "sweep-budget") {
+            const first = `${fixture.config.worktreesDir}/repository/a-first`;
+            yield* fs.makeDirectory(first);
+            yield* fs.utimes(first, 1, 1);
+          }
+          const orphanEntry = (report: StorageCleanupReport) =>
+            report.entries.find((entry) => entry.path === orphan);
+          const sweep = yield* fixture.service.runNow.pipe(Effect.forkChild);
+          yield* Deferred.await(measuring);
+          yield* TestClock.adjust(limit === "walk-timeout" ? "30 seconds" : "29 seconds");
+          const firstReport = yield* Fiber.join(sweep);
+          expect(orphanEntry(firstReport)?.bytes).toBeNull();
+          expect(firstReport.entries.find((entry) => entry.path === later)?.bytes).toBeNull();
+          const nextReport = yield* fixture.service.runNow;
+          expect(orphanEntry(nextReport)?.bytes).toBe(limit === "walk-timeout" ? null : 1);
+          expect(nextReport.entries.find((entry) => entry.path === later)?.bytes).toBe(0);
+          yield* fs.writeFileString(`${orphan}/file`, "changed");
+          expect(orphanEntry(yield* fixture.service.runNow)?.bytes).toBe(
+            limit === "walk-timeout" ? null : 1,
+          );
+          expect(walks).toBe(limit === "walk-timeout" ? 1 : 2);
+          if (limit === "walk-timeout") return;
+          fixture.setStoredWorktreePaths([orphan]);
+          expect(orphanEntry(yield* fixture.service.runNow)).toBeUndefined();
+          fixture.setStoredWorktreePaths([]);
+          expect(orphanEntry(yield* fixture.service.runNow)?.bytes).toBe(7);
+          expect(walks).toBe(3);
+        }),
+      ),
   );
 
   it.live.each(["nested", "direct"] as const)(

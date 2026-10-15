@@ -376,10 +376,12 @@ const make = Effect.gen(function* () {
       }
       return result;
     });
-    // Share one walk budget across all orphans, instead of 30 seconds per folder.
+    // Let the first walk reach its own limit so unmeasurable folders get cached.
+    // Later walks share the remaining sweep budget.
     // Unmeasured folders still appear with an unknown size.
     const now = yield* Clock.currentTimeMillis;
     const measurementDeadline = now + 30_000;
+    let firstMeasurement = true;
     const reported = new Set<string>();
     const report = Effect.fnUntraced(
       function* (worktreePath: string) {
@@ -397,10 +399,11 @@ const make = Effect.gen(function* () {
         const linked = (yield* fs.exists(gitPath)) && (yield* fs.stat(gitPath)).type === "File";
         reported.add(key);
         const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
-        if (!orphanSizes.has(key) && remaining > 0) {
+        if (!orphanSizes.has(key) && (firstMeasurement || remaining > 0)) {
           const measured = yield* measureWorktree(worktreePath).pipe(
-            Effect.timeoutOption(remaining),
+            firstMeasurement ? Effect.map(Option.some) : Effect.timeoutOption(remaining),
           );
+          firstMeasurement = false;
           if (Option.isSome(measured)) orphanSizes.set(key, measured.value);
         }
         const bytes = orphanSizes.get(key) ?? null;
