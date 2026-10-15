@@ -7,7 +7,7 @@ import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 
 import { FactoryRuntime } from "./index.ts";
-import { FactoryPaths } from "./paths.ts";
+import * as Paths from "./t3/paths.ts";
 
 const messageText = (message: unknown): string => {
   const first = Array.isArray(message) ? message[0] : message;
@@ -22,13 +22,15 @@ repos:
     path: /b
 `;
 
-/** Builds FactoryRuntime over a temp factory dir holding `config` (or no file) and returns the log lines. */
+/** Builds FactoryRuntime over a temp base dir whose factory dir holds `config` (or no file) and returns the log lines. */
 const logsFor = (config: string | undefined) =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { join } = yield* Path.Path;
-      const factoryDir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-index-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-index-" });
+      const factoryDir = join(baseDir, "factory");
+      yield* fs.makeDirectory(factoryDir);
       const machineConfigPath = join(factoryDir, "config.yml");
       if (config !== undefined) yield* fs.writeFileString(machineConfigPath, config);
 
@@ -40,7 +42,14 @@ const logsFor = (config: string | undefined) =>
       yield* Effect.scoped(
         Layer.build(
           FactoryRuntime.pipe(
-            Layer.provide(Layer.succeed(FactoryPaths, { factoryDir, machineConfigPath })),
+            Layer.provide(
+              Layer.succeed(Paths.FactoryPaths, {
+                baseDir,
+                worktreesDir: join(baseDir, "worktrees"),
+                factoryDir,
+                machineConfigPath,
+              }),
+            ),
           ),
         ),
       ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));

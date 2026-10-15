@@ -1,27 +1,31 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 
-import { ServerConfig } from "../../config.ts";
-import { FactoryPaths } from "../paths.ts";
-import { FactoryPathsLive } from "./paths.ts";
+import * as ServerConfig from "../../config.ts";
+import * as Paths from "./paths.ts";
 
-it.effect("derives the factory paths from the server base directory", () =>
-  Effect.gen(function* () {
-    const { join } = yield* Path.Path;
-    const { baseDir } = yield* ServerConfig;
-    const paths = yield* FactoryPaths;
-
-    assert.strictEqual(paths.factoryDir, join(baseDir, "factory"));
-    assert.strictEqual(paths.machineConfigPath, join(baseDir, "factory", "config.yml"));
-  }).pipe(
-    Effect.provide(
-      FactoryPathsLive.pipe(
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "factory-paths-" })),
-        Layer.provideMerge(NodeServices.layer),
+it.effect(
+  "takes the base dir and the worktrees dir from ServerConfig and puts factory data under <base>/factory",
+  () =>
+    Effect.gen(function* () {
+      const paths = yield* Paths.FactoryPaths;
+      assert.strictEqual(paths.baseDir, "/srv/t3fac");
+      assert.strictEqual(paths.worktreesDir, "/srv/t3fac/worktrees");
+      assert.strictEqual(paths.factoryDir, "/srv/t3fac/factory");
+      assert.strictEqual(paths.machineConfigPath, "/srv/t3fac/factory/config.yml");
+    }).pipe(
+      Effect.provide(
+        Paths.layer.pipe(
+          Layer.provide(
+            Layer.succeed(ServerConfig.ServerConfig, {
+              baseDir: "/srv/t3fac",
+              worktreesDir: "/srv/t3fac/worktrees",
+            } as ServerConfig.ServerConfig["Service"]),
+          ),
+          Layer.provide(NodeServices.layer),
+        ),
       ),
     ),
-  ),
 );

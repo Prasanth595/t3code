@@ -10,12 +10,18 @@ The only upstream files this fork edits are the ones listed in [SEAMS](SEAMS). [
 
 Only `apps/server/src/factory/t3/` may import T3 internals. Other files under `apps/server/src/factory/` import relative paths only from inside that folder, and no package that `apps/server/package.json` takes from the workspace (`@t3tools/*`, `effect-acp`, ...). Nothing outside `apps/server/src/factory/` imports the factory, except `apps/server/src/server.ts`. `apps/server/src/factory/boundary.test.ts` enforces both.
 
-## Commands
+## Checks
 
-From the repo root:
+`factory/scripts/check.sh` runs these steps in order, printing each name first, and stops at the first failure with that step's exit code:
+
+1. `factory/scripts/check-seams.sh`
+2. `vp test run apps/server/src/factory`
+3. `vp run --filter t3 typecheck`
+4. `vp run --filter @t3tools/web typecheck`
+
+The same script is the factory gate (`gate` in `.dw/config.yml`) and the `factory-ci` GitHub workflow. To run it locally from the repo root:
 
 ```sh
-vp test run apps/server/src/factory
-vp run --filter t3 typecheck
-factory/scripts/check-seams.sh
+vp i
+factory/scripts/check.sh
 ```

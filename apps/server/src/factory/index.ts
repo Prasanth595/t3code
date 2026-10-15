@@ -4,11 +4,10 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import { formatConfigError, loadMachineConfig } from "./config.ts";
-import { FactoryPaths } from "./paths.ts";
-import { FactoryPathsLive } from "./t3/paths.ts";
+import * as Paths from "./t3/paths.ts";
 
 const start = Effect.gen(function* () {
-  const { machineConfigPath } = yield* FactoryPaths;
+  const { machineConfigPath } = yield* Paths.FactoryPaths;
   const loaded = yield* Effect.result(loadMachineConfig(machineConfigPath));
   if (Result.isFailure(loaded)) {
     for (const error of loaded.failure.errors) {
@@ -27,4 +26,4 @@ const start = Effect.gen(function* () {
 export const FactoryRuntime = Layer.effectDiscard(start);
 
 /** The factory's root layer. server.ts merges it into the runtime; nothing else imports it. */
-export const FactoryLayer = FactoryRuntime.pipe(Layer.provide(FactoryPathsLive));
+export const FactoryLayer = FactoryRuntime.pipe(Layer.provide(Paths.layer));
