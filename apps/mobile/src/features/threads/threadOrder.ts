@@ -326,6 +326,110 @@ export function threadDropLifecycle(
   };
 }
 
+export type ThreadMovePlan =
+  | { readonly section: "settled" }
+  | {
+      readonly section: "pinned" | "active";
+      readonly assignments: readonly { readonly id: string; readonly orderKey: string }[];
+    };
+
+/** Mirror the server's projection of a planned drop, so the arrange sheet can
+ * stack moves locally and send only the result. */
+export function applyThreadMove<T extends EnvironmentThreadShell>(
+  threads: readonly T[],
+  movedId: string,
+  plan: ThreadMovePlan,
+  now: string,
+): T[] {
+  const keys = new Map(
+    plan.section === "settled" ? [] : plan.assignments.map(({ id, orderKey }) => [id, orderKey]),
+  );
+  return threads.map((thread) => {
+    const id = rowId(thread);
+    if (id !== movedId && !keys.has(id)) return thread;
+    let next: T = thread;
+    if (id === movedId) {
+      if (plan.section === "settled")
+        return {
+          ...thread,
+          settledOverride: "settled",
+          unsettledAt: null,
+          pinnedAt: null,
+          pinOrderKey: null,
+          activeOrderKey: null,
+        };
+      if (plan.section === "pinned" && thread.pinnedAt == null)
+        next = {
+          ...next,
+          pinnedAt: now,
+          settledOverride: thread.settledOverride === "settled" ? "active" : thread.settledOverride,
+          snoozedUntil: null,
+        };
+      if (plan.section === "active") {
+        const lifecycle = threadDropLifecycle(thread, "active", now);
+        if (lifecycle.unpin) next = { ...next, pinnedAt: null, pinOrderKey: null };
+        if (lifecycle.unsettle) next = { ...next, settledOverride: "active", unsettledAt: now };
+        if (lifecycle.unsnooze) next = { ...next, snoozedUntil: null };
+      }
+    }
+    const key = keys.get(id);
+    if (key === undefined) return next;
+    return plan.section === "pinned"
+      ? { ...next, pinOrderKey: key }
+      : { ...next, activeOrderKey: key };
+  });
+}
+
+/** Lay drafted arrangement fields over the live shells, keeping everything
+ * else (title, runtime) current. */
+export function withThreadDrafts<T extends EnvironmentThreadShell>(
+  threads: readonly T[],
+  drafts: ReadonlyMap<string, EnvironmentThreadShell>,
+): readonly T[] {
+  if (drafts.size === 0) return threads;
+  return threads.map((thread) => {
+    const draft = drafts.get(rowId(thread));
+    return draft === undefined
+      ? thread
+      : {
+          ...thread,
+          pinnedAt: draft.pinnedAt,
+          pinOrderKey: draft.pinOrderKey,
+          activeOrderKey: draft.activeOrderKey,
+          settledOverride: draft.settledOverride,
+          unsettledAt: draft.unsettledAt,
+          snoozedUntil: draft.snoozedUntil,
+        };
+  });
+}
+
+export type ThreadArrangementCommand =
+  | { readonly type: "settle" | "unpin" | "unsettle" | "unsnooze" }
+  | { readonly type: "pin"; readonly orderKey: string | null }
+  | { readonly type: "reorderPin" | "reorderActive"; readonly orderKey: string };
+
+/** The commands that turn `saved` into `draft`, in the order they must run. */
+export function threadArrangementCommands(
+  saved: EnvironmentThreadShell,
+  draft: EnvironmentThreadShell,
+): ThreadArrangementCommand[] {
+  // Settle clears the pin and both keys; pin clears the parked states.
+  if (draft.settledOverride === "settled")
+    return saved.settledOverride === "settled" ? [] : [{ type: "settle" }];
+  if (draft.pinnedAt != null && saved.pinnedAt == null)
+    return [{ type: "pin", orderKey: draft.pinOrderKey }];
+  const commands: ThreadArrangementCommand[] = [];
+  if (draft.pinnedAt == null && saved.pinnedAt != null) commands.push({ type: "unpin" });
+  if (saved.settledOverride === "settled") commands.push({ type: "unsettle" });
+  if (draft.snoozedUntil == null && saved.snoozedUntil != null) commands.push({ type: "unsnooze" });
+  if (draft.pinnedAt != null) {
+    if (draft.pinOrderKey != null && draft.pinOrderKey !== saved.pinOrderKey)
+      commands.push({ type: "reorderPin", orderKey: draft.pinOrderKey });
+  } else if (draft.activeOrderKey != null && draft.activeOrderKey !== saved.activeOrderKey)
+    commands.push({ type: "reorderActive", orderKey: draft.activeOrderKey });
+  return commands;
+}
+
 export type ThreadDragSection = "pinned" | "active" | "snoozed" | "settled";
 
 /** The action shown during hover describes the lifecycle change made on drop. */
