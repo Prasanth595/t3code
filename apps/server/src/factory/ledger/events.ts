@@ -321,3 +321,155 @@ export const makeCause = (step: CauseStep, reason: string, extras: CauseExtras =
 /** The cause as written to a line: the keys in softfac's order, whatever order they were built in. */
 export const causeObject = (cause: Cause): Record<string, unknown> =>
   buildData(["step", "reason", "actor", "command", "attempt", "label"], cause);
+
+/** How a retro ended. */
+export const RETRO_RESULTS = [
+  "thread-gone",
+  "done",
+  "stopped",
+  "failed",
+  "interrupted",
+  "cancelled",
+  "rolled_back",
+  "timed-out",
+] as const;
+export type RetroResult = (typeof RETRO_RESULTS)[number];
+
+/** How a half-made claim was put right. */
+export const CLAIM_REPAIRS = ["finished", "released", "reconciled"] as const;
+export type ClaimRepair = (typeof CLAIM_REPAIRS)[number];
+
+/** Where a self-update failed. */
+export const UPDATE_STEPS = ["check", "checkout", "install", "verify", "config"] as const;
+export type UpdateStep = (typeof UPDATE_STEPS)[number];
+
+/** Which report to the fleet app failed. */
+export const FLEET_CALLS = ["token", "heartbeat", "events", "desired"] as const;
+export type FleetCall = (typeof FLEET_CALLS)[number];
+
+/** What the fleet app asked this machine for. */
+export const DESIRED_WHATS = ["target-commit", "config"] as const;
+export type DesiredWhat = (typeof DESIRED_WHATS)[number];
+
+/** What came of a request from the fleet app. */
+export const DESIRED_STATES = ["applied", "refused", "failed"] as const;
+export type DesiredState = (typeof DESIRED_STATES)[number];
+
+/**
+ * Something that happened that belongs to no run, as `{ event, data }`. `reason` is a code from
+ * ledger.md; it is not checked here. An issue is a GitHub number as a JSON number, or a Linear
+ * identifier as a string. Three event types have more than one shape: a `claim_skipped` for the
+ * claims pause has only a `reason`, and an `attention` for the machine has no `run`.
+ */
+export type MachineEvent =
+  | { readonly event: "pass_started"; readonly data: Record<never, never> }
+  | {
+      readonly event: "pass_finished";
+      readonly data: { runs: number; claimed: number; errors: number; attention: number };
+    }
+  | { readonly event: "preflight_failed"; readonly data: { check: string; why: string } }
+  | {
+      readonly event: "repo_skipped";
+      readonly data: { repo: string; reason: string; message: string };
+    }
+  | {
+      readonly event: "claim_skipped";
+      readonly data: { repo: string; issue: number | string; reason: string } | { reason: string };
+    }
+  | {
+      readonly event: "claim_repaired";
+      readonly data: { repo: string; issue: number | string; outcome: ClaimRepair };
+    }
+  | {
+      readonly event: "attention";
+      readonly data:
+        | { run: string; reason: string }
+        | { reason: string; volume: string; free_bytes: number; floor_gb: number; held: number }
+        | { reason: string; url: string; user: string; gh_config_dir: string };
+    }
+  | { readonly event: "self_update_started"; readonly data: { from: string; to: string } }
+  | {
+      readonly event: "self_update_installed";
+      readonly data: { from: string; to: string; duration_ms: number };
+    }
+  | {
+      readonly event: "self_update_failed";
+      readonly data: { from: string; to: string; step: UpdateStep; reason: string };
+    }
+  | { readonly event: "self_update_rolled_back"; readonly data: { from: string; to: string } }
+  | {
+      readonly event: "fleet_failed";
+      readonly data: { call: FleetCall; reason: string; message: string };
+    }
+  | {
+      readonly event: "fleet_desired";
+      readonly data: {
+        what: DesiredWhat;
+        asked: string;
+        state: DesiredState;
+        reason: string;
+        detail?: string;
+      };
+    }
+  | {
+      readonly event: "retro_started";
+      readonly data: {
+        n: number;
+        thread_id: string;
+        runs: number;
+        since_ms: number | null;
+        model_instance: string;
+        model: string;
+      };
+    }
+  | {
+      readonly event: "retro_finished";
+      readonly data: { n: number; thread_id: string; result: RetroResult; duration_ms: number };
+    }
+  | { readonly event: "worktrees_swept"; readonly data: { paths: ReadonlyArray<string> } }
+  | {
+      readonly event: "error";
+      readonly data: { run?: string; step: CauseStep; kind: ErrorKind; message: string };
+    };
+
+export type MachineEventName = MachineEvent["event"];
+
+type KeysOfEach<T> = T extends unknown ? keyof T : never;
+type MachineDataKeys<N extends MachineEventName> = KeysOfEach<
+  Extract<MachineEvent, { event: N }>["data"]
+>;
+
+/**
+ * The 17 event types the machine log can hold, each with the names of its `data` fields in the
+ * order they are written. A type with more than one shape lists the fields of all of them: the
+ * ones that are absent are left out, and the shapes share no field that is ordered differently.
+ */
+export const MACHINE_EVENT_FIELDS: Readonly<Record<MachineEventName, ReadonlyArray<string>>> = {
+  pass_started: [],
+  pass_finished: ["runs", "claimed", "errors", "attention"],
+  preflight_failed: ["check", "why"],
+  repo_skipped: ["repo", "reason", "message"],
+  claim_skipped: ["repo", "issue", "reason"],
+  claim_repaired: ["repo", "issue", "outcome"],
+  attention: [
+    "run",
+    "reason",
+    "volume",
+    "free_bytes",
+    "floor_gb",
+    "held",
+    "url",
+    "user",
+    "gh_config_dir",
+  ],
+  self_update_started: ["from", "to"],
+  self_update_installed: ["from", "to", "duration_ms"],
+  self_update_failed: ["from", "to", "step", "reason"],
+  self_update_rolled_back: ["from", "to"],
+  fleet_failed: ["call", "reason", "message"],
+  fleet_desired: ["what", "asked", "state", "reason", "detail"],
+  retro_started: ["n", "thread_id", "runs", "since_ms", "model_instance", "model"],
+  retro_finished: ["n", "thread_id", "result", "duration_ms"],
+  worktrees_swept: ["paths"],
+  error: ["run", "step", "kind", "message"],
+} satisfies { readonly [N in MachineEventName]: ReadonlyArray<MachineDataKeys<N>> };
