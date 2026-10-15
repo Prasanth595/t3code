@@ -94,10 +94,14 @@ it.effect(
           "",
         ].join("\n"),
       );
+      // -F skips /etc/ssh/ssh_config. In the review sandbox's user namespace those
+      // root-owned includes fail OpenSSH's owner check before any authentication.
+      yield* fs.writeFileString(`${directory}/ssh_config`, "Host *\n");
       yield* fs.writeFileString(
         `${directory}/bin/ssh`,
         `#!/bin/sh
 exec /usr/bin/ssh \\
+  -F "$T3_DEVICE_SSH_CONFIG" \\
   -o BatchMode=yes \\
   -o StrictHostKeyChecking=yes \\
   -o UserKnownHostsFile="$T3_DEVICE_SSH_KNOWN_HOSTS" \\
@@ -140,14 +144,18 @@ exec /usr/bin/ssh \\
       yield* fs.writeFileString(knownHosts, scanned);
       const previousPath = process.env.PATH;
       const previousKnownHosts = process.env.T3_DEVICE_SSH_KNOWN_HOSTS;
+      const previousConfig = process.env.T3_DEVICE_SSH_CONFIG;
       process.env.PATH = `${directory}/bin:${previousPath ?? ""}`;
       process.env.T3_DEVICE_SSH_KNOWN_HOSTS = knownHosts;
+      process.env.T3_DEVICE_SSH_CONFIG = `${directory}/ssh_config`;
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           if (previousPath === undefined) delete process.env.PATH;
           else process.env.PATH = previousPath;
           if (previousKnownHosts === undefined) delete process.env.T3_DEVICE_SSH_KNOWN_HOSTS;
           else process.env.T3_DEVICE_SSH_KNOWN_HOSTS = previousKnownHosts;
+          if (previousConfig === undefined) delete process.env.T3_DEVICE_SSH_CONFIG;
+          else process.env.T3_DEVICE_SSH_CONFIG = previousConfig;
         }),
       );
 
