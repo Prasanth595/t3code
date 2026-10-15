@@ -33,7 +33,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { readRun } from "./ledger/read.ts";
 import { newRunId, runIdToString } from "./ledger/runId.ts";
 import { T0, ticking, useTempDirs } from "./ledger/testSupport.ts";
-import { FactoryProcess, layer as processLayer } from "./process.ts";
+import { FactoryProcess, RunSpawnError, layer as processLayer } from "./process.ts";
 
 const tempDir = useTempDirs();
 
@@ -1724,4 +1724,92 @@ it.live("a leftover that cannot be removed is noted once and the attempt is an e
       }
     }).pipe(Effect.ensuring(Effect.sync(() => unlock(dir))));
   }).pipe(provided),
+);
+
+// ---- gate: what the ledger and git output may and may not hold -----------------------------
+
+/** The real process layer, except that the `nth` shell command (1-based) cannot start. */
+const failingShellLayer = (nth: number) =>
+  Layer.effect(
+    FactoryProcess,
+    Effect.gen(function* () {
+      const real = yield* FactoryProcess;
+      let shellCalls = 0;
+      return FactoryProcess.of({
+        run: (input) => {
+          if (input.shell === true && ++shellCalls === nth) {
+            return Effect.fail(
+              new RunSpawnError({ shell: true, cwd: input.cwd, cause: new Error("no shell") }),
+            );
+          }
+          return real.run(input);
+        },
+      });
+    }),
+  ).pipe(Layer.provide(processLayer));
+
+it.live("a gate command that cannot start leaves no gate_command line and uses no attempt", () =>
+  Effect.gen(function* () {
+    const remote = makeRemote("gate-spawn-error");
+    const dataDir = tempDir("gate-spawn-error-data");
+    const run = newRunId(REPO, "10", 1);
+    const sha = remote.push([["README", "pushed\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const gate = yield* FactoryGate;
+    const error = yield* gate
+      .run({ ...baseInput(remote, dataDir, run, sha, sha), gate: ["true", "true"] })
+      .pipe(Effect.flip);
+    assert.strictEqual(error._tag, "GateCommandSpawnError");
+    assert.deepStrictEqual(
+      entries(dataDir, run).map((l) => l.event),
+      ["gate_checkout"],
+    );
+    assert.isFalse(NodeFS.existsSync(gateRoot(dataDir, run)));
+    assert.strictEqual(gateLocksHeld(dataDir), 0);
+  }).pipe(Effect.provide(gateLayer.pipe(Layer.provide(failingShellLayer(2))))),
+);
+
+it.live("a warning git prints on stderr is not part of what the checkout parses", () =>
+  usingFakeGit("co-stderr-noise", `echo "warning: something" >&2\n${LOGGING_GIT}`, (fake) =>
+    Effect.gen(function* () {
+      const made = yield* checkoutWithFake(
+        fake,
+        fake.options({ remoteBase: "https://example.test" }),
+      );
+      assert.strictEqual(made.head, SOME_SHA);
+      assert.strictEqual(made.merge._tag, "contained");
+    }),
+  ),
+);
+
+it.live("a failed git call carries its stderr and not its stdout", () =>
+  usingFakeGit(
+    "co-stderr-failed",
+    `case "$*" in *fetch*) echo "stdout text"; echo "stderr text" >&2; exit 3;; esac`,
+    (fake) =>
+      Effect.gen(function* () {
+        const error = yield* checkoutWithFake(
+          fake,
+          fake.options({ remoteBase: "https://example.test" }),
+        ).pipe(Effect.flip);
+        const failed = expectFailed(error);
+        assert.strictEqual(failed.status, 3);
+        assert.strictEqual(failed.stderr, "stderr text\n");
+      }),
+  ),
+);
+
+it.live("a git call that prints more than the cap fails the checkout", () =>
+  usingFakeGit("co-too-much", `case "$*" in *rev-parse*) printf '%0200d\\n' 0;; esac`, (fake) =>
+    Effect.gen(function* () {
+      const error = yield* checkoutWithFake(
+        fake,
+        fake.options({ remoteBase: "https://example.test", gitTailBytes: 64 }),
+      ).pipe(Effect.flip);
+      const failed = expectFailed(error);
+      assert.strictEqual(failed.args, "rev-parse HEAD");
+      assert.strictEqual(failed.status, null);
+      assert.strictEqual(failed.stderr, "it printed more than 64 bytes and was killed");
+    }),
+  ),
 );
