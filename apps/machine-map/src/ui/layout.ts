@@ -24,24 +24,15 @@ export const GAP = 14;
 /** Rounds of pushing. A few machines settle in fewer; more rounds only cost time. */
 const ROUNDS = 60;
 
-const clampBox = (box: Box, width: number, height: number): Box => ({
-  ...box,
-  x: Math.min(Math.max(box.x, box.w / 2), Math.max(box.w / 2, width - box.w / 2)),
-  y: Math.min(Math.max(box.y, box.h / 2), Math.max(box.h / 2, height - box.h / 2)),
-});
-
 /**
- * Pushes overlapping boxes apart inside `width` x `height`. Boxes in `fixed` do not move.
- * Each push takes the axis that needs the shorter move and still fits, so a box at the edge
- * moves the other way. When the area is too small, boxes stay as close to apart as it allows.
+ * Pushes overlapping boxes apart. Boxes in `fixed` do not move. Each push takes the axis that
+ * needs the shorter move. The map has no edges (MM-1114), so every push fits.
  */
 export function separate(
   boxes: ReadonlyArray<Box>,
-  width: number,
-  height: number,
   fixed: ReadonlySet<number> = new Set(),
 ): Array<Box> {
-  const out = boxes.map((box, i) => (fixed.has(i) ? box : clampBox(box, width, height)));
+  const out = [...boxes];
   for (let round = 0; round < ROUNDS; round++) {
     let moved = false;
     for (let i = 0; i < out.length; i++) {
@@ -55,33 +46,13 @@ export function separate(
         const overlapY = (a.h + b.h) / 2 + GAP - Math.abs(dy);
         if (overlapX <= 0.5 || overlapY <= 0.5) continue;
         const shareA = fixed.has(i) ? 0 : fixed.has(j) ? 1 : 0.5;
-        const shareB = 1 - shareA;
         // Identical centers split by their order, so the result never depends on chance.
-        const signX = dx === 0 ? 1 : Math.sign(dx);
-        const signY = dy === 0 ? 1 : Math.sign(dy);
-        const alongX = (box: Box, share: number, sign: number) =>
-          clampBox({ ...box, x: box.x + sign * overlapX * share }, width, height);
-        const alongY = (box: Box, share: number, sign: number) =>
-          clampBox({ ...box, y: box.y + sign * overlapY * share }, width, height);
-        const xMove = [alongX(a, shareA, -signX), alongX(b, shareB, signX)] as const;
-        const yMove = [alongY(a, shareA, -signY), alongY(b, shareB, signY)] as const;
-        // How much of the overlap each axis removes after the edges stop it.
-        const xGain = Math.abs(xMove[1].x - xMove[0].x) - Math.abs(dx);
-        const yGain = Math.abs(yMove[1].y - yMove[0].y) - Math.abs(dy);
-        const xFits = xGain >= overlapX - 0.5;
-        const yFits = yGain >= overlapY - 0.5;
-        const useX = xFits && yFits ? overlapX <= overlapY : xFits || (!yFits && xGain >= yGain);
-        const [nextA, nextB] = useX ? xMove : yMove;
-        if (
-          Math.abs(nextA.x - a.x) +
-            Math.abs(nextA.y - a.y) +
-            Math.abs(nextB.x - b.x) +
-            Math.abs(nextB.y - b.y) <
-          0.5
-        )
-          continue;
-        out[i] = nextA;
-        out[j] = nextB;
+        const useX = overlapX <= overlapY;
+        const sign = useX ? (dx === 0 ? 1 : Math.sign(dx)) : dy === 0 ? 1 : Math.sign(dy);
+        const push = (box: Box, by: number): Box =>
+          useX ? { ...box, x: box.x + by * overlapX } : { ...box, y: box.y + by * overlapY };
+        out[i] = push(a, -sign * shareA);
+        out[j] = push(b, sign * (1 - shareA));
         moved = true;
       }
     }
@@ -115,32 +86,31 @@ function normal(a: Point, b: Point): Point {
 
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 
-/** MM-1108: the center of a pair card from its offset. `scale` is the shorter side of the map. */
-export function offsetPoint(a: Point, b: Point, offset: PairOffset, scale: number): Point {
+/** MM-1108: the center of a pair card from its offset, in map pixels. */
+export function offsetPoint(a: Point, b: Point, offset: PairOffset): Point {
   const n = normal(a, b);
   return {
-    x: a.x + (b.x - a.x) * offset.along + n.x * offset.aside * scale,
-    y: a.y + (b.y - a.y) * offset.along + n.y * offset.aside * scale,
+    x: a.x + (b.x - a.x) * offset.along + n.x * offset.aside,
+    y: a.y + (b.y - a.y) * offset.along + n.y * offset.aside,
   };
 }
 
-/** MM-1108: the offset of a pair card center, the inverse of `offsetPoint`, kept in range. */
-export function pointOffset(a: Point, b: Point, p: Point, scale: number): PairOffset {
+/** MM-1108: the offset of a pair card center, the inverse of `offsetPoint`, along the line kept in range. */
+export function pointOffset(a: Point, b: Point, p: Point): PairOffset {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const lengthSquared = dx * dx + dy * dy;
   const n = normal(a, b);
   const along = lengthSquared === 0 ? 0.5 : ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared;
-  const aside = scale === 0 ? 0 : ((p.x - a.x) * n.x + (p.y - a.y) * n.y) / scale;
+  const aside = (p.x - a.x) * n.x + (p.y - a.y) * n.y;
   // Four decimals is under a pixel on any screen, and keeps the map small.
   const round = (value: number) => Math.round(value * 10_000) / 10_000;
-  return { along: round(clamp(along, 0, 1)), aside: round(clamp(aside, -1, 1)) };
+  return { along: round(clamp(along, 0, 1)), aside: round(aside) };
 }
 
 /**
  * Places each pair card on its line. A card with a `fixed` center (MM-1108) stays there, unless
- * it covers a machine card or a note, for example on a narrower map than the one that placed it.
- * Then it moves the shortest way off them. Each other card takes the first spot that covers no
+ * it covers a machine card or a note, for example after a card grew. Then it moves the shortest way off them. Each other card takes the first spot that covers no
  * machine card, no note and no pair card placed before it. Without a free spot, it takes the spot
  * that covers the least. A second push for that card can move it onto a machine card, so it
  * stays; the owner can drag it. Revisit when crowded maps on desktop show stacked pair cards.
@@ -154,19 +124,15 @@ export function placePairs(
     readonly fixed: Point | null;
   }>,
   machines: ReadonlyArray<Box>,
-  width: number,
-  height: number,
   notes: ReadonlyArray<Box> = [],
 ): Array<Point> {
   const pad = (box: Box): Box => ({ ...box, w: box.w + GAP, h: box.h + GAP });
   const padded = machines.map(pad);
   const cards = [...machines, ...notes];
   const keepOff = (box: Box): Box =>
-    separate([...cards, box], width, height, new Set(cards.keys()))[cards.length] ?? box;
+    separate([...cards, box], new Set(cards.keys()))[cards.length] ?? box;
   // Cards that the owner placed go first, so automatic cards keep off them.
-  const fixedBoxes = pairs.map(({ fixed, w, h }) =>
-    fixed ? keepOff(clampBox({ ...fixed, w, h }, width, height)) : null,
-  );
+  const fixedBoxes = pairs.map(({ fixed, w, h }) => (fixed ? keepOff({ ...fixed, w, h }) : null));
   const placed: Array<Box> = [
     ...notes.map(pad),
     ...fixedBoxes.flatMap((box) => (box ? [pad(box)] : [])),
@@ -180,16 +146,12 @@ export function placePairs(
     let best: { box: Box; score: number } | null = null;
     for (const aside of ASIDE) {
       for (const t of ALONG) {
-        const box = clampBox(
-          {
-            x: a.x + (b.x - a.x) * t + nx * aside * across,
-            y: a.y + (b.y - a.y) * t + ny * aside * across,
-            w,
-            h,
-          },
-          width,
-          height,
-        );
+        const box = {
+          x: a.x + (b.x - a.x) * t + nx * aside * across,
+          y: a.y + (b.y - a.y) * t + ny * aside * across,
+          w,
+          h,
+        };
         const near = pad(box);
         const score =
           padded.reduce((sum, m) => sum + MACHINE_WEIGHT * overlapArea(near, m), 0) +
@@ -244,8 +206,8 @@ export interface MapViewport {
   readonly k: number;
 }
 
-/** MM-1116: the zoom limits. */
-export const MIN_ZOOM = 0.25;
+/** MM-1116: the zoom limits. The map has no edges, so "Fit" can need a far zoom out. */
+export const MIN_ZOOM = 0.1;
 export const MAX_ZOOM = 2;
 export const clampZoom = (k: number) => clamp(k, MIN_ZOOM, MAX_ZOOM);
 

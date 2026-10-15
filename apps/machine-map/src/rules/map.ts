@@ -59,25 +59,36 @@ export const defaultArrow = (from: MachineId, to: MachineId): ArrowRecord => ({
   revertLevel: null,
 });
 
-/** Spots for new machines: a grid inside the edges of the map. */
+/**
+ * MM-1114: map places are pixels on an unbounded map. Places were fractions of the map area
+ * before; the portal moved them once into this frame, so the old layout keeps its shape. New
+ * machines start inside it.
+ */
+export const MAP_FRAME = { width: 1400, height: 700 } as const;
+
+/** Spots for new machines: a grid inside the frame. */
 const SPOTS: ReadonlyArray<MapPosition> = [0.15, 0.38, 0.62, 0.85].flatMap((y) =>
-  [0.12, 0.31, 0.5, 0.69, 0.88].map((x) => ({ x, y })),
+  [0.12, 0.31, 0.5, 0.69, 0.88].map((x) => ({
+    x: Math.round(x * MAP_FRAME.width),
+    y: Math.round(y * MAP_FRAME.height),
+  })),
 );
-/** The map is wider than tall on a desktop, so a step across counts more than a step down. */
-const ACROSS = 1.6;
+/** A new card needs this much room around its center, about one card and a gap. */
+const MIN_ROOM = 260;
 
 /**
- * MM-206: the place of a new machine. The first one goes to the middle. Each next one takes the
- * spot farthest from every machine, so new cards do not land on old ones. The owner moves them
- * later.
+ * MM-206: the place of a new machine. The first one goes to the middle of the frame. Each next one
+ * takes the spot of the frame farthest from every machine, so new cards do not land on old ones.
+ * When the frame is full, it goes right of every machine. The owner moves them later.
  */
 export function freePosition(taken: ReadonlyArray<MapPosition>): MapPosition {
-  if (taken.length === 0) return { x: 0.5, y: 0.5 };
+  if (taken.length === 0) return { x: MAP_FRAME.width / 2, y: MAP_FRAME.height / 2 };
   const room = (spot: MapPosition) =>
-    Math.min(...taken.map((p) => Math.hypot((spot.x - p.x) * ACROSS, spot.y - p.y)));
-  let best = SPOTS[0] ?? { x: 0.5, y: 0.5 };
+    Math.min(...taken.map((p) => Math.hypot(spot.x - p.x, spot.y - p.y)));
+  let best = SPOTS[0] ?? { x: 0, y: 0 };
   for (const spot of SPOTS) if (room(spot) > room(best)) best = spot;
-  return best;
+  if (room(best) >= MIN_ROOM) return best;
+  return { x: Math.max(...taken.map((p) => p.x)) + MIN_ROOM + 40, y: MAP_FRAME.height / 2 };
 }
 
 export const findMachine = (map: MachineMapDocument, id: MachineId): MachineRecord | undefined =>
@@ -518,4 +529,58 @@ export function desiredState(
     settings: effectiveSettings(map, machineId),
     paused,
   };
+}
+
+// ---------------------------------------------------------------- MM-1114: fractions to pixels
+
+type Json = Readonly<Record<string, unknown>>;
+const isRecord = (value: unknown): value is Json =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const scalePlace = (place: unknown): unknown =>
+  isRecord(place) && typeof place.x === "number" && typeof place.y === "number"
+    ? {
+        ...place,
+        x: Math.round(place.x * MAP_FRAME.width),
+        y: Math.round(place.y * MAP_FRAME.height),
+      }
+    : place;
+const withPlace = (record: unknown): unknown =>
+  isRecord(record) ? { ...record, position: scalePlace(record.position) } : record;
+/** The distance beside the line was a fraction of the shorter side of the map. */
+const scaleAside = (offset: unknown): unknown =>
+  isRecord(offset) && typeof offset.aside === "number"
+    ? { ...offset, aside: Math.round(offset.aside * Math.min(MAP_FRAME.width, MAP_FRAME.height)) }
+    : offset;
+const mapEach = (list: unknown, each: (item: unknown) => unknown): unknown =>
+  Array.isArray(list) ? list.map(each) : list;
+
+/** MM-1114: a stored map with fraction places, as raw JSON before decoding, in map pixels. */
+export function absoluteMapJson(map: unknown): unknown {
+  if (!isRecord(map)) return map;
+  return {
+    ...map,
+    machines: mapEach(map.machines, withPlace),
+    ...(map.notes === undefined ? {} : { notes: mapEach(map.notes, withPlace) }),
+    ...(map.pairPlacements === undefined
+      ? {}
+      : { pairPlacements: mapEach(map.pairPlacements, scaleAside) }),
+  };
+}
+
+/** MM-1114: stored changes with fraction places, as raw JSON before decoding, in map pixels. */
+export function absoluteChangesJson(changes: unknown): unknown {
+  return mapEach(changes, (change) => {
+    if (!isRecord(change)) return change;
+    switch (change._tag) {
+      case "putMachine":
+        return { ...change, machine: withPlace(change.machine) };
+      case "putNote":
+        return { ...change, note: withPlace(change.note) };
+      case "placePair":
+        return { ...change, offset: scaleAside(change.offset) };
+      default:
+        return change;
+    }
+  });
 }

@@ -52,14 +52,13 @@ export const MACHINE_LEVEL_SCOPES: Readonly<Record<MachineLevel, ReadonlyArray<A
 /** The session subject of a machine on the server of another machine (MM-1305). */
 export const machineSessionSubject = (machineId: MachineId): string => `machine:${machineId}`;
 
-const MapCoordinate = Schema.Number.check(Schema.isFinite());
+const MapPixels = Schema.Number.check(Schema.isFinite());
 
 /**
- * A place on the map. The portal writes fractions of the map area today. Any finite number
- * decodes, so a later portal can write map pixels without breaking machines on this build
- * (MM-1114): each machine decodes `self` in its desired state.
+ * A place on the map in map pixels (MM-1114). The map has no edges, so a place can be negative
+ * or far out. Places of older portals were fractions; the portal moved them once.
  */
-export const MapPosition = Schema.Struct({ x: MapCoordinate, y: MapCoordinate });
+export const MapPosition = Schema.Struct({ x: MapPixels, y: MapPixels });
 export type MapPosition = typeof MapPosition.Type;
 
 export const MachineRecord = Schema.Struct({
@@ -173,8 +172,8 @@ export type MapPreset = typeof MapPreset.Type;
 export const PairOffset = Schema.Struct({
   /** 0 is the center of `a`, 1 the center of `b`. */
   along: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
-  /** Distance beside the line, as a fraction of the shorter side of the map. Any finite number decodes, see `MapPosition`. */
-  aside: MapCoordinate,
+  /** Distance beside the line, in map pixels. */
+  aside: MapPixels,
 });
 export type PairOffset = typeof PairOffset.Type;
 
@@ -555,9 +554,10 @@ export type PortalToMachine = typeof PortalToMachine.Type;
 export const PortalSnapshot = Schema.Struct({
   /**
    * MM-1120: the unit of map places. A page decodes only the unit of its own bundle, so a
-   * snapshot in a newer unit fails to decode and the page loads the new bundle.
+   * snapshot in a newer unit fails to decode and the page loads the new bundle. Pixels since
+   * MM-1114; a page of the fractions bundle reloads.
    */
-  placeUnits: Schema.Literal("fractions"),
+  placeUnits: Schema.Literal("pixels"),
   map: MachineMapDocument,
   presence: Schema.Record(Schema.String, MachinePresence),
   /** Current values that each machine reported, by machine id. */
