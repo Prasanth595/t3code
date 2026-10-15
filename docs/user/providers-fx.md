@@ -25,7 +25,7 @@ fx also has an **Effort** control. A new thread starts at Medium.
 
 T3 Code does not show fx's backend selector. To use Codex, Grok, or Vercel AI Gateway, run `fx provider` on the environment's machine.
 
-Type `$` in the composer to list the skills fx finds in its skill folders, in the order fx's own skill menu shows them. When two skills share a name, fx can't tell which one you mean, so neither can be picked until you rename one.
+Type `$` in the composer to list the skills fx finds in its skill folders, in the order fx's own skill menu shows them. When two different skills share a name, the menu lists the one fx loads for that name: the first copy in fx's folder order, starting with the workspace.
 
 ## Permission modes
 

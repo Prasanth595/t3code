@@ -56,10 +56,11 @@ describe("discoverFxSkills", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  // fx keeps both skills that share a name, ignoring case, and refuses
-  // `$review` as ambiguous. It skips a SKILL.md whose frontmatter has no name or never
-  // closes, and a symlinked folder in its managed ~/.fx/skills.
-  it.effect("offers only skills fx can load and invoke by name", () =>
+  // For `$review` with two skills of that name (ignoring case), fx's model
+  // picks the first in scan order, so only that one is offered. fx skips a
+  // SKILL.md whose frontmatter has no name or never closes, and a symlinked
+  // folder in its managed ~/.fx/skills.
+  it.effect("offers the skill fx loads for each name", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -147,16 +148,17 @@ describe("discoverFxSkills", () => {
 
       const skills = yield* discoverFxSkills({ cwd: workspace, environment: { HOME: home } });
 
+      // fx scans the workspace before HOME, so the workspace `review` wins
+      // over ~/.claude's `Review`.
       assert.deepEqual(
-        skills.map((skill) => [skill.name, skill.userInvocable !== false]),
+        skills.map((skill) => [skill.name, skill.path]),
         [
-          ["été", true],
-          ["Été", true],
-          ["bom-folder", true],
-          ["plain", true],
-          ["replacement", true],
-          ["review", false],
-          ["Review", false],
+          ["été", path.join(home, ".fx/skills/accent-lower/SKILL.md")],
+          ["Été", path.join(home, ".fx/skills/accent-upper/SKILL.md")],
+          ["bom-folder", path.join(home, ".fx/skills/bom-folder/SKILL.md")],
+          ["plain", path.join(home, ".fx/skills/plain/SKILL.md")],
+          ["replacement", path.join(home, ".fx/skills/replacement/SKILL.md")],
+          ["review", path.join(workspace, ".fx/skills/review/SKILL.md")],
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

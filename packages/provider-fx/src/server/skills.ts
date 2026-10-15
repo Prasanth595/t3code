@@ -342,8 +342,9 @@ const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (inpu
 
 /**
  * Skills in fx's menu order. Like fx, a folder reached twice (a symlinked
- * root) counts once. A name two different skills share stays listed but
- * can't be picked: fx refuses an ambiguous `$name`.
+ * root) counts once. When two different skills share a name, `$name` lets
+ * the model choose from fx's catalog, which lists them in scan order; it
+ * takes the first copy, so that is the one listed here.
  */
 export const discoverFxSkills = Effect.fn("discoverFxSkills")(function* (input: {
   readonly cwd: string;
@@ -360,24 +361,18 @@ export const discoverFxSkills = Effect.fn("discoverFxSkills")(function* (input: 
   const cwd = yield* realPath(input.cwd);
   const path = yield* Path.Path;
   const seenFolders = new Set<string>();
+  // fx matches `$name` ignoring ASCII case only.
+  const seenNames = new Set<string>();
   const found: Array<{ readonly skill: ServerProviderSkill; readonly rank: number }> = [];
   for (const root of skillRoots(path, cwd, home)) {
     for (const { skill, folder } of yield* discoverSkillsInRoot(root)) {
       if (seenFolders.has(folder)) continue;
       seenFolders.add(folder);
+      const nameKey = skill.name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+      if (seenNames.has(nameKey)) continue;
+      seenNames.add(nameKey);
       found.push({ skill, rank: root.rank });
     }
   }
-  // fx matches `$name` ignoring ASCII case only.
-  const nameKey = (skill: ServerProviderSkill) =>
-    skill.name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
-  const nameCounts = new Map<string, number>();
-  for (const { skill } of found) {
-    nameCounts.set(nameKey(skill), (nameCounts.get(nameKey(skill)) ?? 0) + 1);
-  }
-  return found
-    .sort((left, right) => left.rank - right.rank)
-    .map(({ skill }) =>
-      (nameCounts.get(nameKey(skill)) ?? 0) > 1 ? { ...skill, userInvocable: false } : skill,
-    );
+  return found.sort((left, right) => left.rank - right.rank).map(({ skill }) => skill);
 });
