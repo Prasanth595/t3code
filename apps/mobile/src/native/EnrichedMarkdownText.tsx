@@ -5,9 +5,16 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { markdownWithHtml } from "../lib/markdownDocument";
-import { widestOrderedListMarkerDigits } from "../lib/orderedListMarkers";
+import { wideOrderedListMarkerDigits } from "../lib/orderedListMarkers";
 import { useCallback, useMemo, useState } from "react";
-import { ActionSheetIOS, PixelRatio, Platform, Share, StyleSheet, View } from "react-native";
+import {
+  ActionSheetIOS,
+  Platform,
+  Share,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import {
   EnrichedMarkdownText,
   type DocumentAssetsEvent,
@@ -29,15 +36,15 @@ import {
 // The native list gutter only fits "99.", so wider numbers draw past the left
 // edge. DM Sans digits are at most 0.71em wide and the period 0.26em, in every
 // weight; the gutter is in dp while the marker scales with the system font size.
-function orderedListMarkerMinWidth(digits: number, fontSize: number): number {
-  if (digits < 3) return 0;
-  return Math.ceil((digits * 0.71 + 0.26) * fontSize * PixelRatio.getFontScale());
+function orderedListMarkerMinWidth(digits: number, fontSize: number, fontScale: number): number {
+  if (digits === 0) return 0;
+  return Math.ceil((digits * 0.71 + 0.26) * fontSize * fontScale);
 }
 
 function enrichedStyle(
   style: SelectableMarkdownTextProps["textStyle"],
   dark: boolean,
-  orderedListMarkerDigits: number,
+  orderedListMarker: { digits: number; fontScale: number },
 ): MarkdownStyle {
   const monospace = Platform.OS === "ios" ? "Menlo" : "monospace";
   // Keep the radius modest: iOS clips square table-cell borders without stroking the corner arcs.
@@ -131,7 +138,11 @@ function enrichedStyle(
       bulletColor: style.mutedColor,
       markerColor: style.mutedColor,
       gapWidth: 6,
-      markerMinWidth: orderedListMarkerMinWidth(orderedListMarkerDigits, style.fontSize),
+      markerMinWidth: orderedListMarkerMinWidth(
+        orderedListMarker.digits,
+        style.fontSize,
+        orderedListMarker.fontScale,
+      ),
     },
     thematicBreak: { color: style.dividerColor, height: 1, marginTop: 8, marginBottom: 8 },
     table: {
@@ -255,16 +266,17 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       mimeTypes: { "app.t3.context-fragment": props.contextClipboardFragment! },
     };
   }, [props.contextClipboardFragment, props.markdown]);
-  const orderedListMarkerDigits = useMemo(
-    () => widestOrderedListMarkerDigits(props.markdown),
-    [props.markdown],
-  );
+  const { fontScale } = useWindowDimensions();
+  const orderedListMarkerDigits = useMemo(() => wideOrderedListMarkerDigits(markdown), [markdown]);
   const markdownStyle = useMemo(
     () => ({
-      ...enrichedStyle(props.textStyle, themeAppearance === "dark", orderedListMarkerDigits),
+      ...enrichedStyle(props.textStyle, themeAppearance === "dark", {
+        digits: orderedListMarkerDigits,
+        fontScale,
+      }),
       linkVariants,
     }),
-    [props.textStyle, themeAppearance, orderedListMarkerDigits, linkVariants],
+    [props.textStyle, themeAppearance, orderedListMarkerDigits, fontScale, linkVariants],
   );
   const renderMedia = useCallback(
     (asset: MarkdownMediaAsset) =>
