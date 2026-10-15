@@ -10,6 +10,7 @@ import {
   PullRequestListResult,
   PullRequestReviewerRequestInput,
   PullRequestSetFilesViewedInput,
+  gitHubApiHostOf,
   pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
@@ -103,6 +104,11 @@ describe("PullRequestListResult", () => {
         SourceControlProviderKind.make("github"),
       ),
     ).toBe("github.example.com");
+  });
+
+  it("reads a github.com subdomain with a port through github.com", () => {
+    expect(gitHubApiHostOf("work.github.com:8443")).toBe("github.com");
+    expect(gitHubApiHostOf("github.example.com:8443")).toBe("github.example.com:8443");
   });
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record

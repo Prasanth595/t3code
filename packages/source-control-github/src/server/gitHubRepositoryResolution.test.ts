@@ -92,6 +92,10 @@ describe("gitHubApiHostForRemote", () => {
       "github.com",
     );
     assert.strictEqual(gitHubApiHostForRemote("git@work.github.com:acme/web.git"), "github.com");
+    assert.strictEqual(
+      gitHubApiHostForRemote("https://work.github.com:8443/acme/web.git"),
+      "github.com",
+    );
   });
 });
 

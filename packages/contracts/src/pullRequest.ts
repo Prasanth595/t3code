@@ -1396,7 +1396,7 @@ export function pullRequestHostOf(
  */
 export function gitHubApiHostOf(host: string): string {
   const normalized = host.toLowerCase();
-  return normalized.endsWith(".github.com") ? "github.com" : normalized;
+  return normalized.replace(/:\d+$/, "").endsWith(".github.com") ? "github.com" : normalized;
 }
 
 /**
