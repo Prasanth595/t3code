@@ -795,23 +795,23 @@ export const makeGitHub = (options: GitHubOptions) => {
    * exits 0, and an answer that was lost on the way back leaves a caller asking again. So
    * does one that is no longer open, merged or closed in the meantime: there is nothing to
    * draft, and a caller that resumes a decision would otherwise fail on it every time. When
-   * the call fails for another reason the pull request is read, and its state decides, not
-   * the words of the error; a read that fails or finds it open leaves the original error.
+   * the call fails for any other reason, a non-zero exit, a timeout, a rate limit or too much
+   * output, the pull request is read, and its state decides, not the words of the error; a
+   * read that fails or finds it open leaves the original error.
    */
   const markPrDraft = (pr: number): GitHubEffect<void> =>
     gh([...repoArgs(["pr", "ready", String(pr)]), "--undo"]).pipe(
       Effect.asVoid,
-      Effect.catchTags({
-        GitHubFailed: (original) =>
-          original.stderr.includes('is already "in draft"')
-            ? Effect.void
-            : pullRequest(pr).pipe(
-                Effect.orElseSucceed(() => null),
-                Effect.flatMap((pull) =>
-                  pull !== null && !pull.open ? Effect.void : Effect.fail(original),
-                ),
+      Effect.catch((original) =>
+        original._tag === "GitHubFailed" && original.stderr.includes('is already "in draft"')
+          ? Effect.void
+          : pullRequest(pr).pipe(
+              Effect.orElseSucceed(() => null),
+              Effect.flatMap((pull) =>
+                pull !== null && !pull.open ? Effect.void : Effect.fail(original),
               ),
-      }),
+            ),
+      ),
     );
 
   /** Comments on the pull request, ending with the factory marker. */
