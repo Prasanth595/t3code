@@ -13,8 +13,9 @@
 # a person. Red: push, open it as a draft, and file `Sync to <tag> fails checks`
 # with the failing step and the last 200 lines of its output. A conflict in any
 # other file, or a failing `vp i` or generator, aborts the merge and pushes
-# nothing; a refused push stops too. Each files its own issue (`conflicts`,
-# `fails checks`, `cannot be pushed`) and exits 1; an open issue of the same
+# nothing; a refused push stops too, and so does a refused fast-forward. Each
+# files its own issue (`conflicts`, `fails checks`, `cannot be pushed`, `cannot
+# land`) and exits 1; an open issue of the same
 # kind gets a comment and the new tag in its title instead, so a lasting problem
 # keeps one issue. gh targets origin's GitHub repository, never the fork's parent.
 #
@@ -55,7 +56,10 @@ if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]+\.[0-9]+$ ]]; then
 fi
 echo "newest nightly: $tag"
 
-read -r current _ < factory/UPSTREAM
+# What main records, not the checkout, which an earlier local run may have left
+# on a sync branch.
+git fetch --quiet origin "$base"
+read -r current _ < <(git show "origin/$base:factory/UPSTREAM")
 if [[ $current == "$tag" ]]; then
   echo "up to date"
   exit 0
@@ -124,7 +128,8 @@ fails_before_commit() {
 }
 
 # A sync branch already on origin belongs to an earlier run: its open pull
-# request waits for a person; without one, the run that pushed it stopped early.
+# request waits for a person, who has the issue that run filed (`fails checks`
+# or `cannot land`); without one, the run that pushed it stopped early.
 if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
   pr_url=$(gh pr list --head "$branch" --state open --json url --jq '.[0].url // empty')
   if [[ -n $pr_url ]]; then
@@ -141,7 +146,6 @@ if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
   exit 1
 fi
 
-git fetch --quiet origin "$base"
 git fetch --quiet --no-tags "$upstream" "refs/tags/$tag:refs/tags/$tag"
 sha=$(git rev-parse "$tag^{commit}")
 git checkout --quiet -B "$branch" "origin/$base"
@@ -221,12 +225,14 @@ if [[ $check_status == 0 ]]; then
   cat "$scratch/land.log" >&2
   echo "sync: $base could not be fast-forwarded to $branch; $pr_url waits for a person" >&2
   {
-    echo "\`$base\` could not be fast-forwarded to this branch: it moved while the checks ran,"
-    echo "or it refuses the push. The checks passed on the \`$base\` this branch was cut from,"
-    echo "not on the current one, so this needs a person: merge \`$base\` in, run"
-    echo "\`factory/scripts/check.sh\`, then merge."
+    echo "\`$branch\` merges \`$tag\` ($sha) and passed the checks, but \`$base\` could not be"
+    echo "fast-forwarded to it: \`$base\` moved while the checks ran, or it refuses the push."
+    echo "The checks ran on the \`$base\` the branch was cut from, not the current one, so"
+    echo "this needs a person: merge \`$base\` into the branch, run \`factory/scripts/check.sh\`,"
+    echo "then merge the pull request. Until then each run waits on it."
+    echo "Pull request: $pr_url"
   } > "$scratch/land.md"
-  gh pr comment "$pr_url" --body-file "$scratch/land.md"
+  file_issue "cannot land" "$scratch/land.md"
   exit 1
 fi
 

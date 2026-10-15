@@ -418,18 +418,28 @@ describe("sync.sh", () => {
     git(other, "config", "commit.gpgsign", "false");
     write(other, "OTHER.md", "another pull request\n");
     const moved = commit(other, "another pull request");
-    const { status, stderr, calls, body } = run({ SYNC_TEST_MOVE_MAIN: other });
-    expect(status).toBe(1);
-    expect(stderr).toContain(
+    const first = run({ SYNC_TEST_MOVE_MAIN: other });
+    expect(first.status).toBe(1);
+    expect(first.stderr).toContain(
       `sync: main could not be fast-forwarded to sync/${NEWEST}; https://example.test/pr/1 waits for a person`,
     );
     expect(git(origin, "rev-parse", "main")).toBe(moved);
     expect(originBranches()).toEqual(["main", `sync/${NEWEST}`]);
-    expect(calls.slice(-1)).toEqual([
-      expect.stringMatching(/^gh pr comment https:\/\/example\.test\/pr\/1 --body-file /),
+    expect(first.calls).not.toContainEqual(expect.stringMatching(/^gh pr merge/));
+    expect(first.calls.at(-1)).toMatch(
+      new RegExp(`^gh issue create --title Sync to ${NEWEST} cannot land --body-file `),
+    );
+    expect(first.body).toContain("moved while the checks ran");
+    expect(first.body).toContain("Pull request: https://example.test/pr/1");
+
+    // The next run finds the branch and its open pull request, which the issue
+    // already points a person at, and waits without filing again.
+    const second = run({ SYNC_TEST_PR_URL: "https://example.test/pr/1" });
+    expect(second.status).toBe(0);
+    expect(second.stdout).toContain(`sync: ${NEWEST} waits on https://example.test/pr/1`);
+    expect(second.calls).toEqual([
+      `gh pr list --head sync/${NEWEST} --state open --json url --jq .[0].url // empty`,
     ]);
-    expect(calls).not.toContainEqual(expect.stringMatching(/^gh pr merge/));
-    expect(body).toContain("it moved while the checks ran");
   });
 
   it("waits on the open pull request of a sync branch already on origin", () => {
