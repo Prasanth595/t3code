@@ -671,6 +671,7 @@ export const MachineToPortal = Schema.Union([
   Schema.TaggedStruct("clientSeen", {
     thumbprint: TrimmedNonEmptyString,
     describedAs: Schema.String.check(Schema.isMaxLength(200)),
+    /** The Access subject: an email, or the client id of an owner service token. */
     email: Schema.NullOr(TrimmedNonEmptyString),
   }),
 ]);

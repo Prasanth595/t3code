@@ -1244,24 +1244,46 @@ export const make = Effect.gen(function* () {
 
   /**
    * Fork (MM-917): an owner browser that proves its key may get the arrow of its client instead of
-   * the owner access. A missing or bad proof keeps the owner access while `clientAccess` observes.
+   * the owner access. The proof is read only while `clientAccess` observes, so `off` stays the
+   * path of today. A missing or bad proof keeps the owner access.
    */
-  const ownerBrowserGrant = (request: HttpServerRequest.HttpServerRequest, email: string) =>
-    Option.isNone(machineMap) || request.headers.dpop === undefined
-      ? Effect.succeed(undefined)
-      : verifyRequestDpopProof({ request }).pipe(
-          Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.option,
-          Effect.flatMap((thumbprint) => {
-            const client = deriveAuthClientMetadata({ request });
-            return machineMap.value.browserGrant({
-              thumbprint: Option.getOrUndefined(thumbprint),
-              email,
-              describedAs: [client.browser, client.os].filter(Boolean).join(" on "),
-            });
-          }),
-        );
+  const loggedProofFailures = new Set<string>();
+  const ownerBrowserGrant = (request: HttpServerRequest.HttpServerRequest, subject: string) => {
+    const dpop = request.headers.dpop;
+    if (Option.isNone(machineMap) || dpop === undefined) return Effect.succeed(undefined);
+    const map = machineMap.value;
+    return map.observesBrowserKeys.pipe(
+      Effect.flatMap((observes) =>
+        !observes
+          ? Effect.succeed(undefined)
+          : verifyRequestDpopProof({ request }).pipe(
+              Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.flatMap((thumbprint) => {
+                const client = deriveAuthClientMetadata({ request });
+                return map.browserGrant({
+                  thumbprint,
+                  subject,
+                  describedAs: [client.browser, client.os].filter(Boolean).join(" on "),
+                });
+              }),
+              // Once per reason, so a proof that never verifies, for example a URL that the
+              // tunnel rewrites, shows in the log without a line per sign-in.
+              Effect.catch((error) => {
+                const reason =
+                  error._tag === "ServerAuthInvalidCredentialError"
+                    ? (error.dpopFailureReason ?? error.diagnostic ?? "invalid")
+                    : error._tag;
+                if (loggedProofFailures.has(reason)) return Effect.succeed(undefined);
+                loggedProofFailures.add(reason);
+                return Effect.logWarning("Machine map could not verify a browser key proof.", {
+                  reason,
+                }).pipe(Effect.as(undefined));
+              }),
+            ),
+      ),
+    );
+  };
 
   const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
     (request) =>

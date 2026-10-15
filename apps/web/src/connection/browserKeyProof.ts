@@ -31,8 +31,10 @@ const loadOrCreateKey = (): Promise<BrowserDpopKey> =>
     }).pipe(Effect.provide(browserCryptoLayer)),
   ));
 
-/** The DPoP proof for one request, or null when this browser cannot make one. */
-export async function browserKeyProof(method: string, url: string): Promise<string | null> {
+/** A slow IndexedDB must not hold up the page start. Without a proof, the owner login applies. */
+const PROOF_TIMEOUT_MS = 1_000;
+
+async function makeProof(method: string, url: string): Promise<string | null> {
   try {
     const proofKey = await loadOrCreateKey();
     const { proof } = await Effect.runPromise(
@@ -43,4 +45,15 @@ export async function browserKeyProof(method: string, url: string): Promise<stri
     loadedKey = null;
     return null;
   }
+}
+
+/** The DPoP proof for one request, or null when this browser cannot make one in time. */
+export function browserKeyProof(method: string, url: string): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    makeProof(method, url),
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), PROOF_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }

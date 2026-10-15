@@ -79,8 +79,9 @@ export const clientGrantFor = (
 };
 
 /**
- * MM-912: the clients whose level on this machine changed between two desired states, read like
- * `sourcesWithChangedLevel`. A client that left the desired state counts as a change to `none`.
+ * MM-912, MM-909: the clients whose sessions on this machine must end: the level changed between
+ * two desired states, read like `sourcesWithChangedLevel`, or a browser key left the client. A
+ * client that left the desired state counts as a change to `none`.
  */
 export const clientsWithChangedLevel = (
   previous: MachineDesiredState | null,
@@ -88,12 +89,23 @@ export const clientsWithChangedLevel = (
   next: MachineDesiredState | null,
   nowMs: number,
 ): ReadonlyArray<DesiredClient["id"]> => {
-  return sourcesWithChangedLevel(clientArrows(previous), previousAtMs, clientArrows(next), nowMs);
+  const lostKey = (previous?.browserClients ?? []).flatMap((before) => {
+    const after = next?.browserClients?.find((client) => client.id === before.id);
+    return after !== undefined && before.thumbprints.some((key) => !after.thumbprints.includes(key))
+      ? [before.id]
+      : [];
+  });
+  return [
+    ...new Set([
+      ...sourcesWithChangedLevel(clientArrows(previous), previousAtMs, clientArrows(next), nowMs),
+      ...lostKey,
+    ]),
+  ];
 };
 
 /**
- * MM-917: the grant for a browser that proved a key that an approved client holds, or undefined
- * for an unknown key, `none` or an expired arrow.
+ * MM-917: the grant for a browser that proved a key that an approved client holds, at most
+ * `standard`, or undefined for an unknown key, `none` or an expired arrow.
  */
 export const browserGrantFor = (
   desired: MachineDesiredState,
@@ -108,7 +120,8 @@ export const browserGrantFor = (
   if (level === "none") return undefined;
   return {
     subject: clientSessionSubject(client.id),
-    scopes: MACHINE_LEVEL_SCOPES[level],
+    // `observe` never gives more than the owner login of today. Revisit when machines enforce.
+    scopes: MACHINE_LEVEL_SCOPES[level === "admin" ? "standard" : level],
     label: `client ${client.name}`,
   };
 };

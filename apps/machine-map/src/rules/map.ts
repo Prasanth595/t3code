@@ -645,7 +645,7 @@ export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineI
         if (previous.mapRole !== change.machine.mapRole) touched.add(change.machine.id);
         break;
       }
-      // MM-912: machines apply the clients that hold an app token. A browser client has none yet.
+      // MM-912, MM-917: machines apply client arrows for app tokens and browser keys.
       case "setClientArrow":
         touched.add(change.arrow.to);
         break;
