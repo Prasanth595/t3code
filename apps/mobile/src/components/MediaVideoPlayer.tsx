@@ -34,8 +34,7 @@ function LoadedMediaVideo(props: {
   });
   const { status } = useEvent(player, "statusChange", { status: player.status });
   const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
-  // A buffering stall reports not playing while loading; it keeps the session.
-  useMediaAudioSessionHold(isPlaying || status === "loading");
+  useMediaAudioSessionHold(isPlaying);
   const loadSource = useEffectEvent(async (signal: AbortSignal) => {
     const uri = props.resolvePlaybackUri ? await props.resolvePlaybackUri() : props.uri;
     if (signal.aborted) return;

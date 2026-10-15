@@ -6,8 +6,9 @@ const nativeControls = requireOptionalNativeModule<{
   releaseVideoAudioSession(): Promise<void>;
 }>("T3NativeControls");
 
-// Lets a player that starts right after another stops keep the session.
-const RELEASE_DELAY_MS = 100;
+// Players report not playing during seeks and buffering stalls, and another
+// player may start right after one stops. Both keep the session.
+const RELEASE_DELAY_MS = 1_000;
 
 let playingCount = 0;
 let releaseTimer: ReturnType<typeof setTimeout> | undefined;
