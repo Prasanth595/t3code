@@ -360,7 +360,7 @@ The server setting `worktreePathTemplate` decides where new worktrees go. It is 
 
 ## Installed web app
 
-Each server web app, such as `https://t3-vps.yarden-zamir.com`, installs as an app. Desktop Chrome and Edge show "Install" in the address bar. Android Chrome shows "Install app" in its menu. On iPhone, use Share > Add to Home Screen. The app has shortcuts for a new thread, pull requests and settings.
+Each server web app, such as `https://t3-vps.yarden-zamir.com`, installs as an app. Desktop Chrome and Edge show "Install" in the address bar. Android Chrome shows "Install app" in its menu. On iPhone, use Share > Add to Home Screen. The app has shortcuts for a new thread, pull requests and settings. On Android, long-press the app icon to see them.
 
 The client setting `installedAppEnabled` adds a service worker. It is on by default. Turn it off in Settings > General > Installed app, in each browser and for each server.
 
