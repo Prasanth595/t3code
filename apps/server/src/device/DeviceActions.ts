@@ -88,7 +88,6 @@ const ok = (operation: string) => (result: { code: number; stderr: string; stdou
         }),
       );
 
-// `default` is what a fresh simulator reports ("large").
 const IOS_TEXT_SIZES: Record<DeviceTextSize, string> = {
   small: "small",
   default: "large",
@@ -155,8 +154,6 @@ const ANDROID_PERMISSIONS: Record<string, ReadonlyArray<string>> = {
   motion: ["android.permission.ACTIVITY_RECOGNITION"],
 };
 
-// Gravity vector (x:y:z) that makes the emulator report each orientation,
-// and the window-manager rotation index for the same.
 const ANDROID_GRAVITY: Record<DeviceOrientation, string> = {
   portrait: "0:9.81:0",
   landscape_left: "9.81:0:0",
@@ -416,7 +413,6 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
       }
       const verb = input.decision === "grant" ? "grant" : "revoke";
       for (const permission of permissions) {
-        // Not every app declares every permission in a group; ignore those.
         yield* shell(["pm", verb, input.appId, permission], "permission").pipe(Effect.ignore);
       }
       return;

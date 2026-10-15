@@ -79,7 +79,6 @@ const withoutFragment = (url: string) => url.split("#", 1)[0];
 export function HtmlRenderWebView(props: {
   readonly uri: string;
   readonly title: string;
-  /** Inside the feed, the page takes scroll gestures only when it overflows its frame. */
   readonly nested: boolean;
   readonly onLoadError?: () => void;
 }) {
@@ -112,8 +111,6 @@ export function HtmlRenderWebView(props: {
     setGeneration((value) => value + 1);
   };
   const scrollable = !props.nested || overflow.x || overflow.y;
-  // Pages have no horizontal padding of their own, so full screen adds the
-  // feed's gutter in the page's background color.
   return (
     <View
       style={
@@ -143,9 +140,6 @@ export function HtmlRenderWebView(props: {
         // that only overflows sideways leaves vertical drags to the feed.
         nestedScrollEnabled={props.nested && overflow.y}
         overScrollMode={props.nested ? "never" : "always"}
-        // Only the page itself loads here; other top-frame navigations are
-        // dropped. A link the reader taps opens as a new window, which the
-        // platform allows only from a tap, and goes to the browser.
         onShouldStartLoadWithRequest={(request) =>
           request.isTopFrame === false ||
           withoutFragment(request.url) === withoutFragment(props.uri)
@@ -186,7 +180,6 @@ export function ThreadHtmlRender(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly render: HtmlRenderReference;
-  /** The feed's content width; the frame's height follows the page's measured height there. */
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
 }) {
@@ -210,8 +203,6 @@ export function ThreadHtmlRender(props: {
   const [uri, setUri] = useState<string | null>(null);
   if (uri === null && asset._tag === "Success") setUri(asset.url);
   const [failed, setFailed] = useState(false);
-  // A failed load retries once with a fresh URL, or remounts on the same one,
-  // since the failure may have been the connection rather than the URL.
   const [attempt, setAttempt] = useState(0);
   const retried = useRef(false);
   const handleLoadError = () => {

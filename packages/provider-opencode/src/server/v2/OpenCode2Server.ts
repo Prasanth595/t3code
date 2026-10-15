@@ -27,7 +27,6 @@ export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
 export class OpenCode2Server extends Context.Service<
   OpenCode2Server,
   {
-    /** Runs `use` against the instance's server, spawning it first when T3 owns it. */
     readonly withConnection: <A, E, R>(
       use: (connection: OpenCode2Connection) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
@@ -35,9 +34,8 @@ export class OpenCode2Server extends Context.Service<
 >()("@t3tools/provider-opencode/server/v2/OpenCode2Server") {}
 
 /**
- * A fresh password for a spawned server. OpenCode 2 always requires one and
- * prints a generated one to stdout otherwise, so T3 supplies its own and keeps
- * it in memory.
+ * OpenCode 2 always requires one and prints a generated one to stdout
+ * otherwise, so T3 supplies its own and keeps it in memory.
  */
 export const generatePassword = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -46,9 +44,9 @@ export const generatePassword = Effect.gen(function* () {
 });
 
 /**
- * The environment for a spawned 2.x server. `OPENCODE_PASSWORD` wins over
- * `OPENCODE_SERVER_PASSWORD` in OpenCode 2, so the inherited 1.x variable is
- * dropped to keep the T3 password the only one in play.
+ * `OPENCODE_PASSWORD` wins over `OPENCODE_SERVER_PASSWORD` in OpenCode 2, so
+ * the inherited 1.x variable is dropped to keep the T3 password the only one in
+ * play.
  */
 export const serverEnvironment = (
   environment: NodeJS.ProcessEnv,
@@ -72,10 +70,10 @@ const httpFailureOf = (cause: unknown): HttpClientError.HttpClientError | undefi
 };
 
 /**
- * Describes a failed `/api/info` call. Only a transport failure means the
- * server is unreachable; a 401 without the 2.x error body is still a rejected
- * password (1.x sends it empty), and any other failed status is a server error.
- * A 2xx the client cannot decode is not OpenCode 2 (1.x answers with HTML).
+ * Only a transport failure means the server is unreachable; a 401 without the
+ * 2.x error body is still a rejected password (1.x sends it empty), and any
+ * other failed status is a server error. A 2xx the client cannot decode is not
+ * OpenCode 2 (1.x answers with HTML).
  */
 const describeInfoFailure = (cause: unknown) => {
   const failure = httpFailureOf(cause);
@@ -130,9 +128,6 @@ export const verifyServer = (client: OpenCodeClient) =>
     Effect.map((info) => info.version),
   );
 
-/**
- * Clients are built once per server; a failed check is not remembered.
- */
 export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   readonly binaryPath: string;
   readonly serverUrl: string;
@@ -177,7 +172,6 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   return OpenCode2Server.of({
     withConnection: (use) =>
       owner.withServer((server) =>
-        // The owner verifies every server it starts before lending it out.
         latest?.url === server.url
           ? use(latest)
           : Effect.die(new Error("OpenCode 2 server was lent before verification.")),

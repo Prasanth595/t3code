@@ -112,7 +112,6 @@ export function WelcomeWizard({
   onDone,
   resumeEnvironmentId,
 }: {
-  /** Whether this client is authenticated to the server serving the app. */
   readonly localAvailable: boolean;
   readonly resumeEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
@@ -137,7 +136,6 @@ export function WelcomeWizard({
     for (const environment of newComputers) {
       autoSelectedComputers.current.add(environment.environmentId);
     }
-    // A computer the user switched off stays unselected until they pick it.
     const enabledComputers = newComputers.filter((environment) => environment.entry.enabled);
     if (enabledComputers.length === 0) return;
     setSelection(
@@ -640,7 +638,6 @@ function PairingForm({
 const PRIMARY_AGENT_DRIVERS = ["codex", "claudeAgent"] as const;
 type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
 
-/** Setup values stay fixed while provider probes refresh the surrounding cards. */
 interface AgentTerminalSession {
   readonly environmentId: EnvironmentId;
   readonly driver: OnboardingAgentDriver;
@@ -721,7 +718,6 @@ function ConnectedAgentsStep({
       ? instances.map((provider) => ({ driver, provider, instanceId: provider.instanceId }))
       : [{ driver, provider: byDriver.get(driver), instanceId: byDriver.get(driver)?.instanceId }];
   });
-  // Keep the newly created row mounted while settings and provider snapshots catch up.
   if (createdAccount) {
     const index = primaryAgents.findIndex(
       (agent) => agent.instanceId === createdAccount.instanceId,
@@ -996,12 +992,6 @@ function AgentCard({
   );
 }
 
-/**
- * Inline install terminal. Opens a PTY on the connected environment under a
- * synthetic onboarding thread id (terminals are keyed by free-form thread id;
- * the server validates only the cwd) and pre-types the install or login
- * command without submitting, so the user reviews and presses Enter.
- */
 function AgentInstallTerminal({
   session,
   onClose,
@@ -1033,9 +1023,9 @@ function AgentInstallTerminal({
   >("preparing");
   const terminalReady = setupState === "ready" || setupState === "writeFailed";
 
-  // Keep each setup generation distinct. In Strict Mode, a canceled open can
-  // finish after the replacement setup starts; it must not close or pre-type
-  // into the replacement session that shares this terminal id.
+  // In Strict Mode, a canceled open can finish after the replacement setup
+  // starts; it must not close or pre-type into the replacement session that
+  // shares this terminal id.
   useEffect(() => {
     const generation = setupGenerationRef.current + 1;
     setupGenerationRef.current = generation;
@@ -1076,8 +1066,8 @@ function AgentInstallTerminal({
       setSetupState(wrote._tag === "Success" ? "ready" : "writeFailed");
     });
 
-    // Every exit path unmounts the drawer. Close the PTY only while this
-    // connection still has terminal access; revocation leaves it running.
+    // Close the PTY only while this connection still has terminal access;
+    // revocation leaves it running.
     return () => {
       if (activeSetupGenerationRef.current === generation) {
         activeSetupGenerationRef.current = null;
@@ -1194,7 +1184,6 @@ function ImportStep({
   const importWarningRef = useRef("");
   const importedThreadCountRef = useRef(0);
   const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
-  // Keep project creation attempts separate from completed history imports so both can retry.
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
   const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
   const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
@@ -1296,8 +1285,6 @@ function ImportStep({
     const importGeneration = importGenerationRef.current;
     const importedProjects = importedProjectsRef.current;
     const projectAttempts = projectAttemptsRef.current;
-    // Retries skip paths that already landed this session (re-creating them
-    // would only trip the duplicate-root invariant and read as a failure).
     let importedProjectsCount =
       importedProjects.size > 0
         ? selection.filter((candidate) => importedProjects.has(candidate.key)).length
@@ -1662,10 +1649,6 @@ function ImportRepositoryGroup({
   );
 }
 
-/**
- * Clones of one repository and plain folders differ only by folder name, so
- * the name stays visible and the shared parent path truncates first.
- */
 function ProjectPathText({
   path,
   className,
@@ -1740,7 +1723,6 @@ function ImportRowMeta({
   readonly lastActiveAt: string | null;
 }) {
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
-  // "just now" does not fit the fixed column, so collapse it.
   const age = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
   return (
     <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">

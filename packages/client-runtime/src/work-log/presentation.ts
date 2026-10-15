@@ -113,7 +113,6 @@ export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
-/** Structured identity is authoritative, including when it identifies a foreign server. */
 function workEntryToolName(
   entry: Pick<WorkLogPresentationEntry, "label" | "toolTitle" | "toolData" | "structuredPayload">,
 ): string | undefined {
@@ -378,8 +377,6 @@ function workEntryIndicatesToolFailureFromOutput(
     if (item.outputIndicatesFailure || (item.exitCode !== undefined && item.exitCode !== 0)) {
       return true;
     }
-    // Older servers/caches can still carry output. Read only the previous
-    // preview-sized prefix for status, without exposing it in the row detail.
     if (item.output && toolOutputIndicatesFailure(item.output.slice(0, 32_768))) {
       return true;
     }
@@ -390,12 +387,10 @@ function workEntryIndicatesToolFailureFromOutput(
   return output.length > 0 && toolOutputIndicatesFailure(output);
 }
 
-/** Includes legacy activities that stored error output in the command field. */
 export function workEntryIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
   return workEntryIndicatesToolFailureFromOutput(entry, true);
 }
 
-/** Checks rendered output without treating the user's command as an error. */
 export function workEntryDisplayIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
   return workEntryIndicatesToolFailureFromOutput(entry, false);
 }
@@ -498,8 +493,6 @@ export function resolveViewedImageAsset(
     readonly workspaceRoot?: string | null | undefined;
   },
 ): ViewedImageAsset | null {
-  // A relative path with no known workspace still names a media-file relative
-  // to the thread's workspace, so classify against "." and drop the prefix.
   const imageSource = classifyMarkdownImageSource(source, input.workspaceRoot ?? ".");
   if (imageSource._tag !== "WorkspaceFile") return null;
   const resolvedFilePath =
@@ -748,10 +741,6 @@ export function toolGroupSummaryKind(
   return fallbackKinds.size === 1 ? fallbackKinds.values().next().value! : "mixed";
 }
 
-/**
- * A bold-only opening line (the Codex summary heading) wins; otherwise this is
- * the first sentence of the reasoning text.
- */
 export function liveThoughtLine(markdown: string): string {
   const heading = /^\s*\*\*([^*\r\n]+)\*\*[ \t]*\r?(?:\n|$)/.exec(markdown)?.[1];
   const text = (heading ?? markdown)

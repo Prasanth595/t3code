@@ -32,14 +32,13 @@ function probed(version: string | null | undefined): ProbedOpenCode | undefined 
   return { generation: major >= 2 ? "v2" : "v1", version };
 }
 
-/** `opencode --version` prints `1.18.32` on 1.x and `opencode v2.0.18` on 2.x. */
 export const classifyOpenCodeCliVersion = (output: string) =>
   probed(parseGenericCliVersion(output));
 
 /**
- * 2.x answers `/api/info` and 1.x answers `/global/health`. Each serves its web UI's HTML with a
- * 200 on the other's path, so only a JSON body counts. Both versions answer a wrong password with
- * a 401 on either path, so a 401 says nothing about the version.
+ * Each serves its web UI's HTML with a 200 on the other's path, so only a JSON body counts. Both
+ * versions answer a wrong password with a 401 on either path, so a 401 says nothing about the
+ * version.
  */
 function classifyOpenCodeProbeResponse(
   path: "/api/info" | "/global/health",
@@ -177,11 +176,6 @@ export const probeOpenCodeRuntime = (
     ? probeOpenCodeServer(settings.serverUrl, settings.serverPassword)
     : probeOpenCodeBinary(settings.binaryPath, environment);
 
-/**
- * Settings changes rebuild the driver; `refresh` re-probes (status checks use it, so an in-place
- * upgrade re-routes). A failed probe is never remembered. `lastSuccess` never probes, for calls
- * too hot to wait on one.
- */
 export const makeOpenCodeRuntimeProbe = <E>(probe: Effect.Effect<ProbedOpenCode, E>) =>
   Effect.map(
     Cache.makeWith(() => probe, {

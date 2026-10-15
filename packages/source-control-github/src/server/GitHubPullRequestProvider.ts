@@ -79,7 +79,6 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
     verdicts: access.didAuthor ? (["comment"] as const) : CAPABILITIES.review.verdicts,
     requestReviewers: access.canWrite,
     ...(access.canUpdateBranch === true ? { updateMethods: CAPABILITIES.updateMethods } : {}),
-    // Triage is the one role that labels without writing, which is what triage is for.
     labels: access.canTriage,
   };
 }
@@ -111,9 +110,6 @@ export function gitHubProviderFailure(
 /**
  * `gh pr view --json` reports no avatar for anyone, so the ones the GraphQL read collected are
  * applied here by login.
- *
- * A login GitHub did not answer for falls back to the picture every GitHub install serves at
- * `/<login>.png`.
  */
 function withAvatar(
   actor: PullRequestActor | null,
@@ -326,8 +322,6 @@ export const make = Effect.gen(function* () {
 
     getChangeRequestSummary: (input) =>
       cli.getPullRequestSummary(input).pipe(
-        // `gh pr view` names the author without an avatar; the login-shaped URL every user
-        // has stands in, without the second request the listing spends on it.
         Effect.map((summary) => ({
           ...summary,
           ...(summary.author === undefined
@@ -389,8 +383,7 @@ export const make = Effect.gen(function* () {
       Effect.all(
         [
           cli.getPullRequestActivity(input),
-          // Line comments live on review threads, which `gh pr view --json` cannot reach. A
-          // GraphQL hiccup degrades to a truncated conversation rather than blanking activity.
+          // Line comments live on review threads, which `gh pr view --json` cannot reach.
           cli.listReviewThreadComments(input).pipe(
             Effect.orElseSucceed(() => ({
               comments: [],

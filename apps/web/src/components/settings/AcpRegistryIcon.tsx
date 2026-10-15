@@ -121,7 +121,7 @@ export function AcpRegistryAgentIcon({
         className,
       )}
     >
-      {/* Registry glyphs are monochrome. Recolor their alpha rather than
+      {/* Recolor their alpha rather than
           inverting RGB values; external images cannot inherit currentColor.
           A local SVG filter also works when CDN CORS prevents CSS masks. */}
       <svg aria-hidden className="pointer-events-none absolute size-0" focusable="false">

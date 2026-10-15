@@ -51,9 +51,6 @@ const CLAUDE_INVESTIGATION_ALLOWED = [
  */
 const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"].join(",");
 
-/**
- * Verbose mode wraps the result in an array of conversation messages.
- */
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
 });
@@ -187,7 +184,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
-      // Titles need only the supplied prompt, not configuration from the checkout.
       const workingDirectory =
         operation === "generateThreadTitle"
           ? yield* fileSystem
@@ -212,7 +208,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
           settingsJson,
-          // Metadata prompts need no executable capabilities, even when they contain a skill name.
           ...(investigate
             ? [
                 "--tools",

@@ -70,9 +70,7 @@ export interface ComposerEditorProps {
    * hardware Return handling.
    */
   readonly enterBehavior?: ComposerEnterBehavior;
-  /** Shortcut-HUD title for the primary send chord. iOS only. */
   readonly submitTitle?: string;
-  /** Shortcut-HUD title for the Command-modified send chord. iOS only. */
   readonly alternateSubmitTitle?: string;
   /**
    * `alternate` is true for the Command-modified chord, which sends using the

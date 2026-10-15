@@ -113,7 +113,6 @@ export function codexRateLimitsToLimits(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
-  // Select the main bucket explicitly; the legacy snapshot can name another limit.
   const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
   return {
     ...makeUsageLimits({
@@ -131,11 +130,6 @@ export function codexRateLimitsToUpdate(
   return windows.length > 0 ? { windows } : undefined;
 }
 
-/**
- * A bounded, client-safe reason for a failed `account/rateLimits/read`. The
- * raw error is for the log; only the category and, for a JSON-RPC failure,
- * the code reach the Limits view.
- */
 export function codexRateLimitsFailureMessage(error: CodexErrors.CodexAppServerError): string {
   switch (error._tag) {
     case "CodexAppServerRequestError":
@@ -198,12 +192,6 @@ function codexUsageLimitNextStep(rateLimitReachedType: string | null | undefined
   }
 }
 
-/**
- * The message a usage-limit stop shows instead of the provider sentence, which
- * on a Business workspace blames credits for a window that simply ran out. The
- * window named is the exhausted one that has yet to reset, latest first; `atIso`
- * is the stopping event's timestamp, not the wall clock.
- */
 export function codexUsageLimitMessage(
   snapshot: CodexRateLimitSnapshot | undefined,
   atIso: string,

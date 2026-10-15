@@ -44,7 +44,6 @@ const realpathLikeFileSystem = (filePath: string) =>
     NodeFS.realpath(filePath, (error, resolved) => (error ? reject(error) : resolve(resolved)));
   });
 
-/** Opens a canonical media path once. Replacements cannot change the response's source. */
 export const openMediaFile = Effect.fn("openMediaFile")(function* (
   filePath: string,
   identity?: { readonly device: string; readonly inode: string },

@@ -19,7 +19,6 @@ import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
-/** Project IDs belong to an environment, including when a grouped project spans machines. */
 export function matchesScheduledTaskScope(
   scope: ResolvedSettingsScope,
   environmentId: EnvironmentId,
@@ -64,7 +63,6 @@ export interface DraftState {
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
   readonly modelKey: string;
-  /** Not editable in the dialog, but preserved so editing an agent-created task keeps its modes. */
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   /**
@@ -78,7 +76,6 @@ export interface DraftState {
   readonly signaturePrefix: string;
   /** Write-only: empty keeps the secret already stored on the server. */
   readonly signatureSecret: string;
-  /** Minutes as typed; empty runs every held request regardless of age. */
   readonly maxDeliveryAgeMinutes: string;
 }
 
@@ -88,7 +85,6 @@ export const WEBHOOK_SIGNATURE_DEFAULTS = {
   signaturePrefix: "sha256=",
 } as const;
 
-/** Null when the draft's webhook age limit is invalid; the caller reports it and does not save. */
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
   if (draft.scheduleMode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);

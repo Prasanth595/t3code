@@ -17,7 +17,6 @@ export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRu
 
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
-/** Uses the selected environment's grant, including cached scopes during a refresh. */
 export function useEnvironmentScope(
   environmentId: EnvironmentId | null,
   scope: AuthEnvironmentScope,

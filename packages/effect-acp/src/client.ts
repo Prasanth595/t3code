@@ -40,11 +40,9 @@ export interface AcpClientOptions {
   readonly onTermination?: AcpProtocol.AcpPatchedProtocolOptions["onTermination"];
   readonly onOutgoingResponseFailure?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponse"];
-  /** Transforms child output before protocol logging and parsing. */
   readonly transformStdout?: (
     stdout: ChildProcessSpawner.ChildProcessHandle["stdout"],
   ) => AcpProtocol.AcpStdio["stdin"];
-  /** Transforms decoded session updates before buffering or delivery. */
   readonly transformSessionUpdate?: (
     notification: AcpSchema.SessionNotification,
   ) => AcpSchema.SessionNotification;
@@ -66,17 +64,9 @@ export class AcpClient extends Context.Service<
       readonly initialize: (
         payload: AcpSchema.InitializeRequest,
       ) => Effect.Effect<AcpSchema.InitializeResponse, AcpError.AcpError>;
-      /**
-       * Performs authentication with the method negotiated for ACP v1 or v2.
-       * @see https://agentclientprotocol.com/protocol/v2/draft/authentication
-       */
       readonly authenticate: (
         payload: AcpSchema.AuthenticateRequest,
       ) => Effect.Effect<AcpSchema.AuthenticateResponse, AcpError.AcpError>;
-      /**
-       * Logs out the current ACP identity using the negotiated generation.
-       * @see https://agentclientprotocol.com/protocol/v2/draft/authentication
-       */
       readonly logout: (
         payload: AcpSchema.LogoutRequest,
       ) => Effect.Effect<AcpSchema.LogoutResponse, AcpError.AcpError>;
@@ -120,7 +110,6 @@ export class AcpClient extends Context.Service<
       /**
        * Selects a session mode on ACP v1 agents, which predate mode config
        * options. ACP v2 fails with method-not-found; use `setSessionConfigOption`.
-       * @see https://agentclientprotocol.com/protocol/schema#session/set_mode
        */
       readonly setSessionMode: (
         payload: AcpSchemaV1.SetSessionModeRequest,
@@ -161,7 +150,6 @@ export class AcpClient extends Context.Service<
         notification: AcpSchema.MessageMcpNotification,
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /** Legacy ACP v1 hooks retained for policy compatibility; ACP v2 never advertises them. */
     readonly handleReadTextFile: (
       handler: AcpRequestHandler<AcpSchema.ReadTextFileRequest, AcpSchema.ReadTextFileResponse>,
     ) => Effect.Effect<void>;
@@ -1062,8 +1050,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
           Effect.map((response) => {
             // ACP v1 protocolVersion values were not generation identifiers in
             // every shipped agent. Antigravity, for example, reports version 2
-            // with the v1 agentInfo/agentCapabilities response shape. The
-            // response discriminator determines the wire generation reliably.
+            // with the v1 agentInfo/agentCapabilities response shape.
             if (isV2InitializeResponse(response)) {
               negotiatedProtocolGeneration = 2;
               return normalizeInitializeResponse(response);

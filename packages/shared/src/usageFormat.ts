@@ -71,7 +71,6 @@ export function formatDayShort(day: string): string {
   return `${MONTHS[month - 1] ?? ""} ${dayOfMonth}`;
 }
 
-/** Inclusive day list between two `YYYY-MM-DD` bounds. */
 export function enumerateDays(sinceDay: string, untilDay: string): readonly string[] {
   const days: string[] = [];
   const start = Date.parse(`${sinceDay}T00:00:00Z`);
@@ -186,10 +185,6 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone);
 }
 
-/**
- * The window the page requests, expressed in the viewer's own time zone so days
- * line up with what they actually experienced.
- */
 export function makeWindow(
   days: number,
   now = new Date(),
@@ -215,8 +210,6 @@ export function makeWindow(
   }
   const untilDay = format.format(now);
   if (resolution === "hour") {
-    // Fixed-duration buckets remain correct across offset changes and daylight-saving
-    // transitions.
     const untilTimeMs = Math.floor(now.getTime() / 60_000) * 60_000;
     const sinceTimeMs = untilTimeMs - 24 * HOUR_MS;
     const sinceTime = new Date(sinceTimeMs);

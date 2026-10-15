@@ -8,7 +8,6 @@ import {
 const IMAGE_MIME_KEYS = ["mimeType", "mime_type", "media_type", "type"] as const;
 const IMAGE_BODY_KEYS = new Set(["data", "blob", "base64"]);
 const MAX_DEPTH = 32;
-// Shorter strings are identifiers or tiny fixtures, not pixels worth removing.
 const MIN_BODY_LENGTH = 64;
 const BASE64_BODY = /^[A-Za-z0-9+/_-]+={0,2}$/;
 
@@ -77,7 +76,6 @@ function strip(
     return next ?? value;
   }
   const record = value as UnknownRecord;
-  // Every served block is a `type: "image"` block; keep it whole.
   if (record.type === "image" && isServed(context, record)) return record;
   const imageBody = isImageBody(record, key);
   let next: UnknownRecord | undefined;
@@ -98,7 +96,6 @@ function strip(
     }
   }
   if (next !== undefined && removedBody !== undefined) {
-    // Measured from the removed body, never taken from a provider's size field.
     next.sizeBytes = base64DecodedLength(removedBody);
   }
   return next ?? record;

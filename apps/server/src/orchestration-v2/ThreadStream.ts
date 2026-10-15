@@ -39,11 +39,6 @@ type ThreadSnapshotStreamItem = Extract<
   { readonly kind: "snapshot" }
 >;
 
-/**
- * Bounded snapshot fields shared by the HTTP route and socket fallbacks. Only
- * clients that opted in get compact `turnItems` and the marker; everyone else
- * gets the unchanged representation.
- */
 export function boundedSnapshotResponseFields(input: {
   readonly bounded: BoundedProjectionResult;
   readonly compactTurnItems: boolean;
@@ -90,9 +85,8 @@ export type ThreadResumePlan =
   | { readonly mode: "snapshot" };
 
 /**
- * A client cursor above the high water mark is stale or invalid. Event count
- * limits reducer churn while encoded bytes limit a small number of large
- * updates. Either excess is cheaper to replace with one current snapshot.
+ * Event count limits reducer churn while encoded bytes limit a small number of
+ * large updates. Either excess is cheaper to replace with one current snapshot.
  */
 export function decideThreadResume(input: {
   readonly afterSequence: number;

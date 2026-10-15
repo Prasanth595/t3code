@@ -91,12 +91,6 @@ import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
 
 const threadOutboxDebug = createDebugLogger("thread-outbox");
 
-/**
- * On the queued-request path (settings sync, startTurn) the RPC client reports ordinary
- * transport drops as the raw socket/worker reason tags, and reserves `RpcClientDefect` for
- * client-side protocol violations and decoding failures — unlike the shared config-subscription
- * stream, which deliberately re-wraps transport causes under that tag.
- */
 function isRpcClientDecodeDefect(error: unknown): boolean {
   if (
     typeof error !== "object" ||
@@ -119,11 +113,6 @@ function isOrdinaryThreadOutboxTransportFailure(error: unknown): boolean {
   return shouldRetryThreadOutboxDelivery(error) && !isRpcClientDecodeDefect(error);
 }
 
-/**
- * Settings-sync failures always resolve to a retry even when the server rejected the command,
- * so the error, not the resolved action, must decide the log level there; routing every retry
- * to debug could hide a permanently rejected update forever.
- */
 function logThreadOutboxDeliveryFailure(input: {
   readonly stage: ThreadOutboxCommandStage;
   readonly error: unknown;
@@ -197,12 +186,6 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
   return CommandId.make(`${message.commandId}:${setting}`);
 }
 
-/**
- * The revision-checked update means an edit accepted while the bytes uploaded wins: this
- * attempt abandons and the next drain pass re-reads the message. `deliveryRevision` is the
- * revision of the payload this attempt will send, used for the delivery removal's
- * compare-and-set.
- */
 export async function prepareQueuedMessageAttachments(
   queuedMessage: QueuedThreadMessage,
   supportsImageUploads = false,
@@ -265,10 +248,6 @@ function isQueuedMessagePayloadCurrent(
   );
 }
 
-/**
- * The revision and editor checks preserve a creation payload when its pending-task editor owns
- * newer work.
- */
 export async function completeQueuedMessageDelivery(
   queuedMessage: QueuedThreadMessage,
   deliveryRevision: number,
@@ -291,7 +270,6 @@ export async function completeQueuedMessageDelivery(
       return "edited";
     }
     retainAcknowledgedThreadMessage(queuedMessage);
-    // Removal also releases the message's local attachment files.
     const removed = await removeThreadOutboxMessage(
       queuedMessage,
       deliveryRevision,
@@ -346,13 +324,6 @@ export async function removeAcknowledgedExistingThreadMessage(
   }
 }
 
-/**
- * A creation delivered its startTurn but an edit won the cleanup race, so the edited payload is
- * still queued. The next drain would see the created thread and take the creation "remove"
- * path, silently discarding the edit; hand the edited content to the new thread's composer
- * instead and remove the entry. Returns true when recovery is complete or an open editor owns
- * the next action, and false when the drain should retry with backoff.
- */
 export async function recoverEditedCreationAfterDelivery(
   queuedMessage: QueuedThreadMessage,
 ): Promise<boolean> {
@@ -391,8 +362,6 @@ export async function recoverEditedCreationAfterDelivery(
       kept.attachments.filter((attachment) => !existingAttachmentIds.has(attachment.id)),
       { allowOverflow: true },
     );
-    // Only settings the queued message actually carries: spreading explicit
-    // undefined would clear choices the user already made on the draft.
     updateComposerDraftSettings(draftKey, {
       ...(kept.modelSelection !== undefined ? { modelSelection: kept.modelSelection } : {}),
       ...(kept.runtimeMode !== undefined ? { runtimeMode: kept.runtimeMode } : {}),
@@ -402,8 +371,6 @@ export async function recoverEditedCreationAfterDelivery(
     // only durable copy until the draft lands, so flush before removing.
     await flushComposerDrafts();
   } catch (error) {
-    // Keep the entry queued. The drain retries with backoff, and the merge is
-    // idempotent so content that persisted before the failure is not repeated.
     console.warn("[thread-outbox] could not hand an edited pending task to the composer", error);
     return false;
   }
@@ -428,9 +395,6 @@ export async function restoreRejectedQueuedMessage(
 ): Promise<"restored" | "deferred" | "blocked" | "retry"> {
   const draftKey = recoveryDraftKey(queuedMessage);
   const threadKey = scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
-  // Set once the merge publishes, cleared once the queued message is removed.
-  // The catch below uses it to take the merged content back out, so a retry
-  // after a mid-recovery failure cannot append the recovered text again.
   let rollback: { readonly snapshot: ComposerDraft; readonly merged: ComposerDraft } | null = null;
   try {
     if (
@@ -462,9 +426,6 @@ export async function restoreRejectedQueuedMessage(
       return "blocked";
     }
 
-    // Shown before the merge publishes the text, so a resend of that text,
-    // which can happen while this recovery still awaits persistence, clears
-    // it. Withdrawn below wherever the recovery backs out.
     const withdrawError = () => clearThreadComposerError(threadKey, queuedMessage.messageId);
     if (!queuedMessage.creation) {
       setThreadComposerError(threadKey, message, queuedMessage.messageId);
@@ -522,8 +483,6 @@ export async function restoreRejectedQueuedMessage(
       await undoComposerDraftMerge(draftKey, originalDraft, restoredDraft);
       return "deferred";
     }
-    // Revision-checked: an edit that landed after the confirmation above
-    // must not be deleted with the pre-edit payload this recovery restored.
     if (
       !(await removeThreadOutboxMessage(
         queuedMessage,
@@ -549,7 +508,6 @@ export async function restoreRejectedQueuedMessage(
     return "restored";
   } catch (error) {
     if (rollback !== null) {
-      // The in-memory rollback lands even when its own persistence write fails.
       await undoComposerDraftMerge(draftKey, rollback.snapshot, rollback.merged).catch(
         (undoError) => {
           console.warn("[thread-outbox] failed to persist a recovery rollback", undoError);
@@ -910,9 +868,6 @@ export function useThreadOutboxDrain(): void {
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
           createdAt: queuedMessage.createdAt,
-          // Rows written before follow-up behavior existed keep the previous
-          // delivery, which the server turns into a queued run when a turn is
-          // already active.
           dispatchMode: queuedMessage.dispatchMode ?? "start",
         },
       });
@@ -1031,8 +986,6 @@ export function useThreadOutboxDrain(): void {
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
       let workspace = creation;
       if (creation.pullRequestReference) {
-        // Keep opening the composer and queuing offline immediate. Only Send
-        // resolves the provider's actual PR head, including forks, in a worktree.
         const checkout = await preparePullRequest({
           environmentId: queuedMessage.environmentId,
           input: { cwd: projectCwd, reference: creation.pullRequestReference, mode: "worktree" },
@@ -1094,19 +1047,12 @@ export function useThreadOutboxDrain(): void {
       if (failure?.action === "restore") {
         return restoreQueuedMessage(persistedMessage, failure.message);
       }
-      // Recorded before the queue entry goes so the thread screen never sees a
-      // gap between the queued creation and the server's shell.
       recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
       const outcome = await completeQueuedMessageDelivery(persistedMessage, deliveryRevision);
       if (outcome === "edited") {
         if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
-          // The editor holds the entry with unsaved edits; merging the queue
-          // payload now would duplicate the delivered turn. Once the editor
-          // saves, the duplicate-creation removal below recovers the edits.
           return true;
         }
-        // The thread exists now, so the next drain would remove the edited
-        // payload as a duplicate creation. Hand it to the thread's composer.
         return recoverEditedCreationAfterDelivery(persistedMessage);
       }
       return outcome === "removed";
@@ -1220,10 +1166,6 @@ export function useThreadOutboxDrain(): void {
       if (deliveryAction === "send" && !operableEnvironments.has(nextQueuedMessage.environmentId)) {
         continue;
       }
-      // The delivery action resolves first; capability checks apply only to
-      // a message that will send. Checking earlier would restore a
-      // creation whose startTurn already made the thread as a duplicate draft
-      // instead of removing it.
       const serverConfig = serverConfigs.get(nextQueuedMessage.environmentId);
       const dispatchStep = resolveThreadOutboxDispatchStep({
         deliveryAction,
@@ -1241,8 +1183,6 @@ export function useThreadOutboxDrain(): void {
         continue;
       }
       if (dispatchStep.step === "retry") {
-        // The environment is connected but its config has not synced yet.
-        // Back off and retry instead of parking the message forever.
         scheduleQueuedMessageRetry(nextQueuedMessage.messageId);
         continue;
       }
@@ -1310,9 +1250,6 @@ export function useThreadOutboxDrain(): void {
         if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[nextQueuedMessage.messageId]) {
           return true;
         }
-        // The shell state is equally stale. Re-run the same delivery policy
-        // against the live thread snapshot so a vanished thread or newly
-        // created target defers, while busy existing threads can still steer.
         if (deliveryAction === "send") {
           const liveThread = findThread(
             appAtomRegistry.get(environmentThreadShells.threadShellsAtom),

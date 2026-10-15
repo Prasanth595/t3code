@@ -13,11 +13,6 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 /**
  * The V1 profile is only read, never opened by Chromium, so this works while V1
  * is still running.
- *
- * `load` runs before the window opens; the preload takes the items once,
- * merges them into the new profile, and calls `complete`, which writes a
- * marker so later launches skip the read. A failed read or merge, or a window
- * that never completes, leaves no marker and retries next launch.
  */
 export class DesktopLegacyLocalStorage extends Context.Service<
   DesktopLegacyLocalStorage,
@@ -78,7 +73,6 @@ const make = Effect.gen(function* () {
   });
 
   const load = Effect.fn("desktop.legacyLocalStorage.load")(function* (userDataPath: string) {
-    // Development already shares its profile between versions.
     if (environment.isDevelopment) return;
     const marker = path.join(userDataPath, MARKER_FILE_NAME);
     if (yield* fs.exists(marker).pipe(Effect.orElseSucceed(() => true))) return;
@@ -104,7 +98,6 @@ const make = Effect.gen(function* () {
 
   return DesktopLegacyLocalStorage.of({
     load,
-    // Taking clears the items, so a reload before `complete` cannot merge twice.
     take: Ref.getAndSet(items, Option.none()),
     complete: writeMarker,
   });

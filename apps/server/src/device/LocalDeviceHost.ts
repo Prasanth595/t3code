@@ -1,11 +1,6 @@
 import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
 import { deviceToolInstallMessage } from "@t3tools/contracts";
 /**
- * Runs expo-device-hub as a supervised child on a loopback port and starts the
- * agent-device daemon in HTTP mode under a T3-owned state directory. Both are
- * lazy: the device service requires explicit setup consent before it calls
- * ensureReady to install tools or start helper processes.
- *
  * The hub runs in its standalone mode (origin root). The T3 proxy strips its
  * own prefix, and the Device panel derives stream and socket URLs from the
  * prefix itself rather than from anything the hub prints.
@@ -457,10 +452,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.ignoreCause,
     );
 
-  /**
-   * Restart the hub when it dies under us, with the same doubling backoff the
-   * relay connector uses so a hub that crashes on boot cannot spin.
-   */
   const superviseHub = (hub: HubProcess, hubTool: DeviceToolPaths): Effect.Effect<void> =>
     Effect.gen(function* () {
       yield* Effect.result(hub.child.exitCode);
@@ -663,8 +654,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     );
     yield* onPhase("starting");
     const hub = yield* spawnHub(hubTool, nodePath);
-    // Until the hub is in runningRef, nothing else stops it, so publishing it
-    // is part of the guarded step.
     const next = yield* Effect.gen(function* () {
       yield* pruneLocalDeviceTools(config.baseDir, nodePath, "hub").pipe(
         Effect.provideService(Path.Path, path),

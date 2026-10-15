@@ -5,15 +5,12 @@
  */
 
 const RAW_HOST = "raw.githubusercontent.com";
-/** Git LFS pointers resolve here, which is where an LFS-tracked screenshot's bytes live. */
 const LFS_HOST = "media.githubusercontent.com";
 const ATTACHMENT_PATH_PATTERN = /^\/user-attachments\/assets\/[\w-]+$/u;
-/** What GitHub wrote into a body before `user-attachments`; older descriptions still carry it. */
 const LEGACY_ATTACHMENT_PATH_PATTERN = /^\/[^/]+\/[^/]+\/assets\/\d+\/[\w-]+$/u;
 /** `blob` and `raw` both address file bytes; `raw` is the one the token is honoured on. */
 const REPOSITORY_FILE_PATTERN = /^\/([^/]+)\/([^/]+)\/(?:raw|blob)\/(.*[^/])$/u;
 
-/** Port, userinfo, and fragment say nothing about which bytes GitHub will serve. */
 function canonicalUrl(host: string, url: URL): string {
   return `https://${host}${url.pathname}${url.search}`;
 }
@@ -36,16 +33,11 @@ export function githubMediaFetchUrl(source: string): string | null {
     return `https://github.com${url.pathname}`;
   }
   const repositoryFile = REPOSITORY_FILE_PATTERN.exec(url.pathname);
-  // `?raw=true` is how the web UI spells "the bytes, not the page"; the raw host needs no query.
   return repositoryFile
     ? `https://${RAW_HOST}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`
     : null;
 }
 
-/**
- * A percent sequence GitHub accepts but `decodeURIComponent` rejects is left
- * encoded rather than failing the whole asset.
- */
 export function githubMediaFileName(fetchUrl: string): string {
   const segment = new URL(fetchUrl).pathname.split("/").pop() ?? "";
   let decoded: string;

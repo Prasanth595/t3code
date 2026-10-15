@@ -1,9 +1,7 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
-// Comments that switch a diagnostic off or on. None of them explains another.
 const DIRECTIVE_PATTERN =
   /^\s*\*?\s*(?:(?:oxlint|eslint)-(?:disable|enable)|@ts-(?:expect-error|ignore|nocheck)|@effect-diagnostics)/u;
-// TypeScript's own directives; whatever follows one is its reason.
 const TS_DIRECTIVE_PATTERN = /^\s*\*?\s*@ts-(?:expect-error|ignore|nocheck)(?![\w-])(.*)$/su;
 const EMPTY_COMMENT_PATTERN = /^[\s*]*$/u;
 

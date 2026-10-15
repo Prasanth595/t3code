@@ -4,10 +4,6 @@ export const PROMPT_LINK_PARAM_KEYS = ["prompt", "repo", "pr", "provider", "mode
 
 type RouteParams = Readonly<Record<string, unknown>> | undefined;
 
-/**
- * Rebuilds the link's query from React Navigation route params, so the shared parser reads the
- * same input on every surface.
- */
 export function promptLinkSearchFromParams(
   params: RouteParams,
   keys: ReadonlyArray<string> = PROMPT_LINK_PARAM_KEYS,
@@ -21,7 +17,6 @@ export function promptLinkSearchFromParams(
   return search.size > 0 ? search.toString() : null;
 }
 
-/** Route params that remove a handled prompt link, so it applies once. */
 export function clearedPromptLinkParams(keys: ReadonlyArray<string> = PROMPT_LINK_PARAM_KEYS) {
   return Object.fromEntries(keys.map((key) => [key, undefined]));
 }

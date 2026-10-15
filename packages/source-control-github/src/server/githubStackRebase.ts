@@ -7,14 +7,12 @@ import * as Base64 from "effect/encoding/Base64";
 import * as GitHubApi from "./GitHubApi.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
-/** One open layer of a stack, bottom to top, with the head the reader reviewed. */
 export interface CascadeLayer {
   readonly number: number;
   readonly headBranch: string;
   readonly headSha: string;
 }
 
-/** A layer's rebase hit a conflict; the layers below it are already rebased on GitHub. */
 export class GitHubStackRebaseConflictError extends Schema.TaggedError<GitHubStackRebaseConflictError>()(
   "GitHubStackRebaseConflictError",
   { number: Schema.Int, completed: Schema.Int },
@@ -37,15 +35,11 @@ function remoteUrl(host: string, repository: string): string {
   return `https://${host.trim().toLowerCase()}/${repository}.git`;
 }
 
-/**
- * The stacks API has no rebase endpoint to call instead.
- */
 export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (input: {
   readonly host: string;
   readonly repository: string;
   readonly base: string;
   readonly layers: ReadonlyArray<CascadeLayer>;
-  /** Where to fetch and push; the repository's own URL on its host unless a test points elsewhere. */
   readonly remote?: string;
 }) {
   const api = yield* GitHubApi.GitHubApi;

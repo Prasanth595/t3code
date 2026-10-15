@@ -44,7 +44,6 @@ export const isWindowsCommandNotFound = Effect.fn("isWindowsCommandNotFound")(fu
 });
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
-// Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
 export const AUTH_PROBE_TIMEOUT_MS = 10_000;
 
 export const COMPACT_SLASH_COMMAND = {
@@ -138,12 +137,6 @@ export function parseGenericCliVersion(output: string): string | null {
   return match?.[1] ?? null;
 }
 
-/**
- * A custom entry that declares its own capabilities keeps them; a bare slug
- * gets the driver's default set. A named entry whose slug matches a built-in
- * renames that built-in instead (for example `{ "slug": "gpt-5.5", "name":
- * "GPT" }` in `settings.json`); other fields on such an entry are ignored.
- */
 export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
@@ -158,7 +151,6 @@ export function providerModelsFromSettings(
   const resolvedBuiltInModels = builtInModels.map((model) => {
     const name = nameOverrides.get(model.slug);
     if (!name) return model;
-    // The built-in short name would undo the override in compact UI.
     const { shortName: _shortName, ...rest } = model;
     return { ...rest, name };
   });

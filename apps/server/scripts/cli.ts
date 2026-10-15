@@ -177,8 +177,6 @@ const publishCmd = Command.make(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      // npm runs with cwd set to the packages dir below, so tarball paths are
-      // resolved once here rather than joined twice.
       const packagesDir = path.resolve(config.packagesDir);
       const scopeDir = path.join(packagesDir, "@t3code");
       const launcherTarball = path.join(packagesDir, "t3.tgz");

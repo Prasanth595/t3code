@@ -41,12 +41,6 @@ interface QueuedThreadShell {
 export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
-/**
- * A user message no turn has picked up yet: the turn.start command was
- * dispatched (message-sent + turn-start-requested) but no session has adopted
- * it, so `session` is still null and the pending work is invisible to the
- * session-status checks.
- */
 export function hasQueuedTurnStart(
   shell: QueuedThreadShell,
   options: { readonly now: string },
@@ -59,8 +53,6 @@ export function hasQueuedTurnStart(
     return true;
   }
   if (shell.latestUserMessageAt == null) return false;
-  // A failed session start clears the queued state: the failure is already
-  // visible (status edge / error).
   if (shell.session?.status === "error") return false;
   const messageAt = Date.parse(shell.latestUserMessageAt);
   if (Number.isNaN(messageAt)) return false;
@@ -86,19 +78,11 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
 }
 
-/**
- * Raising a hand never clears the server-side snooze fields; it only stops the
- * thread from classifying as snoozed.
- */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return true;
   if (shell.pendingSubagentRequest != null) return true;
   const runtime = shell.runtime ?? shell.session ?? null;
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
-  // Only a FRESH failure raises the hand: a thread snoozed while already
-  // failed stays snoozed — that snooze was the user saying "I saw it, not
-  // now". session.updatedAt stamps the status edge, so an error newer than
-  // the snooze is new information.
   if (
     (runtime?.status === "error" || runtime?.status === "failed") &&
     (shell.snoozedAt == null ||
@@ -117,11 +101,6 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
   return false;
 }
 
-/**
- * A running session IS snoozable — snooze only affects visibility, never the
- * agent. Client-side twin of the server invariants so the UI can reject before
- * a round trip.
- */
 export function canSnooze(
   shell: Pick<
     ThreadSnoozeShell,
@@ -142,11 +121,6 @@ export function canSnooze(
   return true;
 }
 
-/**
- * Timer wakes are derived — no server event fires when snoozedUntil passes; the
- * stale fields simply stop classifying as snoozed (and feed the woke indicator
- * until the user visits or re-engages).
- */
 export function effectiveSnoozed(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
@@ -158,11 +132,6 @@ export function effectiveSnoozed(
   return !threadRaisedHandWhileSnoozed(shell);
 }
 
-/**
- * Timer wakes report the wake time itself; raised-hand wakes report the
- * triggering timestamp so a visit BEFORE the early wake doesn't suppress
- * the indicator.
- */
 export function threadWokeAt(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
@@ -272,9 +241,6 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   return presets;
 }
 
-/**
- * Minutes round up so a snooze never reads "0m" while still hidden.
- */
 export function snoozeWakeLabel(snoozedUntil: string, options: { readonly now: string }): string {
   const wakeMs = Date.parse(snoozedUntil);
   const nowMs = Date.parse(options.now);

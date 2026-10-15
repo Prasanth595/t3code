@@ -1,9 +1,3 @@
-/**
- * GitHub's blockquote alerts: a quote whose first line is `[!NOTE]` — or TIP, IMPORTANT,
- * WARNING, CAUTION — renders as a titled callout. They are GitHub's own extension rather than
- * GFM, so remark-gfm leaves the marker as literal text in the quote.
- */
-
 interface MarkdownAstNode {
   type?: string;
   value?: unknown;

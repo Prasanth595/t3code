@@ -25,7 +25,6 @@ export function shouldHighlightCodeBlock(code: string): boolean {
   return code.length <= MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH;
 }
 function blockSignature(node: ProseMirrorNode, theme: DiffThemeName): string {
-  // A separator that cannot occur in a language name keeps the parts distinct.
   return [theme, String(node.attrs.language ?? ""), node.textContent].join("\u0000");
 }
 
@@ -105,16 +104,12 @@ export function composerCodeBlockHighlight(options: {
                   !cache.has(blockSignature(node, theme)),
               );
               if (pending.length === 0) {
-                // A theme switch keeps every signature but changes which one
-                // applies, so the painted decorations still have to be rebuilt.
                 if (themeChanged) {
                   view.dispatch(view.state.tr.setMeta(composerCodeBlockHighlightKey, true));
                 }
                 return;
               }
 
-              // Settled rather than all: a block whose highlighter fails to
-              // load stays plain, and the others are still painted.
               void Promise.allSettled(
                 pending.map(async ({ node }) => {
                   // The stored info string keeps everything after the language
@@ -203,7 +198,6 @@ function buildDecorations(
     // unmarked text node, so `content.size === textContent.length`. Allowing
     // marks or hard breaks in the code block would desync these silently.
     if (node.content.size !== node.textContent.length) continue;
-    // +1 steps past the code block's opening token into its text.
     const start = pos + 1;
     for (const decoration of highlighted.decorations) {
       decorations.push(

@@ -79,7 +79,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       return apiKey;
     });
 
-  // Ignores `cwd`: the agent runs in an empty temp directory, away from the project.
   const runCursorJson: TextGenerationOperations.Runner = (input) => {
     const { operation, prompt, modelSelection } = input;
     return Effect.gen(function* () {
@@ -134,8 +133,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         );
 
       const request = Effect.gen(function* () {
-        // Prefer the sandbox. When the SDK refuses it, the empty temp directory
-        // and empty setting sources still keep this run off the user's project.
+        // When the SDK refuses it, the empty temp directory and empty setting
+        // sources still keep this run off the user's project.
         const agent = yield* Effect.acquireRelease(
           createCursorAgent(true).pipe(
             Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),

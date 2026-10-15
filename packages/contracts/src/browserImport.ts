@@ -17,12 +17,6 @@ const BROWSER_IMPORT_SOURCE_IDS = [
 export const BrowserImportSourceId = Schema.Literals(BROWSER_IMPORT_SOURCE_IDS);
 export type BrowserImportSourceId = typeof BrowserImportSourceId.Type;
 
-/**
- * `needsKeychainApproval` and `browserRunning` are recoverable — the user
- * grants access or quits the browser. `unsupportedPlatform` is not: it covers
- * cases like Chrome on Windows, whose App-Bound Encryption is designed to stop
- * exactly this, and which we will not work around.
- */
 export const BrowserImportUnavailableReason = Schema.Literals([
   "notInstalled",
   "needsKeychainApproval",
@@ -33,42 +27,21 @@ export const BrowserImportUnavailableReason = Schema.Literals([
 ]);
 export type BrowserImportUnavailableReason = typeof BrowserImportUnavailableReason.Type;
 
-/**
- * A superset of the unavailable reasons: a source can pass the pre-flight
- * check and still fail, most often because the user declined the keychain
- * prompt the read triggers.
- */
 export const BrowserImportFailureReason = Schema.Literals([
   ...BrowserImportUnavailableReason.literals,
-  /** The operating system's keyring or its bundled reader is unavailable. */
   "keychainUnavailable",
   "unknownSource",
-  /** The requested profile directory is not one the source reported. */
   "unknownSourceProfile",
-  /** The target profile's Electron session could not be opened. */
   "sessionUnavailable",
-  /**
-   * The cookies were written, but the new profile could not be saved to
-   * settings, so its partition was cleared again rather than left orphaned.
-   */
   "profileNotSaved",
-  /**
-   * The cookies were written, but the profile count reached its cap while the
-   * import ran, so the new profile was not saved and its partition was cleared.
-   */
   "profileLimitReached",
   "readFailed",
 ]);
 export type BrowserImportFailureReason = typeof BrowserImportFailureReason.Type;
 
 export const BrowserImportSourceProfile = Schema.Struct({
-  /** Directory name under the source's user-data dir. */
   directory: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
-  /**
-   * Counted without decrypting, so it is cheap; absent when the store could not
-   * be read yet (Safari before Full Disk Access is granted).
-   */
   cookieCount: Schema.optional(Schema.Int),
 });
 export type BrowserImportSourceProfile = typeof BrowserImportSourceProfile.Type;
@@ -88,7 +61,6 @@ export const BrowserImportInput = Schema.Struct({
 });
 export type BrowserImportInput = typeof BrowserImportInput.Type;
 
-/** IPC payload: the import input plus the environment the partition belongs to. */
 export const DesktopPreviewImportCookiesInputSchema = Schema.Struct({
   environmentId: TrimmedNonEmptyString,
   sourceId: BrowserImportSourceId,
@@ -98,14 +70,7 @@ export const DesktopPreviewImportCookiesInputSchema = Schema.Struct({
 
 export const BrowserImportResult = Schema.Struct({
   imported: Schema.Int,
-  /**
-   * Surfaced rather than hidden so a mostly-failed import doesn't look like a
-   * success.
-   */
   skipped: Schema.Int,
-  /**
-   * Capped, since a broken key can skip thousands across many sites.
-   */
   skippedDomains: Schema.Array(Schema.String),
 });
 export type BrowserImportResult = typeof BrowserImportResult.Type;

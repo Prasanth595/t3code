@@ -1,17 +1,6 @@
 // @effect-diagnostics globalFetch:off globalTimers:off - This browser and WebView transport runs without an Effect runtime.
 /* oxlint-disable unicorn/prefer-add-event-listener -- Each client owns its sockets and their handlers. */
 
-/**
- * - iOS (serve-sim): video is an HTTP `stream.avcc` body of length-prefixed
- *   envelopes (`u32be length, u8 tag, payload`; tag 1 avcC description,
- *   2 keyframe, 3 delta, 4 JPEG seed) decoded with WebCodecs; input goes over
- *   `helper/ws?device=<udid>` as `[tag][json]` packets. When WebCodecs is
- *   unavailable (plain-http remote origins) the MJPEG endpoint is used as an
- *   `<img>` source instead.
- * - Android (serve-emu): one WebSocket at `ws?device=<serial>&frame-meta=1`
- *   carries H.264 access units prefixed with a 16-byte "SEMU" header
- *   (magic, version, key flag, pts) and accepts JSON gestures upstream.
- */
 import {
   createDuoControl,
   type DuoCommand,
@@ -78,11 +67,9 @@ export interface DuoPanelSinks {
 
 export interface DeviceStreamEvents {
   readonly onDuoControl?: (state: DuoControlState) => void;
-  /** A fixed panel cannot be decoded; the owner should return to the active flat feed. */
   readonly onDuoUnavailable?: (detail?: string) => void;
   readonly onStatus: (status: DeviceStreamStatus, detail?: string) => void;
   readonly onScreen: (screen: DeviceScreenSize) => void;
-  /** The proxy rejected the credential; the owner should refresh access and reconnect. */
   readonly onUnauthorized: () => void;
   /**
    * H.264 cannot be decoded here (no WebCodecs, or the simulator's profile is
@@ -99,7 +86,6 @@ export interface DeviceStreamTarget {
   readonly access: DeviceHubAccess;
   /** Native iOS WebViews can use MJPEG without cross-origin fetch or secure-context support. */
   readonly preferMjpeg?: boolean;
-  /** Internal fixed-panel feeds share their parent's input session. */
   readonly panelId?: 1 | 3;
   readonly videoOnly?: boolean;
 }
@@ -138,14 +124,12 @@ function taggedJson(tag: number, payload: unknown): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-/** Build the WebCodecs `avc1.PPCCLL` string from an avcC record or an SPS NAL. */
 export function avcCodecString(bytes: Uint8Array): string {
   if (bytes.length < 4) return "avc1.42E01E";
   const hex = (byte: number) => byte.toString(16).padStart(2, "0");
   return `avc1.${hex(bytes[1]!)}${hex(bytes[2]!)}${hex(bytes[3]!)}`;
 }
 
-/** Split serve-emu's SEMU-framed message into metadata and the Annex-B payload. */
 export function parseSemuPacket(raw: ArrayBuffer): {
   readonly data: Uint8Array;
   readonly isKey: boolean | null;
@@ -265,9 +249,7 @@ export interface DeviceStreamClient {
   readonly rotate: () => void;
   readonly setOrientation: (orientation: DeviceScreenSize["orientation"]) => void;
   readonly controlDuo: (command: DuoCommand) => void;
-  /** Switch between one active feed and two fixed-panel feeds without replacing HID. */
   readonly setDuoPanels: (panels: DuoPanelSinks | null) => void;
-  /** Model UVs already map to the hardware framebuffer. */
   readonly sendRawTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
 }
 
@@ -454,7 +436,7 @@ export function createDeviceStreamClient(
       timer = null;
       if (image.naturalWidth > 0 && image.naturalHeight > 0) frameReceived();
       else {
-        // Multipart images may not emit load until the response ends. Stop checking after the first frame.
+        // Multipart images may not emit load until the response ends.
         timer = setTimeout(check, MJPEG_FRAME_CHECK_MS);
       }
     };
@@ -553,7 +535,6 @@ export function createDeviceStreamClient(
     return decoder;
   };
 
-  /** iOS can fall back to MJPEG when the stream's H.264 profile is unsupported. */
   const configureDecoder = async (
     config: VideoDecoderConfig,
     isCurrent = () => !stopped,
@@ -752,7 +733,6 @@ export function createDeviceStreamClient(
       if (response.status === 401 || response.status === 403) return handleUnauthorized();
       await response.body?.getReader().read();
     } catch {
-      // A failed prime just means the socket may take a retry to come up.
     } finally {
       clearTimeout(timeout);
       controller.abort();

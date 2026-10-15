@@ -216,7 +216,6 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     }
     const selectedModel = input.modelSelection.model.trim();
     const models = yield* modelCatalog;
-    // "default" is the catalog's default model, as in chat. Without one, Muse picks.
     const catalogModel =
       selectedModel && selectedModel !== MUSE_DEFAULT_MODEL
         ? models.find((model) => model.slug === selectedModel)
@@ -341,7 +340,6 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     });
     return { title: sanitizeThreadTitle(generated.title) };
   });
-  // Muse runs in an empty read-only directory and cannot be pointed at a checkout to read.
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = () =>
     Effect.fail(investigationUnsupported("generateReviewGuide", "Muse Code"));
   return {

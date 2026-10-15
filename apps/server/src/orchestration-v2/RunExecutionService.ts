@@ -110,8 +110,7 @@ function isSettledRunEligibleForInheritedBackground(status: OrchestrationV2Run["
 
 /**
  * Provider sessions are runtime containers and can host multiple provider threads, so the durable
- * provider-thread lineage is the discriminator. Completed, rolled-back, and already-terminal items
- * remain excluded.
+ * provider-thread lineage is the discriminator.
  */
 export function selectInheritedBackgroundTurnItems(input: {
   readonly threadId: ThreadId;
@@ -169,8 +168,7 @@ function isRunOwnedSubagentTerminalStatus(
 
 /**
  * A running subagent stays with the run that launched it, which keeps ingesting until it ends;
- * taking it over too would store its events twice. An interrupted, failed or cancelled one is never
- * resumed.
+ * taking it over too would store its events twice.
  */
 export function canRouteRelatedSubagent(status: OrchestrationV2Subagent["status"]): boolean {
   return status === "completed";
@@ -367,8 +365,6 @@ export function routeProviderEvent(
 
   switch (event.type) {
     case "provider_session.updated":
-      // The session manager persists process-wide status once for every
-      // attached app thread before broadcasting the adapter event.
       return [false, state];
     case "app_thread.created": {
       if (event.appThread.id === input.threadId) {
@@ -440,8 +436,6 @@ export function routeProviderEvent(
         return [true, state];
       }
       const inheritedRunId = state.inheritedBackgroundTurnItems.get(event.turnItem.id);
-      // Preserve the item's original ownership while allowing the one live run
-      // to deliver an exact carryover identity selected from the projection.
       const isInheritedBackgroundItem =
         event.turnItem.threadId === input.threadId &&
         event.turnItem.runId !== null &&
@@ -589,9 +583,6 @@ export const layer: Layer.Layer<
         const shouldFinalizeRun =
           input.shouldFinalizeRun === undefined ? true : yield* input.shouldFinalizeRun();
         if (!shouldFinalizeRun) {
-          // Superseded attempt (steer / selection restart). Emit
-          // run_interrupt_result only when hard Stop left an unpaired request
-          // for this run; plain steers and already-paired stops emit nothing.
           if (input.terminal.status === "interrupted") {
             const hasUnpairedRequest =
               input.hasUnpairedRunInterruptRequest === undefined
@@ -692,8 +683,6 @@ export const layer: Layer.Layer<
                 ]
               : [],
           events: [
-            // Terminalize open run-owned subagent rows before the root run
-            // settles so projections never keep a forever-running subagent card.
             ...cascadedSubagentEvents,
             ...(finalizedAttempt === null
               ? []
@@ -884,8 +873,6 @@ export const layer: Layer.Layer<
                   terminal: makeFailedTerminalEvent(
                     makeProviderFailure({
                       cause: Cause.squash(cause),
-                      // Keep exact underlying text in the logged cause only;
-                      // the persisted turn item gets a bounded curated message.
                       message: "Run preparation failed.",
                       class: "unknown",
                     }),
@@ -1163,10 +1150,6 @@ export const layer: Layer.Layer<
             if (childSubagents.size > 0) {
               return false;
             }
-            // Keep ingesting past root settlement while background-capable items owned by this run
-            // (or an owned child thread) are still non-terminal, so their late completion events
-            // reach the projection (stuck-spinner fix). Only for completed runs: interrupted/failed
-            // turns intentionally drop background tracking rather than pinning the stream open.
             // Newly owned items depend on adapters emitting a non-terminal event before the root
             // terminal. Owner loss (a newer run claimed lastRunOrdinal) must not close this stream
             // while these sets are non-empty: turn_item.updated writes are not ownership-gated, so
@@ -1175,18 +1158,12 @@ export const layer: Layer.Layer<
             if (backgroundItems.size > 0) {
               return false;
             }
-            // Owner loss means do not hold the stream open solely for the
-            // roster probe; once background sets are empty, release.
             if (yield* Ref.get(providerThreadOwnerLost)) {
               return true;
             }
-            // Claude background Bash has no turn-item projection. Keep the
-            // stream open while this root's provider thread still reports
-            // pending roster work so late empty updates can clear Waiting.
-            // Use only the thread-scoped probe: session-wide pending work
-            // (siblings, wake buffers, session subagents) must not pin this
-            // root subscription. Session idle release still uses
-            // hasPendingBackgroundWork via ProviderSessionManager.
+            // Claude background Bash has no turn-item projection. Use only the
+            // thread-scoped probe: session-wide pending work (siblings, wake
+            // buffers, session subagents) must not pin this root subscription.
             const latestProviderThreadSnapshot = yield* Ref.get(latestProviderThread);
             if (input.session.hasPendingBackgroundWorkForThread !== undefined) {
               const hasPendingWork = yield* input.session
@@ -1211,11 +1188,6 @@ export const layer: Layer.Layer<
                   DateTime.toEpochMillis(yield* DateTime.now),
                 );
                 if (deliveredEvent) {
-                  // Root provider_thread.updated always uses an ownership gate:
-                  // pre-terminal writeIfRunCurrent (attempt still running), or
-                  // post-terminal writeIfProviderThreadOwner so late roster
-                  // clears still land while this attempt owns the run and this
-                  // run owns lastRunOrdinal.
                   const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
                   const isRootProviderThreadUpdate =
                     event.type === "provider_thread.updated" &&
@@ -1329,8 +1301,6 @@ export const layer: Layer.Layer<
                                           checkpointScope: input.checkpointScope,
                                           providerThread,
                                           attempt: input.attempt,
-                                          // The failure may be the ownership
-                                          // read itself, so check in the write.
                                           writeIfRunCurrent: {
                                             activeAttemptId: input.attempt.id,
                                             expectedStatus: "running",
@@ -1372,8 +1342,6 @@ export const layer: Layer.Layer<
           // its already-issued MCP credential valid even when the agent goes
           // a long time between browser-tool calls.
           yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
-          // A context read that fails costs the agent the apps' notes for
-          // this turn, not the turn itself.
           const appContext = (yield* mcpAppModelContext
             .forThread(input.run.threadId)
             .pipe(
@@ -1456,8 +1424,6 @@ export const layer: Layer.Layer<
                             checkpointScope: input.checkpointScope,
                             providerThread,
                             attempt: input.attempt,
-                            // Checked in the write transaction, not by another
-                            // read that can fail like the one before the start.
                             writeIfRunCurrent: {
                               activeAttemptId: input.attempt.id,
                               expectedStatus: "running",
@@ -1466,7 +1432,6 @@ export const layer: Layer.Layer<
                             terminal: makeFailedTerminalEvent(
                               makeProviderFailure({
                                 cause: Cause.squash(cause),
-                                // A failed ownership read is not the provider's fault.
                                 class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
                               }),
                               latestItemOrdinal + 1,

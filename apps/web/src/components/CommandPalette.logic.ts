@@ -51,10 +51,6 @@ export function browseInputEndPaddingClass(input: {
   return "*:data-[slot=autocomplete-input]:pe-24!";
 }
 
-/**
- * One reducer owns open/mode state so the surfaces can never stack and
- * re-triggering a mode's shortcut toggles it closed.
- */
 export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
@@ -180,10 +176,6 @@ export type CommandPaletteRow =
       readonly itemIndex: number | null;
     };
 
-/**
- * `itemValues` is the highlightable item order Base UI navigates;
- * `rowIndexByItemIndex` maps a highlight back to its row for scrolling.
- */
 export function buildCommandPaletteRows(groups: ReadonlyArray<CommandPaletteGroup>) {
   const rows: CommandPaletteRow[] = [];
   const itemValues: string[] = [];
@@ -236,10 +228,6 @@ export function enumerateCommandPaletteItems(
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
-// A project as the palette shows it. `displayName` is the grouped label (for
-// example "owner/repo" when projects are merged across machines). Keep `title`
-// as the real project title: the automatic project icon is derived from it, and
-// every other surface uses the real title, so overriding it desyncs the icon.
 export type CommandPaletteProject = Project & { readonly displayName: string };
 
 export function buildCommandPaletteProjectMetadata(input: {
@@ -355,7 +343,6 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
           projectTitle ?? ``,
           thread.branch ?? ``,
           contentMatch?.snippet ?? ``,
-          // Last so pasted IDs never outrank title matches for shared substrings.
           thread.id,
         ],
         title: thread.title,

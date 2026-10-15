@@ -35,11 +35,6 @@ import {
   type PullRequestGlyphIcon,
 } from "./pullRequestIcons";
 
-/**
- * The mix leans to the foreground because hosts hand out any color at all: at 30% of
- * the label on light and 45% on dark, white, black and GitHub's pale yellows all clear
- * 4.5:1 on their wash, selected row included, and saturated colors sit well above.
- */
 export function PullRequestLabelChip({
   label,
   size = "sm",
@@ -65,10 +60,6 @@ export function PullRequestLabelChip({
   );
 }
 
-/**
- * "Awaiting review" is only drawn when the host reports it, which on GitHub means the branch
- * rules require a review nobody has given.
- */
 function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
   switch (decision) {
     case "approved":
@@ -281,10 +272,6 @@ export function pullRequestChecksState(
   return statuses.has("success") ? "passing" : null;
 }
 
-/**
- * The ring runs a shade stronger than the text tones. At 16px across it is a thin arc, and the
- * muted pairing that reads well as a word was barely there as an outline.
- */
 const REVIEW_OUTCOME_PRESENTATION = {
   approved: {
     label: "Approved",
@@ -346,7 +333,6 @@ export function pullRequestReviewOutcomeStaleLabel(outcome: PullRequestReviewOut
   return `${REVIEW_OUTCOME_PRESENTATION[outcome].label} earlier changes`;
 }
 
-/** Decorative: every caller says which verdict this is in words beside it. */
 export function PullRequestReviewOutcomeIcon({
   outcome,
   className,
@@ -415,9 +401,6 @@ export function PullRequestActorAvatar({
   );
 }
 
-/**
- * GitHub attributes work from a deleted account to "ghost"; say the same word everywhere.
- */
 export function PullRequestActorLabel({
   actor,
   className,

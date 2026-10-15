@@ -43,7 +43,6 @@ export function costPerMillionTokens(model: ModelTotals): number | null {
 const ink = (percent: number) =>
   `color-mix(in oklab, var(--foreground) ${percent}%, var(--background))`;
 
-/** Adjacent segments stay above the 15 ΔE separation floor in both themes. */
 const TYPE_COLORS = {
   input: ink(60),
   cacheRead: ink(30),
@@ -58,8 +57,6 @@ export function costTypeSegments(cost: CategoryCost): readonly ShareSegment[] {
     { label: "Cache read", value: cost.cacheRead, color: TYPE_COLORS.cacheRead },
     { label: "Cache write", value: cost.cacheWrite, color: TYPE_COLORS.cacheWrite },
     { label: "Output", value: cost.output, color: TYPE_COLORS.output },
-    // Reported cost with no rates to split it, or from older servers. Below a
-    // cent it is rounding, not usage.
     { label: "Other", value: cost.unsplit >= 0.005 ? cost.unsplit : 0, color: TYPE_COLORS.other },
   ];
 }

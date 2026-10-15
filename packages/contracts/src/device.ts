@@ -10,7 +10,6 @@ export type DeviceHostId = typeof DeviceHostId.Type;
 
 export const LOCAL_DEVICE_HOST_ID = "local" as DeviceHostId;
 
-/** SSH aliases and key paths are resolved on the environment server. */
 export const SshDeviceHostConfig = Schema.Struct({
   id: DeviceHostId.check(
     Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
@@ -31,7 +30,6 @@ export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(
   ),
 );
 
-/** Simulator udid or adb serial (an AVD name while it is not running). */
 export const DeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 export type DeviceId = typeof DeviceId.Type;
 
@@ -88,10 +86,6 @@ export const DeviceHostStatus = Schema.Literals([
 ]);
 export type DeviceHostStatus = typeof DeviceHostStatus.Type;
 
-/**
- * A device a thread is looking at. One session per (thread, device); the same
- * device may be open in several threads, since the stream is shared.
- */
 export const DeviceSession = Schema.Struct({
   threadId: ThreadId,
   hostId: DeviceHostId,
@@ -122,18 +116,14 @@ export const DeviceServiceState = Schema.Struct({
   ),
   onboardingCompleted: Schema.Boolean,
   agentAccessEnabled: Schema.Boolean,
-  /** Origin-relative path the client prefixes to hub routes. */
   hubBasePath: Schema.String,
   revision: Schema.Int,
 });
 export type DeviceServiceState = typeof DeviceServiceState.Type;
 
 export const DeviceListInput = Schema.Struct({
-  /** Install this server's pinned tool without enabling access or starting helpers. */
   updateTool: Schema.optional(Schema.Literals(["hub", "agent"])),
-  /** Read inventory without installing tools or starting helpers. */
   inspectOnly: Schema.optional(Schema.Boolean),
-  /** Retry this host only, including agent tools if access was already granted. */
   retryHostId: Schema.optional(DeviceHostId),
 });
 export type DeviceListInput = typeof DeviceListInput.Type;
@@ -195,7 +185,6 @@ export const DeviceOrientation = Schema.Literals([
 ]);
 export type DeviceOrientation = typeof DeviceOrientation.Type;
 
-/** Current values as read from the device; `undefined` means unsupported or unread. */
 export const DeviceSettings = Schema.Struct({
   appearance: Schema.optional(DeviceAppearance),
   textSize: Schema.optional(DeviceTextSize),
@@ -314,7 +303,6 @@ export const DeviceActionInput = Schema.Union([
     ...DeviceTarget,
     type: Schema.Literal("sendPush"),
     appId: TrimmedNonEmptyString,
-    /** APNs-style payload; a bare string becomes the alert body. */
     payload: Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.Unknown)]),
   }),
 ]);
@@ -462,10 +450,8 @@ export type DeviceToolOpenInput = typeof DeviceToolOpenInput.Type;
 
 export const DeviceToolOpenResult = Schema.Struct({
   device: DeviceSummary,
-  /** Ready-to-run agent-device invocation pinned to this device. */
   agentDevice: Schema.Struct({
     command: Schema.String,
-    /** Flags that pin every command to this device, e.g. `--udid <id>`. */
     targetArgs: Schema.Array(Schema.String),
   }),
   quickStart: Schema.String,

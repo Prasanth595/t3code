@@ -45,10 +45,6 @@ import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
 
-// Reflects whether the relay actually accepted this device's registration.
-// The notification and Live Activity switches are gated on this so they can
-// never read as enabled when the device cannot receive anything (e.g. the
-// registration request timed out).
 function useDeviceRegistered(): boolean {
   const status = useSyncExternalStore(
     subscribeAgentAwarenessRegistrationStatus,

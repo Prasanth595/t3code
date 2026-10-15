@@ -48,8 +48,6 @@ export function EnvironmentIconMenu({
     ? "granted"
     : "denied";
   const lock = resolveEnvironmentIconPickerLock({ serverConfig, operateAccess });
-  // With no detection the server falls back to "server", so picking that
-  // kind clears the override the same way picking the detected kind does.
   const detected = serverConfig?.environment.platform.machine ?? "server";
   const resolved = resolveEnvironmentMachineKind(serverConfig);
 

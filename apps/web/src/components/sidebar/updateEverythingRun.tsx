@@ -42,9 +42,6 @@ function updateRunMachines(update: (machine: UpdateRunMachine) => UpdateRunMachi
   );
 }
 
-/** Records the result of every update for one machine. `failure` is null when
-    it succeeded. A server that updated is no longer retried, even when the
-    machine failed for its providers. The run ends once every machine is done. */
 export function settleUpdateRunMachine(
   environmentId: EnvironmentId,
   failure: string | null,
@@ -66,7 +63,6 @@ export function settleUpdateRunMachine(
   );
 }
 
-/** Retries each failed server update in the run. */
 export function retryFailedUpdateRunServers(
   update: (
     target: ServerUpdateTarget,
@@ -91,7 +87,6 @@ export function retryFailedUpdateRunServers(
     void update(target, { quiet: true }).then((outcome) =>
       settleUpdateRunMachine(
         target.environmentId,
-        // A skipped retry (no permission, disconnected, interrupted) did not update.
         outcome.status === "updated"
           ? providerFailure
           : outcome.status === "failed"
@@ -103,7 +98,6 @@ export function retryFailedUpdateRunServers(
   }
 }
 
-/** Drops the finished machines, which ends a run that only kept failures. */
 export function dismissSettledUpdateRunMachines(): void {
   setUpdateEverythingRun(
     (run) =>
@@ -115,7 +109,6 @@ export function dismissSettledUpdateRunMachines(): void {
   );
 }
 
-/** Resolves once a server restarts into its update, or its update `finished` first. */
 export function waitForServerUpdateHandoff(
   environmentId: EnvironmentId,
   finished: Promise<unknown>,
@@ -141,10 +134,6 @@ export function waitForServerUpdateHandoff(
 
 let decideRestart: ((restart: boolean) => void) | null = null;
 
-/**
- * Counts down to this app's relaunch. Resolves true when the countdown ends,
- * or false when the user chose to restart later with {@link postponeUpdateRestart}.
- */
 export function waitForUpdateRestart(delayMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const decide = (restart: boolean) => {
@@ -160,13 +149,11 @@ export function waitForUpdateRestart(delayMs: number): Promise<boolean> {
   });
 }
 
-/** Keeps this app on its version. Its downloaded update waits on the update button. */
 export function postponeUpdateRestart(): void {
   decideRestart?.(false);
 }
 
 const SAVED_RESULT_KEY = "t3code:update-everything-result:v1";
-// A result older than this belongs to an install that never relaunched the app.
 const SAVED_RESULT_MAX_AGE_MS = 10 * 60 * 1000;
 // Covers a background service's 30-minute trial start, like the server update itself.
 const HANDOFF_TIMEOUT_MS = 32 * 60 * 1000;
@@ -185,23 +172,17 @@ const SavedResult = Schema.Struct({
   updatedServers: Schema.Number,
   updatedProviders: Schema.Number,
   failures: Schema.Array(Schema.String),
-  // Older saved results have no handed-off servers.
   handedOff: Schema.optional(Schema.Array(HandedOffServer)),
 });
 const decodeSavedResult = Schema.decodeUnknownOption(Schema.fromJsonString(SavedResult));
 
-/**
- * Keeps a result through this app's relaunch. Call it right before the
- * install. Servers still restarting are saved too, so the sidebar keeps
- * following them after the relaunch.
- */
 export function saveUpdateEverythingResult(result: UpdateEverythingResult): void {
   const run = appAtomRegistry.get(updateEverythingRunAtom);
   const handedOff = (run?.machines ?? []).flatMap((machine): HandedOffServer[] => {
     if (machine.result !== null) return [];
     const state = appAtomRegistry.get(serverEnvironment.updateStateAtom(machine.environmentId));
     // A desktop-managed server installs its own feed's version, which only its
-    // update state knows. A server followed from an earlier relaunch keeps its version.
+    // update state knows.
     const targetVersion =
       machine.handedOffVersion ??
       (state.status === "running" ? state.targetVersion : machine.server?.targetVersion);
@@ -266,13 +247,7 @@ export function showUpdateEverythingResult(result: UpdateEverythingResult): void
   );
 }
 
-/**
- * Follows servers that were restarting when this app relaunched. Each is done
- * once it reports its target version, or failed after the handoff timeout.
- * One toast reports them all at the end.
- */
 function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
-  // A server already past the timeout still shows, then fails on its first timer tick.
   if (servers.length === 0) return;
   setUpdateEverythingRun(() => ({
     localVersion: null,
@@ -335,12 +310,6 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
 
 let notifiedNotAppliedVersion: string | null = null;
 
-/**
- * Desktop launch notices for updates: the summary of a pass that ended with
- * this app's relaunch, and a warning when the last install did not apply.
- * Servers still restarting from that pass stay in the sidebar until they are
- * back. Mount once at the app root.
- */
 export function DesktopUpdateLaunchNotice() {
   const notAppliedVersion = useDesktopUpdateState()?.notAppliedVersion ?? null;
 

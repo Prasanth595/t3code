@@ -60,7 +60,6 @@ export const selfInvocationArgs = (
 ): ReadonlyArray<string> =>
   invocation.entrypoint === undefined ? args : [invocation.entrypoint, ...args];
 
-/** A standalone T3 binary runs its embedded CLI, regardless of script arguments. */
 export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutable")(function* (
   feature: typeof NodeRuntimeFeature.Type,
   environment?: NodeJS.ProcessEnv,
@@ -73,12 +72,8 @@ export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutabl
   const platform = yield* HostProcess.Platform;
   const env = environment ?? (yield* HostProcess.Environment);
   const resolvedNodePath = yield* resolveCommandPath(platform === "win32" ? "node.exe" : "node", {
-    // Batch wrappers require a shell; helper callers launch the runtime directly.
     env: platform === "win32" ? { ...env, PATHEXT: ".EXE" } : env,
-  }).pipe(
-    // Refresh immediately after the user installs Node and retries setup.
-    Effect.provideService(CommandResolutionCache, new Map()),
-  );
+  }).pipe(Effect.provideService(CommandResolutionCache, new Map()));
   if (resolvedNodePath === null) return yield* new NodeRuntimeUnavailableError({ feature });
   const nodePath = path.resolve(resolvedNodePath);
   const resolvedPath = yield* fs

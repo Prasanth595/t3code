@@ -31,13 +31,6 @@ export function shouldUseRestingComposerLayout(input: {
   hasMultilinePrompt: boolean;
   timelineOverflows: boolean;
 }): boolean {
-  // Only a timeline scroll rests the composer: the user asked for it with the
-  // gesture, and it lifts on the next composer interaction. Losing focus never
-  // rests it, so clicking a message, copying output, or selecting text for a
-  // citation leaves the composer where it was.
-  // Resting exists to give reading space back to the timeline. A thread that
-  // fits above the composer has nothing to reclaim, so it stays expanded and
-  // never shows the collapsed row that a fresh thread would otherwise open on.
   return (
     input.isExistingThread &&
     !input.isMobileViewport &&
@@ -59,10 +52,7 @@ export const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
 /**
  * Reserving only the resting height lets a scroll to the end land flush against the short
  * composer, and the expansion that follows then covers the last rows because the timeline never
- * moves for footer growth. While resting, keep the measured expanded height. Estimate the empty
- * expansion only before that measurement exists: strip mounting can otherwise inflate the
- * estimate mid-transition and move the timeline. An expanded measurement is authoritative and
- * may shrink the reservation.
+ * moves for footer growth.
  */
 export function resolveComposerTimelineInset(input: {
   currentInset: number;
@@ -81,11 +71,6 @@ export function resolveComposerTimelineInset(input: {
     : input.overlayHeight;
 }
 
-/**
- * Whether the overlay's composer is resting. Only a mounted composer can be:
- * a status bar in its place (a native subagent thread) never is, even if the
- * composer it replaced last reported resting.
- */
 export function overlayComposerIsResting(input: {
   composerMounted: boolean;
   composerReportedResting: boolean;

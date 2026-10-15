@@ -112,7 +112,6 @@ function PullRequestRowImpl({
       data-pull-request-stats-key={statsKey}
       data-pull-request-key={statsKey}
       className={cn(
-        // Keep the action buttons inside the same skipped row, but outside its selection button.
         "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
         selected ? "bg-accent" : "hover:bg-accent/60",
       )}
@@ -251,9 +250,4 @@ function PullRequestRowImpl({
   );
 }
 
-/**
- * Memoized: the list re-renders on every keystroke of a search and every status poll, and a
- * row whose entry, selection and match state are unchanged has nothing new to say. Effective
- * because the route hands it a stable `onSelect`.
- */
 export const PullRequestRow = memo(PullRequestRowImpl);

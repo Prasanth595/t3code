@@ -29,7 +29,6 @@ import {
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 
-/** Signed asset URLs live for an hour; treat anything older than this as worth re-minting. */
 const STALE_URL_MS = 5 * 60_000;
 
 export function ReadOnlySourcePreview(props: { name: string; text: string }) {
@@ -49,7 +48,6 @@ function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: bool
 export function AttachmentFilePreview(props: {
   name: string;
   mimeType: string;
-  /** Zero when unknown. */
   sizeBytes: number;
   file?: Blob | null;
   asset?: { environmentId: EnvironmentId; attachmentId: string };
@@ -94,8 +92,6 @@ export function AttachmentFilePreview(props: {
   const [revision, setRevision] = useState(0);
   const [content, setContent] = useState<{ text: string; truncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Reading source is a separate failure from loading the file: a rendered HTML page can be
-  // fine while its bytes are not UTF-8, and switching back to the page must not stay stuck.
   const [contentError, setContentError] = useState<string | null>(null);
   const authorizedAt = useRef(0);
   useEffect(() => {
@@ -108,7 +104,6 @@ export function AttachmentFilePreview(props: {
   useEffect(() => {
     if (props.file) return;
     let cancelled = false;
-    // Await a fresh signed URL: cached links can expire while the client is suspended.
     // oxlint-disable-next-line react/set-state-in-effect -- A new preview request clears its previous URL and error.
     setRemoteUrl(null);
     setError(null);
@@ -138,8 +133,6 @@ export function AttachmentFilePreview(props: {
     setContentError(null);
     const file = props.file;
     void (async () => {
-      // A signed URL minted when the file opened may have expired by the time the user
-      // switches to source. Publish its replacement so later mode switches use it too.
       if (!file && Date.now() - authorizedAt.current > STALE_URL_MS) {
         const target = await refresh();
         if (controller.signal.aborted) return;
@@ -147,7 +140,6 @@ export function AttachmentFilePreview(props: {
         authorizedAt.current = Date.now();
         if (target !== url) {
           setRemoteUrl(target);
-          // The URL change restarts this effect; fetch once with the new authorization.
           return;
         }
       }
@@ -217,8 +209,6 @@ export function AttachmentFilePreview(props: {
     <FileSurfaceFailure
       message={failure}
       onRetry={() => {
-        // Clearing first lets a local Blob preview remount: its URL never changes, so the
-        // revision bump alone would re-render the same failed element.
         setError(null);
         setRevision((value) => value + 1);
       }}

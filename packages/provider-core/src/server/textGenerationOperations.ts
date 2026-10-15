@@ -27,13 +27,11 @@ export interface Request<S extends Schema.Top> {
   readonly prompt: string;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
-  /** The user's attachments, already listed in the prompt. Providers that accept images send them. */
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /**
    * Set when the model must investigate `cwd` before answering: it may read files and run
-   * read-only commands there, over as many turns as it needs, and must change nothing. Absent,
-   * the prompt carries everything and the model runs with no tools at all. A runner that cannot
-   * guarantee read-only tools fails rather than answering blind.
+   * read-only commands there, over as many turns as it needs, and must change nothing. A
+   * runner that cannot guarantee read-only tools fails rather than answering blind.
    */
   readonly investigate?: { readonly timeoutMs: number } | undefined;
 }
@@ -57,13 +55,11 @@ export const withoutInvestigation =
       ? Effect.fail(investigationUnsupported(request.operation, provider))
       : run(request);
 
-/** Decodes the JSON object in a text reply, which models often wrap in prose. */
 export const decodeJsonReply = <S extends Schema.Top>(
   request: Pick<Request<S>, "operation" | "outputSchema">,
   provider: string,
   text: string,
 ) => {
-  // Each request builds its own output schema, so the decoder cannot be hoisted.
   const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(request.outputSchema));
   return decodeOutput(extractJsonObject(text)).pipe(
     Effect.mapError(

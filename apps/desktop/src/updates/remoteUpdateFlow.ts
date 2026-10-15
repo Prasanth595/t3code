@@ -1,9 +1,5 @@
 import type { DesktopUpdateRemoteOutcome, DesktopUpdateState } from "@t3tools/contracts";
 
-/**
- * "wait" means an action (possibly started locally) is in flight and the run should ride along
- * until the next state change.
- */
 export type RemoteDesktopUpdateStep =
   | { readonly action: "check" }
   | { readonly action: "download" }
@@ -16,10 +12,10 @@ export type RemoteDesktopUpdateStep =
     };
 
 /**
- * How many times this run already issued each action. The caps are what stop
- * a check -> up-to-date -> check loop and endless download retries; they are
- * counts rather than booleans because a state event raced by the local
- * 4-minute poller can re-show an already-handled status once.
+ * The caps are what stop a check -> up-to-date -> check loop and endless
+ * download retries; they are counts rather than booleans because a state event
+ * raced by the local 4-minute poller can re-show an already-handled status
+ * once.
  */
 export interface RemoteDesktopUpdateAttempts {
   readonly checks: number;
@@ -29,7 +25,6 @@ export interface RemoteDesktopUpdateAttempts {
 export const MAX_REMOTE_UPDATE_CHECKS = 2;
 export const MAX_REMOTE_UPDATE_DOWNLOADS = 3;
 
-/** Same predicate DesktopUpdates.installDownloadedUpdate uses for admission. */
 function isInstallableDesktopUpdateState(state: DesktopUpdateState): boolean {
   return (
     state.downloadedVersion !== null &&
@@ -115,10 +110,9 @@ export function nextRemoteDesktopUpdateStep(
 }
 
 /**
- * Normalizes an updater message for the `reason` wire field, which is a
- * TrimmedNonEmptyString. Updater messages are plain strings and may be blank;
- * a blank reason would fail encoding and silently drop the terminal report,
- * leaving the server to wait for its timeout.
+ * Updater messages are plain strings and may be blank; a blank reason would
+ * fail encoding and silently drop the terminal report, leaving the server to
+ * wait for its timeout.
  */
 export function normalizeRemoteUpdateReason(reason: string | undefined): string | undefined {
   const trimmed = reason?.trim();

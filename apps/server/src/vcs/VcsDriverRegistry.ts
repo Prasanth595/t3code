@@ -118,7 +118,6 @@ export const make = Effect.gen(function* () {
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
-  // A new `.git` in any of them means `git init` made a nested repository.
   // Falls back to the cwd alone when the root is not above it, such as a cwd
   // reached through a symlink.
   const foldersBelowRoot = (cwd: string, rootPath: string) => {

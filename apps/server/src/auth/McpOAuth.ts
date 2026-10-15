@@ -62,11 +62,6 @@ export interface McpOAuthUrls {
   readonly resource: string;
 }
 
-/**
- * Issuer and MCP resource for the origin this request reached: its Host, and
- * https when a proxy says so. A Host that is not a valid authority falls back
- * to localhost, which no client will have asked for.
- */
 export const requestUrls = (request: HttpServerRequest.HttpServerRequest): McpOAuthUrls => {
   const origin = Option.match(HttpServerRequest.toURL(request), {
     onNone: () => "http://localhost",
@@ -100,7 +95,6 @@ export const authorizationServerMetadata = (
   authorization_response_iss_parameter_supported: true,
 });
 
-/** A redirect URI an MCP client may register: loopback http, or any https. */
 const parseRedirect = (value: string): URL | undefined => {
   // No fragment, not even an empty one, which `URL.hash` reports as "" (RFC 6749 §3.1.2).
   if (value.length > MAX_REDIRECT_URI_LENGTH || value.includes("#")) return undefined;
@@ -116,9 +110,8 @@ const parseRedirect = (value: string): URL | undefined => {
 };
 
 /**
- * Whether a presented redirect is one the client registered. Loopback
- * redirects match on everything but the port (RFC 8252 §7.3), since CLI
- * agents listen on whatever port is free; https redirects match exactly.
+ * Loopback redirects match on everything but the port (RFC 8252 §7.3), since
+ * CLI agents listen on whatever port is free; https redirects match exactly.
  */
 export const redirectMatches = (registered: string, presented: string): boolean => {
   const left = parseRedirect(registered);
@@ -201,16 +194,11 @@ export class McpOAuth extends Context.Service<
     readonly register: (
       input: AuthMcpClientRegistration,
     ) => Effect.Effect<McpOAuthClient, AuthMcpRegistrationError>;
-    /** Validates an authorize request. Page errors must never redirect. */
+    /** Page errors must never redirect. */
     readonly validateAuthorization: (input: {
       readonly urls: McpOAuthUrls;
       readonly request: AuthMcpAuthorizationRequest;
     }) => Effect.Effect<AuthorizationRequest, McpOAuthPageError | McpOAuthRedirectError>;
-    /**
-     * The signed-in owner on this origin, when their browser session may
-     * approve at least read-only access. `approve` checks the chosen access
-     * against the session's scopes.
-     */
     readonly approvingBrowserSession: (
       request: HttpServerRequest.HttpServerRequest,
       authorization: AuthorizationRequest,
@@ -543,11 +531,6 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(McpOAuth, make);
 
-/**
- * Lets `/mcp` admit OAuth clients. Their scope has no calling thread, and
- * never carries preview or device access: those tools act on the caller's
- * own thread.
- */
 export const layerMcpClientAuthenticator = Layer.effect(
   McpHttpServer.McpClientAuthenticator,
   Effect.gen(function* () {

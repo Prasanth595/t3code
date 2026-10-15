@@ -307,7 +307,6 @@ const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 
-// Module scope keeps the inbox order across routes that unmount the sidebar.
 const inboxReturns = createInboxReturnTracker();
 
 function canOperateThreads(
@@ -345,10 +344,6 @@ function settledTimeLabel(thread: SidebarThreadSummary): string {
   return timestamp === null ? "" : compactSidebarTimeLabel(formatRelativeTimeLabel(timestamp));
 }
 
-// An overlay pill instead of an inline slot: the hint must neither displace the
-// status/time label (holding ⌘ used to blank out "Working") nor shift any
-// layout when it appears. pointer-events-none so it never swallows clicks meant
-// for the settle/un-settle buttons it can overlap.
 function JumpHintBadge(props: { label: string }) {
   return (
     <span
@@ -571,8 +566,6 @@ function SnoozeMenuButton(props: {
   timestampFormat: TimestampFormat;
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat } = props;
-  // Presets resolve at open time so "In 1 hour" is relative to the click,
-  // not to when the row mounted.
   const presets = useMemo(
     () => (open ? resolveSnoozePresets(new Date(), timestampFormat) : []),
     [open, timestampFormat],
@@ -627,10 +620,6 @@ function SnoozeMenuButton(props: {
   );
 }
 
-// Listeners go on the whole row (no dedicated handle): the pointer sensor's
-// distance constraint keeps plain clicks working, and we skip dnd-kit's aria
-// attributes since there is no keyboard sensor and the row body already carries
-// its own button semantics.
 type SortableThreadRowBag = Pick<
   ReturnType<typeof useSortable>,
   "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
@@ -667,11 +656,6 @@ function SortableThreadRow(props: {
 const draftSurfaceClassName = "bg-warning/4 hover:bg-warning/8";
 const draftPenClassName = "size-3 shrink-0 text-warning-foreground";
 
-// Structural list items — the section headers and the
-// empty-section placeholders — take part in the sortable list so they shift
-// with the rows and the gap can open on either side of them. They can't be
-// picked up, and a marker is the sortable `over` when the pointer is on it,
-// which resolveSidebarDropTarget turns into the section the gap sits in.
 function SortableSidebarMarker(props: {
   marker: SidebarListMarker;
   className?: string;
@@ -691,7 +675,6 @@ function SortableSidebarMarker(props: {
       className={cn("list-none", props.className)}
       style={{
         transform: CSS.Translate.toString(transform),
-        // A newly revealed target must not slide from its hidden position.
         transition: props.marker.endsWith("-placeholder") ? "none" : transition,
         visibility: transform?.scaleY === 0 ? "hidden" : undefined,
       }}
@@ -701,8 +684,6 @@ function SortableSidebarMarker(props: {
   );
 }
 
-// Empty targets stay measurable without reserving space at rest. The sorting
-// strategy opens their hint space during a drag.
 function SidebarSectionPlaceholder(props: {
   marker: "active-placeholder" | "settled-placeholder";
   label: string;
@@ -733,8 +714,6 @@ const SIDEBAR_DRAG_DISTANCE = 6;
 
 type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 
-// Zero-height markers reserve no label space at rest. During a drag the
-// sorting strategy opens 24px for a 16px label with 4px clearance on each side.
 const SIDEBAR_DRAG_LABEL_HEIGHT = 24;
 
 function SidebarDragBoundary(props: {
@@ -942,10 +921,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
 }) {
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftsByThreadKey = useComposerDraftStore((store) => store.draftsByThreadKey);
-  // A draft that was never navigated away from has no snapshot to freeze, so a
-  // fresh typing session shows no row at all. Captured synchronously on route
-  // change (setState-during-render derived state) so the row never flickers out
-  // for a frame between route change and capture.
   const [frozenActive, setFrozenActive] = useState<{
     routeDraftId: string | null;
     row: SidebarDraftRowData | null;
@@ -966,9 +941,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   }
   const drafts = useMemo(() => {
     const rows: SidebarDraftRowData[] = [];
-    // Every non-promoted session with content gets a row, mapped or not:
-    // new-thread surfaces mint fresh drafts and leave invested ones behind
-    // unmapped, so the mapping only knows about the latest per project.
     for (const [draftKey, session] of Object.entries(draftThreadsByThreadKey)) {
       if (session.promotedTo != null) {
         continue;
@@ -980,9 +952,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
         continue;
       }
       if (draftKey === props.routeDraftId) {
-        // Open draft: render the frozen entry snapshot, or nothing for a
-        // draft that has never been left. Gated on the LIVE session above so
-        // send/discard still removes the row immediately.
         if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
           rows.push(frozenActive.row);
         }
@@ -1019,9 +988,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
             isActive={draftId === props.routeDraftId}
             onNavigate={props.onNavigateToDraft}
-            // The /draft/$draftId route redirects home on its own when the
-            // draft it renders disappears, so discarding the open draft needs
-            // no special-casing here.
             onDiscard={discardComposerDraft}
             onContextMenu={props.onDraftContextMenu}
           />
@@ -1075,12 +1041,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
   snoozeSupported: boolean;
-  // Pinned cards keep the full settle/snooze quick actions: settling clears the
-  // pin server-side, and snoozing hides the card until wake with the pin intact
-  // underneath. The glyph is also the in-row pin state cue (the pinned block
-  // has no header), so it always shows while pinned; it only becomes a
-  // clickable unpin quick-action once the pinning capability is confirmed, and
-  // stays a passive marker while the descriptor is not loaded.
   pinningSupported: boolean;
   isPinned: boolean;
   sortable?: SortableThreadRowBag | undefined;
@@ -1209,14 +1169,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
     : null;
 
-  // Same semantics as the legacy sidebar (never-visited counts as read):
-  // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
   const isInFlight =
     status === "working" || status === "waiting" || status === "approval" || status === "input";
-  // Timer wakes survive a mere visit. An unparseable visit timestamp counts as
-  // never-visited, so corrupt local data cannot eat the wake signal.
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
@@ -1235,8 +1191,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       ? {
           label: thread.goal?.status === "active" ? "Goal" : "Working",
           icon: "working" as const,
-          // No shimmer: a label that animates forever is noise in a sidebar
-          // full of them (and repaints every vsync on high-refresh displays).
           className: "text-info",
         }
       : status === "waiting"
@@ -1465,23 +1419,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     },
     [onSnooze, threadRef],
   );
-  // While the snooze popover is open the pointer leaves the row, which
-  // would fade the hover actions out from under the open menu. Pin them and
-  // suppress the row tooltip so its portal cannot overlap the popover.
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
-  // Snooze is offered only where it can succeed: capability-gated and never
-  // on blocked-on-you work or queued turns (the server rejects both).
   const showSnoozeButton =
     canOperateThread &&
     props.snoozeSupported &&
     canSnooze(thread, { now: new Date().toISOString() });
   const showHoverActions =
     (canOperateThread && props.settlementSupported) || showSnoozeButton || hasUnsentDraft;
-  // If the thread becomes blocked while the popover is open, the button
-  // unmounts without firing onOpenChange(false). Deriving the flag keeps a
-  // stale true from permanently hiding the status label / pinning the
-  // hover actions, and the effect clears the raw state so the popover
-  // doesn't resurrect if the button later remounts.
   const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
   useEffect(() => {
     if (!showSnoozeButton) setSnoozeMenuOpen(false);
@@ -1524,10 +1468,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
     isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
-    // The lifted row is an opaque card so the rows beneath it never show
-    // through. The row tint is translucent in dark themes and the pointer
-    // keeps the hover color applied, so both the tint and the solid sidebar
-    // color are stacked as background images.
     props.sortable?.isDragging &&
       "bg-sidebar bg-linear-to-b from-sidebar-row-active to-sidebar-row-active text-sidebar-foreground opacity-100 shadow-lg",
   );
@@ -1705,7 +1645,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
-          // Matches the h-9 row so unrendered rows never shift the list when they paint.
           "list-none [content-visibility:auto] [contain-intrinsic-size:auto_36px]",
           sortable?.isDragging && "relative z-20",
         )}
@@ -1748,9 +1687,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 Regenerating title
               </span>
             ) : null}
-            {/* The PR badge stays outside the hover-fading slot: it must
-              remain visible AND clickable while the row is hovered. Only
-              the time/jump label yields to the settle affordance. */}
             {prBadge}
             {sortable?.isDragging ? (
               dragDestination
@@ -1772,8 +1708,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       {props.snoozeWakeLabelText}
                     </span>
                   ) : isWoke ? (
-                    // A wake can land straight in the settled tail (e.g. PR
-                    // merged while snoozed); the signal must survive the trip.
                     <Tooltip>
                       <TooltipTrigger
                         render={
@@ -1866,7 +1800,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
-        // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
         sortable?.isDragging && "relative z-20",
       )}
@@ -1910,10 +1843,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 <span className="flex-1" />
               )}
               {pinIndicator}
-              {/* The visible state owns this slot's width: status at rest,
-                  actions on hover/keyboard focus or while the popover is open. Keeping
-                  the hidden state out of flow lets the project label reclaim
-                  space without either state overlapping it. */}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -2052,9 +1981,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   ) : null}
                 </span>
               )}
-              {/* A sweep hides the slot rather than unmounting it, so the
-                  pressed action button stays connected and a cancelled sweep's
-                  release click still fires and is consumed. */}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             <div className="mt-1 flex min-w-0">
@@ -2426,9 +2352,6 @@ export default function Sidebar() {
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   const routeTargetRef = useRef(routeTarget);
   routeTargetRef.current = routeTarget;
-  // Post-settle navigation validates against the CURRENT route, not the one
-  // captured when the settle started: if the user navigated elsewhere while
-  // the command was in flight, completing it must not yank them away.
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
 
@@ -2558,8 +2481,6 @@ export default function Sidebar() {
           ),
     [scopedProjectGroup],
   );
-  // Configs identify scratch projects, so both they and live project snapshots
-  // must arrive before a persisted scope can be considered missing.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
   useEffect(() => {
@@ -2580,10 +2501,6 @@ export default function Sidebar() {
     projectGroupingSettings,
     setProjectScopeKey,
   ]);
-  // Selecting a number keeps typing in a draft composer from re-rendering the
-  // whole sidebar. Approximates the block's row filter (every non-promoted
-  // session with content); it can overcount by one for an open never-left
-  // draft, which only softens the empty state.
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
   const visibleDraftSessionCount = useComposerDraftStore((store) => {
     let count = 0;
@@ -2604,8 +2521,6 @@ export default function Sidebar() {
     }
     return count;
   });
-  // Scope flips drop the selection: rows selected under the old scope may be
-  // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
@@ -2656,10 +2571,7 @@ export default function Sidebar() {
     readonly occurredAt: string;
     readonly clearsSnooze: boolean;
     readonly order: readonly string[] | null;
-    /** Destination order keys before the drop, to recognize concurrent writes. */
     readonly keysAtDrop: ReadonlyMap<string, string | null>;
-    /** The keys this drop writes (one per planned assignment). The
-        override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
   const {
@@ -2674,8 +2586,6 @@ export default function Sidebar() {
   } = useMemo(() => {
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    // Subagent child threads live in the parent's Agents surface, not the
-    // sidebar roster (v2 models them as real threads with lineage).
     const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
     inboxReturns.observe(workingShelfEnabled ? threads : null);
     const pinned: EnvironmentThreadShell[] = [];
@@ -2689,10 +2599,6 @@ export default function Sidebar() {
     const activeReorderable = new Set<string>();
     for (const thread of visible) {
       const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
-      // Threads on servers without the settlement capability (old server,
-      // or descriptor not loaded yet) never classify as settled: the user
-      // could neither un-settle nor pin them, so auto-settling them would
-      // strand rows in a tail with no working affordances.
       const supportsSettlement = capabilities?.threadSettlement === true;
       const supportsSnooze = capabilities?.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
@@ -2829,10 +2735,9 @@ export default function Sidebar() {
         ? Date.parse(snoozedThreads[0].snoozedUntil)
         : Number.NaN;
     if (Number.isNaN(nextWakeAtMs)) return;
-    // setTimeout delays are signed 32-bit: anything larger overflows and
-    // fires immediately, turning a far-future wake (event-condition snoozes
-    // synced from elsewhere) into a tight re-arm loop. Clamped, the timer
-    // just re-arms every ~24.8 days until the wake is in range.
+    // setTimeout delays are signed 32-bit: anything larger overflows and fires
+    // immediately, turning a far-future wake (event-condition snoozes synced
+    // from elsewhere) into a tight re-arm loop.
     const delayMs = Math.min(Math.max(0, nextWakeAtMs - Date.now()) + 50, 2_147_483_647);
     const id = window.setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
     return () => window.clearTimeout(id);
@@ -2944,10 +2849,6 @@ export default function Sidebar() {
       ),
     [orderedThreads],
   );
-  // Rows call back into the click handler without carrying the ordered list as
-  // a prop — a fresh array identity per shell update would defeat every row's
-  // memoization. The ref keeps shift-range-select working against the list as
-  // rendered at click time.
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   orderedThreadKeysRef.current = orderedThreadKeys;
   const threadByKey = useMemo(
@@ -3003,9 +2904,6 @@ export default function Sidebar() {
   const { showThreadJumpHints: showJumpHints, updateThreadJumpHintsVisibility } =
     useThreadJumpHintVisibility();
 
-  // Settled threads are live shells, so opening one is plain navigation:
-  // history stays readable without un-settling, and sending a message or
-  // starting a session un-settles server-side.
   const navigateToThread = useCallback(
     (threadRef: ScopedThreadRef) => {
       if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
@@ -3052,10 +2950,6 @@ export default function Sidebar() {
 
   const navigateToDraft = useCallback(
     (draftId: DraftId) => {
-      // Unconditional: also drops a stale selection anchor left by
-      // plain-click navigation, so a later shift-click starts fresh
-      // instead of ranging from a row that is no longer the context.
-      // (clearSelection no-ops when there is nothing to clear.)
       clearSelection();
       if (isMobile) {
         setOpenMobile(false);
@@ -3078,8 +2972,6 @@ export default function Sidebar() {
   );
   const handleThreadSearchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
-      // IME composition (Japanese/Chinese input) uses the same keys; committing
-      // a candidate must not move the highlight or navigate away mid-compose.
       if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape" && isSearchingThreads) {
         event.preventDefault();
@@ -3177,8 +3069,6 @@ export default function Sidebar() {
     [navigateToThread, rangeSelectTo, toggleThreadSelection],
   );
 
-  // A settle per thread at a time: double clicks and repeated menu picks
-  // must not dispatch a second settle that fails and toasts a false error.
   const settlingThreadKeysRef = useRef(new Set<string>());
   // Callers snapshot the plan BEFORE the command mutates the partition;
   // background parks never navigate (null plan).
@@ -3248,9 +3138,6 @@ export default function Sidebar() {
     [planForwardNavigation, settleThread],
   );
   useEffect(() => registerSettleAndAdvance(attemptSettle), [attemptSettle]);
-  // Post-settle navigation must skip threads settling in this same batch — they
-  // are all leaving the card block together. Pinned rows ARE included: the
-  // decider clears the pin as part of settling, so they park like the rest.
   const settleThreads = useCallback(
     (threadKeys: readonly string[]) => {
       const coSettlingKeys = new Set(threadKeys);
@@ -3312,9 +3199,6 @@ export default function Sidebar() {
     listMotionRef.current?.update(false);
   }, []);
 
-  // Hold the chosen section and order until every key write arrives. This
-  // also covers first-time ordering, which assigns keys to keyless neighbors.
-  // A failed write, concurrent reorder, or membership change releases the hold.
   const [dragState, setDragState] = useState<{
     readonly activeKey: string;
     readonly activeSection: SidebarSection;
@@ -3409,8 +3293,6 @@ export default function Sidebar() {
   }, [activeThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads]);
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
   sectionByThreadKeyRef.current = sectionByThreadKey;
-  // Staying in one section keeps an overshoot from changing neighboring
-  // sections, whose boundaries may be hidden outside a row drag.
   const [actionSweep, setActionSweep] = useState<{
     action: SidebarSweepAction;
     keys: ReadonlySet<string>;
@@ -3454,9 +3336,6 @@ export default function Sidebar() {
         onStart: () => sweepTo(originKey),
         onMove: ({ y }) =>
           sweepTo(threadListRef.current && sidebarThreadKeyAtY(threadListRef.current, y)),
-        // Also runs after a press that never moved. Nothing is swept then,
-        // and the button's own click applies its action. Rows that changed
-        // section mid-gesture, say pinned from another device, are skipped.
         onEnd: () => {
           const keys = sweptKeys.filter(canApply);
           if (action === "settle") {
@@ -3605,7 +3484,6 @@ export default function Sidebar() {
       contextDragKeyRef.current = activeKey;
       const activeSection = sectionByThreadKey.get(activeKey);
       if (activeSection === undefined) return;
-      // Stop normal section motion before dnd-kit measures the picked-up row.
       listMotionRef.current?.suspend();
       const list = threadListRef.current;
       const header = list?.querySelector<HTMLElement>('[data-testid="sidebar-pinned-header"]');
@@ -3629,8 +3507,6 @@ export default function Sidebar() {
     },
     [sectionByThreadKey],
   );
-  // Include every visible row in the measured order. Older servers disable
-  // pickup on their rows without changing where those rows render.
   const sidebarListItems = useMemo((): readonly SidebarListItem[] => {
     const rowsOf = (
       list: readonly EnvironmentThreadShell[],
@@ -3702,9 +3578,6 @@ export default function Sidebar() {
   );
   const sidebarListHasRows = sidebarListItems.length + visibleDraftSessionCount > 0;
   useLayoutEffect(() => {
-    // Drag release clears the baseline, so its commit cannot replay the
-    // sortable preview; rows glide from their released positions instead.
-    // Draft navigation can reveal a frozen row without changing the draft count.
     void sidebarListOrderKey;
     listMotionRef.current?.update(!listMotionPaused && sidebarListHasRows);
   }, [
@@ -3775,8 +3648,6 @@ export default function Sidebar() {
       snoozedThreads.length,
     ],
   );
-  // Hidden and filtered threads keep their keys. Reserve those slots without
-  // including the rows in the visible drop order or writing to them.
   const { pinnedKeysById, activeKeysById } = useMemo(
     () => ({
       pinnedKeysById: new Map(
@@ -3885,8 +3756,6 @@ export default function Sidebar() {
           : plan.kind === "reorder-pinned" || plan.kind === "move-active"
             ? plan.assignments
             : [];
-      // A drop rewrites the dragged row and every row it renumbers, so all of
-      // them must be writable before any of them changes.
       if (
         !checkThreadOperations(
           [activeKey, ...assignments.map(({ id }) => id)].flatMap((key) => {
@@ -3917,7 +3786,6 @@ export default function Sidebar() {
         ) => {
           const result = await operation;
           if (result._tag === "Success") return true;
-          // A late failure must not cancel a newer drag's preview.
           setOptimisticDrop((current) => (current === drop ? null : current));
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
@@ -3952,7 +3820,6 @@ export default function Sidebar() {
             return;
           }
           case "move-active":
-            // The drag expresses unpin intent; button/menu confirmation is unchanged.
             if (plan.unpin && !(await run(unpinThread(threadRef), "Failed to unpin thread")))
               return;
             if (
@@ -3978,7 +3845,6 @@ export default function Sidebar() {
           case "reorder-pinned":
             break;
         }
-        // Stop on failure; each successful key write remains a valid placement.
         const keyWrites = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
         for (const assignment of keyWrites) {
           const thread = threadByKey.get(assignment.id);
@@ -4087,17 +3953,12 @@ export default function Sidebar() {
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
       if (!api) return;
-      // Selections can outlive their rows (settled-tail paging, thread deletion
-      // elsewhere) and the menu labels must count only what the actions will
-      // touch.
       const selectedThreadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
       const threadKeys = selectedThreadKeys.filter((threadKey) =>
         threadByKeyRef.current.has(threadKey),
       );
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
-      // Snooze (N) is offered when every selected thread can actually take
-      // it — a mixed selection with blocked-on-you work would half-apply.
       const selectionNow = new Date();
       const selectedThreads = threadKeys.flatMap((threadKey) => {
         const thread = threadByKeyRef.current.get(threadKey);
@@ -4478,8 +4339,6 @@ export default function Sidebar() {
         }
         switch (clicked.value) {
           case "filter-by-project":
-            // This item is the only scope control here, so picking the
-            // already-scoped project again is the way back to all projects.
             if (threadProjectGroup) {
               setProjectScopeKey(
                 projectScopeKey === threadProjectGroup.projectKey
@@ -4711,8 +4570,6 @@ export default function Sidebar() {
     threadByKey,
   ]);
 
-  // Adding Shift (screenshots) or Alt no longer matches ⌘1..9, so the overlay
-  // hides for chords like ⌘⇧4.
   const shortcutModifiers = useShortcutModifierState();
   const terminalFocused = useTerminalFocus();
   const shouldShowJumpHintsNow = shouldShowThreadJumpHintsForModifiers(
@@ -4751,10 +4608,6 @@ export default function Sidebar() {
     [isMobile, newThreadContext, projectGroups.length, setOpenMobile],
   );
 
-  // In multi-project setups the label is only the picker's shortcut: falling
-  // back to chat.newLocal would advertise the same shortcut for both the picker
-  // and direct create. In single-project setups both commands create directly,
-  // so chat.newLocal is a valid fallback.
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
     (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
@@ -4766,8 +4619,6 @@ export default function Sidebar() {
       <SidebarContent
         className="min-h-full"
         fixedHeader={
-          // Lifted above the stage backdrop, whose fade bleeds below the
-          // header and would otherwise paint across the search row's outline.
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
@@ -4809,8 +4660,6 @@ export default function Sidebar() {
                     }
                   >
                     {scopedProjectGroup ? (
-                      // Wrapped so the button's direct-child svg color rule cannot override
-                      // a project's own icon color.
                       <span className="flex shrink-0">
                         <ProjectFavicon project={scopedProjectGroup} className="size-4" />
                       </span>
@@ -4838,8 +4687,6 @@ export default function Sidebar() {
                         ) {
                           return;
                         }
-                        // Combobox items use virtual focus: keyboard events
-                        // stay on this input, not on the highlighted option.
                         const scopeKey = highlightedProjectScopeKeyRef.current;
                         const project = scopeKey ? projectGroupByScopeKey.get(scopeKey) : null;
                         if (project) handleProjectSettings(event, project);
@@ -5039,8 +4886,6 @@ export default function Sidebar() {
                         const rowVariant = isCard ? "card" : "slim";
                         return (
                           <SidebarThreadRow
-                            // Fade between card and compact rows while the outer
-                            // sortable wrapper keeps its identity during a drag.
                             key={`${threadKey}:${rowVariant}`}
                             thread={thread}
                             variant={rowVariant}

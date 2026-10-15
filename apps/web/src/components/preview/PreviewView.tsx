@@ -113,7 +113,6 @@ function previewProfileName(
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
 
-/** Resolves stream access only while a server tab shows a file it downloaded. */
 function ServerTabFileNotShown(props: {
   readonly threadRef: ScopedThreadRef;
   readonly tabId: string;
@@ -199,11 +198,8 @@ export function PreviewView({
         : findActiveBrowserRecordingRuntimeTabId(threadRef, tabId)
       : null;
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
-  // Server tabs run in the environment's browser and stream to any client, except the
-  // desktop app's own server's tabs, which render here natively while the server drives them.
   const nativeServerTab = useRendersServerTabNatively(threadRef.environmentId, snapshot);
   const isServerTab = snapshot?.runtime === "server" && !nativeServerTab;
-  /** The server owns this tab's appearance, zoom, and size, whoever renders it. */
   const serverOwnsRendering = snapshot?.runtime === "server";
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
   const [serverAspectRatioLocked, setServerAspectRatioLocked] = useState(false);
@@ -235,10 +231,6 @@ export function PreviewView({
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
-  // A tab created before profiles existed carries no profile of its own. It
-  // runs in the built-in `default` partition — the scope the browser used
-  // before profiles — not in whatever profile is configured as the default
-  // now, so that is what its label names and its clear actions target.
   // Passing the snapshot's raw `undefined` through would reach the IPC layer
   // as "every profile".
   const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
@@ -253,7 +245,6 @@ export function PreviewView({
   const threadKey = scopedThreadKey(threadRef);
   useEffect(() => {
     if (!navUrl || !navTitle || !latestHistoryUrl) return;
-    // Agent-driven pages only enrich an existing requested URL.
     setTitleForThreadUrl(threadRefRef.current, navUrl, navTitle, environmentHostname);
   }, [environmentHostname, latestHistoryUrl, navTitle, navUrl, threadKey]);
 
@@ -266,7 +257,6 @@ export function PreviewView({
         return true;
       }
       if (runtimeTabId && previewBridge) {
-        // The bridge mirrors the resolved URL back to the server.
         await previewBridge.navigate(runtimeTabId, resolvedUrl);
         rememberPreviewUrl(threadRef, resolvedUrl);
         return true;
@@ -302,7 +292,6 @@ export function PreviewView({
   const handleOpenServerUrl = useCallback(
     async (next: string) => {
       try {
-        // A server tab's browser runs on the environment, where loopback is already right.
         const resolved =
           isServerTab || !previewBridge
             ? normalizePreviewUrl(next)
@@ -310,9 +299,7 @@ export function PreviewView({
         if (await navigateToResolvedUrl(resolved)) {
           recordVisitForThread(threadRef, next);
         }
-      } catch {
-        // Server-side `failed` event renders the unreachable view.
-      }
+      } catch {}
     },
     [isServerTab, navigateToResolvedUrl, threadRef],
   );
@@ -438,8 +425,6 @@ export function PreviewView({
     void localApi.shell.openExternal(url).catch(() => undefined);
   }, [url]);
 
-  // A desktop tab of a remote environment can only reach what this computer
-  // reaches; the environment's browser reaches its own network, and its agents.
   const moveTarget = alternatePreviewRuntime(
     threadRef.environmentId,
     primaryEnvironmentId,
@@ -453,7 +438,6 @@ export function PreviewView({
     const result = await openPreviewSession({
       openPreview: open,
       threadRef,
-      // Loopback means the environment's machine, which this computer reaches by its address.
       ...(url
         ? {
             url:
@@ -490,11 +474,6 @@ export function PreviewView({
     useRightPanelStore.getState().close(threadRef);
   }, [miniPlayerTabId, tabId, threadRef]);
 
-  /**
-   * A server tab, streamed or rendered natively here, runs them through its
-   * environment, so every client and agent sees one state. Opening DevTools and
-   * a separate window need the desktop's own page.
-   */
   const desktopCall = (op: ((tabId: string) => Promise<void>) | undefined) => () => {
     if (op && runtimeTabId) void op(runtimeTabId).catch(() => undefined);
   };
@@ -818,9 +797,9 @@ export function PreviewView({
         if (pickRequest.cancelled) return;
         const result = await previewBridge.pickElement(runtimeTabId);
         if (!result || pickRequest.cancelled) return;
-        // The user has submitted. Nothing that happens after this point (a
-        // second picker click, a tab change, unmount) may discard it, so the
-        // pick stops being cancellable here rather than in `finally`.
+        // Nothing that happens after this point (a second picker click, a tab
+        // change, unmount) may discard it, so the pick stops being cancellable
+        // here rather than in `finally`.
         if (pickActiveRef.current === pickRequest) {
           pickActiveRef.current = null;
           if (isMountedRef.current) setPickActive(false);
@@ -841,8 +820,6 @@ export function PreviewView({
             stackedThreadToast({
               type: "error",
               title: "Could not capture the picked element",
-              // The send path reports its own outcome, so only say what this
-              // handler knows: the crop was dropped.
               description: "The annotation was kept without the screenshot.",
             }),
           );
@@ -884,9 +861,7 @@ export function PreviewView({
         ) {
           try {
             previouslyFocused.focus({ preventScroll: true });
-          } catch {
-            // Some elements throw on .focus() (detached iframes, etc.).
-          }
+          } catch {}
         }
       }
     })();
@@ -956,8 +931,6 @@ export function PreviewView({
         onRefresh={handleRefresh}
         onSubmit={(next) => void handleSubmitUrl(next)}
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
-        // Capture, annotation, and the more menu drive the desktop webview, so
-        // server tabs leave them out. Floating works for both.
         onCapture={previewBridge && tabId && !isServerTab ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
@@ -970,22 +943,12 @@ export function PreviewView({
         }
         onPickElement={previewBridge && tabId && !isServerTab ? handlePickElement : undefined}
         pickActive={pickActive}
-        // Disable when there's no tab (nothing to pick on) OR the page
-        // failed to load (a React overlay covers the webview, so the
-        // user wouldn't be able to actually click anything underneath).
         pickDisabled={!tabId || isUnreachable}
         pickDisabledReason={
           isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
         }
         leadingActions={
           activeProfileId !== browserDefaults.profileId ? (
-            // Capped: profile names run to 48 characters, and an unbounded
-            // badge in this row takes its width from the URL input, the only
-            // flexible element in the compact chrome. The cap sits on the
-            // badge and the truncation on an inner span, because `Badge` is an
-            // `inline-flex` with `whitespace-nowrap` — `text-overflow` never
-            // reaches a bare text node inside it, so the name would be cut off
-            // at both ends with no ellipsis.
             <Tooltip>
               <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
                 <span className="truncate">{activeProfileName}</span>

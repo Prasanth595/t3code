@@ -120,7 +120,6 @@ const SNOOZED_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
-// Pre-settlement servers: no lifecycle items, archive fills the gap.
 const LEGACY_MENU_ACTIONS: MenuAction[] = [
   { id: "archive", title: "Archive", image: "archivebox" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
@@ -471,20 +470,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
   readonly pinned?: boolean;
-  /** Preformatted against the parent minute tick so this memoized row's
-      countdown keeps moving. */
   readonly snoozeWakeLabelText?: string;
-  /** Precomputed per row — not via the
-      list's extraData — so the minute tick re-renders only rows whose
-      displayed text moved. */
   readonly timeLabel: string;
-  /** Parent minute tick carried on the row's list item, present only when the
-      row's menu offers snooze presets, so those menus refresh while mounted
-      without invalidating every other row. */
   readonly snoozePresetMinute: string;
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
-  /** Keep the environment's provider array stable across unrelated list updates. */
   readonly providers: ReadonlyArray<ThreadListProvider> | undefined;
   readonly providerInstance: ThreadRowProviderInstance | null;
   readonly environmentLabel: string | null;
@@ -506,8 +496,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
   readonly onSetThreadAutoSettle: (thread: EnvironmentThreadShell, enabled: boolean) => void;
-  /** False on environments whose server predates thread.settle/unsettle:
-      swipe + menu fall back to Archive instead of failing on use. */
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly pinningSupported: boolean;
@@ -592,9 +580,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // A recycled cell reassigns this mounted row to a different thread without
   // remounting it, and the render closure stops running while list equality
   // says the item is unchanged — so any row-local UI state must be dismissed
-  // when the identity under it changes. Without this, a custom snooze sheet
-  // opened for one thread survives the thread's removal/reorder and its submit
-  // snoozes whichever thread the cell was reassigned to.
+  // when the identity under it changes.
   const rowIdentity = `${thread.environmentId}:${thread.id}`;
   const [boundIdentity, setBoundIdentity] = useState(rowIdentity);
   if (boundIdentity !== rowIdentity) {
@@ -997,10 +983,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             {thread.runtime.lastError}
           </Text>
         ) : thread.branch || props.environmentLabel ? (
-          /* The glyph
-             hugs the label (it cannot live inside the Text without breaking
-             truncation), and the wrapper takes the slack so the trailers
-             stay pinned right. */
           <View className="min-w-0 flex-1 flex-row items-center gap-1">
             <Text
               className={cn(
@@ -1127,8 +1109,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {sidebarPane ? (
           fadedCardContent
         ) : (
-          /* The opaque screen background stays so swipe
-             actions reveal behind the row. */
           <View>
             <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{fadedCardContent}</View>
             {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (

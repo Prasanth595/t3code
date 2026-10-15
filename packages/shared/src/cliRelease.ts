@@ -3,11 +3,10 @@ export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
 /**
- * The archives a release attaches. Kept in step with the build_linux_cli
- * matrix, build_windows_arm64_cli, and the `cli_archive` rows in
- * .github/workflows/release.yml: a key here without a build there produces
- * download URLs that 404, and a build there without a key here is
- * unreachable from every installer.
+ * Kept in step with the build_linux_cli matrix, build_windows_arm64_cli, and
+ * the `cli_archive` rows in .github/workflows/release.yml: a key here without a
+ * build there produces download URLs that 404, and a build there without a key
+ * here is unreachable from every installer.
  */
 // No darwin-x64: Node single-executables are unsupported on x64 macOS (the
 // SEA docs list macOS as arm64 only) and the binary segfaults on start.
@@ -29,9 +28,9 @@ export function cliArchivePlatformKey(
 }
 
 /**
- * The tar to extract a release archive with. Windows ships bsdtar in
- * System32, which reads both formats; a Git-for-Windows GNU tar earlier on
- * PATH cannot open the zip, so the system copy is named by absolute path.
+ * Windows ships bsdtar in System32, which reads both formats; a Git-for-Windows
+ * GNU tar earlier on PATH cannot open the zip, so the system copy is named by
+ * absolute path.
  */
 export function cliArchiveTarCommand(
   platform: NodeJS.Platform,
@@ -55,10 +54,6 @@ export function cliReleaseDownloadBaseUrl(
   return `${(baseUrl?.trim() || CLI_RELEASE_DEFAULT_BASE_URL).replace(/\/+$/, "")}/v${version}`;
 }
 
-/**
- * Parses the `sha256sum` style checksum file attached to each release.
- * Lines are `<hex>  <file>`; a leading `*` marks binary mode and is ignored.
- */
 export function parseChecksums(text: string): ReadonlyMap<string, string> {
   const checksums = new Map<string, string>();
   for (const line of text.split(/\r?\n/)) {

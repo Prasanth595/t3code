@@ -176,7 +176,6 @@ export function parseServiceState(value: string): ServiceState | undefined {
   }
 }
 
-/** Detects an in-flight update across launcher protocol versions before replacing its state. */
 export function serviceStateHasPendingUpdate(value: string): boolean {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -186,7 +185,6 @@ export function serviceStateHasPendingUpdate(value: string): boolean {
   }
 }
 
-/** Reads the active version across launcher protocol revisions for downgrade protection. */
 export function serviceStateActiveVersion(value: string): string | undefined {
   try {
     const parsed: unknown = JSON.parse(value);

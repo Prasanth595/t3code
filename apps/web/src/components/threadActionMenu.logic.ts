@@ -66,10 +66,6 @@ export function buildDraftActionMenuItems(options: {
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly branch: string | null;
-  /**
-   * Project scoping for the thread list. Null on surfaces with no scoped
-   * list behind the menu (the chat header), where the item must not show.
-   */
   readonly projectFilter: {
     readonly label: string;
     readonly isActive: boolean;
@@ -125,9 +121,6 @@ export function buildThreadActionMenuItems(
             : { id: "pin" as const, label: "Pin thread", icon: "pin" },
         ]
       : []),
-    // Both lifecycle actions stay available on pinned threads: settling
-    // clears the pin ("done" beats "keep on top"), and snoozing hides the
-    // card until wake with the pin intact.
     ...(state.supports.settlement
       ? [
           state.isSettled

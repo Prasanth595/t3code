@@ -1,9 +1,3 @@
-/**
- * Runs in the preload before the app reads storage, and never overwrites what V2 already holds: a
- * key V2 has written keeps V2's value, except that stashed prompts and unsent drafts are merged
- * entry by entry so neither side's are lost.
- */
-
 interface MergeStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -14,7 +8,6 @@ const COMPOSER_DRAFTS_KEY = "t3code:composer-drafts:v1";
 const NOT_IMPORTED_KEYS = new Set([
   // Identifies one running install to the server; two apps must not share it.
   "t3.backgroundActivity.clientId",
-  // Resumes a permission setup V1 left mid-flow; V2 would redirect to it on boot.
   "t3code:snap-shot-setup-resume:v1",
 ]);
 /** Matches MAX_STASH_ENTRIES in apps/web/src/promptStashStore.ts. */
@@ -53,9 +46,6 @@ function mergePromptStash(current: JsonObject, legacy: JsonObject): JsonObject |
   };
 }
 
-/**
- * Shapes must share a version.
- */
 function mergeComposerDrafts(current: JsonObject, legacy: JsonObject): JsonObject | null {
   if (current.version !== legacy.version) return null;
   if (!isObject(current.state) || !isObject(legacy.state)) return null;
@@ -86,7 +76,6 @@ function mergeValue(key: string, current: string, legacy: string): string | null
   return merged === null ? null : JSON.stringify(merged);
 }
 
-/** Returns false when a write failed, so the caller can retry on a later launch. */
 export function mergeLegacyLocalStorage(
   storage: MergeStorage,
   legacyItems: Readonly<Record<string, string>>,

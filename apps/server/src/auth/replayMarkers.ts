@@ -17,9 +17,7 @@ const REPLAY_MARKER_PREFIXES = [DPOP_REPLAY_MARKER_PREFIX, ...CLOUD_REPLAY_MARKE
 /**
  * A marker only matters while its proof can pass the time check (about 5 minutes
  * for DPoP, 7 for cloud proofs). After that, the time check rejects a replay by
- * itself. The sweep and the time check both use the wall clock, so a pruned
- * marker can let a replay through only if the clock moves back by almost a day,
- * or if the filesystem stamps mtimes almost a day behind.
+ * itself.
  */
 export const REPLAY_MARKER_MAX_AGE = Duration.days(1);
 
@@ -37,7 +35,6 @@ export const pruneExpiredReplayMarkers = Effect.fn("replayMarkers.pruneExpired")
     (name) =>
       name.endsWith(".bin") && REPLAY_MARKER_PREFIXES.some((prefix) => name.startsWith(prefix)),
   );
-  // `partition` visits every marker, so one locked file does not stop the sweep.
   const [removed, failures] = yield* Effect.partition(markers, (name) => {
     const markerPath = path.join(secretsDir, name);
     return fileSystem.stat(markerPath).pipe(

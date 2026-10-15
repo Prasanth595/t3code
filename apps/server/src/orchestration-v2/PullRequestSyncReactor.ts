@@ -166,12 +166,9 @@ export const make = Effect.gen(function* () {
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
-    // Settled threads stop watching their pull requests. Unsettling one makes its links due on
-    // the next sweep, since the cadence clock below kept running while it was settled.
     const active = entries.filter((entry) => isUnsettled(entry.thread));
     if (active.every((entry) => entry.link.snapshot?.state === "merged")) return false;
     if (active.some((entry) => entry.link.snapshot?.state === "open")) return true;
-    // Closed requests can reopen on the host.
     const last = lastSyncedAt.get(key);
     return last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
   };
@@ -201,8 +198,6 @@ export const make = Effect.gen(function* () {
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
-    // Layers auto-linked this sweep, so two links of one thread that share a
-    // stack do not both try to add the same sibling.
     const linkedThisSweep = new Set<string>();
     const persistence = yield* Semaphore.make(1);
 
@@ -289,8 +284,6 @@ export const make = Effect.gen(function* () {
             (summary.stack !== undefined &&
               (entry.link.stack?.number ?? null) !== (summary.stack?.number ?? null)),
         );
-      // A summary that says the pull request is in no stack, for links that hold none, already
-      // answers what the stack read would.
       const knownUnstacked =
         summary.stack === null && entries.every((entry) => entry.link.stack === null);
       const fetchedStack = !needsStack
@@ -378,8 +371,6 @@ export const make = Effect.gen(function* () {
       // GitHub answers them in one request rather than one `gh pr view` apiece.
       { concurrency: 25, discard: true },
     );
-    // A host failure such as a signed-out CLI fails every due pull request the same way, so a
-    // sweep reports one line per reason rather than one per pull request.
     for (const [reason, { count, key }] of skips) {
       yield* Effect.logWarning("pull request sync skipped", { count, key, reason });
     }
@@ -387,7 +378,6 @@ export const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker((scope: "all" | "requested") =>
     Effect.suspend(() => {
-      // Requests from here on queue another sweep; the ones already recorded are read by this.
       if (scope === "requested") requestedSweepQueued = false;
       return sweep(scope);
     }).pipe(Effect.catchCause(logSkipped("pull request sync sweep failed", {}))),

@@ -67,7 +67,6 @@ export class BrowserImport extends Context.Service<
     readonly listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>>;
     readonly importCookies: (input: {
       readonly input: BrowserImportInput;
-      /** Partition scope of the target profile, derived by the caller in main. */
       readonly scope: string;
       readonly persistent: boolean;
       readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
@@ -141,9 +140,7 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   }
   // `set` resolves once the cookie is in memory; Chromium writes the store to
   // disk on its own schedule. Flush before reporting "Done", so a crash right
-  // after does not lose what the user was just told was imported. A failed
-  // flush is logged rather than surfaced: the cookies are still in the
-  // session and land on disk at the next scheduled write.
+  // after does not lose what the user was just told was imported.
   if (imported > 0) {
     yield* Effect.tryPromise(() => session.cookies.flushStore()).pipe(
       Effect.tapError((error) =>
@@ -160,8 +157,6 @@ export const make = Effect.gen(function* BrowserImportMake() {
   const browserSession = yield* BrowserSession.BrowserSession;
   const platform = yield* HostProcess.Platform;
   const executablePath = yield* HostProcess.ExecutablePath;
-  // Captured here so the service's methods stay free of a requirements
-  // channel: the layer is built where NodeServices is already in scope.
   const platformServices = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
   >();

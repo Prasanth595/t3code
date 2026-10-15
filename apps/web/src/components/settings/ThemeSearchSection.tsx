@@ -90,13 +90,9 @@ export function ThemeSearchSection({
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [pendingUpdate, setPendingUpdate] = useState<OpenVsxThemeExtension | null>(null);
   const requestRef = useRef<AbortController | null>(null);
-  // The (query, sort) pair the last search actually ran, so an install
-  // finishing can tell a same-key rerun (which must not wipe an install
-  // error) from a query that changed mid-install (which must be searched).
+
   const lastSearchKeyRef = useRef<string | null>(null);
-  // The (query, sort) pair from the previous effect run, so a search error
-  // that belongs to an older key can be cleared when the user returns to
-  // already-shown results without clearing a fresh install error.
+
   const prevSearchKeyRef = useRef<string | null>(null);
 
   useEffect(() => {

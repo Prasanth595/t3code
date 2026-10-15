@@ -50,7 +50,6 @@ function recoveryHint(error: RelayProtectedError): string {
   }
 }
 
-/** Preserve relay diagnostics before converting permanent rejections into non-retryable errors. */
 export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(function* (
   response: HttpClientResponse.HttpClientResponse,
 ) {

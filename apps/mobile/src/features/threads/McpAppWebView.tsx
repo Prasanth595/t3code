@@ -42,17 +42,9 @@ import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
 
 const ROW_BOTTOM_MARGIN = 8;
 
-// The WebView loads a tiny outer page that hosts the app in a real
-// opaque-origin iframe, as web does, so the app's `window.parent` and the
-// `event.source` of host replies are a real window, which the MCP Apps SDK
-// requires. Android exposes `ReactNativeWebView` to every frame, so a frame
-// nested in the app could post to React Native directly. The outer page
-// therefore wraps what it relays with a secret only it holds, and React Native
-// drops anything else. The bridge belongs to the captured document: once the
-// app frame loads a second time (it navigated itself), the outer page stops
-// relaying and says so, rather than letting a page T3 never served pose as the
-// app. This is not a confidentiality boundary: a frame can always navigate
-// itself, so the app could carry anything it read out in a URL either way.
+// Android exposes `ReactNativeWebView` to every frame, so a frame nested in the
+// app could post to React Native directly. The outer page therefore wraps what
+// it relays with a secret only it holds, and React Native drops anything else.
 function outerDocument(src: string, allow: string, secret: string) {
   const attribute = (value: string) =>
     value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -100,9 +92,7 @@ const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
  */
 export function ThreadMcpApp(props: {
   readonly environmentId: EnvironmentId;
-  /** The thread that produced the app, which its requests run against. */
   readonly threadId: ThreadId;
-  /** The thread on screen, which approved app messages are sent to. */
   readonly conversationThreadId: ThreadId;
   readonly itemId: TurnItemId;
   readonly revision: string;
@@ -157,9 +147,6 @@ export function ThreadMcpApp(props: {
   if (uri === null && asset._tag === "Success") setUri(asset.url);
   const [loaded, setLoaded] = useState(false);
   const [navigatedAway, setNavigatedAway] = useState(false);
-  // Bumped when the OS reclaims the web process: a fresh view, document and
-  // host, so the reloaded app is initialized and replayed again. Once only, so
-  // an app that keeps crashing its process is not reloaded forever.
   const [generation, setGeneration] = useState(0);
   const [crashed, setCrashed] = useState(false);
   const restart = () => {
@@ -174,7 +161,6 @@ export function ThreadMcpApp(props: {
     if (asset._tag === "Success") setUri(asset.url);
     setGeneration(1);
   };
-  // Minted per view, so only this view's outer page can speak for its app.
   const [secret] = useState(uuidv4);
   const setDocumentKey = (next: (value: number) => number) => {
     setLoaded(false);
@@ -347,8 +333,6 @@ export function ThreadMcpApp(props: {
         if (!(await confirm(`Send this message from ${app.server}?`, text, "Send"))) {
           throw new McpAppHostRefusal("Declined by the user.");
         }
-        // Through the outbox like a typed message, so it survives a dropped
-        // connection; the thread's own settings fill in when it sends.
         await enqueueThreadOutboxMessage({
           environmentId: latest.current.props.environmentId,
           threadId: latest.current.props.conversationThreadId,
@@ -374,8 +358,6 @@ export function ThreadMcpApp(props: {
       },
       requestDisplayMode: async (mode) => {
         const current = latest.current.props;
-        // Full screen would cover the approval or question the agent waits
-        // on, or a screen the user moved to.
         if (
           mode === "fullscreen" &&
           (latest.current.awaitingUser || !latest.current.navigation.isFocused())
@@ -545,8 +527,6 @@ export function ThreadMcpApp(props: {
           }
           setSupportMultipleWindows={false}
           onLoadEnd={() => setLoaded(true)}
-          // The outer page is inline HTML, so these report a broken view, not
-          // an app page; the row shows the failure instead of a blank box.
           onError={() => setCrashed(true)}
           onHttpError={() => setCrashed(true)}
           onMessage={(event: WebViewMessageEvent) => {

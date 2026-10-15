@@ -228,7 +228,6 @@ function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback:
   return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
 }
 
-/** The surface treats an omitted family or size as "use the built-in default". */
 function terminalFontOptions(family: string, size: number): { family?: string; size: number } {
   const trimmed = family.trim();
   return trimmed.length > 0 ? { family: trimmed, size } : { size };
@@ -546,7 +545,6 @@ export function TerminalViewport({
     if (terminalRef.current) terminalRef.current.input.readOnly = !canOperateTerminal;
   }, [canOperateTerminal]);
 
-  // A grant can change while the pointer remains over a link.
   useEffect(() => {
     terminalRef.current?.refreshLinkActivation();
   }, [canOpenHostEditor]);
@@ -632,13 +630,8 @@ export function TerminalViewport({
       }
       outputCursorRef.current = initialOutput.cursor;
       if (latestSession.error !== null) writeSystemMessage(terminal, latestSession.error);
-      // Attaching to a session that already exited must still run exit handling
-      // once, so mount synchronization starts from the empty "closed" state.
-      // (A session that is "closed" at mount is indistinguishable from one that
-      // never started, so only "exited" triggers the message — as with xterm.)
       synchronizedStatusRef.current = "closed";
       synchronizeTerminalStatus(terminal, latestSession.status, latestSession.version);
-      // Startup may finish after the user has returned to the composer.
       if (
         hasTerminalWriteAccess() &&
         visibleRef.current &&
@@ -650,7 +643,6 @@ export function TerminalViewport({
       const dismissSelectionAction = (supersede = false) => {
         const ownsMenu =
           openSelectionMenuRequestIdRef.current === selectionActionRequestIdRef.current;
-        // Passive cancellation must not invalidate a newer right-click flow.
         if (supersede || ownsMenu) selectionActionRequestIdRef.current += 1;
         if (ownsMenu) void localApi?.contextMenu.close();
       };
@@ -705,8 +697,6 @@ export function TerminalViewport({
         terminalRef.current?.focus();
       };
 
-      // A selection-action flow that was superseded while its async work ran
-      // must go silent: no error message, no focus steal.
       const reportIfCurrent = (requestId: number, error: unknown, fallback: string) => {
         if (requestId !== selectionActionRequestIdRef.current) return;
         const activeTerminal = terminalRef.current;
@@ -1069,8 +1059,6 @@ export function TerminalViewport({
 
   useEffect(() => {
     if (!autoFocus || !canOperateTerminal || !visible) return;
-    // Claim focus when requested, then hand it to the terminal once ready only
-    // if the user has not focused something else in the meantime.
     (terminalRef.current ?? containerRef.current)?.focus();
   }, [autoFocus, canOperateTerminal, focusRequestId, visible]);
 
@@ -1210,7 +1198,6 @@ export default function ThreadTerminalDrawer({
     false,
     Schema.Boolean,
   );
-  // The stored height is the user's preference; the window only clamps what renders.
   const controlledDrawerHeight = height;
   const [windowMaxDrawerHeight, setWindowMaxDrawerHeight] = useState(maxDrawerHeight);
   const [drawerHeightState, setDrawerHeightState] = useState(() => ({
@@ -1426,7 +1413,6 @@ export default function ThreadTerminalDrawer({
   }, [onHeightChange]);
 
   useLayoutEffect(() => {
-    // A render mid-drag (the window cap moved) must not replace the live height.
     const resizeState = resizeStateRef.current;
     if (resizeState) {
       resizeState.drawer?.style.setProperty("height", `${drawerHeightRef.current}px`);
@@ -1462,8 +1448,6 @@ export default function ThreadTerminalDrawer({
     };
   }, []);
 
-  // Writes the height straight to the drawer while dragging so the edge lands in
-  // the pointer's frame; React state commits once on release.
   const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const resizeState = resizeStateRef.current;
     if (!resizeState || resizeState.pointerId !== event.pointerId) return;
@@ -1510,7 +1494,6 @@ export default function ThreadTerminalDrawer({
     }
 
     const onWindowResize = () => {
-      // React only renders the stored preference, so clamp a live drag height here.
       const resizeState = resizeStateRef.current;
       const liveHeight = clampDrawerHeight(drawerHeightRef.current);
       if (resizeState && liveHeight !== drawerHeightRef.current) {

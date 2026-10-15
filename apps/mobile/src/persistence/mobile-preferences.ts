@@ -41,7 +41,6 @@ const ThreadListFilters = Schema.Struct({
 });
 export type ThreadListFilters = typeof ThreadListFilters.Type;
 
-/** Controls are keyed by environment id, with "" for all environments. */
 const PullRequestListPreferences = Schema.Struct({
   environmentId: Schema.NullOr(Schema.String),
   controls: Schema.Record(Schema.String, PullRequestListControls),
@@ -66,17 +65,13 @@ export interface Preferences {
   readonly codeWordBreak?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
-  /** What the Return key does in the composer on a hardware keyboard. iOS only. */
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
-  /** Microphone kinds and remembered devices, most preferred first. iOS only. */
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
-  /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly planModeEnabled?: boolean;
   readonly workingShelfEnabled?: boolean;
-  /** @deprecated Retained to migrate favorites to the connected environment. */
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: ProviderInstanceId;
     readonly model: string;

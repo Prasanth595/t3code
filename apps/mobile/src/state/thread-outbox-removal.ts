@@ -57,11 +57,6 @@ async function cleanUpRemovedMessages(
 }
 
 /**
- * The only way a queued message leaves the outbox. Removal also releases the
- * message's local attachment files (via the reference-counting sweep, so a
- * file still referenced by a draft or another queued message survives).
- * Keeping release inside the removal call means no call site can forget it.
- *
  * `expectedRevision` (from `threadOutboxRevision`) and `canRemove` make the
  * removal a compare-and-set: when an edit was accepted or an editor takes the
  * message, it stays queued, nothing is released, and this returns false.

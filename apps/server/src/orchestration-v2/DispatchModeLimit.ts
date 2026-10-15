@@ -15,9 +15,7 @@ export interface DispatchModeRefusal extends DispatchModes {
 /**
  * A caller checks its target's modes before dispatching, but the target's user can raise them
  * meanwhile; the orchestrator re-checks this limit inside the thread's command lock, where nothing
- * else can change them. Unset for the user's own commands, which have no limit. The orchestrator
- * also records its refusal in `refused`, so the sender can report it however the code in between
- * wrapped the dispatch error.
+ * else can change them.
  */
 export interface DispatchModeLimitValue extends DispatchModes {
   readonly refused?: Ref.Ref<DispatchModeRefusal | undefined>;

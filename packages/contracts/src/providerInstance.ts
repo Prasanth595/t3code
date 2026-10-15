@@ -3,11 +3,6 @@ import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const PROVIDER_SLUG_MAX_CHARS = 64;
-/**
- * Mixed case is permitted so historical driver kinds (e.g. `claudeAgent`) can
- * be used verbatim during the migration and so external fork authors retain
- * reasonable freedom.
- */
 const PROVIDER_SLUG_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const ENVIRONMENT_VARIABLE_NAME_MAX_CHARS = 128;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -17,9 +12,6 @@ const slugSchema = TrimmedNonEmptyString.check(
   Schema.isPattern(PROVIDER_SLUG_PATTERN),
 );
 
-/**
- * Notably **not** validated: that the driver is one we know how to load.
- */
 export const ProviderDriverKind = slugSchema.pipe(Schema.brand("ProviderDriverKind"));
 export type ProviderDriverKind = typeof ProviderDriverKind.Type;
 

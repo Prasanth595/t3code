@@ -123,8 +123,6 @@ const AssetClaimsSchema = Schema.Union([
     version: Schema.Literal(1),
     kind: Schema.Literal("attachment"),
     attachmentId: Schema.String,
-    /** Decided at mint time. Absent tokens (from before this field) serve
-        inline, which is only ever the image case. */
     download: Schema.optionalKey(Schema.Boolean),
     fileName: Schema.optionalKey(Schema.String),
     mimeType: Schema.optionalKey(Schema.String),
@@ -192,8 +190,6 @@ export type ResolvedAsset =
       readonly kind: "github-media";
       readonly url: string;
       readonly cwd: string;
-      /** When the signed URL that granted this stops working, which bounds how long a client
-          may keep the bytes it fetched with it. */
       readonly expiresAt: number;
     };
 
@@ -224,7 +220,6 @@ const optionOnNotFound = <A, R>(
     }),
   );
 
-/** Reads a stored MCP HTML snapshot; null means it exceeds the preview limit. */
 export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   // Stored snapshots also contain a bounded CSP meta tag (up to 32 domains
@@ -242,10 +237,6 @@ export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* 
   return bytes;
 });
 
-/**
- * Decodes one image a tool returned inline; null when the stored item has no
- * such image, or it is larger than a provider turn accepts.
- */
 const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(function* (input: {
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
@@ -604,10 +595,6 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           resource: input.resource,
         });
       }
-      // Generic files carry their extension inside the attachment id (that
-      // shape resolves the on-disk path); images do not. Videos and images
-      // render inline. Other generic files download unless a viewer requests
-      // a supported document or audio format inline.
       const extension = parseAttachmentFileExtension(input.resource.attachmentId);
       const isGenericFile = extension !== null;
       const videoMimeType = input.resource.mimeType?.split(";", 1)[0]?.trim() ?? "";

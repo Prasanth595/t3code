@@ -282,8 +282,6 @@ function ManagedCodexSetup({
     installation?.source !== "local" &&
     installation?.version != null &&
     installation.version !== installation.installedVersion;
-  // Auth receipts and provider snapshots arrive independently. Keep the current
-  // attempt pending until its authenticated snapshot arrives, even after success.
   const finishingSignIn =
     awaitingProvider !== null &&
     !authenticated &&
@@ -1009,7 +1007,6 @@ function ManagedCodexSetup({
   );
 }
 
-/** The server selects the executable for managed instances; local config cannot override it. */
 export function CodexManagedRuntimeFields({
   environmentId,
   instanceId,

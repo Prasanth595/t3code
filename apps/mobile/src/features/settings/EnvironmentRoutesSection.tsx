@@ -61,7 +61,6 @@ export function EnvironmentRoutesSection({
   const [editing, setEditing] = useState(false);
   const saved = entry === undefined ? [] : connectionRoutes(entry);
   const savedIds = saved.map((route) => connectionRouteId(route.target));
-  // A dropped order shows until the catalog matches it.
   const [pending, setPending] = useState<ReadonlyArray<string> | null>(null);
   const order =
     pending !== null &&
@@ -72,7 +71,6 @@ export function EnvironmentRoutesSection({
   const [drag, setDrag] = useState<{ readonly id: string; readonly translation: number } | null>(
     null,
   );
-  // Rows size to their content, so a drag measures how far it has moved past each one.
   const [heights, setHeights] = useState<ReadonlyMap<string, number>>(() => new Map());
   // Each drop remounts the rows so the new order and the cleared drag offsets
   // land in one frame. Kept rows would show their old offsets in their new
@@ -209,7 +207,6 @@ export function EnvironmentRoutesSection({
               if (!cancelled) move(index, dropIndex(index, translation));
             }}
             onStep={(direction) => move(index, direction === "up" ? index - 1 : index + 1)}
-            // The last route goes with the machine, which is "Remove" on the row.
             // A learned route would be learned again, so it is only reordered.
             onRemove={
               routes.length > 1 && !isLearned(route) ? () => confirmRemove(route) : undefined

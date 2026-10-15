@@ -120,8 +120,6 @@ function spotlightRect(element: Element): {
   }
 
   const padding = 5;
-  // Keep the true bounds when an element is partially offscreen. Clamping its
-  // rectangle to the viewport would draw a fake glow edge along the crop.
   const x = bounds.left - padding;
   const y = bounds.top - padding;
   const elementRadius =
@@ -355,8 +353,6 @@ export function themeRoleFromUtilityClass(
   className: string,
   kind: ThemePaintKind,
 ): ThemeColorRole | null {
-  // Stateful variants such as hover: and disabled: may not be contributing to
-  // the current paint. The computed-style probe below handles those exactly.
   if (className.includes(":")) return null;
   for (const prefix of THEME_UTILITY_PREFIXES[kind]) {
     if (!className.startsWith(prefix)) continue;

@@ -71,10 +71,6 @@ export function encodeTerminalPaste(text: string): string {
   return text.replace(UNSAFE_PASTE_BYTES, " ").replace(/\r\n|\n/g, "\r");
 }
 
-/**
- * Splits terminal input into writes the wire contract accepts, never cutting
- * through a surrogate pair so every chunk stays valid UTF-16.
- */
 export function chunkTerminalWrite(data: string): ReadonlyArray<string> {
   const chunks: string[] = [];
   let start = 0;
@@ -91,8 +87,7 @@ export function chunkTerminalWrite(data: string): ReadonlyArray<string> {
 }
 
 /**
- * Maps the OS reported by the environment descriptor onto the toolbar's host
- * layout. Returns null for "unknown" so callers can fall back to a weaker signal.
+ * Returns null for "unknown" so callers can fall back to a weaker signal.
  */
 export function hostPlatformFromOs(os: ExecutionEnvironmentPlatformOs | null): HostPlatform | null {
   if (os === "darwin") return "mac";

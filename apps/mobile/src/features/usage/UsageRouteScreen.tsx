@@ -392,7 +392,6 @@ function UsageUpdating({
 }) {
   const opacity = useSharedValue(1);
   useLayoutEffect(() => {
-    // The delay keeps a quick cached answer from flashing the dim.
     opacity.set(
       dimmed
         ? withDelay(150, withTiming(0.5, { duration: 150, reduceMotion: ReduceMotion.System }))
@@ -834,8 +833,7 @@ function ModelsSection(props: { readonly merged: MergedUsage; readonly metric: U
   const colors = useProviderColors();
   if (merged.models.length === 0) return null;
 
-  // Ranked like the provider rows. .sort() on a copy, not .toSorted(): Hermes
-  // doesn't ship the ES2023 method.
+  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
   const ordered = [...merged.models].sort((a, b) =>
     metric === "cost"
       ? b.costUsd - a.costUsd || b.totalTokens - a.totalTokens

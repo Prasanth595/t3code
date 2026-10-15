@@ -163,7 +163,6 @@ export function deriveLogicalProjectKeyFromSettings(
   });
 }
 
-/** Resolves a scratch filter selected before its environment config identified the project. */
 export function resolveScratchProjectScopeKey(
   key: string | null,
   projects: ReadonlyArray<
@@ -289,7 +288,6 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   readonly projects: ReadonlyArray<TProject>;
   readonly settings: ProjectGroupingSettings;
   readonly preferredEnvironmentId?: EnvironmentId | null;
-  /** Filter equivalence does not change the default ownership of mutable project settings. */
   readonly groupScratchProjects?: boolean;
 }): ReadonlyArray<ProjectGroup<TProject>> {
   const projectsByPhysicalKey = new Map<string, TProject[]>();

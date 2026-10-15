@@ -22,7 +22,6 @@ export const unavailable = () =>
     message: "The operation could not be completed.",
   });
 
-/** Decider string rejections are public; wrapped storage and hydration causes are not. */
 export const dispatchFailure = (
   error: OrchestratorV2Error | ThreadManagement.ThreadManagementProviderInstanceDisabledError,
 ) =>
@@ -38,11 +37,6 @@ export const dispatchFailure = (
         })
       : unavailable();
 
-/**
- * The most a caller may hand to the threads it targets. A thread caller is
- * capped by its own thread's modes; an OAuth client by the ceiling chosen
- * when it was approved.
- */
 export interface CallerLimits {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -127,11 +121,6 @@ export function assertLiveCaller({ caller, scope }: Caller) {
     : Effect.void;
 }
 
-/**
- * Actions that change the environment itself (projects, preferences) need full
- * access: a thread caller in full-access/default mode, or a client approved
- * with a full-access ceiling.
- */
 export const assertFullAccess = (context: Caller, message: string) =>
   context.limits.runtimeMode === "full-access" && context.limits.interactionMode === "default"
     ? Effect.void

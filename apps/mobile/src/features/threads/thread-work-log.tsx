@@ -672,8 +672,6 @@ function ThreadWorkGroupList(props: {
       } else if (pendingAppendHeightRef.current !== null) {
         pendingAppendHeightRef.current = Math.min(nextHeight, WORK_GROUP_MAX_HEIGHT);
       }
-      // A short group can grow its viewport on this append. Wait for that
-      // layout before calculating the end offset, rather than jumping twice.
       finishPendingAppend();
       rememberPosition();
     },
@@ -1370,10 +1368,6 @@ export function ThreadWorkGroupToggle(props: {
   );
 }
 
-/**
- * Text nodes carry keys tied to the row identity only, so a progress tick re-renders the labels
- * without remounting the card (see the batch key in appendActivityGroupRows).
- */
 export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
   readonly summary: AgentSpawnSummary;
   readonly expanded: boolean;

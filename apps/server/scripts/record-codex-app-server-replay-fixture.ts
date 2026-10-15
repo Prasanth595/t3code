@@ -173,7 +173,6 @@ interface ReplayScenario {
   readonly name: ScenarioName;
   readonly fileName: `${ScenarioName}.ndjson`;
   readonly description: string;
-  /** Model this scenario needs, e.g. one that still runs multi-agent v1. `--model` wins. */
   readonly model?: string;
   readonly runs: ReadonlyArray<ReplayRun>;
 }
@@ -1093,7 +1092,6 @@ function makeRecorder({
 }: {
   readonly outPath: string;
   readonly scenario: ReplayScenario;
-  /** Checkout root, scrubbed from recordings because it names the local worktree layout. */
   readonly checkout: string;
 }): Effect.Effect<Recorder, PlatformError.PlatformError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
@@ -1549,7 +1547,6 @@ function runReplaySession({
 
       for (const [stepIndex, step] of run.steps.entries()) {
         if (step.type === "rollback") {
-          // The adapter only reverts paginated history, so it reads the mode first.
           yield* client.request("thread/read", { threadId: activeThreadId, includeTurns: false });
           yield* revertCodexThread(client, activeThreadId, step.numTurns);
           continue;
@@ -1560,7 +1557,6 @@ function runReplaySession({
           if (sourceThreadId === undefined) {
             throw new Error(`Unknown replay thread alias '${step.from}'.`);
           }
-          // The adapter forks at the source's latest native turn.
           const lastTurnId = lastTurnIdByThread.get(sourceThreadId);
           const forked = yield* client.request("thread/fork", {
             threadId: sourceThreadId,

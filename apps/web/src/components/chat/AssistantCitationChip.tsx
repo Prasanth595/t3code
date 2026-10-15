@@ -48,7 +48,6 @@ export function AssistantCitationChip({
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
     onDraftChange?: (comment: string) => void;
-    /** Returns focus to the host editor when the popover closes instead of to the pencil trigger. */
     onRestoreFocus?: () => void;
   };
 }) {
@@ -78,7 +77,6 @@ export function AssistantCitationChip({
     if (settleDraftOnClose("none")) {
       commentEditor?.onOpenChange(false);
     } else {
-      // Keep the draft mounted, positioned at the composer trigger instead of a detached range.
       setUnavailableSourceAnchor(sourceAnchor);
     }
   });
@@ -92,8 +90,6 @@ export function AssistantCitationChip({
       onUnavailable: onSourceUnavailable,
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
-  // A multi-line selection's bounding box spans the full message width; anchor
-  // the bubble to the selection's last line, where the pointer released.
   const popupAnchor = activeSourceAnchor
     ? {
         contextElement: activeSourceAnchor.source,
@@ -188,7 +184,6 @@ export function AssistantCitationChip({
               finalFocus={
                 commentEditor.onRestoreFocus
                   ? () => {
-                      // Leave focus alone when the user closed the popover by moving to another control.
                       const activeElement = document.activeElement;
                       if (
                         activeElement === document.body ||
@@ -253,7 +248,6 @@ function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
   }, []);
-  // Stable so a fade update during resize delivery does not resubscribe the element.
   const observeFade = useCallback(
     (element: HTMLDivElement | null) =>
       element ? observeResize(element, () => updateFade(element)) : undefined,

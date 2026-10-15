@@ -7,7 +7,6 @@ const TEST_FILE_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
 // node:test has no `.each`, so files written against it keep their loops.
 const NODE_TEST_IMPORT_PATTERN = /["']node:test["']/u;
 const TEST_FUNCTIONS = new Set(["describe", "it", "suite", "test"]);
-// Modifiers whose tester also exposes `.each` (@effect/vitest's `it.effect` and `it.live`).
 const EACH_CAPABLE_MODIFIERS = new Set(["effect", "live"]);
 const LOOPS = new Set(["ForStatement", "ForInStatement", "ForOfStatement"]);
 const FUNCTIONS = new Set(["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"]);
@@ -33,16 +32,10 @@ const testCallName = (callee: unknown): Option.Option<string> => {
   return Option.some(`${object.value.name}.${property.value}`);
 };
 
-/**
- * A loop around a `describe` is reported on the `describe`, so the tests inside
- * it stay quiet.
- */
 const isInsideLoop = (node: ESTree.Node): boolean => {
   let current = node.parent;
   while (current) {
     if (LOOPS.has(current.type)) return true;
-    // Anything inside a function (a describe body, a helper, a test body) runs
-    // once per call of that function, not once per iteration.
     if (FUNCTIONS.has(current.type)) return false;
     current = current.parent;
   }

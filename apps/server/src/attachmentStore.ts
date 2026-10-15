@@ -150,7 +150,6 @@ export function threadHtmlRenderAttachmentIds(
   });
 }
 
-/** Null for attachment types this build does not know; callers skip those. */
 export function attachmentRelativePath(attachment: ChatAttachment): string | null {
   switch (attachment.type) {
     case "image": {

@@ -12,11 +12,6 @@ const FILE_OVERHEAD_SECONDS = 0.25;
 
 const recordedSeconds: Readonly<Record<string, number>> = shardWeights;
 
-/**
- * Vitest's default split hashes file paths into equal-count shards, which can put the
- * slowest files on one runner. Every shard derives the same split from the same file
- * list, so each file still runs in exactly one shard.
- */
 export class WeightedShardSequencer extends BaseSequencer {
   override async shard(files: TestSpecification[]) {
     const { index, count } = this.ctx.config.shard ?? { index: 1, count: 1 };

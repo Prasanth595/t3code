@@ -30,8 +30,6 @@ import {
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
 
-/** Settings files outlive the build that reads them, so the object is carried
- * as-is and only the theme keys are touched. */
 const SparseSettings = Schema.Record(Schema.String, Schema.Unknown);
 const decodeSettingsJson = Schema.decodeUnknownEffect(fromLenientJson(SparseSettings));
 const encodeSettingsJson = Schema.encodeEffect(fromJsonStringPretty(SparseSettings));
@@ -176,9 +174,8 @@ const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<st
 });
 
 /**
- * Reads the sparse settings object, treating only a genuinely absent file as
- * empty. A permission or I/O error must propagate: reading it as "no settings"
- * would have the caller write a fresh sparse file over settings it never saw.
+ * A permission or I/O error must propagate: reading it as "no settings" would
+ * have the caller write a fresh sparse file over settings it never saw.
  */
 const readSettingsObject = Effect.fn(function* (settingsPath: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -257,8 +254,6 @@ const publishThemeFile = Effect.fn(function* (input: {
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // A preflight for error quality only: it tells a FIFO from an oversized
-  // file. Enforcement happens at the guarded read below.
   const info = yield* fs
     .stat(input.filePath)
     .pipe(
@@ -274,9 +269,6 @@ const publishThemeFile = Effect.fn(function* (input: {
     });
   }
 
-  // An explicit source path is the user's own input, and a symlink there is a
-  // normal way to point at a theme (desktop hooks symlink the current palette),
-  // so it is resolved before the guarded read.
   const resolvedSource = yield* fs
     .realPath(input.filePath)
     .pipe(
@@ -333,8 +325,6 @@ const publishThemeFile = Effect.fn(function* (input: {
       );
       try {
         NodeFS.writeFileSync(fd, raw);
-        // Rename preserves the inode, so this identifies our published file
-        // at the destination for as long as it is actually ours.
         return NodeFS.fstatSync(fd).ino;
       } finally {
         NodeFS.closeSync(fd);
@@ -389,9 +379,7 @@ const publishThemeFile = Effect.fn(function* (input: {
   const cleanup = Effect.sync(() => {
     try {
       if (hadPrevious) NodeFS.unlinkSync(backupPath);
-    } catch {
-      // A stray backup is inert: it is not `.json`, so nothing serves it.
-    }
+    } catch {}
   });
 
   yield* Effect.try({
@@ -448,9 +436,6 @@ const themeSetCommand = Command.make("set", {
       let revertPublish: Effect.Effect<void> = Effect.void;
       let cleanupPublish: Effect.Effect<void> = Effect.void;
       if (targetIsFile) {
-        // Settings are preflighted before publishing, so a settings file the
-        // set step cannot read or parse fails the command before it mutates
-        // the themes directory.
         yield* readSettingsObject(paths.settingsPath);
         const published = yield* publishThemeFile({
           themesDir: paths.themesDir,
@@ -472,9 +457,6 @@ const themeSetCommand = Command.make("set", {
         return yield* new ThemeIdInvalidError({ themeId: target });
       }
 
-      // set means set: if the default cannot be written, the publish that
-      // rode along with it is undone rather than left as a side effect of a
-      // command that reported failure.
       yield* writeDefaultTheme({ settingsPath: paths.settingsPath, themeId }).pipe(
         Effect.onError(() => revertPublish),
       );

@@ -1,9 +1,4 @@
 // @effect-diagnostics globalDate:off
-/**
- * `Intl.DateTimeFormat` is the only reliable way to resolve a wall-clock day in
- * an arbitrary IANA zone, and it takes a `Date`. That is why the raw `Date`
- * construction is allowed here; nothing in this module reads the clock.
- */
 import type {
   UsageBucket,
   UsageCategoryCost,
@@ -37,10 +32,9 @@ function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
     });
   }
   // Formatting once per quarter-hour slot keeps `Intl` (about 2µs a call) off
-  // the per-record path. A slot whose two ends fall on one day lies wholly in
-  // that day. Named zones put midnight on a quarter hour, so their slots never
-  // split; a fixed offset such as `+00:01` can, and records in a split slot are
-  // formatted exactly. `null` marks a split slot.
+  // the per-record path. Named zones put midnight on a quarter hour, so their
+  // slots never split; a fixed offset such as `+00:01` can, and records in a
+  // split slot are formatted exactly.
   const days = new Map<number, string | null>();
   return (timestampMs) => {
     const slot = Math.floor(timestampMs / QUARTER_HOUR_MS);
@@ -84,9 +78,6 @@ export interface AggregateOptions {
   readonly untilTimeMs?: number;
 }
 
-/**
- * A model whose chain enters a loop is left unmapped.
- */
 export function resolveModelAliases(
   aliases: Readonly<Record<string, string>>,
 ): ReadonlyMap<string, string> {
@@ -147,11 +138,6 @@ export class UsageAggregator {
     }
   }
 
-  /**
-   * Returns whether it actually contributed, so callers can derive per-window
-   * facts (distinct sessions, for one) from the records that landed rather than
-   * everything the mtime prefilter happened to admit.
-   */
   add(input: UsageRecord, sourcePath?: string): boolean {
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
@@ -332,19 +318,10 @@ export class UsageAggregator {
   }
 }
 
-/**
- * Rounds to micro-dollars. The split and speed figures need no more precision,
- * and shorter numbers keep them cheap on the wire.
- */
 function roundUsd(value: number): number {
   return Math.round(value * 1e6) / 1e6;
 }
 
-/**
- * A bucket mixes records from one model, but their cost provenance can differ
- * when only some records carried a reported cost. The weakest provenance in the
- * bucket wins so the UI never overstates confidence.
- */
 function resolveCostSource(bucket: MutableBucket): UsageBucket["costSource"] {
   if (bucket.unpricedRecords === bucket.records) return "unpriced";
   if (bucket.providerReportedRecords === bucket.records) return "providerReported";

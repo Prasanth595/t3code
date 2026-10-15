@@ -36,7 +36,6 @@ export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
       if (right - endX >= x - left) left = endX;
       else right = x;
     } else if (endY >= bottom - metrics.safeArea.bottom) {
-      // An occlusion at the bottom can also occupy just one corner.
       if (region.width >= right - left) bottom = y;
       else if (right - endX >= x - left) left = endX;
       else right = x;

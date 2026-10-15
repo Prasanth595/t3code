@@ -1,9 +1,8 @@
 /**
- * Cursor's dashboard API takes about 20 seconds for a 30-day window, so fetched records are kept
- * for the whole retention period, whatever window was asked for. A record's dedupe key carries its
- * timestamp and an occurrence index counted within one fetch. A refetched range therefore replaces
- * every cached record in that range rather than adding to it, so each timestamp's records always
- * come from a single fetch and their occurrence indexes cannot collide.
+ * A record's dedupe key carries its timestamp and an occurrence index counted within one fetch. A
+ * refetched range therefore replaces every cached record in that range rather than adding to it,
+ * so each timestamp's records always come from a single fetch and their occurrence indexes cannot
+ * collide.
  */
 import { cursorRateModel } from "./accountUsage.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
@@ -17,7 +16,6 @@ const REFETCH_OVERLAP_MS = 60 * 60 * 1000;
 
 export interface CursorAccountCache {
   readonly accountKey: string;
-  /** Inclusive range of event timestamps the records are complete for. */
   readonly sinceMs: number;
   readonly untilMs: number;
   readonly fetchedAtMs: number;
@@ -48,10 +46,6 @@ export function cursorFetchRange(
     : { sinceMs: cache.untilMs - REFETCH_OVERLAP_MS, untilMs: nowMs };
 }
 
-/**
- * Pass `undefined` for a cache that belongs to another account. `changed` is false when the fetch
- * only confirmed the cached records, so there is nothing new to persist.
- */
 export function mergeCursorFetch(
   cache: CursorAccountCache | undefined,
   accountKey: string,

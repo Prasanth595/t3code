@@ -3,7 +3,7 @@
  * Playwright connects over CDP only through a WebSocket URL, so each attached
  * desktop tab gets a loopback endpoint with an unguessable path. Its frames
  * cross the bootstrap file descriptors to the desktop's relay, which owns the
- * tab's `webContents.debugger`. The endpoint only bridges to that one tab.
+ * tab's `webContents.debugger`.
  */
 import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
@@ -43,7 +43,6 @@ const keyOf = ({ threadId, tabId }: DesktopTabKey) => `${threadId}\u0000${tabId}
 export class DesktopBrowserChannel extends Context.Service<
   DesktopBrowserChannel,
   {
-    /** False when this server was not started by a desktop app. */
     readonly available: boolean;
     /**
      * Subscribes before it checks, so an attach landing in between is never
@@ -51,13 +50,8 @@ export class DesktopBrowserChannel extends Context.Service<
      */
     readonly awaitAttached: (key: DesktopTabKey, timeout: Duration.Input) => Effect.Effect<boolean>;
     readonly detached: Stream.Stream<DesktopTabKey>;
-    /** Desktop tabs as they attach, including a tab coming back after its DevTools close. */
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
-    /**
-     * A one-connection CDP endpoint for an attached tab. Closing the scope
-     * releases the tab on the desktop and stops the endpoint.
-     */
     readonly endpoint: (key: DesktopTabKey) => Effect.Effect<string, never, Scope.Scope>;
     readonly pointer: (
       key: DesktopTabKey,

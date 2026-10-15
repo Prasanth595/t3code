@@ -23,11 +23,6 @@ type McpAppFullscreenScreenProps = StaticScreenProps<{
   readonly revision?: string;
 }>;
 
-/**
- * The thread an app's messages go to. A link only names it, so it counts only
- * when it is the app's own thread or a fork of it; anything else falls back to
- * the app's thread.
- */
 function useConversationThreadId(
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -52,7 +47,6 @@ function descendsFrom(
   const parents = new Map(
     shells
       .filter((shell) => shell.environmentId === environmentId)
-      // Only forks continue a conversation; a subagent is its own.
       .filter((shell) => shell.lineage.relationshipToParent === "fork")
       .map((shell) => [shell.id as string, shell.lineage.parentThreadId]),
   );
@@ -107,8 +101,6 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
   const derived = item?.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
   const [app, setApp] = useState(derived);
   if (derived?.attachmentId !== app?.attachmentId) setApp(derived);
-  // The approval or question the agent waits on renders on the thread this
-  // modal covers, so the app steps aside for it.
   const conversation = useThreadShell(scopeThreadRef(environmentId, conversationThreadId));
   const awaitingUser =
     conversation?.hasPendingApprovals === true || conversation?.hasPendingUserInput === true;

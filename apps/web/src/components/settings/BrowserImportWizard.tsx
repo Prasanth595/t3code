@@ -41,17 +41,9 @@ export type { WizardTarget } from "./browserImportWizard.logic";
 
 interface BrowserImportWizardProps {
   readonly source: BrowserImportSource;
-  /** Captured when the wizard opens so destination copy and writes stay stable. */
   readonly destinationEnvironmentName: string;
-  /**
-   * Incognito is excluded upstream.
-   */
   readonly targetProfiles: ReadonlyArray<WizardTargetProfile>;
   readonly canCreateProfile: boolean;
-  /**
-   * For a new target the caller only registers the profile once the import succeeds, so a
-   * blocked attempt never leaves an empty profile behind.
-   */
   readonly onImport: (input: {
     readonly sourceProfileDirectory: string;
     readonly target: WizardTarget;
@@ -82,8 +74,6 @@ export function BrowserImportWizard({
     initialTargetSelection(canCreateProfile, targetProfiles),
   );
   const [targetError, setTargetError] = useState<string>();
-  // Stable across retries so a keychain re-approval lands in one profile, not
-  // a new one each time.
   const newProfileId = useRef(`profile-${randomUUID()}`);
   // A second Import click before React has left the configure screen would
   // start a second run; the parent refuses it, and applying that refusal here

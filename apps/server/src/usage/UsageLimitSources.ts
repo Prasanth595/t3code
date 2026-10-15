@@ -28,9 +28,7 @@ export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
   {
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
-    /** The current set followed by every change, with repeats dropped. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
-    /** Re-read every source now. Never fails; failures land on the snapshot. */
     readonly refresh: Effect.Effect<void>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,

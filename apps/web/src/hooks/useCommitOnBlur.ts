@@ -1,13 +1,5 @@
 import { type ChangeEvent, type KeyboardEvent, useState } from "react";
 
-/**
- * `onCommit` fires on blur and on Enter.
- *
- * The draft resynchronizes from the upstream `value` only when the input
- * is not focused, so an external push (e.g. an optimistic settings
- * update from the user's own commit, or a reset to defaults) doesn't
- * clobber an in-progress edit.
- */
 export function useCommitOnBlur(value: string, onCommit: (next: string) => void) {
   const [draft, setDraft] = useState<string | null>(null);
 

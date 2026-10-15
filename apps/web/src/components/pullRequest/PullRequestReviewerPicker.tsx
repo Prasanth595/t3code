@@ -1,9 +1,4 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-/**
- * The people who may be asked are read only once this menu opens: on a large repository that is
- * a list of everyone with access, which is worth a request when somebody wants it and worth
- * nothing on every pull request they merely open.
- */
 import type {
   EnvironmentId,
   PullRequestRef,

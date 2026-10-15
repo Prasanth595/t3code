@@ -67,9 +67,6 @@ export class PersistenceDecodeError extends Schema.TaggedError<PersistenceDecode
   }
 }
 
-/**
- * Use node:sqlite's fixed description, never the driver message.
- */
 function sqliteCondition(cause: unknown): string | undefined {
   let value = cause;
   for (let depth = 0; depth < 4 && Predicate.isObject(value); depth += 1) {

@@ -333,10 +333,6 @@ export function ThemeEditorPanel({
   } | null>(null);
   useEffect(() => {
     if (!open) return;
-    // A panel sized wider than the window can no longer be clamped back into
-    // view by position alone -- its right edge (close, minimize, the grip)
-    // stays off screen. So the size shrinks to fit first, then the position
-    // is re-clamped against the new size.
     const clamp = () => {
       const margin = 8;
       let clampedWidth: number | undefined;
@@ -350,11 +346,6 @@ export function ThemeEditorPanel({
       setPosition((current) => {
         if (!current) return current;
         const clamped = clampPosition(current.x, current.y, clampedWidth);
-        // Dragging may park the panel with only its header showing, but a
-        // window resize should pull the whole thing back into view when it
-        // fits -- otherwise the grip ends up below the fold. Minimized, the
-        // stored height is not applied (the panel hugs its header), so the
-        // rendered height is what has to fit.
         const height = isMinimized
           ? (panelRef.current?.offsetHeight ?? 0)
           : (clampedHeight ?? panelRef.current?.offsetHeight ?? 0);
@@ -391,16 +382,11 @@ export function ThemeEditorPanel({
 
       setName(editingTheme?.label ?? seedName ?? "");
       setActiveAppearance(nextAppearance);
-      // Themes saved by the guided editor carry the managed flag; anything
-      // else (imports, hand-edited files, older saves) opens in advanced mode
-      // so guided regeneration cannot silently discard hand-tuned colors. A
-      // seeded new theme follows the same rule: its palette is only safe to
-      // regenerate when the guided editor produced it.
+      // Themes saved by the guided editor carry the managed flag; anything else
+      // (imports, hand-edited files, older saves) opens in advanced mode so
+      // guided regeneration cannot silently discard hand-tuned colors.
       setIsAdvanced(sourceTheme !== null && sourceTheme.managed !== true);
       setSimpleColorsDirtyByAppearance({ light: false, dark: false });
-      // An unmanaged palette needs conversion when the user opts into the
-      // guided editor. Merely revealing Advanced for a managed/default draft
-      // must stay read-only until a color changes.
       setShouldRegenerateGuidedColors(sourceTheme !== null && sourceTheme.managed !== true);
       setColorsByAppearance(nextColors);
       setSelectedRole(null);
@@ -413,8 +399,6 @@ export function ThemeEditorPanel({
     previousOpenRef.current = open;
   }, [editingTheme, initialAppearance, isDraftSeeded, open, seedName, seedTheme]);
 
-  // Labels are matched as well as derived ids: a rename keeps a theme's original id, so its label
-  // is the only name a user can see and retype.
   const nameTargetId = themeIdFromName(name);
   const normalizedName = name.trim().toLowerCase();
   const mergeTarget =
@@ -534,8 +518,6 @@ export function ThemeEditorPanel({
       setUsageCount(null);
       return;
     }
-    // Picking a new element needs the unobscured app, so suspend the existing
-    // spotlight while the picker is armed.
     if (isInspecting) return;
 
     const highlightedRoles = selectedHighlightRolesKey.split(",") as Array<ThemeColorRole>;
@@ -725,8 +707,6 @@ export function ThemeEditorPanel({
       }
       if (!shouldRegenerateGuidedColors) return;
 
-      // Regenerate every appearance the theme will save, not just the visible
-      // one, so the palettes shown after toggling match what gets saved.
       const managedAppearances: ReadonlyArray<ThemeAppearance> =
         editingTheme && getThemeModes(editingTheme).length > 1
           ? ["light", "dark"]
@@ -755,8 +735,6 @@ export function ThemeEditorPanel({
     }
 
     try {
-      // Only regenerate palettes the user actually touched in guided mode, so
-      // untouched appearances save exactly what the editor displayed.
       const colorsForSave = !isAdvanced
         ? {
             light: simpleColorsDirtyByAppearance.light
@@ -830,8 +808,6 @@ export function ThemeEditorPanel({
           );
           return;
         }
-        // The guided (managed) flag only survives when every palette in the theme came from the
-        // guided editor.
         mergedAppearance = activeAppearance;
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
@@ -866,8 +842,6 @@ export function ThemeEditorPanel({
         })
       ) {
         if (!editingTheme && mergedAppearance === null) {
-          // Roll the install back so a retry can run it again instead of
-          // failing on the already-taken theme id.
           try {
             removeCustomTheme(savedTheme.id);
           } catch {}
@@ -1096,9 +1070,6 @@ export function ThemeEditorPanel({
     const margin = 8;
     const MIN_WIDTH = 280;
     const MIN_HEIGHT = 220;
-    // Grow only into the space right of and below the panel's own corner,
-    // otherwise a panel parked away from the top-left pushes its far edges
-    // (and this grip) off screen.
     const maxWidth = Math.max(MIN_WIDTH, window.innerWidth - margin - start.left);
     const maxHeight = Math.max(MIN_HEIGHT, window.innerHeight - margin - start.top);
     setSize({

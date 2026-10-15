@@ -130,8 +130,6 @@ function KeybindingsSearchInput({
         value={query}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
-          // The settings route treats an unhandled Escape as "go back";
-          // inside the search box it clears, then leaves the field.
           if (event.key !== "Escape") return;
           event.preventDefault();
           if (query.length > 0) onChange("");
@@ -739,7 +737,6 @@ function useKeybindingRowEditor({
   };
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
-    // Tab is recorded like any key while recording; after that it moves focus on.
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
     if (event.key === "Escape") {
@@ -1050,7 +1047,6 @@ function useNewKeybindingDraft({
   };
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
-    // Tab is recorded like any key while recording; after that it moves focus on.
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
     if (event.key === "Escape") {
@@ -1248,8 +1244,6 @@ function KeybindingsGroups(props: KeybindingsGroupsProps) {
 }
 
 function BrowserKeybindingNotice() {
-  // The label carries the whole sentence so assistive tech reads it without
-  // opening the tooltip.
   const message = "The browser may claim some shortcuts first. The desktop app receives them all.";
   return (
     <Tooltip>
@@ -1269,9 +1263,6 @@ function BrowserKeybindingNotice() {
 }
 
 export function KeybindingsSettingsPanel() {
-  // The representative environment supplies the displayed bindings; edits
-  // fan out to every connected environment in the selection, so one
-  // shortcut change reaches each machine the user runs T3 Code on.
   const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
   const canOpenKeybindingsFile = useEnvironmentScope(
     primaryEnvironment?.environmentId ?? null,
@@ -1304,7 +1295,6 @@ export function KeybindingsSettingsPanel() {
   const [isAddingBinding, setIsAddingBinding] = useState(false);
   const rows = useMemo(() => buildKeybindingRows(keybindings, query), [keybindings, query]);
   const groups = useMemo(() => groupKeybindingRows(rows), [rows]);
-  // Settings search jumps to a command, so only its first row anchors.
   const anchorIds = useMemo(() => {
     const ids = new Map<string, string>();
     const seen = new Set<KeybindingCommand>();
@@ -1315,12 +1305,9 @@ export function KeybindingsSettingsPanel() {
     }
     return ids;
   }, [rows]);
-  // The search-target context is provided by this panel's own page container,
-  // so the jump target is read from the route hash here.
   const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
   const [handledSearchTargetId, setHandledSearchTargetId] = useState(searchTargetId);
 
-  // A settings-search jump must not be hidden by the page's own filter.
   if (searchTargetId !== handledSearchTargetId) {
     setHandledSearchTargetId(searchTargetId);
     if (searchTargetId.startsWith("keybinding-")) setQuery("");

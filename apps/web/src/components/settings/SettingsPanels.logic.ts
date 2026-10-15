@@ -46,9 +46,7 @@ export function rememberEnabledProjectGroupingMode(mode: SidebarProjectGroupingM
   if (mode === "separate") return;
   try {
     localStorage.setItem(LAST_ENABLED_PROJECT_GROUPING_MODE_KEY, mode);
-  } catch {
-    // Storage can be unavailable in restricted browser contexts.
-  }
+  } catch {}
 }
 
 export function hasChangedBackgroundActivitySettings(
@@ -120,11 +118,6 @@ export type BrowserDefaultSettings = Pick<
   | "pullRequestLinksOpenInApp"
 >;
 
-/**
- * The setting is a tagged union rather than a scalar, so identity comparison
- * reports every stored viewport as changed — including one that matches the
- * default.
- */
 function isSamePreviewViewport(
   left: PreviewViewportSetting,
   right: PreviewViewportSetting,

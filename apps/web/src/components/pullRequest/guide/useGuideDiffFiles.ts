@@ -10,7 +10,6 @@ import { pullRequestReviewKey } from "../pullRequestReviewStore";
 
 interface LoadedDiff {
   readonly key: string;
-  /** The page asked for next; null is the first. */
   readonly cursor: string | null;
   readonly done: boolean;
   readonly files: ReadonlyMap<string, FileDiffMetadata>;
@@ -18,10 +17,6 @@ interface LoadedDiff {
 
 const NO_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
 
-/**
- * Paging stops once every wanted path has arrived: a stop's excerpts are usually in the first
- * page, and a large change should not be read whole to show one of them.
- */
 export function useGuideDiffFiles({
   environmentId,
   reference,
@@ -30,7 +25,6 @@ export function useGuideDiffFiles({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  /** The guide's head. A push writes a new guide, whose excerpts must read the new diff. */
   headSha: string;
   wantedPaths: ReadonlyArray<string>;
 }) {

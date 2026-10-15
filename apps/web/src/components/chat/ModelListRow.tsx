@@ -19,7 +19,6 @@ import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
   model: ModelEsque;
-  /** Instance the model belongs to — the routing key used in combobox values. */
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
   providerDisplayName: string;

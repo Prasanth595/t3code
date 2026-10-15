@@ -202,7 +202,6 @@ export interface KeybindingGroup {
   readonly rows: ReadonlyArray<KeybindingRow>;
 }
 
-/** Page sections in display order; a command joins the first group listing its prefix. */
 const KEYBINDING_GROUPS = [
   {
     id: "navigation",
@@ -412,7 +411,6 @@ function normalizeShortcutKeyToken(key: string): string | null {
   return null;
 }
 
-/** Turns a keydown into a binding such as `mod+shift+k` or `tab`. Null for modifier-only presses. */
 export function keybindingFromKeyboardEvent(
   event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
   platform: string,

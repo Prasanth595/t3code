@@ -144,12 +144,7 @@ export interface CloudflaredRelayClientOptions {
 }
 
 export interface RelayClientShape {
-  /**
-   * Finds the relay client to run, without downloading anything: the override, else the pinned
-   * managed folder, else the newest older managed folder, else `cloudflared` on PATH.
-   */
   readonly resolve: Effect.Effect<RelayClientStatus>;
-  /** Installs the pinned managed release unless it, or a valid override, is already present. */
   readonly install: Effect.Effect<AvailableRelayClient, RelayClientInstallError>;
   readonly installWithProgress: (
     report: (event: RelayClientInstallProgressEvent) => Effect.Effect<void>,
@@ -184,7 +179,6 @@ function parseVersion(value: string): readonly [number, number, number] | null {
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
-/** Orders `YYYY.M.P` cloudflared versions; unparseable versions sort first. */
 export function compareCloudflaredVersions(left: string, right: string): number {
   const a = parseVersion(left) ?? [0, 0, 0];
   const b = parseVersion(right) ?? [0, 0, 0];
@@ -196,7 +190,6 @@ export function parseCloudflaredVersionOutput(output: string): string | null {
   return version ? version.join(".") : null;
 }
 
-// A changed file is a new key, so a replaced binary is probed again.
 class VersionProbeKey extends Data.Class<{
   readonly executablePath: string;
   readonly size: number;
@@ -268,10 +261,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   // `cloudflared version` costs a process spawn, so answers are cached per file
-  // revision. Before `--no-autoupdate`, a managed binary could replace itself in
-  // place, so the version is read from the binary, never from its folder name.
-  // A failed or timed-out probe is not cached, so a slow spawn under an AV scan
-  // does not hide a good binary until it changes on disk.
+  // revision. A failed or timed-out probe is not cached, so a slow spawn under
+  // an AV scan does not hide a good binary until it changes on disk.
   const versionCache = yield* Cache.makeWith(
     (key: VersionProbeKey) =>
       spawner

@@ -203,8 +203,6 @@ type TerminalToolbarAction =
       readonly modifier: PendingModifier;
     };
 
-// A blank param (a hand-typed deep link) is treated as missing, since branded
-// IDs reject whitespace-only values.
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return first === undefined || first.trim().length === 0 ? null : first;
@@ -377,9 +375,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const lastBufferReplayKeyRef = useRef<string | null>(null);
   const sentInitialInputKeyRef = useRef<string | null>(null);
   const [readyBufferReplayKey, setReadyBufferReplayKey] = useState<string | null>(null);
-  /**
-   * Default grid is always valid for attach; onResize refines cols/rows.
-   */
   const [hasMeasuredSurface, setHasMeasuredSurface] = useState(true);
   const [pendingModifierState, setPendingModifierState] = useState<{
     readonly terminalId: string;
@@ -549,7 +544,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     routeEnvironmentId === null
       ? null
       : (serverConfigs.get(routeEnvironmentId)?.environment.platform.os ?? null);
-  // The descriptor is authoritative; the label is only a hint until it arrives.
   const hostPlatform = useMemo(
     () =>
       hostPlatformFromOs(hostOs) ??
@@ -792,7 +786,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     setHasMeasuredSurface(true);
   }, [routeEnvironmentId, routeThreadId, terminalId]);
 
-  /** Resolves true once the pty accepted the write, false if it was skipped or rejected. */
   const writeInput = useCallback(
     async (data: string): Promise<boolean> => {
       if (
@@ -822,7 +815,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }
   const pasteSession = pasteSessionRef.current;
 
-  // Drop delayed clipboard reads whenever the route or attached pty changes.
   useEffect(() => {
     pasteSession.reset(canOperateTerminal && isRunning);
     return () => {
@@ -962,8 +954,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       navigation.goBack();
       return;
     }
-    // Deep-linked/root mounts have nothing to pop; land on the thread
-    // instead of stranding the user on a dead terminal.
     if (selectedThread) {
       navigation.dispatch(
         StackActions.replace("Thread", {
@@ -1018,7 +1008,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         navigateAwayAfterExit();
         return;
       }
-      // Leave a background terminal screen when it is focused again.
       pendingExitNavigationRef.current = terminalKey;
     },
   });

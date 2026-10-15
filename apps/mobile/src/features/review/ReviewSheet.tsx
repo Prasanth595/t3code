@@ -372,9 +372,7 @@ function ReviewFileNavigator({
       contentContainerStyle={{
         paddingHorizontal: 8,
         paddingBottom: 8,
-        // The nested native header is translucent; start the list below it so
-        // the scroll-edge effect can sample the content (same treatment as
-        // FileTreeBrowser in the Files pane).
+
         paddingTop: Platform.OS === "ios" ? insets.top + IOS_NAV_BAR_HEIGHT + 8 : 8,
       }}
       scrollIndicatorInsets={
@@ -662,11 +660,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
     .filter((part): part is string => Boolean(part))
     .join(" · ");
 
-  // The changed-files navigator drives the native diff surface via
-  // scrollToFile, so it is only useful when that surface resolved. In raw
-  // fallback mode the ref is necessarily null and the raw patch neither
-  // scrolls nor filters — registering the navigator would present working
-  // controls that cannot navigate.
   const showChangedFilesPane =
     !showConnectionNotice &&
     selectedSection !== null &&

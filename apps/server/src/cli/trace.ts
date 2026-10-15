@@ -22,10 +22,9 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
       durationMs: Schema.Finite,
       endTimeUnixNano: Schema.FiniteFromString,
       exit: Schema.optional(Schema.Struct({ _tag: Schema.String })),
-      // Browser (`otlp-span`) records. Effect's OTLP tracer writes code "2" for
-      // errors. It marks interrupts with an `effect.fiber.interrupted`
-      // attribute; clients before Effect 4.0.2 wrote code "1" with message
-      // "Interrupted" instead.
+      // Effect's OTLP tracer writes code "2" for errors. It marks interrupts
+      // with an `effect.fiber.interrupted` attribute; clients before Effect
+      // 4.0.2 wrote code "1" with message "Interrupted" instead.
       status: Schema.optional(
         Schema.Struct({
           code: Schema.optional(Schema.String),
@@ -39,14 +38,7 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
   ),
 );
 
-/**
- * Spans that ended before `sinceMs` are left out. Rates are per minute between
- * the first and last span end, since spans are written when they end.
- */
 export function makeTraceSpanSummary(sinceMs = -Infinity) {
-  // Keep each span's duration (8 bytes, a few MB for the default 110 MB of
-  // rotated traces) for exact percentiles. A bounded sketch would save little
-  // and make p50 and p90 approximate.
   const byName = new Map<string, { durations: number[]; interrupted: number; failures: number }>();
   let spanCount = 0;
   let skippedLineCount = 0;
@@ -172,8 +164,6 @@ const traceSummaryCommand = Command.make("summary", {
   Command.withHandler(
     Effect.fn("cli.trace.summary")(function* (flags) {
       const fs = yield* FileSystem.FileSystem;
-      // T3CODE_TRACE_FILE, else the userdata trace file for --base-dir or
-      // T3CODE_HOME. Implicit dev runs write elsewhere; set T3CODE_TRACE_FILE.
       const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
       const baseDir = yield* resolveBaseDir(
         Option.getOrUndefined(Option.orElse(flags.baseDir, () => envHome)),

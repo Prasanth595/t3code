@@ -69,7 +69,6 @@ export interface RuntimeSubagent {
   readonly runHandles: SubagentRunHandles | null;
   readonly childThreadId: string | null;
   readonly recentActivity: ReadonlyArray<SubagentActivityEntry>;
-  /** First retained observation, used as the roster's stable display order. */
   readonly firstSeenAt: string;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
@@ -101,7 +100,6 @@ export interface SubagentWorkflowGroup {
     readonly index: number;
     readonly title: string;
     readonly members: ReadonlyArray<RuntimeSubagent>;
-    /** done = every member settled (success or error); running = any active. */
     readonly state: "pending" | "running" | "done";
     readonly settledCount: number;
   }>;
@@ -125,12 +123,6 @@ function isoFromEpochMillis(value: number | undefined): string | null {
   return value === undefined ? null : DateTime.formatIso(DateTime.makeUnsafe(value));
 }
 
-/**
- * Members are synthesized from the coordinator's snapshot rather than read from
- * their own subagent entities, so a parent thread's Lineage can show them
- * without loading the coordinator's child thread; their identity is the
- * coordinator id plus the spawn ordinal.
- */
 function workflowMembersToRuntime(
   coordinator: RuntimeSubagent,
   workflow: OrchestrationV2SubagentWorkflow,
@@ -145,15 +137,12 @@ function workflowMembersToRuntime(
           : agent.state;
     const failed = status === "failed";
     const startedAt = isoFromEpochMillis(agent.startedAt);
-    // The provider reports a settled member's duration, not its end instant.
     const completedAt = isTerminalSubagentStatus(status)
       ? agent.startedAt !== undefined && agent.durationMs !== undefined
         ? isoFromEpochMillis(agent.startedAt + agent.durationMs)
         : coordinator.completedAt
       : null;
     return {
-      // Members share the run's handles: the transcript directory is what
-      // makes their conversation readable, and only the run knows it.
       ...coordinator,
       id: `${coordinator.id}:agent:${agent.index}`,
       kind: "workflow_agent" as const,
@@ -162,8 +151,6 @@ function workflowMembersToRuntime(
       status,
       activationCount: agent.attempt ?? 1,
       usage: workflowUsage(agent),
-      // A member keeps its prompt on `progress` even once settled: that is the
-      // question half of its conversation, and the detail view shows both halves.
       progress: agent.prompt ?? null,
       result: failed ? null : (agent.result ?? null),
       error: failed ? (agent.result ?? null) : null,

@@ -14,19 +14,10 @@ export const isWebLink = (value: string) => {
 
 export const isWebPageFile = (path: string) => /\.x?html?$/i.test(path);
 
-/**
- * Web links and HTML files macOS opens with T3 Code once it is the default
- * browser, plus `t3code://` prompt and thread links on every platform. Files
- * arrive as file:// URLs. They can
- * arrive before the app is ready (the link that launched it) or while the web
- * app reloads, so they wait until the renderer says it is listening.
- */
 export class DesktopWebLinks extends Context.Service<
   DesktopWebLinks,
   {
-    /** Queues a link and delivers it as soon as the renderer is listening. */
     readonly receive: (url: string) => Effect.Effect<void>;
-    /** The renderer started or stopped listening; listening flushes queued links. */
     readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopWebLinks") {}
@@ -34,7 +25,6 @@ export class DesktopWebLinks extends Context.Service<
 const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const pending: Array<string> = [];
-  /** The page that said it is listening; a reload or crash replaces it, and it must say so again. */
   let listening: Electron.WebContents | null = null;
   let detachListening: (() => void) | null = null;
 

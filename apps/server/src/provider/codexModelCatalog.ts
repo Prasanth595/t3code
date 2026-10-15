@@ -7,7 +7,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 
-/** Dated Codex builds match their base model's catalog entry. */
 const CODEX_MATCHING: ModelCatalog.CatalogMatching = { family: codexModelFamily };
 
 const CodexModelAdapter = Schema.Struct({

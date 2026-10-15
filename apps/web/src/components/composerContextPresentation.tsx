@@ -54,7 +54,6 @@ export type ComposerDraftContextRecord =
   | {
       kind: "preview-annotation";
       record: PreviewAnnotationPayload;
-      /** The crop, which the draft stores as an image sharing the annotation's id. */
       screenshot?: ComposerImageAttachment | undefined;
     }
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
@@ -303,7 +302,6 @@ function ComposerPreviewAnnotationDetails({
   screenshot: ComposerImageAttachment | undefined;
 }) {
   const summary = previewAnnotationTooltip(annotation);
-  // The draft drops the annotation's own data URL and keeps the crop as an image.
   const screenshotUrl = annotation.screenshot?.dataUrl || screenshot?.previewUrl;
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background/70">

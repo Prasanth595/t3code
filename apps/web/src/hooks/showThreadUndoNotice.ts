@@ -13,7 +13,6 @@ type UndoOptions = {
   undo: () => Promise<AtomCommandResult<unknown, unknown>>;
   failureTitle: string;
   claim: ReturnType<typeof ThreadUndo.begin>;
-  /** Runs once the action can no longer be undone. */
   commit?: () => void;
 };
 
@@ -25,8 +24,6 @@ type UndoNotice = {
 
 export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => ({ notice: null }));
 
-// Shared across sidebar, header and menu actions. Consecutive actions of the
-// same kind share one notice and can be restored together.
 let liveUndos: UndoOptions[] = [];
 let expiry: ReturnType<typeof setTimeout> | undefined;
 

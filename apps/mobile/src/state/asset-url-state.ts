@@ -8,10 +8,6 @@ export type AssetUrlState =
   | { readonly _tag: "Failure"; readonly reason: AssetUrlFailureReason }
   | Extract<SharedAssetUrlState, { readonly _tag: "Success" }>;
 
-/**
- * A dead environment wins over everything else: even a resolved URL is
- * unreachable there, and a failed query is caused by the outage, not the file.
- */
 export function deriveAssetUrlState(input: {
   readonly connectionPhase: EnvironmentConnectionPhase;
   readonly shared: SharedAssetUrlState;

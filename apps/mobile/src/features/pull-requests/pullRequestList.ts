@@ -75,7 +75,6 @@ export function pullRequestListRowsAreEqual(
   );
 }
 
-/** Keep cursors and viewer identities with the environment that issued them. */
 export function mergeEnvironmentPullRequestPages(
   sources: readonly { environmentId: EnvironmentId; pages: PullRequestListPages }[],
 ) {
@@ -208,7 +207,6 @@ export function filterPullRequestList<
       const author = filters.author === "me" ? viewer : filters.author;
       if (!author || normalize(entry.author?.login ?? "") !== normalize(author)) return false;
     }
-    // Hosts without a review rollup still perform their own review filtering.
     if (filters.review && entry.reviewDecision && entry.reviewDecision !== filters.review)
       return false;
     if (filters.review === "none" && entry.reviewDecision) return false;
@@ -224,8 +222,6 @@ export function filterPullRequestList<
     }
     return true;
   });
-  // The same repository can be available on multiple machines. Pick its first matching source,
-  // unless that machine is unreachable and another one can answer: its rows may only be cached.
   const reachable = (entry: Entry) =>
     !connectedEnvironmentIds ||
     (entry.environmentId !== undefined && connectedEnvironmentIds.has(entry.environmentId));

@@ -9,12 +9,6 @@ import type {
   AgentActivityRowProps,
 } from "../../widgets/AgentActivity";
 
-/**
- * The rows point at seeded showcase threads so the copy matches the thread
- * list, but the phases are staged: the relay that normally derives them is not
- * part of the capture. Rows follow the relay's order: attention first, then
- * running, then finished.
- */
 export const SHOWCASE_AGENT_ACTIVITY_ROWS = [
   { threadId: "pocket-command-center", phase: "waiting_for_approval", minutesAgo: 1 },
   { threadId: "beautiful-boot", phase: "waiting_for_input", minutesAgo: 4 },

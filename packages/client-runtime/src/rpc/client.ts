@@ -234,18 +234,12 @@ export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
 }
 
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
-  /** Reports protocol or programming defects without changing their recovery policy. */
   readonly onDefect?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
   readonly onExpectedFailure?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
-  /**
-   * Each consecutive failure doubles it up to 30 seconds, and the first value
-   * from a healthy stream resets it. Authorization failures are not retried;
-   * they wait for the next session or `resubscribe` signal.
-   */
   readonly retryExpectedFailureAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
 }
@@ -434,7 +428,6 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   return subscribeDynamic(tag, () => Effect.succeed(input), options);
 }
 
-/** Protected writes must go through the permission-aware command layer. */
 export const request = <TTag extends Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,

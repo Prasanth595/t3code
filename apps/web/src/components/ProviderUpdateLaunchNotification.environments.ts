@@ -29,9 +29,6 @@ function normalizeConnectionState(phase: string | undefined): EnvironmentUpdateC
     case "offline":
       return "disconnected";
     default:
-      // "available" (or anything not yet observed) — the backend has not
-      // confirmed it is serving yet, so treat it as still settling so the
-      // popover waits for it.
       return "connecting";
   }
 }
@@ -56,9 +53,6 @@ export function useLocalEnvironmentUpdateGroups(): {
 
       inputs.push({
         environmentId: environment.environmentId,
-        // Secondaries carry a meaningful label straight from the platform source
-        // (e.g. "WSL (Ubuntu)"). The primary's catalog label can be the account
-        // name, so fall back to its platform OS so the row reads "Windows"/"Linux".
         label: isPrimary
           ? deriveEnvironmentDisplayLabel({
               isWsl: false,
@@ -68,9 +62,6 @@ export function useLocalEnvironmentUpdateGroups(): {
             })
           : environment.label,
         isPrimary,
-        // The primary is the backend serving this renderer, so it is ready
-        // whenever its providers are available; secondaries report their live
-        // connection phase.
         connectionState: isPrimary
           ? "ready"
           : normalizeConnectionState(environment.connection.phase),

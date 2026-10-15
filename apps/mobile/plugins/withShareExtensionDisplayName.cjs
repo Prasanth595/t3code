@@ -1,9 +1,8 @@
 "use strict";
 
 // Brand the extension while leaving its initially-empty signing team intact: Expo uses that state
-// to select ios.appleTeamId and enable first-time profile provisioning. ORDERING: list this
-// plugin BEFORE expo-sharing. Expo runs same-type mods in reverse registration order, so this
-// executes after the extension exists.
+// to select ios.appleTeamId and enable first-time profile provisioning. Expo runs same-type mods
+// in reverse registration order, so this executes after the extension exists.
 
 const fs = require("fs");
 const path = require("path");

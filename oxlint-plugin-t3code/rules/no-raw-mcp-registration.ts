@@ -46,10 +46,6 @@ const namesMcpServer = (node: unknown) =>
 const exposesMcpServer = (source: Option.Option<string>) =>
   Option.isSome(source) && (source.value === MCP_SERVER_MODULE || AI_MODULES.has(source.value));
 
-/**
- * Keeps every registration on `/mcp` inside McpHttpServer, whose helpers
- * accept only handlers McpToolAccess built; the lint config exempts that file.
- */
 export default defineRule({
   meta: {
     type: "problem",
@@ -72,7 +68,6 @@ export default defineRule({
           return (
             AI_MODULES.has(source.value) &&
             namesMcpServer(specifier.imported) &&
-            // A test's `McpServer.toolkit(...)` is reported below by name.
             !(isTest && namesMcpServer(specifier.local))
           );
         });

@@ -20,13 +20,11 @@ import type { MediaActionSource } from "../media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 
 export interface ExpandedImageItem {
-  /** A loadable URL, or null when the dialog must mint one from `asset` first. */
   src: string | null;
   name: string;
   type?: "video";
   source?: SnapShotSource;
   autoPlay?: boolean;
-  /** Authored remote destination to open when embedding fails, never a generated asset URL. */
   originalUrl?: string;
   srcFragment?: string;
   actionsSource?: MediaActionSource;
@@ -41,7 +39,6 @@ export function wrapExpandedImageIndex(index: number, imageCount: number): numbe
   return imageCount > 0 ? ((index % imageCount) + imageCount) % imageCount : 0;
 }
 
-/** Resolves a chat media reference on its owning environment, without downloading its bytes. */
 export async function resolveMarkdownMediaPreview(input: {
   source: string;
   resolvedFilePath?: string | undefined;

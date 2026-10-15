@@ -7,9 +7,7 @@
 export interface WebhookRequest {
   readonly method: string;
   readonly path: string;
-  /** Raw query string without the leading `?`. */
   readonly query: string;
-  /** Lowercased header names. */
   readonly headers: Readonly<Record<string, string>>;
   readonly bodyText: string;
 }
@@ -32,7 +30,6 @@ export function redactHeaders(headers: Readonly<Record<string, string>>): Record
   );
 }
 
-/** Redacts credential-named values in a raw query string, keeping the rest as sent. */
 export function redactQuery(query: string): string {
   if (query === "") return query;
   return query

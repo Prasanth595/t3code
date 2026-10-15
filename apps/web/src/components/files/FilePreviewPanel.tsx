@@ -147,7 +147,6 @@ type FilePostRender = <LAnnotation>(
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
-  /** The thread is a draft the server does not know yet. */
   readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
@@ -211,13 +210,11 @@ function WorkspaceImagePreview(props: {
 
 /**
  * HTML runs in a sandboxed frame with an opaque origin, so a page cannot reach
- * the app's session or storage. A file inside the workspace may load sibling
- * assets; a host file outside it is served on its own.
+ * the app's session or storage.
  */
 function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
-  /** The thread is a draft the server does not know yet. */
   readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
@@ -269,7 +266,6 @@ function WorkspaceBrowserPreview(props: {
 function WorkspaceVideoPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
-  /** The thread is a draft the server does not know yet. */
   readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
@@ -293,7 +289,6 @@ function WorkspaceVideoPreview(props: {
     mutationId: props.workspaceMutationId,
     resourceKey: JSON.stringify([props.environmentId, resource]),
     refresh: () => {
-      // Failed refreshes flow through assetUrl and can be retried from the player.
       void refreshAssetUrl().catch(() => undefined);
     },
   });
@@ -328,7 +323,6 @@ function WorkspaceVideoPreview(props: {
 function WorkspaceAudioPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
-  /** The thread is a draft the server does not know yet. */
   readonly draft: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
@@ -409,8 +403,7 @@ const REVEAL_MAX_ATTEMPTS = 30;
 /**
  * After scrolling to the target, hold it for a short window so late
  * programmatic scroll resets (editable-editor focus and state restoration)
- * cannot silently snap the file back to the top. Real user input cancels the
- * guard immediately.
+ * cannot silently snap the file back to the top.
  */
 const REVEAL_GUARD_FRAMES = 20;
 const REVEAL_GUARD_TOLERANCE_PX = 2;
@@ -625,7 +618,7 @@ function needsWorkerHighlight(workerPool: WorkerPoolManager | undefined, file: F
 /**
  * Pierre highlights an active edit session on the main thread, so each version
  * of the file becomes editable only once it has rendered the worker's
- * highlight. A failed worker highlight falls back to main-thread highlighting.
+ * highlight.
  */
 function useEditableAfterHighlight(file: FileContents) {
   const workerPool = useWorkerPool();
@@ -730,7 +723,6 @@ function EditableFileSurface({
       file,
       lineAnnotations: nextLineAnnotations,
     }: EditorChangeEvent<"file", FileCommentAnnotationGroup, undefined>) => {
-      // Adopting an external change reports it as an edit; it is already on disk.
       if (file.contents === getProjectFileContents(environmentId, cwd, relativePath)) return;
       setEditedContents(file.contents);
       setProjectFileQueryData(environmentId, cwd, relativePath, file.contents);
@@ -1056,15 +1048,11 @@ export default function FilePreviewPanel({
   const isMedia = isImage || isVideo || isAudio;
   const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
-  // A file outside the workspace (an absolute path) is shown, never edited.
   const isHostFile =
     attachment !== undefined || (relativePath !== null && isAbsolutePath(relativePath));
   const fileAccess = useFilesystemReadAccess(environmentId);
   const { canReadFiles } = fileAccess;
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
-  // The read still runs: a folder named `assets.png` is only knowable as a folder
-  // from the read failure, and the server stats before reading, so a folder costs
-  // an open and a stat and returns no body.
   const file = useProjectFileQuery(
     environmentId,
     cwd,
@@ -1072,11 +1060,6 @@ export default function FilePreviewPanel({
     attachment === undefined && relativePath !== null,
   );
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
-  // A chat link cannot tell a folder from a file, so a folder arrives here as
-  // a file surface and the read fails. Keep the breadcrumbs, drop the preview
-  // pane, and let the tree fill the surface with the folder revealed. Mutation
-  // refresh stays on so the surface notices if the path becomes a file. A host
-  // path cannot be revealed in the workspace tree, so it keeps the read error.
   const isDirectory = file.isNotFile && !isHostFile;
   const previewPath = isDirectory ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
@@ -1110,7 +1093,6 @@ export default function FilePreviewPanel({
   const isMarkdown = previewPath ? isMarkdownPreviewFile(previewPath) : false;
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
-  // A reveal still wins over the preference: the line only exists in the source.
   const revealHandled =
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
@@ -1127,8 +1109,6 @@ export default function FilePreviewPanel({
   const canToggleRendered =
     previewPath !== null && attachment === undefined && renderedMode !== null;
   const updateClientSettings = useUpdateClientSettings();
-  // Word wrap only reaches the text bodies. A rendered Markdown document, a table and the
-  // browser frame all lay themselves out, so the toggle stays hidden rather than inert.
   const showsRawText =
     previewPath !== null &&
     file.data !== null &&
@@ -1155,9 +1135,6 @@ export default function FilePreviewPanel({
     enabled:
       attachment === undefined &&
       relativePath !== null &&
-      // Media and PDFs never show their contents, so re-reading them on every
-      // workspace mutation is waste. A folder named like one still re-reads, so
-      // it notices when the path becomes a file.
       (isDirectory || (!isMedia && !isPdf)) &&
       !selectedFilePending,
     mutationId: workspaceMutationId,
@@ -1418,9 +1395,6 @@ export default function FilePreviewPanel({
             </div>
           ) : relativePath && file.data ? (
             isMarkdown && renderMarkdown ? (
-              // Markdown reconciles in place across text updates, so a file
-              // switch needs a new key or the previous file's disclosure and
-              // wrap state carries into the next document.
               <RenderedMarkdownSurface
                 key={relativePath}
                 environmentId={environmentId}

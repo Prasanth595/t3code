@@ -31,7 +31,6 @@ export type ServiceReconcileResult =
       readonly plan: BootService.BootServicePlan;
     };
 
-/** Install, update, or repair the service using the CLI version running this command. */
 export const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
   readonly allowDowngrade?: boolean;
   readonly start?: boolean;
@@ -230,11 +229,8 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     yield* Console.log(
       `A newer t3@${status.installedVersion} background service is installed. Leaving it unchanged.`,
     );
-    // This CLI cannot verify the newer service. Keep the manual fallback available.
     return false;
   }
-  // A LaunchAgent starts at login and dies at logout; there is no
-  // enable-linger equivalent on macOS. Do not promise more than that.
   const platform = yield* HostProcess.Platform;
   const wanted = yield* Prompt.run(
     Prompt.Confirm({

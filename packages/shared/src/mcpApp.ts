@@ -15,7 +15,6 @@ const MAX_DOMAIN_LENGTH = 256;
 const MAX_NAME_LENGTH = 256;
 const MAX_RESOURCE_URI_LENGTH = 4096;
 
-/** `_meta.ui.csp` on a UI resource: origins the app needs, by kind. */
 export interface McpAppCsp {
   readonly connectDomains?: ReadonlyArray<string>;
   readonly resourceDomains?: ReadonlyArray<string>;
@@ -23,7 +22,6 @@ export interface McpAppCsp {
   readonly baseUriDomains?: ReadonlyArray<string>;
 }
 
-/** `_meta.ui.permissions` on a UI resource. */
 export interface McpAppPermissions {
   readonly camera?: Record<string, never>;
   readonly microphone?: Record<string, never>;
@@ -33,7 +31,6 @@ export interface McpAppPermissions {
 
 export interface McpAppReference {
   readonly attachmentId: string;
-  /** The MCP server the tool belongs to, as the provider names it. */
   readonly server: string;
   readonly tool: string;
   readonly resourceUri: string;
@@ -143,9 +140,6 @@ export function readMcpAppResourceUri(meta: unknown): string | undefined {
   return typeof uri === "string" && uri.startsWith(MCP_APP_RESOURCE_SCHEME) ? uri : undefined;
 }
 
-/**
- * The spec defaults to visible to both the model and apps.
- */
 export function mcpAppToolCallableByApp(meta: unknown): boolean {
   const visibility =
     Predicate.isObject(meta) && Predicate.isObject(meta.ui) ? meta.ui.visibility : undefined;
@@ -217,8 +211,6 @@ export function injectMcpAppThemeBootstrap(html: string): string {
   });
 })();
 </script>`;
-  // Snapshots start with our doctype and CSP meta. Keep that policy ahead of
-  // the bootstrap, rather than letting an injected script precede it.
   const prefix =
     /^\uFEFF?\s*<!doctype[^>]*>\s*(?:<meta\s+http-equiv="Content-Security-Policy"[^>]*>)?/i.exec(
       html,
@@ -231,7 +223,6 @@ export function injectMcpAppThemeBootstrap(html: string): string {
 /**
  * Analytics libraries often read cookies during startup. An opaque document
  * has none, but browsers throw instead of returning an empty cookie string.
- * Keep the sandbox and make that document-local case behave like no cookies.
  */
 export function injectMcpAppCookieBootstrap(html: string): string {
   const bootstrap = `<script>(function(){try{void document.cookie;}catch(error){if(error&&error.name==="SecurityError"){Object.defineProperty(document,"cookie",{configurable:true,get:function(){return "";},set:function(){}});}}})();</script>`;

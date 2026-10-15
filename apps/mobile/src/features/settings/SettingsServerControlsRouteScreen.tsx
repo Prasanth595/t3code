@@ -67,7 +67,6 @@ const SUBMODULE_CHOICES: ReadonlyArray<{
   readonly label: string;
   readonly description: string;
 }> = [
-  // Only offered at environment scope; a project falls back through "Use defaults".
   {
     mode: null,
     label: "Inherit",
@@ -87,7 +86,6 @@ const WORKSPACE_CHOICES: ReadonlyArray<{
   readonly label: string;
   readonly description: string;
 }> = [
-  // Only offered at environment scope; a project falls back through "Use defaults".
   {
     mode: null,
     label: "Inherit",

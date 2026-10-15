@@ -9,7 +9,6 @@ interface Props {
   zoomFactor: number;
 }
 
-/** Suppressed for the first render's value so we don't flash 100% on mount. */
 export function ZoomIndicator({ zoomFactor }: Props) {
   const [visible, setVisible] = useState(false);
   const lastFactorRef = useRef(zoomFactor);

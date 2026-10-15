@@ -31,7 +31,6 @@ export interface DiffRow {
   readonly oldAt: number;
   readonly newAt: number;
   readonly text: string;
-  /** Which hunk of the file the row came from; rows from two hunks are not adjacent. */
   readonly hunk: number;
 }
 
@@ -86,11 +85,6 @@ export function fileDiffRows(file: FileDiffMetadata): ReadonlyArray<DiffRow> {
   return rows;
 }
 
-/**
- * Its range is in one side's line numbers, so the other side's half of a replacement at either
- * edge comes along: an excerpt starting on an added line also shows the lines it replaced, which
- * is what makes it read as a change rather than as new code.
- */
 export function excerptRows(
   rows: ReadonlyArray<DiffRow>,
   excerpt: Pick<PullRequestReviewGuideExcerpt, "side" | "start" | "end">,
@@ -153,11 +147,8 @@ export function rowsToPatch(
 }
 
 /**
- * The old side an excerpt expands against: the new file with only the excerpt's lines put back
- * as they were. The renderer fills the code around a hunk from both files and needs them to
- * agree outside it, which the real old file does not wherever another hunk changed lines. Only
- * the lines the reader can expand into are read, and those are the new file's, so the code
- * around the excerpt shows as it reads after the change. Null when the excerpt spans hunks.
+ * The renderer fills the code around a hunk from both files and needs them to agree
+ * outside it, which the real old file does not wherever another hunk changed lines.
  */
 export function excerptExpansionOldContents(
   newContents: string,
@@ -168,8 +159,6 @@ export function excerptExpansionOldContents(
   const newLines = newContents.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const before = head.newAt - 1;
   const newCount = rows.filter((row) => row.newLine !== null).length;
-  // The old side keeps its own numbering, so its prefix is as long as the old file's: trimmed
-  // from the front, or padded there with lines no expansion reaches.
   const oldBefore = head.oldAt - 1;
   const prefix = newLines.slice(0, before);
   const oldPrefix =
@@ -187,9 +176,6 @@ export interface LetteredNote<Note> {
   readonly note: Note;
 }
 
-/**
- * A note outside every excerpt keeps its letter in the list; it just has no line to mark.
- */
 export function letterStopNotes(stop: PullRequestReviewGuideStop) {
   const lettered = stop.notes.map((note, index) => ({ marker: noteMarker(index), note }));
   const byExcerpt = stop.excerpts.map((excerpt) => {

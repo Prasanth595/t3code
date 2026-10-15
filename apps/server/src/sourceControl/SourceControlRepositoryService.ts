@@ -58,9 +58,7 @@ export class SourceControlRepositoryService extends Context.Service<
 
 export interface SourceControlPreparedClone {
   readonly destinationPath: string;
-  /** Credential-free; safe to show and to store in snapshots. */
   readonly remoteUrl: string;
-  /** What git is given; may carry embedded credentials. */
   readonly cloneUrl: string;
   readonly repository: SourceControlRepositoryInfo | null;
 }

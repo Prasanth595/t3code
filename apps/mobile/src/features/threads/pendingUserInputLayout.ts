@@ -2,10 +2,6 @@ const PENDING_USER_INPUT_MAX_HEIGHT = 560;
 const PENDING_USER_INPUT_MIN_HEIGHT = 160;
 const PENDING_USER_INPUT_VERTICAL_GAP = 12;
 
-/**
- * Overestimating only costs card height; an underestimate would let the card
- * overshoot on the first keyboard open.
- */
 export const ESTIMATED_KEYBOARD_HEIGHT = 336;
 
 /**

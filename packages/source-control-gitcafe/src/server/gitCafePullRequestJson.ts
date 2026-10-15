@@ -75,7 +75,6 @@ export const GitCafePullDetail = Schema.Struct({
   closedAt: Schema.NullOr(IsoDateTime),
   mergedAt: Schema.NullOr(IsoDateTime),
   sourceRepo: Schema.NullOr(Schema.Struct({ owner: Schema.String, name: Schema.String })),
-  /** The base GitCafe last compared the pull request against, which a provider merge fences on. */
   observedBaseOid: Schema.optional(Schema.NullOr(Schema.String)),
   mergeRoute: Schema.optional(Schema.Literals(["native", "provider", "unsupported"])),
   lockedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -101,7 +100,6 @@ const CommentCapabilities = Schema.Struct({
 const GitCafeComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   threadId: TrimmedNonEmptyString,
-  /** What a resolution or rewrite fences on; absent from older answers. */
   version: Schema.optional(NonNegativeInt),
   author: Actor,
   body: Schema.NullOr(Schema.String),
@@ -166,7 +164,6 @@ export const GitCafeReactions = Schema.Struct({
 const GitCafeStack = Schema.Struct({
   id: TrimmedNonEmptyString,
   number: PositiveInt,
-  /** What a land or restack fences on. */
   revision: PositiveInt,
   landingBase: Schema.String,
   members: Schema.Array(
@@ -266,7 +263,6 @@ export function toReviewers(
   });
 }
 
-/** A linked GitHub reviewer answers to both logins, so either one finds the review request. */
 function reviewerLogins(actor: Actor, host: string): ReadonlyArray<string> {
   const reviewer = toActor(actor, host);
   if (reviewer === null) return [];
@@ -302,7 +298,6 @@ export function toChangeRequest(
 
 export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewerPermissions {
   const { comment, edit, review, merge, moderate } = detail.capabilities;
-  // A locked conversation keeps its composer for moderators only.
   const open = comment && (detail.lockedAt == null || moderate);
   return {
     actions: [
@@ -315,7 +310,6 @@ export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewe
     ],
     stackRebase: merge,
     comment: open,
-    // Each thread's root narrows this further with its own `canResolve`.
     resolve: open,
     verdicts: review ? ["approve", "request-changes", "comment"] : [],
     requestReviewers: false,
@@ -379,7 +373,6 @@ const REVIEW_STATES = {
   comment: "commented",
 } as const;
 
-/** GitCafe persists a thread's identity apart from its line, so threads group by `threadId`. */
 export function toActivity(input: {
   readonly comments: typeof GitCafeComments.Type;
   readonly reviews: typeof GitCafeReviews.Type;
@@ -399,7 +392,6 @@ export function toActivity(input: {
     ...(comment.capabilities === undefined ? {} : { canEdit: comment.capabilities.edit }),
     ...(reactions === undefined ? {} : { reactions: reactions.byComment.get(comment.id) ?? [] }),
   });
-  // Stable, so remarks written in the same instant keep GitCafe's own order.
   const ordered = input.comments.items.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
   const groups = new Map<string, Array<GitCafeComment>>();
   for (const comment of ordered) {

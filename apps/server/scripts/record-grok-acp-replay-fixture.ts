@@ -37,7 +37,6 @@ const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-// Broadcasts T3 never reads: account tier, marketing, and client UI settings.
 const DROPPED_INBOUND_METHODS = new Set(["_x.ai/settings/update", "_x.ai/announcements/update"]);
 const HOME_PLACEHOLDER = "/home/grok-replay";
 
@@ -72,7 +71,6 @@ function mapStrings(value: unknown, map: (text: string) => string): unknown {
   );
 }
 
-/** Tees raw ACP lines in wire order. Replay drives one process, so a restart is an error. */
 function makeWireTee() {
   const wire: Array<WireMessage> = [];
   let runtimeCount = 0;
@@ -142,8 +140,6 @@ function makeWireTee() {
 function frameLabel(kind: string, method: string, params: unknown): string {
   const update = isRecord(params) && isRecord(params.update) ? params.update : undefined;
   const updateType = typeof update?.sessionUpdate === "string" ? `:${update.sessionUpdate}` : "";
-  // Frames carry the prompt they belong to, so a fixture can gate on the start
-  // of one of Grok's own wake turns (`task-completed-*`, `subagent-completed-*`).
   const meta = isRecord(params) && isRecord(params._meta) ? params._meta : undefined;
   const promptId =
     update?.sessionUpdate === "turn_completed" && typeof update.prompt_id === "string"
@@ -213,15 +209,11 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
 
 const T3_INSTRUCTIONS_BODY = /<t3_code_instructions>\n[\s\S]*?\n<\/t3_code_instructions>/u;
 
-/** Replaces T3-owned request content so prompt wording changes do not invalidate recordings. */
 function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructions: string) {
   const params = isRecord(frame.params) ? frame.params : undefined;
   if (params === undefined) return frame;
   switch (frame.method) {
     case "initialize":
-      // Pin what T3 advertises (fs and terminal capabilities decide whether
-      // Grok routes file and shell work through T3, the client type whether
-      // Auto mode asks); the rest is <any>.
       return {
         ...frame,
         params: Object.fromEntries(
@@ -332,7 +324,6 @@ function collectSessionIds(entries: ReadonlyArray<ProviderReplayEntry>): Readonl
     }
     if (entry.type === "emit_inbound" && isRecord(frame.params)) {
       add(frame.params.sessionId);
-      // Background task ids name Grok's wake turns (`task-completed-<id>`).
       const update = isRecord(frame.params.update) ? frame.params.update : undefined;
       if (update?.sessionUpdate === "task_backgrounded" && UUID.test(String(update.task_id))) {
         add(update.task_id);
@@ -356,11 +347,9 @@ function normalizeEntries(input: {
         [id, `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`] as const,
     ),
     [input.workspace, "<workspace>"],
-    // Grok keys its session directory by the URL-encoded cwd.
     [encodeURIComponent(input.workspace), "%3Cworkspace%3E"],
     [input.home, HOME_PLACEHOLDER],
   ];
-  // Shell output (e.g. `ls -l`) names the recording user.
   const user = /^[a-z_][a-z0-9_-]*$/iu.test(input.user) ? input.user : "";
   const userPattern = user.length === 0 ? undefined : new RegExp(`\\b${user}\\b`, "gu");
   const replaceAll = (text: string) => {
@@ -395,8 +384,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const fixtureInput = fixture.buildInput();
-  // Same README and seeded files as the replay workspace, so client-mediated
-  // fs reads answer identically at replay time.
   const workspace = yield* checkpointWorkspace(fixtureName, fixtureInput.workspaceFiles);
   const realWorkspace = yield* fs.realPath(workspace);
   const materialized = yield* materializeFixtureInput({
@@ -479,8 +466,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
     ),
   );
 
-  // Background scenarios keep the session open until Grok's own wake turns
-  // finish, so the transcript holds everything replay will emit.
   // A wake turn is admitted shortly after the frame that triggers it, so Grok
   // must also stay quiet for a few seconds.
   let quietPolls = 0;

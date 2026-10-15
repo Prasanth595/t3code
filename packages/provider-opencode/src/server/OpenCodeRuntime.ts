@@ -204,7 +204,6 @@ export interface OpenCodeInventory {
 
 export type OpenCodeSlashCommand = Pick<Command, "name" | "description" | "source" | "hints">;
 
-/** Command templates stay in OpenCode, which expands arguments and runs MCP prompts. */
 export const loadOpenCodeCommands = (client: OpencodeClient) =>
   runOpenCodeSdk("command.list", (signal) => client.command.list(undefined, { signal })).pipe(
     Effect.map((result): ReadonlyArray<OpenCodeSlashCommand> =>
@@ -242,8 +241,7 @@ export class OpenCodeRuntime extends Context.Service<
   {
     /**
      * Its lifetime is bound to the caller's `Scope.Scope` — the child is killed automatically
-     * when that scope closes. Consumers that want a long-lived server must create and hold a
-     * scope explicitly (see {@link Scope.make}) and close it when done.
+     * when that scope closes.
      */
     readonly startOpenCodeServerProcess: (input: {
       readonly binaryPath: string;
@@ -253,14 +251,8 @@ export class OpenCodeRuntime extends Context.Service<
       readonly port?: number;
       readonly hostname?: string;
       readonly timeoutMs?: number;
-      /** Checks the listening server and returns its version. Defaults to the 1.x health check. */
       readonly verify?: (url: string) => Effect.Effect<string, OpenCodeRuntimeError>;
     }) => Effect.Effect<OpenCodeServerProcess, OpenCodeRuntimeError, Scope.Scope>;
-    /**
-     * Returns a handle to either an externally-managed OpenCode server (when
-     * `serverUrl` is provided — no lifetime is attached to the caller's scope) or a
-     * freshly spawned local server whose lifetime is bound to the caller's scope.
-     */
     readonly connectToOpenCodeServer: (input: {
       readonly binaryPath: string;
       readonly directory: string;
@@ -456,11 +448,8 @@ export function openCodeQuestionId(
 }
 
 /**
- * Anything else (ZIP, binaries, image formats like BMP/AVIF/SVG that model APIs reject, or files
- * over the direct-attachment size limit) would make the turn fail before it starts, so those ride
- * only as the file path ProviderService puts in the prompt. Text is native only as text/plain,
- * which OpenCode reads itself; other text types (HTML, Markdown, CSV) reach the model API as raw
- * file parts, which Anthropic and OpenAI reject.
+ * Text is native only as text/plain, which OpenCode reads itself; other text types (HTML,
+ * Markdown, CSV) reach the model API as raw file parts, which Anthropic and OpenAI reject.
  */
 const OPENCODE_NATIVE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
@@ -521,14 +510,10 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     ];
   }
 
-  // "Auto-accept edits" is documented as "auto-approve edits, ask before other
-  // actions", so prompting for every edit ignores the mode the user picked.
   // "auto" is left asking on purpose: the docs say providers without an AI
   // reviewer, OpenCode among them, fall back to Supervised for that mode.
   const editAction = runtimeMode === "auto-accept-edits" ? "allow" : "ask";
 
-  // Session rules override OpenCode's agent defaults. Allow reads and task
-  // updates, but keep its default approval rules for environment files.
   return [
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "read", pattern: "*", action: "allow" },
@@ -693,7 +678,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         ));
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
       const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
-      // One server runs every session of the instance, so its scope has no thread.
       const launch = yield* agentScope.wrap({
         command: input.binaryPath,
         args,
@@ -743,11 +727,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           : Effect.sync(() => {
               try {
                 signalProcessGroup(Number(child.pid), signal);
-              } catch {
-                // The direct child may already have exited after starting the
-                // server; the process group kill is best-effort cleanup for
-                // any serve process left in that group.
-              }
+              } catch {}
             });
       const terminateChild = killOpenCodeProcessGroup("SIGTERM").pipe(
         Effect.andThen(Effect.sleep("1 second")),
@@ -1061,8 +1041,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         }),
       );
 
-      // Agent and skill metadata enrich the provider snapshot but are not required
-      // for an authoritative model inventory, so either may degrade to an empty list.
       let agents: ReadonlyArray<Agent> = [];
       if (agentsResult._tag === "Success" && agentsResult.value.code === 0) {
         agents = parseAgentListCliOutput(agentsResult.value.stdout);

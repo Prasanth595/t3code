@@ -87,7 +87,6 @@ export interface AcpTerminalOutputSnapshot {
 interface ManagedAcpTerminal {
   readonly terminalId: string;
   readonly sessionId: string;
-  /** The spawned command with args, kept for MCP-fallback identification. */
   readonly commandLine: string;
   readonly buffer: OutputBufferState;
   readonly exit: Deferred.Deferred<EffectAcpSchema.WaitForTerminalExitResponse>;
@@ -373,8 +372,6 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
     ),
   );
 
-  // Terminal failures surface to the agent as JSON-RPC errors and to the
-  // user only as a failed tool item, so log them for server-side diagnosis.
   const logged =
     <Request, Response>(
       operation: string,
@@ -402,10 +399,6 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   };
 });
 
-/**
- * Rewrites embedded `terminal` tool-call content into plain text content so
- * the provider-neutral tool-call projection can display live command output.
- */
 export function resolveEmbeddedTerminalContent(
   notification: EffectAcpSchema.SessionNotification,
   readOutputSnapshot: AcpClientTerminals["readOutputSnapshot"],

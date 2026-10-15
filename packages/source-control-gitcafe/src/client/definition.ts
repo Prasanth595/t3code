@@ -18,7 +18,6 @@ const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
 
 const KIND = SourceControlProviderKind.make("gitcafe");
 
-/** A git.cafe token, used before `CAFE_TOKEN` and the `cafe` login. */
 export const settings = makeProviderSettingsSchema({
   token: TrimmedString.pipe(
     secretSetting,
@@ -40,8 +39,6 @@ export const definition = defineSourceControlClient({
   icon: "gitcafe",
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "owner/repo",
-  // Left unattributed so a reference with no repository identity behind it gets no checkout
-  // command guessed from its hostname alone.
   publicHost: null,
   publishDescription: "git.cafe",
   publishHost: () => "git.cafe",

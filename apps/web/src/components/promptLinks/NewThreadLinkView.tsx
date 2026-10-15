@@ -49,17 +49,11 @@ type LinkState =
       readonly project: EnvironmentProject;
     };
 
-// A link opens once per history entry. Going back to it lands here again, and opening a
-// second draft for the same click would surprise more than it helps.
 const openedLinkKeys = new Set<string>();
 
-/**
- * The user still reads the prompt and presses Send.
- */
 export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   const locationKey = useLocation({ select: (location) => location.state.__TSR_key ?? "" });
   const navigate = useNavigate();
-  // The link needs every reachable machine's projects and threads to find its repository.
   const ready = useAtomValue(allReachableShellsLiveAtom);
   const projects = useProjects();
   const threads = useThreadShells();
@@ -135,7 +129,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     setState({ status: "opening" });
     const environmentId =
       scratchEnvironmentId(lastActiveEnvironmentId()) ?? scratchEnvironmentId(null);
-    // Reports its own failure.
     const project = environmentId === null ? null : await openScratchProject(environmentId);
     if (project === null) {
       setState({
@@ -192,8 +185,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({ status: "missing-repository", repository });
       return;
     }
-    // The server adds the project at once and clones behind it. The draft shows the clone's
-    // progress and holds Send until the code is there.
     const project = await waitForProject(scopeProjectRef(environmentId, projectId), 5_000).catch(
       () => null,
     );
@@ -201,7 +192,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({ status: "failed", message: "The clone started, but its project did not appear." });
       return;
     }
-    // A pull request checks out from the cloned repository, which is not there yet.
     if (link.kind === "pull-request") {
       setState({
         status: "failed",

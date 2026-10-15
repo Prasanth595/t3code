@@ -16,7 +16,6 @@ export function nextPendingReviewCommentId(): string {
   return `pending-review-comment-${pendingCommentSequence}`;
 }
 
-/** A project's thread can review the same repository path and number on different hosts. */
 export function pullRequestReviewKey(reference: PullRequestRef): string {
   return JSON.stringify([
     reference.projectId,

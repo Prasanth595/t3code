@@ -5,8 +5,7 @@ import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from ".
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly.
  * Adding providers or other array-element variants is additive: unknown entries
- * are skipped on decode and do not require a version bump. So are optional
- * bucket fields, which older clients ignore.
+ * are skipped on decode and do not require a version bump.
  */
 export const USAGE_CONTRACT_VERSION = 6 as const;
 
@@ -23,10 +22,6 @@ export const UsageProviderKind = Schema.Literals([
 ]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
-/**
- * Days are bucketed server-side so that a turn always lands on the day the user
- * experienced it, not the UTC day.
- */
 const USAGE_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export const UsageDay = TrimmedNonEmptyString.check(Schema.isPattern(USAGE_DAY_PATTERN)).pipe(
@@ -37,11 +32,6 @@ export type UsageDay = typeof UsageDay.Type;
 export const UsageResolution = Schema.Literals(["day", "hour"]);
 export type UsageResolution = typeof UsageResolution.Type;
 
-/**
- * - `modelPriced` - we used a custom price override or the LiteLLM rate table.
- * - `unpriced` - tokens are known, rates are not. Counted in totals, excluded
- *   from cost.
- */
 export const UsageCostSource = Schema.Literals(["providerReported", "modelPriced", "unpriced"]);
 export type UsageCostSource = typeof UsageCostSource.Type;
 
@@ -60,9 +50,6 @@ export const UsageTokenTotals = Schema.Struct({
 });
 export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 
-/**
- * A provider-reported cost is split in proportion to the model's list rates.
- */
 export const UsageCategoryCost = Schema.Struct({
   input: Schema.Number,
   cacheRead: Schema.Number,
@@ -71,54 +58,26 @@ export const UsageCategoryCost = Schema.Struct({
 });
 export type UsageCategoryCost = typeof UsageCategoryCost.Type;
 
-/**
- * `hourStart` is the UTC start instant of a rolling bucket and is present only
- * for hourly requests.
- *
- * `costUsd` is the raw API-equivalent cost of these tokens. It is not money
- * spent: subscription plans bill separately. `unpricedRecords` counts records
- * whose tokens are included in the token totals but which contributed nothing
- * to `costUsd`.
- */
 export const UsageBucket = Schema.Struct({
   day: UsageDay,
   hourStart: Schema.optional(TrimmedNonEmptyString),
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
-  /** Source directory, so overlapping multi-home environments merge once per source. */
   sourcePath: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
-  /**
-   * What the cached input would have cost at full input rates minus what it
-   * actually cost. Requires the rate table, so it is computed alongside cost
-   * rather than derived on the client.
-   */
   cacheSavingsUsd: Schema.Number,
-  /**
-   * `costUsd` by token category. Cost with no known rates stays out of it, and
-   * it is absent when nothing could be split or the server predates it.
-   */
   categoryCostUsd: Schema.optional(UsageCategoryCost),
-  /** Cost of fast and ultrafast requests. Absent when zero; the rest is standard. */
   fastCostUsd: Schema.optional(Schema.Number),
   ultrafastCostUsd: Schema.optional(Schema.Number),
-  /** What fast and ultrafast requests cost above the standard rate. Absent when zero. */
   speedPremiumUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,
-  /** Distinct assistant responses, after de-duplication. */
   records: NonNegativeInt,
   unpricedRecords: NonNegativeInt,
-  /** Distinct transcript sessions that contributed to this cell. */
   sessions: NonNegativeInt,
 });
 export type UsageBucket = typeof UsageBucket.Type;
 
-/**
- * Two environments on the same machine (worktree servers, for example) resolve
- * the same provider home and would otherwise double count. The client drops
- * duplicate fingerprints before merging.
- */
 export const UsageSourceFingerprint = Schema.Struct({
   hostId: TrimmedNonEmptyString,
   provider: UsageProviderKind,
@@ -127,8 +86,7 @@ export const UsageSourceFingerprint = Schema.Struct({
    * Filesystem identity of the transcript directory, as `device:inode`.
    * Hostname and path alone are not enough: every Mac in a fleet resolves
    * `/Users/<user>/.claude`, so two machines that happen to share a hostname
-   * would look like one source and have their usage silently dropped. Empty
-   * when it cannot be read.
+   * would look like one source and have their usage silently dropped.
    */
   volumeId: Schema.String,
 });
@@ -142,7 +100,6 @@ export const UsageSource = Schema.Struct({
   status: UsageSourceStatus,
   scannedFiles: NonNegativeInt,
   skippedFiles: NonNegativeInt,
-  /** Records that parsed but carried no recognisable usage payload. */
   malformedRecords: NonNegativeInt,
   /**
    * Buckets also carry per-bucket session counts, but a session spans days and
@@ -173,25 +130,16 @@ export const UsagePricing = Schema.Struct({
 export type UsagePricing = typeof UsagePricing.Type;
 
 export const UsageSummaryInput = Schema.Struct({
-  /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
-  /** Inclusive last day of the window, in `timeZone`. */
   untilDay: UsageDay,
   /**
    * IANA zone the client wants days bucketed in. An offset would be wrong for
    * any window that crosses a DST boundary.
    */
   timeZone: TrimmedNonEmptyString,
-  /** Defaults to daily for older clients. */
   resolution: Schema.optional(UsageResolution),
-  /** Inclusive UTC instant for an hourly rolling window. */
   sinceTime: Schema.optional(TrimmedNonEmptyString),
-  /** Exclusive UTC instant for an hourly rolling window. */
   untilTime: Schema.optional(TrimmedNonEmptyString),
-  /**
-   * Wait for slow sources to finish refreshing instead of answering from their
-   * cache. Older servers ignore it and always wait.
-   */
   awaitRefresh: Schema.optional(Schema.Boolean),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
@@ -211,7 +159,6 @@ export type UsageSummary = typeof UsageSummary.Type;
 
 export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageReadError", {
   reason: Schema.Literals(["scanFailed", "invalidWindow"]),
-  /** Stable, bounded description. The underlying failure travels in `cause`. */
   detail: TrimmedNonEmptyString,
   cause: Schema.optional(Schema.Defect()),
 }) {

@@ -16,7 +16,6 @@ export function usageEnvironmentProgress(
   if (!environment.isConnected || environment.error !== null) return { phase: "inactive" } as const;
   if (summary === null) return { phase: "loading" } as const;
   if (refreshing) return { phase: "stale" } as const;
-  // A refreshing source without a pending follow-up has nothing left to wait on.
   if (!environment.isPending) return { phase: "ready" } as const;
   const providers = [
     ...new Set(
@@ -37,11 +36,6 @@ export function updatingProvidersLabel(
     : `Updating ${providers.length} providers…`;
 }
 
-/**
- * The page dims only while old numbers are all that is on screen. Once any
- * environment answers, the label carries what is still coming, so one slow
- * device never holds the page dimmed.
- */
 export function usageProgress(
   environments: readonly UsageProgressEnvironment[],
   {
@@ -76,11 +70,6 @@ export function usageProgress(
   };
 }
 
-/**
- * An environment that
- *   has not answered yet, or whose whole summary is stale, could change any
- *   provider, so it sets `everyProvider`.
- */
 export function usageLoadingState(
   environments: readonly UsageProgressEnvironment[],
   refreshing = false,

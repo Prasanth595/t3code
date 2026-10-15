@@ -417,10 +417,6 @@ export function PullRequestFiltersMenu({
   onServer: (server: EnvironmentId | undefined) => void;
   projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
   projectId: ProjectId | undefined;
-  /**
-   * The server the selected project belongs to. A project id is only unique within its own
-   * server, so without this two rows sharing an id would both read as checked here.
-   */
   projectEnvironmentId: EnvironmentId | undefined;
   unavailable: ReadonlyMap<string, string>;
   onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;

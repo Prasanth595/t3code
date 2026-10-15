@@ -200,8 +200,6 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       const child = path.join(directory, entry);
       const info = yield* orUndefined(fileSystem.stat(child), input.budget);
       if (info?.type !== "Directory") continue;
-      // A tree deeper than the limit is skipped rather than fatal: the same tree would fail
-      // every refresh and hide every other skill with it.
       if (depth >= MAX_SKILL_DEPTH) continue;
       yield* visit(child, depth + 1);
     }

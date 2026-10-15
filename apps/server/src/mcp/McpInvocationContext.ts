@@ -48,7 +48,6 @@ export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
   readonly capabilities: ReadonlySet<McpCapability>;
   readonly issuedAt: number;
-  /** Namespaces idempotency keys so two callers reusing a clientRequestId cannot collide. */
   readonly requestNamespace: string;
   readonly thread: McpThreadCaller | undefined;
   readonly client: McpClientCaller | undefined;
@@ -59,7 +58,6 @@ export class McpInvocationContext extends Context.Service<
   McpInvocationScope
 >()("t3/mcp/McpInvocationContext") {}
 
-/** The error a missing capability surfaces as; preview keeps its own so the broker can route it. */
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
   ? PreviewAutomationUnavailableError
   : McpCapabilityUnavailableError;
@@ -94,11 +92,6 @@ export const requireMcpCapability = <const C extends McpCapability>(
     Effect.withSpan("mcp.requireCapability"),
   );
 
-/**
- * Preview tabs and device sessions belong to the calling thread, so their
- * capabilities are only ever granted to thread callers. A scope that carries
- * one without a thread is refused the same way as a missing capability.
- */
 export const requireThreadMcpCapability = <const C extends "preview" | "device">(
   capability: C,
 ): Effect.Effect<McpThreadInvocationScope, McpCapabilityError<C>, McpInvocationContext> =>

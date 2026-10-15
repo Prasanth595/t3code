@@ -31,7 +31,6 @@ export interface UpdatesHarnessOptions {
   readonly startBackend?: Effect.Effect<void>;
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
-  /** Contents of the resources/package-type marker a Linux package ships. */
   readonly packageType?: string | undefined;
   readonly installRecord?: string | undefined;
 }
@@ -205,8 +204,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 
-  // Tracks the restart markers and install records installs leave, so
-  // installs stay free of real disk I/O that would outrun the tests' settle loops.
   const updateRestartMarkers = new Set<string>();
   const installRecords = new Map<string, string>();
   let previousInstallRecord = options.installRecord;

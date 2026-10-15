@@ -424,7 +424,7 @@ function modeState(): AcpCompat.SessionModeState {
 }
 
 // Mirrors the real Grok ACP: it advertises versioned model ids, never the CLI's own
-// "grok-build" product name. Native helper model switching has its own v1 fixture.
+// "grok-build" product name.
 const grokAcpModels: ReadonlyArray<AcpCompat.ModelInfo> = [
   {
     modelId: "grok-4.6",
@@ -939,7 +939,6 @@ const program = Effect.gen(function* () {
           requestedSessionId,
           requestedSessionId,
         ].entries()) {
-          // Progress from an earlier tool must not end the retry.
           if (index === 2 && vibeRetryOutcome === "recovered") {
             yield* Effect.sync(() =>
               writeJsonRpcNotification("session/update", {
@@ -1446,7 +1445,6 @@ const program = Effect.gen(function* () {
           yield* Effect.sleep("100 millis");
           return yield* Effect.sync(() => process.exit(0));
         }
-        // Stay open until session/cancel so interrupt tests can observe a running tool.
         while (!cancelledSessions.has(requestedSessionId)) {
           yield* Effect.sleep("25 millis");
         }
@@ -1973,9 +1971,6 @@ const program = Effect.gen(function* () {
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
-      // In-turn monitor + TaskOutput hydrate, then a late post-finalize
-      // duplicate terminal TaskOutput for the same task. Exercises the
-      // already-handled short-circuit: must not pin hasPendingBackgroundWork.
       if (emitInTurnTaskOutputThenLateDuplicate) {
         const monitorToolCallId = "tool-call-monitor-1";
         yield* agent.client.sessionUpdate({

@@ -98,7 +98,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
       speed: "standard",
       // Forks copy entries verbatim, including ID/timestamp. Entry IDs are only
       // eight random hex digits, so retain timestamp/model to avoid collisions
-      // across unrelated sessions. Parent IDs may change when Pi branches.
+      // across unrelated sessions.
       dedupeKey: JSON.stringify(["pi", entry.id, entry.timestamp, model]),
     },
   ];

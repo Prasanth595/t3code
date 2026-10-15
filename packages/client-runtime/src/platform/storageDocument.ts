@@ -24,9 +24,6 @@ export const ConnectionCatalogDocument = Schema.Struct({
   credentials: Schema.Array(StoredConnectionCredential),
   remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
   githubRoutingPermissions: Schema.optionalKey(Schema.Array(StoredGitHubRoutingPermission)),
-  // Saved environments the user switched off. They stay registered with their
-  // credentials and cache but never connect until switched back on. Older
-  // documents predate the key, so decoding defaults it to none.
   disabledEnvironmentIds: Schema.Array(EnvironmentId).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
@@ -85,7 +82,6 @@ function removeRouteMetadata(
     ...document,
     profiles: document.profiles.filter((value) => !connectionIds.has(value.connectionId)),
     credentials: document.credentials.filter((value) => !connectionIds.has(value.connectionId)),
-    // The DPoP token belongs to the T3 Connect route.
     remoteDpopTokens: relayRemoved
       ? document.remoteDpopTokens.filter((value) => !environmentIds.has(value.environmentId))
       : document.remoteDpopTokens,
@@ -126,14 +122,11 @@ export function setRoutesInCatalog(
   };
 }
 
-/** Saves one route of an environment, keeping its other routes. */
 export function registerConnectionInCatalog(
   document: ConnectionCatalogDocument,
   registration: ConnectionRegistration,
   routes: ReadonlyArray<PersistedConnectionTarget> = [registration.target],
 ): ConnectionCatalogDocument {
-  // Re-registering (for example editing a label or URL) keeps the disabled
-  // flag; only `setConnectionEnabledInCatalog` or removal changes it.
   const next = setRoutesInCatalog(document, registration.target.environmentId, routes);
 
   switch (registration._tag) {
@@ -164,7 +157,6 @@ export function registerConnectionInCatalog(
   }
 }
 
-/** Forgets an environment and every route it had. */
 export function removeConnectionFromCatalog(
   document: ConnectionCatalogDocument,
   environmentId: EnvironmentId,
@@ -192,7 +184,6 @@ export function removeConnectionFromCatalog(
   };
 }
 
-/** Flips the disabled flag for a saved environment; unknown ids are ignored. */
 export function setConnectionEnabledInCatalog(
   document: ConnectionCatalogDocument,
   environmentId: EnvironmentId,

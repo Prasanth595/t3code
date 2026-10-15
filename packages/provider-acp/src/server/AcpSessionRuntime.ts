@@ -110,7 +110,6 @@ export interface AcpSessionRuntimeOptions {
   ) => Effect.Effect<void, AcpProcessGroupTerminationError>;
   readonly posixProcessTreeController?: AcpPosixProcessTreeController;
   readonly linuxCgroupController?: AcpLinuxCgroupController | null;
-  /** Native cancellation waits for the prompt response and the getEvents consumer to drain. */
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
   readonly cancelTimeout?: Duration.Input;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
@@ -126,9 +125,7 @@ export interface AcpSessionRuntimeOptions {
   readonly authenticateEagerly?: boolean;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly additionalDirectories?: ReadonlyArray<string>;
-  /** Transforms provider stdout before protocol parsing and protocol logging. */
   readonly transformStdout?: EffectAcpClient.AcpClientOptions["transformStdout"];
-  /** Normalizes provider-specific fields before notification queues or runtime state retain them. */
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
@@ -138,7 +135,6 @@ export interface AcpSessionRuntimeOptions {
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Disable only for non-interactive discovery that must surface auth-required immediately. */
   readonly authenticateOnAuthRequired?: boolean;
-  /** Observes the normalized handshake before any session setup or authentication retry. */
   readonly onInitialized?: (
     result: EffectAcpSchema.InitializeResponse,
   ) => Effect.Effect<void, never>;
@@ -379,9 +375,7 @@ export function sweepStaleLinuxCgroupSiblings(
         if (NodePath.dirname(siblingPath) !== parentPath) continue;
         if (readPopulated(siblingPath) !== "0") continue;
         remove(siblingPath);
-      } catch {
-        // Ignore unreadable or busy siblings; never fail lease creation.
-      }
+      } catch {}
     }
   } catch {}
 }
@@ -425,9 +419,7 @@ function tryCreateLinuxCgroupLease(
   } catch {
     try {
       NodeFS.rmdirSync(childPath);
-    } catch {
-      // The unavailable cgroup was never used for a child process.
-    }
+    } catch {}
     return undefined;
   }
   return {
@@ -564,9 +556,7 @@ export function signalLinuxCgroupRootTerm(input: {
     const observed = input.controller.identity(root.pid);
     if (!samePosixProcessIdentity(root, observed) || !input.lease.contains(root.pid)) return;
     input.controller.signalProcess(root.pid, "SIGTERM");
-  } catch {
-    // TERM is optional. cgroup.kill remains the authoritative teardown.
-  }
+  } catch {}
 }
 
 function readLinuxProcessIdentity(pid: number): AcpPosixProcessIdentity | undefined {
@@ -1151,14 +1141,9 @@ export class AcpSessionRuntime extends Context.Service<
       EffectAcpSchema.InitializeResponse,
       EffectAcpErrors.AcpError
     >;
-    /** Explicit login uses the negotiated v1 authenticate / v2 auth/login operation. */
     readonly authenticate?: (methodId: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
-    /**
-     * Concurrent calls share the same in-flight startup and a failed startup may be retried.
-     */
     readonly start: () => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
     readonly getEvents: () => Stream.Stream<AcpSessionRuntimeEvent, never>;
-    /** Waits for queued events to be processed, or for the runtime scope to close. */
     readonly drainEvents: Effect.Effect<void>;
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
     readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
@@ -1279,7 +1264,6 @@ export const make = (
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    // A child of the caller's scope, so termination can close the runtime without closing the caller's.
     const runtimeScope = yield* Scope.fork(yield* Scope.Scope);
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
@@ -1452,8 +1436,6 @@ export const make = (
               cause: new Error("Contained ACP command was not found on PATH"),
             });
           });
-    // A cgroup lease is already its own leaf cgroup, so it only needs the
-    // raised OOM score (in its wrapper). Other agents get their own scope.
     const scopedSpawnCommand =
       linuxCgroupLease !== undefined || spawnCommand.shell
         ? spawnCommand
@@ -2329,7 +2311,6 @@ export const make = (
       const acknowledge = yield* Deferred.make<void>();
       yield* notificationSemaphore.withPermit(
         Effect.gen(function* () {
-          // Keep a provider's final flushed chunks together until the adapter settles the turn.
           if (Option.isNone(yield* Ref.get(activePromptRef))) {
             yield* Ref.set(assistantUpdatesOpenRef, false);
             yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
@@ -2682,8 +2663,6 @@ export const make = (
             return {} satisfies EffectAcpSchema.SetSessionModeResponse;
           }
           const response = yield* setConfigOption(modeConfigOption?.id ?? "mode", modeId);
-          // The agent answers with its config options, so the mode it reports
-          // is the mode it runs in, even when it kept another one.
           const reported = parseSessionModeState({ configOptions: response.configOptions });
           if (reported === undefined) {
             yield* updateCurrentModeId(modeId);
@@ -2829,14 +2808,11 @@ const handleSessionUpdate = ({
         if (!decision.emit) {
           continue;
         }
-        // A new tool call is a boundary in the prose. Progress on a call that
-        // is already shown, such as a background command finishing, is not.
         if (!shownToolCallIds.has(merged.toolCallId)) {
           shownToolCallIds.add(merged.toolCallId);
           if (shownToolCallIds.size > MAX_SHOWN_TOOL_CALL_IDS) {
             shownToolCallIds.delete(shownToolCallIds.values().next().value!);
           }
-          // A call still running is already on screen, even if it aged out.
           if (!active) yield* closeActiveAssistantSegment({ queue, assistantSegmentRef });
         }
         yield* Queue.offer(queue, {

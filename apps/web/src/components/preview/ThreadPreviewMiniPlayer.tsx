@@ -289,7 +289,6 @@ function DeviceMiniPlayer({
       cornerRadius={cornerRadius}
     >
       {() => (
-        // The stream is DOM, so it takes the band the browser's native webview would.
         <div
           className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit]"
           style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
@@ -378,7 +377,6 @@ function MiniPlayerShell({
   useLayoutEffect(() => () => clearPreview?.(sourceKey), [clearPreview, sourceKey]);
 
   const radius = frame ? cornerRadius(frame) : PREVIEW_MINI_PLAYER_CORNER_RADIUS;
-  // Inside a wide curve the default 8px inset would land on the clipped-away corner.
   const pillInset = Math.max(8, Math.round(radius * 0.55));
 
   const close = () => {

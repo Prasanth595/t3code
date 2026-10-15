@@ -35,7 +35,6 @@ export interface ProviderInstanceEntry {
   readonly displayName: string;
   readonly accentColor?: string | undefined;
   readonly acpRegistryAgentId?: string | undefined;
-  /** Catalog-advertised icon URL. The renderer still applies the official-CDN allowlist. */
   readonly acpRegistryIconUrl?: string | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
@@ -50,10 +49,9 @@ export interface ProviderInstanceEntry {
 export type ProviderCatalogAvailability = "loading" | "ready" | "unavailable" | "unconfigured";
 
 /**
- * Keep a provider catalogue that has not arrived yet distinct from a loaded
- * catalogue with no usable entries. Environment config streams are reactive:
- * treating their initial `null` as a final empty list strands otherwise
- * recoverable threads behind a misleading "no providers" state.
+ * Environment config streams are reactive: treating their initial `null` as a
+ * final empty list strands otherwise recoverable threads behind a misleading
+ * "no providers" state.
  */
 export function resolveProviderCatalogAvailability(input: {
   readonly catalogLoaded: boolean;
@@ -135,16 +133,11 @@ export function deriveProviderEntriesByEnvironment(
 }
 
 /**
- * Provider probes can briefly retain their previous `enabled` value after a settings write, so
- * picker visibility must follow settings rather than waiting for probe reconciliation. A
- * built-in default instance without a `providerInstances` entry keeps its streamed state, since
- * the server runs it with default config. Any other instance missing from `providerInstances`
- * is stale (for example immediately after deletion) and is treated as disabled. `projectId`
- * folds in that project's `providerInstances[id].enabled` override (enable or disable in either
- * direction over the machine value); `null` resolves the machine value only. It has no default:
- * a caller that renders for a single project but forgets to pass it would silently show the
- * machine's enablement instead of that project's, so passing `null` for a surface that isn't
- * project-aware must be a deliberate choice, not an omission.
+ * `projectId` folds in that project's `providerInstances[id].enabled` override (enable or
+ * disable in either direction over the machine value); `null` resolves the machine value only.
+ * It has no default: a caller that renders for a single project but forgets to pass it would
+ * silently show the machine's enablement instead of that project's, so passing `null` for a
+ * surface that isn't project-aware must be a deliberate choice, not an omission.
  */
 export function applyProviderInstanceSettings(
   entries: ReadonlyArray<ProviderInstanceEntry>,
@@ -202,9 +195,6 @@ export function sortProviderInstanceEntries(
   return sorted;
 }
 
-/**
- * Missing snapshots are not inferred from driver kind in UI routing code.
- */
 export function getProviderInstanceEntry(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId,
@@ -212,10 +202,6 @@ export function getProviderInstanceEntry(
   return deriveProviderInstanceEntries(providers).find((entry) => entry.instanceId === instanceId);
 }
 
-/**
- * Custom instances can serve a different model list than the default instance of the same
- * driver kind, so the lookup must be instance-scoped rather than kind-scoped.
- */
 export function getDefaultProviderInstanceModel(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId,
@@ -233,10 +219,6 @@ export function getDefaultProviderInstanceModel(
 const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
   entry.enabled && entry.isAvailable;
 
-/**
- * An errored provider is retained only when it was explicitly requested; it is never invented
- * as a new-user default.
- */
 export function resolveSelectableProviderInstanceEntry(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   instanceId: ProviderInstanceId | undefined,
@@ -261,10 +243,6 @@ export function resolveSelectableProviderInstance(
   return resolveSelectableProviderInstanceEntry(entries, instanceId)?.instanceId;
 }
 
-/**
- * Falling back to another instance also resets the model to that instance's own default,
- * avoiding cross-provider instance/model pairs.
- */
 export function resolveDefaultProviderModelSelection(
   providers: ReadonlyArray<ServerProvider>,
   selection: ModelSelection | null | undefined,

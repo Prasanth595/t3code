@@ -4,10 +4,6 @@ import type { ComponentProps } from "react";
 import { Switch } from "../ui/switch";
 import { useScopedSettingsMixed } from "./useScopedSettings";
 
-/**
- * Clicking a mixed switch turns it on everywhere, the macOS mixed-checkbox
- * convention.
- */
 export function ScopedSwitch({
   settingKeys,
   checked,

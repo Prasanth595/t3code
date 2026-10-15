@@ -133,10 +133,6 @@ export interface ComposerPromptEditorHandle {
     expandedCursor: number;
     contextIds: string[];
   };
-  /**
-   * Prompt history only claims ArrowUp and ArrowDown at these edges so arrows still move the caret
-   * inside multiline text.
-   */
   isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
 }
 
@@ -144,13 +140,11 @@ export interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
   richTextEnabled?: boolean;
-  /** Preserve editor answers verbatim, without Markdown or context chips. */
   literalText?: boolean;
   contextRecords: ComposerDraftContextRecords;
   buildContextClipboardFragment?:
     | ((contextIds: ReadonlyArray<string>) => string | null)
     | undefined;
-  /** Imports a structured paste's records; returns ids that changed. */
   importContextFragment?:
     | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
     | undefined;
@@ -158,11 +152,8 @@ export interface ComposerPromptEditorProps {
   disabled: boolean;
   placeholder: string;
   ariaLabel?: string | undefined;
-  /** Identifies an editor with suggestions, even while its list is closed. */
   suggestionListId?: string | undefined;
-  /** References the highlighted option only while its list is rendered. */
   activeSuggestionId?: string | undefined;
-  /** Reads suggestion state at paste time, including Escape dismissal. */
   isPathQueryActive?: () => boolean;
   containerClassName?: string;
   className?: string;
@@ -599,8 +590,6 @@ const bulletToTaskInputRule = new InputRule({
     const $from = state.doc.resolve(range.from);
     const item = $from.node(-1);
     if ($from.parent.type.name !== "paragraph" || item?.type.name !== "listItem") return null;
-    // Any bullet converts; the task grammar only knows `-`, so a `*` or `+`
-    // item comes back out as `- [ ]`.
     if (!["-", "*", "+"].includes((item.attrs as { marker?: string }).marker ?? "")) return null;
     const checked = (match[1] ?? " ").toLowerCase() === "x";
     chain()
@@ -717,8 +706,6 @@ const ComposerMarkerPlugin = new Plugin({
 
 function decorationsForSelection(state: EditorState): DecorationSet {
   const { doc, selection } = state;
-  // Markers at the caret render after it while it types with the marks before
-  // the edge. Shifting keeps closers ahead of openers at a shared position.
   const caretSide = caretTakesMarksBefore(state) ? 3 : 0;
   const decorations: Decoration[] = [];
   if (!selection.empty) {
@@ -923,7 +910,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const handleEditorChange = useCallback(
     (updated: TiptapEditor) => {
       const map = serializeEditorDoc(updated.state.doc);
-      // Literal answers hold no chips, so reference-shaped text is not a context.
       const contextIds = literalText ? [] : map.contextIds;
       const { from, to } = updated.state.selection;
       const fromFlat = pmToFlat(map, from);
@@ -968,10 +954,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         expandedCursor: nextExpandedCursor,
         contextIds,
       };
-      // A fence holds no chips, so nothing in it should summon the mention or
-      // command menu: `@` in code is a decorator, not a file. Suppressing the
-      // trigger here also keeps the store from inserting a link the block can
-      // only show as literal text, which the store would then count as a chip.
       const inCodeBlock = updated.state.selection.$from.parent.type.spec.code === true;
       const suppressTrigger =
         literalText ||
@@ -1029,7 +1011,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           gapcursor: false,
           trailingNode: false,
           code: false,
-          // The list extensions handle Backspace and Delete themselves.
           listKeymap: false,
           undoRedo: { newGroupDelay: COMPOSER_UNDO_GROUP_DELAY },
           ...(richText ? {} : { bold: false, italic: false, strike: false }),
@@ -1256,14 +1237,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             event.stopPropagation();
             return true;
           }
-          // Enter on a focused task checkbox must not send the prompt (or
-          // split anything): Space toggles it, Enter does nothing.
           if (event.key === "Enter" && event.target instanceof HTMLInputElement) {
             event.preventDefault();
             return true;
           }
-          // Inside a fence Tab belongs to the code, not to the composer's
-          // focus order or its autocomplete.
           if (
             event.key === "Tab" &&
             !event.metaKey &&
@@ -1276,12 +1253,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               view.dispatch(tr),
             );
           }
-          // A fence is multi-line by definition, so Enter and Shift+Enter
-          // belong to the code rather than to sending or splitting: inside a
-          // block they make a line (a generic split would cut the fence in
-          // two), and on a line that is only an opening fence they open the
-          // block. Sending from inside a fence is still Cmd/Ctrl+Enter, which
-          // falls through.
           if (
             event.key === "Enter" &&
             richText &&
@@ -1331,8 +1302,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               return true;
             }
             return splitBlockKeepMarks(view.state, (tr) => {
-              // The split is programmatic, so the browser won't follow the
-              // caret into view on its own.
               view.dispatch(tr.scrollIntoView());
             });
           }
@@ -1418,9 +1387,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             : pastedPathQueryLength(lineBefore, text, isPathQueryActiveRef.current?.());
           const editorInstance = editorHolder.current;
           if (editorInstance) {
-            // Inside a list item or quote, pasted block markup has nowhere to
-            // go: it stays literal lines the next rebuild reads back. Inline
-            // marks still apply.
             const $paste = view.state.selection.$from;
             const nested = ["listItem", "taskItem", "blockquote"].some((name) =>
               hasAncestor($paste, name),
@@ -1430,8 +1396,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               skillLabelFor,
               { styling: richText, blocks: !nested, literalText, literalLength },
               (content) => {
-                // Tagged on the same transaction insertContent builds, so the
-                // paste is one undo step of its own.
                 editorInstance
                   .chain()
                   .command(({ tr }) => {
@@ -1631,9 +1595,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       // ProseMirror resyncs it 20ms later, and dictation tools type fast
       // enough to land keys there, ahead of the text already inserted.
       editor.view.focus();
-      // A newer prompt is waiting to be applied (a chip was just inserted
-      // through the store). Reporting the editor's stale text now would
-      // overwrite that prompt; the pending rewrite places the caret instead.
       if (snapshotRef.current.value !== latestValueRef.current) return;
       const boundedCursor = clampEditorCursor(snapshotRef.current.value, nextCursor);
       const map = serializeEditorDoc(editor.state.doc);

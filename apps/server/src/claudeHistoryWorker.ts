@@ -1,9 +1,8 @@
 import { forkSession, getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
 import * as Schema from "effect/Schema";
 
-// A separate process gives SDK history helpers the provider's environment without
-// mutating the server's environment. Nothing here may run on import: inside the
-// executable `import.meta.main` is true for the whole bundle.
+// Nothing here may run on import: inside the executable `import.meta.main` is
+// true for the whole bundle.
 const decodeHistoryOptions = Schema.decodeSync(
   Schema.fromJsonString(
     Schema.Struct({

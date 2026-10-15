@@ -99,12 +99,6 @@ function importedPaths(
   return imported;
 }
 
-/**
- * Kahn's, but every step takes the lowest remaining path rather than any ready node, so the
- * same change always reads the same way and files of one directory stay together. A cycle
- * leaves nothing ready: the lowest path still standing is taken anyway, which is the
- * alphabetical order the tier would have had without a graph.
- */
 function orderByImports(
   paths: ReadonlyArray<string>,
   imports: ReadonlyMap<string, ReadonlySet<string>>,
@@ -128,10 +122,6 @@ function testedBaseName(path: string): string {
   return (path.split("/").at(-1) ?? "").replace(/\.(?:test|spec)\..*$/, "").replace(/\.[^.]+$/, "");
 }
 
-/**
- * Diff files in reading order: source in dependency order, then the tests that cover it, then
- * whatever a tool wrote.
- */
 export function orderDiffFiles(
   files: ReadonlyArray<FileDiffMetadata>,
 ): ReadonlyArray<FileDiffMetadata> {

@@ -692,10 +692,7 @@ function WebhookEndpointField({
     const confirmed =
       (await requestConfirmDialog("Rotate this webhook URL?\nThe current URL stops working.", {
         variant: "destructive",
-      })) ??
-      // No themed dialog host is mounted; fall back to the native prompt
-      // rather than rotating unasked.
-      window.confirm("Rotate this webhook URL? The current URL stops working.");
+      })) ?? window.confirm("Rotate this webhook URL? The current URL stops working.");
     if (!confirmed) return;
     setRotating(true);
     const result = await rotate({ environmentId, input: { id: task.id } });
@@ -745,10 +742,6 @@ function WebhookEndpointField({
   );
 }
 
-/**
- * The setting is per environment and only readable for this machine's own
- * environment, so other environments show nothing.
- */
 function WebhookDeliveryMode({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const cloudLink = usePrimaryCloudLinkState();
   if (cloudLink.target?.environmentId !== environmentId || cloudLink.data === null) return null;
@@ -809,15 +802,11 @@ function ScheduledTaskEditorDialog({
     draft.editingId !== null &&
     tasksQuery.data !== null &&
     !tasksQuery.data.tasks.some((entry) => entry.id === draft.editingId);
-  // The live row, so a rotated URL shows up without reopening the dialog.
-  // Once the list has loaded, a missing task is gone; don't keep showing its URL.
   const liveTask = tasksQuery.data
     ? (tasksQuery.data.tasks.find((entry) => entry.id === draft.editingId) ?? null)
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
-  // The task runs in selectedProject, so its model picker should reflect that
-  // project's effective enablement, not just the machine's.
   const instanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
@@ -830,8 +819,6 @@ function ScheduledTaskEditorDialog({
     [providers, settings, selectedProject?.id],
   );
 
-  // The real model picker is keyed by a `${instanceId}:${model}` string, which
-  // is exactly how the draft stores its selection.
   const firstInstance = instanceEntries[0];
   const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
   const activeSelection =
@@ -906,8 +893,6 @@ function ScheduledTaskEditorDialog({
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
-    // Keep the original selection object (with provider options) when the
-    // picker still points at the same instance+model.
     const modelSelection =
       draft.baseModelSelection !== null &&
       draft.baseModelSelection.instanceId === selection.instanceId &&

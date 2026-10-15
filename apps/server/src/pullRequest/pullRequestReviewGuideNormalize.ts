@@ -14,7 +14,6 @@ interface FileHunks {
 }
 
 export interface ReviewGuideChange {
-  /** Every changed path, in diff order, named as `git diff --name-only` names it. */
   readonly files: ReadonlyArray<string>;
   readonly hunks: ReadonlyMap<string, FileHunks>;
 }
@@ -26,11 +25,6 @@ const hunkRange = (start: string, count: string | undefined): LineRange | null =
   return lines === 0 ? null : { start: Number(start), end: Number(start) + lines - 1 };
 };
 
-/**
- * Reads `git diff --name-only -z` and `git diff --unified=0` of the same range. Hunks are keyed
- * by the new path, or the old one for a deleted file, so both sides of a renamed file sit under
- * the name the model sees in `--stat`.
- */
 export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewGuideChange {
   const hunks = new Map<string, FileHunks>();
   let oldPath: string | null = null;
@@ -109,11 +103,6 @@ function mergeExcerpts(
 
 const nonEmpty = (value: string) => value.trim() !== "";
 
-/**
- * A model's line numbers and ids are suggestions: excerpts are clamped to changed lines, notes
- * must sit inside what is left, and any changed file the tour skipped lands in a closing skim
- * stop.
- */
 export function normalizeReviewGuide(
   guide: ReviewGuideGenerationResult,
   change: ReviewGuideChange,
@@ -151,8 +140,6 @@ export function normalizeReviewGuide(
       };
     });
 
-  // A file can be excerpted in several stops, its shape in one and its implementation in another.
-  // A files entry is for a file the tour never shows, so it is listed once and only then.
   const placed = new Set(shaped.flatMap((stop) => stop.excerpts.map((excerpt) => excerpt.path)));
   const stops = shaped.map((stop) => {
     const files = stop.files.filter((file) => !placed.has(file.path));

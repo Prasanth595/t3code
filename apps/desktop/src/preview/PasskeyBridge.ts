@@ -203,14 +203,10 @@ const abortReason = (signal: AbortSignal) =>
   signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
 
 /**
- * Routes this page's WebAuthn ceremonies to the system passkey sheet through
- * the main process, which supplies the frame's real origin. Runs in the page's
- * own world (the preview preload has contextIsolation off), before any page
- * script. Conditional (autofill and automatic upgrade) requests stay native:
- * the system sheet is modal and must not open on its own.
+ * Conditional (autofill and automatic upgrade) requests stay native: the system
+ * sheet is modal and must not open on its own.
  */
 export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
-  // Insecure contexts have no WebAuthn to bridge.
   if (typeof CredentialsContainer === "undefined" || typeof PublicKeyCredential === "undefined") {
     return;
   }
@@ -228,7 +224,6 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
           ? credentialFromCreateResult(result.data)
           : credentialFromGetResult(result.data);
       },
-      // No handler yet (or any more) for this guest: answer like a refusal.
       (error: unknown) => {
         throw error instanceof DOMException || error instanceof TypeError
           ? error

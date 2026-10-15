@@ -239,8 +239,6 @@ describe("mobile SQLite environment cache store", () => {
       expect(DateTime.formatIso(shell.threads[0]!.titleRegeneration!.startedAt)).toBe(
         "2026-07-29T12:00:00.000Z",
       );
-      // Working and unsettled threads are exactly what a backgrounded app
-      // caches; a decode failure here discards the whole shell on relaunch.
       expect(DateTime.formatIso(shell.threads[0]!.activityRunStartedAt!)).toBe(
         "2026-07-29T12:00:00.000Z",
       );
@@ -323,7 +321,6 @@ describe("mobile SQLite environment cache store", () => {
 
       const shell = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
       expect(shell.threads.map((thread) => thread.id)).toEqual([THREAD_ID, readable.id]);
-      // Only the thread with the unreadable link loses its links.
       expect([...(yield* shell.loadPullRequests!)]).toEqual([[readable.id, [link]]]);
       expect(messages).toHaveLength(1);
       expect(memory.removed).toEqual([]);
@@ -410,7 +407,6 @@ describe("mobile SQLite environment cache store", () => {
 });
 
 describe("cooperative shell cache encoding", () => {
-  // A fresh encoder per call keeps these cases cold; the cache has its own cases below.
   const encodeStoredShellSnapshot = (stored: typeof StoredOrchestrationShellSnapshot.Type) =>
     makeStoredShellSnapshotEncoder()(stored);
   const encodeOriginal = Schema.encodeEffect(
@@ -521,7 +517,6 @@ describe("cooperative shell cache encoding", () => {
             })),
           },
         });
-        // Five row chunks (3 active + 2 archived): four yields between them, one before the envelope.
         expect(setTimer).toHaveBeenCalledTimes(5);
       } finally {
         vi.restoreAllMocks();
@@ -606,7 +601,6 @@ describe("cooperative shell cache encoding", () => {
 
       const setTimer = vi.spyOn(globalThis, "setTimeout");
       try {
-        // Same row references, new envelope: no row work, so no host yields.
         const resaved = {
           ...stored,
           snapshot: { ...stored.snapshot, snapshotSequence: 4 },
@@ -658,7 +652,6 @@ describe("cooperative shell cache encoding", () => {
       };
       expect(yield* Effect.isFailure(encode(invalid))).toBe(true);
       expect(yield* Effect.isFailure(encode(invalid))).toBe(true);
-      // Valid rows from the failed save still encode correctly afterwards.
       expect(yield* encode(stored)).toBe(yield* encodeOriginal(stored));
     }),
   );

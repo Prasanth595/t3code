@@ -98,8 +98,6 @@ export function deriveThreadRelationshipGraph(input: {
     for (const subagent of input.projection.subagents) {
       if (subagent.childThreadId === null) continue;
       const child = threadsById.get(subagent.childThreadId);
-      // The row describes the child conversation, including queued follow-ups
-      // and their outcomes. A child without an app run still uses its task.
       addEdge({
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
@@ -194,7 +192,6 @@ export function isParentThreadRelationship(
   return edge.kind !== "transfer" && edge.targetThreadId === currentThreadId;
 }
 
-/** An incoming parent row shows its own activity, not the child's edge status. */
 export function threadRelationshipRowStatus(
   graph: ThreadRelationshipGraph,
   row: Pick<ThreadRelationshipWalkRow, "threadId" | "edge">,
@@ -207,8 +204,6 @@ export function threadRelationshipRowStatus(
 }
 
 function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number | null {
-  // `createdAt` is typed as a DateTime, but the value reaches here from a
-  // decoded shell that may be missing (a related thread we have no shell for).
   const createdAt: unknown = node?.thread?.createdAt;
   if (!DateTime.isDateTime(createdAt)) return null;
   const millis = DateTime.toEpochMillis(createdAt);
@@ -221,9 +216,6 @@ function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number
  * only then falls back to newest-created-first. Mobile does not share that
  * exception, so this is not the canonical relationship order and should not be
  * reused as one.
- *
- * Ordering below the pins is `createdAt` descending, which is immutable, so
- * rows never move when messages or status changes arrive on a related thread.
  */
 export function orderWebThreadLineageRows(input: {
   readonly graph: ThreadRelationshipGraph;

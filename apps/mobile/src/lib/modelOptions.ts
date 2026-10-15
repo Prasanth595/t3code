@@ -55,13 +55,6 @@ function providerDisplayLabel(provider: {
   return provider.instanceId;
 }
 
-/**
- * `provider.enabled` reflects the machine plus any project's keep-alive
- * override, so it alone can't tell this project apart from one that merely
- * shares the instance. Settings carry the real per-project view the server
- * itself enforces, so a project with no override of its own must resolve
- * from there, not from a snapshot another project may be keeping alive.
- */
 function isProviderEnabledForProject(
   config: T3ServerConfig | null | undefined,
   provider:
@@ -180,11 +173,6 @@ export function describeUnavailableModelSelection(
       };
 }
 
-/**
- * Keep Antigravity selections when setup or catalog changes make them unavailable. Other
- * providers fall through to the server default when they are disabled, missing, or signed out.
- * Without config, keep stored selections.
- */
 export function resolveSelectableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
@@ -209,10 +197,6 @@ export function resolveSelectableModelSelection(
     : null;
 }
 
-/**
- * Reject legacy models for implicit defaults, except Antigravity selections, which must not
- * silently change after a catalog update. Explicit picks in the settings sheet are unaffected.
- */
 export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,

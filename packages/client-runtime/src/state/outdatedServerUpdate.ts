@@ -24,10 +24,6 @@ export interface OutdatedServerUpdateTarget {
   readonly fromVersion?: string;
 }
 
-/**
- * Progress lands in the same per-environment update state as a normal server
- * update.
- */
 export function createOutdatedServerUpdateCommand<E>(
   runtime: Atom.AtomRuntime<
     | EnvironmentRegistry.EnvironmentRegistry

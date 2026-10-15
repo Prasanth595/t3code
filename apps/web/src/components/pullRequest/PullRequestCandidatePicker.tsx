@@ -50,16 +50,13 @@ export function PullRequestCandidatePicker<T>({
   searchLabel: string;
   isPending: boolean;
   error: string | null;
-  /** Already narrowed by the query; the shell only decides which state to show. */
   candidates: ReadonlyArray<T>;
   emptyLabel: string;
   noMatchLabel: string;
   errorLabel: string;
-  /** The host has more than the read asked for, so a name missing here may still be askable. */
   truncated: boolean;
   truncatedLabel: string;
   candidateKey: (candidate: T) => string;
-  /** Every row locks while one change is in flight, so a second press cannot race the first. */
   disabled: boolean;
   onSelect: (candidate: T) => void;
   children: (candidate: T) => ReactNode;
@@ -143,8 +140,6 @@ export function PullRequestCandidatePicker<T>({
             ))
           )}
           {truncated ? (
-            // Typing filters what arrived; it does not ask the host again, so this says what the
-            // list is rather than offering a search that would find nothing further.
             <p className="px-2 py-1.5 text-xs text-muted-foreground">{truncatedLabel}</p>
           ) : null}
         </ComboboxList>

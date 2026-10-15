@@ -106,10 +106,6 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
   return useRemoteOpenResolution(environmentId).state;
 }
 
-/**
- * Editors offered in remote-link mode. The desktop app probes the machine the
- * renderer runs on; a browser cannot, so it offers VS Code only.
- */
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
@@ -150,11 +146,9 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
 }
 
 /**
- * In desktop, route through the Electron shell so the OS handler opens without navigating the
- * renderer; in a browser, assign the location — unlike window.open this does not leave a blank
- * tab behind. Resolves false when the desktop shell refused the URL (e.g. an older build whose
- * protocol allowlist predates editor schemes) so callers do not record a successful open that
- * never happened.
+ * Resolves false when the desktop shell refused the URL (e.g. an older build whose protocol
+ * allowlist predates editor schemes) so callers do not record a successful open that never
+ * happened.
  */
 export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   const bridge = window.desktopBridge;
@@ -169,11 +163,6 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   return true;
 }
 
-/**
- * One-time "you need SSH keys on that machine" hint, shown in the picker menu
- * until the first remote open fires (we cannot observe SSH success from here,
- * so first click is the dismiss signal).
- */
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";
 
 export function useRemoteOpenHint(): readonly [seen: boolean, markSeen: () => void] {

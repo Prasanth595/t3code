@@ -165,7 +165,6 @@ export function UsagePage() {
       return { partial: true, everyProvider: true, providers: new Set<UsageProviderKind>() };
     }
     const state = usageLoadingState(selectedEnvironments, refreshingUsage);
-    // A hidden provider still refreshing must not add its row or mute the totals.
     const providers = new Set([...state.providers].filter((p) => !hiddenProviders.has(p)));
     return {
       partial: state.everyProvider || providers.size > 0,
@@ -371,7 +370,6 @@ export function UsagePage() {
     if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
   }, [showingLimits, connectedLimitsEnvironments]);
 
-  // Names the period on screen, which is the previous one until the new one answers.
   const windowLabel =
     shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone)} to ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone)}`
@@ -426,8 +424,6 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        {/* The period does not apply to Limits, so it stays in place but
-            disabled; unmounting it shifted the metric toggle ~300px. */}
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
@@ -1150,7 +1146,6 @@ function ProviderMark({
   );
 }
 
-/** The delay keeps a quick answer from flashing. */
 function figureClass(loading: boolean) {
   return cn("transition-opacity", loading && "opacity-40 delay-150");
 }
@@ -1176,7 +1171,6 @@ function Metric({
   );
 }
 
-/** Shown inside the environment filter so arriving results do not move the page. */
 function UsageCoverageNotice({
   environments,
   duplicateSources,

@@ -39,10 +39,6 @@ const toBrowserDefaults = (settings: {
     appearance: settings.browserDefaultAppearance,
     autoShowFloatingPreview: settings.browserAutoShowFloatingPreview,
     profiles,
-    // Incognito is a per-tab choice, not a default: a profile that discards
-    // everything on close would leave every new tab signed out. Excluding it
-    // here keeps the resolved default equal to what the settings list offers,
-    // so the row badged "Default" is the one tabs actually open under.
     profileId:
       profiles.find(
         (profile) =>
@@ -70,21 +66,12 @@ export function useBrowserDefaults(): BrowserDefaults {
   return useClientSettings(toBrowserDefaults);
 }
 
-/**
- * Passing these at creation rather than after registration keeps the guest from
- * painting a frame at 100%/system first.
- */
 export function browserDefaultTabState(
   defaults: BrowserDefaults = getBrowserDefaults(),
 ): DesktopPreviewTabDefaults {
   return { zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance };
 }
 
-/**
- * The viewport a *newly opened* tab should start at. Sent with `preview.open`
- * so the session is born at the configured size instead of being resized a
- * frame later, which the user would see as a visible reflow.
- */
 export function browserDefaultOpenViewport(
   defaults: BrowserDefaults = getBrowserDefaults(),
 ): PreviewViewportSetting {

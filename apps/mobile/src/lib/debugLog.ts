@@ -1,14 +1,9 @@
-/**
- * (client-runtime cannot host this: its tooling bans `console.*` in favor of Effect logging.)
- */
-
 export interface DebugLogger {
   readonly isEnabled: () => boolean;
   readonly log: (event: string, data?: Record<string, unknown>) => void;
 }
 
 export interface DebugLoggerOptions {
-  /** Log whenever `__DEV__` is true, without the global filter. Defaults to false. */
   readonly enabledInDev?: boolean;
   readonly legacyGlobalFlag?: string;
 }

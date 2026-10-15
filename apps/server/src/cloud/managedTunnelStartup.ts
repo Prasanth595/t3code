@@ -36,8 +36,6 @@ export function managedTunnelStartupAction(input: {
   return { action: "none" };
 }
 
-// After this window the host can start its stored connector config while
-// registration keeps retrying to reconcile the origin when the relay returns.
 const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
 
 export const retryManagedTunnelRegistration = <A, E, R>(

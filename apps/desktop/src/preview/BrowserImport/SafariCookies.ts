@@ -10,7 +10,6 @@ const APPLE_EPOCH_OFFSET_SECONDS = 978_307_200;
 
 /** `u32 0x00000100`, `u32le cookieCount`, then one `u32le` offset per cookie. */
 const COOKIE_PAGE_HEADER_SIZE = 12;
-/** Through the `f64 creation` field; string bytes follow. */
 const COOKIE_RECORD_HEADER_SIZE = 56;
 
 const FLAG_SECURE = 0x1;
@@ -24,7 +23,6 @@ export class SafariCookieReadError extends Schema.TaggedError<SafariCookieReadEr
   {
     reason: SafariCookieReadFailure,
     cookieDatabasePath: Schema.optional(Schema.String),
-    /** Kept for the log; never surfaced to the user. */
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -104,8 +102,6 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
       const valueOffset = cookie.readUInt32LE(28);
       const expiry = cookie.readDoubleLE(40);
 
-      // Offsets are relative to the record; one pointing outside it would
-      // otherwise read a neighbouring cookie's bytes as this one's value.
       if (
         [urlOffset, nameOffset, pathOffset, valueOffset].some(
           (offset) => offset < COOKIE_RECORD_HEADER_SIZE || offset >= cookie.length,
@@ -171,10 +167,7 @@ export const isPermissionDenied = (error: PlatformError.PlatformError): boolean 
  * `stat` succeeds on the jar inside Safari's container even without Full Disk
  * Access — that is what lets the listing find it — so presence alone cannot
  * tell granted from denied.
- *
- * Opening it for read is what TCC gates: EPERM means the grant is missing.
- * Anything else (including a missing jar) is not a permission answer.
- */
+ * */
 export const safariAccessDenied = Effect.fnUntraced(function* (cookiePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.open(cookiePath, { flag: "r" }).pipe(
@@ -184,7 +177,6 @@ export const safariAccessDenied = Effect.fnUntraced(function* (cookiePath: strin
   );
 });
 
-/** A missing or unreadable jar is never evidence that access was granted. */
 export const safariAccessGranted = Effect.fnUntraced(function* (cookiePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.open(cookiePath, { flag: "r" }).pipe(

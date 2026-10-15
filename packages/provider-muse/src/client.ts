@@ -8,7 +8,6 @@ export const museClient = defineProviderClient({
   label: "Muse Code",
   settingsSchema: MuseSettings,
   badgeLabel: "Beta",
-  // Meta's symbol (https://commons.wikimedia.org/wiki/File:Meta_Platforms_Inc._logo_(cropped).svg).
   icon: {
     viewBox: "0 0 287.56 191",
     fill: { light: "#0081fb", dark: "#0081fb" },

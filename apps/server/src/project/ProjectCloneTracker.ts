@@ -30,18 +30,9 @@ import * as Stream from "effect/Stream";
 
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 
-/**
- * Snapshots are memory only. A done clone is dropped after a short grace
- * window; a failed one stays until it is retried or the server restarts, since
- * the empty project is the durable record the user can act on.
- */
 export class ProjectCloneTracker extends Context.Service<
   ProjectCloneTracker,
   {
-    /**
-     * Fails before creating anything when the destination or repository is
-     * unusable so the caller can report it inline.
-     */
     readonly start: (
       input: ProjectCloneStartInput,
       hooks: ProjectCloneHooks,
@@ -58,15 +49,10 @@ export class ProjectCloneTracker extends Context.Service<
      */
     readonly discard: (projectId: ProjectId) => Effect.Effect<void>;
     readonly get: (projectId: ProjectId) => Effect.Effect<ProjectCloneSnapshot | null>;
-    /** Emits every tracked clone first, then the full list after each change. */
     readonly stream: Stream.Stream<ReadonlyArray<ProjectCloneSnapshot>>;
   }
 >()("t3/project/ProjectCloneTracker") {}
 
-/**
- * The tracker never depends on the engine directly: the WebSocket handler
- * dispatches with the client's origin, and the tracker only needs the outcome.
- */
 export interface ProjectCloneHooks {
   readonly createProject: (input: {
     readonly projectId: ProjectId;
@@ -80,7 +66,6 @@ export interface ProjectCloneHooks {
   }) => Effect.Effect<void>;
 }
 
-/** Finished snapshots stay visible this long so a late subscriber sees the outcome. */
 const DONE_RETENTION = "30 seconds";
 
 function clampText(text: string, maxLength: number): string {
@@ -108,7 +93,6 @@ export const make = Effect.gen(function* () {
   const changes = yield* PubSub.unbounded<ReadonlyArray<ProjectCloneSnapshot>>();
   const retentionFibers = new Map<ProjectId, Fiber.Fiber<unknown, never>>();
   let sequence = 0;
-  // Clone fibers outlive the RPC that started them but not the server.
   const cloneScope = yield* Scope.make("parallel");
   yield* Effect.addFinalizer(() => Scope.close(cloneScope, Exit.void));
   // start/cancel/retry/discard mutate the same entry and the same directory;
@@ -334,7 +318,6 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* Fiber.interrupt(tracked.fiber!);
           const after = yield* get(projectId);
-          // Git finished in the window before the interrupt landed: keep it.
           if (after?.phase === "done") return;
           if (after?.phase === "running") yield* finish(projectId, "cancelled", null);
           yield* repositories.discardClone(tracked.input.destinationPath).pipe(Effect.ignore);
@@ -353,8 +336,6 @@ export const make = Effect.gen(function* () {
       ) {
         return false;
       }
-      // A retry into leftover files would fail on the non-empty destination
-      // with a less useful message, so a cleanup failure is the error here.
       yield* repositories.discardClone(tracked.input.destinationPath);
       const startedAt = yield* nowIso;
       yield* modify(projectId, (entry) => ({
@@ -390,8 +371,6 @@ export const make = Effect.gen(function* () {
       yield* remove(projectId);
     });
 
-  // One-slot sliding mailbox per subscriber: a slow socket only ever holds the
-  // newest list, and lists are whole states so skipping intermediates is safe.
   const stream: ProjectCloneTracker["Service"]["stream"] = Stream.callback<
     ReadonlyArray<ProjectCloneSnapshot>
   >(
@@ -422,10 +401,9 @@ export const make = Effect.gen(function* () {
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
 /**
- * A project whose clone has not landed has no files to work in. Every
- * dispatch transport (WebSocket, HTTP) runs this before normalizing so no
- * client can start a thread on an empty tree, and no attachment copies are
- * made for a command that is about to be refused.
+ * Every dispatch transport (WebSocket, HTTP) runs this before normalizing so no
+ * client can start a thread on an empty tree, and no attachment copies are made
+ * for a command that is about to be refused.
  */
 export const rejectCommandsDuringClone = (
   tracker: ProjectCloneTracker["Service"],

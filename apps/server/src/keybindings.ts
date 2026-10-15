@@ -96,11 +96,6 @@ function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): bool
   );
 }
 
-// Default rules added to a command after startup sync had already persisted
-// that command. Backfill skips commands a config already has, so startup adds
-// each rule once per config, only next to the untouched earlier default
-// (`alongside`), and records its id. Customized commands and later removals
-// stay as the user set them.
 const LATE_DEFAULT_KEYBINDINGS: ReadonlyArray<{
   readonly id: string;
   readonly alongside: KeybindingRule;
@@ -221,16 +216,8 @@ function invalidEntryIssue(index: number, detail: string): ServerConfigIssue {
 export class Keybindings extends Context.Service<
   Keybindings,
   {
-    /**
-     * Safe to call multiple times. The first successful call establishes the
-     * runtime; later calls await the same startup.
-     */
     readonly start: Effect.Effect<void, KeybindingsConfigError>;
 
-    /**
-     * Readiness means the config directory exists, the watcher is attached, the
-     * startup sync has completed, and the current snapshot has been loaded.
-     */
     readonly ready: Effect.Effect<void, KeybindingsConfigError>;
 
     readonly syncDefaultKeybindingsOnStartup: Effect.Effect<void, KeybindingsConfigError>;
@@ -446,7 +433,6 @@ const make = Effect.gen(function* () {
     })),
   );
 
-  // A failed read is not kept: the next read retries instead of replaying the failure.
   const resolvedConfigCache = yield* Cache.makeWith<
     typeof resolvedConfigCacheKey,
     KeybindingsConfigState,
@@ -571,7 +557,6 @@ const make = Effect.gen(function* () {
       if (defaultsToAppend.length > 0) {
         yield* writeConfigAtomically([...defaultsToAppend, ...customConfig]);
       }
-      // A late default skipped at max entries stays pending for a later start.
       const settledLateDefaults = pendingLateDefaults.filter(
         (late) => !skippedDefaults.includes(late.rule),
       );
@@ -603,7 +588,6 @@ const make = Effect.gen(function* () {
 
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
-    // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
     // `fs.watch` can fire before the content has been flushed to disk.
     const debouncedKeybindingsEvents = fs.watch(keybindingsConfigDir).pipe(

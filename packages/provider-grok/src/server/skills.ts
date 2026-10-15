@@ -75,10 +75,6 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-/**
- * Callers that need best-effort discovery can recover this effect to an empty list; workspace
- * callers leave failures typed so they are not cached.
- */
 export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
   grokSettings: Pick<GrokSettings, "binaryPath">,
   environment: NodeJS.ProcessEnv = process.env,

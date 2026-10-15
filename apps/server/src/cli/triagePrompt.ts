@@ -1,10 +1,6 @@
 /**
  * `TRIAGE_PLAYBOOK` must stay byte-identical to `.github/triage/PLAYBOOK.md`
- * (only backticks and backslashes are escaped here). Agents fetch that file
- * from `main` and
- * follow it when it differs, so old releases pick up playbook edits without a
- * release; this copy is the offline fallback. `triagePrompt.test.ts` fails
- * when the two drift.
+ * (only backticks and backslashes are escaped here).
  */
 
 export const TRIAGE_PLAYBOOK = `# T3 Code triage playbook

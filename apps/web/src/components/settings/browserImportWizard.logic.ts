@@ -66,7 +66,6 @@ export type WizardStep =
     }
   | { readonly step: "blocked"; readonly reason: BrowserImportFailureReason };
 
-/** The import owns its target partition until the write finishes. */
 export function canCloseWizard(step: WizardStep): boolean {
   return step.step !== "importing";
 }
@@ -93,8 +92,6 @@ export function outcomeToStep(outcome: ImportOutcome): WizardStep {
   }
   if (outcome.reason === "browserRunning") return { step: "quit" };
   if (outcome.reason === "needsFullDiskAccess") {
-    // The failed import already checked access, so explain that it is still
-    // denied instead of returning to an indistinguishable permission screen.
     return { step: "fullDiskAccess", resume: "import", checked: true };
   }
   return { step: "blocked", reason: outcome.reason };
@@ -120,13 +117,6 @@ export function refreshedSourceProfileDirectory(
   return source.profiles[0]?.directory ?? "";
 }
 
-/**
- * Whether retrying could clear a failure. The keychain prompt can be approved
- * on a second try, a missing key appears once the user signs in to the
- * browser (which is what its copy asks for), and a read or session error may
- * be transient; an unsupported browser will not change, so it gets no retry
- * button.
- */
 export function isRetryableReason(reason: BrowserImportFailureReason): boolean {
   switch (reason) {
     case "needsKeychainApproval":

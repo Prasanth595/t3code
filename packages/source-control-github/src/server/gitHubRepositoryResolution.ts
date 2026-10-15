@@ -21,10 +21,9 @@ export function parseFetchRemotes(
 }
 
 /**
- * The repository `gh pr list` reads in a checkout, picked the way gh picks one without a
- * prompt: the remote `gh repo set-default` marked, else the first of upstream, github, origin
- * (in any case), else the only remote. `remotes` is `git remote -v` output and `resolved` is the output of
- * `git config --get-regexp '^remote\..*\.gh-resolved$'`.
+ * The repository `gh pr list` reads in a checkout, picked the way gh picks one without a prompt: the
+ * remote `gh repo set-default` marked, else the first of upstream, github, origin (in any case), else
+ * the only remote.
  *
  * Null whenever gh might weigh the remotes differently: a remote on another host or under an SSH alias,
  * more than one mark, or several remotes with none of those names.
@@ -109,7 +108,6 @@ export function resolveGitHubRepository(input: {
   return { host, locator: null };
 }
 
-/** `owner/name` or `host/owner/name`, as `gh --repo` and GH_REPO take them. */
 export function parseGitHubRepositorySelector(
   selector: string,
   defaultHost: string,
@@ -133,10 +131,6 @@ export function parseGitHubRepositorySelector(
   return null;
 }
 
-/**
- * A pull request reference the way `gh pr view` takes one: a number (`#7` too), a pull request
- * URL, or a branch name.
- */
 export function parsePullRequestReference(
   reference: string,
 ):
@@ -171,14 +165,12 @@ export function gitHubApiHostForRemote(remoteUrl: string): string | null {
   const provider = detectSourceControlProviderFromRemoteUrl(remoteUrl);
   if (provider === null) return null;
   const host = new URL(provider.baseUrl).host.toLowerCase();
-  // A dotless SSH host is an alias from ~/.ssh/config, never a real API host.
   if (isSshRemoteUrl(remoteUrl) && !host.includes(".")) {
     return host.includes("github") ? "github.com" : null;
   }
   return provider.kind === "github" ? host : null;
 }
 
-/** A caller's host hint, read the way a remote's host is: a dotless alias is not an API host. */
 function apiHostForHint(host: string): string {
   const normalized = host.toLowerCase();
   return !normalized.includes(".") && normalized.includes("github") ? "github.com" : normalized;

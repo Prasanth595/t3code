@@ -41,10 +41,7 @@ const CAPABILITIES: PullRequestCapabilities = {
 /**
  * Bitbucket lets the author of a pull request decline their own with no more than read access,
  * and the permission response says nothing about who opened this one — so withholding the
- * control from the one person entitled to it is the worse of the two mistakes. Asking for a
- * review is left open for the same reason: Bitbucket takes a reviewer set from the author of a
- * pull request as well as from whoever can write, and says nothing here about which of the two
- * this account is.
+ * control from the one person entitled to it is the worse of the two mistakes.
  */
 export function bitbucketViewerPermissions(input: {
   readonly canWrite: boolean;
@@ -61,8 +58,6 @@ export function bitbucketViewerPermissions(input: {
 export function bitbucketProviderFailure(
   error: BitbucketPullRequestApi.BitbucketPullRequestApiError,
 ): PullRequestProviderFailure {
-  // Bitbucket is read over HTTP with credentials from the environment, so there is no tool to be
-  // missing: unusable always means the credentials are absent or refused.
   if (error._tag === "BitbucketResponseError" && error.status === 401) {
     return { reason: "unauthenticated" };
   }
@@ -99,7 +94,6 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
     state: pullRequest.state,
     isDraft: pullRequest.isDraft,
     mergeability: pullRequest.mergeability,
-    // Line counts are a separate read, which only the detail is worth spending on.
     additions: 0,
     deletions: 0,
     createdAt: pullRequest.createdAt,
@@ -151,8 +145,6 @@ export const make = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
 
-    // Bitbucket credentials come from the server's environment rather than a checkout, so the
-    // account is the same whichever workspace asks.
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
@@ -169,8 +161,6 @@ export const make = Effect.gen(function* () {
           Effect.map((batch) => ({
             items: batch.items.map(toChangeRequest),
             truncated: batch.truncated,
-            // Bitbucket is asked for `-updated_on` whether or not it is being carried on from,
-            // so every page it answers is one a cursor can continue.
             continues: true,
           })),
         ),
@@ -189,9 +179,6 @@ export const make = Effect.gen(function* () {
           api.getDiffStat(target),
           recoverRead(api.getMergeability(target), "unknown" as const),
           recoverRead(api.listChecks(target), []),
-          // A permission that could not be read is an unknown one, which is granted: a hidden
-          // Merge leaves someone entitled to it with no way through, and one Bitbucket refuses
-          // at least says why.
           recoverRead(api.getRepositoryPermission(target), true),
         ],
         { concurrency: 5 },
@@ -228,8 +215,6 @@ export const make = Effect.gen(function* () {
       const target = { repository: input.repository, number: input.number };
       return Effect.all(
         [
-          // Reviews ride on the pull request itself, so this inexpensive core read is repeated
-          // here rather than making the core response wait for the conversation endpoints.
           api.getPullRequest(target),
           recoverRead(api.listComments(target), { comments: [], threads: [], truncated: true }),
           recoverRead(api.listCommits(target), []),
@@ -350,7 +335,6 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("replyToThread"))),
 
-    // Never called: `capabilities.reactions` is false, and the service refuses without it.
     setReaction: () =>
       Effect.fail(
         new PullRequestProviderError({

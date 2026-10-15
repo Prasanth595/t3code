@@ -49,9 +49,6 @@ const RawPullRequestSchema = Schema.Struct({
   mergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
   createdBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
   reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawIdentitySchema))),
-  // Required, and required to be non-empty: the wire contract will not carry a change request
-  // without a branch or a created time, so a row missing one is skipped rather than breaking the
-  // response it travels in.
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
   creationDate: TrimmedNonEmptyString,
@@ -94,7 +91,6 @@ const RawThreadSchema = Schema.Struct({
           author: Schema.optional(Schema.NullOr(RawIdentitySchema)),
           publishedDate: Schema.optional(Schema.NullOr(Schema.String)),
           isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
-          /** `system` marks the notes Azure writes itself, which are events, not comments. */
           commentType: Schema.optional(Schema.NullOr(Schema.String)),
         }),
       ),
@@ -128,10 +124,6 @@ export interface AzureDevOpsPullRequest {
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
   readonly createdAt: string;
-  /**
-   * Azure records no last-touched time on a pull request, so the closing time stands in where
-   * there is one and the creation time otherwise.
-   */
   readonly updatedAt: string;
   readonly closedAt: string | null;
   readonly body: string;
@@ -183,10 +175,6 @@ function toMergeability(value: string | null | undefined): PullRequestMergeabili
   }
 }
 
-/**
- * Taken from what Azure returned rather than from the local remote, whose shape
- * differs between the modern, legacy and SSH forms.
- */
 function toLocation(
   raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
 ): AzureDevOpsRepositoryLocation | null {
@@ -311,10 +299,6 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
     : Result.fail(decoded.failure);
 }
 
-/**
- * Azure answers the whole thread collection in one response, with no cursor and no page to
- * follow, so what this returns is everything the host has.
- */
 export function decodeThreadsJson(
   raw: string,
 ): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
@@ -356,11 +340,6 @@ export function decodeThreadsJson(
   );
 }
 
-/**
- * Azure records every push as an iteration and keys the whole review off them: the changed
- * files, and the marks a reader leaves on those files, both hang from an iteration rather
- * than from the pull request.
- */
 const RawIterationSchema = Schema.Struct({
   id: Schema.Int,
   sourceRefCommit: Schema.optional(
@@ -443,11 +422,6 @@ function toRepositoryPath(value: string | null | undefined): string | null {
   return path.length === 0 ? null : path;
 }
 
-/**
- * Azure names a change with one word or two, and a rename arrives either alone or alongside the
- * edit that came with it. Anything it has added since reads as a plain change, which shows the
- * file rather than dropping it from the review.
- */
 function toChangeKind(
   raw: string | null | undefined,
   renamed: boolean,

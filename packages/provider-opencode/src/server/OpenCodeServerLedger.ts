@@ -17,21 +17,12 @@ type ProcessIdentity = typeof ProcessIdentity.Type;
 
 const OpenCodeServerEntry = Schema.Struct({
   version: Schema.Literal(1),
-  /** The spawned group. Its id is the pid T3 spawned, which also names the entry file. */
   pgid: Schema.Int,
-  /**
-   * A group member seen at spawn: the spawned process, or a process it left in
-   * the group if it had already exited. Its pid, start time, and command line
-   * must all still match before the group is signalled.
-   */
   pid: Schema.Int,
-  /** Linux `/proc/<pid>/stat` start ticks, or macOS `ps` lstart (whole seconds). */
   startTime: Schema.String,
   command: Schema.String,
   port: Schema.Int,
-  /** Entries copied along with a state directory are dropped, never acted on. */
   stateDir: Schema.String,
-  /** The T3 server that spawned it. Entries of a live owner are never touched. */
   owner: ProcessIdentity,
 });
 type OpenCodeServerEntry = typeof OpenCodeServerEntry.Type;
@@ -39,17 +30,9 @@ const OpenCodeServerEntryJson = Schema.fromJsonString(OpenCodeServerEntry);
 const decodeEntry = Schema.decodeUnknownOption(OpenCodeServerEntryJson);
 const encodeEntry = Schema.encodeEffect(OpenCodeServerEntryJson);
 
-/**
- * Local `opencode serve` processes run in their own process group so T3 can
- * stop the whole group, which also means they outlive a T3 server that is
- * SIGKILLed or crashes. Each spawn is recorded under the state directory and
- * removed on a graceful stop; the next server start stops whatever a dead
- * server left behind.
- */
 export class OpenCodeServerLedger extends Context.Service<
   OpenCodeServerLedger,
   {
-    /** Records a spawned server group and returns the effect that forgets it after a graceful stop. */
     readonly track: (server: {
       readonly pid: number;
       readonly port: number;
@@ -114,13 +97,11 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = yield* HostProcess.Platform;
   const directory = path.join(input.stateDir, ENTRY_DIRECTORY);
-  // Windows servers are not detached and are never recorded.
   const recordable = platform === "linux" || platform === "darwin";
 
   const observeLinux = (pid: number, group?: number) =>
     Effect.gen(function* () {
       const stat = yield* fs.readFileString(`/proc/${pid}/stat`);
-      // After the parenthesized comm: state, ppid, pgrp, session, … starttime (index 19).
       const fields = stat
         .slice(stat.lastIndexOf(")") + 2)
         .trim()
@@ -166,7 +147,6 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     return Effect.succeed(undefined);
   };
 
-  // Scans every process, so it is only used when the spawned process is gone.
   const observeGroup = (pgid: number): Effect.Effect<ReadonlyArray<ObservedProcess>> => {
     if (platform === "linux") {
       return fs.readDirectory("/proc").pipe(
@@ -317,7 +297,6 @@ export const layer = (input: { readonly stateDir: string }) =>
     OpenCodeServerLedger,
     Effect.gen(function* () {
       const ledger = yield* make(input);
-      // Reaping waits for orphans to exit, so it must not hold up startup.
       yield* ledger.reapOrphans.pipe(Effect.forkScoped);
       return OpenCodeServerLedger.of({ track: ledger.track });
     }),

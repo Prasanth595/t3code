@@ -7,7 +7,6 @@ export interface GuideRunWatch {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly title: string | null;
-  /** The guide and failure on record when the wait began; a different one means the run ended. */
   readonly previousGuideAt: string | null;
   readonly previousFailedAt: string | null;
   readonly since: number;
@@ -23,7 +22,6 @@ const NO_PROGRESS: GuideProgress = { position: 0, seen: new Set() };
 interface GuideRunStoreState {
   readonly watches: Readonly<Record<string, GuideRunWatch>>;
   readonly shownKey: string | null;
-  /** A guide a notice asked to open; its panel switches to the Guide tab and clears this. */
   readonly openRequestKey: string | null;
   readonly progress: Readonly<Record<string, GuideProgress>>;
   readonly setProgress: (key: string, change: (current: GuideProgress) => GuideProgress) => void;
@@ -62,7 +60,6 @@ export const useGuideRunStore = create<GuideRunStoreState>()((set) => ({
   requestOpen: (openRequestKey) => set({ openRequestKey }),
 }));
 
-/** One guide's progress: a new head is a new tour, since its stops are not the ones read. */
 export function guideProgressKey(runKey: string, headSha: string): string {
   return `${runKey}:${headSha}`;
 }

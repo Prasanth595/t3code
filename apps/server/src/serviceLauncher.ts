@@ -33,8 +33,7 @@ import {
 const HANDOFF_DELAY_MS = 2_000;
 /**
  * Migrations and the open-time `PRAGMA optimize` count toward it and scale with the database:
- * tens of GB on a cold page cache take minutes. They run synchronously on the child's main
- * thread, so it cannot report progress meanwhile. A missed window rolls back the database, so
+ * tens of GB on a cold page cache take minutes. A missed window rolls back the database, so
  * the next attempt pays the same cost.
  */
 export const PREPARED_TIMEOUT_MS = 30 * 60_000;
@@ -52,9 +51,6 @@ interface ManagedChild {
   readonly process: NodeChildProcess.ChildProcess;
 }
 
-// Mirrors pinnedRuntimePaths: a runtime is an unpacked release archive whose
-// executable runs on its own. Kept inline so this file stays on Node
-// built-ins only.
 const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
@@ -71,7 +67,6 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
   args: ["serve"],
 });
 
-/** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
 const RESTORE_MARKER = ".restore-pending";
 
@@ -162,16 +157,10 @@ async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.S
 }
 
 /**
- * Whether `copyDatabaseFile` will clone the database into the backup
- * directory rather than copy it.
  * - macOS: `cp -c` clones within one APFS volume and silently copies
  *   anywhere else, so every existing database file must share the backup
  *   directory's device, whose filesystem type must match the system volume's,
  *   which is always APFS.
- * - Linux: clone each existing database file with `cp --reflink=always`,
- *   which fails instead of copying when a file cannot be reflinked (another
- *   filesystem, or a btrfs file marked No_COW), then discard the clones.
- * - Elsewhere: never.
  */
 async function backupCanClone(dbPath: string, backupRoot: string): Promise<boolean> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
@@ -183,9 +172,6 @@ async function backupCanClone(dbPath: string, backupRoot: string): Promise<boole
       NodeFSP.statfs("/"),
     ]);
     if (backupFs.type !== systemFs.type) return false;
-    // A file linked from another volume is caught because `stat` follows
-    // symlinks. A hard-linked file is restored by a full copy, so it needs the
-    // full space.
     return (await statDatabaseFiles(dbPath)).every(
       (source) => source.dev === backupDirectory.dev && source.nlink === 1,
     );
@@ -221,7 +207,7 @@ const filesystemBackupSpaceProbe: BackupSpaceProbe = {
 
 /**
  * Runs before the server is stopped so a full disk refuses the update instead of causing an
- * outage and a cold restart. Throws when the database or the filesystem cannot be inspected.
+ * outage and a cold restart.
  */
 export async function databaseBackupBlocker(
   baseDir: string,
@@ -320,7 +306,6 @@ async function restoreTarget(path: string): Promise<string> {
   throw new Error(`Too many symbolic links resolving ${path}.`);
 }
 
-/** Restore is retryable after any process crash while the backup directory remains. */
 async function restoreDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
@@ -361,7 +346,6 @@ export async function readServiceState(filePath: string): Promise<ServiceState> 
   return state;
 }
 
-/** Durable same-directory replacement used for every runtime state transition. */
 export async function writeServiceState(filePath: string, state: ServiceState): Promise<void> {
   const directory = NodePath.dirname(filePath);
   await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -508,15 +492,10 @@ export class Launcher {
   async stop(signal: NodeJS.Signals): Promise<void> {
     // This must happen synchronously at signal receipt. A queued update
     // transition may already be terminating the active child, and that child
-    // needs to see the marker in its shutdown finalizer. KillMode=mixed also
-    // ensures systemd signals the launcher before the rest of the cgroup, and
-    // launchd signals only the job's main process (this launcher), so the
-    // marker lands before the child sees any signal on both platforms.
+    // needs to see the marker in its shutdown finalizer.
     try {
       NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
-    } catch {
-      // Err toward keeping the tunnel; the next link or unlink reconciles it.
-    }
+    } catch {}
     if (this.#stopRequested || this.#stopping) {
       await this.#completion.promise.catch(() => undefined);
       return;
@@ -576,7 +555,6 @@ export class Launcher {
   }
 
   async #startTrial(pending: PendingServiceUpdate): Promise<void> {
-    // The previous child is dead here, so all three SQLite files are quiescent.
     try {
       await backupDatabaseOnce(this.#baseDir, pending);
     } catch {
@@ -696,8 +674,6 @@ export class Launcher {
       (error: unknown) =>
         `Could not check that the database backup fits before updating: ${error instanceof Error ? error.message : String(error)}. The server was not stopped.`,
     );
-    // The child may have exited during the check. Its queued exit transition
-    // reports that; answering it or recording a pending update would not.
     if (!child.process.connected) return;
     if (backupBlocker !== undefined) {
       await reject(backupBlocker);
@@ -801,10 +777,9 @@ export class Launcher {
   }
 
   /**
-   * Another server owns the T3 home. Exiting would make systemd or launchd
-   * start another refused server, so stay idle until stopped or restarted.
-   * A pending update fails without restoring its backup: the other owner may
-   * have written to the database since.
+   * Exiting would make systemd or launchd start another refused server, so stay
+   * idle until stopped or restarted. A pending update fails without restoring
+   * its backup: the other owner may have written to the database since.
    */
   async #idleWhileStateDirOwned(): Promise<void> {
     this.#clearTimer();

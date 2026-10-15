@@ -35,8 +35,6 @@ function initialConfigOption<E>(
   );
 }
 
-// Bounded so a wedged environment cannot pin the permissions check (and with it
-// the settings UI) in a loading state for long.
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
 
 export const fetchEnvironmentSessionState = Effect.fn(
@@ -122,9 +120,6 @@ function makeEnvironmentSessionAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-prepared-connection:${environmentId}`)),
   );
 
-  // Keyed on the prepared connection's identity: a reconnect (new credential,
-  // new base URL) swaps the prepared value, which re-runs the fetch, so scope
-  // changes from re-pairing are picked up without an explicit refresh.
   const sessionStateAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime
       .atom((get) => {

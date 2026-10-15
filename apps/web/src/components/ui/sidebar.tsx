@@ -458,8 +458,6 @@ function SidebarRail({
         });
       },
     };
-    // Toggling the sidebar cancels a drag so the inline width never pins a
-    // collapsed sidebar open.
   }, String(open));
   React.useLayoutEffect(() => {
     latestResizable.current = resolvedResizable;
@@ -500,8 +498,6 @@ function SidebarRail({
     }
     if (storedWidth === null) return;
     const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
-    // Hydrate the CSS variable before the browser paints so a restored sidebar
-    // never flashes at the default width first.
     wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
     resolvedResizable.onResize?.(clampedWidth);
   }, [resolvedResizable]);
@@ -617,8 +613,6 @@ function SidebarContent({
   return (
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
-      {/* Rows take focus on click. Scroll padding would make the browser nudge
-          the list whenever a focused row sits under the fade. */}
       <ScrollArea
         hideScrollbars
         scrollFade
@@ -630,7 +624,6 @@ function SidebarContent({
         className="h-auto min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:[--fade-size:0.75rem]"
       >
         <div
-          // Reordered rows must not pull the viewport to their new position.
           className={cn(
             "flex w-full min-w-0 flex-col [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden [&>[data-sidebar=group]+[data-sidebar=group]]:pt-0",
             fixedHeader && "[&>[data-sidebar=group]:first-child]:pt-0",

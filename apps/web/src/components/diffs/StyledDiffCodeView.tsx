@@ -212,10 +212,6 @@ type StyledDiffCodeViewProps<LAnnotation> = (
 ) & {
   readonly options?: StyledDiffCodeViewOptions<LAnnotation>;
   readonly viewerRef?: Ref<CodeViewHandle<LAnnotation, undefined>>;
-  /**
-   * Appended to the shared stylesheet inside the viewer's shadow root, for a surface that has
-   * to restyle chrome the viewer owns — such as replacing its per-file line counts.
-   */
   readonly unsafeCSSExtra?: string;
 };
 
@@ -231,8 +227,6 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
       <CodeView<LAnnotation>
         {...props}
         {...(viewerRef ? { ref: viewerRef } : {})}
-        // The custom element itself is focusable for keyboard scrolling. Its native outline sits
-        // outside the panel clipping boundary; actual controls inside retain their own indicators.
         className={
           className
             ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`

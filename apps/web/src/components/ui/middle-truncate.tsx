@@ -2,11 +2,6 @@ import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
 
-/**
- * No measuring and no observers, so it costs the same as `truncate` in a long list and
- * works inside `content-visibility` skipping. Both halves are real text: selection and copy
- * give the whole string, and a screen reader reads it through.
- */
 export function MiddleTruncate({
   value,
   tail,
@@ -16,10 +11,8 @@ export function MiddleTruncate({
   ...props
 }: Omit<ComponentProps<"span">, "children"> & {
   value: string;
-  /** Characters kept at the end. Defaults to the last path segment, capped, or 10. */
   tail?: number;
   showTitle?: boolean;
-  /** Align capital letters with adjacent icons while preserving accents and descenders. */
   variant?: "default" | "cap-aligned";
 }) {
   const split = splitForMiddleTruncate(value, tail);

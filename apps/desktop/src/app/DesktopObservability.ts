@@ -342,10 +342,6 @@ const readPersistedObservabilitySettings: Effect.Effect<
     : parsePersistedServerObservabilitySettings(raw.value);
 });
 
-/**
- * Settings is read once for every signal, so the main process cannot resolve
- * traces against one revision of the file and logs against another.
- */
 const resolveOtlpEndpoints = Effect.gen(function* () {
   const otel = yield* OtelEnvironment.load;
   if (otel.disabled) {
@@ -441,9 +437,6 @@ const backendLogFilePathForInstance = (
 
 // Cacheable by resolved file path so two ids that sanitize to the same filename
 // share a single RotatingLogFileWriter (no race on currentSize tracking).
-// Splitting the sink off from the per-call shape lets the shape annotate writes
-// with the *caller's* id rather than whatever id created the cached writer
-// first.
 const makeBackendOutputSinkForInstance = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   id: string,
@@ -602,8 +595,6 @@ const layerTelemetry = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const endpoints = yield* resolveOtlpEndpoints;
-    // `host.name` keeps machines apart on a shared collector; one set in
-    // `OTEL_RESOURCE_ATTRIBUTES` wins, since explicit attributes override it.
     const resource = {
       serviceName: "t3code-desktop",
       serviceVersion: environment.appVersion,
@@ -681,11 +672,6 @@ const layerTelemetry = Layer.unwrap(
         return Layer.succeed(Tracer.Tracer, tracer);
       }),
     ).pipe(Layer.provide(OtlpExporter.layerFlusher));
-
-    // Metrics stay off until the main process records one. `OtlpMetrics`
-    // exports on every interval even when the registry is empty, so wiring it
-    // up today would post an empty payload every ten seconds to any collector
-    // configured for the backend.
 
     const layerOtelWarnings = Layer.effectDiscard(
       Effect.forEach(endpoints.warnings, (warning) => Effect.logWarning(warning)),

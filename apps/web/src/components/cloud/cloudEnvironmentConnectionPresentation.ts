@@ -9,10 +9,6 @@ export interface SavedCloudEnvironmentConnectionPresentation {
   readonly tone: "connected" | "connecting" | "error" | "idle";
 }
 
-/**
- * Catalog membership only means the environment is saved; it does not mean the
- * connection attempt succeeded.
- */
 export function presentSavedCloudEnvironmentConnection(
   connection: EnvironmentConnectionPresentation,
 ): SavedCloudEnvironmentConnectionPresentation {

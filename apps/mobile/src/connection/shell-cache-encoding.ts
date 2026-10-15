@@ -28,9 +28,6 @@ const encodeEnvelope = Schema.encodeEffect(
 );
 
 /**
- * The final envelope encode and JSON stringify still run synchronously over the
- * whole payload.
- *
  * Shell rows are immutable and the shell reducer keeps unchanged rows by
  * reference, so each encoder remembers the canonical encoding of rows it has
  * already encoded successfully and only runs the row codec for new rows.

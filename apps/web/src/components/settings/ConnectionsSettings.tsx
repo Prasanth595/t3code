@@ -502,9 +502,7 @@ function endpointDefaultPreferenceKey(endpoint: AdvertisedEndpoint): string {
   let scheme = "unknown";
   try {
     scheme = new URL(endpoint.httpBaseUrl).protocol.replace(/:$/u, "");
-  } catch {
-    // Keep the stored preference stable even if a custom endpoint is malformed.
-  }
+  } catch {}
 
   return `${endpoint.provider.id}:${endpoint.reachability}:${scheme}:${endpoint.label}`;
 }
@@ -639,7 +637,6 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   const revealValue = failedCopyValue ?? shareablePairingUrl ?? credential ?? "";
   const isRevealValueUrl = revealValue !== credential;
   const isRevealValueHostedAppPairingUrl = isRevealValueUrl && isHostedAppPairingUrl(revealValue);
-  // Never render a QR for a loopback URL, even in the manual-copy fallback.
   const isRevealValueQrShareable =
     endpointCopyOptions.find((option) => option.url === revealValue)?.qrShareable ?? true;
   const canCopyToClipboard =
@@ -1453,7 +1450,6 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
         text: connection.error ? `Reconnecting: ${connection.error}` : "Reconnecting",
         tone: "error",
       };
-    // Not a failure: the machine is fine, this build just cannot talk to it.
     case "unsupported":
       return { text: "Client not supported", tone: "muted" };
     case "error":
@@ -1543,7 +1539,6 @@ function SavedBackendListRow({
   if (discoveredDescriptor !== undefined && discoveredDescriptor !== lastDescriptor) {
     setLastDescriptor(discoveredDescriptor);
   }
-  // Held for the same reason as the descriptor, so Copy MCP URL survives a refresh.
   const discoveredRelayHttpBaseUrl =
     relayDiscovery.environments.get(environmentId)?.environment.endpoint.httpBaseUrl;
   const [lastRelayHttpBaseUrl, setLastRelayHttpBaseUrl] = useState(discoveredRelayHttpBaseUrl);
@@ -1832,8 +1827,6 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     setIsUpdating(true);
     const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
     if (ok) {
-      // Turning the tunnel off while publishing stays on downgrades the link
-      // rather than removing it — say so instead of claiming an unlink.
       toastManager.add({
         type: "success",
         title: enabled
@@ -2130,7 +2123,6 @@ export function ConnectionsSettings() {
   const [desktopAccessManagementMutationError, setDesktopAccessManagementMutationError] = useState<
     string | null
   >(null);
-  // Only this client's creation response can supply a shareable credential.
   const [createdPairingCredentials, setCreatedPairingCredentials] = useState<
     ReadonlyMap<string, string>
   >(() => new Map());
@@ -2164,11 +2156,6 @@ export function ConnectionsSettings() {
   const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
   const [desktopWslMutationError, setDesktopWslMutationError] = useState<string | null>(null);
   type PendingWslChange =
-    // wasWslOnly is true when the user picked Off while wsl-only mode
-    // was active. In that case "disable" also clears wsl-only and
-    // relaunches onto the Windows backend, because leaving wsl-only on
-    // with wslBackendEnabled off is a meaningless state (wsl-only is
-    // only honoured when the WSL backend is enabled).
     | { readonly kind: "disable"; readonly wasWslOnly: boolean }
     | { readonly kind: "distro"; readonly nextDistro: string | null }
     | { readonly kind: "enable"; readonly nextDistro: string | null }
@@ -2764,8 +2751,6 @@ export function ConnectionsSettings() {
     [removeEnvironment],
   );
 
-  // Removing forgets the pairing, credentials, and cached threads on this
-  // device. Switching off is the reversible path, so removal always confirms.
   // T3 Connect environments get their own dialog: removing one here leaves its
   // account registration, so it points to where that can be deregistered.
   const [pendingT3ConnectRemoval, setPendingT3ConnectRemoval] =
@@ -2776,7 +2761,6 @@ export function ConnectionsSettings() {
         setPendingT3ConnectRemoval(environment);
         return;
       }
-      // Fail closed: no mounted confirm host means no removal.
       const confirmed = await requestConfirmDialog(
         `Remove ${environment.label} from this device?\nThis forgets its pairing, credentials, and cached threads here. Switch it off instead to keep it saved.`,
         { variant: "destructive" },
@@ -3137,10 +3121,6 @@ export function ConnectionsSettings() {
       try {
         await apply();
         refreshDesktopWslState();
-        // The connection platform source polls the desktop bootstrap list and
-        // reconciles the environment catalog automatically, so toggling the WSL
-        // backend on/off or switching distros is picked up here without an
-        // explicit renderer reconcile.
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to update WSL backend.";
         setDesktopWslMutationError(message);
@@ -3159,16 +3139,11 @@ export function ConnectionsSettings() {
     [desktopBridge, primaryEnvironmentId],
   );
 
-  // Clearing the mutation error before refresh lets the atom-owned load error
-  // become the visible retry state.
   const loadWslState = useCallback(() => {
     setDesktopWslMutationError(null);
     refreshDesktopWslState();
   }, []);
 
-  // We use this as a proxy for "the user has work that lives on the WSL side":
-  // if WSL has connected in a way that registered the env, disabling or
-  // switching distros could disrupt open threads/projects.
   const hasWslRegistrationToLose = useMemo(() => {
     return environments.some((environment) =>
       isDesktopLocalConnectionTarget(environment.entry.target),
@@ -3187,9 +3162,6 @@ export function ConnectionsSettings() {
         // still clear that state instead of silently no-op'ing.
         if (!desktopWslState.enabled && !desktopWslState.wslOnly) return;
         const wasWslOnly = desktopWslState.wslOnly;
-        // Confirm when there's WSL state to lose, OR when wsl-only is
-        // on (turning the only running backend off needs to switch
-        // back to Windows and restart — always consequential).
         if (hasWslRegistrationToLose || wasWslOnly) {
           setPendingWslChange({ kind: "disable", wasWslOnly });
           return;
@@ -3205,10 +3177,6 @@ export function ConnectionsSettings() {
       }
       const resolvedCurrent = desktopWslState.distro ?? defaultDistroName;
       if (resolvedCurrent === resolvedNext) return;
-      // Confirm when there's WSL registration to lose, OR in wsl-only mode:
-      // there the primary IS the WSL backend, so a distro change relaunches
-      // the app (the IPC handler does this) rather than swapping a secondary,
-      // and the user should see that coming.
       if (hasWslRegistrationToLose || desktopWslState.wslOnly) {
         setPendingWslChange({ kind: "distro", nextDistro });
         return;
@@ -3239,8 +3207,6 @@ export function ConnectionsSettings() {
   const handleToggleWslOnly = useCallback(
     (enabled: boolean) => {
       if (!desktopBridge || !desktopWslState || desktopWslState.wslOnly === enabled) return;
-      // wsl-only changes which backend the pool uses as "primary", which is
-      // decided once at app launch.
       setPendingWslChange({ kind: "wsl-only", nextValue: enabled });
     },
     [desktopBridge, desktopWslState],
@@ -3255,7 +3221,6 @@ export function ConnectionsSettings() {
       void applyWslSettingChange(async () => {
         const next = await desktopBridge.setWslBackendEnabled(false);
         if (change.wasWslOnly) {
-          // Clearing wsl-only relaunches onto the Windows backend.
           return await desktopBridge.setWslOnly(false);
         }
         return next;
@@ -3295,10 +3260,6 @@ export function ConnectionsSettings() {
       }
       return null;
     }
-    // The desktop side falls back to the Windows backend, but the normal distro
-    // picker needs a live distro list it no longer has. Without a control here
-    // the user would be stranded on a WSL preference they can't clear, so
-    // render a recovery row that switches back to Windows.
     if (!isWslSettingsRowVisible({ state: desktopWslState, error: desktopWslError })) {
       return null;
     }
@@ -3325,7 +3286,6 @@ export function ConnectionsSettings() {
         />
       );
     }
-    // Distro is null when the user wants the WSL default.
     const defaultDistroName =
       desktopWslState.distros.find((distro) => distro.isDefault)?.name ?? null;
     const selectValue = !desktopWslState.enabled
@@ -3972,7 +3932,6 @@ export function ConnectionsSettings() {
             title="No environment selected"
             description="Connect an environment to view its settings and access."
           />
-          {/* A turned-off local environment leaves no primary environment, so its switch lives here too. */}
           <LocalEnvironmentSetting />
           {canReadRelay || canManageRelay ? (
             <CloudLinkRow canReadRelay={canReadRelay} canManageRelay={canManageRelay} />

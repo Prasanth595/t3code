@@ -50,8 +50,6 @@ const ReleaseIndex = Schema.Array(
 const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
 
 const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
-// Enough to walk past a long run of nightlies without hammering the API when
-// a channel genuinely has nothing published.
 const RELEASE_INDEX_MAX_PAGES = 10;
 
 const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
@@ -113,10 +111,6 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     launcherOwnsVersionsDir(path, input.versionsDir, candidate);
 
   if (platform === "win32") {
-    // The shim runs the executable by absolute path, so the executable sees
-    // itself as argv0; the shim is the `t3.cmd` next to it only when launched
-    // from an install script's bin directory. Find it by searching the
-    // directories that would resolve `t3` on this shell's PATH.
     const shimPath = yield* findWindowsShim(input.launchedAs);
     if (shimPath === undefined) return Option.none<string>();
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
@@ -259,11 +253,6 @@ export const updateCommand = Command.make("update", {
   ),
 );
 
-/**
- * Servers from before `serviceManaged` was recorded cannot be told apart by the file alone, so
- * the launcher-supervised case is also recognised by lineage: a service server's parent is the
- * launcher, and on Linux that launcher runs inside the unit's cgroup.
- */
 const findForegroundServer = Effect.fn("cli.update.find_foreground_server")(function* (input: {
   readonly serverRuntimeStatePath: string;
   readonly serviceInstalled: boolean;
@@ -341,8 +330,6 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);
 
-  // Reaching it from stable or nightly takes an explicit ask and an explicit acknowledgement; the
-  // flag alone is not enough from a script.
   const currentChannel = cliReleaseChannelOf(currentVersion);
   if (targetChannel === "preview" && currentChannel !== "preview") {
     yield* Console.log(
@@ -380,18 +367,8 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     serverRuntimeStatePath: input.serverRuntimeStatePath,
     serviceInstalled,
   });
-  // What this machine runs is the executable behind the launcher and, when a
-  // service is installed for this home, the version that service runs. Either
-  // being stale is an update to do, and the newest of the two is what the
-  // downgrade check protects.
   const serviceVersion = serviceInstalled ? status.installedVersion : undefined;
   const executableCurrent = targetVersion === currentVersion;
-  // A service whose recorded version is missing or unreadable is not known
-  // to be current, so it gets the update rather than being skipped. Nor is
-  // one on the right version that is stopped, disabled, or still running the
-  // version before it (an earlier update where the restart was declined):
-  // `status.current` covers all of that when the target is this executable,
-  // and the problem list is what can be judged for any other target.
   const restartPending = status.problems?.includes("restart-pending") === true;
   const serviceCurrent =
     !serviceInstalled ||

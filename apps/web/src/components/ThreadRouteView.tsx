@@ -136,9 +136,6 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     if (target.kind !== "server" || !bootstrapComplete) {
       return;
     }
-    // Navigation already resolved onto this path, so a drop aimed here
-    // passed its landing check; once the thread reads as missing it can
-    // never be attached, release it even when there is nowhere to redirect.
     if (renderState === "missing") {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);

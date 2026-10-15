@@ -60,7 +60,6 @@ const CommandLookupEnvConfig = Config.all({
 
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
-/** Where the provider executable was found; every path is absolute. */
 export interface ProviderMaintenanceResolutionContext {
   readonly binaryPath: string;
   readonly resolvedCommandPath: string;
@@ -83,14 +82,9 @@ export interface ProviderMaintenanceCapabilitiesResolver {
 export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
-  /**
-   * It runs first for paths its installer owns, and otherwise only when no package manager is
-   * proven, because these updaters detect their installer too.
-   */
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
     readonly isCommandPath?: (commandPath: string) => boolean;
-    /** Environment the native updater needs to target this instance's install. */
     readonly env?: NodeJS.ProcessEnv;
   } | null;
 }
@@ -152,7 +146,6 @@ export function makeProviderMaintenanceCapabilities(input: {
   };
 }
 
-/** Pin only package-manager actions we own, preserving prefix, scripts, env and lock. */
 export function makeTargetedProviderUpdateAction(
   capabilities: ProviderMaintenanceCapabilities,
   version: string,
@@ -229,11 +222,6 @@ function isPnpmGlobalCommandPath(commandPath: string): boolean {
   );
 }
 
-/**
- * Windows global installs have no `lib` segment and are proven by the shim instead (see
- * `resolveNpmGlobalPrefix`). A project-local `node_modules` is not a global install and yields
- * null.
- */
 export function npmGlobalPrefixFromCommandPath(
   realCommandPath: string,
   packageName: string,
@@ -259,7 +247,6 @@ const HOMEBREW_KEG_PATTERN = /^(.*)\/(cellar|caskroom)\/([^/]+)\/[^/]+\//i;
 export interface HomebrewOwnership {
   readonly kind: "formula" | "cask";
   readonly name: string;
-  /** The Homebrew prefix the keg sits under; must match `brew --prefix`. */
   readonly prefix: string;
 }
 
@@ -339,12 +326,6 @@ const runHomebrew = Effect.fn("runHomebrew")(function* (
   );
 });
 
-/**
- * Every package-manager branch has evidence that the named tool owns that path, so T3 Code never
- * runs a package manager against an install it did not create. An unproven install falls back to
- * the provider's own updater, which detects its installer itself, and stays manual-only without
- * one.
- */
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
@@ -438,8 +419,8 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
     // and still exits 0, so a package whose postinstall finishes the install
     // (claude copies its native binary over a placeholder stub) is left broken
-    // while the update reports success. Allow this one package's scripts.
-    // Older npm warns about the unknown config and continues.
+    // while the update reports success. Older npm warns about the unknown
+    // config and continues.
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
@@ -477,8 +458,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     if (!brewPath) {
       return fallback;
     }
-    // A keg-shaped path is only Homebrew's if it sits under the prefix of the
-    // `brew` that would upgrade it; `brew --prefix` is a cheap shell script.
     const brewPrefix = nonEmptyString(yield* runHomebrew(brewPath, ["--prefix"], context.env));
     const realBrewPrefix = brewPrefix
       ? yield* fileSystem.realPath(brewPrefix).pipe(Effect.orElseSucceed(() => brewPrefix))
@@ -546,11 +525,6 @@ const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
   return yield* fileSystem.exists(packageDir).pipe(Effect.orElseSucceed(() => false));
 });
 
-/**
- * POSIX npm links `<prefix>/bin/<cmd>` into the package, so the real path is
- * proof. Windows npm writes `.cmd` shims beside `node_modules`, so the proof
- * is the package manifest next to the shim.
- */
 const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
   context: ProviderMaintenanceResolutionContext,
   packageName: string,
@@ -636,8 +610,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
 /**
  * Turn a one-shot resolution into the shape drivers expose: a cached read for
  * advisories and a `fresh` read that update execution uses so it never trusts
- * ownership derived before the user clicked. An interrupted resolution is not
- * cached, so the next read resolves again.
+ * ownership derived before the user clicked.
  */
 export const makeCachedProviderMaintenanceResolution = Effect.fn(
   "makeCachedProviderMaintenanceResolution",

@@ -75,11 +75,6 @@ export class GitHubApiNotFoundError extends Schema.TaggedError<GitHubApiNotFound
   }
 }
 
-/**
- * `githubErrors` carries GitHub's own error messages, from a GraphQL `errors` list or a REST
- * `message`/`errors` body: they name the field and the reason ("A pull request already exists
- * for acme:feature"), never a token.
- */
 export class GitHubApiResponseError extends Schema.TaggedError<GitHubApiResponseError>()(
   "GitHubApiResponseError",
   {
@@ -110,7 +105,6 @@ export interface GitHubRestResponse {
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly body: string;
   readonly truncated: boolean;
-  /** The body was not valid UTF-8, which a raw file read takes to mean binary. */
   readonly invalidUtf8: boolean;
 }
 
@@ -118,17 +112,13 @@ export interface GitHubRestInput {
   readonly host: string;
   readonly operation: string;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  /** Relative to the API root, e.g. `repos/acme/web/pulls/7`; query string included. */
   readonly path: string;
   readonly body?: unknown;
-  /** Defaults to `application/vnd.github+json`. */
   readonly accept?: string;
   /** Revalidates a cached answer. A 304 is returned rather than failed, and is free. */
   readonly ifNoneMatch?: string;
   readonly maxResponseBytes?: number;
-  /** Defaults to 30 seconds; a whole pull request's patch may need longer. */
   readonly timeout?: Duration.Input;
-  /** Overrides `SourceControlRateLimit.Interactive` for this one request. */
   readonly allowReserve?: boolean;
 }
 
@@ -144,7 +134,6 @@ export interface GitHubGraphQlInput {
 export class GitHubApi extends Context.Service<
   GitHubApi,
   {
-    /** The raw JSON body of a successful GraphQL answer, with `rateLimit` recorded. */
     readonly graphql: (input: GitHubGraphQlInput) => Effect.Effect<string, GitHubApiError>;
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
     readonly credential: (
@@ -160,10 +149,6 @@ function normalizeHost(host: string): string {
   return host.trim().toLowerCase();
 }
 
-/**
- * Where the API for a host lives. github.com and GHE.com data residency serve it from an `api.`
- * subdomain; GitHub Enterprise Server serves it under `/api` on the instance itself.
- */
 export function gitHubApiUrls(host: string): { readonly rest: string; readonly graphql: string } {
   const normalized = normalizeHost(host);
   if (normalized === "github.com") {
@@ -363,7 +348,6 @@ export const make = Effect.gen(function* () {
     readonly graphql?: boolean;
   }) {
     const host = normalizeHost(input.host);
-    // Only the path: a query string can carry a SHA or a branch, and never needs to be in a trace.
     yield* Effect.annotateCurrentSpan({
       "github.host": host,
       "github.operation": input.operation,
@@ -373,9 +357,6 @@ export const make = Effect.gen(function* () {
     });
     const { token, fingerprint } = yield* credential(host);
     const scope = yield* SourceControlRateLimit.CredentialScope;
-    // REST spends `core` and GraphQL its own quota, each with its own reserve. Every REST path
-    // this reads today is `core`; a `search/` read would need its own resource here. A refusal
-    // still pauses the whole host, the key PullRequestService records its own backoff under.
     const resource = input.graphql === true ? "graphql" : "core";
     const key = { provider: SourceControlProviderKind.make("github"), host };
     const run = Effect.gen(function* () {
@@ -414,7 +395,6 @@ export const make = Effect.gen(function* () {
           stream: response.stream,
           maxBytes: input.maxResponseBytes,
         }).pipe(
-          // 204, 304 and many refusals carry no body at all, which is an empty answer.
           Effect.catchIf(
             (error) => error.reason._tag === "EmptyBodyError",
             () => Effect.succeed({ text: "", truncated: false, invalidUtf8: false }),
@@ -467,7 +447,6 @@ export const make = Effect.gen(function* () {
                 ...(retryAt === undefined ? {} : { retryAt }),
               });
             }),
-          // The source may hold a newer token than the one that was refused.
           Unauthorized: () =>
             credentials
               .invalidate(host)
@@ -484,7 +463,6 @@ export const make = Effect.gen(function* () {
         },
       );
     });
-    // The rate-limit scope follows the credential, so a pause on one account never blocks another.
     return yield* gate
       .withPermit(run)
       .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, scope || fingerprint));
@@ -546,7 +524,6 @@ export const make = Effect.gen(function* () {
         acceptNotModified: false,
         graphql: true,
       });
-      // A body cut at the byte cap hides any `errors` past the cut and cannot be decoded.
       if (response.truncated) {
         return yield* new GitHubApiResponseError({
           host,
@@ -563,10 +540,6 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(GitHubApi, make);
 
-/**
- * The transport with the credential, quota reserve and rate-limit pause it reads through. An
- * application builds this once so every GitHub reader shares one view of each quota per host.
- */
 export const layerWithDependencies = layer.pipe(
   Layer.provideMerge(GitHubCredentials.layer),
   Layer.provideMerge(GitHubQuota.layer),

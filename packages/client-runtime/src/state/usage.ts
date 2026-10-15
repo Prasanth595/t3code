@@ -27,8 +27,7 @@ export function needsCursorKeychainAccess(
 
 /**
  * Any environment reading a Cursor account already reports that account's
- * history from every machine, so the prompt only adds duplicates there. A
- * different account on another machine stays reachable from provider settings.
+ * history from every machine, so the prompt only adds duplicates there.
  */
 export function cursorKeychainAccessEnvironments<
   E extends { readonly summary: UsageSummary | null; readonly needsCursorKeychainAccess: boolean },
@@ -58,12 +57,9 @@ export async function refreshUsageLimits<A>(
     if (afterPending) {
       try {
         await pending;
-      } catch {
-        // The new check still needs to run if the earlier one failed.
-      }
+      } catch {}
       return refreshUsageLimits(environmentId, refresh, false, true);
     }
-    // Manual refresh waits for the current check; automatic refresh does not repeat it.
     return automatic ? undefined : ((await pending) as A);
   }
   const refreshAfter = limitsRefreshAfter.get(environmentId) ?? 0;
@@ -116,7 +112,6 @@ export async function refreshUsage({
         const sessionUnavailable =
           ratesResult._tag === "Failure" &&
           isEnvironmentRpcUnavailable(squashAtomCommandFailure(ratesResult));
-        // Invalidate even on failure so reconnects cannot reuse the old summary.
         registry.refresh(query);
         if (sessionUnavailable || controller.signal.aborted) return;
         await executeAtomQuery(registry, query, {

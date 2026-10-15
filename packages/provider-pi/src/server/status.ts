@@ -52,8 +52,6 @@ const PI_PRESENTATION = {
   displayName: "Pi",
   showInteractionModeToggle: false,
   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
-  // The adapter reports context usage from Pi's streaming usage while a
-  // turn runs, so clients can reserve the meter before the first settle.
   reportsContextWindow: true,
   requiresNewThreadForModelChange: false,
 } as const;
@@ -62,8 +60,7 @@ const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 15_000;
 /**
  * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
- * Version 0.80.5 was the first published package containing both hooks. T3
- * needs them for rollback boundaries and reliable turn terminalization.
+ * Version 0.80.5 was the first published package containing both hooks.
  */
 export const MINIMUM_PI_VERSION = "0.80.5";
 
@@ -171,7 +168,6 @@ const discoverPiViaRpc = (
     } satisfies PiDiscovery;
   }).pipe(Effect.scoped);
 
-/** Probe the full command catalog Pi exposes in a workspace without changing machine health. */
 export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
   function* (piSettings: PiSettings, environment: NodeJS.ProcessEnv, cwd: string) {
     const launchArgs = resolvePiLaunchArgs(piSettings.launchArgs);

@@ -47,7 +47,6 @@ export function formatSubagentDisplayTitle(title: string): string {
   return name.replace(/(^|\s)\S/gu, (letter) => letter.toUpperCase()) || displayTitle;
 }
 
-/** Match desktop's model resolution and show only changes from the parent's workspace. */
 export function resolveSubagentMetadata(input: {
   readonly model: string | null;
   readonly provider?: Pick<ServerProvider, "driver" | "models"> | null | undefined;

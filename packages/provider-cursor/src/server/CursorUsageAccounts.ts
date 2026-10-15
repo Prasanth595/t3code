@@ -1,9 +1,3 @@
-/**
- * Cursor's account API is slow, so a read answers from the cached account
- * history and marks itself `refreshing` while a background refresh runs;
- * `awaitRefresh` waits for that refresh instead.
- */
-
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ProviderUsageScan } from "@t3tools/provider-core/server/usage";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
@@ -42,13 +36,11 @@ export class CursorUsageAccounts extends Context.Service<
   CursorUsageAccounts,
   {
     readonly scan: (input: {
-      /** From the same settings snapshot as the rest of the usage read. */
       readonly keychainUsageEnabled: boolean;
       readonly windowStartMs: number;
       readonly retentionCutoffMs: number;
       readonly awaitRefresh: boolean;
     }) => Effect.Effect<ReadonlyArray<ProviderUsageScan>>;
-    /** Waits for every cache write scheduled so far, as a restart would need. */
     readonly awaitPersisted: Effect.Effect<void>;
   }
 >()("@t3tools/provider-cursor/server/CursorUsageAccounts") {}
@@ -127,7 +119,6 @@ const make = Effect.gen(function* () {
     };
     let base = caches.get(credentialKey);
     let fetched = yield* fetchMissing(base);
-    // Another login's history replaces the cached account's, even if reading it fails.
     if (
       base !== undefined &&
       fetched.result.accountKey !== null &&
@@ -157,9 +148,6 @@ const make = Effect.gen(function* () {
     );
     caches.set(credentialKey, merged.cache);
     failures.delete(credentialKey);
-    // An unchanged edge is not worth rewriting the file for: after a restart
-    // the cache just refetches a slightly wider edge. Persisting anyway retries
-    // an earlier failed write; it is a no-op when nothing is dirty.
     if (merged.changed) cacheDirty = true;
     yield* schedulePersist;
   });
@@ -198,11 +186,6 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  /**
-   * The account source. A cache inside its TTL, or a refresh that failed
-   * inside it, answers directly. Otherwise a refresh starts: `awaitRefresh`
-   * waits for it, and anything else answers from the cache marked `refreshing`.
-   */
   const accountSource = Effect.fn("CursorUsageAccounts.accountSource")(function* (
     credential: CursorCredentialSource,
     authPath: string,
@@ -210,7 +193,6 @@ const make = Effect.gen(function* () {
     retentionStartMs: number,
     awaitRefresh: boolean,
   ) {
-    // No saved login means there is no account source to report, not a setup error.
     if (
       typeof credential === "string" &&
       !(yield* fileSystem.exists(credential).pipe(Effect.orElseSucceed(() => true)))

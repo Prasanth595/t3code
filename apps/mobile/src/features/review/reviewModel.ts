@@ -442,7 +442,6 @@ export function buildReviewSectionItems(input: {
     truncated: section.truncated,
     isLoading: false,
   }));
-  // Changes is the default section, so it holds the place while git sources load.
   const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
   const visibleGitItems =
     input.loadingGitSections && !hasChangesItem

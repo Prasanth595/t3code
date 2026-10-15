@@ -7,12 +7,6 @@ import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-/**
- * A shell snapshot whose threads may arrive before their pull request links are decoded. Those
- * links are most of a large shell's decode cost and only feed PR badges, so the thread list can
- * paint first. `loadPullRequests` then decodes the links by thread id; until it runs, those
- * threads carry no `pullRequests`.
- */
 export interface DeferredShellSnapshot extends OrchestrationV2ShellSnapshot {
   readonly loadPullRequests?: Effect.Effect<
     ReadonlyMap<ThreadId, ReadonlyArray<ThreadPullRequestLink>>
@@ -26,7 +20,6 @@ const yieldToHost = Effect.sleep("1 millis");
 const decodeThreadLinks = Schema.decodeUnknownEffect(
   Schema.UndefinedOr(Schema.toCodecJson(Schema.Array(ThreadPullRequestLink))),
 );
-// Bounds each uninterrupted stretch of decoding, so taps and frames run between batches.
 const LINKS_PER_BATCH = 400;
 
 /**
@@ -45,9 +38,6 @@ export function detachPullRequests(snapshot: unknown): ReadonlyArray<unknown> {
   });
 }
 
-/**
- * A thread whose links cannot be read gets none; its row stays usable.
- */
 export function deferPullRequests<S extends OrchestrationV2ShellSnapshot>(
   snapshot: S,
   rawLinks: ReadonlyArray<unknown>,

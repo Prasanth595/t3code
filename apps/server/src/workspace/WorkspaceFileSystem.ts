@@ -106,22 +106,12 @@ export class WorkspaceFileSystem extends Context.Service<
       input: FilesystemGetMetadataInput,
     ) => Effect.Effect<FilesystemGetMetadataResult>;
 
-    /**
-     * Read a UTF-8 text file relative to the workspace root, or any host file by
-     * absolute path.
-     */
     readonly readFile: (
       input: ProjectReadFileInput,
     ) => Effect.Effect<
       ProjectReadFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
-    /**
-     * Write a file relative to the workspace root.
-     *
-     * Creates parent directories as needed and rejects paths that escape the
-     * workspace root.
-     */
     readonly writeFile: (
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
@@ -182,9 +172,9 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Resolves the file a read targets. Workspace-relative paths must stay inside the
-   * root, symlinks included. An absolute path reads a host file in place, such as a
-   * report an agent wrote to a temp directory; it gets no root check.
+   * Workspace-relative paths must stay inside the root, symlinks included. An
+   * absolute path reads a host file in place, such as a report an agent wrote to a
+   * temp directory; it gets no root check.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,

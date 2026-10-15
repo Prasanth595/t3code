@@ -20,10 +20,6 @@ function getTimestampFormatOptions(
   };
 }
 
-/**
- * A host reports a locale only when it knows better than the runtime does —
- * see `getSystemLocale` on the desktop bridge for why desktop does.
- */
 export function resolveTimestampLocale(
   systemLocale: string | null | undefined,
 ): string | undefined {
@@ -60,7 +56,7 @@ type LocaleWithWeekInfo = Intl.Locale & {
 /**
  * First weekday of a locale as a `Date#getDay` index (0 is Sunday), or
  * `undefined` when the runtime has no week data, so callers keep their own
- * default. Without a locale it reads the runtime's.
+ * default.
  */
 export function resolveWeekStartsOn(locale: string | undefined): WeekdayIndex | undefined {
   try {
@@ -157,9 +153,6 @@ const numericDateWithYearFormatter = new Intl.DateTimeFormat(timestampLocale, {
   year: "numeric",
 });
 
-/**
- * Boundaries are local calendar days, not 24-hour windows.
- */
 export function formatDayAwareTimestamp(
   isoDate: string,
   timestampFormat: TimestampFormat,

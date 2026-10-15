@@ -27,11 +27,8 @@ export function resolveTerminalSessionLabel(
 }
 
 /**
- * Ids are ALWAYS chosen by the client and sent explicitly on every
- * `terminal.open` / `terminal.attach` call — the server never allocates.
- *
- * Returns the lowest unused `term-N` number. When metadata is unavailable,
- * callers append a UUID so an unseen host session cannot be reused accidentally.
+ * When metadata is unavailable, callers append a UUID so an unseen host session
+ * cannot be reused accidentally.
  */
 export function nextTerminalId(
   existingTerminalIds: ReadonlyArray<string>,

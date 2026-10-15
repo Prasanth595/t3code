@@ -8,18 +8,10 @@ export function isNewTaskDraftKey(draftKey: string): boolean {
   return draftKey.startsWith(NEW_TASK_DRAFT_PREFIX);
 }
 
-/**
- * The outbox drain writes it and the thread screen's "Edit task" action opens
- * it, so both sides derive the key here rather than rebuilding the string.
- */
 export function restoredNewTaskDraftKey(messageId: string): string {
   return newTaskDraftKey(`restored-${messageId}`);
 }
 
-/**
- * Ids are UUIDs and never contain a colon, so a colon after the prefix marks
- * the legacy shape.
- */
 export function parseLegacyNewTaskDraftKey(
   draftKey: string,
 ): { readonly environmentId: string; readonly projectId: string } | null {

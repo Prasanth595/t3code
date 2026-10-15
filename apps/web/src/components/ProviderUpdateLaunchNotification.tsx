@@ -16,10 +16,6 @@ import {
 import { ProviderUpdatePrimaryNotification } from "./ProviderUpdatePrimaryNotification";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
-/**
- * Local secondaries connect over loopback with a `local:<backendInstanceId>`
- * bearer connection id; everything else (SSH, relay, remote) is ignored.
- */
 function useHasLocalSecondaryEnvironment(): boolean {
   const { environments } = useEnvironments();
   return useMemo(
@@ -129,8 +125,6 @@ function ProviderUpdateEnvironmentsNotification() {
     hasInteractedRef.current = false;
 
     const dismissPrompt = () => {
-      // Dismiss whatever set is still on offer at close time, so the popover
-      // does not re-pop for updates the user just declined.
       const liveKey = notificationKeyRef.current;
       if (liveKey) {
         dismissNotificationKey(liveKey);

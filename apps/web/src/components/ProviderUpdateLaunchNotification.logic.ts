@@ -366,10 +366,6 @@ export function getProviderUpdateRunOutcome(
       };
 }
 
-/**
- * Summarize a cross-machine "Update all" as one toast, or null when every
- * request was interrupted.
- */
 export function getProviderUpdateRunToastView(
   runs: ReadonlyArray<ProviderUpdateRun>,
 ): Pick<ProviderUpdateToastView, "type" | "title" | "description"> | null {
@@ -642,13 +638,6 @@ export function firstRejectedProviderUpdateMessage(
   return rejected.reason instanceof Error ? rejected.reason.message : "Provider update failed.";
 }
 
-/**
- * Because the same driver has a distinct instance id per environment, a
- * secondary backend (e.g. WSL) that *resolved* with a failed or unchanged
- * provider would otherwise be filtered out (its instance id is not the
- * primary's) or collapsed behind the primary's success — this surfaces it
- * instead.
- */
 export function collectProviderUpdateOutcomeSnapshots(
   results: ReadonlyArray<PromiseSettledResult<LocalProviderUpdateOutcome>>,
 ): ServerProvider[] {
@@ -762,11 +751,6 @@ function environmentProviderNames(group: LocalEnvironmentUpdateGroup): string {
     .join(", ");
 }
 
-/**
- * A non-terminal result snapshot ("running") is intentionally skipped rather
- * than treated as authoritative, so live server state can still drive the row
- * to its terminal status instead of pinning it on "Updating…".
- */
 export function resolveEnvironmentUpdateRowStatus(input: {
   readonly group: LocalEnvironmentUpdateGroup;
   readonly error: string | undefined;

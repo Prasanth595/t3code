@@ -282,7 +282,6 @@ function PullRequestOverview(props: {
 
 function usePullRequestToolbarHeight(bottomInset: number) {
   const { buttonSize } = useAndroidControlSizing();
-  // Reserve the controls, native toolbar padding, and outer gaps before onLayout measures them.
   return useState(() => (Platform.OS === "android" ? bottomInset + buttonSize + 40 : 0));
 }
 
@@ -313,7 +312,6 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     if (next === section) return;
     scrollOffsets.current[section] = currentScrollOffset.current;
     const headerEnd = Math.max(-insets.top, bodyY.current - insets.top);
-    // The shared header stays in place. Once collapsed, retain each tab's own reading position.
     const offset = pullRequestTabOffset(
       currentScrollOffset.current,
       scrollOffsets.current[next],
@@ -850,7 +848,6 @@ export function PullRequestFileRouteScreen({
   const nativeView = useRef<NativeReviewDiffViewHandle>(null);
   const jumpStarted = useRef(false);
   const lastSelection = useRef({ path: route.params.path, id: route.params.fileSelectionId });
-  // Each sheet selection jumps in this reader, including reselecting its original file.
   useEffect(() => {
     if (
       lastSelection.current.path === route.params.path &&

@@ -149,7 +149,6 @@ export function ThemeImportDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImported: (theme: ThemeDefinition) => boolean;
-  /** Batch imports install without activating; the caller reports them. */
   onImportedMany: (themes: ReadonlyArray<ThemeDefinition>, context: { updated: boolean }) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -163,8 +162,6 @@ export function ThemeImportDialog({
 
   useEffect(() => {
     importRequestRef.current += 1;
-    // Reset on close too: a dialog dismissed mid-drag would otherwise reopen
-    // still wearing the drop highlight.
     setIsDropTarget(false);
     if (!open) return;
     setJson("");
@@ -364,7 +361,6 @@ export function ThemeImportDialog({
   );
 
   const handleSubmit = useCallback(() => {
-    // Pasted text bypasses the file guard, so the same limit applies here.
     const oversized = describeOversizedThemeFile(json.length);
     if (oversized) {
       setError(oversized);
@@ -382,8 +378,6 @@ export function ThemeImportDialog({
       }
       const installedTheme = installCustomTheme(theme);
       if (!onImported(installedTheme)) {
-        // Roll the install back so a retry can run it again instead of
-        // failing on the already-taken theme id.
         try {
           removeCustomTheme(installedTheme.id);
         } catch {}

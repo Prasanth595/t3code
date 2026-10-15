@@ -31,8 +31,6 @@ export function duoViewSnaps(frames: readonly DuoRestFrame[], panel: 1 | 3) {
       .setFromRotationMatrix(new Matrix4().makeBasis(right, up, normal))
       .invert();
     for (let index = 0; index < orientations.length; index++) {
-      // Only these rolls put the partner below the focused lid. Other quarter
-      // turns belong to the upright, whole-display family.
       if (frame.face === "right" && index !== 0) continue;
       if (frame.face === "left" && index !== 2) continue;
       const roll = (panel === 3 ? Math.PI / 2 : 0) - (index * Math.PI) / 2;
@@ -48,8 +46,6 @@ export function duoViewSnaps(frames: readonly DuoRestFrame[], panel: 1 | 3) {
         )
       )
         continue;
-      // Bound yaw using both real leaf normals. A narrow fold cannot tolerate
-      // the same side view as a fully open display.
       let yawLimit = frame.face === "cover" ? Math.PI / 9 : Math.PI / 3;
       if (panel === 3) {
         for (const sign of [-1, 1]) {

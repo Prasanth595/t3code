@@ -268,8 +268,6 @@ export const make = Effect.gen(function* () {
             return;
           }
 
-          // Only a capture reveal fights another process for the foreground, which
-          // needs Win32 calls that load native modules. Everything else stays native.
           const captureReveal = platform === "win32" && captureRevealWindows.delete(window.id);
           const shellHostedForeground =
             captureReveal && (await isWindowsShellHostedForeground().catch(() => false));

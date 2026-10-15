@@ -189,8 +189,6 @@ await new Promise<void>((done) => gate.once("listening", done));
 const gateAddress = gate.address();
 NodeAssert.ok(gateAddress && typeof gateAddress !== "string");
 
-// Reserve an ephemeral port, then give it to the real server. A bind race fails
-// the check; it never falls back to an existing environment.
 const reservation = NodeHttp.createServer();
 reservation.listen(0, "127.0.0.1");
 await new Promise<void>((done) => reservation.once("listening", done));
@@ -551,7 +549,6 @@ async function stopServer(server: ReturnType<typeof NodeChildProcess.spawn>) {
     await stopped;
     clearTimeout(deadline);
   }
-  // Kill only the process group created above, including lingering provider pipes.
   if (server.pid) {
     try {
       process.kill(-server.pid, "SIGKILL");

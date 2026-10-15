@@ -144,10 +144,6 @@ export function isSshRemoteUrl(remoteUrl: string): boolean {
   return SCP_SSH_REMOTE_PATTERN.test(trimmed) || trimmed.toLowerCase().startsWith("ssh://");
 }
 
-/**
- * Extracts the normalized host used for provider detection. SCP-style and SSH remotes return the
- * hostname only, while other URL schemes retain explicit ports for non-default web endpoints.
- */
 function parseRemoteHost(remoteUrl: string): string | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) {
@@ -203,7 +199,6 @@ function isAzureDevOpsHost(host: string): boolean {
   );
 }
 
-/** GitCafe has no self-hosted installs: production and staging are the only hosts. */
 function isGitCafeHost(host: string): boolean {
   return host === "git.cafe" || host === "staging.git.cafe";
 }

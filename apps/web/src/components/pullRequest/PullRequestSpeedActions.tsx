@@ -23,7 +23,6 @@ export interface PullRequestSpeedActionResult<Entry = EnvironmentPullRequestEntr
   readonly action: PullRequestAction;
 }
 
-/** No detail or stack reads until a merge is clicked, even on a long list. */
 export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>({
   entry,
   hostActions,

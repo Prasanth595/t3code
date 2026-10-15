@@ -285,18 +285,10 @@ export const DesktopUpdateRemoteOutcome = Schema.Literals([
 ]);
 export type DesktopUpdateRemoteOutcome = typeof DesktopUpdateRemoteOutcome.Type;
 
-/**
- * Desktop main -> server: the desktop app's update state. Sent once when the backend attaches
- * and again on every state change, so the server always knows whether the app on its machine
- * can be updated and how a server-triggered run is progressing.
- */
 export const DesktopUpdateStatusReport = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("desktopUpdateStatus"),
-  // Set while a server-triggered run owns the flow; absent for the attach
-  // snapshot and for locally driven update activity.
   requestId: Schema.optionalKey(TrimmedNonEmptyString),
-  // Terminal marker for a server-triggered run; absent while it is working.
   outcome: Schema.optionalKey(DesktopUpdateRemoteOutcome),
   reason: Schema.optionalKey(TrimmedNonEmptyString),
   state: DesktopUpdateStateSchema,

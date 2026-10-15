@@ -14,10 +14,6 @@ import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-/**
- * Each server queues updates that share an installer, so sending them all
- * together is safe.
- */
 export function useProviderUpdates() {
   const { environments } = useEnvironments();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
@@ -74,8 +70,6 @@ export function ProviderUpdatesAction() {
   const { machines, updateAll } = useProviderUpdates();
   const pending = useRef(false);
   const [isPending, setIsPending] = useState(false);
-  // Candidates leave the list as soon as their servers report them queued, so
-  // keep the button while the run is in flight.
   if (machines.length === 0 && !isPending) {
     return null;
   }

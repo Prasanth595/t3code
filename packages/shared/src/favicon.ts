@@ -47,10 +47,6 @@ function explicitFaviconUrl(rawUrl: string | null | undefined): string | null {
   }
 }
 
-/**
- * A small site-owned fallback table covers websites whose conventional favicon
- * is illegible in one appearance without recoloring full-color icons.
- */
 export function toolActivityFaviconUrl(
   icon: {
     readonly pageUrl: string;
@@ -75,10 +71,6 @@ export function toolActivityFaviconUrl(
   );
 }
 
-/**
- * Return a public favicon URL that discloses only a public hostname, never the
- * port, path, or a private or internal-looking host.
- */
 export function faviconUrlForOrigin(rawUrl: string | null | undefined, size = 32): string | null {
   if (!rawUrl) return null;
   try {

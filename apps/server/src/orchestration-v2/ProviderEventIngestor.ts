@@ -206,11 +206,6 @@ const CONVERSATION_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "failed",
 ]);
 
-/**
- * A run whose provider turn has a strong native ref is judged by that ref. A
- * run without one cannot be located, so it falls with everything after the last
- * run still on the branch.
- */
 function runsOffNativeBranch(input: {
   readonly projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">;
   readonly providerThreadId: ProviderThreadId;
@@ -267,19 +262,11 @@ export interface ProviderEventIngestorV2Shape {
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, ProviderEventIngestorV2Error>;
   readonly ingestNormalized: (
     input: ProviderEventIngestInput & {
-      /**
-       * Atomically reject mutable provider state emitted by an attempt that
-       * lost ownership while the adapter event was in flight.
-       */
       readonly writeIfRunCurrent?: {
         readonly runId: RunId;
         readonly activeAttemptId: RunAttemptId;
         readonly expectedStatus: OrchestrationV2Run["status"];
       };
-      /**
-       * Atomically reject provider-thread snapshots from an attempt that no
-       * longer owns the run or from a run that no longer owns the thread.
-       */
       readonly writeIfProviderThreadOwner?: {
         readonly providerThreadId: ProviderThreadId;
         readonly runId: RunId;
@@ -418,15 +405,13 @@ export const layer: Layer.Layer<
           subagent.modelSelection ??
           (model === null || model === modelSelection.model
             ? modelSelection
-            : // The parent's options belong to the parent's model.
-              { instanceId: modelSelection.instanceId, model });
+            : { instanceId: modelSelection.instanceId, model });
         const staleThread = projections.getThread(childThreadId).pipe(
           Effect.map((thread) =>
             modelSelectionsEqual(thread.modelSelection, reportedSelection(thread)) ? null : thread,
           ),
           Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         );
-        // Nearly every update already matches; only a mismatch takes the lock.
         if ((yield* staleThread) === null) return [];
         return yield* threadCommands.withLock(
           childThreadId,
@@ -691,8 +676,6 @@ export const layer: Layer.Layer<
               return dismissed;
             }
             const occurredAt = yield* DateTime.now;
-            // A turn that failed because systemd killed the agent's scope for
-            // memory would otherwise read as a plain provider crash.
             const failure = (yield* agentScope.oomKilled(input.threadId))
               ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
               : input.event.failure;

@@ -32,7 +32,6 @@ const drivers = [
 export type BuiltInSourceControlDriversEnv =
   (typeof drivers)[number] extends SourceControlDriver<infer R> ? R : never;
 
-/** Ordered as the hosts appear in discovery. */
 export const BUILT_IN_SOURCE_CONTROL_DRIVERS: ReadonlyArray<
   SourceControlDriver<BuiltInSourceControlDriversEnv>
 > = drivers;

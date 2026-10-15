@@ -82,16 +82,13 @@ class ClaudeResetCreditError extends Schema.TaggedError<ClaudeResetCreditError>(
 const isClaudeResetCreditError = Schema.is(ClaudeResetCreditError);
 
 /**
- * Every reset failure except `requestFailed` and `unconfirmed` is final:
- * Claude answered, or nothing was sent. An unanswered or unconfirmed claim
- * retries with the same request id.
+ * An unanswered or unconfirmed claim retries with the same request id.
  */
 export const isSettledClaudeResetCreditFailure = (error: unknown) =>
   isClaudeResetCreditError(error) &&
   error.reason !== "requestFailed" &&
   error.reason !== "unconfirmed";
 
-/** Rejects unparseable and calendar-invalid timestamps such as February 30. */
 const isFutureTimestamp = (value: string, nowMs: number) => {
   if (!COMPLETE_TIMESTAMP.test(value)) return false;
   const [year, month, day] = value.slice(0, 10).split("-").map(Number);
@@ -100,7 +97,6 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
   );
 };
 
-/** Grants that are paused or past `ends_at` cannot be claimed and do not count. */
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
@@ -153,10 +149,6 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
-/**
- * Any failure reads as "no resets" so the usage bars never break on this
- * optional extra.
- */
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   function* (configDir: string, version: string) {
     const token = yield* readAccessToken(configDir);
@@ -179,7 +171,6 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   Effect.orElseSucceed(() => undefined),
 );
 
-/** The organization the login is signed in to; one email can belong to several. */
 export const readClaudeOrganizationId = (accountConfigPath: string) =>
   readJson(Config, accountConfigPath).pipe(
     Effect.map((config) => config.oauthAccount?.organizationUuid?.trim() || undefined),
@@ -203,8 +194,8 @@ const CLAIM_OUTCOMES = {
 } as const satisfies Record<string, ProviderConsumeResetCreditOutcome>;
 
 /**
- * Claims `grantId`. `requestId` is the idempotency key: a retry with the same
- * id is the same claim. Ids are checked before anything is sent.
+ * `requestId` is the idempotency key: a retry with the same id is the same
+ * claim.
  */
 export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(function* (input: {
   readonly configDir: string;

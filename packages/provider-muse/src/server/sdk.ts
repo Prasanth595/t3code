@@ -43,7 +43,6 @@ export interface MuseSdkHostOptions {
   readonly cwd?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly runtimeMode?: RuntimeMode;
-  /** Disables shell and filesystem writes and workspace trust. */
   readonly readOnly?: boolean;
   /** Read-only generation needs durable logging for turn/item notifications (verified through 1.1.1). */
   readonly sessionLogging?: boolean;
@@ -51,7 +50,6 @@ export interface MuseSdkHostOptions {
   readonly startupTimeoutMs?: number;
 }
 
-/** Preserve the host's CLI login while excluding the API-key override before copying values. */
 export function makeMuseEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
@@ -86,7 +84,6 @@ export const museWorkspaceRoot = Effect.fn("museWorkspaceRoot")(function* (path:
   return museVerbatimPath(canonical);
 });
 
-/** A Windows environment variable; their names are case-insensitive there. */
 function windowsEnvironmentValue(environment: NodeJS.ProcessEnv, name: string) {
   const key = Object.keys(environment).find(
     (candidate) => candidate.toUpperCase() === name.toUpperCase(),
@@ -99,9 +96,7 @@ function windowsEnvironmentValue(environment: NodeJS.ProcessEnv, name: string) {
  * everywhere but Windows. There Node neither looks a bare `muse` up with
  * PATHEXT (ENOENT) nor runs a `.cmd` file such as Muse's own launcher (EINVAL)
  * without a shell, so resolve the binary like any other command and run a
- * `.cmd` or `.bat` under cmd.exe. Node quotes a path with spaces, and inside
- * those quotes cmd takes every character literally. A path without spaces is
- * not quoted, so its metacharacters are escaped instead.
+ * `.cmd` or `.bat` under cmd.exe.
  */
 export const museLaunch = Effect.fn("museLaunch")(function* (
   binaryPath: string,
@@ -155,7 +150,6 @@ export function museServeArgs(
   return args;
 }
 
-/** What T3 sends in MSP `initialize`; only full hosts ask for session MCP servers. */
 export function museInitializeParams(readOnly = false) {
   return {
     clientInfo: { name: "t3_code", title: "T3 Code", version: "1" },
@@ -177,7 +171,6 @@ export async function createMuseSdkHost(
     args: [...launch.args, ...(options.launchArgs ?? []), ...museServeArgs(options)],
     ...(options.cwd ? { cwd: options.cwd } : {}),
     env: options.environment ?? makeMuseEnvironment(),
-    // A healthy host exits at once; this only bounds a hung one on close.
     shutdownTimeoutMs: 10_000,
   });
   let closePromise: Promise<void> | undefined;

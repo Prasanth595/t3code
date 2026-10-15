@@ -44,7 +44,6 @@ function mediaFileName(source: MediaActionSource): string {
   );
 }
 
-/** An explicit action may ask the server while its grant is still unresolved. */
 function allowsHostMedia(session: SessionGrantInput | null) {
   return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
 }
@@ -55,7 +54,6 @@ function canReadHostMedia(environmentId: EnvironmentId | null): boolean {
   return result._tag !== "Failure" && allowsHostMedia(Option.getOrNull(AsyncResult.value(result)));
 }
 
-/** Explicit byte operations get fresh capabilities without replacing a player's active source. */
 export function useMediaActions(source: MediaActionSource) {
   const hostEnvironmentId =
     source.asset &&

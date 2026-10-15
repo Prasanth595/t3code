@@ -7,17 +7,9 @@ import {
   SourceControlRepositoryInfo,
 } from "./sourceControl.ts";
 
-/**
- * The server keeps this in memory only: a finished clone is dropped after a
- * short grace period, a failed one stays until it is retried or the project is
- * removed, and a server restart forgets in-flight clones (the project keeps its
- * empty workspace root and can be removed like any other project).
- */
-/** Producers clamp free text to these before publishing so encoding never fails. */
 export const PROJECT_CLONE_DETAIL_MAX_LENGTH = 200;
 export const PROJECT_CLONE_ERROR_MAX_LENGTH = 1000;
 
-/** Follows git's own clone phases as they appear on stderr, in order. */
 export const ProjectCloneStage = Schema.Literals([
   "connecting",
   "counting",
@@ -37,9 +29,7 @@ export const ProjectCloneSnapshot = Schema.Struct({
   repository: Schema.NullOr(SourceControlRepositoryInfo),
   phase: ProjectClonePhase,
   stage: ProjectCloneStage,
-  /** Percent of the current stage, parsed from git's progress lines. */
   percent: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
-  /** Trailing text from the progress line, typically transfer size and rate. */
   detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PROJECT_CLONE_DETAIL_MAX_LENGTH))),
   error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PROJECT_CLONE_ERROR_MAX_LENGTH))),
   startedAt: IsoDateTime,
@@ -51,7 +41,6 @@ export type ProjectCloneSnapshot = typeof ProjectCloneSnapshot.Type;
 export const ProjectCloneSubscribeInput = Schema.Struct({});
 export type ProjectCloneSubscribeInput = typeof ProjectCloneSubscribeInput.Type;
 
-/** Every tracked clone on the environment. Sent first, then after every change. */
 export const ProjectCloneListEvent = Schema.Array(ProjectCloneSnapshot);
 export type ProjectCloneListEvent = typeof ProjectCloneListEvent.Type;
 

@@ -17,7 +17,6 @@ export interface FileChipTarget {
   readonly relativePath?: string;
 }
 
-/** Null when the link is not a file or resolves nowhere the feed can open, such as `~/x` or `../x`. */
 export function resolveFileChipTarget(
   href: string,
   workspaceRoot: string | null | undefined,

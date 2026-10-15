@@ -59,10 +59,6 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
       ref.number,
     ].join(" ");
 
-  /**
-   * `paths` are what was asked about, and are held as answered for whether the host had a version
-   * for them or not: that is what stops the same question being asked again.
-   */
   const recordFileRevisions = (
     key: string,
     paths: ReadonlyArray<string>,
@@ -76,14 +72,11 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
           : null;
       const revisions = new Map(carried?.revisions ?? []);
       const asked = new Set(carried?.asked ?? []);
-      // The paths asked for go last, so a whole-change answer wider than the cap is trimmed down
-      // to the reader's own files rather than over them.
       const learned = answer.complete === true ? [...answer.revisions.keys(), ...paths] : paths;
       for (const path of learned) {
         asked.delete(path);
         asked.add(path);
         const revision = answer.revisions.get(path);
-        // A path left out of the answer keeps its last known version rather than being cleared.
         if (revision !== undefined) {
           revisions.delete(path);
           revisions.set(path, revision);
@@ -214,8 +207,6 @@ export const make = (dependencies: Dependencies) => {
         .pipe(Effect.mapError(toFilesViewedStoreError("filesViewed")));
       const marks = held.files;
       if (marks.length === 0) return { files: [], truncated: held.truncated };
-      // A host that won't say what its head has costs the marks their staleness (`fileRevisionsOf`
-      // returns null), rather than costing the reader every tick they've made.
       const revisions = yield* fileRevisionsOf(
         project,
         ref,
@@ -231,11 +222,8 @@ export const make = (dependencies: Dependencies) => {
       );
       return {
         files: marks.map((mark) => {
-          // A mark stamped with no baseline holds until the reader presses it again.
           if (mark.revision === null) return { path: mark.path, state: "viewed" as const };
           const revision = revisions?.get(mark.path);
-          // A deleted file is answered as the empty revision, matching its stamp, so it stays
-          // cleared; a path the host had no answer for (`undefined`) also holds as cleared.
           return {
             path: mark.path,
             state:
@@ -294,8 +282,6 @@ export const make = (dependencies: Dependencies) => {
         cleared.length === 0
           ? null
           : yield* fileRevisionsOf(project, input, cleared, "setFilesViewed", "fresh").pipe(
-              // A host that won't say what its head has costs the press its baseline, not the
-              // press itself: the mark is stored with none and holds until pressed again.
               Effect.catch((error) =>
                 Effect.logWarning("recording viewed files without what the head has of them", {
                   operation: "setFilesViewed",

@@ -26,7 +26,6 @@ const REMOVE_SIZE = 20;
 
 type MicrophonePermission = "checking" | "granted" | "ask" | "denied";
 
-/** Re-reads microphone access whenever the app returns from system Settings. */
 function useMicrophonePermission() {
   const [permission, setPermission] = useState<MicrophonePermission>("checking");
   const apply = useCallback(
@@ -87,10 +86,6 @@ const KINDS: Record<
   },
 };
 
-/**
- * A device joins the list the first time it is connected during dictation; until then its kind's
- * row ranks it.
- */
 export function SettingsMicrophoneRouteScreen() {
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);

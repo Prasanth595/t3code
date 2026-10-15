@@ -3,11 +3,6 @@ import * as Effect from "effect/Effect";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { AsyncResult, Atom } from "effect/reactivity";
 
-/**
- * Whether `t3@<version>` is published on npm. A 404 is false; network and
- * registry errors stay unknown. Both re-check every few minutes, so a release
- * that lands later shows up without a reload.
- */
 export const npmReleasePublishedAtom = Atom.family((version: string) =>
   Atom.make(
     Effect.gen(function* () {

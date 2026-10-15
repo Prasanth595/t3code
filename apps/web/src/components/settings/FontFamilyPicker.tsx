@@ -62,9 +62,7 @@ let grantedProbeStarted = false;
 /**
  * Electron's default permission handler approves silently (it has no prompt
  * UI), and a browser that granted once reports "granted" on later visits — in
- * both, no user gesture is needed. "prompt" and "denied" states change nothing:
- * the focus-driven flow stays, because raising the browser prompt still
- * requires a gesture.
+ * both, no user gesture is needed.
  */
 function probeAlreadyGrantedPermission(): void {
   if (grantedProbeStarted || enumerationState.status !== "unknown") return;
@@ -75,10 +73,7 @@ function probeAlreadyGrantedPermission(): void {
     (status) => {
       if (status.state === "granted") discoverInstalledFonts();
     },
-    () => {
-      // The engine does not recognize the permission name; keep the
-      // focus-driven flow.
-    },
+    () => {},
   );
 }
 
@@ -97,7 +92,6 @@ export function FontFamilyPicker({
 }: {
   ariaLabel: string;
   defaultFamily: string;
-  /** Committed family name; empty string means the default is in use. */
   selectedFamily: string;
   requireMonospace?: boolean;
   initialOpen?: boolean;
@@ -111,8 +105,6 @@ export function FontFamilyPicker({
   // and the popup lingers on screen forever.
   useEffect(() => {
     if (initialOpen) setOpen(true);
-    // The prop is only meaningful at mount - the control just swapped in
-    // under an active focus - so later changes are deliberately ignored.
   }, []);
   const listRef = useRef<LegendListRef | null>(null);
   const enumeration = useFontEnumeration();
@@ -189,8 +181,6 @@ export function FontFamilyPicker({
         if (typeof next === "string") handlePick(next);
       }}
       onItemHighlighted={(_value, eventDetails) => {
-        // Keyboard highlights must pull the virtualized row into view, or
-        // arrow keys walk past the rendered window and navigate blind.
         if (!open || eventDetails.index < 0 || eventDetails.reason !== "keyboard") return;
         void listRef.current?.scrollIndexIntoView?.({ index: eventDetails.index, animated: false });
       }}

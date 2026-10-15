@@ -162,10 +162,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
-  /**
-   * When set, the picker is locked to the given driver kind — typically because the user is
-   * editing a previously-sent message and can't change which driver served the turn.
-   */
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
@@ -296,9 +292,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   }, [focusSearchInput]);
 
-  // Favorites are keyed by `${instanceId}:${slug}`; the storage schema widened from
-  // ProviderDriverKind to ProviderInstanceId so pre-migration favorites keyed by driver slugs
-  // (e.g. `"codex:gpt-5"`) still resolve — the default instance id equals the driver slug.
   const favoritesSet = useMemo(() => {
     return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
   }, [favorites]);
@@ -420,10 +413,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const filteredModels = useMemo(() => {
     let result = flatModels;
 
-    // Apply tokenized fuzzy search across the combined provider/model search fields.
-    // When searching, we only respect locked provider (by driver kind),
-    // ignoring sidebar selection so account-scoped searches can find a
-    // model before the user chooses a specific instance rail item.
     if (searchQuery.trim()) {
       const candidates =
         props.lockedProvider !== null ? result.filter((m) => matchesLockedProvider(m)) : result;
@@ -509,8 +498,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         )
       : [];
 
-  // Models the manifest announces that this provider's installed CLI is too old to run. Without
-  // this, a new model just seems missing until the user happens to update the CLI.
   const updateRequiredNotices = (
     isSearching
       ? instanceEntries.filter(matchesLockedProvider)
@@ -547,9 +534,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!entry) {
         return;
       }
-      // `resolveSelectableModel` uses the driver kind for normalization
-      // (slug casing etc.). Custom instances share their driver's
-      // normalization rules, so pass the driver kind here.
       const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
       if (resolvedModel) {
         if (additive && onToggleModel) {
@@ -629,7 +613,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => modelListRef.current?.getState().listen("totalSize", setModelListContentSize),
     [],
   );
-  // Fit the list to its rows plus the combobox list `py-1` and LegendList `py-1.5`.
   const modelListHeight =
     filteredItemKeys.length === 0 ? 0 : `calc(${modelListContentSize}px + var(--spacing) * 5)`;
   const updateModelListScrollFades = useCallback(() => {

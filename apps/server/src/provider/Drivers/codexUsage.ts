@@ -18,8 +18,7 @@ import { resolveCodexHomeLayout } from "./CodexHomeLayout.ts";
 
 /**
  * Codex `token_count` events carry no model or service tier, so both are carried forward: the model
- * from the most recent `turn_context`, the tier from the most recent `thread_settings_applied`. The
- * field order is the stored JSON's, so keep it stable.
+ * from the most recent `turn_context`, the tier from the most recent `thread_settings_applied`.
  */
 export const CodexScanState = Schema.Struct({
   model: Schema.mutableKey(Schema.String),
@@ -48,8 +47,7 @@ export function initialCodexScanState(): CodexScanState {
  * A forked or subagent rollout opens with the parent's full history copied in,
  * every line re-stamped to the fork instant. Those copies are written in one
  * synchronous burst (observed gaps 0-40ms), while the child's first genuine
- * usage event only lands after a real model turn (observed 5s+). One second of
- * separation splits the two cleanly; `ccusage` uses the same threshold.
+ * usage event only lands after a real model turn (observed 5s+).
  */
 const FORK_COPY_MAX_GAP_MS = 1000;
 
@@ -169,19 +167,15 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
     model: state.model,
     sessionId: state.sessionId,
     totals,
-    // Codex does not report cost in the rollout.
     reportedCostUsd: null,
     speed: state.speed,
-    // Events surviving the fork-copy suppression above are unique to this
-    // rollout, so they need no global dedup.
     dedupeKey: null,
   };
 }
 
 /**
- * Maps a Codex `service_tier` to its billing speed. Codex omits the field when
- * no tier was requested, which bills as standard, as do `default` and
- * `standard`. `fast` is accepted as an alias of `priority`.
+ * Codex omits the field when no tier was requested, which bills as standard, as
+ * do `default` and `standard`. `fast` is accepted as an alias of `priority`.
  */
 function codexSpeed(serviceTier: unknown): UsageSpeed {
   if (serviceTier === "priority" || serviceTier === "fast") return "fast";

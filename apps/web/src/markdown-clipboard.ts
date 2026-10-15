@@ -29,10 +29,8 @@ function wrapInlineMarker(content: string, marker: string): string {
 }
 
 /**
- * A code element whose pre wrapper fell outside the copied range is still
- * block code, recognizable by its highlighter line spans or embedded
- * newlines. Wrapping it like inline code produces backtick-surrounded
- * shell commands on paste.
+ * A code element whose pre wrapper fell outside the copied range is still block
+ * code, recognizable by its highlighter line spans or embedded newlines.
  */
 function isBlockCodeElement(element: Element, content: string): boolean {
   if (content.includes("\n")) return true;
@@ -283,10 +281,6 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
       continue;
     }
     if (element.tagName === "LI") {
-      // serializeListItem emits a marker ("- ", "1. ", "[x] ") for every item,
-      // so an item that does not hold the block carries content of its own even
-      // when it renders no text. An item that wraps the block is just the
-      // structure around it, and a pre-only selection would drop the marker too.
       const preBeforeItem = scan.pre;
       scanForSoleCodeBlock(element, scan);
       if (!scan.other && scan.pre === preBeforeItem) scan.other = true;
@@ -299,9 +293,7 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
 /**
  * A drag that ends on a block's final newline pulls the closing `pre` into the
  * range, so the fragment holds the whole block even though the user only
- * highlighted code. Re-fencing that pastes stray backticks, so a fragment whose
- * only visible content is one code block copies as plain code, matching a
- * selection that never left the `pre`.
+ * highlighted code.
  */
 function soleCodeBlock(container: Node): Element | null {
   const scan: SoleCodeBlockScan = { pre: null, other: false };

@@ -117,10 +117,6 @@ function normalizeGitHubPullRequestRecord(
 const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
 
-/**
- * Pull request rows in `gh --json` or GraphQL node shape. A row that does not decode is
- * skipped, so one malformed pull request cannot hide the rest.
- */
 export function decodeGitHubPullRequestEntries(
   entries: ReadonlyArray<unknown>,
 ): ReadonlyArray<NormalizedGitHubPullRequestRecord> {

@@ -37,7 +37,6 @@ export interface ThreadPreviewState {
   desktopByTabId: Record<string, DesktopPreviewOverlay>;
   recentlySeenUrls: string[];
   listLoaded: boolean;
-  /** Server process currently authoritative for revision ordering. */
   serverEpoch: string | null;
   serverRevision: number;
 }
@@ -444,8 +443,7 @@ export function setActivePreviewTab(ref: ScopedThreadRef, tabId: string): void {
 
 /**
  * Runs `action` once the thread's preview state has the tab, which a popup's
- * `opened` event may deliver after the stream that announced it. Gives up
- * after `timeoutMs`. Returns a cancel function.
+ * `opened` event may deliver after the stream that announced it.
  */
 export function whenPreviewTabKnown(
   ref: ScopedThreadRef,

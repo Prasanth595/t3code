@@ -70,7 +70,6 @@ function writtenFilePaths(
   );
 }
 
-/** The Scratch project was created, but its event never reached this client. */
 export class ScratchProjectNotLoadedError extends Schema.TaggedError<ScratchProjectNotLoadedError>()(
   "ScratchProjectNotLoadedError",
   { projectId: ProjectId },

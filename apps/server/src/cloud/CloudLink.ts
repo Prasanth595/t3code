@@ -308,7 +308,6 @@ function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-/** Records each one-shot marker; false when any already existed, so the request is a replay. */
 export function consumeCloudReplayGuards(input: {
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly names: ReadonlyArray<string>;
@@ -405,8 +404,6 @@ type CloudLinkBackgroundError =
   | Schema.SchemaError
   | PlatformError.PlatformError;
 
-// "revoked" means the relay rejected this environment's credential, as after
-// the environment is deregistered from T3 Connect.
 type ManagedTunnelRegistration =
   | { readonly status: "not_linked" | "superseded" | "revoked" }
   | { readonly status: "recovery_required"; readonly config: RelayManagedEndpointRuntimeConfig }
@@ -462,7 +459,6 @@ export class CloudLink extends Context.Service<
       | CloudLinkInternalError
       | EnvironmentAuth.ServerAuthInternalError
     >;
-    /** Issues a short-lived pairing credential for a client the relay vouched for, once per proof. */
     readonly mintCredential: (
       request: RelayCloudMintCredentialRequest,
     ) => Effect.Effect<
@@ -483,7 +479,6 @@ export class CloudLink extends Context.Service<
       | EnvironmentAuth.ServerAuthInternalError
       | CliTokenManager.CloudCliTokenManagerError
     >;
-    /** As `reconcileDesiredLink`, but returns null when the CLI no longer wants a link. */
     readonly reconcileDesiredLinkIfStillDesired: (
       localOrigin: string,
     ) => Effect.Effect<
@@ -504,11 +499,6 @@ export class CloudLink extends Context.Service<
       expectedConfig?: RelayManagedEndpointRuntimeConfig,
       options?: { readonly retryRuntimeFailures?: boolean },
     ) => Effect.Effect<boolean, CloudLinkBackgroundError>;
-    /**
-     * Starts the stored tunnel. By default only one the relay already confirmed
-     * on this origin; startup falls back to any stored tunnel when the relay
-     * stays unreachable.
-     */
     readonly startManagedTunnelIfOriginConfirmed: (
       localOrigin: string,
       options?: { readonly requireConfirmedOrigin?: boolean },
@@ -783,11 +773,10 @@ const make = Effect.gen(function* () {
         : null;
       yield* endpointRuntime.applyConfig(null);
       yield* secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
-      // The relay has already committed this link. The stored runtime config
-      // is what reports the link as managed and what startup respawns, so drop
-      // it first and store it last. A write that fails part-way then leaves a
-      // link that reads as not managed, and the next relink repairs it instead
-      // of trusting a stale tunnel config.
+      // The stored runtime config is what reports the link as managed and what
+      // startup respawns, so drop it first and store it last. A write that
+      // fails part-way then leaves a link that reads as not managed, and the
+      // next relink repairs it instead of trusting a stale tunnel config.
       yield* secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
 
       yield* secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
@@ -914,8 +903,6 @@ const make = Effect.gen(function* () {
           confirmedOrigin: parsedOrigin.origin,
         },
       );
-      // Callers decide on managed tunnel recovery from the mode this link
-      // actually used, not from a value read before the relay round trip.
       return mode;
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("persist-desired-link")),
@@ -1288,11 +1275,10 @@ const make = Effect.gen(function* () {
     }
     // The connector token died with the tunnel. Drop the stored config so the
     // next start waits for the link reconcile instead of respawning the relay
-    // client with a dead token. Kept when the release request fails: the tunnel
-    // still exists, so the stored token keeps working across the restart.
-    // Only dropped while it is still the config this shutdown released — a fast
-    // restart may already have reconciled and stored a fresh config for its
-    // replacement tunnel, and that one must survive this finalizer.
+    // client with a dead token. Only dropped while it is still the config this
+    // shutdown released — a fast restart may already have reconciled and stored
+    // a fresh config for its replacement tunnel, and that one must survive this
+    // finalizer.
     const storedConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
     if (
       Option.isSome(storedConfig) &&
@@ -1397,14 +1383,11 @@ const make = Effect.gen(function* () {
       .set(name, stringToBytes(String(value)))
       .pipe(Effect.catch(internalError("persist-preferences")));
 
-  // One update at a time, so two requests can't each leave one setting behind.
   const preferencesLock = yield* Semaphore.make(1);
 
   const savePreferences = Effect.fn("CloudPreferences.update")(
     function* (input: EnvironmentCloudPreferencesRequest) {
-      // All or nothing: the activity setting is saved first, before the relay
-      // is told anything, and put back if the hold change then fails. Both
-      // current values are read up front; a failed read stops here, before
+      // Both current values are read up front; a failed read stops here, before
       // anything changes, because a guessed value would be the rollback target.
       const readCurrent = (name: string) =>
         secrets.get(name).pipe(Effect.catch(internalError("read-preferences")));

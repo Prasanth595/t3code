@@ -34,7 +34,6 @@ export const COMPUTER_USE_TOOL_SOURCE = {
   kind: "computer",
 } as const;
 
-/** Computer-use calls may fail or still be running before result metadata is available. */
 export function dynamicToolSurface(toolName: string | null | undefined, input: unknown) {
   if (toolName === "cua_repl.js") return "computer" as const;
   const code = asRecord(input)?.code;
@@ -185,7 +184,6 @@ function collectPaths(value: unknown, paths: string[], seen: Set<string>, depth:
   }
 }
 
-/** Structured paths from tool input, never file-body text. */
 export function collectToolFilePaths(data: unknown): string[] {
   const paths: string[] = [];
   collectPaths(data, paths, new Set<string>(), 0);
@@ -247,7 +245,6 @@ export type ToolActivityAction = "command" | "read" | "file_change" | "search" |
 
 function toolNameToken(value: string | undefined): string | undefined {
   const trimmed = asTrimmedString(value);
-  // Server-prefixed MCP names (`github.read_file`, `mcp__db__find`) are not local reads or searches.
   if (!trimmed || /__|[./]/u.test(trimmed)) {
     return undefined;
   }

@@ -2,10 +2,6 @@ export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"]
 
 export const MOBILE_DEFAULT_THEME_ID = "t3-code";
 
-/**
- * Declared here so host-side tooling (the app-store screenshot harness) can
- * validate a requested theme without importing React Native application code.
- */
 export const MOBILE_THEME_IDS = [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS] as const;
 
 /**
@@ -119,10 +115,6 @@ export type ThemeDefinition = Readonly<{
   managed?: boolean;
 }>;
 
-/**
- * Alpha-bearing tokens are flattened over their real backdrops (canvas, or the
- * sidebar for its rows) because theme colors are stored as opaque OKLCH tokens.
- */
 export const T3_CODE_LIGHT_THEME_COLORS: ThemeColors = {
   searchMatchBackground: "#ffde8b",
   searchMatchForeground: "#21180a",

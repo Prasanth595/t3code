@@ -30,8 +30,6 @@ export interface ShortcutMatchContext {
   previewOpen: boolean;
   isWeb: boolean;
   isDesktop: boolean;
-  /** A text field, textarea, select or rich-text editor owns the keyboard.
-      Optional: only chords that collide with native editing consult it. */
   editableFocus?: boolean;
   [key: string]: boolean;
 }
@@ -170,7 +168,6 @@ export function resolveShortcutCommand(
   return null;
 }
 
-/** App shortcuts use the primary environment; script shortcuts belong to the active project. */
 export function resolveChatShortcutCommand(
   event: ShortcutEventLike,
   primaryKeybindings: ResolvedKeybindingsConfig,

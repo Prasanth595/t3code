@@ -25,9 +25,6 @@ export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 interface DiffFileTreeProps {
   readonly entries: ReadonlyArray<DiffFileTreeEntry>;
   readonly onSelectFile: (path: string) => void;
-  /**
-   * Bump `revealRequestId` to scroll the tree to the same path again.
-   */
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
   readonly ariaLabel: string;
@@ -65,8 +62,6 @@ export function DiffFileTree({
   );
   const filePathsRef = useRef<ReadonlySet<string>>(new Set(paths));
   const onSelectFileRef = useRef(onSelectFile);
-  // Selection driven by `selectedPath` below is an echo of a file already on screen, not a
-  // request to scroll to it again.
   const syncingSelectionRef = useRef(false);
   const handledRevealRef = useRef<{ path: string; revealRequestId: number } | null>(null);
   const mountedPathsRef = useRef<ReadonlyArray<string> | null>(null);
@@ -126,8 +121,6 @@ export function DiffFileTree({
       handledRevealRef.current = null;
       return;
     }
-    // A path list that changes under an already-revealed file (a refresh, a later slice) must
-    // not pull the tree back to it over whatever the reader has picked since.
     const item = model.getItem(selectedPath);
     if (item === null || item.isDirectory()) {
       handledRevealRef.current = null;

@@ -18,9 +18,6 @@ type Options = {
   onDrop?: (point: { x: number; y: number }) => boolean;
 };
 
-/**
- * Own the listeners so unmounting the list can cancel the sensor too.
- */
 export class SidebarPointerSensor {
   static activators = [
     {
@@ -35,8 +32,6 @@ export class SidebarPointerSensor {
   private readonly document: Document;
   private readonly window: Window;
 
-  // The settle sweep constructs this sensor directly, outside dnd-kit, so it
-  // takes only the props the gesture reads.
   constructor(private readonly props: Omit<SensorProps<Options>, "activeNode" | "context">) {
     this.pointer = props.event as PointerEvent;
     this.document = getOwnerDocument(this.pointer.target);
@@ -96,8 +91,6 @@ export class SidebarPointerSensor {
       this.clearSelection();
       this.props.onStart(this.coordinates());
     }
-    // The move that starts a drag also moves it, so a release before the
-    // next pointermove still lands where the pointer is.
     if (this.phase === "dragging") {
       if (event.cancelable) event.preventDefault();
       if (this.props.options.onMove?.(coordinates) === true) return;

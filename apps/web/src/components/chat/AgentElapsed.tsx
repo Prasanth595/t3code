@@ -16,7 +16,6 @@ function formatElapsedSeconds(totalSeconds: number): string {
   return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-/** Rounds down. */
 export function formatCompactElapsedSeconds(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   if (seconds < 60) return `${seconds}s`;

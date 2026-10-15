@@ -26,9 +26,7 @@ function PullRequestGitHubVideo({
 }: {
   environmentId: EnvironmentId;
   cwd: string;
-  /** What the body authored, which is what "Open original" should reach. */
   url: string;
-  /** The canonical GitHub media URL: a `blob` link addresses the page, not the bytes. */
   fetchUrl: string;
 }) {
   const resource = useMemo<AssetResource>(

@@ -66,7 +66,6 @@ export const make = (
   let cached: { readonly token: string; readonly untilMs: number } | null = null;
   let pending: Deferred.Deferred<string | null, CursorKeychainReadError> | null = null;
 
-  /** Joins the read in flight, or starts one that outlives the caller. */
   const startRead = Effect.uninterruptible(
     Effect.gen(function* () {
       if (pending !== null) return pending;

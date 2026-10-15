@@ -49,7 +49,7 @@ const isPreviewStreamDialog = (value: unknown): value is PreviewStreamControl["d
     "defaultValue" in value &&
     typeof value.defaultValue === "string");
 
-/** Client-to-server messages. Coordinates are page CSS px. */
+/** Coordinates are page CSS px. */
 export type PreviewStreamInput =
   | { readonly type: "takeControl" }
   | { readonly type: "releaseControl" }
@@ -104,7 +104,6 @@ export interface PreviewStreamFileChooser {
   readonly accept: string;
   /** POST multipart `file` parts here; an empty form cancels the page's picker. */
   readonly uploadUrl: string;
-  /** Cookie sessions must send credentials with the upload. */
   readonly credentials: boolean;
 }
 
@@ -161,7 +160,6 @@ export interface PreviewStreamPointer {
   readonly sequence: number;
 }
 
-/** CDP modifier bitmask: Alt 1, Ctrl 2, Meta 4, Shift 8. */
 export const previewStreamModifiers = (event: {
   readonly altKey: boolean;
   readonly ctrlKey: boolean;
@@ -193,19 +191,15 @@ export interface PreviewStreamEvents {
   readonly onClipboard?: (text: string) => void;
   readonly onDownload?: (download: PreviewStreamDownload) => void;
   readonly onPopup?: (tabId: string) => void;
-  /** The page opened a file picker (`null` once answered or replaced). */
   readonly onFileChooser?: (chooser: PreviewStreamFileChooser | null) => void;
   readonly onConnectedChange: (connected: boolean) => void;
   /** The upgrade was refused; refresh access and start a new client. */
   readonly onUnauthorized: () => void;
-  /** The tab was closed on the server. The client has stopped. */
   readonly onGone?: () => void;
-  /** The server's browser cannot start until its host is set up. The client has stopped. */
   readonly onHostSetup?: (setup: PreviewStreamHostSetup) => void;
 }
 
 export interface PreviewStreamClient {
-  /** False when the socket is not open and the message was dropped. */
   readonly send: (input: PreviewStreamInput) => boolean;
   readonly stop: () => void;
 }

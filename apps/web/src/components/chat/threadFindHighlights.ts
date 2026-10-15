@@ -28,7 +28,6 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
     let text = "";
     let nodes: { node: Node; start: number; end: number }[] = [];
     const flush = () => {
-      // Offsets ascend, so both node cursors only move forward: linear in text nodes.
       let startIndex = 0;
       let endIndex = 0;
       for (const offset of findThreadSearchOccurrences(text, query)) {
@@ -82,7 +81,6 @@ function foldsHiding(range: Range, container: HTMLElement): Element[] {
     fold && container.contains(fold);
     fold = fold.parentElement?.closest(FOLD_SELECTOR)
   ) {
-    // A clipped body still shows its first lines; only text past the cutoff is folded.
     if (
       fold.hasAttribute("hidden") ||
       range.getBoundingClientRect().bottom > fold.getBoundingClientRect().bottom
@@ -142,8 +140,6 @@ export function useThreadFindHighlights(input: {
       return;
     }
 
-    // Selection changes reuse ranges. Only changed or newly mounted rows
-    // need their text walked again; removed rows release their DOM references.
     const cache = new Map<Element, readonly ThreadFindRange[]>();
     const paint = makeThreadFindHighlightPainter(container);
     paintRef.current = paint;
@@ -217,7 +213,6 @@ export function useThreadFindHighlights(input: {
   }, [activeOccurrence, activeRowId, onActiveRange]);
 }
 
-/** Selection changes touch only the old and new match; layout checks run once per DOM scan. */
 function makeThreadFindHighlightPainter(container: HTMLElement) {
   let previousRanges: readonly ThreadFindRange[] | null = null;
   const rangesByRow = new Map<string, Range[]>();

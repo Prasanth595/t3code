@@ -22,7 +22,6 @@ export interface CommitMessageGenerationInput {
 export interface CommitMessageGenerationResult {
   subject: string;
   body: string;
-  /** Only present when `includeBranch` was set on the input. */
   branch?: string | undefined;
 }
 
@@ -72,29 +71,19 @@ export interface ThreadTitleGenerationResult {
 export interface ReviewGuideStackLayer {
   readonly number: number;
   readonly title: string | null;
-  /** The layer's head in the checkout, null where it could not be fetched. */
   readonly headSha: string | null;
   readonly state: "open" | "closed" | "merged";
 }
 
 export interface ReviewGuideGenerationInput {
-  /** A disposable checkout of the change's head. The model investigates it read-only. */
   cwd: string;
   number: number;
   title: string;
   description: string;
   baseBranch: string;
-  /** The commit the change is measured from, present in `cwd`. */
   baseCommit: string;
-  /**
-   * The guide leaves these alone rather than raising them again.
-   */
   settledReview: string;
   instructions?: string | undefined;
-  /**
-   * The stack the change is a layer of, bottom first, when it is in one. Another layer's head is
-   * fetched into `cwd` where the host served it, so the model can read across a seam.
-   */
   stack?: ReadonlyArray<ReviewGuideStackLayer> | undefined;
   modelSelection: ModelSelection;
 }

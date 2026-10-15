@@ -72,11 +72,6 @@ export const PREVIEW_VIEWPORT_PRESET_IDS = [
 export const PreviewViewportPresetId = Schema.Literals(PREVIEW_VIEWPORT_PRESET_IDS);
 export type PreviewViewportPresetId = typeof PreviewViewportPresetId.Type;
 
-/**
- * Preset IDs shipped before the Chrome-compatible catalog. Existing sessions
- * can still reconnect with these values, but new resize requests only expose
- * PREVIEW_VIEWPORT_PRESET_IDS.
- */
 const LEGACY_PREVIEW_VIEWPORT_PRESET_IDS = [
   "desktop-1920x1080",
   "desktop-1440x900",
@@ -122,10 +117,6 @@ export type PreviewZoomFactor = typeof PreviewZoomFactor.Type;
 
 export const DEFAULT_PREVIEW_ZOOM_FACTOR: PreviewZoomFactor = 1.0;
 
-/**
- * `system` clears the emulation override so the guest follows the OS. Structurally identical to
- * `DesktopPreviewColorScheme`, which is the IPC-layer spelling of the same set.
- */
 export const PreviewAppearancePreference = Schema.Literals(["system", "light", "dark"]);
 export type PreviewAppearancePreference = typeof PreviewAppearancePreference.Type;
 
@@ -153,19 +144,13 @@ export const PreviewNavStatus = Schema.Union([
 ]);
 export type PreviewNavStatus = typeof PreviewNavStatus.Type;
 
-/**
- * `desktop` is an Electron <webview> owned by one desktop client; `server` is headless Chromium
- * owned by the environment server, viewed by any client through `/api/preview-stream` and driven by
- * agents with no client attached. Absent means `desktop`.
- */
 export const PreviewRuntime = Schema.Literals(["desktop", "server"]);
 export type PreviewRuntime = typeof PreviewRuntime.Type;
 
 /**
  * Host setup the server's browser is missing, sent as JSON in the reason when
- * the preview stream closes with code 4503. Fixing it needs the host's
- * operator, so viewers stop retrying and show `command`, the one line that
- * fixes it. Close reasons are capped at 123 bytes, which this fits.
+ * the preview stream closes with code 4503. Close reasons are capped at 123
+ * bytes, which this fits.
  */
 export const PreviewStreamHostSetup = Schema.Struct({
   need: Schema.Literals(["sandbox", "libraries"]),
@@ -180,11 +165,8 @@ export const PreviewSessionSnapshot = Schema.Struct({
   navStatus: PreviewNavStatus,
   canGoBack: Schema.Boolean,
   canGoForward: Schema.Boolean,
-  /** Missing snapshots from older servers are treated as fill-panel mode. */
   viewport: Schema.optional(PreviewViewportSetting),
-  /** Server tabs only; the desktop keeps its own tabs' appearance. Absent means `system`. */
   colorScheme: Schema.optional(PreviewAppearancePreference),
-  /** Server tabs only. Absent means 1. */
   zoomFactor: Schema.optional(PreviewZoomFactor),
   /**
    * Browser profile the tab's Chromium partition is derived from. Fixed at
@@ -193,10 +175,8 @@ export const PreviewSessionSnapshot = Schema.Struct({
    */
   profileId: Schema.optional(BrowserProfileId),
   runtime: Schema.optional(PreviewRuntime),
-  /** Authenticated provider session owning an isolated server tab. */
   automationOwner: Schema.optional(Schema.String),
   reveal: Schema.optional(Schema.Boolean),
-  /** A fresh presentation request, including whether it overrides automatic-floating settings. */
   revealRequest: Schema.optional(Schema.Struct({ id: Schema.String, force: Schema.Boolean })),
   updatedAt: Schema.String,
 });
@@ -205,15 +185,8 @@ export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
 export const PreviewOpenInput = Schema.Struct({
   threadId: ThreadId,
   url: Schema.optional(Url),
-  /**
-   * Omitting it keeps the historical fill-panel behaviour; clients that have a configured default
-   * send it here so the session is born at the right size instead of being resized a frame later
-   * (which the user would see as a visible reflow).
-   */
   viewport: Schema.optional(PreviewViewportSetting),
-  /** Omit to open under the client's configured default profile. */
   profileId: Schema.optional(BrowserProfileId),
-  /** Omit for a desktop tab. `server` requires the `serverBrowser` capability. */
   runtime: Schema.optional(PreviewRuntime),
   reveal: Schema.optional(Schema.Boolean),
 });
@@ -258,7 +231,6 @@ export const PreviewAdjustInput = Schema.Struct({
   colorScheme: Schema.optional(PreviewAppearancePreference),
   zoomFactor: Schema.optional(PreviewZoomFactor),
   hardReload: Schema.optional(Schema.Boolean),
-  /** Clears the tab's profile's cookies or HTTP cache; its other storage stays. */
   clear: Schema.optional(Schema.Literals(["cookies", "cache"])),
 });
 export type PreviewAdjustInput = typeof PreviewAdjustInput.Type;
@@ -270,7 +242,6 @@ export const PreviewCloseInput = Schema.Struct({
 export type PreviewCloseInput = typeof PreviewCloseInput.Type;
 
 export const PreviewReportProfilesInput = Schema.Struct({
-  /** The user's own profiles; the server adds the built-ins. */
   profiles: Schema.Array(BrowserProfile).check(Schema.isMaxLength(BROWSER_PROFILE_MAX_COUNT)),
   defaultProfileId: BrowserProfileId,
 });
@@ -290,7 +261,6 @@ export const PreviewListResult = Schema.Struct({
   sessions: Schema.Array(PreviewSessionSnapshot),
   /** Identifies the current server process so revision resets are safe. */
   serverEpoch: TrimmedNonEmptyString,
-  /** Monotonic server state revision used to reject stale list responses. */
   revision: NonNegativeInt,
 });
 export type PreviewListResult = typeof PreviewListResult.Type;

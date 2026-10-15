@@ -17,7 +17,6 @@ const REMOTE_PATTERNS = [
   /^[^@/:]+@([^/:]+):(.+)$/u,
 ];
 
-/** An `owner/name` repository path, without the `.git` suffix a clone URL carries. */
 export function gitCafeRepositoryPath(path: string): string | null {
   const repository = path
     .trim()
@@ -26,7 +25,6 @@ export function gitCafeRepositoryPath(path: string): string | null {
   return REPOSITORY.test(repository) ? repository : null;
 }
 
-/** The host and `owner/name` of an https or ssh remote on a GitCafe host; null for anything else. */
 export function parseGitCafeRemote(
   url: string,
 ): { readonly host: GitCafeHost; readonly repository: string } | null {

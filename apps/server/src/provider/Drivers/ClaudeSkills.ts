@@ -26,9 +26,7 @@ type SkillFrontmatter =
 /**
  * Claude Code accepts the YAML 1.1 boolean spellings (`yes`/`no`, `on`/`off`,
  * `1`/`0`), which the 1.2 core schema this parser uses leaves as strings and
- * numbers. Verified against the CLI: a skill carrying `user-invocable: no` is
- * absent from its published slash commands, so a strict `=== false` here would
- * offer a command the CLI rejects.
+ * numbers.
  */
 function parseFrontmatterBoolean(value: unknown): boolean | undefined {
   if (typeof value === "boolean") return value;
@@ -114,13 +112,6 @@ function claudeManagedSettingsPath(
   return "/etc/claude-code/managed-settings.json";
 }
 
-/**
- * Settings files Claude Code merges for `skillOverrides`, in increasing
- * precedence: user, project, project-local, then the administrator's managed
- * policy, which wins outright. When the workspace sits inside a git repository,
- * the repository root's `settings.local.json` is read too and outranks the
- * workspace's own local file.
- */
 export function skillOverrideSettingsPaths(
   path: Path.Path,
   configDirPath: string,
@@ -182,11 +173,6 @@ const SkillOverrideSettings = fromLenientJson(
 );
 const decodeSkillOverrideSettings = Schema.decodeUnknownEffect(SkillOverrideSettings);
 
-/**
- * `"user-invocable-only"` hides it from the agent exactly as
- * `disable-model-invocation` does, so it is kept apart from a plain on/off
- * decision rather than collapsed into one.
- */
 type SkillOverride = {
   readonly enabled: boolean;
   readonly userInvocationOnly: boolean;
@@ -252,12 +238,6 @@ const readSkillOverrides = Effect.fn("readSkillOverrides")(function* (
   return overridesByName;
 });
 
-/**
- * Resolve the Claude config directory the CLI would use, matching the
- * precedence the spawned CLI sees: the instance's `homePath` (exported as
- * `CLAUDE_CONFIG_DIR` by `makeClaudeEnvironment`), then a `CLAUDE_CONFIG_DIR`
- * already present in the process environment, then `~/.claude`.
- */
 const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   environment: NodeJS.ProcessEnv,
@@ -317,9 +297,6 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       }
 
       const frontmatter = parseSkillFrontmatter(contents);
-      // Malformed frontmatter means the skill won't load in Claude Code
-      // either — skip it rather than surfacing a broken entry under its
-      // directory name.
       if (frontmatter.kind === "malformed") {
         continue;
       }

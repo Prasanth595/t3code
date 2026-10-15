@@ -10,9 +10,8 @@ import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts"
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 /**
- * The `rpc.aggregate` span attribute of every WebSocket RPC. Trace queries and dashboards group by
- * these labels, so they keep their historical values even where they differ from the method
- * prefix.
+ * Trace queries and dashboards group by these labels, so they keep their historical values
+ * even where they differ from the method prefix.
  */
 const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
@@ -230,11 +229,6 @@ export class RpcInstrumentation extends RpcMiddleware.Service<RpcInstrumentation
   "t3/server/RpcInstrumentation",
 ) {}
 
-/**
- * For a stream RPC, the middleware receives the whole stream run, so the span and the metrics cover
- * the subscription until it ends, fails, or is interrupted. Methods in
- * `RPC_METHODS_WITH_TRACING_DISABLED` record metrics but no spans, for the call or anything it runs.
- */
 export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect, { rpc }) => {
   const method = rpc._tag;
   const measured = effect.pipe(

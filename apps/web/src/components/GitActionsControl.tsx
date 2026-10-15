@@ -125,10 +125,6 @@ interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
-  /**
-   * Opens the thread's own change request beside it. Absent when the thread has no project to
-   * place it against, in which case it still opens in the browser.
-   */
   onOpenPullRequest?: ((number: number) => void) | undefined;
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
@@ -1135,11 +1131,9 @@ export default function GitActionsControl({
   );
   const changeRequestTerminology = sourceControlPresentation.terminology;
   const SourceControlIcon = sourceControlPresentation.Icon;
-  // Default to true while loading so we don't flash init controls.
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
-  // Matches the diff panel's Changes view. Older servers only report uncommitted totals.
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];

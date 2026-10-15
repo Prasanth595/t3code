@@ -102,10 +102,6 @@ function canonicalModelSelectionOptions(
   );
 }
 
-/**
- * Compares the complete provider selection while treating option ordering and
- * an omitted empty option list as presentation details.
- */
 export function modelSelectionsEqual(left: ModelSelection, right: ModelSelection): boolean {
   if (left.instanceId !== right.instanceId || left.model !== right.model) {
     return false;
@@ -302,7 +298,6 @@ export function isClaudeUltrathinkPrompt(text: string | null | undefined): boole
   return typeof text === "string" && /\bultrathink\b/i.test(text);
 }
 
-/** Compare Codex model families without changing provider-owned dispatch identifiers. */
 export function codexModelFamily(slug: string): string {
   return slug.startsWith("openai.gpt-") ? slug.slice("openai.".length) : slug;
 }
@@ -360,12 +355,6 @@ export interface CustomModelDefinition {
 
 const decodeCustomModelCapabilities = Schema.decodeUnknownOption(ModelCapabilities);
 
-/**
- * Read a `customModels` setting into resolved definitions. Accepts the typed
- * union as well as the opaque `providerInstances[id].config` blob clients see,
- * so it tolerates bare slugs, malformed rows, and unparseable capabilities
- * (dropped rather than failing the whole list).
- */
 export function readCustomModelEntries(value: unknown): CustomModelDefinition[] {
   if (!Array.isArray(value)) return [];
   const entries: CustomModelDefinition[] = [];
@@ -476,11 +465,6 @@ export function createModelSelection(
   return selections.length > 0 ? { ...base, options: selections } : base;
 }
 
-/**
- * Unlike a single `find`, this checks every descriptor so that the
- * correct descriptor's `promptInjectedValues` list is consulted even when
- * multiple select descriptors exist.
- */
 export function resolvePromptInjectedEffort(
   caps: ModelCapabilities,
   rawEffort: string | null | undefined,

@@ -40,8 +40,6 @@ import {
 import { GuideNoteMarker } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
 
-// Long lines scroll inside the excerpt. The renderer only shows its scrollbar on hover, which
-// reads as code cut off at the edge, so the excerpt keeps it visible.
 const EXCERPT_UNSAFE_CSS = `${DIFF_VIEW_UNSAFE_CSS}
 [data-code]::-webkit-scrollbar-thumb {
   background-color: var(--diffs-bg-context);
@@ -54,7 +52,6 @@ export interface ExcerptNoteMarker {
 }
 
 export interface ExcerptCommenting {
-  /** Whether a comment can be queued for the review; asking an agent needs no host support. */
   readonly canComment: boolean;
   readonly pending: ReadonlyArray<PendingReviewComment>;
   readonly onComment: (comment: {
@@ -184,8 +181,6 @@ export function GuideExcerpt({
     return [...groups.values()];
   }, [commenting?.pending, draft, excerpt.path, excerpt.side, notes, slice]);
 
-  // Positions and the agent's copy of the lines come from the whole file's diff, so a comment
-  // lands where the Code tab would put it rather than on the excerpt's cut-down patch.
   const beginComment = useCallback(
     (range: SelectedLineRange | null) => {
       if (range === null || file === null) return;
@@ -337,7 +332,6 @@ export function GuideExcerpt({
   );
 }
 
-/** A renamed file's comment carries its old path too, which hosts need to place it. */
 function previousPathOf(file: FileDiffMetadata, path: string): string | null {
   const previous = resolveFileDiffPreviousPath(file);
   return previous === path ? null : previous;

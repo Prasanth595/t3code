@@ -1,15 +1,8 @@
 /**
- * The composer is reused rather than duplicated, so the edit needs somewhere
- * to put its text that is not the user's own draft for the thread. It gets a
- * derived draft key: the thread's key plus a marker and the run id. That key
- * still ends in the thread id segment, so everything keyed off the draft key
- * (attachment uploads resolving an environment, per-draft persistence) keeps
- * working, while the user's draft is never touched and is waiting unchanged
- * when the edit is cancelled.
- *
- * The record below is in-memory only: an edit that does not survive a restart
- * is better than a composer that reopens pointed at a run the server may have
- * already started.
+ * That key still ends in the thread id segment, so everything keyed off the
+ * draft key (attachment uploads resolving an environment, per-draft
+ * persistence) keeps working, while the user's draft is never touched and is
+ * waiting unchanged when the edit is cancelled.
  */
 import type {
   ChatAttachment,
@@ -102,10 +95,7 @@ export function endQueuedRunEdit(
 
 /**
  * Attachments replace the message's list wholesale, so kept server attachments
- * are resent alongside the newly uploaded ones, in composer order. Context
- * records are rebound to the uploaded ids and then pruned to what the final
- * list still contains, so removing an attachment cannot leave a record pointing
- * at nothing.
+ * are resent alongside the newly uploaded ones, in composer order.
  */
 export function resolveQueuedEditPayload(input: {
   readonly edit: QueuedRunEdit;

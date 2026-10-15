@@ -1,14 +1,9 @@
 import { useEffect, useId, useRef } from "react";
 
-/** Long enough that alt-tabbing through windows does not become a request per tab stop. */
 export const LIVE_REFRESH_MIN_INTERVAL_MS = 10_000;
 
 export const LIVE_REFRESH_INTERVAL_MS = 5 * 60_000;
 
-/**
- * This leaves one minute after the five-minute interval for the first timer
- * tick to run.
- */
 export const LIVE_REFRESH_IDLE_AFTER_MS = 6 * 60_000;
 
 export function shouldLiveRefresh(input: {

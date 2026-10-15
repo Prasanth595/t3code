@@ -597,8 +597,6 @@ const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, 
   payload: Schema.Struct({
     instanceId: Schema.optional(ProviderInstanceId),
     cwd: Schema.optional(TrimmedNonEmptyString),
-    /** With `instanceId` and `cwd`: rescan the workspace's skills and slash
-     * commands even when a snapshot for that cwd already exists. */
     fresh: Schema.optional(Schema.Boolean),
     /** Explicit user request: bypass T3-owned caches and rediscover models.
      * Background status refreshes must not open agent sessions. */
@@ -1120,7 +1118,6 @@ const WsPullRequestsRequestReviewersRpc = Rpc.make(WS_METHODS.pullRequestsReques
   error: PullRequestRpcError,
 });
 
-/** Read when the label menu opens, for the same reason the reviewer candidates are. */
 const WsPullRequestsLabelCandidatesRpc = Rpc.make(WS_METHODS.pullRequestsLabelCandidates, {
   payload: PullRequestRef,
   success: PullRequestLabelCandidateList,
@@ -1743,7 +1740,6 @@ const WsScheduledTasksListRpc = Rpc.make(WS_METHODS.scheduledTasksList, {
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
 });
 
-/** Streams the full scheduled-task list: one snapshot on subscribe, then a fresh list after every change. */
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -1828,10 +1824,6 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
-/**
- * Every RPC in `WsRpcGroup` carries it, so a handler cannot be added without
- * authorization.
- */
 export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthorization>()(
   "t3/contracts/RpcScopeAuthorization",
   { error: EnvironmentAuthorizationError },

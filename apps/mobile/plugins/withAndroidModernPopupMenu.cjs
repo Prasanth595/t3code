@@ -94,11 +94,9 @@ function withPopupMenuStyles(config) {
         "textAppearancePopupMenuHeader",
         "@style/AppPopupMenu.HeaderTextAppearance",
       );
-      // Menu item views resolve their submenu arrow from this style
-      // (android:listMenuViewStyle / android:subMenuArrow are public attrs).
       assignStyleItem(appTheme, "android:listMenuViewStyle", "@style/AppPopupMenuListMenuView");
       // Both framework and AppCompat attrs are set since the popup may inflate either CheckBox
-      // flavor. App-wide for native checkboxes, which the app otherwise doesn't use.
+      // flavor.
       assignStyleItem(appTheme, "android:checkboxStyle", "@style/AppPopupMenuCheckBox");
       assignStyleItem(appTheme, "checkboxStyle", "@style/AppPopupMenuCheckBoxCompat");
     }
@@ -128,8 +126,6 @@ function withPopupMenuStyles(config) {
         item: [
           { _: "15sp", $: { name: "android:textSize" } },
           { _: "@color/popup_menu_item_text", $: { name: "android:textColor" } },
-          // DM Sans (--font-sans); embedded by the expo-font plugin config in
-          // app.config.ts.
           { _: "@font/xml_dm_sans_regular", $: { name: "android:fontFamily" } },
         ],
       },

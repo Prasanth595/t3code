@@ -246,8 +246,8 @@ export interface GrokModelsCliOutput {
 }
 
 /**
- * Parses `grok models`. The command exits 0 whether or not the user is logged in, so the text
- * is the only signal.
+ * The command exits 0 whether or not the user is logged in, so the text is the
+ * only signal.
  */
 export function parseGrokModelsCliOutput(output: string): GrokModelsCliOutput {
   const authenticated = /you are logged in/i.test(output)
@@ -324,7 +324,6 @@ export function grokSlashCommandsFromInitialize(
     if (Option.isNone(decoded)) continue;
     const command = decoded.value;
     const name = command.name.trim();
-    // Permission changes must go through T3 so the client and provider agree.
     if (!name || name.toLowerCase() === "always-approve") continue;
     // Grok advertises /context, but its ACP handler completes without emitting output.
     if (name.toLowerCase() === "context") continue;
@@ -340,8 +339,8 @@ export function grokSlashCommandsFromInitialize(
 }
 
 /**
- * Reads model and command metadata from `initialize._meta`. This never calls `authenticate`
- * or `session/new`, so it cannot open a browser login or boot the workspace's MCP servers.
+ * This never calls `authenticate` or `session/new`, so it cannot open a browser login or
+ * boot the workspace's MCP servers.
  */
 const discoverGrokMetadataViaAcpInitialize = (
   grokSettings: GrokSettings,
@@ -455,7 +454,6 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  // `grok models` reports login state and model slugs without starting the agent.
   const modelsResult = yield* runGrokCliCommand(grokSettings, ["models"], environment).pipe(
     Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
     Effect.result,
@@ -540,7 +538,6 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     probe: {
       installed: true,
       version,
-      // A failed metadata probe degrades the model picker, it does not make chats fail.
       status: acpFailed ? "warning" : "ready",
       auth,
       ...(acpFailed

@@ -1,15 +1,8 @@
-// Split chunks are fetched lazily, so a deploy (or desktop server swap)
-// between page load and a later fetch can 404 the old hashed assets. One
-// reload picks up the fresh index.html. A sessionStorage flag keeps a
-// persistent failure from becoming a reload loop, and a successful boot clears
-// it so the next stale deploy gets its own single reload.
+// Split chunks are fetched lazily, so a deploy (or desktop server swap) between
+// page load and a later fetch can 404 the old hashed assets. One reload picks
+// up the fresh index.html.
 const CHUNK_RELOAD_GUARD_KEY = "t3code:chunk-load-reloaded";
 
-/**
- * Called from the `vite:preloadError` listener. Reloads at most once per
- * failure streak and returns whether it did, so the caller knows whether to
- * swallow the event or let the error surface through the normal paths.
- */
 export function reloadOnceForChunkLoadError(
   getStorage: () => Storage = () => window.sessionStorage,
   reload: () => void = () => window.location.reload(),

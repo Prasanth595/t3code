@@ -23,10 +23,6 @@ export const ServerProviderUsageWindow = Schema.Struct({
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
-/**
- * Codex grants these when it has rate-limited the user unfairly; redeeming one
- * clears the current windows.
- */
 export const ServerProviderResetCredits = Schema.Struct({
   availableCount: NonNegativeInt,
   nextExpiresAt: Schema.optional(IsoDateTime),
@@ -70,13 +66,9 @@ export const ProviderUsageLimitsUpdate = Schema.Struct({
 });
 export type ProviderUsageLimitsUpdate = typeof ProviderUsageLimitsUpdate.Type;
 
-/**
- * the account itself is not something this environment can run turns on.
- */
 export const UsageLimitSourceAccount = Schema.Struct({
   id: TrimmedNonEmptyString,
   driver: ProviderDriverKind,
-  /** The signed-in address, when the source names one; clients blur it like provider auth. */
   email: Schema.optional(TrimmedNonEmptyString),
   plan: Schema.optional(TrimmedNonEmptyString),
   workspaceId: Schema.optional(TrimmedNonEmptyString),
@@ -84,10 +76,6 @@ export const UsageLimitSourceAccount = Schema.Struct({
 });
 export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
 
-/**
- * A source that could not be read keeps `error` beside an empty account list
- * rather than vanishing, so the user can see it is configured but failing.
- */
 export const UsageLimitSourceSnapshot = Schema.Struct({
   id: UsageLimitSourceId,
   kind: Schema.Literal("cliproxy"),
@@ -134,7 +122,6 @@ export type ProviderConsumeResetCreditOutcome = typeof ProviderConsumeResetCredi
 
 export const ProviderConsumeResetCreditResult = Schema.Struct({
   outcome: ProviderConsumeResetCreditOutcome,
-  /** Redemption succeeded, but a follow-up such as clearing the hub cooldown failed. */
   warning: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderConsumeResetCreditResult = typeof ProviderConsumeResetCreditResult.Type;

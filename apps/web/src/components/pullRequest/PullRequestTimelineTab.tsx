@@ -53,7 +53,6 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 interface ReactionSurface {
   readonly canReact: boolean;
   readonly environmentId: EnvironmentId;
-  /** Thread the timeline is shown beside, so body links can open in its in-app browser. */
   readonly threadRef: ScopedThreadRef | null;
   readonly reference: PullRequestRef;
   readonly onRefresh: () => void;
@@ -181,7 +180,6 @@ function ConversationCard({
   reactions,
 }: {
   event: PullRequestTimelineEvent;
-  /** The remark behind this entry, only where this reader may rewrite it. */
   editable: PullRequestComment | null;
   cwd: string;
   onOpen: (url: string) => void;
@@ -448,7 +446,6 @@ function ReviewVerdictEvent({
 }: {
   event: PullRequestTimelineEvent;
   outcome: PullRequestReviewOutcome;
-  /** Commits landed after this verdict, so it speaks for code the branch no longer has. */
   stale: boolean;
   cwd: string;
   onOpen: (url: string) => void;
@@ -456,8 +453,6 @@ function ReviewVerdictEvent({
 }) {
   return (
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
-      {/* Pinned rather than centred: this row grows with a body, and a
-          centred avatar drifts down beside it instead of sitting by the name. */}
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
         className="top-6"
@@ -467,8 +462,6 @@ function ReviewVerdictEvent({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
             <ActorName actor={event.actor} />
-            {/* Lowercased in the styling rather than the string, so what a screen reader
-                announces stays the label every other surface uses. */}
             <Tooltip disabled={!stale}>
               <TooltipTrigger
                 render={

@@ -41,7 +41,6 @@ export function OverlayPortal(props: { readonly children: ReactNode }) {
   return null;
 }
 
-/** Mounted once at the app root, above the navigation container. */
 export function OverlayPortalHost() {
   const [current, setCurrent] = useState<Entries>(() => new Map());
 

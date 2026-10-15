@@ -8,13 +8,8 @@ export interface GraphQlDocument {
 }
 
 /**
- * GitHub has no bulk form of most lookups, so aliases are how a batch travels in one request.
- *
  * Every value travels as a variable renamed per alias (`$s0_owner`), and `field` is handed those
  * placeholders rather than the values: nothing an item holds is written into the document.
- * `shared` variables are declared once and referenced by their own name; `within` nests the aliased
- * fields inside one parent selection, such as a single repository.
- *
  * Null for no items, since a document with no selection is not a document.
  */
 export function aliasedGraphQlDocument<Item, Variables extends GraphQlVariables>(input: {
@@ -58,11 +53,8 @@ export function aliasedGraphQlDocument<Item, Variables extends GraphQlVariables>
 }
 
 /**
- * `read` is handed the pages so far, for reads that size or check the next page by what has
- * already arrived.
- *
- * `truncated` says pages remained when reading stopped. A cursor GitHub hands back a second time
- * would page forever, so it stops the read as truncated too.
+ * A cursor GitHub hands back a second time would page forever, so it stops the
+ * read as truncated too.
  */
 export const readGraphQlPages = <Page, E, R>(
   read: (after: string | null, pages: ReadonlyArray<Page>) => Effect.Effect<Page, E, R>,

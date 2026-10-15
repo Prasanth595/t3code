@@ -75,8 +75,7 @@ function ChecksBody({
     <>
       <ScrollArea className="max-h-64">
         <ul className="flex flex-col gap-1">
-          {/* Keyed by position as well as by name: the host is the one that decides how many runs
-          share a name, and a repeated key is a rendering fault rather than a wrong list. */}
+          {}
           {visibleChecks.map((check, index) => (
             <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
               <PullRequestCheckStatusIcon status={check.status} />
@@ -122,10 +121,6 @@ function ChecksBody({
   );
 }
 
-/**
- * `checks` decides between the two. Given them, nothing is read; without them, the popup reads
- * the detail itself, which is why the row must also say which environment it came from.
- */
 export function PullRequestChecksPopover({
   checksState,
   checks,

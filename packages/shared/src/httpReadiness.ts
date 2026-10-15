@@ -30,15 +30,6 @@ export function describeReadinessCause(cause: unknown): unknown {
   };
 }
 
-/**
- * Each individual probe is bounded by `probeTimeoutMs` so a single hung request
- * cannot stall the retry loop, and the retry cadence is `intervalMs` bounded to
- * roughly `timeoutMs / intervalMs` attempts.
- *
- * `makeError` is called at every failure site; callers can inspect `cause` (which
- * carries a `kind` discriminator for the probe-timeout and overall-timeout cases)
- * to reproduce phase-specific messages, or ignore it.
- */
 export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady")(function* <
   E,
 >(input: {
@@ -65,9 +56,6 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
   const lastProbeFailure = yield* Ref.make<unknown>(null);
   let attempt = 0;
 
-  // Tracks errors this function itself produced via `makeError`, so the
-  // pass-through guards below never double-wrap an already-constructed error
-  // (mirrors the SSH original's `cause instanceof SshReadinessError` checks).
   const makeError = input.makeError;
   const madeErrors = new WeakSet<object>();
   const fail = (cause: unknown): E => {

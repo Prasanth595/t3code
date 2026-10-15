@@ -193,16 +193,14 @@ const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")
 });
 
 /**
- * Runs `use` on the shared connection. A connection the browser already closed
- * throws InvalidStateError even when no close event reached this tab, so drop
- * it and retry once on a fresh one instead of failing every later operation.
+ * A connection the browser already closed throws InvalidStateError even when no
+ * close event reached this tab, so drop it and retry once on a fresh one
+ * instead of failing every later operation.
  */
 function withDatabase<A>(
   database: DatabaseHandle,
   use: (opened: IDBDatabase) => Effect.Effect<A, ConnectionTransientError>,
 ) {
-  // Only a connection that opened and then failed is stale; a failing open is
-  // storage being unavailable, which a retry would not fix.
   const closedConnection = Symbol("closedConnection");
   const attempt = Effect.flatMap(database.get, (opened) =>
     use(opened).pipe(

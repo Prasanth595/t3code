@@ -23,7 +23,6 @@ export function resolveThreadSelectionNavigationAction(input: {
   return isBaseThreadRoute(input.pathname) ? "set-params" : "replace";
 }
 
-/** Dismiss sheets and select their underlying workspace destination in one stack update. */
 export function resolveThreadSelectionOverlayState(input: {
   readonly state: NavigationState | undefined;
   readonly workspaceRouteKey: string | undefined;
@@ -50,11 +49,6 @@ export function resolveThreadSelectionOverlayState(input: {
   };
 }
 
-/**
- * On regular-width layouts, the file browser and preview occupy one workspace
- * destination. Replacing the browser route keeps a single back step to chat.
- * Compact layouts retain the browser as the previous stack screen.
- */
 export function resolveFileSelectionNavigationAction(input: {
   readonly hasPersistentFileInspector: boolean;
 }): AdaptiveNavigationAction {

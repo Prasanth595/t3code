@@ -11,7 +11,6 @@ import * as Stream from "effect/Stream";
 
 export interface TestProviderHostOptions {
   readonly cwd?: string;
-  /** Initial settings. A test changes them through `TestProviderHostSettings`. */
   readonly settings?: ServerSettings;
   readonly runBackgroundWork?: boolean;
 }

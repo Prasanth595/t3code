@@ -69,7 +69,6 @@ const chromePlatform = (platform: NodeJS.Platform, arch: NodeJS.Architecture) =>
 
 export interface PreviewBrowserRelease {
   readonly version: string;
-  /** Chrome for Testing's platform name, which also names the archive's top directory. */
   readonly platform: string;
   readonly url: string;
   readonly bytes: number;
@@ -136,7 +135,6 @@ export class PreviewBrowser extends Context.Service<
       string,
       PreviewBrowserInstallError | PreviewBrowserInstallingError | PreviewBrowserUnsupportedError
     >;
-    /** The installed headless shell, if any. Never starts or waits on an install. */
     readonly installed: Effect.Effect<Option.Option<string>>;
   }
 >()("t3/preview/PreviewBrowser") {}
@@ -149,7 +147,6 @@ export interface PreviewBrowserOptions {
 }
 
 const DOWNLOAD_TIMEOUT = "15 minutes";
-// Longer than any install can run: the download times out at 15 minutes.
 const STAGING_STALE_AFTER_MS = 60 * 60_000;
 
 const wrapFailure = (detail: string) => (cause: unknown) =>
@@ -189,8 +186,6 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
   let state: InstallState = { _tag: "idle" };
   const progress = { downloadedBytes: 0, unpacking: false };
 
-  // The version directory appears by one rename of a fully unpacked tree, so a
-  // runnable binary there is the complete-install marker.
   const installedExecutable = (release: PreviewBrowserRelease) => {
     const executable = path.join(installRoot, release.version, executableName);
     return fs.stat(executable).pipe(
@@ -269,7 +264,6 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
         const unixMode = entry.externalFileAttributes >>> 16;
         const unixType = unixMode & 0o170000;
         const isDirectory = entry.fileName.endsWith("/");
-        // Everything sits under the one top directory, which is stripped.
         const relative = entry.fileName.startsWith(root) ? entry.fileName.slice(root.length) : null;
         const target = relative === null ? null : path.resolve(destination, relative);
         if (
@@ -328,7 +322,6 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
         progress.unpacking = true;
         yield* extract(release, archivePath, unpacked);
         const destination = path.join(installRoot, release.version);
-        // A directory left without a runnable binary would block the rename.
         yield* fs.remove(destination, { recursive: true, force: true });
         yield* fs.rename(unpacked, destination);
       }).pipe(Effect.scoped);
@@ -400,7 +393,6 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
               .pipe(Effect.andThen(Deferred.done(done, exit))),
           ),
           Effect.ignoreCause,
-          // Server shutdown closes the service scope and stops an install in progress.
           Effect.interruptible,
           Effect.forkIn(serviceScope),
         );
@@ -408,7 +400,6 @@ export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
       }),
     );
 
-  // A waiter that saw the failure has reported it; the next call retries.
   const clearFailure = (error: PreviewBrowserInstallError) =>
     gate.withPermit(
       Effect.sync(() => {

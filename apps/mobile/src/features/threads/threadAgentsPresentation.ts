@@ -15,7 +15,6 @@ export interface SubagentRowPresentation {
   readonly statusLabel: string;
   readonly tone: SubagentRowTone;
   readonly live: boolean;
-  /** Provider-native tasks have no thread of their own to open. */
   readonly canOpenThread: boolean;
 }
 

@@ -7,7 +7,6 @@ import type {
 
 import type { UsageRecord, UsageSpeed } from "@t3tools/provider-core/server/usage";
 
-/** Token rates for one billing speed. All values are USD per token. */
 export interface TokenRates {
   readonly inputCostPerToken: number;
   readonly outputCostPerToken: number;
@@ -20,20 +19,12 @@ export interface TokenRates {
  * don't record those, so we don't price them.
  */
 export interface ModelRate extends TokenRates {
-  /**
-   * From LiteLLM's `provider_specific_entry.fast` multiple (Claude fast mode),
-   * or else its `*_priority` rates (Codex `priority`).
-   */
   readonly fast: TokenRates | null;
   readonly ultrafast: TokenRates | null;
 }
 
 export type RateTable = ReadonlyMap<string, ModelRate>;
 
-/**
- * Custom IDs keep their case, provider prefix, and variant suffix. Custom rates
- * apply as entered, at every speed.
- */
 export function createOverrideRateTable(
   overrides: Readonly<Record<string, UsageModelPriceOverride>>,
 ): RateTable {
@@ -62,8 +53,7 @@ function finiteNumber(value: unknown): number | null {
 
 /**
  * Anthropic bills cache reads at a discount and cache writes at a premium. When the standard
- * tier omits them, cached input is priced as plain input rather than as free. A faster tier
- * that omits them keeps the standard tier's cache-to-input ratio.
+ * tier omits them, cached input is priced as plain input rather than as free.
  */
 function readTokenRates(
   entry: LiteLlmEntry,
@@ -107,9 +97,7 @@ function fastMultiplier(entry: LiteLlmEntry): number | null {
 
 /**
  * Entries without both an input and an output rate are dropped: a half-priced model would
- * silently under-report cost, which is worse than reporting the model as unpriced. Entries keep
- * their full normalized key; a bare name is aliased only when no canonical entry exists and
- * every qualified entry has the same rate.
+ * silently under-report cost, which is worse than reporting the model as unpriced.
  */
 export function parseRateTable(document: unknown): RateTable {
   const table = new Map<string, ModelRate>();
@@ -134,7 +122,6 @@ export function parseRateTable(document: unknown): RateTable {
     });
   }
 
-  // `null` marks a bare name claimed at conflicting rates: no alias for it.
   const aliasCandidates = new Map<string, ModelRate | null>();
   for (const [key, rate] of table) {
     const alias = bareModelName(key);
@@ -209,8 +196,8 @@ const UNPRICEABLE_MODELS = new Set([
 ]);
 
 /**
- * Lookups per table, by raw model name. A scan prices every record twice
- * against a few dozen models, and tables are never mutated once built.
+ * A scan prices every record twice against a few dozen models, and tables are
+ * never mutated once built.
  */
 const resolvedRates = new WeakMap<RateTable, Map<string, ModelRate | null>>();
 
@@ -243,9 +230,7 @@ export type PricedRecord = Pick<
 export interface PricedUsage {
   readonly costUsd: number;
   readonly costSource: UsageCostSource;
-  /** `costUsd` by token category, or `null` when no rates are known to split it. */
   readonly categoryCostUsd: UsageCategoryCost | null;
-  /** What `costUsd` exceeds the same tokens at standard rates. `0` without rates. */
   readonly speedPremiumUsd: number;
 }
 
@@ -263,9 +248,8 @@ function sumCategories(cost: UsageCategoryCost): number {
 }
 
 /**
- * A provider-reported cost is kept as is, and split by category and speed in proportion to the
- * model's list rates when those are known. `reasoningTokens` is intentionally not charged
- * separately: it is already counted inside `outputTokens`.
+ * `reasoningTokens` is intentionally not charged separately: it is already
+ * counted inside `outputTokens`.
  */
 export function priceUsage(
   table: RateTable,

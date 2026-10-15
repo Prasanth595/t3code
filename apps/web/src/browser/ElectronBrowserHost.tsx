@@ -31,7 +31,6 @@ export function ElectronBrowserHost() {
     () =>
       Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
         const threadRef = parseScopedThreadKey(threadKey);
-        // Server tabs of other environments stream; this desktop's own server tabs render here.
         return threadRef
           ? Object.values(previewState.sessions)
               .filter(
@@ -110,7 +109,6 @@ export function ElectronBrowserHost() {
     return preview.onOpenLink(({ tabId, url, background }) => {
       const source = sessionByRuntimeTabId.current.get(tabId);
       if (!source) return;
-      // The new tab keeps the source tab's profile so its cookies carry over.
       void openUrlInPreview({
         threadRef: source.threadRef,
         url,

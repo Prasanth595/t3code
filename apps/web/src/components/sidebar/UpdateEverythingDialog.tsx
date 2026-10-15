@@ -15,7 +15,6 @@ import {
 import { Button } from "../ui/button";
 import type { RestartingMachine, SkippedMachine } from "./updateEverything.logic";
 
-/** A thread an agent is working on now. A restart stops these; queued threads wait. */
 const isRunning = (status: string) =>
   status === "preparing" || status === "starting" || status === "running";
 
@@ -45,10 +44,6 @@ interface UpdateEverythingDialogProps {
   readonly onConfirm: () => void;
 }
 
-/**
- * Recovery still skips some, such as a thread waiting on the user, so the text says "can
- * resume", not "will".
- */
 export function UpdateEverythingDialog({
   open,
   onOpenChange,
@@ -57,7 +52,7 @@ export function UpdateEverythingDialog({
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
-        {/* The popup unmounts when closed, so the thread count is read only while open. */}
+        {}
         <UpdateEverythingDialogContent {...content} />
       </AlertDialogPopup>
     </AlertDialog>

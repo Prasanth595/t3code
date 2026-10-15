@@ -43,7 +43,6 @@ import { cn } from "~/lib/utils";
 import { refreshPreviewStreamAccess, usePreviewStreamAccess } from "~/state/previewStream";
 import { observeResize } from "~/lib/observeResize";
 
-/** Chrome-row controls for a server tab; commands require current ownership. */
 export interface ServerBrowserHandle {
   readonly navigate: (url: string) => void;
   readonly history: (delta: -1 | 1) => void;
@@ -75,7 +74,6 @@ type WheelInput = Extract<PreviewStreamInput, { type: "wheel" }>;
 interface PagePoint {
   readonly x: number;
   readonly y: number;
-  /** Page CSS px per client px. */
   readonly scale: number;
 }
 
@@ -88,12 +86,10 @@ interface TouchGesture {
   panning: boolean;
 }
 
-/** Whether the page point under a touch takes text; null until the server answers. */
 interface TouchProbe {
   readonly x: number;
   readonly y: number;
   editable: boolean | null;
-  /** True only for this tap's own reply, never for a cached answer. */
   answered: boolean;
   tapped: boolean;
 }
@@ -123,7 +119,6 @@ async function copyPageText(text: string) {
   }
 }
 
-/** The download happens on the environment; this hands the finished file to this device. */
 function offerDownload(download: PreviewStreamDownload) {
   const id = toastManager.add({
     type: "info",
@@ -146,13 +141,11 @@ export function ServerBrowserSurface(props: {
   readonly threadId: string;
   readonly tabId: string;
   readonly visible: boolean;
-  /** Sends the surface size so fill-mode tabs follow it. The floating player scales the page instead. */
   readonly followSize?: boolean;
   readonly controlPosition?: "top" | "bottom";
   readonly onFirstFrame?: () => void;
   readonly onViewport?: (viewport: PreviewStreamViewport) => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
-  /** The page opened a new tab from this viewer's click; the viewer should switch to it. */
   readonly onPopup?: (tabId: string) => void;
   readonly className?: string;
   readonly ref?: Ref<ServerBrowserHandle>;
@@ -221,8 +214,6 @@ export function ServerBrowserSurface(props: {
   );
   const controlChanged = useEffectEvent((next: PreviewStreamControl | null) => onControl?.(next));
   const popupOpened = useEffectEvent((popupTabId: string) => onPopup?.(popupTabId));
-  // Frame cap in device px, fixed per socket. It grows with the surface and
-  // never shrinks, so only outgrowing it reconnects.
   const [cap, setCap] = useState<{ width: number; height: number } | null>(null);
 
   const send = useCallback((input: PreviewStreamInput) => {
@@ -280,7 +271,6 @@ export function ServerBrowserSurface(props: {
       if (!canvas || !viewport || !hasFrameRef.current || controlRef.current?.controller !== "you")
         return null;
       const rect = canvas.getBoundingClientRect();
-      // `object-contain` letterboxes the frame inside the canvas box.
       const fit = Math.min(rect.width / canvas.width, rect.height / canvas.height);
       const width = canvas.width * fit;
       const height = canvas.height * fit;
@@ -397,7 +387,6 @@ export function ServerBrowserSurface(props: {
           probe.editable = result.editable;
           probe.answered = true;
           if (!probe.tapped) return;
-          // Late answer: Android still raises the keyboard; iOS waits for the next tap.
           probeRef.current = null;
           if (result.editable) inputRef.current?.focus({ preventScroll: true });
           else inputRef.current?.blur();
@@ -663,7 +652,6 @@ export function ServerBrowserSurface(props: {
   const handleKey = (action: "down" | "up", event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (controlRef.current?.controller !== "you") return;
     keySentRef.current = false;
-    // IME and soft keyboards deliver text through composition and input events.
     if (
       event.nativeEvent.isComposing ||
       event.keyCode === 229 ||
@@ -679,8 +667,6 @@ export function ServerBrowserSurface(props: {
       return;
     }
     const shortcut = event.ctrlKey || event.metaKey;
-    // Paste arrives as a paste event carrying this device's clipboard. Copy and cut run
-    // in the page, which sends the copied text back. Shift+Insert is the same paste.
     if (shortcut && event.key.toLowerCase() === "v") return;
     if (event.shiftKey && event.key === "Insert") return;
     // Enter carries "\r" like Puppeteer's key table, so forms submit and textareas break lines.
@@ -917,7 +903,6 @@ interface AgentCursorPlacement {
   readonly top: number;
 }
 
-/** Places the agent cursor over the letterboxed frame, the inverse of the viewer's own pointer mapping. */
 function placeAgentCursor(
   pointer: PreviewStreamPointer,
   canvas: HTMLCanvasElement | null,

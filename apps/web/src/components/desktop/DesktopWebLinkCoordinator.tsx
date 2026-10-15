@@ -67,7 +67,6 @@ export function DesktopWebLinkCoordinator() {
       stackedThreadToast({ type: "error", title: "Could not open the link", description }),
     );
 
-  // The OS hands each link over once, so a thread that could not start says so.
   const startThread = async (url: string): Promise<ScopedThreadRef | null> => {
     const environmentId = scratchEnvironmentId(primaryEnvironment?.environmentId ?? null);
     if (environmentId === null) {
@@ -128,7 +127,6 @@ export function DesktopWebLinkCoordinator() {
     const unsubscribe = webLinks.onOpen((url) => {
       queueRef.current = queueRef.current.then(() => openLink(url)).catch(() => undefined);
     });
-    // Skip readiness if React runs cleanup before this subscription can receive links.
     queueMicrotask(() => {
       if (subscribed) void webLinks.setReady(true).catch(() => undefined);
     });

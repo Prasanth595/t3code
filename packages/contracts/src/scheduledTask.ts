@@ -68,7 +68,6 @@ const ScheduledTaskWebhookSignatureFields = {
   }),
 };
 
-/** HMAC-SHA256 over the raw request body. The secret is never part of the read model. */
 export const ScheduledTaskWebhookSignature = Schema.Struct(
   ScheduledTaskWebhookSignatureFields,
 ).annotate({ description: "Optional HMAC-SHA256 signature check over the raw request body." });
@@ -159,9 +158,7 @@ export const ScheduledTaskRunStatus = Schema.Literals(["never", "running", "succ
 export type ScheduledTaskRunStatus = typeof ScheduledTaskRunStatus.Type;
 
 export const ScheduledTaskWebhookEndpoint = Schema.Struct({
-  /** Environment-relative path including the secret token; works on any origin that reaches the environment. */
   path: TrimmedNonEmptyString,
-  /** Public T3 Connect URL, or null when the environment is not linked to T3 Connect. */
   url: Schema.NullOr(TrimmedNonEmptyString),
   hasSecret: Schema.Boolean,
 });
@@ -267,7 +264,6 @@ export const ScheduledTaskWebhookDeliverySummary = Schema.Struct({
   contentType: Schema.NullOr(Schema.String),
   bodyBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   outcome: ScheduledTaskWebhookDeliveryOutcome,
-  /** True when a configured signature matched; false when none was configured. */
   signatureVerified: Schema.Boolean,
   missingFields: Schema.Array(Schema.String),
   error: Schema.NullOr(Schema.String),

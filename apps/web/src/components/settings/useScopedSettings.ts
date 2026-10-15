@@ -36,7 +36,6 @@ import {
   type ScopedSettingsPatch,
 } from "./scopedSettings";
 
-/** Effective settings for the representative target: project overrides applied on top of its environment. */
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
@@ -121,11 +120,6 @@ export function useUpdateScopedSettings() {
   );
 }
 
-/**
- * Drop the project overrides for `keys` so the selected checkouts inherit
- * again. Rows also render outside the settings layout (provider cards,
- * dialogs), where there is no scope and nothing to clear.
- */
 export function useClearScopedSettings() {
   const context = useOptionalSettingsScope();
   const run = useRunScopedPlan();

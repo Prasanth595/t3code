@@ -1,10 +1,6 @@
 import type { ProviderDriverKind } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 
-/**
- * Fields carry `providerSettingsForm` annotations, which the settings form
- * renders generically.
- */
 export type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
 } & Schema.Top;
@@ -17,10 +13,6 @@ export interface ProviderEnvironmentField {
   readonly sensitive?: boolean;
 }
 
-/**
- * Colors are per theme; a path without a fill or gradient uses the icon's
- * `fill`.
- */
 export interface ProviderIcon {
   readonly viewBox: string;
   readonly fill: { readonly light: string; readonly dark: string };
@@ -28,7 +20,6 @@ export interface ProviderIcon {
     readonly d: string;
     readonly fillRule?: "evenodd" | "nonzero";
     readonly fill?: { readonly light: string; readonly dark: string };
-    /** A brand gradient, the same in both themes. Coordinates are in viewBox units. */
     readonly gradient?: ProviderIconGradient;
   }>;
 }
@@ -47,7 +38,6 @@ export interface ProviderClientDefinition {
   readonly icon?: ProviderIcon;
   readonly settingsSchema: ProviderSettingsSchema;
   readonly environmentFields?: ReadonlyArray<ProviderEnvironmentField>;
-  /** Whether the driver has a default instance backed by legacy `providers.<kind>` settings. */
   readonly hasDefaultInstance?: boolean;
   readonly badgeLabel?: string;
 }
@@ -60,7 +50,6 @@ export function defineProviderClient<const Definition extends ProviderClientDefi
 
 export interface ProviderClientRegistry {
   readonly definitions: ReadonlyArray<ProviderClientDefinition>;
-  /** `undefined` for drivers this client does not ship, such as a fork's driver. */
   readonly get: (
     driverKind: ProviderDriverKind | undefined,
   ) => ProviderClientDefinition | undefined;

@@ -182,13 +182,11 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
-    /** Apply a patch and one provider-instance mutation against the same latest settings snapshot. */
     readonly updateProviderInstance: (
       mutation: ProviderInstanceMutation,
       patch?: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
-    /** Run an effect against a settings snapshot while settings writes are paused. */
     readonly withSettingsSnapshot: <A, E, R>(
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | ServerSettingsError, R>;
@@ -196,14 +194,12 @@ export class ServerSettingsService extends Context.Service<
     readonly streamChanges: Stream.Stream<ServerSettings>;
 
     /**
-     * Acquire a settings change subscription synchronously in the current
-     * fiber. Use this before reading a snapshot when changes between the
-     * snapshot and a lazily started stream must not be lost.
+     * Use this before reading a snapshot when changes between the snapshot and
+     * a lazily started stream must not be lost.
      */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
   }
 >()("t3/serverSettings/ServerSettingsService") {
-  /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
 }
 
@@ -348,8 +344,6 @@ function migrateLegacySourceControlSettings(
   return { settings: { ...settings, sourceControlHosts }, secretMoves };
 }
 
-// Drivers that start disabled, so a session in the history means the user
-// turned them on before the instance kept an explicit flag.
 const HISTORY_RESTORED_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set(
   ["cursor", "grok", "opencode"].map((driver) => ProviderDriverKind.make(driver)),
 );
@@ -416,7 +410,6 @@ function migrateLegacyProviderSettings(
 
 const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
 
-/** ACP Registry instances reject every application text-generation operation. */
 function selectionSupportsTextGeneration(
   settings: ServerSettings,
   selection: ModelSelection,
@@ -443,7 +436,6 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
   return fallback === null ? settings : { ...settings, textGenerationModelSelection: fallback };
 }
 
-// Values under these keys are compared as a whole — never stripped field-by-field.
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "backgroundActivity",
   "automaticGitFetchInterval",
@@ -633,10 +625,6 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  /**
-   * Failed moves stay usable from the file and are retried next time; client redaction does not
-   * depend on migration.
-   */
   const moveInlineSettingsSecrets = (settings: ServerSettings) =>
     Effect.gen(function* () {
       const pending: SettingsSecret[] = [];
@@ -802,7 +790,6 @@ const make = Effect.gen(function* () {
     return migrated;
   });
 
-  // A failed read is not kept: the next read retries instead of replaying the failure.
   const settingsCache = yield* Cache.makeWith<typeof cacheKey, ServerSettings, ServerSettingsError>(
     () => loadSettingsFromDisk,
     {
@@ -880,7 +867,6 @@ const make = Effect.gen(function* () {
     Effect.sync(() => {
       const previous = new Map<string, SettingsSecret>();
       mapSettingsSecrets(current, (secret) => {
-        // Duplicate environment names follow the provider's last-value-wins behavior.
         previous.set(secret.secretName, secret);
         return secret;
       });
@@ -1120,7 +1106,6 @@ const make = Effect.gen(function* () {
       ),
     );
 
-    // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
     // `fs.watch` can fire before the content has been flushed to disk.
     const debouncedSettingsEvents = Stream.merge(

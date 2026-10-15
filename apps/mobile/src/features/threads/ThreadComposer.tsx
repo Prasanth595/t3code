@@ -130,14 +130,8 @@ import {
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
 
-/**
- * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
- */
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
-/**
- * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
- */
 export const COMPOSER_EXPANDED_CHROME = 156;
 
 export interface ThreadComposerProps {
@@ -149,11 +143,6 @@ export interface ThreadComposerProps {
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
-  /**
-   * Message sync phase for the selected thread (drives the status pill):
-   * "loading" = first fetch, nothing to show yet; "syncing" = cached messages
-   * are on screen while they reconcile with the server.
-   */
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: EnvironmentThreadShell;
   readonly reportedModelSelection?: ModelSelection | null;
@@ -182,14 +171,12 @@ export interface ThreadComposerProps {
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: (followUp?: ActiveTurnComposerAction) => Promise<MessageId | null>;
-  /** `/usage-limits` resolves locally; the host decides where the report shows. Null clears it. */
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly canSwitchProvider: boolean;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
-  /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
@@ -199,7 +186,6 @@ export interface ThreadComposerProps {
 export const COMPOSER_TRANSITION_DURATION_MS = 220;
 // Side panes already animate the dock's width. Nested horizontal layout
 // transitions would leave the surface trailing its toolbar's new position.
-// Keep the vertical pill/card morph while horizontal layout follows the dock.
 const composerHeightTransition: LayoutAnimationFunction = (values) => {
   "worklet";
   const timing = {
@@ -327,8 +313,6 @@ export function ComposerSurface(props: {
         fallbackColor={colors["--color-composer-surface"]}
         fallbackClassName="border border-composer-border"
         glassEffectStyle="regular"
-        // The composer is a passive material containing interactive controls.
-        // Keep native glass out of the interactive content's layout path.
         pointerEvents="none"
         tintColor="transparent"
         layout={layoutTransition}
@@ -418,8 +402,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
-  // Content lives under the edit's own draft while a queued message is open;
-  // the owner key still identifies this composer for settings and dictation.
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
@@ -434,8 +416,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     });
   };
   const { onSendMessage, onChangeDraftMessage, onShowUsageLimits } = props;
-  // T3 owns /usage-limits only where Limits has data for the selected provider;
-  // elsewhere the name stays the provider's own and is sent through untouched.
   const usageLimitsOffered =
     selectedProviderStatus !== null &&
     hasProviderUsageLimits(
@@ -574,8 +554,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const handleSend = useCallback(
     async (followUp?: ActiveTurnComposerAction) => {
       if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
-      // Typed out in full rather than picked from the menu. Attachments mean the
-      // user is sending a prompt, so those go through as usual.
       if (
         usageLimitsOffered &&
         isUsageLimitsCommand(props.draftMessage) &&
@@ -885,8 +863,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   });
                 }}
                 onOpenAttachment={openDraftDocument}
-                // A rested composer full of chips left almost nowhere to tap to start typing:
-                // every chip opened its file instead. Collapsed, they focus the editor.
                 chipsInert={!isExpanded}
                 onInertChipPress={() => inputRef.current?.focus()}
                 ref={inputRef}
@@ -971,7 +947,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 placeholder={props.placeholder}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
-                // Command-Return sends the other way, matching web's Mod+Enter.
                 onSubmit={(alternate) =>
                   void handleSend(
                     alternate && sendPresentation.alternate !== null
@@ -986,8 +961,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
                 }
                 scrollEnabled={isExpanded}
-                // Android: collapsed single line centers natively (gravity) in
-                // a pill-height box matching the send button; iOS keeps insets.
                 singleLineCentered={!isExpanded}
                 contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
                 style={

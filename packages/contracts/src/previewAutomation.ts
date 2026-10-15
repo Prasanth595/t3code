@@ -25,7 +25,6 @@ const OptionalTimeoutMs = Schema.optional(
     .annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." }),
 ).annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." });
 
-/** Operations understood by desktop hosts predating viewport resizing. */
 export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
   "status",
   "open",
@@ -41,7 +40,6 @@ export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
   "recordingStop",
 ] as const;
 
-/** Advertised by current desktop hosts for mixed-version routing. */
 const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
@@ -107,15 +105,11 @@ export const PreviewAutomationStatus = Schema.Struct({
       }),
     ),
   ),
-  /** Optional for compatibility with desktop hosts predating viewport sizing. */
   viewportSetting: Schema.optional(PreviewViewportSetting),
-  /** Measured guest-page viewport in CSS pixels when a webview is ready. */
   viewport: Schema.optional(PreviewRenderedViewportSize),
-  /** Server hosts: a file picker the page opened, answered with preview_upload. */
   fileChooser: Schema.optional(
     Schema.NullOr(Schema.Struct({ multiple: Schema.Boolean, accept: Schema.String })),
   ),
-  /** Server hosts: files this tab downloaded, saved on the environment until the tab closes. */
   downloads: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -146,7 +140,6 @@ export const PreviewAutomationStatus = Schema.Struct({
     ),
   ),
   profiles: Schema.optional(Schema.Array(PreviewAutomationProfile)),
-  /** Server hosts: the profile preview_open uses when given none. */
   defaultProfileId: Schema.optional(BrowserProfileId),
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
@@ -479,7 +472,7 @@ export const PreviewAutomationSelectResult = Schema.Struct({
 });
 export type PreviewAutomationSelectResult = typeof PreviewAutomationSelectResult.Type;
 
-/** A required locator field. Its JSON schema keeps only the description on its last check. */
+/** Its JSON schema keeps only the description on its last check. */
 const DescribedLocator = (description: string) =>
   Schema.String.check(Schema.isTrimmed())
     .check(Schema.isNonEmpty({ description }))
@@ -773,8 +766,7 @@ export type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity
 export const PreviewAutomationHost = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
   /**
-   * Missing means the pre-capability-negotiation V1 operation set. This lets
-   * a newer server safely coexist with an older desktop during rollout.
+   * Missing means the pre-capability-negotiation V1 operation set.
    */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
 });
@@ -838,7 +830,6 @@ export const PreviewAutomationResponse = Schema.Struct({
 });
 export type PreviewAutomationResponse = typeof PreviewAutomationResponse.Type;
 
-// Thread fields are absent when the caller signed in from outside a T3 thread.
 const McpCapabilityErrorFields = {
   environmentId: EnvironmentId,
   threadId: Schema.optional(ThreadId),
@@ -1005,10 +996,6 @@ export class PreviewAutomationExecutionError extends Schema.TaggedError<PreviewA
   {
     ...PreviewAutomationRequestErrorFields,
     ...PreviewAutomationRemoteDiagnosticFields,
-    /**
-     * What went wrong, as the server's own browser reported it, such as a
-     * page that refused the connection. Absent for other hosts.
-     */
     reason: Schema.optional(Schema.String),
   },
 ) {
@@ -1026,7 +1013,6 @@ export class PreviewAutomationInvalidSelectorError extends Schema.TaggedError<Pr
     ...PreviewAutomationRemoteDiagnosticFields,
     selectorKind: Schema.optional(Schema.Literals(["locator", "selector"])),
     selectorLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-    /** The selector was an `aria-ref` from an older snapshot. */
     staleRef: Schema.optional(Schema.Boolean),
   },
 ) {

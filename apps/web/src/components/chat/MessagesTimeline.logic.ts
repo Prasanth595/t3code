@@ -139,7 +139,6 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   if (entry.command?.trim()) return commandDisplayText(entry.command);
   const action = toolGroupAction(entry);
   if (action === "code-search" || action === "search") {
-    // Adapters title file searches with their target; the item keeps only the pattern.
     const searchLabel =
       entry.itemType === "file_search"
         ? entry.label
@@ -396,10 +395,6 @@ export function resolveTimelineMinimapCurrentIndex(input: {
   return precedingIndex;
 }
 
-/**
- * `contentWidth` is the rendered column width, which follows the Chat width
- * setting, so callers measure it rather than assume a fixed maximum.
- */
 function resolveTimelineSideGutter(viewportWidth: number, contentWidth: number): number {
   if (!Number.isFinite(viewportWidth) || viewportWidth <= 0 || !Number.isFinite(contentWidth)) {
     return 0;
@@ -420,10 +415,6 @@ const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
 const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
 const TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH = "22rem";
 
-/**
- * A fixed-width hover strip would then sit on top of the message text and
- * swallow its pointer events.
- */
 export function resolveTimelineMinimapHitStripWidth(
   viewportWidth: number,
   contentWidth: number,
@@ -438,15 +429,8 @@ export function resolveTimelineMinimapHitStripWidth(
   );
 }
 
-// The prev/next buttons are centered 4px into the strip and 20px wide, so
-// their hitbox reaches 14px past the strip's left edge.
 const TIMELINE_MINIMAP_NAVIGATION_REACH = 14;
 
-/**
- * The prev/next buttons hang outside the strip's height, so the strip's own
- * width cap does not cover them. Keep them inert to the pointer unless the
- * gutter can hold them; keyboard focus still reaches them.
- */
 export function resolveTimelineMinimapNavigationInteractive(collapsedWidth: number): boolean {
   return collapsedWidth >= TIMELINE_MINIMAP_NAVIGATION_REACH;
 }
@@ -729,12 +713,9 @@ interface SupersededAttemptFold {
 }
 
 /**
- * Final replies of superseded attempts that finished before the steer replaced
- * them. A steer stamps the attempt's completedAt when it is dispatched, and the
- * provider closes a reply it cut off only after that, so a reply whose item
- * completed earlier was whole. Item status alone cannot tell: an interrupted
- * stream also closes as `completed`. The reply must be the attempt's last
- * output; trailing tool or reasoning work means the attempt was still going.
+ * Item status alone cannot tell: an interrupted stream also closes as
+ * `completed`. The reply must be the attempt's last output; trailing tool or
+ * reasoning work means the attempt was still going.
  */
 function completeSupersededReplyEntryIds(
   timelineEntries: ReadonlyArray<TimelineEntry>,
@@ -792,7 +773,6 @@ function deriveSupersededAttemptFolds(
       entry.kind === "html-render" ||
       entry.kind === "mcp-app" ||
       timelineEntryIsPersistentResourceCard(entry) ||
-      // A steer supersedes the attempt but leaves its children running.
       liveSubagentEntryIds.has(entry.id) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
     ) {
@@ -844,9 +824,7 @@ function deriveUnsettledRunId(
 /**
  * A child can keep working after its launching turn settles (or its attempt is
  * superseded), and the waiting footer counts it, so its card stays visible
- * until the child ends. Adjacent cards from one provider turn render as a
- * single grouped row; the whole group stays visible while any member is live,
- * so a launch batch never shows half of its children.
+ * until the child ends.
  */
 function liveSubagentCardEntryIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<string> {
   const visible = new Set<string>();
@@ -911,10 +889,9 @@ function responseBoundaryRunId(entry: TimelineEntry): RunId | null {
 }
 
 /**
- * A promptless provider restart replaces the native turn without adding a
- * user message. Keep every provider turn since the initiating prompt in one
- * visual response until the replacement turn settles. Steers keep that
- * boundary; an automatic wake starts a new response with its notification.
+ * A promptless provider restart replaces the native turn without adding a user
+ * message. Keep every provider turn since the initiating prompt in one visual
+ * response until the replacement turn settles.
  */
 function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
   return timelineEntries.findLastIndex(timelineEntryStartsResponse);
@@ -979,7 +956,6 @@ function deriveTurnFolds(input: {
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
   unfoldedRunIds: ReadonlySet<RunId>;
-  /** Keeps the latest runless response open; V2 work must not reopen imported turns. */
   runlessWorkActive: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
   completeSupersededReplyEntryIds: ReadonlySet<string>;
@@ -1053,9 +1029,6 @@ function deriveTurnFolds(input: {
         entries: [],
         terminalEntry: null,
         hasStreamingMessage: false,
-        // Each user boundary starts at most one turn; a second turn after the
-        // same user message (e.g. a steer-superseded continuation) falls back
-        // to its own first entry.
         startBoundary: pendingBoundary?.createdAt ?? null,
         anchorEntryId: pendingBoundary?.anchorEntryId ?? entry.id,
       };
@@ -1539,8 +1512,6 @@ export function deriveMessagesTimelineRows(input: {
       appendActiveWorkRows();
     }
 
-    // The terminal interrupt result is the useful timeline marker. The
-    // preceding request is transient bookkeeping and duplicates that marker.
     if (
       timelineEntry.kind === "event" &&
       timelineEntry.projectedItem.item.type === "run_interrupt_request"
@@ -1816,9 +1787,6 @@ export function deriveMessagesTimelineRows(input: {
     const durationStart =
       durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt;
 
-    // While the turn is still running, the latest assistant message is only
-    // provisionally terminal — withhold the metadata row until the turn
-    // settles so commentary doesn't flash timestamps mid-work.
     const showAssistantMeta =
       timelineEntry.message.role === "assistant" &&
       terminalAssistantMessageIds.has(timelineEntry.message.id) &&
@@ -1847,17 +1815,11 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  // "Live" means the turn is in the timeline, not just that the server
-  // dispatched it: the card must not vanish in the gap between. A failed or
-  // cancelled setup stays under the send so its outcome and actions remain
-  // reachable.
   const setupHandedOff =
     input.worktreeSetup !== null &&
     input.worktreeSetup !== undefined &&
     worktreeSetupAgentStarted(input.worktreeSetup) &&
     input.latestRun?.startedAt != null;
-  // A finished setup keeps the slot until the turn is live, so the card does
-  // not jump above the working header in the gap before the run starts.
   const setupOwnsWorkingSlot =
     !setupHandedOff &&
     (input.worktreeSetup?.phase === "running" || input.worktreeSetup?.phase === "done");
@@ -2161,7 +2123,6 @@ export function computeStableMessagesTimelineRows(
   return anyChanged ? { byId: next, result } : previous;
 }
 
-/** Shallow field comparison per row variant — avoids deep equality cost. */
 function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {
   if (a.kind !== b.kind || a.id !== b.id) return false;
 

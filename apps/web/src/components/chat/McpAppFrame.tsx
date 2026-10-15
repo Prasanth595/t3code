@@ -62,9 +62,7 @@ function saveBlob(blob: Blob, name: string) {
 
 export function McpAppFrame(props: {
   readonly environmentId: EnvironmentId;
-  /** The thread that produced the app, which its requests run against. */
   readonly threadId: ThreadId;
-  /** The thread on screen, whose next turn the app's model context informs. */
   readonly conversationThreadId: ThreadId;
   readonly itemId: TurnItemId;
   readonly revision: string;
@@ -107,9 +105,8 @@ export function McpAppFrame(props: {
   const asset = useAssetUrlState(props.environmentId, resource);
   const refreshAsset = useAssetUrlRefresh(props.environmentId, resource);
   // The frame keeps its first URL: a re-minted one would reload the app. A
-  // cached URL near expiry is minted afresh first, since a frame cannot
-  // report a failed load. At most one mint per document, so a skewed clock
-  // cannot mint on every update.
+  // cached URL near expiry is minted afresh first, since a frame cannot report
+  // a failed load.
   const [src, setSrc] = useState<string | null>(null);
   const [mintFailed, setMintFailed] = useState(false);
   const minting = useRef(false);
@@ -129,7 +126,6 @@ export function McpAppFrame(props: {
     );
   }, [src, cachedUrl, cachedExpiresAt, refreshAsset]);
 
-  // The wire timeline omits tool input and output; the app needs both.
   const detail = useTurnItemDetail({
     environmentId: props.environmentId,
     threadId: props.threadId,
@@ -177,8 +173,6 @@ export function McpAppFrame(props: {
     const shown = box.matches(":popover-open");
     if (displayMode === "fullscreen" && !shown) box.showPopover();
     if (displayMode !== "fullscreen" && shown) box.hidePopover();
-    // Reported only on a change, so an inline row never touches another
-    // row's pin.
     if (displayMode === "fullscreen") {
       latest.current.props.onFullscreenChange?.(true);
       return () => latest.current.props.onFullscreenChange?.(false);
@@ -209,8 +203,6 @@ export function McpAppFrame(props: {
     };
   }, [displayMode]);
 
-  // The definition is read once per app, before the host is built, so the
-  // initialize response can carry it; a failure only leaves it out.
   useEffect(() => {
     let cancelled = false;
     void latest.current
@@ -229,8 +221,7 @@ export function McpAppFrame(props: {
   }, [props.environmentId, props.threadId, props.itemId, app.tool]);
   // The bridge belongs to the captured document. A frame that navigates keeps
   // its window, so a second load stops the app rather than letting a page T3
-  // never served pose as it. Counted per document: a reopened app is a new
-  // document, not a navigation.
+  // never served pose as it.
   const loads = useRef({ generation: 0, count: 0 });
   const onFrameLoad = () => {
     if (loads.current.generation !== documentGeneration) {
@@ -385,7 +376,6 @@ export function McpAppFrame(props: {
           if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
             throw new McpAppHostRefusal(`${file.name} is too large to save.`);
           }
-          // A copy backed by a plain ArrayBuffer, which Blob requires.
           saveBlob(new Blob([bytes.slice()], { type: mimeType }), file.name);
         }
       },
@@ -394,7 +384,6 @@ export function McpAppFrame(props: {
           setDisplayMode("inline");
           return;
         }
-        // The app asked to go, so it gets its teardown before the frame does.
         void host.teardown().then(() => setClosed(true));
       },
       onSizeChanged: (size) => {
@@ -435,8 +424,6 @@ export function McpAppFrame(props: {
           size="xs"
           variant="ghost"
           onClick={() => {
-            // The first URL's token may have expired: the new document
-            // takes a fresh one, minted again if it is near expiry.
             minting.current = false;
             setSrc(null);
             setDocumentGeneration((value) => value + 1);
@@ -466,8 +453,7 @@ export function McpAppFrame(props: {
           app.prefersBorder === true && !fullscreen && "rounded-lg border border-border",
           fullscreen
             ? "fixed inset-0 m-0 flex h-dvh max-h-none w-dvw max-w-none flex-col border-0 bg-background p-0"
-            : // A closed popover is hidden; inline, the box is a plain block.
-              "block! static! m-0 border-0 bg-transparent p-0 text-inherit",
+            : "block! static! m-0 border-0 bg-transparent p-0 text-inherit",
         )}
       >
         {fullscreen ? (

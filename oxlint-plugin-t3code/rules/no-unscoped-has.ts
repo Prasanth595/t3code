@@ -13,7 +13,6 @@ const ANCESTOR_PREFIX_PATTERN = /(?:^|:)in-$/u;
 const ATTRIBUTE_PREFIX_PATTERN = /(?:^|:)(?:data|aria)-$/u;
 const QUOTED_PATTERN = /(["'])(?:\\.|(?!\1).)*\1/gu;
 
-// A variant's closing bracket is followed by ":" or a group/peer name like "/row:".
 const VARIANT_END_PATTERN = /^(?:\/[\w-]+)?:/u;
 
 function variantGroups(token: string): { prefix: string; group: string }[] {
@@ -44,10 +43,6 @@ function closingParen(selector: string, open: number): number {
   return selector.length;
 }
 
-/**
- * Whether nothing after `from` in the enclosing branch is joined by a combinator,
- * i.e. the element ending at `from` is the subject that its wrapper matches.
- */
 function isWrapperSubject(selector: string, from: number): boolean {
   let depth = 0;
   for (let index = from; index < selector.length; index++) {
@@ -101,7 +96,6 @@ function hasCompounds(selector: string): string[] {
   return compounds;
 }
 
-/** `compound` without any `:not(...)`, including one left open around the `:has()`. */
 function withoutNegations(compound: string): string {
   let result = "";
   let index = 0;
@@ -122,7 +116,6 @@ function withoutNegations(compound: string): string {
 }
 
 function findUnscopedHasVariants(text: string): string[] {
-  // Selectors are ASCII case-insensitive.
   if (!text.toLowerCase().includes(":has(")) return [];
   const offenders: string[] = [];
   for (const token of text.split(/\s+/u)) {

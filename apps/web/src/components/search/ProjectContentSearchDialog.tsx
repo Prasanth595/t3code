@@ -210,9 +210,6 @@ function OpenContentSearchDialog(props: {
             event.preventDefault();
             setSelectedIndex((current) => (current - 1 + matches.length) % matches.length);
           } else if (event.key === "Enter") {
-            // While a newer query is debouncing or in flight, the visible
-            // matches belong to the previous query; opening one would jump
-            // to a result the user did not ask for.
             if (!canOpenMatches) {
               event.preventDefault();
               return;

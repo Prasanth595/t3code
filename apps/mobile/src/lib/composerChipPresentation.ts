@@ -53,9 +53,7 @@ export function contextChipPresentation(
       mimeType: record?.mimeType ?? "",
     })
       ? "video"
-      : // A picture chosen through the file picker is typed `file`, but it is still a
-        // picture: it reads as one to the user and should not wear the generic file chip.
-        kind === "file" &&
+      : kind === "file" &&
           imageMimeType({ name: record?.name ?? "", mimeType: record?.mimeType ?? "" }) !== null
         ? "image"
         : kind === "review-comment" && record?.sectionId?.startsWith("pull-request:")

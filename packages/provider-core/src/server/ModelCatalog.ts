@@ -17,9 +17,7 @@ export interface ProviderCatalogModel {
   readonly status: "current" | "legacy";
   readonly badge?: "new";
   readonly capabilities: ModelCapabilities | null;
-  /** Provider-owned metadata for this model; the provider decodes it. */
   readonly adapter: unknown;
-  /** Provider-owned metadata for the model's capability profile. */
   readonly profileAdapter: unknown;
 }
 
@@ -31,17 +29,10 @@ export interface ProviderCatalog {
 export class ModelCatalog extends Context.Service<
   ModelCatalog,
   {
-    /**
-     * The driver's catalog from the manifest in memory (disk cache or bundle),
-     * or `undefined` when the manifest has no entry for it. Never fetches.
-     */
     readonly current: (
       driverKind: ProviderDriverKind,
     ) => Effect.Effect<ProviderCatalog | undefined>;
     readonly bundled: (driverKind: ProviderDriverKind) => ProviderCatalog | undefined;
-    /**
-     * Starts a TTL-gated remote refresh in the background.
-     */
     readonly refreshInBackground: Effect.Effect<void>;
   }
 >()("@t3tools/provider-core/server/ModelCatalog") {}
@@ -63,19 +54,12 @@ export const catalogServerModel = (
 });
 
 export interface CatalogMatching {
-  /**
-   * Maps a slug to the family the catalog names it by, such as a dated Codex
-   * build to its base model. Defaults to the slug itself.
-   */
   readonly family?: (slug: string) => string;
 }
 
 const familyOf = (matching: CatalogMatching | undefined, slug: string) =>
   matching?.family?.(slug) ?? slug;
 
-/**
- * Custom models are user-defined and never reclassified.
- */
 export function classifyCatalogModels(
   models: ReadonlyArray<ServerProviderModel>,
   catalog: ProviderCatalog | undefined,
@@ -93,10 +77,6 @@ export function classifyCatalogModels(
   });
 }
 
-/**
- * Aliases that pointed at the old default move with the flag so the shared "provider default"
- * alias keeps resolving.
- */
 export function applyCatalogDefault(
   models: ReadonlyArray<ServerProviderModel>,
   catalog: ProviderCatalog | undefined,
@@ -129,10 +109,6 @@ export function applyCatalogDefault(
   });
 }
 
-/**
- * Drivers that announce models a newer CLI unlocks add `updateRequiredModels` themselves; this
- * clears a stale list.
- */
 export function applyModelCatalog(
   draft: ServerProviderDraft,
   catalog: ProviderCatalog | undefined,

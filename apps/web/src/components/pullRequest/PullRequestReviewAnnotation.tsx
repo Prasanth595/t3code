@@ -132,7 +132,6 @@ export function ReviewThreadCard({
   fixPending?: boolean;
   fixLabel?: string;
   onFix?: () => void;
-  /** Resolves to whether the host took it, so a reply that failed keeps the words it was given. */
   onReply: (body: string) => Promise<boolean>;
   onLoadMore: (cursor: string) => Promise<PullRequestThreadCommentsResult | null>;
   canEditComment: (comment: PullRequestThreadComment) => boolean;

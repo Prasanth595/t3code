@@ -34,11 +34,6 @@ import {
 import { imageMimeType } from "@t3tools/shared/image";
 import { uuidv4 } from "./uuid";
 
-/**
- * Nothing outside this module mints or deletes pending uploads. The local-file side of the
- * lifecycle is owned by `removeThreadOutboxMessage` / the composer draft mutators, which release
- * files through `releaseUnusedComposerAttachmentFiles`.
- */
 export type UploadedMobileAttachment =
   | UploadChatImageAttachment
   | ChatImageAttachment
@@ -95,12 +90,6 @@ export function withUploadedMobileAttachmentReferences(input: {
   });
 }
 
-/**
- * Deletes pending uploads the client no longer references. Every delete result
- * is inspected; failed deletes are retried once and a persistent failure
- * throws, so a caller can never silently leak the outcome. (The server also
- * expires pending uploads, so a leaked id self-heals eventually.)
- */
 export async function releasePendingAttachmentUploads(
   environmentId: EnvironmentId,
   attachmentIds: ReadonlyArray<string>,
@@ -141,15 +130,12 @@ async function releaseCreatedUploadsQuietly(
   try {
     await releasePendingAttachmentUploads(environmentId, attachmentIds);
   } catch (error) {
-    // The original failure must propagate; the leaked pending uploads expire
-    // on the server.
     console.warn("[attachments] could not delete abandoned pending uploads", error);
   }
 }
 
 export interface PreparedTurnAttachments {
   readonly status: "ready";
-  /** Wire attachments for `startTurn`, in the original composer order. */
   readonly attachments: ReadonlyArray<UploadedMobileAttachment>;
   readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   readonly pendingAttachmentIds: ReadonlyArray<string>;
@@ -296,13 +282,11 @@ async function uploadFileBytes(
 /**
  * `persistUploadedReferences` runs once the bytes are on the server and only when new ids appeared.
  * It must write the annotated attachments into the owner (queued message or draft) so a retry after
- * a crash reuses the bytes. Returning `"abandon"` (owner no longer wants the send) or throwing
- * deletes the pending uploads this call minted, so the owner cannot leak them.
+ * a crash reuses the bytes.
  */
 export async function prepareTurnAttachments(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
-  /** Older environments continue to receive inline images. */
   readonly supportsImageUploads?: boolean;
   readonly signal?: AbortSignal;
   readonly onUploadProgress?: (attachmentId: string, progress: number) => void;

@@ -91,7 +91,6 @@ function LinkRow({
   projectId: ProjectId | null;
   speedMode: boolean;
   onUnlink: (link: ThreadPullRequestLink) => void;
-  /** Null when the environment cannot watch pull requests. */
   onSetWatching: ((link: ThreadPullRequestLink, watching: boolean) => void) | null;
 }) {
   const openPrLink = useOpenPrLink(threadRef);
@@ -108,7 +107,6 @@ function LinkRow({
   const snapshot = link.snapshot;
   const open = snapshot === null || snapshot.state === "open";
   const watching = link.watch !== undefined;
-  // A link carries no host summary, so the host's own definition says what it can do.
   const linkHostActions = (
     sourceControlClients.findByChangeRequestUrl(link.url) ?? UNKNOWN_SOURCE_CONTROL_CLIENT
   ).changeRequestActions;
@@ -136,9 +134,6 @@ function LinkRow({
         setMenuPosition({ x: event.clientX, y: event.clientY });
         setMenuOpen(true);
       }}
-      // The step is capped: beyond a few layers the indent only says "still in the stack",
-      // which the connector line already does, and a sixteen-layer stack would otherwise
-      // stair-step off the right edge.
       style={{ paddingLeft: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}
     >
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
@@ -228,8 +223,6 @@ function LinkRow({
               ) : null}
               {snapshot !== null ? (
                 <>
-                  {/* Cut in the middle: rows from one owner differ in the repository name at the
-                      end, which a tail cut would hide. */}
                   <Tooltip>
                     <TooltipTrigger render={<span className="flex min-w-0 max-w-32 font-mono" />}>
                       <MiddleTruncate value={link.repository} showTitle={false} />
@@ -255,8 +248,6 @@ function LinkRow({
           visible={speedMode}
         />
       ) : null}
-      {/* Out of the row's flow, so no row reserves a column for a button only the hovered one
-          shows. */}
       <span
         className={cn(
           "absolute right-0 bottom-0.5 flex items-center rounded-r-md bg-background pr-1 pl-5",

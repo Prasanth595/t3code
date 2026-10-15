@@ -173,14 +173,9 @@ export interface ThreadDetailScreenProps {
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly activityRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
-  /** The live work is a provider-native subagent's runless root turn. */
   readonly runlessWorkActive?: boolean;
   readonly providerSubagentStatus?: ProviderSubagentStatus | null;
   readonly isCompacting: boolean;
-  /**
-   * `serverOwned` marks a thread the server already created that is still setting up its
-   * worktree; follow-ups queue on the server behind that setup.
-   */
   readonly creationState:
     | {
         readonly kind: "preparing";
@@ -438,8 +433,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // the keyboard while the editor stays focused, and a focus-keyed inset would leave the toolbar
   // under the gesture bar. iOS must NOT use visibility — it only flips on keyboardDidHide, after
   // the hide animation, so the composer would ride down flush to the screen edge and then snap up
-  // into the inset. On iOS blur precedes the hide, so the focus-keyed inset is already in place
-  // while the composer rides down.
+  // into the inset.
   const composerBottomInset = (
     Platform.OS === "android" ? isKeyboardVisible : composerExpanded || composerFocused
   )
@@ -633,8 +627,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     keyboardHeight:
       lastKnownKeyboardHeight > 0 ? lastKnownKeyboardHeight : ESTIMATED_KEYBOARD_HEIGHT,
     navigationHeaderHeight,
-    // The questionnaire owns the composer slot, so only the composer's
-    // bottom inset still overlaps.
     composerOverlapHeight: composerBottomInset,
   });
   const estimatedOverlayHeight = composerOverlapHeight;
@@ -654,8 +646,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     -nativeInsetOvercount,
     Platform.OS === "ios" ? COMPOSER_TRANSITION_DURATION_MS : 0,
   );
-  // The expanded questionnaire is an absolute overlay on iOS, so it never changes the measured
-  // overlay height (that constancy is what keeps the feed from snapping on collapse/expand).
   const userInputCardProgress = useSharedValue(1);
   const userInputInsetProgress = useSharedValue(1);
   const userInputCardCoverage = useSharedValue(0);
@@ -750,8 +740,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       setCollapsedUserInputRequestId(null);
       scheduleOverlayRepin(USER_INPUT_TOGGLE_DURATION_MS + 50);
     } else {
-      // Collapsing hides the custom-answer inputs; release the keyboard with
-      // them instead of leaving it up over a dead responder.
       Keyboard.dismiss();
       userInputCardProgress.value = withTiming(0, USER_INPUT_TOGGLE_TIMING);
       // Instant: the sinking card still covers the strip being revealed, and
@@ -779,7 +767,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const providerSubagentProvider = props.serverConfig?.providers.find(
     (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
   );
-  // Providers can report a dated id or alias (claude-haiku-4-5-20251001).
   const providerSubagentModelSlug = providerSubagentProvider
     ? resolveSelectableModel(
         providerSubagentProvider.driver,
@@ -792,7 +779,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   );
   const workspaceContentWidth = useWorkspaceContentWidth();
   // Clearing animated width can retain the unfolded width after Android resumes folded.
-  // Assign both layouts explicitly so the dock always follows its current parent.
   const composerWidthStyle = useAnimatedStyle(() =>
     isSplitLayout && workspaceContentWidth !== null
       ? {
@@ -836,7 +822,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       ? Date.parse(selectedThreadLastVisitedAt)
       : NaN;
     if (!Number.isNaN(lastVisitedAtMs) && lastVisitedAtMs >= threadUpdatedAtMs) return;
-    // Dedupe per watermark — the effect re-runs before the command echo lands.
     const dispatchKey = `${selectedThreadKey}:${selectedThreadUpdatedAt}`;
     if (lastDispatchedVisitRef.current === dispatchKey) return;
     const dispatch = () => {
@@ -1140,8 +1125,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       {showContent ? (
         <KeyboardStickyView
           // iOS emits a native animated height target on both will-show and
-          // will-hide, so stay subscribed for the full transition. Android
-          // retains its background/resume stale-state quarantine.
+          // will-hide, so stay subscribed for the full transition.
           enabled={Platform.OS === "ios" || (isKeyboardVisible && !keyboardStateSuspect)}
           pointerEvents="box-none"
           style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}

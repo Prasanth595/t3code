@@ -4,10 +4,6 @@ import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "~/previewMin
 import { whenPreviewTabKnown } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
-/**
- * A floating opener floats the popup; otherwise it becomes the panel's active
- * tab. The opener stays open.
- */
 export function showPreviewPopup(
   threadRef: ScopedThreadRef,
   popupTabId: string,

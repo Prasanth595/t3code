@@ -27,16 +27,7 @@ export class ProviderInstanceRegistry extends Context.Service<
     readonly getInstance: (
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ProviderInstance | undefined>;
-    /**
-     * Every available (driver-registered, successfully created) instance,
-     * in stable settings-author order.
-     */
     readonly listInstances: Effect.Effect<ReadonlyArray<ProviderInstance>>;
-    /**
-     * Wire-shape shadow snapshots for instances whose driver is unknown to
-     * this build (or whose config failed to decode). Suitable for merging
-     * directly into `ProviderRegistry` output.
-     */
     readonly listUnavailable: Effect.Effect<ReadonlyArray<ServerProvider>>;
     /**
      * NOTE: because `Stream.fromPubSub` defers `PubSub.subscribe` until the stream starts
@@ -47,11 +38,6 @@ export class ProviderInstanceRegistry extends Context.Service<
      * consumer loop is forked.
      */
     readonly streamChanges: Stream.Stream<void>;
-    /**
-     * Acquire a subscription to the registry's change channel synchronously in the caller's
-     * fiber. Returns a `PubSub.Subscription<void>` whose lifetime is scoped to the provided
-     * `Scope` (the subscription is released when the scope closes).
-     */
     readonly subscribeChanges: Effect.Effect<PubSub.Subscription<void>, never, Scope.Scope>;
   }
 >()("t3/provider/ProviderInstanceRegistry") {}
@@ -68,21 +54,13 @@ interface RegistryState {
   readonly changes: PubSub.PubSub<void>;
 }
 
-/**
- * Config payloads are opaque `unknown` at the envelope layer; `Equal.equals` falls back to
- * structural equality for plain records, which matches how the schema decode output is
- * constructed.
- */
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
 
 /**
- * Resolve an entry's enabled state. An explicit false on either the
- * envelope or the raw config blob wins (most restrictive) — old settings
- * files can carry both flags with conflicting values, and a user's disable
- * must never be silently undone. Otherwise the envelope flag wins, then the
- * decoded config's flag (which carries the driver schema's default for
- * built-ins and forks alike), then enabled by default.
+ * An explicit false on either the envelope or the raw config blob wins (most
+ * restrictive) — old settings files can carry both flags with conflicting
+ * values, and a user's disable must never be silently undone.
  */
 const resolveEntryEnabled = (entry: ProviderInstanceConfig, typedConfig: unknown): boolean => {
   const rawConfigEnabled = providerInstanceConfigEnabledFlag(entry.config);
@@ -144,11 +122,6 @@ const buildEntry = <R>(input: {
 
     const typedConfig = decodeResult.success;
     const childScope = yield* Scope.make();
-    // Attach the child scope to the registry's parent scope: if the
-    // registry scope closes, each surviving instance's child scope is
-    // closed through this finalizer. `reconcile` manually closes the
-    // child scope on remove/replace; subsequent close via the parent's
-    // finalizer is a no-op because `Scope.close` is idempotent.
     yield* Scope.addFinalizer(parentScope, Scope.close(childScope, Exit.void).pipe(Effect.ignore));
 
     const createResult = yield* driver
@@ -290,10 +263,6 @@ const makeReconcile = <R>(input: {
     });
 };
 
-/**
- * The scope that this effect runs in owns every per-instance child scope created during
- * `reconcile`. Closing that scope closes every live instance.
- */
 export const makeProviderInstanceRegistry = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
@@ -316,8 +285,6 @@ export const makeProviderInstanceRegistry = <R>(input: {
     // scopes to the *caller's* scope instead of the registry's.
     const parentScope = yield* Scope.Scope;
 
-    // Capture the driver R context at construction time so `reconcile`
-    // can be invoked later without re-providing driver dependencies.
     const driverContext = yield* Effect.context<R>();
 
     const entries = yield* Ref.make<ReadonlyMap<ProviderInstanceId, LiveEntry>>(new Map());
@@ -343,8 +310,6 @@ export const makeProviderInstanceRegistry = <R>(input: {
       listUnavailable: Ref.get(unavailable).pipe(
         Effect.map((map) => Array.from(map.values()) as ReadonlyArray<ServerProvider>),
       ),
-      // Getters: each read constructs a fresh Stream / Effect descriptor so multiple consumers
-      // don't share a single already-started Channel or subscription.
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },

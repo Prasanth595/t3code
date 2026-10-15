@@ -43,7 +43,6 @@ export function useReviewGuideWriter({
       since: Date.now(),
     }),
   );
-  // A run started elsewhere, or before a reload, is watched as soon as it is seen.
   useEffect(() => {
     if (data?.run?._tag === "Running") watchRun();
   }, [data?.run?._tag]);

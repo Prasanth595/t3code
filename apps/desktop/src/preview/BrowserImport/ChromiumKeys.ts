@@ -31,7 +31,6 @@ export type ChromiumKeyFailure = typeof ChromiumKeyFailure.Type;
 
 export class ChromiumKeyError extends Schema.TaggedError<ChromiumKeyError>()("ChromiumKeyError", {
   reason: ChromiumKeyFailure,
-  /** Kept for the log; never surfaced to the user. */
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
@@ -39,17 +38,9 @@ export class ChromiumKeyError extends Schema.TaggedError<ChromiumKeyError>()("Ch
   }
 }
 
-/**
- * Keys to try, indexed by the record prefix they decrypt. A database can hold
- * records written under more than one scheme, so a missing entry means those
- * records are skipped rather than the whole import failing.
- */
 export interface ChromiumKeyMaterial {
-  /** AES-128-CBC on macOS, and the keyring-free Linux fallback. */
   readonly cbcV10?: Buffer;
-  /** AES-128-CBC, Linux keyring-derived. */
   readonly cbcV11?: Buffer;
-  /** Retained so an import that needs this key can report why it is missing. */
   readonly cbcV11Error?: ChromiumKeyError;
   /**
    * AES-128-CBC from an empty passphrase. Some Linux clients wrote records
@@ -57,7 +48,6 @@ export interface ChromiumKeyMaterial {
    * after a record's own key fails.
    */
   readonly cbcEmpty?: Buffer;
-  /** AES-256-GCM key used by pre-App-Bound Chromium on Windows. */
   readonly gcmV10?: Buffer;
 }
 
@@ -65,11 +55,9 @@ const derive = (passphrase: string, iterations: number) =>
   NodeCrypto.pbkdf2Sync(passphrase, KEY_SALT, iterations, KEY_LENGTH, "sha1");
 
 /**
- * Uses the in-process Keychain API rather than shelling out to
- * `/usr/bin/security`, because macOS attributes both the consent prompt and the
- * resulting ACL entry to the binary that asks. Via the CLI the prompt says
- * "security" and "Always Allow" grants trust to a tool every process on the
- * machine can invoke; in-process it names this app and the grant belongs to it.
+ * Via the CLI the prompt says "security" and "Always Allow" grants trust to a
+ * tool every process on the machine can invoke; in-process it names this app
+ * and the grant belongs to it.
  *
  * Deliberately untimed: macOS answers this with a modal, and a timeout racing
  * the user means the prompt can be approved while nothing is left listening,
@@ -89,8 +77,6 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
     try: () => new Keyring.Entry(service, account).getPassword(),
     catch: (cause) => {
       const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
-      // Distinguish the causes rather than reporting "approve the prompt" for
-      // a failure approving cannot fix.
       const missing = /no (matching )?entry|not found/i.test(message);
       return new ChromiumKeyError({
         reason: missing ? "keychainItemMissing" : "needsKeychainApproval",
@@ -106,8 +92,7 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
 
 /**
  * Its exit codes distinguish a missing key, denied access, and an unavailable
- * keyring without parsing localized error messages. Stdout is the unmodified
- * secret.
+ * keyring without parsing localized error messages.
  */
 export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(function* (
   application: string,
@@ -192,7 +177,6 @@ export const decodeWindowsWrappedKey = Effect.fn("ChromiumKeys.decodeWindowsWrap
   return wrappedBuffer.subarray(DPAPI_PREFIX.length);
 });
 
-/** Unwraps a key with the current Windows user's DPAPI identity. */
 export const unwrapWindowsDpapiKey = Effect.fn("ChromiumKeys.unwrapWindowsDpapiKey")(function* (
   wrapped: Buffer,
 ) {
@@ -250,7 +234,6 @@ export const unwrapWindowsDpapiKey = Effect.fn("ChromiumKeys.unwrapWindowsDpapiK
   );
 });
 
-/** Reads and unwraps a legacy Windows Chromium key without exposing it in argv. */
 export const readWindowsKey = Effect.fn("ChromiumKeys.readWindowsKey")(function* (
   localStatePath: string,
 ) {
@@ -285,8 +268,7 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
 
   if (request.platform === "linux") {
     // The fallback passphrase always applies to `v10` records; a keyring
-    // secret, when one is reachable, additionally unlocks `v11`. Preserve its
-    // failure until the reader knows whether any cookies needed that key.
+    // secret, when one is reachable, additionally unlocks `v11`.
     const keyringSecret = request.linuxSecretApplication
       ? yield* readLinuxSecret(request.linuxSecretApplication).pipe(
           // v10 remains importable when Secret Service is absent or does not

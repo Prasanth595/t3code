@@ -11,7 +11,6 @@ import * as Schema from "effect/Schema";
 
 export const PROJECT_FAVICON_THUMBNAIL_SIZE = 96;
 export const PROJECT_FAVICON_MAX_DATA_URL_LENGTH = 32 * 1024;
-/** Larger sources are not worth decoding for an icon and are left to the remote URL. */
 export const PROJECT_FAVICON_MAX_SOURCE_BYTES = 4 * 1024 * 1024;
 export const PROJECT_FAVICON_CACHE_MAX_BYTES = 1024 * 1024;
 export const PROJECT_FAVICON_CACHE_MAX_ENTRIES = 128;
@@ -44,7 +43,6 @@ function keyFor(target: ProjectFaviconTarget) {
 }
 
 export interface ProjectFaviconStorage {
-  /** Every persisted record; entries that fail validation are ignored. */
   readonly list: () => Promise<ReadonlyArray<unknown>>;
   readonly put: (key: string, entry: ProjectFaviconEntry) => Promise<void>;
   readonly remove: (key: string, entry: ProjectFaviconEntry) => Promise<void>;
@@ -116,7 +114,6 @@ export function createProjectFaviconImageLoader(input: {
   };
 }
 
-/** Stores small, self-contained images so startup never needs an old signed URL. */
 export function createProjectFaviconCache(input: {
   readonly storage: ProjectFaviconStorage;
   readonly load: (url: string, signal: AbortSignal) => Promise<string>;

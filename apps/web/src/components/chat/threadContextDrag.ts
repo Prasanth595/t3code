@@ -83,7 +83,6 @@ export function endThreadContextDrag() {
   setGhost(null);
 }
 
-/** True when a composer accepted the drop. */
 export function dropThreadContext(
   point: { x: number; y: number },
   threads: ReadonlyArray<ScopedThreadRef>,

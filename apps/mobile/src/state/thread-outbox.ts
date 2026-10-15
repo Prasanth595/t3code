@@ -40,7 +40,6 @@ export function updateThreadOutboxMessage(
   return threadOutboxManager.update(message, expectedRevision);
 }
 
-/** Snapshot of a queued message's write revision, for update's CAS. */
 export function threadOutboxRevision(messageId: QueuedThreadMessage["messageId"]): number {
   return threadOutboxManager.revisionOf(messageId);
 }

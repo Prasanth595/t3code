@@ -17,7 +17,6 @@ import { readContainedWorkflowFile } from "./workflowFileRead.ts";
 
 const TRANSCRIPT_BYTE_CAP = 512 * 1024;
 
-/** A member id names a file, so anything path-shaped is rejected outright. */
 const AGENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 /**

@@ -10,7 +10,6 @@ export interface ProviderMaintenanceCapabilities {
    * installer was asked and did not know.
    */
   readonly latestVersion?: string | null;
-  /** Compare native release revisions when the provider does not use plain semver. */
   readonly compareVersions?: (current: string, latest: string) => number;
 }
 

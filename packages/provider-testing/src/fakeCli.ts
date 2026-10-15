@@ -7,22 +7,14 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 export interface FakeCliOptions {
   readonly directory: string;
   readonly name: string;
-  /** ES module source the launcher runs with `node`. `process.argv.slice(2)` carries the CLI args. */
   readonly source: string;
   readonly env?: Readonly<Record<string, string>>;
-  /**
-   * Platform the launcher is shaped for. Effect callers should pass the value
-   * they read from `HostProcess.Platform` so an injected override is honoured;
-   * defaults to the real host for plain tests.
-   */
   readonly platform?: NodeJS.Platform;
 }
 
 /**
  * On posix the launcher is a `#!/bin/sh` script; on Windows it is a `.cmd` shim, since a
  * shebang file is not executable there and `resolveSpawnCommand` routes `.cmd` through a shell.
- * Returns the launcher path to hand to the code under test, which on Windows carries the `.cmd`
- * extension.
  */
 export function writeFakeCli(options: FakeCliOptions): string {
   NodeFS.mkdirSync(options.directory, { recursive: true });
@@ -63,15 +55,9 @@ export function writeFakeCli(options: FakeCliOptions): string {
   return launcherPath;
 }
 
-/**
- * Nothing sits between the code under test and the mock, so a kill or a closed stdin reaches it
- * directly and its exit log is faithful on every host. The script must not read `process.argv`;
- * the mock agents are driven by environment and stdin.
- */
 export function execScriptSource(options: {
   readonly scriptPath: string;
   readonly expectedArgs?: ReadonlyArray<string>;
-  /** Tab-separated argv appended here per invocation, for launch-flag assertions. */
   readonly argvLogPath?: string;
   readonly delayMs?: number;
 }): string {

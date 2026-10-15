@@ -29,10 +29,6 @@ export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
 
-/**
- * Safe categories for a failed DPoP proof. These describe the class of failure
- * without exposing proof contents or server-side authentication details.
- */
 export const DpopFailureReason = Schema.Literals([
   "time_window",
   "key_mismatch",
@@ -46,11 +42,6 @@ export type DpopFailureReason = typeof DpopFailureReason.Type;
 export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
-/**
- * Same idea for one optional value whose literal set grows over time: a
- * member this build does not know decodes as absent rather than failing the
- * enclosing struct. Encoding is the plain encoding.
- */
 export const ForwardCompatibleOptional = <Value extends Schema.Top>(value: Value) => {
   const decodeValue = Schema.decodeUnknownOption(value as never);
   return Schema.optionalKey(
@@ -67,11 +58,6 @@ export const ForwardCompatibleOptional = <Value extends Schema.Top>(value: Value
   );
 };
 
-/**
- * The nullable form, for a persisted setting whose literal set grows over
- * time: a member this build does not know (or a missing key) decodes as null
- * rather than failing the enclosing struct. Encoding is the plain encoding.
- */
 export const ForwardCompatibleNullable = <Value extends Schema.Top>(value: Value) => {
   const decodeValue = Schema.decodeUnknownOption(value as never);
   return Schema.Unknown.pipe(
@@ -172,10 +158,7 @@ export class UnknownUnionMember<Tag extends string = string> {
 }
 
 /**
- * A value whose `tag` field holds a value this build does not know decodes to {@link
- * UnknownUnionMember} instead of failing; a known member decodes through its own schema, so a
- * broken known payload still fails. Callers decide what an unknown member means: skip it, or
- * show a fallback. Unknown members are decode-only; encoding one fails.
+ * Unknown members are decode-only; encoding one fails.
  */
 export const ForwardCompatibleUnion = <
   const Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>,
@@ -230,11 +213,6 @@ export const isUnknownUnionMember = <A>(
   value: A,
 ): value is Extract<A, UnknownUnionMember<string>> => value instanceof UnknownUnionMember;
 
-/**
- * An array of a growing tagged union that drops members this build does not
- * know. Known members decode through their own schema and still fail when
- * broken. Encoding is the plain array encoding.
- */
 export const ForwardCompatibleUnionArray = <
   const Members extends ReadonlyArray<Schema.Top & { readonly fields: object }>,
   const Tag extends string,
@@ -306,12 +284,6 @@ export type AuthSessionId = typeof AuthSessionId.Type;
 export const RpcClientId = NonNegativeInt.pipe(Schema.brand("RpcClientId"));
 export type RpcClientId = typeof RpcClientId.Type;
 
-/**
- * Which client surface a connection or command comes from. Unlike
- * `AuthClientMetadataDeviceType` (a UA-style device class where web and
- * desktop are both "desktop"), this names the actual product surface.
- * Optional everywhere it appears: old clients never send it.
- */
 export const ClientSurface = Schema.Literals(["web", "desktop", "mobile", "cli"]);
 export type ClientSurface = typeof ClientSurface.Type;
 

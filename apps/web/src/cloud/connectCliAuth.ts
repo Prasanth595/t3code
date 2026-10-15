@@ -19,21 +19,10 @@ export function hasConnectCliAuthConfig(): boolean {
   );
 }
 
-/**
- * Gate for the /connect route: the CLI handshake only exists on the hosted
- * deployment (the same bundle ships inside local instances) and needs the
- * Clerk CLI OAuth client configured at build time.
- */
 export function connectCliAuthRoutesEnabled(): boolean {
   return isHostedStaticApp() && hasCloudPublicConfig() && hasConnectCliAuthConfig();
 }
 
-/**
- * Builds the Clerk authorize URL for a CLI-initiated connect request. The
- * authorization code returns to the CLI's `127.0.0.1` listener directly, so
- * this page never sees it. Clerk enforces its registered redirect URI
- * allowlist either way.
- */
 export function buildConnectCliClerkAuthorizeUrl(request: ConnectAuthorizeRequest): string | null {
   const { clerkPublishableKey } = resolveCloudPublicConfig();
   const clientId = resolveConnectCliOAuthClientId();

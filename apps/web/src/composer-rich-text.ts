@@ -26,7 +26,6 @@ function pushSpan(spans: RichTextSpan[], text: string, marks: RichTextMark[]): v
   }
 }
 
-/** Parse the supported inline styles, leaving unmatched and escaped markers literal. */
 export function parseInlineMarkdown(text: string): RichTextSpan[] {
   const root: RichTextSpan[] = [];
   const stack: { delimiter: string; mark: RichTextMark; spans: RichTextSpan[] }[] = [];
@@ -40,7 +39,6 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
       continue;
     }
     if (char === "`") {
-      // Multi-backtick code stays literal; a single-backtick span owns its contents.
       const run = text.slice(index).match(/^`+/)![0];
       const close = text.indexOf(run, index + run.length);
       if (
@@ -70,8 +68,6 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
     const canOpen = after !== "" && !/\s/.test(after) && (char !== "_" || !/\w/.test(before));
     while (index < end) {
       const top = stack.at(-1);
-      // Inside italic, a double marker opens bold before closing the single
-      // marker. Once bold is active, closing runs unwind both styles.
       const opensNestedBold =
         top?.mark === "italic" &&
         end - index === 2 &&

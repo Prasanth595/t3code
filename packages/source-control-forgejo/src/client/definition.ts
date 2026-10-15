@@ -69,7 +69,6 @@ export const definition = defineSourceControlClient({
   reviewSummaryRequired: (verdict) => verdict === "request-changes",
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
-  // Forgejo servers are addressed with their port, so two on one hostname stay apart.
   changeRequestUrlHost: (url) => url.host,
   checkoutChangeRequestHost: () => null,
   isChangeRequestInRepository: (identity, link) => {

@@ -83,9 +83,6 @@ function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
   );
 }
 
-/**
- * Rendered inside the portal so only open tooltips track the titlebar.
- */
 function TooltipPositioner(props: TooltipPrimitive.Positioner.Props) {
   const titlebarHeight = useNativeTitlebarHeight();
   return (

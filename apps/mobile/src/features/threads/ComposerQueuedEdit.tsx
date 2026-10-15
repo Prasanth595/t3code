@@ -31,11 +31,6 @@ export function ComposerQueuedEditBanner(props: {
   );
 }
 
-/**
- * Attachments already on the queued message. They live on the server rather
- * than in the draft, so they get their own row: removing one here drops it
- * from the replacement list the edit sends.
- */
 export function ComposerQueuedEditAttachments(props: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<ChatAttachment>;

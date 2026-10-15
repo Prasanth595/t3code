@@ -5,12 +5,9 @@ export type GitHubDiscoveredAccount = NonNullable<SourceControlProviderAuth["acc
 
 export interface GitHubHostGroup {
   readonly host: string;
-  /** gh's active stored login, the one used when Settings pin nothing. */
   readonly activeAccount: string | null;
-  /** Stored logins that work and can be pinned with `gh auth token --user`. */
   readonly selectable: ReadonlyArray<string>;
   readonly broken: ReadonlyArray<GitHubDiscoveredAccount>;
-  /** Set when GH_TOKEN or a sibling overrides every stored login for this host. */
   readonly environmentVariable: string | null;
 }
 
@@ -33,10 +30,6 @@ export function groupGitHubAccounts(
   });
 }
 
-/**
- * Hosts left on gh's defaults (enabled, no pinned account) are dropped so
- * settings only hold real choices.
- */
 export function nextGitHubHosts(
   current: GitHubSettings["hosts"],
   host: string,

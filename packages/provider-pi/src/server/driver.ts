@@ -48,7 +48,6 @@ const DRIVER_KIND = ProviderDriverKind.make("pi");
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@earendil-works/pi-coding-agent",
-  // Pi's updater covers its own installer and npm, pnpm, yarn, and bun globals.
   nativeUpdate: { args: ["update", "--self"] },
 });
 

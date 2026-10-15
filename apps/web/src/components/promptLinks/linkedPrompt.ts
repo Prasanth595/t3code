@@ -14,9 +14,6 @@ export function warnAboutHiddenCharacters(prompt: LinkedPrompt): void {
   });
 }
 
-/**
- * `notes` carry anything the link asked for and did not get, such as a model.
- */
 export function placeLinkedPrompt(
   target: ComposerThreadTarget,
   prompt: LinkedPrompt,

@@ -293,7 +293,6 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       setDragRows(null);
                       translation.setValue(0);
                     };
-                    // A remote reorder or a newly started run invalidates this drag.
                     if (!success || started?.order !== order || started.runId !== run.id) {
                       stop();
                       return;

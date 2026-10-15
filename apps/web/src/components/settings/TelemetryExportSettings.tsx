@@ -51,7 +51,6 @@ export function TelemetryExportSettings() {
       </SettingsSection>
     );
   }
-  // Mounts per environment so its saved endpoints are the ones checked on open.
   return <TelemetryExportForm key={environment.environmentId} />;
 }
 
@@ -62,7 +61,6 @@ function TelemetryExportForm() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const environmentId = environment?.environmentId;
-  // Checks need the same grant as saving, so one permission covers the whole form.
   const canEdit = useAtomValue(
     serverEnvironment.checkOtlpEndpoint.permissionAtom(environmentId ?? null),
   );
@@ -86,7 +84,6 @@ function TelemetryExportForm() {
   const sendCheck = async (key: SignalKey, signal: OtlpSignal, url: string) => {
     if (!environmentId) return;
     const response = await checkOtlpEndpoint({ environmentId, input: { signal, url } });
-    // A newer check for the same field replaces this one.
     setChecks((previous) => {
       if (previous[key]?.url !== url || previous[key].result !== null) return previous;
       const next = { ...previous };

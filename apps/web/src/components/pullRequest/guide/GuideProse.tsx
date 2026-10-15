@@ -10,10 +10,6 @@ export const GuideProseContext = createContext<{
   readonly cwd: string;
 } | null>(null);
 
-/**
- * Plain text inside a control, such as a question that opens a thread, since a
- * link cannot nest in a button.
- */
 export function GuideProse({
   text,
   plain = false,

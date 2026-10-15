@@ -54,9 +54,6 @@ export type McpAppDownload =
       readonly mimeType?: string;
     };
 
-/**
- * Undefined when it has neither or the base64 is malformed.
- */
 export function mcpResourceBytes(content: unknown): Uint8Array | undefined {
   if (!Predicate.isObject(content)) return undefined;
   if (typeof content.text === "string") return encoder.encode(content.text);
@@ -74,7 +71,6 @@ export interface McpAppCallToolResult {
   readonly _meta?: unknown;
 }
 
-/** Thrown by host callbacks to refuse a request with a message the app can show. */
 export class McpAppHostRefusal extends Error {}
 
 export interface McpAppHostOptions {
@@ -95,10 +91,6 @@ export interface McpAppHostOptions {
     readonly content?: ReadonlyArray<unknown>;
     readonly structuredContent?: Record<string, unknown>;
   }) => Promise<void>;
-  /**
-   * Switches the app to a mode the host and the app both offer, returning the
-   * resulting mode. The host has already checked both lists.
-   */
   readonly requestDisplayMode: (mode: McpAppDisplayMode) => Promise<McpAppDisplayMode>;
   readonly downloadFile: (files: ReadonlyArray<McpAppDownload>) => Promise<void>;
   readonly onRequestTeardown: () => void;
@@ -108,10 +100,6 @@ export interface McpAppHostOptions {
 export interface McpAppHost {
   /** Handles one message the app posted; the caller has already checked its source. */
   readonly receive: (data: unknown) => void;
-  /**
-   * Supplies the original tool call's arguments and result. They reach the
-   * app once it has initialized, whichever happens last, and only once.
-   */
   readonly setToolCall: (call: {
     readonly arguments: unknown;
     readonly result: McpAppCallToolResult | undefined;
@@ -353,7 +341,6 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         answer(id, () =>
           options.downloadFile(files).then(
             () => ({}),
-            // The draft reports a refused or failed download in the result.
             (error: unknown) =>
               error instanceof McpAppHostRefusal ? { isError: true } : Promise.reject(error),
           ),
@@ -371,7 +358,6 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         if (initialized) return;
         initialized = true;
         sendToolCall();
-        // The theme or size may have changed since the initialize response.
         hostHandle.updateHostContext();
         return;
       }

@@ -1,7 +1,3 @@
-// Mirrors the newest build on a Google Play track to a rolling GitHub
-// prerelease as a universal APK. Play generates and signs that APK from the
-// uploaded bundle with the app signing key, so it carries the same signature
-// as the Play Store install. Run by .github/workflows/mobile-android-apk.yml.
 const { execFileSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -18,7 +14,6 @@ function requireEnv(name) {
   return value;
 }
 
-// Service account key -> OAuth access token via a self-signed JWT grant.
 async function playAccessToken(key) {
   const now = Math.floor(Date.now() / 1000);
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -83,9 +78,6 @@ function readRelease(tag) {
   }
 }
 
-// Downloads the build's universal APK and uploads it, creating the release on
-// first use. Returns false when Play lists no universal APK, which happens
-// while it is still processing a fresh upload.
 async function uploadApk({ token, appUrl, build, tag, apkName, notes, release }) {
   const generated = await (
     await play(token, "GET", `${appUrl}/generatedApks/${build.versionCode}`)
@@ -122,7 +114,6 @@ async function uploadApk({ token, appUrl, build, tag, apkName, notes, release })
       notes,
     );
   }
-  // --clobber replaces an asset a failed upload left behind.
   gh("release", "upload", tag, apkPath, "--clobber");
   return true;
 }
@@ -154,7 +145,6 @@ async function main() {
 
   const release = readRelease(tag);
   const assets = release?.assets ?? [];
-  // A failed upload can leave an empty asset under the final name.
   const published = assets.some(
     (asset) => asset.name === apkName && asset.state === "uploaded" && asset.size > 0,
   );
@@ -164,7 +154,6 @@ async function main() {
     console.log(`Published ${apkName}.`);
     summary(`:white_check_mark: Published \`${apkName}\` to the \`${tag}\` release.`);
   } else {
-    // The next run retries.
     console.log(`Play lists no universal APK for ${build.versionCode}.`);
     summary(
       `:hourglass: Play lists no universal APK for ${build.versionName} (${build.versionCode}).`,
@@ -172,7 +161,6 @@ async function main() {
     return;
   }
 
-  // Reconciled on every run so an interrupted cleanup finishes on the next one.
   for (const stale of assets) {
     if (stale.name.endsWith(".apk") && stale.name !== apkName) {
       gh("release", "delete-asset", tag, stale.name, "--yes");

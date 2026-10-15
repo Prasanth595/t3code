@@ -52,9 +52,6 @@ type LinkedDraftRequest = {
   readonly pullRequest: PromptLinkPullRequest | null;
 };
 
-/**
- * Nothing is ever sent: the user reads the prompt and presses Send.
- */
 export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> | undefined) {
   const navigation = useNavigation();
   const flow = useNewTaskFlow();
@@ -79,8 +76,6 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
         environment.connectionState === "connecting" || environment.connectionError === null,
     );
 
-  // Writes the prompt and the requested model into a draft. Returns true when the link named a
-  // model the user cannot use, so their default stands in.
   const writeDraft = (
     draftKey: string,
     environmentId: EnvironmentId,
@@ -112,7 +107,6 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     });
     let pullRequestUnavailable: number | null = null;
     if (request.pullRequest) {
-      // The same draft the PR screen's Ask makes: Send checks out the PR head in a worktree.
       const detail = await loadPullRequest({
         environmentId: project.environmentId,
         input: {
@@ -189,9 +183,6 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     await openProjectDraft(result.value, { ...request, pullRequest: null });
   };
 
-  // Clone needs a tap on the destination screen, which then opens a draft in the cloned project
-  // holding the prompt. A pull request's prompt belongs on its branch, which only exists once the
-  // clone is done, so that link, like any on an older server, has to be opened again.
   const cloneRepository = (repository: PromptLinkRepository, request: LinkedDraftRequest) => {
     const environmentId =
       flow.selectedEnvironmentId ?? connectedEnvironments[0]?.environmentId ?? null;
@@ -199,7 +190,6 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
       Alert.alert("Could not clone", "Connect an environment first.");
       return;
     }
-    // Only a tracked clone opens a draft the prompt can ride into; older servers do not.
     const prompt =
       request.pullRequest === null &&
       serverConfigs.get(environmentId)?.environment.capabilities.projectCloneTracking === true
@@ -266,8 +256,6 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
       void openScratchDraft(request);
       return;
     }
-    // Most recently active first, so the user lands where they last worked. Scopes are ordered
-    // that way, but the checkouts inside one are not.
     const lastActivity = new Map<string, string>();
     for (const thread of threads) {
       const key = `${thread.environmentId}:${thread.projectId}`;
@@ -294,7 +282,6 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
     ]);
   });
 
-  // Handle each link once. Clearing the params lets the same link open again later.
   const handledSearchRef = useRef<string | null>(null);
   useEffect(() => {
     if (search === null) {

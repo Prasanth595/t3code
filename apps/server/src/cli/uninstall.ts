@@ -32,7 +32,6 @@ export interface UninstallPlan {
   readonly service: boolean;
   readonly launcher: string | undefined;
   readonly runtimeDir: string | undefined;
-  /** `<home>/userdata`, which is never removed; shown so the user knows where it is. */
   readonly userdataDir: string;
 }
 

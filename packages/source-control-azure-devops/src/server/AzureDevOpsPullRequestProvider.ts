@@ -37,9 +37,7 @@ import { definition } from "../client/definition.ts";
 
 /**
  * Every file is two `az` invocations, each paying a Python interpreter's start-up, so reading them
- * one after another is most of what the Code tab waits for. Four files means eight processes at
- * once: the fan-out the GitHub CLI reads its per-file stats with here, and low enough not to swamp
- * the host's throttling or the machine.
+ * one after another is most of what the Code tab waits for.
  */
 const DIFF_FILE_CONCURRENCY = 4;
 
@@ -53,8 +51,6 @@ export const MAX_DIFF_SPAWNS = 2 * DIFF_FILE_CONCURRENCY;
 export const LOCATION_CACHE_CAPACITY = 128;
 
 const CAPABILITIES: PullRequestCapabilities = {
-  // Azure serves no patch of its own, so the one the Code tab reads is built here out of the
-  // files an iteration changed and both sides of each of them.
   diff: true,
   comment: false,
   actions: [...definition.changeRequestActions],
@@ -77,8 +73,7 @@ const CAPABILITIES: PullRequestCapabilities = {
 /**
  * Azure DevOps states no permission anywhere `az repos pr show` or `az repos pr list` reach: the
  * answer lives in the security namespaces, behind identity descriptors and token paths that would
- * be several calls per pull request to resolve. So the actions stay live and a viewer who may not
- * take one is told so by Azure, at the moment they try.
+ * be several calls per pull request to resolve.
  */
 const AZURE_DEVOPS_VIEWER_PERMISSIONS: PullRequestViewerPermissions = {
   actions: CAPABILITIES.actions,
@@ -181,11 +176,6 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  /**
-   * Everything a diff read needs before it can ask for a file: where the repository lives, and
-   * which pushes the pull request has had. A client names neither, and the iterations are read
-   * afresh every time because the newest one is what a push adds.
-   */
   const diffScope = (input: { readonly cwd: string; readonly number: number }) =>
     Effect.gen(function* () {
       const location = yield* locationOf(input);
@@ -319,8 +309,6 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
         const location = pullRequest.location;
-        // The file count is two reads past the pull request itself, and it is the only thing
-        // riding on them, so a failure leaves it unknown rather than losing the whole detail.
         const changedFiles =
           location === null
             ? 0
@@ -435,9 +423,6 @@ export const make = Effect.gen(function* () {
           const read = yield* Effect.forEach(
             batch,
             (change) =>
-              // A pair Azure refuses is one file rather than the whole slice: an oversize blob or
-              // a path `az` will not carry through leaves that file listed without its hunks, and
-              // everything around it still renders.
               readTexts({ cwd: input.cwd, location: scope.location, iteration, change }).pipe(
                 // Only what is this one file's problem. A signed-out CLI, a rate limit or no `az`
                 // at all is the read failing rather than the file, and belongs to the caller,
@@ -490,8 +475,6 @@ export const make = Effect.gen(function* () {
         return slice;
       }).pipe(Effect.mapError(fail("getDiff"))),
 
-    // Read against the latest iteration: nothing in the request says which push the reader is
-    // looking at, and expansion is stale after a mid-review push on every host here anyway.
     getDiffFileContents: (input) =>
       Effect.gen(function* () {
         const scope = yield* diffScope(input);
@@ -573,8 +556,6 @@ export const make = Effect.gen(function* () {
         .setPullRequestReviewers({
           cwd: input.cwd,
           number: input.number,
-          // Azure names an identity by an email address or a guid, and has no team to ask, so a
-          // candidate's id is the whole of what it takes.
           reviewers: input.reviewers.map((reviewer) => reviewer.id),
           requested: input.requested,
         })

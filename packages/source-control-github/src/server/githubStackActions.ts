@@ -127,7 +127,6 @@ const decodeBranchAccess = Schema.decodeEffect(
 
 const decodeMergeResponse = Schema.decodeEffect(Schema.fromJsonString(MergeResponse));
 
-/** Remote-only updates: a stack rebase works in a scratch clone, never the environment's checkout. */
 export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* (input: {
   cwd: string;
   repository: string;

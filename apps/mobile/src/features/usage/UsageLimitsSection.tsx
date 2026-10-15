@@ -185,10 +185,6 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
-/**
- * Redeeming spends a credit the provider granted the user, so it goes through the native confirm
- * alert rather than firing on a bare tap.
- */
 export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
@@ -280,10 +276,6 @@ export function ResetCredits(props: {
   );
 }
 
-/**
- * Countdowns and pace anchor to `now` rather than ticking, so a refresh also re-anchors the
- * clock: quota and elapsed time move together, or not at all.
- */
 export function useRefreshLimits(
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   active = false,

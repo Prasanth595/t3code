@@ -149,7 +149,6 @@ interface DraftAnchor {
   readonly path: string;
   readonly oldPath: string | null;
   readonly position: PullRequestReviewPosition;
-  /** The whole selection, which the comment collapses to one line but a question keeps. */
   readonly range: SelectedLineRange;
 }
 
@@ -177,7 +176,6 @@ function PullRequestCodeTab({
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
-  /** Commit whose diff is open. Null keeps the whole pull-request diff selected. */
   selectedCommitOid: string | null;
   onSelectedCommitChange: (oid: string | null) => void;
   pendingFinding?: string | null;
@@ -186,7 +184,6 @@ function PullRequestCodeTab({
   onAddToAgentSelection?: (input: PullRequestAgentSelectionInput) => void;
   onRefresh: () => void;
   refreshToken?: number;
-  /** A file another tab asked to show. A new nonce asks again for the same path. */
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
 }) {
   const { resolvedTheme } = useTheme();
@@ -356,8 +353,6 @@ function PullRequestCodeTab({
       }),
     [loadedSlices, resolvedTheme, scopeKey, ignoreWhitespace],
   );
-  // Ordered within a slice rather than across them: ordering the accumulated set would let a late
-  // slice push a file the reader is part way through further down the page.
   const files = useMemo(
     () =>
       parsedSlices.flatMap((parsed) =>
@@ -389,8 +384,6 @@ function PullRequestCodeTab({
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
-  // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
-  // not structure and so dropped. Neither says anything about there being more to fetch.
   const withheldContent =
     loadedSlices.some((slice) => slice.truncated) ||
     parsedSlices.some((parsed) => parsed?.kind === "raw");
@@ -420,8 +413,6 @@ function PullRequestCodeTab({
     return placed;
   }, [commit, detail.reviewThreads, files]);
 
-  // Hashing what the annotations show is the costly part of an item's version, and none of it
-  // moves when a file is ticked or folded, so it is kept apart from the two that do.
   const annotatedFiles = useMemo(
     () =>
       files.map((fileDiff) => {
@@ -626,7 +617,6 @@ function PullRequestCodeTab({
   useEffect(() => {
     if (revealRequest === null || answeredReveal.current === revealRequest.nonce) return;
     if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
-      // The reader is not scrolling toward it, so the sentinel would never ask for its slice.
       if (canLoadNextSlice) loadNextSlice();
       return;
     }
@@ -635,9 +625,6 @@ function PullRequestCodeTab({
   }, [canLoadNextSlice, items, loadNextSlice, revealFile, revealRequest]);
 
   const toggleAllFiles = () => {
-    // Held as an override of the default rather than as the file keys on screen: a diff that is
-    // still paging would otherwise bring its next slice in folded, moments after the reader
-    // asked for everything to be open.
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
     setToggledFiles(new Set());
   };
@@ -823,10 +810,6 @@ function PullRequestCodeTab({
       loadDiffFiles,
       enableGutterUtility: canCommentOnLines && draft === null,
       enableLineSelection: canCommentOnLines && draft === null,
-      // Two gestures reach the same place: dragging the line numbers selects a range, and the
-      // gutter's own button comments on the one line it sits on. They are separate callbacks in
-      // the viewer, so a reader who only ever presses the button gets nothing unless both are
-      // wired.
       onGutterUtilityClick: beginComment,
       onLineSelectionEnd: beginComment,
     }),
@@ -995,7 +978,6 @@ function PullRequestCodeTab({
   // A rebase or a force-push can take the scoped commit out of the change. Its diff may still
   // be reachable on the host, but it is no longer part of what is being reviewed, so the scope
   // goes back to the whole change rather than sitting under a name nothing matches.
-  //
   // Including when the change reports no commits at all: the scope dropdown is the only way back
   // to the whole diff and it is not drawn without commits to list, so a scope that outlived them
   // would leave the tab reading one obsolete commit with nothing to press.
@@ -1302,8 +1284,6 @@ function PullRequestCodeTab({
       </div>
     </div>
   );
-  // The toolbar rides above every branch below, not just the one with a patch in it: a commit
-  // whose diff is empty or unreadable still needs the scope dropdown that got the reader there.
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
@@ -1323,10 +1303,8 @@ function PullRequestCodeTab({
     );
   }
 
-  // A patch the viewer cannot structure (binary, or a format it does not parse) still has to
-  // be readable, so it falls back to the raw text rather than an empty tab. Only once the diff
-  // is whole: returning here while a cursor is outstanding would take the sentinel off screen
-  // and end the walk, leaving the rest of the change unasked for.
+  // Only once the diff is whole: returning here while a cursor is outstanding would take the
+  // sentinel off screen and end the walk, leaving the rest of the change unasked for.
   const rawSlices =
     nextCursor === null
       ? parsedSlices.flatMap((parsed) => (parsed?.kind === "raw" ? [parsed] : []))
@@ -1433,9 +1411,8 @@ function PullRequestCodeTab({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className="relative min-h-0 min-w-0 flex-1"
-          // The chevron answers this too, but the whole header row is the target a reader
-          // actually aims for. The header lives in the viewer's shadow tree, so the capture
-          // listener walks `composedPath` — the only way to see through the shadow boundary.
+          // The header lives in the viewer's shadow tree, so the capture listener walks
+          // `composedPath` — the only way to see through the shadow boundary.
           onClickCapture={(event) => {
             const composedPath = event.nativeEvent.composedPath?.() ?? [];
             for (const node of composedPath) {
@@ -1446,8 +1423,6 @@ function PullRequestCodeTab({
               if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
                 return;
               }
-              // A label answers for the control it names and this listener runs before it hears
-              // anything, so stopping the press keeps the header from folding what the tick folds.
               if (node.hasAttribute("data-viewed-toggle")) return;
               if (node.hasAttribute("data-diffs-header")) {
                 const filePath = node.querySelector("[data-title]")?.textContent?.trim();
@@ -1472,9 +1447,6 @@ function PullRequestCodeTab({
             selectedLines={selectedLines}
             onSelectedLinesChange={setSelectedLines}
             options={diffViewOptions}
-            // The viewer owns the scroll container, so the sentinel that asks for the next slice
-            // has to live inside it — at the end of the files, where reaching it means the reader
-            // is running out of diff.
             renderCodeViewFooter={renderCodeViewFooter}
             renderHeaderPrefix={renderHeaderPrefix}
             renderHeaderMetadata={renderHeaderMetadata}

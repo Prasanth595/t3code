@@ -24,7 +24,6 @@ export const layer = Layer.effectDiscard(
     const runtime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
     const wake = wakeHeldHooks().pipe(
       Effect.timeout("10 seconds"),
-      // The relay retries on its own schedule too, so a few tries are enough.
       Effect.retry({ schedule: Schedule.exponential("2 seconds"), times: 3 }),
       Effect.tap((pending) =>
         pending ? Effect.logInfo("T3 Connect is delivering held webhook requests") : Effect.void,

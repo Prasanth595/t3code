@@ -14,11 +14,6 @@ const CACHE_SCHEMA_VERSION = 1;
 
 let database: MobileDatabase.MobileDatabase["Service"] | undefined;
 
-/**
- * The cache is a module singleton because the favicon atom family holds it outside
- * any Effect runtime. Its rows live in `client_cache`, so the environment cache store
- * hands over the database it already owns instead of the cache re-entering the runtime.
- */
 export function attachProjectFaviconDatabase(service: MobileDatabase.MobileDatabase["Service"]) {
   database = service;
 }
@@ -78,10 +73,6 @@ export async function downscaleProjectFavicon(
   throw new Error("Project icon thumbnail exceeds the cache limit.");
 }
 
-/**
- * Rows live in `client_cache` so Settings → Client storage counts and clears
- * them.
- */
 export const projectFaviconDatabaseCache = createSharedProjectFaviconCache({
   storage: {
     list: () =>

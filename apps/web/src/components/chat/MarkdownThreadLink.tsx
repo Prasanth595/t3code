@@ -7,9 +7,6 @@ import { MessageSquareTextIcon } from "lucide-react";
 import { useProject, useThreadShell } from "../../state/entities";
 import { ProjectFavicon } from "../ProjectFavicon";
 
-/**
- * `label` is what the message wrote, shown only when this client cannot see the thread.
- */
 export function MarkdownThreadLink(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -30,7 +27,6 @@ export function MarkdownThreadLink(props: {
     <Link
       to="/$environmentId/$threadId"
       params={{ environmentId: props.environmentId, threadId }}
-      // Like an attached thread chip: archived threads are not in the index but still open.
       title={thread === null ? "Thread no longer available" : project?.title}
       data-markdown-copy={formatThreadLink(threadId, title)}
     >

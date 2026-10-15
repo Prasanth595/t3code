@@ -12,9 +12,6 @@ interface Props {
   move?: { readonly label: string; readonly onMove: () => void };
 }
 
-/**
- * A server tab's address was a file its browser cannot show (a PDF), so the browser downloaded it.
- */
 export function PreviewFileNotShown({
   url,
   fileName,

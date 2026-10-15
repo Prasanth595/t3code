@@ -28,8 +28,6 @@ export const layer = Layer.effect(
       FileSystem.FileSystem | Crypto.Crypto | HttpClient.HttpClient
     >();
     return CursorAccountReader.of({
-      // Only a Keychain login asks the Keychain. The dashboard reader turns
-      // its outcome, a failure included, into the source's message.
       read: (credentialSource, sinceMs, untilMs) =>
         readCursorAccountUsage(credentialSource, sinceMs, untilMs, keychain.accessToken).pipe(
           Effect.provideContext(context),

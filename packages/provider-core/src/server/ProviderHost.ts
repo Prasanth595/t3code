@@ -13,7 +13,6 @@ import type * as Stream from "effect/Stream";
 import type { ProviderCredentialError } from "./errors.ts";
 
 export interface ProviderHostPaths {
-  /** Directory the server was started in; the fallback cwd for sessions without a project. */
   readonly cwd: string;
   readonly baseDir: string;
   readonly stateDir: string;
@@ -22,7 +21,6 @@ export interface ProviderHostPaths {
   readonly attachmentsDir: string;
 }
 
-/** One opaque credential blob in the server's secret store. Only the provider decodes it. */
 export interface ProviderCredentials {
   /** Instances whose bindings are equal share these credentials. */
   readonly binding: { readonly owner: "t3"; readonly key: string };
@@ -41,7 +39,6 @@ export class ProviderHost extends Context.Service<
       readonly withSnapshot: <A, E, R>(
         use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
       ) => Effect.Effect<A, E | ServerSettingsError, R>;
-      /** Every settings change after subscription, starting with the next one. */
       readonly changes: Stream.Stream<ServerSettings>;
       /** Changes buffered from the moment the scoped subscription is acquired. */
       readonly subscribe: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;

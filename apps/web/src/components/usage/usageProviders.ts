@@ -42,10 +42,8 @@ export const PROVIDER_PRESENTATION = {
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
-/** Stable provider reading order across charts, summaries, tables, and hover rows. */
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
 
-/** Providers with real activity, independent of the metric currently displayed. */
 export function providersWithUsage(
   totals: readonly {
     readonly provider: UsageProviderKind;

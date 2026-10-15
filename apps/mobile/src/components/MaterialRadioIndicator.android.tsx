@@ -4,7 +4,6 @@ import { View } from "react-native";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
-/** The enclosing radio row owns selection, touch and accessibility. */
 export function MaterialRadioIndicator({ selected }: { readonly selected: boolean }) {
   const { themeAppearance, themeVariables, systemColorsActive } = useAppearancePreferences();
   // Expo's radio button cannot override colors in the pinned SDK. Custom

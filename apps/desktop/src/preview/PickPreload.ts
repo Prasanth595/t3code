@@ -1025,7 +1025,6 @@ function startAnnotation(sendEnabled: boolean): void {
   const getAnnotationBounds = (): PreviewAnnotationRect | null =>
     unionRects(
       [
-        // Follow the visible outline, so a clipped selection does not anchor the editor off-screen.
         ...Array.from(selected.values(), (target) => visibleElementRect(target.element)).filter(
           (rect) => rect.width > 0 && rect.height > 0,
         ),
@@ -1393,7 +1392,6 @@ function startAnnotation(sendEnabled: boolean): void {
     pendingCapture = true;
     submit.disabled = true;
     submit.textContent = "Capturing…";
-    // Snapshot everything the annotation will carry before the capture runs.
     // The element context lookup can take up to its timeout, and the user can
     // keep editing meanwhile; the annotation must describe what they submitted.
     const submittedComment = comment.value.trim();
@@ -1449,8 +1447,6 @@ function startAnnotation(sendEnabled: boolean): void {
         );
       })
       .catch(() => {
-        // Last resort. Main is waiting on this message, so hand it an empty pick rather than
-        // leaving the button stuck on "Capturing…" and the renderer's pick promise pending.
         teardown(true);
       });
   };

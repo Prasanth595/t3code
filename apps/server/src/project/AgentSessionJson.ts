@@ -12,7 +12,6 @@ export function createTranscriptJsonSelector(schema: { readonly ast: SchemaAST.A
     if (index === path.length) return true;
     switch (node._tag) {
       case "Objects":
-        // Records have dynamic keys. Keep their values for the decoder to validate.
         if (node.indexSignatures.length > 0) return true;
         return node.propertySignatures.some(
           (property) =>
@@ -33,8 +32,6 @@ export function createTranscriptJsonSelector(schema: { readonly ast: SchemaAST.A
       case "Any":
       case "ObjectKeyword":
       case "Declaration":
-        // Unstructured/custom schemas must reach the decoder intact. The
-        // shared budget still bounds their allocations.
         return true;
       default:
         return false;
@@ -45,11 +42,6 @@ export function createTranscriptJsonSelector(schema: { readonly ast: SchemaAST.A
 
 export class TranscriptJsonLimitError extends Error {}
 
-/**
- * Project a single JSONL record without materializing unselected string values.
- * The caller supplies a shared allocation budget for the entire transcript.
- * Budget exhaustion rejects the transcript, never a message within it.
- */
 export function createTranscriptJsonReader(
   reserve: (bytes: number) => void,
   selectPath: (path: JsonPath) => boolean,
@@ -166,8 +158,6 @@ export function createTranscriptJsonReader(
         } else if (token.name === "endObject" || token.name === "endArray") {
           if (--depth === 0) complete = true;
         }
-        // Charge keys before assembling them, including unknown names. Reject
-        // the transcript on exhaustion instead of silently shortening a key.
         if (token.name === "startKey") {
           key = "";
         } else if (token.name === "stringChunk" && key !== null) {

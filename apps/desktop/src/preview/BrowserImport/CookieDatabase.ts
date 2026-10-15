@@ -5,7 +5,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-/** A cookie in the shape Electron's `session.cookies.set` accepts. */
 export interface ImportedCookie {
   readonly url: string;
   readonly name: string;
@@ -19,7 +18,6 @@ export interface ImportedCookie {
   readonly path: string;
   readonly secure: boolean;
   readonly httpOnly: boolean;
-  /** Seconds since the UNIX epoch, or undefined for a session cookie. */
   readonly expirationDate: number | undefined;
   readonly sameSite: "unspecified" | "no_restriction" | "lax" | "strict";
 }
@@ -51,8 +49,7 @@ export const bareHost = (host: string): string => (host.startsWith(".") ? host.s
 
 /**
  * Both engines keep the file open with WAL while the browser runs, so reading in place can observe
- * a torn write. Copying also guarantees we never open the browser's own file for writing. Scoped:
- * the temporary directory goes away when the caller's scope closes.
+ * a torn write. Copying also guarantees we never open the browser's own file for writing.
  */
 export const snapshotCookieDatabase = Effect.fn("CookieDatabase.snapshotCookieDatabase")(function* (
   cookiePath: string,

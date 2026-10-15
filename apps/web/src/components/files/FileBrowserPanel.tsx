@@ -33,9 +33,7 @@ interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
-  /** Entry currently open in the surface; revealed and selected in the tree. A directory is expanded. */
   selectedPath: string | null;
-  /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
   onRefreshSelectedFile?: () => void;
@@ -257,8 +255,6 @@ export default function FileBrowserPanel({
         },
       },
     },
-    // Rows only need to be draggable so entries can be dropped into the chat
-    // composer; rearranging files inside the tree stays off.
     dragAndDrop: { canDrop: () => false },
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
@@ -269,11 +265,7 @@ export default function FileBrowserPanel({
       // The drag controller's selection cache must track every change,
       // including reveal-driven ones, or drags act on a stale selection.
       dragMention.handleSelectionChange(selectedPaths);
-      // Selection changes driven by the reveal sync below are echoes of an
-      // already-open file, not a request to open it again.
       if (syncingSelectionRef.current) return;
-      // Starting a drag selects the dragged row; that selection is a side
-      // effect of the gesture, not a request to open the file.
       if (dragMention.isDragInProgress()) {
         return;
       }
@@ -405,8 +397,6 @@ export default function FileBrowserPanel({
       return;
     }
     const selectedKind = entryKinds.get(selectedPath);
-    // An unloaded entry has no row to reveal yet; folders do, and chat links can
-    // point at them.
     if (selectedKind === undefined) {
       handledRevealRef.current = null;
       return;
@@ -421,7 +411,6 @@ export default function FileBrowserPanel({
     ) {
       return;
     }
-    // Directory rows are registered with a trailing slash (see treePath).
     const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
     const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
@@ -469,10 +458,6 @@ export default function FileBrowserPanel({
     });
   }, [entryKinds, model, selectedPath, selectedPathRevealId]);
 
-  // Tag tree drags with the composer mention payload. The row is read from
-  // the composed event path (the tree's shadow root is open), so this does
-  // not depend on running after the tree's own dragstart handler; the drag
-  // data store is writable for every dragstart listener in the dispatch.
   // The capture phase runs before the tree's own dragstart handler selects
   // the dragged row, so the drag flag is up before that selection emits.
   const panelRef = useRef<HTMLDivElement | null>(null);

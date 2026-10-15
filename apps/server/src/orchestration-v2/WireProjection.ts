@@ -69,7 +69,6 @@ function summarizeDynamicValue(value: unknown): unknown {
     serialized = "Unserializable tool output";
   }
 
-  // Preserve the first nonblank normalized line, but stop after the preview.
   // Splitting and normalizing every line can allocate far more than the input.
   const start = /\S/u.exec(serialized)?.index;
   let firstLine = start === undefined ? "Large tool output" : "";
@@ -112,10 +111,7 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     }
     case "file_change": {
-      // File identity and counts are enough for activity. Full diffs come from
-      // checkpoint diffs; storage keeps only a bounded copy of this text.
       const { diffStr, oldStr: _old, newStr: _new, ...projected } = item;
-      // A failed edit stores the provider's error where the diff would be.
       return item.status === "failed" && diffStr?.trim()
         ? { ...projected, diffStr: truncateDetail(diffStr) }
         : projected;
@@ -164,9 +160,8 @@ function boundDynamicValue(value: unknown): unknown {
 }
 
 /**
- * A tool output for a detail read, without image bytes. When the rest is too
- * large to send whole, its truncated text still comes with the image markers,
- * in order, so clients can load each image by index.
+ * When the rest is too large to send whole, its truncated text still comes with
+ * the image markers, in order, so clients can load each image by index.
  */
 function boundToolOutput(output: unknown): unknown {
   const omitted = omitToolOutputImageData(output);
@@ -181,9 +176,6 @@ function boundToolOutput(output: unknown): unknown {
       ];
 }
 
-/**
- * Image bytes are left out; clients load them as `tool-output-image` assets.
- */
 export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {
     case "command_execution":

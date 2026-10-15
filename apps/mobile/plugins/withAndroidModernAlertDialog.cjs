@@ -9,10 +9,6 @@ const {
   withDangerousMod,
 } = require("expo/config-plugins");
 
-// buttons, DM Sans type. Alert exposes no runtime custom-palette API, so these
-// build-time resources use the stock palette for each native appearance.
-// The fonts are embedded by the expo-font plugin config in app.config.ts.
-
 // AppCompat's default dialog window background is an inset rounded rect, so
 // the replacement keeps the same 16dp inset to preserve the dialog's margins.
 const DIALOG_BACKGROUND_DRAWABLE = `<?xml version="1.0" encoding="utf-8"?>
@@ -75,10 +71,6 @@ function withAlertDialogStyles(config) {
         $: { name: "AppAlertDialog", parent: "ThemeOverlay.AppCompat.Dialog.Alert" },
         item: [
           { _: "@drawable/alert_dialog_background", $: { name: "android:windowBackground" } },
-          // The message body resolves textColorPrimary in AppCompat's alert
-          // layout; pointing it at the secondary token dims the message
-          // relative to the title, which keeps full-strength text via the
-          // explicit color in AppAlertDialog.Title.
           { _: "@color/alert_dialog_secondary_text", $: { name: "android:textColorPrimary" } },
           { _: "@color/alert_dialog_secondary_text", $: { name: "android:textColorSecondary" } },
           // Theme-level fontFamily is the lowest-priority fallback in attribute

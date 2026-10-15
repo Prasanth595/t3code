@@ -12,8 +12,6 @@ export const TAILSCALE_STATUS_TIMEOUT = Duration.millis(1_500);
 const TAILSCALE_SERVE_TIMEOUT = Duration.seconds(10);
 const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 
-// tailscale is a real executable everywhere (`tailscale.exe` on Windows), so
-// it is always spawned directly rather than through cmd.exe shell mode.
 const tailscaleCommandForPlatform = (platform: NodeJS.Platform): "tailscale" | "tailscale.exe" =>
   platform === "win32" ? "tailscale.exe" : "tailscale";
 
@@ -276,9 +274,8 @@ const TailscalePrefsJson = Schema.Struct({
 const decodeTailscalePrefsJson = Schema.decodeEffect(Schema.fromJsonString(TailscalePrefsJson));
 
 /**
- * Whether this node serves Tailscale SSH (`tailscale up --ssh`), read from its
- * prefs. `tailscale status --json` does not report this for the local node.
- * `tailscale down` clears WantRunning but keeps RunSSH, so check both.
+ * `tailscale status --json` does not report this for the local node. `tailscale
+ * down` clears WantRunning but keeps RunSSH, so check both.
  */
 export const parseTailscaleSshEnabled = (
   rawPrefsJson: string,

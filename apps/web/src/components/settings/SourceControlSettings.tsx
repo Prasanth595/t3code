@@ -224,13 +224,10 @@ function itemSummary({
       );
     }
 
-    // API integrations have no CLI to sign in with; an unverified saved credential falls
-    // through to the "could not verify" detail instead of repeating the setup hint.
     if (!item.executable && auth.status === "unauthenticated") {
       return <span>Available. {item.installHint}</span>;
     }
 
-    // Signed in, but every login is turned off here: the fix is the switch below, not the CLI.
     if (auth.status === "unauthenticated" && auth.accounts?.some((entry) => entry.authenticated)) {
       return <span>{optionLabel(auth.detail) ?? `Every ${item.label} host is turned off.`}</span>;
     }
@@ -502,9 +499,7 @@ function EmptySourceControlDiscovery({
 
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
-  // Discovery scans one machine's tools, so it shows the representative
-  // environment (named in the section title when several are selected);
-  // the settings rows above it fan out like everywhere else.
+
   const environmentId =
     environment?.connection.phase === "connected" ? environment.environmentId : null;
   const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
@@ -606,7 +601,7 @@ export function SourceControlSettingsPanel() {
                   {item.kind === "github" ? (
                     <SettingsSearchTarget id={searchableSetting("github-accounts").id}>
                       <div className="grid gap-6">
-                        {/* Shown even without gh: a saved token is how GitHub works without the CLI. */}
+                        {}
                         <GitHubTokenSettings
                           key={`token-${environmentId}`}
                           environmentId={environmentId}

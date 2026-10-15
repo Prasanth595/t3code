@@ -48,9 +48,8 @@ export const GROK_SUPPORTED_RUNTIME_MODES = [
 ] as const satisfies ReadonlyArray<RuntimeMode>;
 
 /**
- * Launch argv for a runtime mode. `--permission-mode` on the argv beats the
- * user's Grok config, so Supervised cannot inherit a configured always-approve.
- * A mode Grok does not offer launches asking.
+ * `--permission-mode` on the argv beats the user's Grok config, so Supervised
+ * cannot inherit a configured always-approve.
  */
 export function grokAcpSpawnArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string> {
   switch (runtimeMode) {
@@ -105,8 +104,7 @@ export function grokAcpRuntimeProcessOwnership(
 
 /**
  * Current Grok treats Ctrl+C cancellation as a barrier against stale
- * background-task wake prompts until the next genuine user turn. Replay sends
- * the same metadata so recorded cancels match.
+ * background-task wake prompts until the next genuine user turn.
  */
 export const GROK_ACP_CANCEL_META = { cancelTrigger: "ctrl_c" } as const;
 
@@ -180,8 +178,8 @@ export const makeGrokAcpRuntime = (
   });
 
 /**
- * T3's built-in Grok slug. It is the CLI's product name, not a model id the ACP accepts,
- * so selecting it means "use whatever model the Grok session currently runs on".
+ * It is the CLI's product name, not a model id the ACP accepts, so selecting it
+ * means "use whatever model the Grok session currently runs on".
  */
 export const GROK_DEFAULT_MODEL_SLUG = "grok-build";
 
@@ -257,10 +255,6 @@ export function applyGrokAcpModelSelection<E>(input: {
   }
   const reasoningMeta =
     reasoningProvided && reasoningEffort !== undefined ? { reasoningEffort } : undefined;
-  // When reasoning was not provided at all, we also send no meta, but we only reach this call
-  // when the model itself changed - an omitted reasoning preference must not be treated as an
-  // explicit clear of the CLI-advertised default (e.g. Extra High) on same-model
-  // reselections.
   return input.runtime
     .setSessionModel(targetModelId, reasoningMeta)
     .pipe(Effect.mapError(input.mapError), Effect.as(targetModelId));

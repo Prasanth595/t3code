@@ -22,7 +22,6 @@ export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowser
   {
     reason: Schema.String,
     cause: Schema.optional(Schema.Defect()),
-    /** The end of the browser's stderr when it exited, for diagnosing host setup. */
     output: Schema.optional(Schema.String),
   },
 ) {
@@ -43,11 +42,10 @@ const MAX_CONSOLE_TEXT_CHARS = 500;
 const VIEWPORT_HEIGHT = 800;
 const MAX_CAPTURE_HEIGHT = 4_000;
 const CAPTURE_TIMEOUT = "20 seconds";
-// Pages load from this made-up web origin, never from a file. Chrome refuses
-// local files to every web page, frame, worker, and popup, so a page cannot
-// read files the agent's provider withholds; local images reach it already
-// inlined as data URIs. `.localhost` keeps it a secure context that may still
-// load plain-http resources, and the request never leaves the browser.
+// Chrome refuses local files to every web page, frame, worker, and popup, so a
+// page cannot read files the agent's provider withholds; local images reach it
+// already inlined as data URIs. `.localhost` keeps it a secure context that may
+// still load plain-http resources, and the request never leaves the browser.
 // All of the browser's traffic goes through `publicProxy`, which only reaches
 // public addresses, so a page cannot reach this machine's local network. The
 // main frame also stays on the page and the browser opens no popups, so a
@@ -158,12 +156,6 @@ const SETTLE_EXPRESSION =
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
 
-// The page's main blocks in document order, for a client's loading skeleton:
-// media and solid shapes, text with its line count, and tables with their row
-// count. Boxes that only wrap other blocks are walked through, not drawn.
-// Past the detail budget, remaining blocks are kept whole, and once the outline
-// is full, one block of text lines stands in for the rest of the page, so the
-// skeleton still reaches the bottom.
 const OUTLINE_MAX_VISITS = 2_000;
 const OUTLINE_EXPRESSION = `(() => {
   const boxes = [], detail = ${HTML_RENDER_OUTLINE_MAX_BOXES - 12}, max = ${HTML_RENDER_OUTLINE_MAX_BOXES};
@@ -446,7 +438,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       return Effect.forEach(complete, receive, { discard: true });
     }),
     Effect.ignore,
-    // Interruption means the scope is closing on purpose; only an exit disconnects.
     Effect.andThen(disconnect),
     Effect.forkScoped,
   );
@@ -477,7 +468,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       );
     });
 
-  /** A fresh page at `width`; each `load` navigates it and measures the settled layout. */
   const openPage = Effect.fnUntraced(function* (width: number) {
     const { targetId } = yield* send(
       "Target.createTarget",
@@ -532,7 +522,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       sessionId,
     );
 
-    /** Loads a page from `pageBody`, so callers loading it often encode it once. */
     const load = Effect.fnUntraced(function* (body: Uint8Array, urlFragment: string) {
       const loaded = yield* Deferred.make<void, BrowserFailure>();
       events.body = body;
@@ -590,7 +579,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Effect.ignore,
     );
 
-    /** The loaded page's outline, encoded for an `HtmlRenderReference`. */
     const outline = send(
       "Runtime.evaluate",
       { expression: OUTLINE_EXPRESSION, returnByValue: true },
@@ -630,7 +618,6 @@ const scratchDirectory = Effect.gen(function* () {
   );
 });
 
-/** Loads `html` at `width` and returns a PNG of the top of the page. */
 export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreenshot")(
   function* (input: {
     readonly executable: string;
@@ -666,9 +653,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 
 /**
  * Content heights of the page at each width, each from a fresh load, since
- * pages often lay themselves out from the width once at load. One browser,
- * a few widths at a time. The load at the column width also reads the page's
- * outline; an outline that cannot be read is left out.
+ * pages often lay themselves out from the width once at load.
  */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;

@@ -54,8 +54,7 @@ export class ConnectionRegistrationStore extends Context.Service<
   ConnectionRegistrationStore,
   {
     /**
-     * Saves one route's records and sets the environment's full route list,
-     * preferred first. Records of routes missing from `routes` are dropped.
+     * Records of routes missing from `routes` are dropped.
      */
     readonly register: (
       registration: ConnectionRegistration,
@@ -103,10 +102,6 @@ export class EnvironmentCacheStore extends Context.Service<
       environmentId: EnvironmentId,
       threadId: ThreadId,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
-    /**
-     * This deliberately includes provider metadata so offline task creation can
-     * still offer the models a user last saw.
-     */
     readonly loadServerConfig: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<ServerConfig>, ConnectionPersistenceError>;

@@ -10,10 +10,6 @@ export function constantTimeEquals(a: string, b: string): boolean {
   return NodeCrypto.timingSafeEqual(digestA, digestB);
 }
 
-/**
- * The header value is `<prefix><digest>`, with the digest hex- or
- * base64-encoded.
- */
 export function verifyWebhookSignature(input: {
   readonly signature: ScheduledTaskWebhookSignature;
   readonly secret: string;

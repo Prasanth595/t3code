@@ -25,8 +25,6 @@ export class DesktopWslBackend extends Context.Service<
   DesktopWslBackend,
   {
     readonly reconcile: Effect.Effect<void>;
-    // None in wsl-only mode (that path surfaces via a dialog + Windows
-    // fallback).
     readonly lastPreflightError: Effect.Effect<Option.Option<string>>;
   }
 >()("@t3tools/desktop/wsl/DesktopWslBackend") {}
@@ -130,9 +128,6 @@ export const layer = Layer.effect(
           id: targetId,
           label: Effect.succeed(buildLabel(input.distro)),
           configResolve: configuration.resolveWsl({ port: allocatedPort, distro: input.distro }),
-          // Dual-mode secondary: record a fatal preflight failure so Connections
-          // settings can show why the WSL backend never appeared. No dialog or
-          // fallback — Windows is the primary and keeps working.
           onPreflightFailed: (failure) =>
             Ref.set(preflightErrorRef, Option.some(failure.reason)).pipe(Effect.as(false)),
           onStateDirOwned: () =>

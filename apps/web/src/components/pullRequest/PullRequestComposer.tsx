@@ -34,10 +34,6 @@ export function PullRequestComposer({
   ) => Promise<{ readonly commentPosted: boolean }>;
   onCommented: () => void;
   onReviewSubmitted: () => void;
-  /**
-   * Opens the composer on the review, each time the number changes. The guide's last stop asks
-   * for it, so finishing the tour lands on the comments it collected and the verdict.
-   */
   openReviewRequest?: number | undefined;
 }) {
   const [open, setOpen] = useState(false);
@@ -79,8 +75,6 @@ export function PullRequestComposer({
     >
       <PopoverTrigger
         render={<Button size="icon" variant="glass" />}
-        // The only label this control has, so the pending count belongs in it: the badge beside
-        // the icon is decorative and a reader who cannot see it still needs the number.
         aria-label={
           pendingComments.length > 0
             ? `Review pull request, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`

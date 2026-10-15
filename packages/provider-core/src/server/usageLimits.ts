@@ -47,10 +47,6 @@ export function makeUnavailableUsageLimits(input: {
   };
 }
 
-/**
- * An `unsupported` snapshot stays unsupported: an account that cannot have
- * subscription windows will not start reporting them mid-turn.
- */
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
   readonly update: ProviderUsageLimitsUpdate;
@@ -102,15 +98,6 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
   );
 }
 
-/**
- * A successful probe replaces the published windows outright, including any
- * runtime update that landed while it was running. That is a deliberate
- * trade-off: the Codex and Claude reads take a few seconds at most, the
- * probe is the fresher full read in every case except that window, and the
- * per-window epoch bookkeeping needed to reconcile the two was more code
- * than the sub-second regression it prevented. The next runtime event
- * corrects it.
- */
 export function resolveUsageLimitsAfterProbe(input: {
   readonly published: ServerProviderUsageLimits | undefined;
   readonly probed: ServerProviderUsageLimits | undefined;

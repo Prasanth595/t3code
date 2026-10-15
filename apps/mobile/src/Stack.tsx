@@ -166,7 +166,6 @@ const GLASS_HEADER_OPTIONS: AppScreenOptions = {
   unstable_navigationItemStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? "editor" : undefined,
 };
 
-// Android PR screens render their own Material toolbar.
 const PULL_REQUEST_HEADER_OPTIONS: AppScreenOptions = {
   ...GLASS_HEADER_OPTIONS,
   headerShown: Platform.OS !== "android",
@@ -188,9 +187,6 @@ const SHEET_SOLID_HEADER_OPTIONS: AppScreenOptions = {
   unstable_navigationItemStyle: undefined,
 };
 
-// A native glass header for a sheet screen whose primary child is a scroll
-// view. The centered sheet title stays stable while UIKit supplies scroll-edge
-// fading from that child.
 const SHEET_GLASS_HEADER_OPTIONS: AppScreenOptions = {
   ...GLASS_HEADER_OPTIONS,
   unstable_navigationItemStyle: undefined,
@@ -204,7 +200,6 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
-// A navigator container leaves horizontal safe-area handling to its leaf screens.
 const NESTED_NAVIGATOR_OPTIONS = { nativeContentInsetHorizontally: false, headerShown: false };
 
 const SettingsContentStack = createV5SheetStackNavigator({
@@ -415,8 +410,6 @@ const SettingsContentStack = createV5SheetStackNavigator({
   },
 });
 
-// The outer stack never owns visible chrome. Settings routes render inside a
-// nested stack whose native header remains mounted, while Clerk owns auth chrome.
 // Keeping bar visibility invariant avoids iOS 26's headerless-to-headered jump.
 const SettingsSheetStack = createV5SheetStackNavigator({
   initialRouteName: "SettingsContent",
@@ -454,13 +447,9 @@ const NewTaskSheetStack = createNativeStackNavigator({
   initialRouteName: "NewTask",
   screenOptions: {
     ...SHEET_GLASS_HEADER_OPTIONS,
-    // The form-sheet host owns the one opaque adaptive surface. Child screens
-    // and the navigation bar stay transparent over it, avoiding visible color
-    // slabs as view controllers move horizontally.
     contentStyle: Platform.OS === "ios" ? { backgroundColor: "transparent" } : undefined,
     // UIKit's default push adds a dimming shadow and independently transitions
     // the navigation bar. Both read as mismatched sheet backgrounds here.
-    // simple_push retains native push/pop gestures without either artifact.
     animation: Platform.OS === "ios" ? "simple_push" : undefined,
     animationDuration: Platform.OS === "ios" ? 350 : undefined,
   },
@@ -494,8 +483,6 @@ const NewTaskSheetStack = createNativeStackNavigator({
         title: "Branch",
       },
     }),
-    // The same file view the thread composer pushes. A draft has no thread, so it names its
-    // own workspace through route params instead of resolving one from a selected thread.
     NewTaskFile: createNativeStackScreen({
       screen: ThreadFileScreen,
       linking: "draft/files/:path*",
@@ -547,9 +534,6 @@ const NewTaskSheetStack = createNativeStackNavigator({
   },
 });
 
-// Routes presented as sheets/overlays ON TOP of the workspace. They must not
-// influence the adaptive workspace layout: opening Settings over Home should
-// not flip the sidebar in or change the active thread.
 const WORKSPACE_OVERLAY_ROUTES = new Set([
   "PullRequestReview",
   "PullRequestInlineComment",
@@ -571,10 +555,6 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "ThreadSettingsSheet",
 ]);
 
-/**
- * Location of the topmost non-overlay route, including its key so thread
- * selection can dismiss sheets without replacing the wrong destination.
- */
 function workspaceLocationFromState(state: NavigationState) {
   const routes = state.routes.filter((route) => !WORKSPACE_OVERLAY_ROUTES.has(route.name));
   const effectiveState =
@@ -605,8 +585,6 @@ function RootStackLayout(props: {
   const navigation = useNavigation();
   const { pendingShare } = useIncomingShare();
   const sharePresentationRef = useRef(EMPTY_INCOMING_SHARE_PRESENTATION_STATE);
-  // Keyboard commands follow the top route; notification suppression follows
-  // the thread beneath overlay sheets.
   const path = getPathFromState(props.state, navigationPathConfig);
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspaceLocation = workspaceLocationFromState(props.state);
@@ -839,10 +817,6 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/attachments/:attachmentId`,
       options: SOLID_HEADER_OPTIONS,
     }),
-    // The route carries zero params: its content is a session object (staged model, provider
-    // groups, and live update callbacks) that the active ThreadComposer presents into
-    // ExistingThreadSettingsRouteProvider before pushing this screen — state no URL can
-    // reconstruct.
     ThreadSettingsSheet: createNativeStackScreen({
       screen: ExistingThreadSettingsRouteScreen,
       options: {

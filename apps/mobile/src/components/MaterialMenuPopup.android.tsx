@@ -45,7 +45,6 @@ function MenuIcon(props: {
   );
 }
 
-/** Native popup positioned at the original trigger, outside virtualized rows. */
 export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
   const { appearance, themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, menuItemHeight } = useAndroidControlSizing();

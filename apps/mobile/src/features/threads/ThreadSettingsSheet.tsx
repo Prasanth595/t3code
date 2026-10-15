@@ -104,10 +104,6 @@ import {
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
-/**
- * Everyday harnesses start expanded; every other provider (OpenRouter catalogs and friends)
- * starts folded so a 300-model catalog cannot bury the list.
- */
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
   "claudeAgent",
   "codex",
@@ -814,7 +810,6 @@ function useThreadSettingsCatalogItems(
           ),
           session.favoriteKeys,
         );
-        // Favorites list only selectable models, so it never explains gated ones.
         const updateRequiredNotice =
           group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
             ? formatProviderUpdateRequiredNotice(group.updateRequired, session.searchQuery)
@@ -823,9 +818,6 @@ function useThreadSettingsCatalogItems(
           return [];
         }
         const isPrimary = driver !== undefined && PRIMARY_PROVIDER_DRIVERS.has(driver);
-        // Staging a model must not change disclosure state. The applied model
-        // stays stable for the lifetime of this picker (Save closes it), so it
-        // is safe to use as the initial selected-provider default.
         const containsAppliedSelection = group.models.some(session.isApplied);
         const isNarrowed = session.providerFilter !== null || session.searchQuery.trim().length > 0;
         const collapsible = !isNarrowed;

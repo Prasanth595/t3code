@@ -44,16 +44,9 @@ const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
 export class PullRequestReviewGuideService extends Context.Service<
   PullRequestReviewGuideService,
   {
-    /** The stored guide, any run in progress, and the head now. Never runs a model. */
     readonly get: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestReviewGuideResult, PullRequestService.PullRequestError>;
-    /**
-     * Start writing a guide for the current head and return once it is under way. Joins a run
-     * already going for that head.
-     *
-     * `started` says whether this call began the run or joined one already going.
-     */
     readonly generate: (
       input: PullRequestRef,
     ) => Effect.Effect<
@@ -79,7 +72,6 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fileSystem = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;
-  // Runs outlive the request that started them and end with the server.
   const serviceScope = yield* Effect.scope;
   const runs = yield* Ref.make<ReadonlyMap<string, PullRequestReviewGuideRun>>(new Map());
   let runCounter = 0;
@@ -103,11 +95,6 @@ const make = Effect.gen(function* () {
     return { key, workspaceRoot: project.workspaceRoot, identity: project.repositoryIdentity };
   });
 
-  /**
-   * A guide reads the change in a checkout fetched from the project's own remote, so the pull
-   * request has to be in that repository. One from another repository is refused rather than
-   * measured against commits that are not its own.
-   */
   const requireOwnRepository = Effect.fn("PullRequestReviewGuideService.requireOwnRepository")(
     function* (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) {
       const own =
@@ -298,8 +285,6 @@ const make = Effect.gen(function* () {
         .removeWorktree({ cwd: workspaceRoot, path, force: true })
         .pipe(Effect.ignore({ log: true })),
     );
-    // Measured from where the head left the base, so a stacked change is briefed alone rather
-    // than with everything below it that the base has not taken yet.
     const mergeBase = yield* git.execute({
       operation: "PullRequestReviewGuideService.mergeBase",
       cwd: path,
@@ -392,8 +377,6 @@ const make = Effect.gen(function* () {
       modelSelection,
       ...normalizeReviewGuide(generated, change),
     };
-    // A newer run for this pull request, say after a push, owns its guide now; this one's result
-    // is for an older head and is dropped rather than written over it.
     yield* ownership.withPermits(1)(
       Effect.gen(function* () {
         if (yield* owns) yield* guides.put(key, guide);
@@ -431,8 +414,6 @@ const make = Effect.gen(function* () {
     const { key, workspaceRoot, identity } = yield* keyFor(input);
     yield* requireOwnRepository(key, identity);
     const runKey = keyString(key);
-    // A press asks for the head as it is now, not a read shared from the last minute, so a guide
-    // is never started for a commit the pull request has already moved past.
     yield* pullRequests.invalidate({ reference: input });
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {
       concurrency: "unbounded",
@@ -474,8 +455,6 @@ const make = Effect.gen(function* () {
     );
     if (claimed !== running) return { guide: stored, run: claimed, currentHeadSha, started: false };
 
-    // The run is identified by its own Running value: a later claim replaces it, and from then
-    // on this run's completion leaves the newer run's state and guide alone.
     const owns = Ref.get(runs).pipe(Effect.map((current) => current.get(runKey) === running));
     const finish = (next: PullRequestReviewGuideRun | null) =>
       Ref.update(runs, (current) => {

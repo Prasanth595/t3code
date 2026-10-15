@@ -108,7 +108,6 @@ export interface ComposerDraftInsertion {
   readonly end: number;
 }
 
-/** Capture the paste target before any clipboard reads, downloads, or file writes. */
 export function captureComposerDraftInsertion(
   draftKey: string,
   selection?: { start: number; end: number },
@@ -226,7 +225,6 @@ export function createComposerDraftContextHistory() {
           return [];
         const saved = files.get(record.attachmentId)?.attachment;
         liveIds.add(record.attachmentId);
-        // Removing the file can release its old pending upload. Undo reuploads the retained bytes.
         return saved
           ? [{ ...saved, uploadedAttachmentId: undefined, uploadEnvironmentId: undefined }]
           : [];
@@ -332,11 +330,6 @@ export interface ComposerDraft {
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
-  /**
-   * The project is stored here rather than in the key so a project can hold any
-   * number of drafts and a draft can be retargeted to another project without
-   * changing identity.
-   */
   readonly project?: ComposerDraftProject;
 }
 
@@ -358,7 +351,6 @@ export interface ComposerDraftWorkspaceSelection {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
-  /** Resolve and check out this PR when the queued task is sent. */
   readonly pullRequestReference?: string;
 }
 
@@ -495,7 +487,6 @@ function attachmentContextRecord(
     : { ...common, kind: "file" as const };
 }
 
-/** Older drafts stored documents only in the attachment strip. Restore their missing chips. */
 function restoreMissingComposerFileReferences(draft: ComposerDraft): ComposerDraft {
   const records = [...(draft.context?.records ?? [])];
   const usedIds = new Set<string>(records.map((record) => record.contextId));
@@ -567,11 +558,6 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
   );
 }
 
-/**
- * A new-task draft keeps its entry while the composer is bound to it (the
- * project stamp is what the composer binds to); the persist sweep still leaves
- * empty ones off disk.
- */
 function withComposerDraft(
   current: Record<string, ComposerDraft>,
   draftKey: string,
@@ -628,12 +614,6 @@ export function decodePersistedComposerState(value: unknown): {
         .map(([key, draft]) =>
           migrateLegacyNewTaskDraft(
             key,
-            // Stale new-task drafts left on disk by builds before the
-            // model-precedence fix carry a bare modelSelection with no
-            // other selector settings. Strip it so the next compose pass
-            // re-resolves project → sticky → provider defaults. Drafts
-            // with runtime/interaction/workspace settings or actual text /
-            // attachments were deliberately configured and are left alone.
             isNewTaskDraftKey(key) &&
               draft.modelSelection &&
               draft.text.length === 0 &&
@@ -663,8 +643,6 @@ export function decodePersistedComposerState(value: unknown): {
         Object.entries(parsed.signedOutDrafts ?? {}).map(([id, saved]) => [
           id,
           {
-            // Archived drafts come back through restoreCloudComposerDrafts
-            // without another decode, so they get the same key migration.
             drafts: Object.fromEntries(
               Object.entries(saved.drafts).map(([key, draft]) =>
                 migrateLegacyNewTaskDraft(key, draft, now),
@@ -803,7 +781,6 @@ function signedOutAttachmentOwners() {
   ]);
 }
 
-/** Clipboard fragments can refer to a local file that has not finished uploading yet. */
 export function findLocalComposerClipboardAttachment(
   environmentId: EnvironmentId,
   id: string,
@@ -938,8 +915,6 @@ export async function releaseUnusedComposerAttachmentFiles(
     const { releasePendingAttachmentUploads } = await import("../lib/attachmentUpload");
     for (const [environmentId, attachmentIds] of uploadCandidates) {
       for (const attachmentId of attachmentIds) {
-        // A different draft or queued message can reuse the same pending upload
-        // with another local URI.
         if (isComposerAttachmentUploadReferenced(environmentId, attachmentId)) {
           continue;
         }
@@ -1038,8 +1013,6 @@ export function ensureComposerDraftsLoaded(): void {
     }
   });
   loadPromise = loading;
-  // Handle fire-and-forget hook loads without swallowing failures from the
-  // write and cleanup callers that await this same promise.
   void loading.catch((cause) => {
     if (loadPromise === loading) loadPromise = null;
     console.warn(
@@ -1068,7 +1041,6 @@ export async function getComposerCloudAccountId(): Promise<string | null> {
   return appAtomRegistry.get(composerCloudDraftsAtom).accountId;
 }
 
-/** Save an account's local work before its relay environments are removed. */
 export async function archiveCloudComposerDrafts(
   accountId: string | null,
   environmentIds: ReadonlySet<EnvironmentId>,
@@ -1144,7 +1116,6 @@ export async function removeDeliveredCloudQueuedMessage(
       !sameDraftAttachmentIds(archived.attachments, message.attachments)
     )
       continue;
-    // Upload ids may change during preparation; user edits must remain recoverable.
     if (
       JSON.stringify([
         archived.modelSelection,
@@ -1202,7 +1173,6 @@ export async function removeDeliveredCloudQueuedMessage(
   }
 }
 
-/** Restores only this account, before its connections can deliver queued turns. */
 export async function restoreCloudComposerDrafts(accountId: string): Promise<void> {
   await waitForComposerDraftsLoaded();
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
@@ -1314,11 +1284,8 @@ export function appendComposerDraftText(draftKey: string, value: string): void {
 }
 
 /**
- * Appends attachments to a draft, capped at the send limit against the draft's
- * live state (callers may have counted before an await; the picker can race
- * concurrent adds). Overflowed file attachments are released. Returns how many
- * were rejected. Restore paths pass allowOverflow so a failed send never drops
- * the message's own attachments.
+ * Restore paths pass allowOverflow so a failed send never drops the message's
+ * own attachments.
  */
 export function appendComposerDraftAttachments(
   draftKey: string,
@@ -1395,8 +1362,6 @@ export function replaceComposerDraftAttachments(
   const retainedIds = new Set(attachments.map((attachment) => attachment.id));
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);
-    // An attachment that is no longer here must take its chip and context record with it, or
-    // the draft keeps a reference pointing at a file it no longer holds.
     const droppedContextIds = new Set(
       existing.context?.records
         .filter((record) => "attachmentId" in record && !retainedIds.has(record.attachmentId))
@@ -1558,8 +1523,6 @@ function mergeComposerDraftText(existing: string, incoming: string): string {
   if (existing.length === 0) {
     return incoming;
   }
-  // Import retries are possible after an interrupted native handoff. Keep the
-  // operation idempotent when the same shared text is already present.
   if (existing === incoming || existing.endsWith(`\n\n${incoming}`)) {
     return existing;
   }
@@ -1780,11 +1743,10 @@ export function clearComposerDraftContent(
   options?: {
     readonly clearModelSelection?: boolean;
     readonly clearWorkspaceSelection?: boolean;
-    // Send clears the draft while the durable outbox write is still in
-    // flight. Sweeping then would race the write: a failed enqueue rolls the
-    // message out of the queue mid-sweep and its files get deleted right
-    // before the failure handler restores them. The sender re-schedules
-    // cleanup once the write settles.
+    // Send clears the draft while the durable outbox write is still in flight.
+    // Sweeping then would race the write: a failed enqueue rolls the message
+    // out of the queue mid-sweep and its files get deleted right before the
+    // failure handler restores them.
     readonly deferAttachmentCleanup?: boolean;
   },
 ): void {
@@ -1826,11 +1788,6 @@ export function removeComposerDraftsForEnvironment(
   );
 }
 
-/**
- * The entry is published immediately so the composer can bind to its key before
- * the user types; it stays out of the list until it has content, and the
- * empty-draft sweep drops it on persist if nothing is ever written.
- */
 export function createNewTaskDraft(project: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
@@ -1848,10 +1805,6 @@ export function createNewTaskDraft(project: {
   return draftKey;
 }
 
-/**
- * Workspace selection is project-specific (branch, worktree), so it is cleared;
- * model and mode choices carry over.
- */
 export function retargetNewTaskDraft(
   draftKey: string,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
@@ -1892,7 +1845,6 @@ export function retargetNewTaskDraft(
   });
 }
 
-/** New-task drafts for a project, newest first. */
 export function findNewTaskDraftKeys(
   drafts: Readonly<Record<string, ComposerDraft>>,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },

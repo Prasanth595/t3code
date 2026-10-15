@@ -108,7 +108,6 @@ export interface IncomingShareFileReader {
   readonly readSize?: (uri: string) => Promise<number | null>;
 }
 
-/** Apply the destination server's file support after the user chooses a project. */
 export function selectIncomingShareAttachments(input: {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly maxFileAttachmentBytes: number | null;
@@ -226,10 +225,7 @@ async function releaseOwnedFiles(
   for (const uri of new Set(uris.filter((candidate): candidate is string => Boolean(candidate)))) {
     try {
       await fileReader.removeOwnedFile(uri);
-    } catch {
-      // Temporary-file cleanup is best-effort and must never discard content
-      // that was successfully converted into a durable composer attachment.
-    }
+    } catch {}
   }
 }
 
@@ -292,8 +288,6 @@ export async function buildIncomingShareDraft(input: {
       (payload.shareType === "image" ? "image/png" : "application/octet-stream")
     ).toLowerCase();
     if (payload.shareType !== "image") {
-      // The patched native module never emits a blank display name, but keep
-      // the guard: an empty name would fail the attachment name contract.
       const sharedFileName =
         typeof payload.originalName === "string" && payload.originalName.trim().length > 0
           ? payload.originalName
@@ -366,8 +360,6 @@ export async function buildIncomingShareDraft(input: {
         retainedFileUri = persistedFileUri ?? uri;
       } catch (error) {
         warnings.push(error instanceof Error ? error.message : `Could not read '${name}'.`);
-        // A copy persisted before the failure has no attachment referencing
-        // it; release it or it leaks in the app's attachment directory.
         if (persistedFileUri !== undefined) {
           await releaseOwnedFiles(input.fileReader, [persistedFileUri]);
         }

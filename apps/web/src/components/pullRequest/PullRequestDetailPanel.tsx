@@ -279,8 +279,6 @@ function ActOnEnvironmentPicker({
             value={environment.environmentId}
             disabled={disabled}
           >
-            {/* The radio item lays its children out as one block, so the icon and the label
-                need their own row to share a line. */}
             <span className="flex min-w-0 items-center gap-2">
               <EnvironmentMachineIcon
                 kind={environment.machine ?? "server"}
@@ -295,8 +293,6 @@ function ActOnEnvironmentPicker({
   );
 }
 
-/** The number is a link in every place the host writes it, so the right-click that copies one
-    has to answer here too — otherwise the platform's own cut/paste menu opens over it. */
 const openNumberContextMenu = (
   event: ReactMouseEvent,
   detail: { readonly url: string; readonly provider: string },
@@ -310,10 +306,6 @@ const openNumberContextMenu = (
   });
 };
 
-/**
- * A popover rather than a tooltip because what it holds can be pressed: a tooltip's layer takes
- * no pointer, and a control nobody can reach is worse than no control.
- */
 function PullRequestBaseFreshnessWarning({
   baseBranch,
   freshness,
@@ -409,18 +401,8 @@ export function PullRequestDetailPanel({
   reference: PullRequestRef;
   listEntry?: PullRequestListEntry | null;
   refreshToken?: number;
-  /**
-   * Each host action as it goes: "sent" the moment it leaves, so a list can answer before the
-   * host does; "done" or "failed" when the host has spoken. Undefined for one the caller cannot
-   * name, which is only ever "done".
-   */
   onActed?: (action?: PullRequestAction, phase?: "sent" | "done" | "failed") => void;
   onClose?: () => void;
-  /**
-   * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
-   * own pull request, so the branch is already under the reader's feet — and checking it out
-   * again is at best a no-op and at worst git refusing a branch two checkouts.
-   */
   context?: "page" | "thread";
   composerDraftTarget?: ScopedThreadRef | DraftId;
   onBack?: (() => void) | undefined;
@@ -489,8 +471,6 @@ export function PullRequestDetailPanel({
   useEffect(() => {
     if (guideOpenRequested) useGuideRunStore.getState().requestOpen(null);
   }, [guideOpenRequested]);
-  // `visibility` keeps boxes, sizes and scroll offsets, and takes hidden content out of the tab
-  // order and the accessibility tree.
   const tabScopeKey = `${environmentId}:${pullRequestKey}`;
   const [tabMountState, setTabMountState] = useState(() => ({
     key: tabScopeKey,
@@ -507,7 +487,6 @@ export function PullRequestDetailPanel({
     });
   }, [tab, tabScopeKey]);
   const [chromeCondensed, setChromeCondensed] = useState(false);
-  // Each mounted tab remembers its own scroll chrome; short tabs cannot scroll to reopen it.
   const chromeStateByTab = useRef<Partial<Record<DetailTab, boolean>>>({});
   useEffect(() => {
     setChromeCondensed(chromeStateByTab.current[tab] ?? false);
@@ -530,7 +509,6 @@ export function PullRequestDetailPanel({
   );
   const foldRef = useRef<HTMLDivElement | null>(null);
   const condensedRowRef = useRef<HTMLDivElement | null>(null);
-  // Refund after the fold commits so the content under the reader does not jump with its height.
   const compensationRef = useRef<{
     tab: DetailTab;
     scroller: HTMLDivElement;
@@ -569,7 +547,6 @@ export function PullRequestDetailPanel({
     setMergeMethodSelection({ pullRequestKey, method });
   };
   const inlineConfirm = useInlineActionConfirm(pullRequestKey);
-  // One at a time whatever the key: they all check the same pull request out.
   const [handoff, setHandoff] = useState<string | null>(null);
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const detailQuery = useEnvironmentQuery(
@@ -671,8 +648,6 @@ export function PullRequestDetailPanel({
               sharedSummary.mergedAt === undefined
                 ? resolvedCoreDetail.mergedAt
                 : sharedSummary.mergedAt,
-            // A summary may come from an older server that does not report draft state. Keep the
-            // detail's required value instead of making the complete detail shape partial.
             isDraft: sharedSummary.isDraft ?? resolvedCoreDetail.isDraft,
           },
     [resolvedCoreDetail, sharedSummary],
@@ -782,7 +757,6 @@ export function PullRequestDetailPanel({
           input: {
             cwd: detail.workspaceRoot,
             includeMatchingRemoteRefs: true,
-            // listRefs keeps the current ref first and a known default second.
             limit: 2,
           },
         }),
@@ -841,8 +815,6 @@ export function PullRequestDetailPanel({
     },
     { key: `pull-request:${environmentId}:${pullRequestKey}` },
   );
-  // The invalidation goes first so the re-reads miss that cache; if it fails, the reads still
-  // run and at worst answer from it.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const [isInvalidating, setIsInvalidating] = useState(false);
   const refreshing = isInvalidating || detailQuery.isPending;
@@ -950,16 +922,12 @@ export function PullRequestDetailPanel({
       onActed?.(action, "failed");
       return false;
     }
-    // Reverting opens another PR; the current panel has no new state to show.
     if (action === "revert") {
       toastManager.add({ type: "success", title: "Revert pull request opened" });
     }
     if (action === "delete-branch") {
       toastManager.add({ type: "success", title: "Branch deleted" });
     }
-    // A branch update moves the head commit, which leaves the diff atom pointed at a comparison
-    // that no longer exists — the same staleness the manual refresh button fixes, so it goes
-    // through that path rather than a second one.
     if (pullRequestActionNeedsHostRefresh(action)) {
       void refreshFromHost();
     } else {
@@ -1155,9 +1123,6 @@ export function PullRequestDetailPanel({
   const startHandoff = async (
     kind: string,
     task: { prompt: string; reviewComments?: ReadonlyArray<ReviewCommentContext> } | null,
-    // A worktree leaves whatever is open alone, which is why it is the default. Checking out in
-    // the repository itself is what you want when the point is to run the thing where you
-    // already work — and it moves the branch under everything else that is open there.
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!handoffSummary || handoff !== null) return;
@@ -1184,8 +1149,6 @@ export function PullRequestDetailPanel({
       return;
     }
     setHandoff(kind);
-    // It carries no timeout of its own: a loading toast never expires, and an explicit one
-    // would survive the update and pin the result on screen.
     const toastId = toastManager.add({
       type: "loading",
       title: "Preparing the pull request checkout...",
@@ -1247,8 +1210,6 @@ export function PullRequestDetailPanel({
       return;
     }
     setHandoff(null);
-    // A worktree that was already there and had been worked in keeps whatever it holds, so the
-    // thread opens on older code than the pull request carries.
     const staleCheckoutToast = {
       type: "warning",
       title: "Checked out, but not on the latest commits",
@@ -1457,7 +1418,6 @@ export function PullRequestDetailPanel({
     detail?.checks.some((check) => check.status === "action-required")
       ? "pending"
       : latestChecksState;
-  // A newer rollup cannot tell us which runs changed or how many passed.
   const checksStale = checksState !== detailChecksState;
   const primaryAction = detail
     ? resolvePullRequestPrimaryControl({
@@ -1528,9 +1488,6 @@ export function PullRequestDetailPanel({
     : detail
       ? summarizePullRequestChecks(detail.checks)
       : null;
-  // Not counted at all from a conversation this page only holds the recent end of: an approval
-  // older than the window would be missing, and "1" beside a tick is read as the whole answer.
-  // The Summary tab's row can say it may be short; a bare number cannot, so it stays away.
   const approvalCount =
     detail && !detail.commentsTruncated
       ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
@@ -2037,8 +1994,6 @@ export function PullRequestDetailPanel({
                   </span>
                 </Badge>
               ) : null}
-              {/* Keep checkout beside the menu so host actions arriving on its left cannot
-                  move a different action under the reader's pointer. */}
               {checkoutControl}
               <Menu>
                 <Tooltip>
@@ -2440,8 +2395,6 @@ export function PullRequestDetailPanel({
         <div
           className={cn(
             "col-span-2 grid",
-            // Collapse before the scroll refund paints; only reopening eases back in. Animating
-            // both directions makes the shrinking track fight the scrollTop correction.
             condensed
               ? "grid-rows-[0fr]"
               : "grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
@@ -2772,12 +2725,8 @@ export function PullRequestDetailPanel({
           setChromeCondensed((previous) => {
             let next = previous;
             const foldHeight = foldRef.current?.scrollHeight ?? 0;
-            // The condensed row remains mounted, so refund only the height that actually leaves.
             const chromeDelta = foldHeight - (condensedRowRef.current?.scrollHeight ?? 0);
             if (previous) {
-              // The hard top reopens the chrome with no refund: the reader asked for the top,
-              // and moving them a fold's height back down would snatch it away — the fold
-              // slides in above while the content stays where they left it.
               if (top < 4 && foldHeight > 0) {
                 next = false;
               }

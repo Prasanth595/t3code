@@ -17,21 +17,12 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 /** OpenCode 2 accepts only HTTP Basic auth, always with this user name. */
 const OPENCODE_USERNAME = "opencode";
 
-/**
- * A session's execution ended, but this build could not decode the event (a
- * newer server added a field or a value). Only the type and session survive,
- * so the turn still ends.
- */
 export interface OpenCode2UnreadableTerminal {
   readonly type: "unreadable.execution.ended";
   readonly executionType: (typeof EXECUTION_ENDS)[number];
   readonly sessionID: string;
 }
 
-/**
- * A session's execution started, but this build could not decode the event.
- * It marks where a new execution begins and never ends a turn.
- */
 export interface OpenCode2UnreadableStart {
   readonly type: "unreadable.execution.started";
   readonly sessionID: string;
@@ -60,12 +51,8 @@ export type OpenCode2StreamEvent =
   | OpenCode2UnreadableStart;
 
 /**
- * The client's own `event.subscribe` fails the whole stream on the first event a newer
- * server adds, so `events` decodes each frame on its own and skips the ones this build
- * does not know, except an execution's end or start, which it keeps as an {@link
- * OpenCode2UnreadableTerminal} or {@link OpenCode2UnreadableStart}. `events` succeeds
- * once the server accepted the subscription: the stream is volatile, so callers
- * subscribe before they start work whose events they need.
+ * `events` succeeds once the server accepted the subscription: the stream is
+ * volatile, so callers subscribe before they start work whose events they need.
  */
 export interface OpenCode2Api {
   readonly client: OpenCodeClient;

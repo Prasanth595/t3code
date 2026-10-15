@@ -51,8 +51,8 @@ export function resolveLinuxPasswordStoreSwitch(input: {
 // Only an exact XDG_CURRENT_DESKTOP literal proves Electron will protect the session. Chromium can
 // also reach a real backend through DESKTOP_SESSION and the legacy KDE markers, but those are the
 // variables a previous session leaves behind, and trusting them is what let stale hints suppress
-// the forced backend before. Forcing where Chromium would have chosen libsecret is harmless, since
-// it lands on the same backend.
+// the forced backend before.
+
 function electronSelectsProtectedBackend(env: NodeJS.ProcessEnv): boolean {
   for (const name of splitDesktopNameList(env.XDG_CURRENT_DESKTOP)) {
     const trimmed = name.trim();

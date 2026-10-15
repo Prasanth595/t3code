@@ -28,11 +28,6 @@ function meaningfulHastChildren(node: MarkdownImageHastNode): MarkdownImageHastN
   );
 }
 
-/**
- * Images mixed with text or other images — badge rows, icons in a sentence —
- * stay inline at their natural size, since a placeholder taller than the image
- * would move the page more than the image itself does.
- */
 const STANDALONE_IMAGE_BLOCKS = new Set([
   "p",
   "div",
@@ -56,7 +51,6 @@ function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode
 }
 
 function markStandaloneImages(node: MarkdownImageHastNode) {
-  // A raw `<img>` on its own line reaches the root without a paragraph.
   if (node.type === "root" || (node.tagName && STANDALONE_IMAGE_BLOCKS.has(node.tagName))) {
     const image = soleImageDescendant(node);
     if (image) image.properties = { ...image.properties, dataStandalone: true };
@@ -66,7 +60,6 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   });
 }
 
-/** Keep unmatched inline `<A>` placeholders from opening an HTML link over later blocks. */
 function rehypePreserveBareAnchorPlaceholders() {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
@@ -114,7 +107,6 @@ function rehypePreserveBareAnchorPlaceholders() {
   };
 }
 
-/** Carries authored image source metadata through the sanitizer to the image renderer. */
 function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
@@ -221,11 +213,6 @@ function remarkPreserveCodeMeta() {
   };
 }
 
-/**
- * Preserve Windows drive links as allowed `file:` URLs before sanitization.
- * The same traversal tags inline code while it can still be distinguished
- * from fenced code. Code inside links stays untagged to avoid nested anchors.
- */
 function remarkNormalizeLinksAndTagInlineCode() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {

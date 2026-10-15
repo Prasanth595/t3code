@@ -33,10 +33,6 @@ import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
-// After this many consecutive fatal preflight failures, stop the silent
-// restart loop and surface the reason via onPreflightFailed. Transient
-// failures may instead provide their own larger retryLimit when they should
-// self-heal for a while but must not leave the app connecting forever.
 const MAX_PREFLIGHT_FAILURE_ATTEMPTS = 5;
 const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
@@ -76,8 +72,6 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
-  // Present for a WSL run after the configured/default distro has been
-  // resolved to the concrete distro passed to wsl.exe.
   readonly runningDistro?: string;
   readonly wslRuntimeId?: string;
 }
@@ -236,9 +230,6 @@ export interface DesktopBackendInstance {
   readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
 }
 
-// Spec describing one backend instance to spawn. The configResolve effect is
-// awaited each time the instance is (re)started so live settings changes are
-// picked up on the next start cycle.
 export interface BackendInstanceSpec {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
@@ -250,9 +241,6 @@ export interface BackendInstanceSpec {
   // between "fired onReady" and "currentConfig already advanced".
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
-  // Fired once when a fatal or bounded preflight failure has exhausted its
-  // retries. Returns true when the callback changed configuration and the
-  // manager should resolve once more; false stops the failed instance.
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
   readonly onStateDirOwned?: () => Effect.Effect<void>;
 }
@@ -272,8 +260,6 @@ interface BackendManagerState {
   readonly config: Option.Option<DesktopBackendStartConfig>;
   readonly active: Option.Option<ActiveBackendRun>;
   readonly restartAttempt: number;
-  // Consecutive bounded/fatal preflight failures, reset on a clean or
-  // unbounded-transient preflight. restartAttempt counts all restarts.
   readonly preflightFailureAttempt: number;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
@@ -750,10 +736,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             return;
           }
           if (attempt === attemptLimit) {
-            // Fatal/bounded and out of retries. Surface the reason (onPreflightFailed,
-            // on the primary, shows a dialog and persists Windows mode), then
-            // schedule one more restart so the next resolve picks up the Windows
-            // primary and a window can open.
             yield* logInstanceError(
               "backend preflight failed repeatedly; surfacing and falling back",
               { reason, attempt },
@@ -889,7 +871,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const program = runBackendProcess({
           ...config.value,
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
-          // Only a bootstrap that names the browser fds (the local primary) gets them.
           desktopBrowserStream: desktopBrowserHost.events,
           onDesktopBrowserCommand: desktopBrowserHost.handleCommandLine,
           onDesktopTelemetryControl: (message) =>

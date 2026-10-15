@@ -64,10 +64,6 @@ export function getNativeShowcaseScene(): ShowcaseScene | null {
   }
 }
 
-/**
- * An unknown id also reads as null rather than silently falling back, so a
- * capture never claims to show a theme it does not.
- */
 export function getNativeShowcaseTheme(): MobileThemeId | null {
   try {
     const theme = nativeShowcaseControls()?.getShowcaseTheme?.()?.trim();
@@ -115,7 +111,5 @@ export async function applyNativeShowcaseOrientation(
 export function markNativeShowcaseReady(scene: ShowcaseScene): void {
   try {
     nativeShowcaseControls()?.markShowcaseReady?.(scene);
-  } catch {
-    // The readiness marker is capture-runner metadata, never app functionality.
-  }
+  } catch {}
 }

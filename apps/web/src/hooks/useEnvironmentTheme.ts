@@ -23,11 +23,9 @@ function publishedThemeColors(
   appearance: ThemeAppearance,
   colors: Readonly<Record<string, string>> | undefined,
 ): ThemeColors {
-  // Seeds generate the base with the guided theme editor's generator, so a
-  // desktop theme arrives as a coherent T3 Code palette rather than a foreign
-  // one — but only for the appearance they describe. A variant builds on that
-  // appearance's stock defaults: the generator follows the seed canvas's
-  // luminance, so dark seeds would give a light variant unreadable colors.
+  // A variant builds on that appearance's stock defaults: the generator follows
+  // the seed canvas's luminance, so dark seeds would give a light variant
+  // unreadable colors.
   const base =
     appearance === theme.appearance && theme.canvas !== undefined && theme.accent !== undefined
       ? createVividThemeColors(appearance, theme.canvas, theme.accent)

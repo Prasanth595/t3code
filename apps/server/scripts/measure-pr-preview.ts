@@ -1,5 +1,3 @@
-// Numbers form a session with shared repository-permission caches. Browser and
-// service caches are excluded.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Console from "effect/Console";
@@ -43,7 +41,6 @@ function withRateLimit(query: string): string {
     : `${query.slice(0, end)}\n  rateLimit { cost }\n${query.slice(end)}`;
 }
 
-// The server's host port over default settings: gh's own account choice, no saved token.
 const sourceControlHost = ServerSourceControlHost.layer.pipe(
   Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
   Layer.provide(GitVcsDriver.layer),
@@ -99,7 +96,6 @@ const services = GitHubPullRequestApi.layer.pipe(
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 for (const mode of ["detail", "preview"] as const) {
-  // Start each side cold, then retain the caches shared across PRs in one session.
   const rows = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {

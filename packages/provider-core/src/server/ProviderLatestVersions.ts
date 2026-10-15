@@ -6,7 +6,6 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
 const FOUND_TTL = Duration.hours(1);
-/** A failed lookup is retried sooner, so a flaky network does not hide an update for an hour. */
 const MISSING_TTL = Duration.minutes(1);
 
 interface Entry {

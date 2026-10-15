@@ -1,8 +1,3 @@
-/**
- * Firefox stores cookies unencrypted in `cookies.sqlite`, so there is no key to
- * fetch and no consent prompt — the file is readable by anything running as the
- * user.
- */
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -23,13 +18,11 @@ export class FirefoxCookieReadError extends Schema.TaggedError<FirefoxCookieRead
 }
 
 /**
- * `moz_cookies.sameSite` holds nsICookie's constants: 0 = None, 1 = Lax,
- * 2 = Strict, and 256 = Unset for a cookie that carried no SameSite attribute
- * at all. Unset is not the same thing as None — None is an explicit opt-in to
+ * Unset is not the same thing as None — None is an explicit opt-in to
  * cross-site use — so it is imported as Electron's `unspecified`, which lets
  * the target browser apply its own default exactly as Firefox did. Anything
- * unrecognised also lands there rather than on `no_restriction`, since
- * guessing "none" would widen a cookie's scope on import.
+ * unrecognised also lands there rather than on `no_restriction`, since guessing
+ * "none" would widen a cookie's scope on import.
  */
 const SAMESITE_NONE = 0;
 const SAMESITE_LAX = 1;
@@ -38,11 +31,8 @@ const SAMESITE_STRICT = 2;
 /**
  * Schemas 10–14 carried a second column, `rawSameSite`: the value the cookie
  * actually declared, beside a `sameSite` that Firefox had already defaulted to
- * Lax. The schema-15 migration folded them back together with
- * `sameSite = UNSET where sameSite = LAX and rawSameSite = NONE`, i.e. a row
- * that "is Lax" only because nothing was declared. Reading such a database
- * before Firefox has migrated it must apply the same rule, or an undeclared
- * cookie is imported as an explicit Lax.
+ * Lax. Reading such a database before Firefox has migrated it must apply the
+ * same rule, or an undeclared cookie is imported as an explicit Lax.
  */
 const FIREFOX_RAW_SAMESITE_FIRST_SCHEMA = 10;
 const FIREFOX_RAW_SAMESITE_LAST_SCHEMA = 14;

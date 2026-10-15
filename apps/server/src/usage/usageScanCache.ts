@@ -1,11 +1,3 @@
-/**
- * Transcripts are append-only and a file that has not changed can never yield different usage, so
- * parsed records are keyed by `(size, mtime)` and reused. Caching *per file* rather than per day is
- * deliberate. It is timezone independent, so changing the reporting zone does not invalidate
- * anything, and it keeps cross-file de-duplication exact: cached entries are de-duplicated within
- * their own file only, and the aggregator still applies the global dedupe pass over the small
- * surviving key set.
- */
 import type { UsageProviderKind } from "@t3tools/contracts";
 import type {
   TranscriptUsageFormat,
@@ -20,22 +12,19 @@ const USAGE_SCAN_CACHE_VERSION = 5 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
- * Each cache version writes its own file in the state directory. An older
- * server sharing that directory cannot read a newer cache and would replace
- * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * An older server sharing that directory cannot read a newer cache and would
+ * replace it, dropping saved usage for deleted transcripts. Separate files keep
+ * both.
  */
 export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
 export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
 
-/** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
 
 export interface CachedFile {
   readonly size: number;
   readonly mtimeMs: number;
   readonly provider: UsageProviderKind;
-  /** Records from newline-terminated lines, up to `position.resumeOffset`. */
   readonly records: readonly UsageRecord[];
   /**
    * Records from a trailing segment the writer had not newline-terminated at
@@ -48,10 +37,6 @@ export interface CachedFile {
 
 export type ScanCache = Map<string, CachedFile>;
 
-/**
- * Positional and interned rather than object-per-record: on a 30-day window that is the difference
- * between a file measured in tens of megabytes and one under six.
- */
 type SerializedRecord = readonly [
   timestampMs: number,
   modelIndex: number,
@@ -64,7 +49,6 @@ type SerializedRecord = readonly [
   dedupeKey: string | null,
   reportedCostUsd: number | null,
   speed: number,
-  /** Optional trailing field keeps existing cache rows readable. */
   rateModelIndex?: number | null,
 ];
 
@@ -73,13 +57,10 @@ interface SerializedFile {
   readonly m: number;
   readonly p: UsageProviderKind;
   readonly r: readonly SerializedRecord[];
-  /** Tail records; see `CachedFile.tailRecords`. */
   readonly t: readonly SerializedRecord[];
-  /** Parse position: resume offset, guard length, guard hash. */
   readonly o: number;
   readonly gl: number;
   readonly gh: number;
-  /** The format's encoded reducer state at `o`; `null` for stateless formats. */
   readonly cs: unknown;
 }
 
@@ -188,11 +169,6 @@ function isRecordArray(value: unknown): value is readonly unknown[] {
   return Array.isArray(value);
 }
 
-/**
- * Anything malformed yields an empty cache rather than an error: a corrupt cache should cost one
- * cold scan, never a broken page. Entries of a provider without a transcript format in `formats`
- * are dropped.
- */
 export function decodeScanCache(
   document: unknown,
   formats: ReadonlyMap<UsageProviderKind, TranscriptUsageFormat<unknown>>,
@@ -213,9 +189,6 @@ export function decodeScanCache(
   if (!isRecordArray(root.models) || !isRecordArray(root.sessions)) return cache;
   if (typeof root.files !== "object" || root.files === null) return cache;
 
-  // The intern tables must be all strings: a numeric entry would pass the
-  // undefined guard below, land in a record's model, and crash the aggregate
-  // at lookupRate. A corrupt table rejects the whole cache.
   if (!root.models.every((value) => typeof value === "string")) return cache;
   if (!root.sessions.every((value) => typeof value === "string")) return cache;
   const models = root.models as readonly string[];
@@ -359,7 +332,6 @@ function makeStateValidators(
   );
 }
 
-/** Keeps saved usage after transcript cleanup, until the reporting retention expires. */
 export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): number {
   let removed = 0;
   for (const [path, entry] of cache) {

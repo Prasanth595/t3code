@@ -1,7 +1,6 @@
 // @effect-diagnostics globalTimers:off - The stream owns this browser control queue and its timeout.
 import type { DeviceScreenSize } from "./stream.ts";
 
-/** Native hinge presets. Each one also sets the device's physical orientation. */
 export type DuoPose = "closed" | "book" | "open" | "laptop" | "tent";
 export type DuoOrientation =
   | "portrait"
@@ -47,10 +46,6 @@ export function duoFoldState(
   } as const;
 }
 
-/**
- * Native rotation is read in the frame of the display active when it arrives,
- * and the inner panel is mounted a quarter turn from the cover.
- */
 export function duoHoldOrientation(
   vertical: boolean,
   screenId: number | undefined,
@@ -59,7 +54,6 @@ export function duoHoldOrientation(
   return vertical ? "landscape_left" : "portrait_upside_down";
 }
 
-/** One in-flight native transaction. Hinge motion coalesces; presets replace queued motion. Nothing replays after reconnect. */
 export function createDuoControl(options: {
   send: (request: { requestId: number; command: DuoCommand }) => boolean;
   onChange: (state: DuoControlState) => void;
@@ -116,7 +110,6 @@ export function createDuoControl(options: {
   };
 }
 
-/** A pinch keeps its own accumulator across asynchronous native acknowledgements. */
 export function createDuoPinch(options: {
   angle: () => number;
   contains: (x: number, y: number) => boolean;

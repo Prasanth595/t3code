@@ -144,9 +144,6 @@ function ThemeLibraryCard({
     };
   });
   return (
-    // The card surface stays a plain div (buttons cannot nest inside a button
-    // role); the title button and mode circles carry the accessible actions,
-    // while the card click is a pointer-only convenience.
     <Tooltip>
       <TooltipTrigger
         render={
@@ -531,8 +528,6 @@ export function ThemeLibrary({
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
   } | null>(null);
-  // Keep the target after closing so the dialog text remains populated during
-  // its exit animation. The next trash action replaces it before reopening.
   const [isThemeRemovalOpen, setIsThemeRemovalOpen] = useState(false);
   const [themeIdsToRemove, setThemeIdsToRemove] = useState<ReadonlyArray<string>>([]);
   const themeIdsToRemoveSet = new Set(themeIdsToRemove);
@@ -589,16 +584,12 @@ export function ThemeLibrary({
     // published theme whose set has not streamed in yet is pruned from the
     // `themeHalves` prop, and rebuilding from that would drop it.
     const storedHalves = readThemeHalvesRaw();
-    // Keep the themes installed if we cannot move the selection off one of
-    // them; the dialog stays open so the user can retry or cancel.
     if (removesBase && !persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) {
       return;
     }
     for (const appearance of ["light", "dark"] as const) {
       const half = storedHalves[appearance];
       if (half === undefined) continue;
-      // Writing a base preference clears the whole mix, so halves that name
-      // a surviving theme are written back; removed halves fall back to base.
       const next = half && removedIds.has(half) ? null : removesBase ? half : undefined;
       if (next !== undefined && !setThemeHalf(appearance, next)) {
         notifyThemeRemovalFailure();
@@ -639,8 +630,6 @@ export function ThemeLibrary({
         const otherOwner = readThemeHalvesRaw()[otherAppearance] ?? baseCardId;
         if (!persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) return;
         if (!setThemeHalf(otherAppearance, otherOwner)) {
-          // Best-effort rollback: restore the whole-theme selection rather
-          // than leaving the user with no theme at all.
           setTheme(theme);
           notifyThemeSaveFailure();
         }
@@ -757,8 +746,6 @@ export function ThemeLibrary({
   ];
 
   const renderPairGrid = () => (
-    // One shared provider so every tooltip in the grid hands off instantly to
-    // the next hovered trigger instead of stacking on top of it.
     <TooltipProvider>
       <div
         className="grid w-full gap-2"
@@ -810,9 +797,6 @@ export function ThemeLibrary({
             (environmentTheme) => !customThemes.some((theme) => theme.id === environmentTheme.id),
           )
           .map((environmentTheme) => (
-            // No edit or remove: the environment republishes these palettes on
-            // every change, so anything saved here would be overwritten.
-            // Duplicating is the way to keep a copy.
             <ThemeLibraryCard
               activeModes={pickedModesFor(environmentTheme.id)}
               isActive={false}
@@ -906,8 +890,6 @@ export function ThemeLibrary({
       {renderPairGrid()}
       <ThemeImportDialog
         onImportedMany={(importedThemes, { updated }) => {
-          // Re-apply after collection updates. The update may remove the
-          // selected variant, in which case the theme hook falls back safely.
           if (updated) refreshTheme();
           const verb = updated ? "updated" : "added";
           toastManager.add(

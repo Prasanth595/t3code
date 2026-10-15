@@ -150,8 +150,6 @@ export const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  // Commands for one project run in order. Commands that claim a workspace root
-  // also hold that root, so two projects cannot both claim it.
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
 
@@ -393,7 +391,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  /** Delete one child thread durably; a stable command id makes a retry resume the cascade. */
   const deleteChildThread = Effect.fn("ProjectService.deleteChildThread")(function* (
     input: ProjectDeleteInput,
     threadId: ThreadId,
@@ -448,7 +445,6 @@ export const make = Effect.gen(function* () {
     input: ProjectDeleteInput,
   ) {
     const { projectId } = input;
-    // The V2 shell is the only record of which threads are live.
     const snapshot = yield* threadProjections
       .getShellSnapshot()
       .pipe(

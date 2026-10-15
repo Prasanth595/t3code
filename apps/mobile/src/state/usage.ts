@@ -81,13 +81,9 @@ export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
-  /** True until at least one environment has answered. */
+
   readonly isPending: boolean;
-  /**
-   * True while environments that have not failed are still answering. Failed
-   * environments are reported in the environment menu: totals will not
-   * improve by waiting on them, so they must not read as "still reporting".
-   */
+
   readonly isPartial: boolean;
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
@@ -131,8 +127,7 @@ export function useUsage(
         registry: appAtomRegistry,
         server: serverEnvironment,
         presentations: environmentPresentations,
-        // Only environments this connection may read; the others report a
-        // permission error instead of a stale or failed rescan.
+
         environmentIds: selectedEnvironments
           .filter(
             (environment) =>

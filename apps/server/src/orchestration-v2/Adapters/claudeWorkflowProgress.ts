@@ -52,8 +52,6 @@ function parseAgent(entry: unknown): OrchestrationV2WorkflowAgent | null {
   const index = count(field(entry, "index"));
   const label = text(field(entry, "label"));
   if (index === undefined || label === undefined) return null;
-  // An unknown state is in-flight, not settled: guessing "completed" would
-  // freeze a live row, while guessing "running" self-corrects on the next frame.
   const reportedState = text(field(entry, "state")) ?? "";
   const state = Object.hasOwn(AGENT_STATES, reportedState)
     ? (AGENT_STATES[reportedState] ?? "running")
@@ -115,9 +113,6 @@ function parseClaudeWorkflowProgress(message: unknown): {
 }
 
 /**
- * A frame without a snapshot still carries usage, so totals keep climbing between snapshots. A
- * phase only ever joins the plan — the provider re-sends the full plan on every snapshot, but a
- * late frame that omits an already-seen phase must not shorten the arc the user is looking at.
  * Returns undefined when nothing identifies the task as a workflow. Progress frames do not repeat
  * `task_type`, so this is the single place that decides whether a task is a coordinator; without
  * it every ordinary subagent's usage frame would mint an empty workflow and render as a

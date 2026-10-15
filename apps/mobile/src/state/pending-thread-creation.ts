@@ -12,14 +12,6 @@ import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 
-/**
- * A new task navigates to its thread screen the moment it is queued, before the
- * server has created the thread. Until the shell arrives the screen renders a
- * stand-in built from the queued creation. The outcome recorded by the outbox
- * drain covers the two windows that stand-in cannot: the gap between delivery
- * and the first turn (keep showing setup) and a rejected creation
- * (the drain restored the content into the project draft; offer to reopen it).
- */
 export type PendingThreadCreationOutcome =
   | { readonly kind: "delivered"; readonly message: QueuedThreadMessage }
   | { readonly kind: "failed"; readonly message: QueuedThreadMessage; readonly reason: string };
@@ -60,8 +52,7 @@ export function resolvePendingThreadCreation(input: {
   )
     return null;
   // Message delivery and turn startup are separate events. The prompt alone
-  // cannot replace the preparing pill; wait for the turn's timing too. Retain
-  // the local creation if the outbox has already collected its shell outcome.
+  // cannot replace the preparing pill; wait for the turn's timing too.
   if (
     detail !== null &&
     (latestRun !== undefined || detail.latestTurn != null) &&
@@ -100,12 +91,10 @@ export function clearPendingThreadCreationOutcome(threadKey: string): void {
 /**
  * The server creates the thread, then builds the worktree, and only then starts
  * the turn, so the thread shell and an empty detail arrive seconds ahead of the
- * prompt. The queued message id is reused as the delivered message id, so its
- * presence is the exact signal.
+ * prompt.
  */
 export function isPendingThreadCreationVisible(input: {
   readonly creationMessageId: string;
-  /** Null while no detail has loaded; empty during a worktree checkout. */
   readonly loadedMessageIds: ReadonlyArray<string> | null;
 }): boolean {
   return !input.loadedMessageIds?.includes(input.creationMessageId);

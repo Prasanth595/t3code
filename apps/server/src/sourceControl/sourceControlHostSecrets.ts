@@ -40,7 +40,6 @@ export function sourceControlHostSecretName(slot: SourceControlHostSecretSlot): 
     : `source-control-${encode(slot.kind)}-${encode(slot.field)}-${encode(slot.serverHost.trim().toLowerCase())}`;
 }
 
-/** The string values a secret field holds, keyed by server host, or `null` for a plain string. */
 export function readSecretFieldValues(
   value: unknown,
 ): ReadonlyArray<readonly [serverHost: string | null, value: string]> {

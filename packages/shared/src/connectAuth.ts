@@ -7,18 +7,8 @@ const CONNECT_LOOPBACK_CALLBACK_PATH = "/callback";
 
 const CONNECT_AUTHORIZE_PATH = "/connect";
 
-/**
- * The CLI prints URLs against this origin and the web bundle uses it to
- * decide whether it is the hosted deployment — the two must agree, so the
- * default lives here.
- */
 export const DEFAULT_HOSTED_APP_URL = "https://app.t3.codes";
 
-/**
- * Requested at authorize time by the hosted page and by the CLI's device
- * authorization request; keep both sides on this single definition.
- * `offline_access` asks Clerk for the refresh token the CLI relies on.
- */
 export const CONNECT_OAUTH_SCOPES = ["openid", "profile", "email", "offline_access"] as const;
 
 export interface ConnectAuthorizeRequest {
@@ -28,13 +18,11 @@ export interface ConnectAuthorizeRequest {
 }
 
 /**
- * `state` and `code_challenge` ride the fragment so they never reach the hosted
- * app's server or CDN logs; neither is a secret. The CLI routes through the
- * hosted /connect page rather than hitting Clerk's /oauth/authorize directly: a
- * signed-out browser sent straight to /oauth/authorize goes through Clerk's
- * sign-in redirect, which does not reliably preserve the authorize query
- * parameters (state, response_type, code_challenge). The hosted page waits for
- * a Clerk session first, then forwards the request with the parameters intact.
+ * The CLI routes through the hosted /connect page rather than hitting Clerk's
+ * /oauth/authorize directly: a signed-out browser sent straight to
+ * /oauth/authorize goes through Clerk's sign-in redirect, which does not
+ * reliably preserve the authorize query parameters (state, response_type,
+ * code_challenge).
  */
 export function buildConnectAuthorizeRequestUrl(input: {
   readonly hostedAppUrl: string;

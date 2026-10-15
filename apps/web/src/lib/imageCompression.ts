@@ -18,10 +18,6 @@ export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
 export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_HEIC_DECODE_PIXELS = 64_000_000;
 const MAX_HEIC_METADATA_BYTES = 1024 * 1024;
-/**
- * The floor stays high enough to avoid visible blocking on UI screenshots; if even that overflows
- * we drop resolution instead of quality.
- */
 const QUALITY_STEPS = [0.92, 0.85, 0.78, 0.68] as const;
 const FALLBACK_SCALE_STEPS = [0.75, 0.55] as const;
 const HEIC_IMAGE_MIME_TYPE = /^image\/hei(?:c|f)$/i;
@@ -93,7 +89,6 @@ function findHeicMetadataBox(
   return null;
 }
 
-/** Read HEIC image dimensions before the decoder allocates full RGBA buffers. */
 async function validateHeicImageDimensions(
   file: File,
 ): Promise<ImageCompressionFailureReason | null> {
@@ -195,12 +190,6 @@ function createCanvas(width: number, height: number): Canvas2D | null {
   return { canvas, context };
 }
 
-/**
- * WebP is preferred: at matched visual quality it lands roughly 25-35%
- * smaller than JPEG, so the same budget buys more resolution and detail —
- * and it keeps alpha, so screenshots with transparency survive intact.
- * Browsers that can't encode it silently fall back to JPEG.
- */
 async function encodeCanvas(
   canvas: OffscreenCanvas | HTMLCanvasElement,
   quality: number,
@@ -217,7 +206,6 @@ async function encodeCanvas(
 
 const composerThumbnails = new WeakMap<File, Promise<string | null>>();
 
-/** Cache a centered square crop for the composer's object-cover image tiles. */
 export function createComposerImageThumbnail(file: File): Promise<string | null> {
   const cached = composerThumbnails.get(file);
   if (cached) return cached;
@@ -323,12 +311,6 @@ async function reencodeWithinBudget(
       try {
         encoded = await encodeWithinBudget(bitmap, targetDimension, budgetChars, preferredMimeType);
       } catch {
-        // Canvas allocation, drawing, or the codec itself can throw — often
-        // precisely *because* the target is too big (OOM on a large bitmap).
-        // Keep trying the smaller fallback scales rather than giving up: a
-        // reduced pass may well succeed. The exception must never escape,
-        // though, since callers finalize state after this returns and a
-        // throw would strand it (e.g. a stash entry stuck "still saving").
         encodeFailed = true;
         continue;
       }
@@ -388,7 +370,6 @@ async function fitImageToMaxEdge(file: File): Promise<{ file: File; imageSize: I
   if (!mimeType || !canRecompress() || file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) return null;
   let bitmap: ImageBitmap | undefined;
   try {
-    // The header answers "does it fit?" without decoding every attachment.
     const header = readImageDimensions(
       new Uint8Array(await file.slice(0, IMAGE_DIMENSIONS_HEADER_BYTES).arrayBuffer()),
     );
@@ -413,12 +394,6 @@ async function fitImageToMaxEdge(file: File): Promise<{ file: File; imageSize: I
   }
 }
 
-/**
- * Other files already within the limit pass through untouched, preserving their exact bytes and
- * format. Sources above `MAX_COMPRESSIBLE_SOURCE_BYTES` are refused outright — decoding them is the
- * risk, so no amount of output budget makes them safe. An internally converted image can provide
- * its original source size when the intermediate format expands beyond that ceiling.
- */
 export async function compressImageToByteLimit(
   file: File,
   maxBytes: number,
@@ -434,9 +409,6 @@ export async function compressImageToByteLimit(
   if ((options?.sourceSizeBytes ?? file.size) > MAX_COMPRESSIBLE_SOURCE_BYTES) {
     return { ok: false, reason: "too-large" };
   }
-  // The re-encode loop budgets in data-URL characters. Base64 turns 3 bytes
-  // into 4 chars; flooring keeps the budget a hair conservative instead of
-  // admitting an encoding right at the byte cap.
   const budgetChars = Math.floor(maxBytes / 3) * 4;
   const reencoded = await reencodeWithinBudget(
     fitted?.file ?? file,
@@ -458,10 +430,6 @@ export async function compressImageToByteLimit(
   };
 }
 
-/**
- * Converts HEIC/HEIF photos to provider-compatible JPEG before applying the
- * attachment size limit. The decoder is loaded only when such a photo arrives.
- */
 export async function prepareImageForAttachment(
   file: File,
   maxBytes: number,

@@ -30,10 +30,6 @@ export function projectMonogram(projectName: string): string {
   return Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("");
 }
 
-/**
- * Mobile does not bundle the Lucide set, so a Lucide override keeps its color
- * and falls back to the project's monogram instead of the folder glyph.
- */
 export function resolveProjectIconGlyph(
   projectIcon: ProjectIconOverride | null | undefined,
   projectTitle: string,

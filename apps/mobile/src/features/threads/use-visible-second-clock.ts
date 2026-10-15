@@ -14,7 +14,6 @@ export function useVisibleSecondClock(enabled: boolean): number {
     const subscription = AppState.addEventListener("change", (state) =>
       setAppActive(state === "active"),
     );
-    // A change between the first render and this subscription has no event to replay.
     // oxlint-disable-next-line react/set-state-in-effect -- Syncs state the listener missed.
     setAppActive(AppState.currentState === "active");
     return () => subscription.remove();

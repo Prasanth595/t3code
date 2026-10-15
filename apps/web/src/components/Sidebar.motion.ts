@@ -1,10 +1,8 @@
 const motionTiming = { duration: 150, easing: "ease-out" };
 const rowTravel = (height: number) => Math.min(height, 40);
-// A project filter change or a bulk snooze swaps a large part of the list at
-// once. Fades are the expensive part: every removed row gets a deep clone and
-// every clone and entering row gets its own animation, and the layout reads
-// in between force synchronous reflows. Translating displaced rows is cheap,
-// so only the fade count decides whether an update animates.
+// Fades are the expensive part: every removed row gets a deep clone and every
+// clone and entering row gets its own animation, and the layout reads in
+// between force synchronous reflows.
 const MAX_FADED_ROWS_PER_UPDATE = 40;
 
 type RowPosition = { top: number; left: number; width: number; height: number };
@@ -15,7 +13,7 @@ function progress(animation: Animation) {
     : (animation.effect?.getComputedTiming().progress ?? 0);
 }
 
-/** Animate rows between their layout positions. The list must be
+/** The list must be
  * positioned so every direct child's offsetTop has the same origin. */
 export function createSidebarListMotion(parent: HTMLUListElement) {
   let positions: Map<HTMLElement, RowPosition> | null = null;
@@ -44,7 +42,6 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   };
   const fadeOut = (node: HTMLElement, position: RowPosition, travel: number) => {
     if (position.height === 0) return;
-    // React owns the removed row; only a noninteractive copy stays for the fade.
     const clone = node.cloneNode(true) as HTMLElement;
     for (const element of [clone, ...clone.querySelectorAll("*")]) {
       for (const attribute of Array.from(element.attributes)) {
@@ -107,7 +104,6 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const move = (node: HTMLElement, offset: number) => {
     cancel(node);
     const entry = entering.get(node);
-    // The newer transform supersedes entry travel; its original opacity keeps fading.
     if (entry) entry.travel = 0;
     if (offset === 0 && !entry) return;
     const animation = node.animate(
@@ -235,10 +231,6 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       }
       positions = next;
     },
-    /** Called on drag release, before the commit that clears dnd-kit's
-     * transforms. Takes every row's visual top, including the lifted row
-     * under the pointer and the peers holding the label gaps open, so the
-     * next update glides each of them into its committed slot. */
     release() {
       suspend();
       const origin = parent.getBoundingClientRect().top;

@@ -28,15 +28,10 @@ interface MappedText {
 interface Interpreter {
   readonly language: string;
   readonly inline: (flag: string) => boolean;
-  /** Options that consume the next argument. */
   readonly valueOptions?: ReadonlySet<string>;
-  /** Options after which the script comes from a file or module instead. */
   readonly scriptFileOptions?: ReadonlySet<string>;
-  /** "always" for SQL shells, which read statements from stdin next to their database argument. */
   readonly stdin: "always" | "without-script-file" | "never";
-  /** The first positional argument holding a script, as in `sqlite3 app.db "select 1"`. */
   readonly positionalScript?: number;
-  /** SQL shells run every `-c` and every statement argument, in order. */
   readonly repeatable?: boolean;
   readonly subcommand?: string;
   /** PowerShell matches parameters case-insensitively; the lists above are lowercase. */
@@ -65,8 +60,6 @@ const PYTHON: Interpreter = {
   stdin: "without-script-file",
 };
 
-// Shared by SQL clients; each names its own script flags, since `-c` and `-f`
-// mean different things to psql and mysql.
 const SQL_SHELL = {
   language: "sql",
   valueOptions: new Set([
@@ -184,8 +177,6 @@ const DELIMITER_LANGUAGES: Record<string, string> = {
 };
 
 /**
- * The scripts embedded in a shell command, outermost first, so a highlighter
- * painting them in order lets a nested script override the one containing it.
  * Returns nothing for a command that does not parse cleanly; where a broken
  * quote ends cannot be trusted.
  */
@@ -241,7 +232,6 @@ function forEachCommand(
     case "CommandExpansion":
     case "ProcessSubstitution": {
       const { script } = node as Extract<WordPart, { type: "CommandExpansion" }>;
-      // Escaped-backtick scripts own a decoded source their positions index.
       if (script && !script.errors?.length && script.source === undefined) {
         forEachCommand(script.commands, visit, seen);
       }
@@ -262,7 +252,6 @@ function programName(word: Word): string {
 }
 
 function interpreterFor(name: string): Interpreter | undefined {
-  // `py` is the Windows Python launcher, as in `py -3 -c '…'`.
   if (/^python(?:\d+(?:\.\d+)?)?$|^pypy3?$|^py$/u.test(name)) return PYTHON;
   return Object.hasOwn(INTERPRETERS, name) ? INTERPRETERS[name] : undefined;
 }
@@ -342,7 +331,6 @@ function isDescriptor(descriptor: HereDoc["descriptor"], fd: number): boolean {
 
 interface ScriptArgument {
   readonly word: Word;
-  /** The script follows the `=` of `--eval=…` rather than filling the word. */
   readonly inValue: boolean;
 }
 
@@ -383,7 +371,6 @@ function interpreterArgs(
       continue;
     }
     positionals.push(arg);
-    // An interpreter stops reading its own options at the script file.
     if (interpreter.stdin === "without-script-file" && !interpreter.subcommand) break;
   }
 
@@ -449,9 +436,8 @@ function hereDocText(hereDoc: HereDoc, source: string): MappedText {
 }
 
 /**
- * A word's value with the source span of each character: quotes removed and
- * escapes resolved, the way the program receives it. Expansions such as
- * `$HOME` stay as written. Returns undefined for spellings it cannot map.
+ * Expansions such as `$HOME` stay as written. Returns undefined for spellings
+ * it cannot map.
  */
 function wordText(word: Word, source: string): MappedText | undefined {
   const builder = new MappedTextBuilder();

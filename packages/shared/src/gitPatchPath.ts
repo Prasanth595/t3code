@@ -1,8 +1,3 @@
-/**
- * Not every byte git would escape: `core.quotePath` also escapes anything outside ASCII, which
- * is a setting for what a terminal can show rather than anything the format needs, and a patch
- * here is read by a diff viewer.
- */
 const ESCAPE_BY_CHARACTER = new Map([
   ['"', '\\"'],
   ["\\", "\\\\"],
@@ -50,8 +45,6 @@ export function quoteGitPatchPath(path: string): string {
       continue;
     }
     const code = character.codePointAt(0) ?? 0;
-    // Every character git has no name for is written as the octal of its byte, and a control
-    // character is one byte in UTF-8, so the character's own code point is that byte.
     if (code < LOWEST_PRINTABLE || code === DELETE_CHARACTER) {
       body += `\\${code.toString(8).padStart(3, "0")}`;
       quoting = true;
@@ -63,9 +56,8 @@ export function quoteGitPatchPath(path: string): string {
 }
 
 /**
- * A name holding no backslash is already itself, and an escape git would never write reads the
- * way C reads it. The escapes are per byte, so a name in another alphabet arrives as a run of
- * octal and only reads back as itself once those bytes are rejoined and decoded together.
+ * The escapes are per byte, so a name in another alphabet arrives as a run of octal and
+ * only reads back as itself once those bytes are rejoined and decoded together.
  */
 function unescapeBody(body: string): string {
   if (!body.includes("\\")) return body;

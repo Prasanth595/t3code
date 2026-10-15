@@ -13,7 +13,6 @@ const AcpRegistryAgentId = TrimmedNonEmptyString.check(
 const ACP_REGISTRY_CDN_HOSTNAME = "cdn.agentclientprotocol.com";
 const ACP_REGISTRY_AGENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 
-/** Derives the official Registry icon URL without trusting stored URL metadata. */
 export function officialAcpRegistryIconUrlForAgentId(
   agentId: string | null | undefined,
 ): string | null {
@@ -23,7 +22,6 @@ export function officialAcpRegistryIconUrlForAgentId(
   return `https://${ACP_REGISTRY_CDN_HOSTNAME}/registry/v1/latest/${agentId}.svg`;
 }
 
-/** Allows provider icons only from the credential-free official Registry CDN origin. */
 export function resolveOfficialAcpRegistryIconUrl(icon: string | null | undefined): string | null {
   if (!icon) return null;
   try {

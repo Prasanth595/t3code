@@ -11,9 +11,6 @@ const reporter: ErrorReporter.ErrorReporter = {
   report: ({ cause, fiber }) => {
     for (const reason of cause.reasons) {
       if (reason._tag !== "Die" || ErrorReporter.isIgnored(reason.defect)) continue;
-      // Reporters are called synchronously from the failing fiber. Logging with
-      // its context keeps its loggers and annotations, and a fork cannot throw
-      // back into the server that reported.
       Effect.runForkWith(fiber.context)(
         Effect.logError("Unhandled defect", Cause.fromReasons([reason])),
       );

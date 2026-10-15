@@ -5,10 +5,6 @@ import type { QueuedThreadCreation, QueuedThreadMessage } from "./thread-outbox-
 import { isNewTaskDraftKey } from "./new-task-draft-key";
 import type { ComposerDraft } from "./use-composer-drafts";
 
-/**
- * A `pending` task sits in the outbox and sends itself when its environment reconnects; a `draft`
- * is new-task composer content, which only sends when the user submits it.
- */
 export type PendingNewTask = PendingQueuedTask | PendingDraftTask;
 
 export interface PendingQueuedTask {

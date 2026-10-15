@@ -15,25 +15,12 @@ export interface HtmlRenderReference {
   readonly attachmentId: string;
   readonly title: string;
   readonly height: number;
-  /**
-   * `[width, contentHeight]` pairs the server measured at publish, ascending by
-   * width.
-   */
   readonly heights?: ReadonlyArray<readonly [width: number, height: number]>;
-  /**
-   * The page's main blocks at the column width, measured with `heights`, so a
-   * client can draw its loading skeleton in the page's shape. See
-   * `encodeHtmlRenderOutline`.
-   */
   readonly outline?: string;
 }
 
 export const HTML_RENDER_MEASURE_WIDTHS = [320, 375, 430, 520, 640, 728, 860, 1000, 1144] as const;
 
-/**
- * The reply column's frame width at the default chat width. Agents preview at
- * it, and it picks the measured height when a client cannot know its width.
- */
 export const HTML_RENDER_COLUMN_WIDTH = 728;
 
 const MAX_MEASURED_HEIGHTS = 24;
@@ -107,12 +94,8 @@ function measuredHeight(heights: NonNullable<HtmlRenderReference["heights"]>, wi
 }
 
 /**
- * It is the page's own reported `contentHeight` when the client has one, else
- * the server's measurement for that width. A page even a few pixels taller than
- * its frame scrolls inside it and takes the reader's scroll, so the frame fits
- * the page. The agent's height caps it only when it is below the page's height
- * at the column width (the agent asked for a scrolling frame) or when the page
- * was never measured.
+ * A page even a few pixels taller than its frame scrolls inside it and takes
+ * the reader's scroll, so the frame fits the page.
  */
 export function htmlRenderFrameHeight(
   reference: HtmlRenderReference,
@@ -130,10 +113,6 @@ export function htmlRenderFrameHeight(
   return clampHtmlRenderHeight(Math.min(cap, contentHeight ?? measuredHeight(heights, width)));
 }
 
-/**
- * One block of a page's outline: `text` with its line count, a `media` element
- * or solid shape, or a `table` with its row count.
- */
 export interface HtmlRenderOutlineBox {
   readonly kind: "text" | "media" | "table";
   readonly x: number;
@@ -145,16 +124,13 @@ export interface HtmlRenderOutlineBox {
 
 const OUTLINE_KINDS = { t: "text", m: "media", g: "table" } as const;
 const OUTLINE_LETTERS = { text: "t", media: "m", table: "g" } as const;
-// Coordinates travel in 4px units, which keeps the tool result an agent reads short.
 const OUTLINE_UNIT = 4;
 export const HTML_RENDER_OUTLINE_MAX_BOXES = 48;
-// Sizes and line counts are never zero, so a client never divides by one.
 const OUTLINE_BOX = "[tmg]\\d{1,4},\\d{1,4},[1-9]\\d{0,3},[1-9]\\d{0,3},[1-9]\\d{0,2}";
 const OUTLINE_PATTERN = new RegExp(
   `^${OUTLINE_BOX}(?:;${OUTLINE_BOX}){0,${HTML_RENDER_OUTLINE_MAX_BOXES - 1}}$`,
 );
 
-/** Packs measured boxes, in CSS pixels at the column width, into an outline string. */
 export function encodeHtmlRenderOutline(
   boxes: ReadonlyArray<HtmlRenderOutlineBox>,
 ): string | undefined {
@@ -172,10 +148,6 @@ export function encodeHtmlRenderOutline(
   return encoded === "" ? undefined : encoded;
 }
 
-/**
- * The outline's boxes in CSS pixels for a frame `width` wide, stretched to the
- * page's measured height there. Empty without an outline.
- */
 export function htmlRenderOutlineBoxes(
   reference: HtmlRenderReference,
   width: number,
@@ -200,7 +172,6 @@ export function htmlRenderOutlineBoxes(
   });
 }
 
-/** A readable download name: the title without characters file systems reject. */
 export function htmlRenderFileName(title: string) {
   const name = title
     .replace(/[\\/:*?"<>|\p{Cc}]+/gu, " ")
@@ -240,8 +211,6 @@ export interface HtmlRenderTheme {
   readonly variables: Readonly<Record<string, string>>;
 }
 
-// Roles themes cannot change (index.css keeps info/success fixed), plus a
-// categorical chart series after the theme's own accent.
 const FIXED_COLORS = {
   light: {
     success: "#10b981",
@@ -260,9 +229,8 @@ const FIXED_COLORS = {
 } as const;
 
 /**
- * Maps a theme palette to the variables HTML renders style against. Names
- * follow the app's own tokens, except `--accent`, which is the theme's brand
- * color here rather than the app's neutral hover surface.
+ * Names follow the app's own tokens, except `--accent`, which is the theme's
+ * brand color here rather than the app's neutral hover surface.
  */
 export function htmlRenderTheme(
   colors: ThemeColors,
@@ -353,10 +321,6 @@ export function readHtmlRenderContentHeight(data: unknown): number | undefined {
   return typeof height === "number" && Number.isFinite(height) && height > 0 ? height : undefined;
 }
 
-/**
- * The bootstrap adds the click's Cmd/Ctrl state, so a modifier click can leave
- * the app the way it does from a chat link.
- */
 export function readHtmlRenderLinkRequest(data: unknown):
   | {
       readonly id: string | number;
@@ -407,9 +371,7 @@ export function readHtmlRenderKeyDown(data: unknown):
   };
 }
 
-/** A chord as the page sees it: `mod` already resolved to Meta or Control. */
 export interface HtmlRenderShortcut {
-  /** Lowercase key name, as in a keybinding: `k`, `[`, `enter`. */
   readonly key: string;
   readonly metaKey: boolean;
   readonly ctrlKey: boolean;
@@ -417,11 +379,6 @@ export interface HtmlRenderShortcut {
   readonly altKey: boolean;
 }
 
-/**
- * The `t3/notifications/shortcuts` notification a client posts into a render:
- * the chords it may pass on, and chords of other commands that the page keeps
- * even when one also matches an allowed chord.
- */
 export function htmlRenderShortcutsMessage(
   shortcuts: ReadonlyArray<HtmlRenderShortcut>,
   blocked: ReadonlyArray<HtmlRenderShortcut>,
@@ -435,7 +392,6 @@ export function htmlRenderResult(id: string | number) {
 
 const THEME_FRAGMENT_KEY = "t3-theme";
 
-/** URL fragment that hands a render its theme before first paint. */
 export function htmlRenderThemeFragment(theme: HtmlRenderTheme): string {
   return `#${THEME_FRAGMENT_KEY}=${encodeURIComponent(JSON.stringify(theme))}`;
 }
@@ -451,7 +407,6 @@ export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
 const BASE_CSS =
   "html{background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;scrollbar-width:none}" +
   "html::-webkit-scrollbar{display:none}body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}" +
-  // Focus outlines paint inside the element, so the frame edge never clips them.
   ":where(:focus-visible){outline:2px solid var(--ring)}:focus-visible{outline-width:2px!important;outline-offset:-2px!important}";
 
 function rootRule(theme: HtmlRenderTheme): string {
@@ -461,19 +416,12 @@ function rootRule(theme: HtmlRenderTheme): string {
   return `:root{color-scheme:${theme.appearance};${declarations}}`;
 }
 
-// Runs synchronously in <head>, before the page's own styles and body, so the
-// first paint is already themed. It rewrites its own <style> element rather
-// than setting inline properties, so a page's later `:root` rules still win,
-// then drops the fragment so a page's own hash routing never sees it. A link
-// the reader clicks to another page never replaces the page inside the thread:
-// a framed page asks its client to open it, and a top-level page (mobile)
-// opens it as a new window, which the client sends to the browser. A framed
-// page also reports its content height, measured as the server measures it,
-// so its client can fit the frame to the page. A chord the client named as an
-// app shortcut is passed on rather than left to the browser, unless a text
-// field has focus or the page handled it: the deciding listener is added while
-// the key dispatches, so it runs after every listener the page has. Keys
-// match as resolveEventKeys reads them, so the client accepts what it claims.
+// It rewrites its own <style> element rather than setting inline properties, so
+// a page's later `:root` rules still win, then drops the fragment so a page's
+// own hash routing never sees it. A chord the client named as an app shortcut
+// is passed on rather than left to the browser, unless a text field has focus
+// or the page handled it: the deciding listener is added while the key
+// dispatches, so it runs after every listener the page has.
 const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href,metaKey:e.metaKey,ctrlKey:e.ctrlKey}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);var K=[],B=[],C=${JSON.stringify(EVENT_CODE_SHORTCUT_KEYS)};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(SHORTCUTS_METHOD)}&&p&&Array.isArray(p.shortcuts)&&Array.isArray(p.blocked)){K=p.shortcuts;B=p.blocked;}});window.addEventListener("keydown",function(e){var t=e.composedPath()[0],c=e.code||"",l=e.key.toLowerCase(),x=/^[a-z]$/.test(l)?[l]:[l,/^Key[A-Z]$/.test(c)?c.slice(3).toLowerCase():"",C.hasOwnProperty(c)?C[c]:""],f,m=function(s){return s&&s.metaKey===e.metaKey&&s.ctrlKey===e.ctrlKey&&s.shiftKey===e.shiftKey&&s.altKey===e.altKey&&x.indexOf(s.key)>-1;};if(!e.isTrusted||e.isComposing||e.getModifierState("AltGraph")&&!/^[a-z0-9]$/i.test(e.key)||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))||!K.some(m)||B.some(m))return;f=function(v){window.removeEventListener("keydown",f);if(v!==e||e.defaultPrevented)return;e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(KEY_DOWN_METHOD)},params:{key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,repeat:e.repeat}},"*");};window.addEventListener("keydown",f);setTimeout(function(){window.removeEventListener("keydown",f);});},true);}})();`;
 
 function bootstrapMarkup(markup: string): string {

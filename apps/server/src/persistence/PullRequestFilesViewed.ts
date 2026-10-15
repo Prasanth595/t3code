@@ -13,12 +13,6 @@ import {
   type PullRequestFilesViewedRepositoryError,
 } from "./Errors.ts";
 
-/**
- * Which change request, on which host, for which reader. The host is part of it because the same
- * `group/project` exists on gitlab.com and on a self-managed instance, and the reader because
- * signing in as somebody else must not inherit their ticks. A host that will not say who the
- * reader is leaves it empty, which is one reader rather than none.
- */
 export const PullRequestFilesViewedScope = Schema.Struct({
   provider: SourceControlProviderKind,
   host: Schema.String,
@@ -31,10 +25,10 @@ export type PullRequestFilesViewedScope = typeof PullRequestFilesViewedScope.Typ
 export const PullRequestFileViewedMark = Schema.Struct({
   path: Schema.String,
   /**
-   * The host's own name for that version of the file, opaque here. Empty where the host said it
-   * had none to give, which is an answer rather than a gap: a file with no version at the head
-   * is one the change request deletes. Null where the host could not say at all, which is no
-   * baseline rather than an empty one, and such a mark stays cleared until a press replaces it.
+   * Empty where the host said it had none to give, which is an answer rather than a gap: a file
+   * with no version at the head is one the change request deletes. Null where the host could
+   * not say at all, which is no baseline rather than an empty one, and such a mark stays
+   * cleared until a press replaces it.
    */
   revision: Schema.NullOr(Schema.String),
 });
@@ -45,11 +39,6 @@ export interface SetPullRequestFilesViewedInput extends PullRequestFilesViewedSc
   readonly viewedAt: string;
 }
 
-/**
- * How many marks one read of this store carries. Every one of them is a path held in a set and
- * a map for as long as the caller holds the read, so an unbounded read of a change request with
- * thousands of marks in it is paid for again per scope the caller is holding.
- */
 export const MAX_FILES_VIEWED_ROWS = 500;
 
 export interface PullRequestFilesViewedPage {
@@ -108,9 +97,6 @@ const make = Effect.gen(function* () {
         Effect.mapError(toSqlOrDecodeError("listPullRequestFilesViewed", "PullRequestFileViewed")),
       ),
 
-    // One statement per file rather than one for the batch: the batch is what a reader ticked in
-    // the last few hundred milliseconds, so it is a handful of rows on a local database, and a
-    // mixed batch of clears and un-clears has no single statement anyway.
     set: (input) =>
       sql
         .withTransaction(

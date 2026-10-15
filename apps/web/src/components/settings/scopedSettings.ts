@@ -70,14 +70,8 @@ export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnviron
   return { environments, connectedEnvironments, environment };
 }
 
-/**
- * One (environment, project) pair the scope writes to, with that project's
- * effective settings. Environment scopes have no member and read the
- * environment settings directly.
- */
 export interface ScopedSettingsTarget {
   readonly environmentId: EnvironmentId;
-  /** The environment's label; a project is the same project on every environment. */
   readonly label: string;
   readonly projectId: ProjectId | null;
   readonly settings: ServerSettings;
@@ -87,7 +81,6 @@ export interface ScopedSettingsTarget {
 export function resolveScopedSettingsTargets(
   scope: ResolvedSettingsScope,
   connectedEnvironments: readonly ScopedSettingsEnvironment[],
-  // Each member's decoded t3.json, keyed by physical project key, once read.
   // A member absent here has no file tier yet; null is a missing or invalid file.
   projectFiles?: ReadonlyMap<string, T3ProjectFile | null>,
 ): readonly ScopedSettingsTarget[] {
@@ -205,11 +198,6 @@ function projectOverrideWrites(
   return [...writes.values()];
 }
 
-/**
- * Environment scopes write the patch to every connected environment; project
- * and checkout scopes write the scopable keys into each member's override
- * entry on its environment. Client keys always persist locally.
- */
 export function planScopedSettingsPatch(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
@@ -392,11 +380,6 @@ export function planProjectOverridesClear(
   };
 }
 
-/**
- * Objects are compared field by field, so a nested key an older server dropped
- * is caught even when a sibling field saved. A null clears the field; strings
- * may come back trimmed.
- */
 function writeWasDropped(value: unknown, before: unknown, saved: unknown): boolean {
   if (value === null) return before != null && Equal.equals(saved, before);
   if (isPlainObject(value) && !Array.isArray(before) && !Array.isArray(saved)) {
@@ -430,7 +413,6 @@ function droppedSettingKeys(write: ScopedServerWrite, saved: ServerSettings | un
   );
 }
 
-/** Wait for every target so a failed environment does not hide successful or later writes. */
 export async function persistScopedSettingsPatch(
   plan: ReturnType<typeof planScopedSettingsPatch>,
   persistServer: (input: {

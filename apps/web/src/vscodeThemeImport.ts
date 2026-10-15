@@ -28,10 +28,6 @@ function encodeGamma(value: number): number {
   return clamped <= 0.0031308 ? clamped * 12.92 : 1.055 * clamped ** (1 / 2.4) - 0.055;
 }
 
-/**
- * Out-of-gamut colors clip to the sRGB edge, which is what a browser on an sRGB
- * screen shows anyway.
- */
 function parseColorFunction(value: string): VsCodeRgba | null {
   const match = /^color\(\s*(display-p3|srgb)\s+([^)]+)\)$/i.exec(value);
   if (!match) return null;
@@ -60,7 +56,6 @@ function parseColorFunction(value: string): VsCodeRgba | null {
     number,
     number,
   ];
-  // Display P3 linear -> sRGB linear.
   const srgb = [
     1.2249401762805 * linearRed - 0.2249401762805 * linearGreen,
     -0.042056961239 * linearRed + 1.042056961239 * linearGreen,
@@ -232,9 +227,6 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     accentColor = parseVsCodeColor(accentHex)!;
   }
 
-  // The floor derives from a muted accent -- the vivid engine carries the
-  // accent hue into every surface, which washes an imported neutral palette (a
-  // gray theme with a blue focusBorder would get blue code and text surfaces).
   const mutedAccentHex = flattenOver(
     { r: accentColor.r, g: accentColor.g, b: accentColor.b, a: 0.2 },
     canvas,
@@ -247,8 +239,6 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     solidOver(canvas, "terminal.background", "panel.background") ?? derived.terminalBackground;
   const terminal = hexToRgb(terminalHex);
 
-  /** Foregrounds only win when they stay readable on the surface they land on;
-   *  a theme tuned for its own chrome can be unreadable on ours. */
   const readableOn = (
     surface: string,
     fallback: string,
@@ -258,10 +248,6 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     const isReadable = (candidate: string) => contrastRatio(hexToRgb(candidate), surfaceRgb) >= 4.5;
     const specified = solidOver(surfaceRgb, ...keys);
     if (specified && isReadable(specified)) return specified;
-    // The derived fallback was solved against the derived surface. When the
-    // file replaced that surface (a light sideBar in a dark theme, say), the
-    // fallback has to clear the bar there too, or the text falls back to the
-    // readable end of the greyscale for the surface actually in play.
     if (isReadable(fallback)) return fallback;
     return relativeLuminance(surfaceRgb) < 0.179 ? "#ffffff" : "#000000";
   };
@@ -293,8 +279,6 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
       break;
     }
   }
-  // Find overlays can cover prose, code, or message bubbles. Flatten them onto
-  // the editor canvas so each imported foreground has one predictable surface.
   const searchMatchBackground =
     solidOver(canvas, "editor.findMatchHighlightBackground") ?? derived.searchMatchBackground;
   const searchMatchActiveBackground =
@@ -397,10 +381,6 @@ export function pairVsCodeThemes(
   const groups = new Map<string, Group>();
   const passthrough: Array<{ theme: ThemeDefinition; order: number }> = [];
   themes.forEach((theme, order) => {
-    // Only single-appearance themes with an appearance word in the name can
-    // pair, and only when the rest of the name can still identify the pair
-    // ("Dark+" and "Light+" would pair as "+"); anything else is already
-    // what the user asked for.
     const key = stripAppearance(theme.label);
     if (getThemeModes(theme).length !== 1 || key === theme.label || !/[a-z0-9]/i.test(key)) {
       passthrough.push({ theme, order });
@@ -413,10 +393,6 @@ export function pairVsCodeThemes(
 
   const paired: Array<{ theme: ThemeDefinition; order: number }> = [];
   for (const [key, group] of groups) {
-    // Ambiguity (two darks for one light) is not guessed at, and a pair
-    // whose stripped name collides with a built-in id ("Grove Light" +
-    // "Grove Dark" -> the reserved "grove") stays two single themes rather
-    // than failing the whole batch.
     if (group.light.length === 1 && group.dark.length === 1) {
       try {
         paired.push({

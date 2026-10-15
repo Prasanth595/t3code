@@ -44,9 +44,6 @@ export interface DeviceStreamHandle {
   readonly inputConnected: boolean;
 }
 
-/**
- * `visible=false` tears the stream down so a hidden panel decodes nothing.
- */
 export function DeviceStreamView(props: {
   readonly environmentId: EnvironmentId;
   readonly platform: DevicePlatform;
@@ -185,8 +182,6 @@ export function DeviceStreamView(props: {
     return w / h;
   }, [props.platform, screen]);
 
-  // Encoder restarts and video reconnects retain the decoded frame and viewer
-  // while input is still connected and the next keyframe is on its way.
   const retainingFrame =
     status === "connecting" && hasFrame && inputState.connected && screen !== null;
   const showPhone =
@@ -260,8 +255,6 @@ export function DeviceStreamView(props: {
         ...(rotation ? { transform: `rotate(${rotation}deg)` } : {}),
       };
 
-  // The accessibility tree is polled while the overlay is on; each poll is
-  // one JSON fetch, so there is nothing to repaint between polls.
   const [axElements, setAxElements] = useState<ReadonlyArray<DeviceAxElement>>([]);
   useEffect(() => {
     if (!props.axOverlay || !access || !props.visible) return;

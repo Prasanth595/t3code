@@ -159,11 +159,6 @@ function nextConfigBlobWithValue(
   return base;
 }
 
-/**
- * Custom rows come from current settings so name/descriptor edits show
- * instantly; a bare entry falls back to the live row's driver-default
- * capabilities (the server fills those in on its next probe).
- */
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
   readonly customModels: ReadonlyArray<CustomModelDefinition>;
@@ -175,8 +170,6 @@ export function deriveProviderModelsForDisplay(input: {
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
   const serverSlugs = new Set(serverModels.map((model) => model.slug));
-  // A custom entry with a built-in slug only renames that built-in on the
-  // server, so the built-in row already shows it.
   const customModels = input.customModels.flatMap((entry) =>
     serverSlugs.has(entry.slug)
       ? []
@@ -585,11 +578,6 @@ interface ProviderInstanceCardProps {
   readonly readOnly?: boolean | undefined;
   readonly canWriteSettings?: boolean;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
-  /**
-   * Built-in default instance slots use `undefined` — they can't be deleted
-   * without losing the slot, and their "reset to defaults" affordance lives on
-   * an outer reset button instead.
-   */
   readonly onDelete?: (() => void) | undefined;
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
@@ -625,11 +613,6 @@ const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> 
  * Unknown drivers (`driverOption === undefined`) get a read-only
  *     notice instead of editable fields, so fork instances round-trip
  *     without accidentally destroying their config.
- * The enabled Switch writes to the envelope's `instance.enabled`
- *     field, which is the single enabled flag: the server folds any legacy
- *     driver-specific `config.enabled` into the envelope on load and both
- *     sides resolve through `resolveProviderInstanceEnabled` (an explicit
- *     false wins, then envelope, then config, then the driver default).
  * With `projectOverride` set, the Switch instead reads and writes
  *     that project's override, leaving the environment's `instance.enabled`
  *     untouched.
@@ -666,13 +649,10 @@ export function ProviderInstanceCard({
 }: ProviderInstanceCardProps) {
   const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
-  // A locally disabled provider reads "Disabled" with a muted dot even if its
-  // last server status is stale. Enabled providers use the server status.
   const statusKey: ProviderStatusKey = enabled
     ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
     : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
-  // `liveProvider.enabled` is machine-wide; a project override can turn it on.
   const summary = enabled
     ? getProviderSummary(liveProvider && { ...liveProvider, enabled: true })
     : { headline: "Disabled", detail: null };
@@ -690,8 +670,6 @@ export function ProviderInstanceCard({
   );
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const updateState = liveProvider?.updateState;
-  // The server reports each update step. `isUpdating` also covers the moment
-  // between the click and the server's first report.
   const updateProgress = isUpdating
     ? ((updateState?.status === "queued" || updateState?.status === "running"
         ? updateState.message

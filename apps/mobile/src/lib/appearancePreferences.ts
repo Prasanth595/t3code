@@ -17,10 +17,6 @@ export const MIN_CODE_FONT_SIZE = 8;
 export const MAX_CODE_FONT_SIZE = 18;
 export const CODE_FONT_SIZE_STEP = 1;
 
-/**
- * `null` overrides mean "automatic": the value is derived from the base font
- * size.
- */
 export interface AppearancePreferences {
   readonly baseFontSize: number;
   readonly terminalFontSize: number | null;
@@ -183,11 +179,6 @@ const TEXT_SCALE_VARIABLE_ROLES = {
   "--text-3xl": MOBILE_TYPOGRAPHY.display,
 } as const;
 
-/**
- * Scaled values for every `--text-*` size and line-height variable, ready to
- * pass to `Uniwind.updateCSSVariables`. All className-based text (`text-sm`,
- * `text-base`, ...) re-resolves live when these are injected.
- */
 export function resolveTextScaleVariables(baseFontSize: number): Record<string, number> {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   const variables: Record<string, number> = {};
@@ -200,13 +191,6 @@ export function resolveTextScaleVariables(baseFontSize: number): Record<string, 
   return variables;
 }
 
-/**
- * The line height a MOBILE_TYPOGRAPHY role renders at under the given base
- * font size — the same value resolveTextScaleVariables injects for the role's
- * `--text-*--line-height` variable. For layout code that must predict
- * text-driven heights (e.g. the thread feed's fixed item sizes) instead of
- * measuring them.
- */
 export function scaledTypographyLineHeight(
   role: { readonly lineHeight: number },
   baseFontSize: number,

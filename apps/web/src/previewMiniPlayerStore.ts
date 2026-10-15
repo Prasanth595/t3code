@@ -25,7 +25,6 @@ export type PreviewMiniPlayerSource =
 export interface PreviewMiniPlayerState {
   readonly source: PreviewMiniPlayerSource;
   readonly position: PreviewMiniPlayerPosition | null;
-  /** Height always follows the mirrored source's aspect ratio. */
   readonly width: number | null;
   readonly lastInteraction: "drag" | "resize";
 }

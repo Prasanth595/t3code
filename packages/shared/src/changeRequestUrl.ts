@@ -10,7 +10,6 @@ export interface ChangeRequestLink {
   readonly host: string;
   readonly repository: string;
   readonly number: number;
-  /** Forgejo's HTTP host and port, separate from the portless repository identity. */
   readonly authority?: string;
 }
 
@@ -19,16 +18,6 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
   return label !== undefined && hostname.split(".").includes(label);
 }
 
-/**
- * Each host is recognised by the path shape it alone uses, guarded by a hostname it could
- * plausibly be served from, since self-hosted installs are named whatever their admin chose:
- * GitLab's `/-/` marker is unique enough to trust on any hostname, while `/pull/` is generic
- * enough that it is only believed from a GitHub-ish host.
- *
- * Nothing here tries to tell a lookalike hostname from a real one — `github.com.evil.test` and
- * the rest are an open set, and blocking spellings of it costs real hosts (`gitlab.com.br` is a
- * registrable domain). What a claim is worth is decided where it is used.
- */
 export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | null {
   let url: URL;
   try {
@@ -47,22 +36,17 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
     if (match) return claim(host, match);
   }
-  // Forgejo and Gitea use /pulls/ on arbitrary self-hosted domains.
   const forgejo = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
   if (forgejo) {
     const link = claim(host, forgejo);
     return link === null ? null : { ...link, authority: url.host.toLowerCase() };
   }
-  // GitLab, self-hosted included: /{group}/[{subgroup}/...]{repo}/-/merge_requests/{n}. The `/-/`
-  // separator is GitLab's own, so the hostname is not asked about.
   const gitlab = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
   if (gitlab) return claim(host, gitlab);
   if (isHostOf(host, "bitbucket.org", "bitbucket")) {
     const match = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
   }
-  // Azure DevOps, both the current host and the per-organisation one it replaced. `_git` is part
-  // of the repository path there, as it is in the remote URL the identity is read from.
   if (isHostOf(host, "dev.azure.com") || host.endsWith(".visualstudio.com")) {
     const match = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);

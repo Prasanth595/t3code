@@ -116,7 +116,6 @@ function checkThreadOperationPermission(thread: EnvironmentThreadShell, title: s
   return false;
 }
 
-/** Resolves to true iff the action was dispatched and succeeded. */
 function useThreadActionExecutor(
   onCompleted?: (action: ThreadListAction, thread: EnvironmentThreadShell) => void,
 ) {
@@ -148,8 +147,6 @@ function useThreadActionExecutor(
           );
           return false;
         }
-        // Archive keeps its original, narrower guard: never interrupt a
-        // thread mid-turn.
         if (action === "archive" && !threadCanArchive(thread.runtime)) {
           Alert.alert(
             actionFailureTitle(action),
@@ -185,8 +182,6 @@ function useThreadActionExecutor(
           Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           return false;
         }
-        // Settled threads stay in the live shell stream; only the archive
-        // lifecycle still feeds the archived-snapshot surface.
         if (action === "archive" || action === "unarchive" || action === "delete") {
           refreshArchivedThreadsForEnvironment(thread.environmentId);
         }
@@ -253,7 +248,6 @@ export function useThreadListActions(): {
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  /** Sets per-thread automatic settlement on or off. */
   readonly setThreadAutoSettle: (
     thread: EnvironmentThreadShell,
     enabled: boolean,
@@ -730,7 +724,6 @@ export function useThreadListActions(): {
                 ? error.message
                 : "The thread could not be moved.",
             );
-            // Keep confirmed keys when a later environment rejects its write.
             return false;
           }
         }

@@ -3,10 +3,6 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 
-/**
- * The prompt and attachments are already back in the project draft, so the only action is
- * reopening it.
- */
 export function ThreadCreationFailedCard(props: {
   readonly reason: string;
   readonly onEditTask: () => void;

@@ -1,9 +1,6 @@
 import type { PasteEventPayload } from "expo-paste-input";
 import { useCallback } from "react";
 
-/**
- * Text pastes are left to the native TextInput — no extra handling is needed.
- */
 export function useNativePaste(onImages: (uris: ReadonlyArray<string>) => void) {
   return useCallback(
     (payload: PasteEventPayload) => {

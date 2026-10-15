@@ -28,17 +28,11 @@ import type { ProviderUsageReader } from "./usage.ts";
 export interface ProviderDriverMetadata {
   readonly displayName: string;
   /**
-   * Whether the driver may be instantiated more than once concurrently.
    * Defaults to `true`. Set to `false` for drivers that wrap a global
    * resource (e.g. a single desktop app socket) — the registry then
    * rejects multi-instance configurations with a clear error.
    */
   readonly supportsMultipleInstances?: boolean;
-  /**
-   * Whether the server runs an instance at `defaultInstanceIdForDriver(kind)`
-   * even when settings have no entry for it. Defaults to `true`; drivers that
-   * need user input before they can run (such as the ACP Registry) opt out.
-   */
   readonly hasDefaultInstance?: boolean;
 }
 
@@ -58,11 +52,6 @@ export interface ProviderInstance {
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   readonly invalidateCaches?: Effect.Effect<void>;
-  /**
-   * Redeem one banked rate-limit reset credit on the signed-in account, then
-   * re-probe so the snapshot reflects the cleared windows. Account-level,
-   * not thread-level, which is why it lives here rather than on the adapter.
-   */
   readonly consumeResetCredit?: () => Effect.Effect<
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
@@ -110,10 +99,6 @@ export function defaultProviderContinuationIdentity(input: {
   };
 }
 
-/**
- * `config` is the typed payload — already decoded by the registry through
- * `driver.configSchema`. Drivers never decode their own raw envelope.
- */
 export interface ProviderDriverCreateInput<Config> {
   readonly instanceId: ProviderInstanceId;
   readonly displayName: string | undefined;
@@ -124,19 +109,13 @@ export interface ProviderDriverCreateInput<Config> {
 }
 
 /**
- * `create` is responsible for *all* per-instance state — process handles,
- * pubsub topics, refs, file watchers — and must release them when its
- * scope closes. Two calls to `create` with different `instanceId` /
- * `config` MUST yield instances with no shared mutable state.
+ * Two calls to `create` with different `instanceId` / `config` MUST yield
+ * instances with no shared mutable state.
  */
 export interface ProviderDriver<Config, R = never, UsageR = never> {
   readonly driverKind: ProviderDriverKind;
   readonly metadata: ProviderDriverMetadata;
   /**
-   * The `Encoded` parameter is intentionally left as `unknown` (not `Config`)
-   * so schemas with `withDecodingDefault` / transformations — where the encoded
-   * shape differs from the decoded shape — satisfy the SPI without casts.
-   *
    * Using `Codec` rather than `Schema` pins `DecodingServices = never` — if
    * we used `Schema<Config>`, the erased `any` in `AnyProviderDriver` would
    * widen `DecodingServices` to `unknown` and poison the R channel of every
@@ -145,9 +124,8 @@ export interface ProviderDriver<Config, R = never, UsageR = never> {
   readonly configSchema: Schema.Codec<Config, unknown>;
   readonly defaultConfig: () => Config;
   /**
-   * The returned effect runs in a scope owned by the registry; closing that
-   * scope releases every resource the driver opened. Failures become
-   * unavailable shadow snapshots — the driver MUST NOT throw defects.
+   * Failures become unavailable shadow snapshots — the driver MUST NOT throw
+   * defects.
    */
   readonly create: (
     input: ProviderDriverCreateInput<Config>,
@@ -155,11 +133,6 @@ export interface ProviderDriver<Config, R = never, UsageR = never> {
   readonly usage?: ProviderUsageReader<Config, UsageR>;
 }
 
-// `any` here intentionally erases the per-driver Config; the registry
-// already decoded it before invoking `create`, so downstream code never
-// needs the original `Config` type. Using `unknown` instead would force
-// `create` callers into casts since `unknown` is not assignable to a
-// concrete `Config` from inside the driver body.
 export type AnyProviderDriver<R = never, UsageR = unknown> = ProviderDriver<any, R, UsageR>;
 
 export type ProviderUsageReaderEnv<Driver> =

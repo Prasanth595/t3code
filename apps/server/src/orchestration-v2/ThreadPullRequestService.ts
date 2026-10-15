@@ -120,10 +120,6 @@ export const make = Effect.gen(function* () {
     }
   };
 
-  /**
-   * A sweep for one thread reads only that thread's shell, not every thread's.
-   * Finished runs and checkpoints queue one of these each.
-   */
   const readThreadSnapshot = ({ threadId, backfill }: RefreshRequest) =>
     threadId === null
       ? orchestrator
@@ -131,8 +127,6 @@ export const make = Effect.gen(function* () {
             location: "active",
             unsettledOnly: !(backfill || pendingBackfill.size > 0),
           })
-          // Reads every active thread once a minute: run it off the event loop. Writes keep
-          // landing during the read, and the snapshot's sequence guards the sync against them.
           .pipe(NodeSqliteClient.readOnly)
       : Effect.gen(function* () {
           // Read the sequence first. The thread is then at least this new, so a
@@ -160,9 +154,6 @@ export const make = Effect.gen(function* () {
         }
       }
     }
-    // A single-thread read only shows whether its own thread is gone. A thread
-    // with no branch has nothing to look up, and its entry would keep every
-    // periodic pass on the full read.
     const visibleThreadIds = new Set(
       threadSnapshot.threads.filter((thread) => thread.branch !== null).map((thread) => thread.id),
     );

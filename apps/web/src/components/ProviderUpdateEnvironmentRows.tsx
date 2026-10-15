@@ -48,8 +48,6 @@ function toProviderUpdateOutcome(input: {
 }): PromiseSettledResult<LocalProviderUpdateOutcome> {
   if (input.result._tag === "Failure") {
     if (isAtomCommandInterrupted(input.result)) {
-      // An interrupted dispatch (e.g. superseded) is neither a success nor a
-      // hard failure — surface it as a non-contributing, non-rejecting outcome.
       return {
         status: "fulfilled",
         value: {
@@ -156,7 +154,6 @@ function EnvironmentUpdateRow({
 export function ProviderUpdateEnvironmentRows({
   onInteract,
 }: {
-  /** Called the first time the user triggers an update, so the host can stop refreshing the prompt. */
   readonly onInteract?: () => void;
 }) {
   const { groups } = useLocalEnvironmentUpdateGroups();
@@ -280,9 +277,6 @@ export function ProviderUpdateEnvironmentRows({
         if (!isCurrentRequest()) {
           return;
         }
-        // The request resolved (not a transport hang), so clear any stale
-        // timeout error the expiry may have set -- otherwise a late success
-        // would be masked, since an error takes priority in the row status.
         setErrorByEnvironment((previous) => {
           if (!previous.has(environmentId)) {
             return previous;
@@ -329,8 +323,6 @@ export function ProviderUpdateEnvironmentRows({
         }
       } finally {
         clearTimeout(expiry);
-        // Only the current attempt owns the shared spinner and in-flight guard;
-        // a superseded attempt resolving late must not clear a newer one's.
         if (isCurrentRequest()) {
           clearPending(environmentId);
           inFlightEnvironmentsRef.current.delete(environmentId);
@@ -347,11 +339,6 @@ export function ProviderUpdateEnvironmentRows({
         group,
         error: errorByEnvironment.get(group.environmentId),
         result: resultByEnvironment.get(group.environmentId),
-        // Derive the live pill from the candidates this row is actually
-        // tracking, not every provider in the environment. Otherwise an
-        // unrelated provider's recent success (or one candidate succeeding while
-        // another was interrupted) makes the pill report success and hides the
-        // Update action for candidates that are still outdated.
         pill: getProviderUpdateSidebarPillView(group.candidates, {
           visibleAfterIso: visibleAfterIsoRef.current,
         }),

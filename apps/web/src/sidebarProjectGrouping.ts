@@ -45,7 +45,6 @@ export interface SidebarProjectPickerEntry {
   isPreferred: boolean;
 }
 
-/** A merged filter still opens settings for the chosen physical project. */
 export function getSidebarProjectSettingsKey(
   group: SidebarProjectSnapshot,
   settings: ProjectGroupingSettings,
@@ -67,7 +66,6 @@ export function getSidebarProjectSettingsKey(
   );
 }
 
-/** Retains a saved physical scratch scope when its environment config coalesces the group. */
 export function resolveSidebarProjectScopeKey(input: {
   readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
   readonly key: string | null;

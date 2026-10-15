@@ -159,9 +159,6 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   );
 });
 
-/**
- * Only `tar` is required on the host; every supported OS ships one that reads gzip and zip.
- */
 const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(function* (
   input: PinnedRuntimeInstallInput,
   stagingDir: string,

@@ -39,7 +39,6 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
 }): LazyVoiceRecorder<TRecorderState> {
   let recorder: NativeVoiceRecorder<TStatus, TRecorderState> | null = null;
   let subscription: Subscription | null = null;
-  // A released recorder still answers `uri` so the controller can delete its file.
   let retired: NativeVoiceRecorder<TStatus, TRecorderState> | null = null;
   let retiredUri: string | null = null;
   let pending: Promise<unknown> = Promise.resolve();
@@ -66,9 +65,7 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
           try {
             const selected = input.selectInput(prepared.getAvailableInputs());
             if (selected) prepared.setInput(selected.uid);
-          } catch {
-            // The input can disconnect in between. The system's route still records.
-          }
+          } catch {}
         }),
       );
     },

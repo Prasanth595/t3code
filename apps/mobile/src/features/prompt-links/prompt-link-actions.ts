@@ -13,9 +13,6 @@ export function showPromptLinkNotice(notice: string): void {
   Alert.alert("Prompt from a link", notice);
 }
 
-/**
- * The notice rides in the same alert, so a link never stacks two dialogs.
- */
 export async function applyLinkedPromptToThreadDraft(
   draftKey: string,
   prompt: LinkedPrompt,

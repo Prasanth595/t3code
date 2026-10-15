@@ -332,10 +332,6 @@ export function buildMessageContext(input: {
   return records.length === 0 ? undefined : { version: 1, records };
 }
 
-/**
- * Narrows away the unknown-kind member. Its `kind` is an open string, so a plain
- * `record.kind === "terminal"` check cannot discriminate the union on its own.
- */
 export function asKnownContextRecord(
   record: ComposerContextRecord | undefined,
 ): KnownComposerContextRecord | undefined {
@@ -361,12 +357,6 @@ export interface ResolvedUserMessageContext {
   recordsById: ReadonlyMap<string, ComposerContextRecord>;
 }
 
-/**
- * The clipboard fragment behind a timeline message selection: only records for
- * chips actually inside the selection travel, so copying prose next to an
- * image never starts importing that image somewhere else. Returns null when no
- * selected chip has backing records.
- */
 export function selectedMessageContextFragment(input: {
   readonly markdown: string;
   readonly records: ReadonlyArray<ComposerContextRecord>;
@@ -436,7 +426,6 @@ export function reviewCommentFromRecord(record: ReviewCommentContextRecord): Rev
   };
 }
 
-/** Lossy on purpose: geometry and screenshot do not travel; the agent-facing detail does. */
 export function previewAnnotationFromRecord(
   record: PreviewAnnotationContextRecord,
 ): PreviewAnnotationPayload {

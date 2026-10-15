@@ -19,10 +19,6 @@ const ACTION_LABEL: Record<ActiveTurnComposerAction, string> = {
   restart: "Restart",
 };
 
-/**
- * Steering is only offered when the provider can actually steer the live turn, so the button never
- * promises something the server would have to silently downgrade.
- */
 export function resolveComposerSendPresentation(input: {
   readonly editingQueuedMessage: boolean;
   readonly running: boolean;

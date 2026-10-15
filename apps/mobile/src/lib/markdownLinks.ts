@@ -288,7 +288,6 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
 
   return {
     kind: "link",
-    // A thread link keeps its href so a press reaches the feed, which opens the thread.
     href:
       /^(?:mailto|tel):/i.test(normalized) || parseThreadLinkHref(normalized) !== null
         ? normalized

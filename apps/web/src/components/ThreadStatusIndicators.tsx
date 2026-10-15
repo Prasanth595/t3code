@@ -137,7 +137,6 @@ export function linkedPullRequestSnapshotStatus(
 ): LinkedThreadPullRequestStatus | null {
   const snapshot = link.snapshot;
   if (snapshot === null) return null;
-  // A link records no host kind, so read it from the URL's change request path.
   const kind = (
     sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined)
   ).kind;
@@ -293,8 +292,6 @@ function PullRequestBadge({
           className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
         >
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
-          {/* An element, not bare text: bare text takes its line box from the control, which
-              inherits the row's size, so beside a text-sm title it sat below the other meta. */}
           <span>{presentation.text}</span>
         </span>
       </TooltipTrigger>
@@ -304,8 +301,6 @@ function PullRequestBadge({
         variant="glass"
         className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
       >
-        {/* The viewport pads 8px inline and 4px block; pull the rows out so their hover
-            highlight sits 4px from every edge. */}
         <div className="-mx-1">
           {visibleThreadPullRequests(pullRequests).length > 0 ? (
             <ThreadPullRequestsMiniList
@@ -562,12 +557,6 @@ export function setThreadChangeRequestSnapshot(
   });
 }
 
-/**
- * Authoritative snapshot update from live VCS status.
- * - `undefined`: missing status, or a local checkout retaining a terminal PR — leave the map alone
- * - `null`: no PR (without a retained terminal snapshot), a cleared branch, or a mismatch without a terminal PR — clear
- * - snapshot: matching branch reports a PR — store/replace
- */
 export function nextThreadChangeRequestSnapshot(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
@@ -629,13 +618,6 @@ export function nextThreadChangeRequestSnapshot(input: {
   };
 }
 
-/**
- * Live PR when the checkout matches the thread branch; otherwise, for local
- * checkouts only, a cached merged/closed PR for the thread. Local thread
- * metadata follows the shared checkout, so the cached branch intentionally
- * survives that metadata changing to the newly checked-out branch. Open PRs
- * are retained only while live status is absent and the branch still matches.
- */
 export function resolveDisplayedThreadPr(input: {
   threadBranch: string | null;
   gitStatus: VcsStatusResult | null;
@@ -759,7 +741,6 @@ export function terminalStatusFromRunningIds(
   };
 }
 
-/** Align newly started pulses with the document clock without a timer or frame loop. */
 export function synchronizeTerminalPulse(event: AnimationEvent<SVGSVGElement>) {
   if (event.animationName !== "status-pulse") return;
 
@@ -914,7 +895,6 @@ export function ThreadRowLeadingStatus({
   snapshot?: ThreadChangeRequestSnapshot | undefined;
 }) {
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(false);
-  // Observe the containing title even when this thread has no badge yet.
   const statusRef = useCallback(
     (node: HTMLSpanElement | null) => rowRef(node?.parentElement ?? null),
     [rowRef],
@@ -1017,8 +997,6 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   });
   const environment = useEnvironment(thread.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  // No primary (the hosted app) means every thread is remote, and the machine
-  // glyph is what tells the environments apart.
   const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
   const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;

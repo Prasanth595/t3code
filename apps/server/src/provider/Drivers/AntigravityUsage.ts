@@ -20,7 +20,6 @@ import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUs
 export class AntigravityUsage extends Context.Service<
   AntigravityUsage,
   {
-    /** Every Antigravity store: the data directories and each configured instance's profile. */
     readonly scan: (input: {
       readonly instances: ReadonlyArray<ProviderUsageInstance<AntigravitySettings>>;
       readonly windowStartMs: number;
@@ -63,7 +62,6 @@ const make = Effect.gen(function* () {
     windowStartMs,
   }) {
     const roots = yield* dataRoots;
-    // Only configured instances have a profile; the implicit default never ran.
     for (const { instanceId } of instances.filter((instance) => instance.configured)) {
       const directories = yield* resolveAntigravityInstanceDirectories(
         host.paths.stateDir,

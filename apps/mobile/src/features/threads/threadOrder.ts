@@ -16,7 +16,6 @@ export type ThreadMoveDestination =
       readonly placement: "before" | "after";
     };
 
-/** Resolve against stable row identities, including rows hidden by a filter. */
 export function threadOrderAfterMove(
   orderedIds: readonly string[],
   movedId: string,
@@ -77,8 +76,6 @@ function rowOrder(row: OrderRow, section: PendingThreadOrder["section"]) {
   };
 }
 
-/** Keep every visible row as an anchor, but only offer plans whose key writes
- * are supported. Menu availability and execution use this same planner. */
 export function createThreadMovePlanner(input: {
   readonly ordered: readonly OrderRow[];
   readonly allThreads?: readonly OrderRow[];
@@ -135,8 +132,6 @@ export function computeThreadMoveAvailability(input: {
     for (const row of rows) result.set(rowId(row), { canMoveUp: false, canMoveDown: false });
     return result;
   }
-  // Plain loops: this runs per section on every Home rebuild over all shells,
-  // and the map/filter/spread chains it replaces dominated it with garbage.
   const orderedIds: string[] = [];
   const indexById = new Map<string, number>();
   for (const row of rows) {
@@ -151,18 +146,12 @@ export function computeThreadMoveAvailability(input: {
     keysById.set(id, rowOrder(row, input.section).key);
     if (input.reorderableEnvironmentIds.has(row.environmentId)) writableIds.add(id);
   }
-  // Read after the loop so a duplicate id reserves only its final key.
   const reservedKeys = new Set<string>();
   keysById.forEach((key, id) => {
     if (key != null && !indexById.has(id)) reservedKeys.add(key);
   });
-  // Mirror of `planPinnedReorder` for adjacent swaps, hoisted so every row is
-  // answered in O(1) amortized instead of one planner probe per row: The walk
-  // depends only on the neighbor key pair - each adjacency is probed by at most
-  // two rows (down of the left member, up of the right member) - so the memo
-  // keeps even a fully adversarial reserved-key layout linear per build. A swap
-  // permutes two rows without changing the multiset, so the assignment set
-  // differs from the unswapped baseline at at most those two positions, and
+  // A swap permutes two rows without changing the multiset, so the assignment
+  // set differs from the unswapped baseline at at most those two positions, and
   // mismatch/writability tallies computed once per section answer each row with
   // a constant-size delta.
   const midpoints = new Map<string, string | null>();
@@ -278,7 +267,6 @@ export function reconcilePendingThreadOrder(
   return confirmed.size === pending.confirmed.size ? pending : { ...pending, confirmed };
 }
 
-/** Apply the full section's pending order after search/environment filtering. */
 export function applyPendingThreadOrder<T extends OrderRow>(
   rows: readonly T[],
   section: PendingThreadOrder["section"],
@@ -291,8 +279,6 @@ export function applyPendingThreadOrder<T extends OrderRow>(
   );
 }
 
-/** Match desktop re-entry: a pin wakes the thread on the server; Active clears
- * each underlying parked state before assigning its destination order key. */
 export function threadDropLifecycle(
   thread: EnvironmentThreadShell,
   section: "pinned" | "active",

@@ -120,9 +120,6 @@ export class ManagedRelayRequestTimeoutError extends Schema.TaggedError<ManagedR
   {
     activity: ManagedRelayRequestActivity,
     timeoutMs: Schema.Number,
-    // The CLIENT span's trace id. A timed-out request has no server response
-    // to take an id from, but the client span was exported, so carrying its id
-    // makes the failure searchable instead of logging `traceId: null`.
     traceId: Schema.NullOr(Schema.String),
   },
 ) {
@@ -572,7 +569,6 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         scopes: input.scopes,
         nowMillis,
       };
-      // Cache hits do not need to wait for an unrelated exchange or store write.
       const cached = (yield* SynchronizedRef.get(cachedTokens)).find((token) =>
         tokenMatches(token, match),
       );

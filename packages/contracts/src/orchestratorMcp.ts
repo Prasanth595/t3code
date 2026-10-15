@@ -68,11 +68,6 @@ const OrchestratorMcpSchedule = Schema.Union([
     "Trigger object: {type:'interval', everyMs}, {type:'fixed_time', timeOfDay, weekdays?}, or {type:'webhook'} to run on each request to a generated URL. Never stringify it unless the provider requires the compatibility form.",
 });
 
-/**
- * Unlike the legacy-tolerant `ProviderOptionSelections` persistence schema,
- * this decodes strictly: a value that is not a string or boolean fails the
- * request rather than being silently dropped.
- */
 const OrchestratorMcpTargetOptionsFromRecord = Schema.Record(
   Schema.String,
   ProviderOptionSelectionValue,
@@ -112,12 +107,6 @@ export const OrchestratorMcpTarget = Schema.Struct({
       description: "Model id advertised for the selected provider instance.",
     }),
   ),
-  /**
-   * Accepts the canonical `[{ id, value }]` array or the shorthand
-   * `{ id: value }` record; valid ids come from the option descriptors
-   * advertised by orchestrator_capabilities. When omitted, options inherit
-   * from the parent only when the child runs the parent's provider and model.
-   */
   options: Schema.optional(
     OrchestratorMcpTargetOptions.annotate({
       description: "Model option selections advertised by orchestrator_capabilities.",
@@ -445,7 +434,6 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   runId: RunId,
-  /** Fresh task for a follow-up to an app-owned child; the previous task stays terminal. */
   taskId: Schema.optional(NodeId),
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
@@ -497,7 +485,6 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
     }),
   ),
-  /** Runtime modes the provider offers; omitted when it offers all of them. */
   runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,
@@ -535,10 +522,6 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   enabled: Schema.optional(
     Schema.Boolean.annotate({ description: "Whether the schedule starts enabled; defaults true." }),
   ),
-  /**
-   * This is the recurring "wake up in this thread" behaviour reserved for
-   * agent-created tasks.
-   */
   bindToCurrentThread: Schema.optional(
     Schema.Boolean.annotate({
       description:
@@ -559,7 +542,6 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
-  /** For webhook tasks: the public T3 Connect URL. Absent when this environment has no managed tunnel. */
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
       "Public URL to give the sender. Absent when this environment has no T3 Connect managed tunnel; the user must enable T3 Connect remote access first.",

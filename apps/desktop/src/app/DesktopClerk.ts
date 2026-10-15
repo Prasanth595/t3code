@@ -100,7 +100,6 @@ export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const shell = yield* ElectronShell.ElectronShell;
 
-  // The SDK bridge acquires Electron's profile-scoped single-instance lock.
   // Must not yield: the bridge registers a scheme Electron rejects once ready.
   const userDataPath = yield* DesktopUserData.resolveUserDataPath(environment);
   yield* electronApp.setPath("userData", userDataPath);
@@ -196,7 +195,6 @@ export const make = Effect.gen(function* () {
       };
       const args = yield* HostProcess.Arguments;
       args.some((value) => startProviderAuthHandoff(value) || openAppLink(value));
-      // As the default browser, macOS hands T3 Code every web link through the same event.
       const openWebLink = (url: string) => {
         if (!DesktopWebLinks.isWebLink(url)) return false;
         void runPromise(webLinks.receive(url));
@@ -211,7 +209,6 @@ export const make = Effect.gen(function* () {
         )
           event.preventDefault();
       });
-      // A browser opens HTML files too, which macOS hands over by path.
       yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
         if (!DesktopWebLinks.isWebPageFile(path)) return;
         event.preventDefault();

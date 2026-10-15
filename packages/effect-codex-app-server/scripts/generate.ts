@@ -375,7 +375,6 @@ function toPascalCaseMethod(method: string) {
 }
 
 function parseRequestEntries(fileContents: string): ReadonlyArray<MethodEntry> {
-  // Optional params render as `params?: Foo | undefined`; their JSON schema is `NullableFoo`.
   const entryPattern = /\{\s*"method":\s*"([^"]+)",\s*id:\s*RequestId,\s*params(\??):\s*([^,}|]+)/g;
   const entries: Array<MethodEntry> = [];
   let match: RegExpExecArray | null;

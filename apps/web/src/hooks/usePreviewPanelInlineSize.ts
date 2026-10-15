@@ -24,7 +24,6 @@ export function usePreviewPanelInlineSize(
     readonly enabled?: boolean | undefined;
     readonly widthStorageKey?: string | undefined;
     readonly defaultWidth?: number | undefined;
-    /** Measure this row instead of the panel's parent. */
     readonly container?: HTMLElement | null | undefined;
   } = {},
 ): PreviewPanelInlineSize {

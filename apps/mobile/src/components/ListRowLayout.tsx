@@ -22,7 +22,6 @@ export function ListRowLayout({
   accessory,
 }: ListRowContentProps & { readonly accessory?: ReactNode }) {
   const { fontScale } = useWindowDimensions();
-  // Leave the label room to wrap at accessibility text sizes.
   const stackDetail = fontScale >= 1.5;
   return (
     <View

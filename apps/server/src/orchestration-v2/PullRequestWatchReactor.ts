@@ -56,7 +56,6 @@ const FINGERPRINT_REREAD_MS = 30 * 60_000;
 
 const isProviderError = Schema.is(PullRequestProviderError);
 
-/** A rate limit is the host asking us to wait, not a sign the pull request cannot be read. */
 const isRateLimited = (cause: Cause.Cause<PullRequestService.PullRequestError>) =>
   Option.match(Cause.findErrorOption(cause), {
     onNone: () => false,
@@ -88,10 +87,8 @@ interface WatchGroup {
 interface LastRead {
   readonly at: number;
   readonly fingerprint: string;
-  /** A check was still running or mergeability unknown, so the detail can move unannounced. */
   readonly inFlight: boolean;
   readonly remarksComplete: boolean;
-  /** The watches this read evaluated; a watch started since takes its first look next pass. */
   readonly watches: ReadonlySet<string>;
   readonly status: string | null;
   readonly remarks: string | null;
@@ -118,9 +115,7 @@ interface WatchLife {
   readonly pullRequest: string;
   readonly startedAt: number;
   readonly headSha: string | null;
-  /** When a pass last saw the head commit move, or the start. */
   readonly pushedAt: number;
-  /** Longest time between pushes, not counting the time since the last one. */
   readonly longestQuietMs: number;
   readonly wakes: number;
   readonly reads: number;
@@ -145,12 +140,6 @@ const snapshotFingerprint = ({ link }: WatchTarget) => {
       ].join(" ");
 };
 
-/**
- * With a host fingerprint, the detail (1 point on GitHub) is read when anything moved or a check
- * is still running, since check counts by state cannot tell which check finished, and the
- * activity (15 points) only when the remarks moved. Without one, both are read whenever the sync
- * snapshot moved or something is in flight.
- */
 function planRead(
   group: WatchGroup,
   last: LastRead | undefined,
@@ -251,8 +240,6 @@ export const make = Effect.gen(function* () {
 
   const readFailures = new Map<string, number>();
   const lastReads = new Map<string, LastRead>();
-  // Replies past each long thread's first page, per pull request, so a pass pages a thread
-  // again only when the host's count of it moves. A restart pages each thread once more.
   const threadTails = new Map<
     string,
     Map<string, { readonly count: number; readonly comments: ReadonlyArray<PullRequestComment> }>
@@ -377,10 +364,6 @@ export const make = Effect.gen(function* () {
           ? "subagent"
           : undefined;
 
-  /**
-   * Runs one thread's step for each thread in a group, so one refusal does not skip the rest.
-   * Succeeds with whether every step landed.
-   */
   const eachTarget = <E>(
     group: WatchGroup,
     step: (target: WatchTarget) => Effect.Effect<void, E>,
@@ -389,7 +372,6 @@ export const make = Effect.gen(function* () {
       step(target).pipe(
         Effect.as(true),
         Effect.catchCause((cause) => {
-          // A thread that did not get its update must not wait for the quiet reread.
           lastReads.delete(group.key);
           return logFailure("pull request watch update failed", {
             threadId: target.thread.id,
@@ -404,12 +386,6 @@ export const make = Effect.gen(function* () {
     return { projectId: first.thread.projectId, ...identityOf(first.link) };
   };
 
-  /**
-   * The host fingerprint of a watched pull request, read for every group at once so they share
-   * one batched request. Null, for a host without one or one that gave no answer, keeps the
-   * sync-snapshot gating; "paused" skips the pass while the host is rate limited, since every
-   * read would be refused.
-   */
   const fingerprintOf = (group: WatchGroup) =>
     pullRequests.watchFingerprint(referenceOf(group)).pipe(
       Effect.catchCause(
@@ -418,9 +394,7 @@ export const make = Effect.gen(function* () {
             ? Effect.interrupt
             : isRateLimited(cause)
               ? Effect.succeed("paused")
-              : // The snapshot-gated reads report a host that cannot be read, and count toward
-                // giving up.
-                Effect.logDebug("pull request watch fingerprint failed", {
+              : Effect.logDebug("pull request watch fingerprint failed", {
                   pullRequest: group.key,
                   cause,
                 }).pipe(Effect.as(null)),
@@ -453,12 +427,9 @@ export const make = Effect.gen(function* () {
     if (Exit.isFailure(read)) {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
       lastReads.delete(group.key);
-      // The host's pause refuses later reads without a request, so waiting it out is free.
       if (isRateLimited(read.cause)) return;
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
-      // The count stays until every stop lands, so a failed stop is tried again on the next
-      // failed read, and a watch started after the stops begins from zero.
       if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
         readFailures.delete(group.key);
       }
@@ -489,7 +460,6 @@ export const make = Effect.gen(function* () {
     }
 
     // Never advance the remark watermark past comments an incomplete read could have missed.
-    // A pass that did not read the activity has no remarks to report.
     const remarks = Option.isSome(activity)
       ? yield* readRemarks(group.key, reference, activity.value)
       : null;

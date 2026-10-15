@@ -104,7 +104,6 @@ interface HomeScreenProps {
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
-  /** Resolves true iff the settle was dispatched and succeeded. */
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (
     thread: EnvironmentThreadShell,
@@ -130,12 +129,6 @@ interface HomeScreenProps {
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
 }
 
-// The estimate seeds the recycler's initial container count, `ceil((scrollLength + 2 *
-// INITIAL_DRAW_DISTANCE) / estimate)` with the initial draw distance capped at 50, so an
-// estimate at or below the average row height starts the pool at or above the item count for the
-// short lists that LegendList otherwise keeps pooling to exactly its item count — that is what
-// stopped the dev-mode "no unused container available" warning on the seeded short-list device
-// passes.
 const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
 // Rows away from the viewport are cheap dormant frames (see
 // swipe-row-activation), so render further ahead: a fast fling then reaches
@@ -264,7 +257,6 @@ export function HomeScreen(props: HomeScreenProps) {
   const fullSwipeWidth = primaryColumn && columnMetrics ? columnMetrics.width - 20 : undefined;
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
-  // Let trackpad scrolling coexist with each row's horizontal swipe gesture.
   const homeScrollGesture = useNativeGesture();
   const insets = useSafeAreaInsets();
   const { fabClearance } = useAndroidControlSizing();
@@ -272,7 +264,6 @@ export function HomeScreen(props: HomeScreenProps) {
   const contentSideInsets = usesNativeWorkspaceColumns
     ? (columnMetrics ?? screenMetrics)?.safeArea
     : undefined;
-  // UIKit's column safe area already includes its bottom toolbar.
   const iosBottomClearance = Math.max(
     columnMetrics?.safeArea.bottom ?? insets.bottom,
     24,
@@ -502,20 +493,14 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
-  // Snooze wake times are second-precise; a counter bumped exactly at the
-  // next wake boundary re-runs the partition with a fresh clock so a woken
-  // thread reappears immediately instead of on the next minute tick.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   useFocusEffect(
     useCallback(() => {
-      // Refresh immediately on enable or focus because the previous value can be hours old.
       setNowMinute(new Date().toISOString().slice(0, 16));
       const id = setInterval(() => setNowMinute(new Date().toISOString().slice(0, 16)), 60_000);
       return () => clearInterval(id);
     }, []),
   );
-  // Threads on servers without the settlement capability never classify as
-  // settled (the user could neither un-settle nor pin them).
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
     providersByEnvironmentId,
@@ -551,7 +536,6 @@ export function HomeScreen(props: HomeScreenProps) {
           queuedThreadKeys,
         }),
       });
-    // The Working beta orders the inbox by time, so only pins can move.
     return new Map([
       ...sectionAvailability("pinned"),
       ...(workingShelfEnabled ? [] : sectionAvailability("active")),
@@ -620,8 +604,6 @@ export function HomeScreen(props: HomeScreenProps) {
     // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
     // range) the boundary string is identical and the chain would die.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
-  // Queued tasks are not thread shells, so the v2 partition never sees them; they are spliced in
-  // below the active block and stay visible and deletable while their environment is offline.
   const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
   const v2PendingTasks = useMemo(
     () =>
@@ -876,8 +858,6 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
 
-  // The signal must ignore the search/environment filters: an active query that matches nothing
-  // needs the in-list "No results" state, not the full-page "No threads yet".
   const hasAnyThreads =
     props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
   const selectedEnvironmentLabel =
@@ -954,8 +934,6 @@ export function HomeScreen(props: HomeScreenProps) {
     </>
   );
 
-  // Snoozed threads need no special empty state: their shelf header is a list row even while
-  // collapsed.
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? undefined : hasSearchQuery ? (
       <EmptyState
@@ -1005,9 +983,6 @@ export function HomeScreen(props: HomeScreenProps) {
             : cn("flex-1", contentBackground)
         }
       >
-        {/* Shared with the iPad sidebar: cells are reused across data
-            rebuilds and `itemsAreEqual` keeps a minute tick (or an unrelated
-            shell update) from re-rendering untouched rows. */}
         <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
           <GestureDetector gesture={homeScrollGesture}>
             <LegendList

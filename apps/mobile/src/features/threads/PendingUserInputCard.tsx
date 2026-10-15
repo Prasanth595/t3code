@@ -33,30 +33,12 @@ import {
 export interface PendingUserInputCardProps {
   readonly canOperateThread: boolean;
   readonly pendingUserInput: PendingUserInput;
-  /**
-   * Constant while a request is pending (it reserves keyboard space), so the
-   * keyboard transition is pure translation; changes only on rare discrete
-   * corrections, which the layout transition smooths.
-   */
   readonly maxHeight: number;
   readonly collapsed: boolean;
   readonly onToggleCollapsed: () => void;
   readonly onStopThread?: () => void;
-  /**
-   * 0 collapsed → 1 expanded. Slides the iOS overlay card down behind the
-   * collapsed bar (inside a clipping window) on the UI thread; the host
-   * animates it directly from the tap handler so the card and the feed
-   * inset glide start the same frame.
-   */
   readonly cardProgress?: SharedValue<number>;
-  /**
-   * Receives how far the expanded card extends above the bar footprint
-   * (written from onLayout with no re-render); the host adds it to the
-   * thread feed's end inset so the end of the chat stays visible above the
-   * card.
-   */
   readonly cardCoverage?: SharedValue<number>;
-  /** Fires on custom-answer focus/blur; hosts use it to vet stale keyboard state. */
   readonly onInputFocusChange?: (focused: boolean) => void;
   readonly drafts: Record<string, PendingUserInputDraftAnswer>;
   readonly answers: Record<string, string | ReadonlyArray<string>> | null;
@@ -72,22 +54,13 @@ export interface PendingUserInputCardProps {
     customAnswer: string,
   ) => void;
   readonly onSubmit: () => Promise<unknown>;
-  /** Closes an async question without a reply. Hidden for native callback questions. */
   readonly onDismiss: () => Promise<unknown>;
 }
 
 /**
- * On iOS the collapsed bar is the PERMANENT in-flow footprint — the expanded
- * card is an absolutely-positioned overlay rising above it. The overlay's
- * measured height (which drives the thread feed's bottom inset) therefore
- * never changes on collapse/expand, so the transcript stays perfectly still
- * while the card animates over it.
- *
  * Android cannot use the overlay: it does not hit-test touches outside a
  * parent's bounds, which made everything above the bar-sized wrapper
- * untouchable. There the expanded card renders in-flow instead (the wrapper
- * grows with it, and the host skips the coverage inset since the measured
- * overlay already includes the card).
+ * untouchable.
  */
 const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 
@@ -107,7 +80,6 @@ function QuestionText(props: { readonly markdown: string }) {
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const questionCount = props.pendingUserInput.questions.length;
-  // Message responses start a new run and remain available after the provider exits.
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
   const responseDisabled = !canRespond || isResponding;
@@ -125,15 +97,9 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       return;
     }
     if (cardCoverage.value === 0) {
-      // First measurement lands while the list is doing its initial
-      // end-pin (thread opened onto a pending request); animating it from
-      // zero would move the end anchor out from under that scroll.
       cardCoverage.value = coverage;
       return;
     }
-    // Animated so a coverage change at rest (discrete max-height
-    // corrections) glides the feed instead of stepping it; toggle timing is
-    // owned by the host's progress values.
     cardCoverage.value = withTiming(coverage, {
       duration: USER_INPUT_TOGGLE_DURATION_MS,
       easing: Easing.out(Easing.cubic),
@@ -155,8 +121,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     [cardHeight, notifyCoverage],
   );
   const cardProgress = props.cardProgress;
-  // No opacity: fading an opaque card over the live transcript reads as a
-  // crossfade (card text, transcript, and bar all half-visible at once).
   const cardAnimatedStyle = useAnimatedStyle(() => {
     const progress = cardProgress === undefined ? 1 : cardProgress.value;
     return {

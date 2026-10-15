@@ -48,18 +48,12 @@ export type RightPanelSurface =
   | {
       id: `file:${string}` | `attachment:${string}`;
       kind: "file";
-      /** Workspace-relative, or absolute for a host file outside the workspace. */
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
-      /** Present when the file lives in the thread's attachment store rather
-          than at a workspace or host path. */
       attachment?: ChatFileAttachment;
     }
   | {
-      /**
-       * The reference lives in the id so several pull requests can remain open as peer tabs.
-       */
       id: `pull-request:${string}`;
       kind: "pull-request";
       /**
@@ -78,16 +72,11 @@ export type RightPanelSurface =
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 14;
 
-/** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
   ThreadId.make("pull-requests-panel"),
 );
 
-/**
- * The pull-request list's shared panel is session
- * state: reopening the app should show the list, not last session's tabs and detail fetches.
- */
 const isPullRequestsPanelKey = (threadKey: string) => threadKey.endsWith(":pull-requests-panel");
 
 export interface ThreadRightPanelState {
@@ -105,15 +94,10 @@ export interface ThreadPanelVisibility {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
-  /**
-   * A thread whose right panel should open maximized the next time it shows,
-   * such as one started for a link the OS opened. Its view consumes it once.
-   */
   pendingMaximizeThreadKey: string | null;
   requestMaximize: (ref: ScopedThreadRef) => void;
   consumeMaximizeRequest: (ref: ScopedThreadRef) => boolean;
   threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
-  /** Session-only count of user panel choices per thread. Automatic updates do not advance it. */
   userActionRevisionByThreadKey: Record<string, number>;
   closeRevisionByThreadKey: Record<string, number>;
   getUserActionRevision: (ref: ScopedThreadRef) => number;
@@ -253,8 +237,6 @@ export function pullRequestSurfaceId(target: {
   repository: string;
   number: number;
 }): PullRequestSurface["id"] {
-  // The environment leads the id where there is one, so the same change request read from two
-  // servers is two tabs rather than one tab that changes its mind about which server it is on.
   const scope =
     target.environmentId === undefined ? "" : `${encodeURIComponent(target.environmentId)}:`;
   const host = target.host === undefined ? "" : `${encodeURIComponent(target.host.toLowerCase())}:`;
@@ -336,10 +318,6 @@ type RightPanelStoreData = Pick<
   "byThreadKey" | "threadPanelVisibilityByThreadKey"
 >;
 
-/**
- * This is the only path real panel actions use, so visibility never has to be
- * reconciled after the fact in React.
- */
 const updateThread = (
   state: RightPanelStoreData,
   threadKey: string,
@@ -370,9 +348,6 @@ const updateThread = (
   return { byThreadKey, threadPanelVisibilityByThreadKey };
 };
 
-// Every store action is a user choice unless it goes through `automaticUpdate`.
-// Only `openProactive` and resource reconciliation are automatic, so a new
-// action counts as a user choice by default.
 const automaticUpdate = (
   state: RightPanelStoreState,
   threadKey: string,
@@ -596,8 +571,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           ) {
             return state;
           }
-          // A linked PR takes priority over a completed-turn diff. Manual actions
-          // always apply, and later user choices reject both proactive requests.
           if (
             surface.kind === "diff" &&
             (selectActiveRightPanel(state.byThreadKey, ref) === "pull-request" ||
@@ -871,8 +844,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
           ),
         ),
-      // Reordering is not a choice about what the panel shows, so it leaves the
-      // user-action revision alone and proactive opens still apply.
       moveSurface: (ref, surfaceId, toIndex) =>
         set((state) =>
           updateThread(state, scopedThreadKey(ref), (current) => {
@@ -945,7 +916,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             current.isOpen ? { ...current, isOpen: false } : current,
           ),
         ),
-      // Layout only: it changes no surface, so proactive panels still apply.
       setMaximized: (ref, maximized) =>
         set((state) =>
           automaticUpdate(state, scopedThreadKey(ref), (current) => {
@@ -1118,7 +1088,6 @@ export function selectActiveRightPanelSurface(
   return selectSelectedRightPanelSurface(byThreadKey, ref);
 }
 
-/** The selected surface even while the panel is hidden, so a layout control can restore it. */
 export function selectSelectedRightPanelSurface(
   byThreadKey: Record<string, ThreadRightPanelState>,
   ref: ScopedThreadRef | null | undefined,

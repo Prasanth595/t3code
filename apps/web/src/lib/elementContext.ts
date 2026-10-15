@@ -7,11 +7,6 @@ import type {
 const ELEMENT_CONTEXT_HTML_PREVIEW_LIMIT = 4000;
 const ELEMENT_CONTEXT_STYLES_LIMIT = 4000;
 
-/**
- * We deliberately keep the shape JSON-serializable so it can ride through
- * `localStorage` persistence, draft restoration, and transcript snapshots
- * without bespoke marshalling.
- */
 export interface ElementContextSelection {
   pageUrl: string;
   pageTitle: string | null;
@@ -20,7 +15,6 @@ export interface ElementContextSelection {
   htmlPreview: string;
   componentName: string | null;
   source: PickedElementStackFrame | null;
-  /** Author CSS (no UA defaults). May be empty. */
   styles: string;
 }
 

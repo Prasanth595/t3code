@@ -40,12 +40,9 @@ import { sourceHighlightAtom } from "./sourceHighlightingState";
 interface SourceFileSurfaceProps {
   readonly contents: string;
   readonly path: string;
-  /** The enclosing sheet or card already reserves its own chrome and safe area. */
   readonly embedded?: boolean;
   readonly initialLine?: number | null;
-  /** Override when a fixed notice already reserves the native header. */
   readonly headerInsetTop?: number;
-  /** Keep the entire document in one native text-selection scope. */
   readonly selectable?: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }
@@ -400,7 +397,6 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 export function SourceFileSurface(props: SourceFileSurfaceProps) {
   const NativeView = resolveNativeReviewDiffView();
   const { codeWordBreak } = useAppearanceCodeSurface();
-  // The native canvas draws source lines without text selection or wrapping.
   const surface =
     NativeView && !codeWordBreak && !props.selectable ? (
       <NativeSourceFileSurface {...props} NativeView={NativeView} />

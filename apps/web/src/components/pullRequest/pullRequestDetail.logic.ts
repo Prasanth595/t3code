@@ -44,7 +44,6 @@ export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, st
   rebase: "Rebase and merge",
 };
 
-/** Old environments keep their existing actions; new ones must finish stack discovery first. */
 export function allowsSinglePullRequestMerge(input: {
   supportsStackActions: boolean;
   hasStack: boolean;
@@ -124,8 +123,6 @@ export function loadingPullRequestCheckoutCommand(
   identity: RepositoryIdentity | null | undefined,
 ): string | null {
   const host = reference.host?.trim().toLowerCase();
-  // Before the detail loads, only the number is known, so only hosts whose command needs nothing
-  // else qualify. Without an identity, only a public hostname names the host.
   const definition = identity?.provider
     ? sourceControlClients.find(identity.provider)
     : host
@@ -149,7 +146,6 @@ export function shouldRefreshPullRequestActivity(
 ): boolean {
   return previous !== null && previous.key === next.key && previous.updatedAt !== next.updatedAt;
 }
-/** Appends fetched pages without replacing fresher comments already in the activity response. */
 export function mergePullRequestThreadComments<T extends { readonly id: string }>(
   base: ReadonlyArray<T>,
   loaded: ReadonlyArray<T>,
@@ -434,14 +430,6 @@ export function newestPullRequestCommitAt(
   return newest;
 }
 
-/**
- * Measured against commit dates, which is the only thing the detail carries. That is a proxy and
- * not the question: a commit date says when the work was written, not when it reached this change
- * request, so pushing a branch of older commits after an approval leaves the approval reading as
- * current, and a rebase re-dates commits a verdict already covered. Answering it exactly needs
- * the host's own review-to-commit link — GitHub hangs a commit off every review — which no
- * adapter reads yet.
- */
 export function isPullRequestVerdictStale(at: string, newestCommitAt: string | null): boolean {
   if (newestCommitAt === null) return false;
   const verdictAt = instant(at);
@@ -450,11 +438,6 @@ export function isPullRequestVerdictStale(at: string, newestCommitAt: string | n
 }
 
 export interface PullRequestReviewOutcomeEntry {
-  /**
-   * A login where the host reported one, and otherwise the review's own id — so a surface listing
-   * these has a key that separates the same two authorless verdicts this does, rather than
-   * collapsing them back into one row.
-   */
   readonly key: string;
   readonly actor: PullRequestActor | null;
   readonly outcome: PullRequestReviewOutcome;
@@ -462,12 +445,6 @@ export interface PullRequestReviewOutcomeEntry {
   readonly stale: boolean;
 }
 
-/**
- * One entry per person and only their last word: a host keeps every review somebody ever
- * submitted, and an approval later followed by a request for changes is not an approval any
- * more. A dismissal is a verdict taken back, so it leaves nothing to show rather than showing
- * itself.
- */
 export function latestPullRequestReviewOutcomes(
   comments: ReadonlyArray<PullRequestComment>,
   commits: ReadonlyArray<PullRequestCommit> = [],
@@ -477,8 +454,6 @@ export function latestPullRequestReviewOutcomes(
   for (const comment of comments) {
     const outcome = pullRequestReviewOutcome(comment.reviewState);
     if (outcome === null) continue;
-    // Two deleted accounts are two reviewers. Keying both as "ghost" would let one overwrite the
-    // other and undercount the verdicts, so a review with no author identity stands alone.
     const login = comment.author?.login ?? `ghost:${comment.id}`;
     const current = latest.get(login);
     // Not every host returns its reviews in order, so the newest wins rather than the last read.
@@ -500,11 +475,9 @@ export interface PullRequestTimelineEvent {
   readonly kind: "opened" | "commit" | "comment" | "review" | "merged" | "closed";
   readonly title: string;
   readonly body: string | null;
-  /** A commit headline is plain text and must not be parsed as one. */
   readonly markdown: boolean;
   readonly url: string | null;
   readonly actor: PullRequestActor | null;
-  /** Every author attributed by the host, with the first used for the timeline marker. */
   readonly commitAuthors: ReadonlyArray<PullRequestActor>;
   readonly additions: number | null;
   readonly deletions: number | null;
@@ -540,10 +513,10 @@ export function groupPullRequestTimelineConversations(
 }
 
 /**
- * Review bots keep their bookkeeping in HTML comments, which the markdown renderer drops. A body
- * that is nothing but a marker therefore renders as an empty block, so it is treated as no body
- * at all. The stripped text decides that and nothing else: the body itself is passed on whole,
- * because a comment demonstrating an HTML comment inside a code fence still has to show it.
+ * A body that is nothing but a marker therefore renders as an empty block, so it is treated as
+ * no body at all. The stripped text decides that and nothing else: the body itself is passed on
+ * whole, because a comment demonstrating an HTML comment inside a code fence still has to show
+ * it.
  */
 export function visibleBody(body: string): string | null {
   return body.replace(/<!--[\s\S]*?-->/gu, "").trim().length === 0 ? null : body.trim();
@@ -677,7 +650,6 @@ function reviewThreadContext(
     filePath: thread.path,
     startIndex: lineIndex,
     endIndex: lineIndex,
-    // A left-side line numbers the file before the change, so the same number means another line.
     rangeLabel:
       thread.line === null ? "file" : `L${thread.line}${thread.side === "left" ? " (before)" : ""}`,
     // Bot bookkeeping lives in HTML comments and would otherwise eat the length bound before
@@ -711,7 +683,6 @@ function handoffPreamble(input: {
 
 export interface FixFindingsHandoff {
   readonly prompt: string;
-  /** Attached to the composer as annotation chips rather than inlined into `prompt`. */
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
 }
 
@@ -785,14 +756,6 @@ export function buildFixFindingsHandoff(input: {
     (thread) =>
       !thread.isResolved && thread.comments.some((comment) => comment.body.trim().length > 0),
   );
-  // Not every finding can be a chip. A review submitted with words and no inline comment has no
-  // line to hang on, and a host that reports no threads at all — Azure DevOps has no diff to pin
-  // one to — has only these. They travel as text, the way a failing check does, rather than
-  // being dropped for lacking somewhere to point.
-  // Every thread's comments, not only the unresolved ones the sweep is about to include: the
-  // flat conversation carries resolved threads too, and a comment that is already on a line is
-  // not a remark with nowhere to hang — quoting a settled finding is how a fixed thing gets
-  // fixed twice.
   const attached = new Set(
     input.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
@@ -877,16 +840,10 @@ export function pullRequestFindingKey(finding: PullRequestFinding): string {
     case "comment":
       return `finding:comment:${finding.comment.id}`;
     case "check":
-      // Checks carry no id of their own, and a run reports the same name on every attempt.
       return `finding:check:${finding.check.name}:${finding.check.url ?? ""}`;
   }
 }
 
-/**
- * Deliberately unfiltered where the whole review is not: pressing this on a resolved thread
- * or a passing check is an explicit request for that one thing, not a sweep that should skip
- * finished work.
- */
 export function buildFixFindingHandoff(input: {
   readonly number: number;
   readonly title: string;
@@ -1150,7 +1107,6 @@ export function resolveBaseFreshness(detail: {
   };
 }): {
   readonly behindBy: number | null;
-  /** Empty where the branch is stale but this reader may not move it: news, not an offer. */
   readonly methods: ReadonlyArray<PullRequestUpdateMethod>;
 } | null {
   if (detail.state !== "open" || detail.baseComparison !== "behind") return null;
@@ -1163,10 +1119,6 @@ export function resolveBaseFreshness(detail: {
   };
 }
 
-/**
- * Updating a branch moves the diff's head. Approving workflows changes data GitHub omits from the
- * normal pull-request detail.
- */
 const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   "update-branch": true,
   merge: false,

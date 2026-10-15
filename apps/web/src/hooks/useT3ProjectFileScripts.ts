@@ -12,10 +12,6 @@ import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
 const NO_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
 
 export interface T3ProjectFileState {
-  /**
-   * - `invalid`: t3.json exists but fails to decode (the server then ignores the whole file,
-   * including `iconPath` and every script).
-   */
   status: "loading" | "missing" | "invalid" | "valid";
   file: T3ProjectFile | null;
   scripts: ReadonlyArray<T3ProjectFileScript>;
@@ -44,11 +40,6 @@ export function useT3ProjectFileState(
   }, [contents, isPending]);
 }
 
-/**
- * Scripts declared in the project's checked-in `t3.json`, offered in the
- * scripts menu for import. Missing, truncated, or invalid files resolve to
- * an empty list.
- */
 export function useT3ProjectFileScripts(
   environmentId: EnvironmentId,
   cwd: string | null,

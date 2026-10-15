@@ -17,8 +17,6 @@ export function normalizeSemverVersion(version: string): string {
     }
   }
 
-  // This matches satisfiesSemverRange, which already treats a missing
-  // minor/patch as 0.
   while (segments.length > 0 && segments.length < 3) {
     segments.push("0");
   }

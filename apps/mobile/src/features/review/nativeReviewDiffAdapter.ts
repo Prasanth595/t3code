@@ -25,7 +25,6 @@ const NATIVE_RGBA_COLOR =
 
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
 
-/** Render headerless selections without guessing file line numbers from selection indices. */
 export function buildNativeReviewSnippetRows(
   comment: Pick<ReviewInlineComment, "id" | "diff" | "fenceLanguage">,
 ): NativeReviewDiffRow[] {
@@ -599,10 +598,6 @@ export function buildNativeReviewDiffData(
   return buildCommentedNativeReviewDiffData(prepareNativeReviewDiffData(parsedDiff), comments);
 }
 
-/**
- * Each file retains only its latest comment overlay, and the weak key releases
- * old parsed diffs.
- */
 export function getCachedNativeReviewDiffData(
   input: BuildNativeReviewDiffDataInput,
 ): NativeReviewDiffData {

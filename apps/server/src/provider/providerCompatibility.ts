@@ -9,8 +9,6 @@ import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 import packageJson from "../../package.json" with { type: "json" };
 
-// Deliberately uses the shared CLI gate syntax: comparator groups joined by ||.
-// Prereleases and unrecognized release tags remain unknown.
 const StableVersion = TrimmedNonEmptyString.pipe(
   Schema.check(Schema.makeFilter((value) => /^\d+\.\d+\.\d+$/.test(value))),
 );

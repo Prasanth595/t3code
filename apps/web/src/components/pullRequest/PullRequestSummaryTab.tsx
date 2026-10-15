@@ -152,10 +152,6 @@ interface CommentEditing {
   readonly onSave: (comment: PullRequestComment, body: string) => void;
 }
 
-/**
- * A remark's words, and the pencil that swaps them for the editor. The pencil is revealed by
- * hovering the remark, like the reaction bar's own, so the parent must carry `group`.
- */
 function CommentBody({
   comment,
   editing,
@@ -295,7 +291,6 @@ function Section({
   title: string;
   defaultOpen?: boolean;
   keepMounted?: boolean;
-  /** Heading controls stay separate from the collapse trigger so they remain independently usable. */
   actions?: ReactNode;
   children: ReactNode;
 }) {
@@ -350,10 +345,6 @@ function Section({
   );
 }
 
-/**
- * A pull request with two hundred comments is two hundred markdown documents, and the
- * ones worth arriving for are the recent ones.
- */
 const COMMENT_PAGE = 10;
 
 const COMMENT_FILTER_STORAGE_KEY = "t3code:pull-request-comment-filter:v1";
@@ -398,9 +389,6 @@ export function PullRequestSummaryTab({
     DEFAULT_COMMENT_FILTER,
     CommentFilterSchema,
   );
-  // A comment that already lives on a review thread is that thread: the thread carries the line
-  // and side the bare comment has lost, and a resolved one is finished work nobody should be
-  // invited to fix again — the same call the whole-review hand-off makes.
   const threadByCommentId = new Map(
     detail.reviewThreads.flatMap((thread) =>
       thread.comments.map((comment) => [comment.id, thread] as const),
@@ -416,8 +404,6 @@ export function PullRequestSummaryTab({
     (comment) =>
       (commentFilter.bots || !isBot(comment)) && (commentFilter.resolved || !isFinished(comment)),
   );
-  // The one count the filter shows. Per-kind counts would overlap, since a resolved bot comment
-  // is both kinds and needs both shown.
   const filteredOutCount = detail.comments.length - filteredComments.length;
   const recentComments = filteredComments.slice(
     Math.max(0, filteredComments.length - shownComments),
@@ -522,8 +508,6 @@ export function PullRequestSummaryTab({
     onEdit: (comment) =>
       setCommentScope(comment === null ? null : { pullRequest: detail.url, commentId: comment.id }),
     onSave: async (comment, body) => {
-      // A review's own summary is not a kind any host rewrites, which is why no pencil is ever
-      // offered on one; the check is here because the comment's own type still allows it.
       if (commentSaving || comment.kind === "review") return;
       setCommentSaving(true);
       const result = await updateComment({
@@ -620,10 +604,6 @@ export function PullRequestSummaryTab({
         <div className="px-3">
           <CommentLocation comment={comment} thread={thread} />
         </div>
-        {/*
-         * Kept where this reader may rewrite the remark: the pencil lives in here,
-                          and hiding the block would take away the only way back to it.
-         */}
         {body === null && !commentEditing.canEdit(comment) ? null : (
           <CommentBody className="px-3 py-3" comment={comment} editing={commentEditing} />
         )}
@@ -654,11 +634,6 @@ export function PullRequestSummaryTab({
                             <span
                               className={cn(
                                 "relative rounded-full hover:z-10",
-                                // Both occupy the same 2px immediately outside a 16px avatar, so the
-                                // colour costs no size: anything drawn further out would be a halo
-                                // wide enough to eclipse the neighbour this stack overlaps by 4px.
-                                // Painted by this wrapper because a child's box-shadow covers its
-                                // parent's, never the other way round.
                                 entry.outcome
                                   ? pullRequestReviewOutcomeRingClassName(
                                       entry.outcome,
@@ -742,7 +717,6 @@ export function PullRequestSummaryTab({
         <div className="group">
           {bodyScope === detail.url ? (
             <PullRequestMarkdownEditor
-              // Empty is a real answer here: saving nothing is how a description is cleared.
               allowEmpty
               value={detail.body}
               cwd={detail.workspaceRoot}
@@ -790,8 +764,6 @@ export function PullRequestSummaryTab({
             const failing = check.status === "failure" || check.status === "cancelled";
             return (
               <div
-                // Position too: the host decides how many runs share a name, and a repeated
-                // key would be a rendering fault on top of whatever the list already says.
                 key={`${index}:${check.name}:${check.url ?? ""}`}
                 className="group flex items-center gap-2 rounded-md pr-1 hover:bg-accent/60"
               >

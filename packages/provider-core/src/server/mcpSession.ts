@@ -14,11 +14,6 @@ export interface McpProviderSessionConfig {
    */
   readonly browserToolsAvailable: boolean;
   readonly capabilities?: ReadonlySet<string>;
-  /**
-   * Set when the session may drive devices. Adapters spread this into the
-   * provider subprocess environment so the `agent-device` CLI is on PATH and
-   * already pointed at the server's daemon; the agent never handles a token.
-   */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
 }
 

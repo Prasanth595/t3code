@@ -14,7 +14,7 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as RelayDeliveryProof from "./RelayDeliveryProof.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
-/** Largest request body a webhook accepts. The relay enforces the same cap. */
+/** The relay enforces the same cap. */
 export const WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 
 /** Response header naming what happened to the request; the relay records it. */
@@ -99,7 +99,6 @@ export const layer = HttpApiBuilder.group(
               ? (effect) =>
                   effect.pipe(Effect.withParentSpan(relayParent.value), withRelayClientTracing)
               : (effect) => effect,
-            // Defects too, so the sender only ever sees the fixed error body.
             Effect.catchCause((cause) =>
               Effect.logWarning("Webhook delivery failed").pipe(
                 Effect.annotateLogs({ hookId: params.hookId }),

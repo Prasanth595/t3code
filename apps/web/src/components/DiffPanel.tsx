@@ -540,7 +540,6 @@ export default function DiffPanel({
             filePath: resolveFileDiffPath(fileDiff),
             fileKey,
             fileVersion,
-            // Header-only placeholders use the viewer's collapsed geometry until their patch arrives.
             collapsed:
               collapsedDiffFileKeys.has(fileKey) ||
               fileDiff.cacheKey?.endsWith(":pending") === true,

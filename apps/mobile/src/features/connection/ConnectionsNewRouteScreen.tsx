@@ -35,7 +35,6 @@ type ConnectionsNewRouteParams = {
   readonly mode?: string;
   readonly pairingUrl?: string;
   readonly autoConnect?: string;
-  /** Adds a route to this saved machine instead of a new environment. */
   readonly routeFor?: EnvironmentId;
 };
 

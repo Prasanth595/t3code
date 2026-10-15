@@ -128,7 +128,6 @@ interface ProactivePanelObservation {
   userActionRevision: number;
 }
 
-/** Capture user intent before loading or metadata writes can defer panel activation. */
 export function observeProactivePanelUserChoice(
   previous: ProactivePanelObservation | null,
   input: { threadKey: string; runningTurnId: RunId | null; userActionRevision: number },
@@ -310,9 +309,6 @@ export function resolveDraftHeroState(input: {
  * Remounting LegendList (or handing it an empty first paint) punches a hole
  * through the chat pane — white in light mode — so cmd+1/2/3 spam flashes even
  * when the destination is already cached.
- *
- * Stored at module scope because ChatView remounts when the thread route
- * changes (same pattern as the thread-error banner session dismissals).
  */
 export type HeldThreadTimeline<T extends readonly unknown[]> = {
   threadKey: string | null;
@@ -642,16 +638,10 @@ export function getAntigravitySendBlockReason(
   }
   const slug = model.trim();
   if (slug.length === 0) return "Choose an Antigravity model before sending.";
-  // A restart clears the account status and catalog. Session startup checks
-  // saved credentials and validates the model before sending the prompt.
   if (provider.auth.status === "unknown") return null;
   if (provider.models.length === 0) {
     return "Refresh Antigravity models in provider settings before sending.";
   }
-  // A saved model that left the catalog is kept in the picker as unavailable
-  // so the user sees what the thread used. The server rejects it at turn
-  // start, so block here unless the provider is in an error state, where a
-  // retry with the same model is the right move.
   if (
     provider.status === "ready" &&
     slug !== ANTIGRAVITY_DEFAULT_MODEL &&
@@ -700,7 +690,6 @@ export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
   URL.revokeObjectURL(previewUrl);
 }
 
-/** Signs an attachment URL without reading its bytes, so video playback can request byte ranges. */
 export async function resolveFileAttachmentUrl(input: {
   attachment: ChatFileAttachment;
   environmentId: EnvironmentId;
@@ -902,8 +891,6 @@ export function branchMismatchKey(
 
 // Draft content is the intent signal — composer focus is useless here because
 // ChatView autofocuses the composer on every thread open.
-// `wasShownForCurrentMismatch` keeps the banner mounted once revealed so it
-// doesn't flicker away when the draft is cleared.
 export function shouldShowBranchMismatchBanner(input: {
   hasMismatch: boolean;
   isDismissed: boolean;
@@ -945,7 +932,6 @@ export function isBranchMismatchDismissedForSession(key: string | null): boolean
 // Git status for a checkout arrives after the composer paints, and the branch
 // strip mounts on the assumption that a project is a Git repo. Without a
 // memory, a non-Git project would mount the strip and drop it on every visit.
-// Keyed by environment and checkout for the session; never persisted.
 const sessionCheckoutIsRepo = new Map<string, boolean>();
 
 function checkoutIsRepoKey(environmentId: EnvironmentId, cwd: string): string {
@@ -973,11 +959,6 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
 }
 
-/**
- * `threadHasStarted` needs the detail: a thread whose latest turn was cleared
- * still has messages, and the loading shell carries none. The shell records
- * when the last user message landed, which every started thread has.
- */
 export function threadShellHasStarted(
   shell:
     | Pick<EnvironmentThreadShell, "latestRun" | "latestUserMessageAt" | "runtime">
@@ -1081,11 +1062,6 @@ export async function waitForStartedServerThread(
   });
 }
 
-/**
- * Runs `revert` (the rollback command `requestId`) and resolves once the
- * message's run is rolled back. Rejects with the server's reason as soon as
- * the thread records that this rollback failed.
- */
 export async function waitForRevertedMessage(
   threadRef: ScopedThreadRef,
   messageId: MessageId,
@@ -1213,9 +1189,6 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
-  // The thread shell can report a preparing or starting run before the detail
-  // projection behind `phase` loads, so either source still connecting holds
-  // the send.
   if (input.phase === "connecting" || derivePhase(input.runtime ?? null) === "connecting") {
     return false;
   }

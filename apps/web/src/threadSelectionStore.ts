@@ -20,7 +20,6 @@ interface ThreadSelectionStore extends ThreadSelectionState {
 
 const EMPTY_SET = new Set<string>();
 
-/** Clear completed deletions and missing threads, retaining failed or unprocessed threads. */
 export function getThreadKeysToDeselectAfterDelete(
   selectedThreadKeys: readonly string[],
   deletedThreadKeys: ReadonlySet<string>,
@@ -74,7 +73,6 @@ export const useThreadSelectionStore = create<ThreadSelectionStore>((set, get) =
           next.add(key);
         }
       }
-      // Keep anchor stable so subsequent shift-clicks extend from the same point
       return { selectedThreadKeys: next, anchorThreadKey: anchor };
     });
   },

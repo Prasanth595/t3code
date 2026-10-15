@@ -56,8 +56,6 @@ const configuredHostedAppUrl = (() => {
 })();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
-// The dev runner defaults this on for --share runs (remote browsers pay a
-// round trip per import level in unbundled dev); T3CODE_BUNDLED_DEV=0 opts out.
 const bundledDevEnv = process.env.T3CODE_BUNDLED_DEV?.trim().toLowerCase();
 const bundledDev = bundledDevEnv === "1" || bundledDevEnv === "true";
 
@@ -73,9 +71,6 @@ const unitTestProject = {
   test: {
     name: "unit",
     include: ["src/**/*.test.{ts,tsx}"],
-    // The web runtime suite exercises auth bootstrap, saved environments,
-    // and websocket subscription lifecycles. Under the full monorepo test
-    // run, those async tests can exceed Vitest's default 5s budget.
     hookTimeout: 15_000,
     testTimeout: 15_000,
     setupFiles: ["../../packages/shared/src/testing/longTempDir.ts"],
@@ -122,8 +117,6 @@ function devCompressionPlugin(): Plugin {
     name: "t3code:dev-compression",
     apply: "serve",
     configureServer(server) {
-      // compression() is typed against Express's req/res, which extend the
-      // node http objects Connect actually passes — safe to narrow.
       server.middlewares.use(
         compression({
           brotli: { params: { [NodeZlib.constants.BROTLI_PARAM_QUALITY]: 5 } },
@@ -136,7 +129,6 @@ function devCompressionPlugin(): Plugin {
 // Vite rejects requests whose Host header isn't localhost, which blocks sharing
 // a dev server over Tailscale/LAN. Tailnet names are safe to allow wholesale:
 // the DNS is controlled by tailscale, so they can't be rebound by an attacker.
-// Anything else (ngrok, a LAN IP alias) goes through the env var.
 const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .split(",")
   .map((entry) => entry.trim())
@@ -160,9 +152,6 @@ export default defineConfig(() => {
       tanstackRouter({ autoCodeSplitting: true }),
       react(),
       babel({
-        // This is because the babel plugin only automatically parses typescript and jsx based on relative paths (e.g. "**/*.ts")
-        // whereas the previous version of the plugin parsed all files with a .ts extension.
-        // This is causing our packages/ directory to fail to parse, as they are not relative to the CWD.
         parserOpts: { plugins: ["typescript", "jsx"] },
         presets: [reactCompilerPreset()],
       }),

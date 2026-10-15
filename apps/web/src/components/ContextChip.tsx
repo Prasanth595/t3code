@@ -29,7 +29,6 @@ const contextChipVariants = cva(
         thread: "[--context-chip-accent:oklch(0.62_0.12_190)]",
         citation: "[--context-chip-accent:oklch(0.62_0.16_259)]",
       },
-      // Colors live in compoundVariants below so they come after the kind colors.
       state: {
         unresolved: "border-dashed",
         invalid: "",

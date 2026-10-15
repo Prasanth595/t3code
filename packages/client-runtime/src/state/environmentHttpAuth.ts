@@ -52,11 +52,6 @@ const withEnvironmentCredentials = <A, E, R>(
     ? request.pipe(Effect.provideService(FetchHttpClient.RequestInit, { credentials: "include" }))
     : request;
 
-/**
- * The DPoP signer is passed in (not resolved from context) and is only required
- * for relay/DPoP connections, so bearer/primary connections work even when no
- * signer is available.
- */
 const buildEnvironmentAuthHeaders = (
   authorization: PreparedHttpAuthorization | null,
   method: HttpMethod.HttpMethod,

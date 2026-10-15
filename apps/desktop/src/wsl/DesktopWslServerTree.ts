@@ -43,20 +43,11 @@ export class DesktopWslServerTreeExtractError extends Schema.TaggedError<Desktop
 export class DesktopWslServerTree extends Context.Service<
   DesktopWslServerTree,
   {
-    // Resolves the directory the WSL backend should treat as the app root (the
-    // directory containing apps/server/dist and node_modules).
     readonly ensure: Effect.Effect<WslServerTreeResult>;
-    // Removes the Windows-side extraction cache after a distro-local runtime
-    // has proven healthy. Serialized with ensure so cleanup cannot race an
-    // extraction that the mounted fallback is preparing.
     readonly cleanupLegacy: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/wsl/DesktopWslServerTree") {}
 
-// Child scheduling stays here instead of inside `visit`, so nested directories
-// cannot create independent concurrency pools. The LIFO work list also keeps
-// traversal memory proportional to the remaining frontier rather than the
-// number of active fibers.
 export const forEachBoundedTree = <Node, E, R>(
   roots: ReadonlyArray<Node>,
   visit: (node: Node) => Effect.Effect<ReadonlyArray<Node>, E, R>,
@@ -79,9 +70,6 @@ interface CopyTreeEntry {
   readonly targetPath: string;
 }
 
-// Copy using only operations supported by Electron's asar-patched fs. Symlinks
-// are not expected because the sidecar is installed with a hoisted, physical
-// layout; anything that is neither a file nor a directory is skipped.
 const copyTree = (
   fs: FileSystem.FileSystem,
   join: (first: string, ...rest: string[]) => string,
@@ -102,8 +90,6 @@ const copyTree = (
           }));
         }
         if (info.type === "File") {
-          // Read and write stay in the same bounded task, so at most eight file
-          // buffers can be retained while their writes complete.
           const bytes = yield* fs.readFile(sourcePath);
           yield* fs.writeFile(targetPath, bytes);
         }
@@ -123,7 +109,6 @@ export const make = Effect.gen(function* () {
   const version = environment.appVersion;
   const versionDir = join(treeRoot, version);
 
-  // Best-effort: a locked file must not block the backend.
   const sweepStale = Effect.gen(function* () {
     const entries = yield* fs.readDirectory(treeRoot).pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
@@ -153,8 +138,6 @@ export const make = Effect.gen(function* () {
       yield* copyTree(fs, join, serverRoot, partialDir);
       const markerJson = yield* encodeMarker({ version });
       yield* fs.writeFileString(join(partialDir, MARKER_FILE_NAME), `${markerJson}\n`);
-      // The marker is written before the rename, so a directory named after
-      // the version is complete by construction.
       yield* fs.remove(versionDir, { recursive: true }).pipe(Effect.ignore);
       yield* fs.rename(partialDir, versionDir);
     }).pipe(
@@ -167,8 +150,6 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  // Serialize concurrent ensure calls (backend restarts can overlap): the
-  // first caller extracts, later callers see the marker and reuse the tree.
   const gate = yield* Semaphore.make(1);
 
   const cleanupLegacy = gate
@@ -205,8 +186,6 @@ export const make = Effect.gen(function* () {
         }
         const result = yield* extract.pipe(
           Effect.map(() => ({ ok: true, root: versionDir }) as const),
-          // Retryable: transient antivirus locks and slow disks are the common
-          // causes, and the backend manager already bounds preflight retries.
           Effect.catch((error) =>
             Effect.succeed({
               ok: false,

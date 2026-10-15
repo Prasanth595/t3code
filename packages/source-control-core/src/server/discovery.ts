@@ -314,7 +314,6 @@ export function isMissingExecutable(error: unknown): boolean {
   );
 }
 
-/** The CLI ran, but its output does not say whether it holds the remote's host. */
 class UnknownRemoteUnanswered extends Schema.TaggedError<UnknownRemoteUnanswered>()(
   "UnknownRemoteUnanswered",
   {},
@@ -322,7 +321,6 @@ class UnknownRemoteUnanswered extends Schema.TaggedError<UnknownRemoteUnanswered
 
 export interface UnknownRemoteVerdict {
   readonly provider: SourceControlProviderInfo | null;
-  /** Every integration answered, so the verdict holds for other checkouts of the same server. */
   readonly settled: boolean;
 }
 
@@ -360,7 +358,6 @@ function refineWithSpec(input: {
     );
 }
 
-/** Asks every integration whether it holds the remote's server; the first claim wins. */
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
   function* (input: {
     readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;

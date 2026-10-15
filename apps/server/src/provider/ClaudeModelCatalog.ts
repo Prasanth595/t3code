@@ -77,10 +77,6 @@ export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(
   BUNDLED_CLAUDE_PROVIDER_CATALOG,
 );
 
-/**
- * Custom entries carry no runtime profile, so option values pass through to
- * Claude Code verbatim.
- */
 export function scopeClaudeModelCatalog(
   catalog: ClaudeModelCatalog,
   customModels: ReadonlyArray<CustomModelSetting>,

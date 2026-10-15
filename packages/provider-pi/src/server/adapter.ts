@@ -86,7 +86,6 @@ const PI_INHERIT_MODEL_SLUG = "default";
 
 const STREAM_FLUSH_MS = 50;
 const PI_REQUEST_TIMEOUT_MS = 15_000;
-// Session lifecycle hooks reload extensions, MCP servers and language servers.
 const PI_SESSION_TIMEOUT_MS = 60_000;
 const PI_UNSOLICITED_ACTIVITY_ERROR =
   "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
@@ -139,9 +138,6 @@ const PiProviderCapabilitiesV2 = {
     supportsDynamicToolCallbacks: false,
   },
   approvals: {
-    // Pi exposes a blocking tool_call extension hook. The T3 bridge uses it
-    // for supervised and auto-accept modes and forwards its confirmations
-    // through the same extension UI protocol as user-installed extensions.
     supportsCommandApproval: true,
     supportsFileReadApproval: false,
     supportsFileChangeApproval: true,
@@ -158,9 +154,6 @@ const PiProviderCapabilitiesV2 = {
     planDeltasHaveItemIds: false,
   },
   subagents: {
-    // T3 delegation uses the shared MCP `delegate_task` path. Installed Pi
-    // subagent extensions are observed best-effort, but their official tool
-    // runs children with --no-session and exposes no resumable child id.
     supportsSubagents: true,
     exposesSubagentThreadIds: false,
     emitsSubagentLifecycle: true,
@@ -174,8 +167,6 @@ const PiProviderCapabilitiesV2 = {
     acceptsSyntheticUserContext: true,
     canGenerateSummaries: false,
     canConsumeHandoffSummaries: true,
-    // T3 delivers both full and delta handoffs through Pi's normal user-message
-    // input, so neither strategy depends on a Pi-specific context hook.
     supportsDeltaHandoff: true,
     supportsFullThreadHandoff: true,
     maxRecommendedHandoffChars: null,
@@ -201,10 +192,6 @@ export interface PiAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: PiSettings;
   readonly environment: NodeJS.ProcessEnv;
-  /**
-   * Where to offer a wake turn for provider-initiated work. Without one, such
-   * work has no owner and the adapter stops it.
-   */
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -252,7 +239,6 @@ function isBoundedStructuredToolValue(value: unknown): boolean {
   return visit(value, 0);
 }
 
-/** Keep model content and distinct typed values; server ingestion owns image byte policy. */
 function piToolOutput(result: unknown, toolName: string): unknown {
   const rawContent = recordField(result, "content");
   const content = Array.isArray(rawContent)
@@ -261,8 +247,6 @@ function piToolOutput(result: unknown, toolName: string): unknown {
       ? [{ type: "text", text: rawContent }]
       : [];
   let structured = recordField(result, "structuredContent");
-  // Pi MCP tools return the full CallToolResult to scripts. The model content
-  // is already captured, so store only its distinct structured payload.
   const details = recordField(result, "details");
   const isMcpResult =
     toolName.startsWith("mcp__") &&
@@ -372,18 +356,15 @@ interface ActivePiTurn {
   readonly startedAt: DateTime.Utc;
   readonly itemOrdinals: Map<string, number>;
   nextItemOrdinal: number;
-  /** Increments on assistant `message_start` so content indexes stay unique. */
   messageOrdinal: number;
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   interrupted: boolean;
-  /** Cancellation of the latest native run; new work can recover before settlement. */
   nativeAborted: boolean;
   sawAgentActivity: boolean;
   adoptedWake: boolean;
   readonly promptMayBeCommandOnly: boolean;
-  /** Pi reports context as unknown immediately after compaction; keep its estimate for the meter. */
   latestCompactionAfterTokens: number | null;
   lastLiveUsedTokens: number | null;
   settleProbeGeneration: number;
@@ -394,7 +375,6 @@ interface ActivePiTurn {
   activeCompaction: PiCompactionState | null;
   activeProviderRetry: PiProviderRetryState | null;
   failure: ReturnType<typeof makeProviderFailure> | null;
-  /** Native retry can recover its work without accepting a rejected joining prompt. */
   rejectedPromptFailure: ReturnType<typeof makeProviderFailure> | null;
   stopTreeRefs?: PiTurnTreeRefs | null;
 }
@@ -418,11 +398,6 @@ interface PendingPiPrompt {
   readonly turnItem: OrchestrationV2TurnItem;
 }
 
-/**
- * The T3 bridge confirms tool calls as `Allow <tool>?`. Edits surface as
- * file-change approvals so clients render them like other providers' edits;
- * every other confirmation, including ones from user extensions, is a command.
- */
 function piApprovalRequestKind(title: string): "command" | "file-change" {
   const toolName = /^Allow (\S+)\?$/.exec(title)?.[1];
   return toolName !== undefined &&
@@ -549,9 +524,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let threadState: PiThreadState | null = null;
       let registrationAttempted = false;
       let lastNativeThreadId: string | null = null;
-      // User Stop intentionally tears down this RPC process after aborting.
-      // Keep that intent beyond turn finalization so the later stdout close is
-      // not mistaken for an unexpected transport failure.
       let stopRequested = false;
       let unsolicitedActivityDetected = false;
       let pendingWake: PiWake | null = null;
@@ -979,7 +951,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           startedAt,
         };
         turn.streamItems.set(nativeItemId, item);
-        // Ordinal reserved on first delta so items appear in stream order.
         itemOrdinal(turn, nativeItemId);
         return item;
       });
@@ -1018,8 +989,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const isError = event["isError"] === true;
         const resultRecord = completed ? event["result"] : event["partialResult"];
         const outputText = contentText(recordField(resultRecord, "content"));
-        // A Stop aborts in-flight tools, and pi reports those as error ends.
-        // Present them as interrupted (matching the run) rather than failed.
         const status = completed
           ? isError
             ? turn.interrupted
@@ -1062,8 +1031,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (toolName === "edit" || toolName === "write") {
           const fileName = recordString(args, "path") ?? recordString(args, "file_path");
           if (fileName !== undefined) {
-            // edit reports a unified patch in its result details; write only
-            // carries the new content in its args. A failed call keeps its error.
             const diffStr =
               recordString(recordField(resultRecord, "details"), "patch") ??
               (isError && outputText.trim().length > 0 ? outputText : undefined);
@@ -1346,8 +1313,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           providerTurnId,
           nativeItemRef: providerRef(nativeRequestId),
           parentItemId: null,
-          // Runless startup/session-switch requests are normalized into the
-          // thread-level ordinal range by TurnItemPositionStore.
           ordinal: turn === null ? 0 : itemOrdinal(turn, nativeRequestId),
           status: "waiting" as const,
           title,
@@ -1459,10 +1424,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         );
 
       /**
-       * Locate this turn's first user entry and the new leaf in pi's session tree. The user-entry
-       * id becomes the provider turn's native ref (the point `fork` rolls back to); the leaf
-       * becomes the conversation head. `get_entries` is append-ordered and keeps abandoned
-       * branches, so both come from walking the leaf's `parentId` chain, never from list order.
+       * `get_entries` is append-ordered and keeps abandoned branches, so both come from walking
+       * the leaf's `parentId` chain, never from list order.
        */
       const captureTurnTreeRefs = Effect.fnUntraced(function* (
         timeoutMs = PI_REQUEST_TIMEOUT_MS,
@@ -1895,7 +1858,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (turn === null) return;
             const emittedAt = yield* DateTime.now;
             if (event["success"] === true) {
-              // The retry recovered. Pi emits the erroring `message_end`
               // before retrying, so leaving that failure in place would make
               // `agent_settled` terminalize a successful turn as failed.
               if (turn.activeProviderRetry !== null) {
@@ -1955,8 +1917,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               turn.nativeAborted = event["aborted"] === true;
               turn.settleWhenIdle = true;
               turn.settleProbeGeneration += 1;
-              // A wake can settle while the newly joined user prompt is still
-              // expanding. Its acknowledgement opens the idle-probe barrier.
               if (
                 turn.adoptedWake &&
                 pendingPromptResponses.some(
@@ -2072,9 +2032,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return;
           }
           case "t3.flush_extension_errors": {
-            // Startup extension failures are informational and do not block
-            // Pi, so attach them to the next real turn instead of creating a
-            // standalone failed run.
             for (const extensionError of outOfTurnExtensionErrors.splice(0)) {
               yield* emitExtensionError(extensionError);
             }
@@ -2139,8 +2096,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         Effect.catchCause((cause) =>
           sessionEventPermit.withPermits(1)(
             Effect.gen(function* () {
-              // Stop-with-restart closes the provider stream cleanly; only an unexpected death is
-              // surfaced as an event-stream failure.
               const state = threadState;
               if (rollbackBarrier !== null)
                 yield* Deferred.fail(
@@ -2307,9 +2262,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           Effect.orElseSucceed(() => undefined),
         );
         lastKnownLeaf = recordString(baselineEntries, "leafId") ?? null;
-        // A successful full baseline makes the cursor trustworthy again. Only
-        // a failed one leaves it stale, so a recovered session does not keep
-        // skipping turn refs. An empty tree is a success with no leafId.
         leafCursorStale = baselineEntries === undefined;
         if (publish)
           yield* emit({
@@ -2335,9 +2287,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               providerSession: sessionEntity,
             });
           }
-          // The "Pi default" model advertises no thinking choices of its own,
-          // so an unqualified return also restores Pi's configured level
-          // instead of silently keeping the effort a previous pick applied.
           if (
             thinking === undefined &&
             appliedThinking !== null &&
@@ -2455,8 +2404,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 }),
             ),
           ),
-        // The run executor routes a bare `/compact` here instead of startTurn.
-        // Pi's start path already turns that text into the RPC compact call.
         compactThread: (turnInput) =>
           runtime.startTurn({
             ...turnInput,
@@ -2586,8 +2533,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   kind: "turn_start",
                 });
               } else if (payload !== null) {
-                // Pi may already be streaming before its wake reaches T3.
-                // Let Pi atomically queue the prompt or start an idle run.
                 yield* connection.send({
                   type: "prompt",
                   message: payload.message,
@@ -2786,8 +2731,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               id: pending.nativeRequestId,
               ...response,
             });
-            // Dropped only once Pi has the answer, so a failed send leaves the
-            // request retryable and still cancellable during teardown.
             pendingPrompts.delete(String(requestInput.requestId));
             if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
             if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
@@ -2862,9 +2805,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   {
                     id: idAllocator.derive.messageFromProviderItem({
                       driver: PI_PROVIDER,
-                      // RPC messages do not expose session-tree entry ids. The
-                      // active-branch index is stable for the lifetime of this
-                      // snapshot and keeps abandoned branch ids out of it.
                       nativeItemId: `${wantedNativeId}:snapshot-message:${index}`,
                     }),
                     threadId,
@@ -2915,9 +2855,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (pendingWake !== null) {
               return yield* protocolError("Cannot roll back while native Pi work awaits a turn");
             }
-            // `fork(entryId)` re-roots the active branch before that user
-            // message, so the rollback boundary is the first user entry of
-            // the earliest turn being discarded.
             const forkEntryId = piRollbackForkEntry(rollbackInput);
             if (forkEntryId === null) {
               return piThreadSnapshot(state.providerThread);
@@ -3215,8 +3152,6 @@ function piSubagentOutput(result: unknown): string {
     stopReason === "error" ||
     stopReason === "aborted";
   if (failed) {
-    // Falsy fallback, not `??`: an empty `errorMessage` must not suppress a
-    // non-empty `stderr`, which is often the only description of the failure.
     const failure = recordString(result, "errorMessage") || recordString(result, "stderr");
     if (failure !== undefined && failure.length > 0) return failure;
   }

@@ -11,9 +11,6 @@ import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 
 const EMPTY_SKILLS: ReadonlyArray<never> = [];
 
-// Serialized the way the composer stores inline tokens: the $skill and the
-// markdown-style file links render as chips, so the preview shows prompt
-// text and pills exactly as the real composer draws them.
 const PROMPT_PREVIEW_TEXT =
   "Use $frontend-design to fix the flaky test in " +
   "[surface.test.ts](apps/web/src/terminal/ghostty/surface.test.ts) and align the header with " +
@@ -151,7 +148,6 @@ const TERMINAL_PREVIEW_TRANSCRIPT =
   "\r\n" +
   TERMINAL_PROMPT;
 
-/** The surface treats an omitted family or size as "use the built-in default". */
 function previewTerminalFont(family: string, size: number): { family?: string; size: number } {
   const trimmed = family.trim();
   return trimmed.length > 0 ? { family: trimmed, size } : { size };
@@ -223,7 +219,6 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
         return;
       }
       surfaceRef.current = surface;
-      // The theme and font may both have changed while the WASM surface loaded.
       surface.setTheme(terminalThemeFromApp(mount));
       const font = fontRef.current;
       void surface.setFont(previewTerminalFont(font.family, font.size));

@@ -136,7 +136,6 @@ export function PullRequestChip(props: {
   );
 }
 
-/** Sample the loaded thumbnail once; transparent pixels should not darken its accent. */
 function averageImageColor(image: HTMLImageElement): string | undefined {
   try {
     const canvas = document.createElement("canvas");
@@ -159,7 +158,6 @@ function averageImageColor(image: HTMLImageElement): string | undefined {
     if (alpha === 0) return;
     return `rgb(${Math.round(red / alpha)} ${Math.round(green / alpha)} ${Math.round(blue / alpha)})`;
   } catch {
-    // Cross-origin or unavailable pixels keep the default image tone and preview action.
     return;
   }
 }

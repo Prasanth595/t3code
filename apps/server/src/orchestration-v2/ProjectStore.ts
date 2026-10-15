@@ -89,7 +89,6 @@ export class ProjectStoreV2 extends Context.Service<
     readonly getShell: (
       projectId: ProjectId,
     ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectStoreV2Error>;
-    /** Active project shells in creation order, without enrichment. */
     readonly listShells: (options?: {
       readonly projectIds?: ReadonlyArray<ProjectId>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectStoreV2Error>;

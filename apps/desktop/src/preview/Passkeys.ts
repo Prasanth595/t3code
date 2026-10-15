@@ -43,7 +43,6 @@ export class PreviewPasskeys extends Context.Service<
     readonly bridgeEnabled: boolean;
     /** Runs after app ready. */
     readonly configure: Effect.Effect<void>;
-    /** Idempotent. */
     readonly installSessionHandlers: (session: Session) => void;
     readonly attachGuest: (guest: WebContents) => () => void;
   }
@@ -173,7 +172,6 @@ const make = Effect.gen(function* () {
         // be trusted for the origin. Read the committed origin before any await:
         // the frame object outlives a navigation.
         const origin = frame.origin;
-        // Like Chromium, only a focused page may open the sheet, one at a time.
         if (!isTrustworthyOrigin(origin) || ceremonyPending || !guest.isFocused()) {
           return notAllowed;
         }
@@ -206,8 +204,6 @@ const make = Effect.gen(function* () {
         guest.ipc.removeHandler(PASSKEY_GET_CHANNEL);
       };
       detach();
-      // Option shapes are the page's to get wrong: the native layer validates
-      // them and answers with a TypeError.
       guest.ipc.handle(
         PASSKEY_CREATE_CHANNEL,
         (event, publicKey: PublicKeyCredentialCreationOptions) =>

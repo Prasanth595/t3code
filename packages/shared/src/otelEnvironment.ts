@@ -1,7 +1,3 @@
-/**
- * `T3CODE_OTEL_SDK_DISABLED` is read first, so a machine that sets
- * `OTEL_SDK_DISABLED` for everything else can still opt T3 Code back in.
- */
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Data from "effect/Data";
@@ -14,12 +10,6 @@ import { OtlpHeadersFromString, OtlpProtocol, type SignalExport } from "./observ
 
 type OtlpSignalName = "TRACES" | "METRICS" | "LOGS";
 
-/**
- * What the OTEL variables say about one signal. `Off` is a signal they
- * claimed with an endpoint, protocol, or headers that do not read, or turned
- * off with `OTEL_<SIGNAL>_EXPORTER=none`, so it is exported nowhere rather
- * than to the bootstrap or Settings collector.
- */
 export type OtelSignal = Data.TaggedEnum<{
   Unset: {};
   Off: {};
@@ -94,7 +84,6 @@ interface ResourceAttributes {
   readonly warning?: string;
 }
 
-// The schema Effect's OTLP exporters read this variable with.
 const resourceAttributes = Config.Record(
   Schema.StringFromUriComponent,
   Schema.StringFromUriComponent,
@@ -118,10 +107,6 @@ interface Setting<A> {
   readonly warning?: string;
 }
 
-/**
- * Reads one variable. Blank reads as unset, and a value `parse` rejects warns
- * without echoing it, since these variables carry credentials.
- */
 const readOrWarn = <A>(
   name: string,
   parse: (raw: string) => Option.Option<A>,
@@ -172,12 +157,6 @@ const EXPORTERS: ReadonlySet<string> = new Set<Exporter>(["otlp", "none"]);
 
 const isExporter = (entry: string): entry is Exporter => EXPORTERS.has(entry);
 
-/**
- * `OTEL_<SIGNAL>_EXPORTER`, a case-insensitive list whose default is `otlp`.
- * Entries T3 Code has no exporter for are named in a warning and dropped, and
- * a list left with nothing to honor reads as unset, as the specification asks
- * of any enum value an implementation does not recognize.
- */
 const exporter = (name: string): Config.Config<Setting<Exporter>> =>
   Config.String(name).pipe(
     Config.option,
@@ -230,12 +209,6 @@ interface ResolvedSignal {
   readonly used: ReadonlyArray<Setting<unknown>>;
 }
 
-/**
- * A signal whose endpoint, protocol, or headers do not read is not exported
- * rather than sent somewhere, in a format, or without the credentials its
- * collector expects. `none` turns the signal off before any of those are read,
- * whether or not an endpoint was named.
- */
 const signal = (
   name: OtlpSignalName,
   exporter: Setting<Exporter>,
@@ -345,12 +318,6 @@ export interface SignalEndpoint {
   readonly export: SignalExport;
 }
 
-/**
- * Where one signal exports and how. `T3CODE_OTLP_*_URL` wins outright with
- * T3 Code's own export, then an OTEL endpoint with its own headers and
- * protocol, since `T3CODE_OTLP_HEADERS` was written for a different
- * collector, then the first of `fallbackUrls` with T3 Code's own export.
- */
 export const resolveSignalEndpoint = (
   otel: OtelEnvironment,
   signal: SignalName,
@@ -390,7 +357,6 @@ export const layerResourceAttributes = (attributes: Readonly<Record<string, stri
           .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
           .join(","),
       },
-      // Keeps an emptied list from falling through to the raw value.
       preserveEmptyStrings: true,
     }),
     { asPrimary: true },

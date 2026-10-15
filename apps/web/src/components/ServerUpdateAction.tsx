@@ -30,9 +30,6 @@ import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-// The wire "installing" stage is a sub-second launcher handoff, so the UI
-// folds it into the download phase; everything after the handoff is the
-// restart the user is actually waiting through.
 const UPDATE_STAGE_LABELS: Record<ServerUpdateStage, string> = {
   downloading: "Downloading…",
   installing: "Downloading…",
@@ -64,14 +61,11 @@ type UpdateButtonProps = Pick<ComponentProps<typeof Button>, "variant" | "size" 
   readonly appearance?: "button" | "icon";
 };
 
-/** What {@link useServerUpdate} did. "skipped" covers a missing permission, an
-    update already in flight, and an interrupted request. */
 export type ServerUpdateOutcome =
   | { readonly status: "updated" | "skipped" }
   | { readonly status: "failed"; readonly message: string };
 
-/** Updates one server and waits until it is back on the target version.
-    Toasts its success or failure unless `quiet`; never rejects. */
+/** Toasts its success or failure unless `quiet`; never rejects. */
 export function useServerUpdate() {
   const updateServer = useAtomCommand(serverEnvironment.updateServer, { reportFailure: false });
   return async (
@@ -265,9 +259,6 @@ export function ServerUpdateAction({
       return;
     }
     if (isDesktopAppUpdate) {
-      // No themed host mounted (undefined) means proceed: the click itself
-      // was the request. This is the only confirmation in the flow; the
-      // remote machine installs without asking anyone there.
       const confirmed =
         (await requestConfirmDialog(
           `Update the T3 Code desktop app that runs the ${serverLabel}? It will close and relaunch on that machine.`,

@@ -32,8 +32,6 @@ const KIND_BY_PORT_TYPE: Readonly<Record<string, MicrophoneKind>> = {
   CarAudio: "carPlay",
 };
 
-// Built-in and CarPlay are listed only as kinds: a phone has one built-in
-// microphone, and CarPlay is the car.
 const DEVICE_KINDS: ReadonlySet<MicrophoneKind> = new Set(["wired", "bluetooth"]);
 
 const rank = (kind: MicrophoneKind) => MICROPHONE_KINDS.indexOf(kind);
@@ -76,10 +74,6 @@ export function microphoneOrder(
   return order;
 }
 
-/**
- * A new device goes just above its kind, keeping the rank it had while unlisted. Returns
- * `order` itself when nothing changed.
- */
 export function rememberMicrophones(
   order: ReadonlyArray<MicrophoneEntry>,
   inputs: ReadonlyArray<MicrophoneInput>,

@@ -13,24 +13,14 @@ export type NavigationWithFinishTransitioning = {
   readonly addListener: (type: "finishTransitioning", callback: () => void) => () => void;
 };
 
-/**
- * How long after the dismissal's state change the keyboard starts rising, so
- * its ~250ms show overlaps the tail of the sheet's ~500ms travel the way UIKit
- * apps choreograph it. The navigator's `finishTransitioning` event (UIKit's
- * real completion callback, surfaced by the repo's native-stack patch)
- * additionally bounds the restore at the true landing moment should this timer
- * ever lag it.
- */
 const SHEET_DISMISSAL_KEYBOARD_OVERLAP_MS = 300;
 
 /**
  * A JS-initiated dismissal pops state before its animation runs; a
  * gesture-driven one animates natively first and pops afterwards, with the
- * navigator's completion event landing a few dozen milliseconds before the
- * pop. A completion this fresh at pop time therefore means the sheet is
- * already gone and the keyboard should return immediately. The two orderings
- * are separated by the sheet's full ~500ms travel, so this window is a
- * classification with wide margin, not an animation race.
+ * navigator's completion event landing a few dozen milliseconds before the pop.
+ * A completion this fresh at pop time therefore means the sheet is already gone
+ * and the keyboard should return immediately.
  */
 const NATIVE_DISMISSAL_ECHO_WINDOW_MS = 150;
 
@@ -138,7 +128,6 @@ export function useThreadSettingsSheetPresentation(input: {
     }
     restorePendingRef.current = false;
     clearDismissRestoreTimer();
-    // A reopened sheet owns focus again; drop the stale restore request.
     if (!isMountedRef.current || isActiveRef.current) {
       return;
     }
@@ -169,7 +158,6 @@ export function useThreadSettingsSheetPresentation(input: {
     }, SHEET_DISMISSAL_KEYBOARD_OVERLAP_MS);
   }, [clearDismissRestoreTimer, runPendingDismissalRestore]);
 
-  /** Wire to the navigator's `finishTransitioning` event. */
   const onStackTransitionsFinished = useCallback(() => {
     lastStackTransitionFinishedAtRef.current = Date.now();
     runPendingDismissalRestore();

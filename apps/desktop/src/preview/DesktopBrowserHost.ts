@@ -1,8 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Names download files on the shared disk.
 /**
- * A tab is attached once its `<webview>` registers with a key the web app
- * gave it. The preview manager owns the tab's single debugger session and hands
- * it here; the relay shares it.
+ * The preview manager owns the tab's single debugger session and hands it here;
+ * the relay shares it.
  */
 import {
   DesktopBrowserCommand,
@@ -43,10 +42,8 @@ interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
   readonly debuggee: DesktopBrowserTabDebugger;
   relay: CdpRelayConnection | null;
-  /** Where the server wants this tab's downloads; null keeps Electron's own handling. */
   downloadDirectory: string | null;
   pendingDownloadGuid: string | null;
-  /** When the server last sent this page input, which only an agent does. */
   agentInputAt: number;
   readonly onMessage: (
     event: Electron.Event,
@@ -59,19 +56,10 @@ interface AttachedTab {
 export class DesktopBrowserHost extends Context.Service<
   DesktopBrowserHost,
   {
-    /**
-     * Newline-delimited events for a backend's browser fd. Each run starts by
-     * announcing the tabs already attached, so a restarted backend hears them.
-     */
     readonly events: Stream.Stream<Uint8Array>;
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
-    /** Withdraws it: closed, swapped, crashed, or devtools needs the debugger. */
     readonly detach: (key: DesktopBrowserTabKey) => void;
-    /**
-     * Whether a server tab's download came from the person at this desktop:
-     * the server sent the page no input just before it started.
-     */
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
@@ -115,7 +103,6 @@ export const make = Effect.gen(function* () {
           tab.downloadDirectory = directory;
         },
       },
-      // A released relay's late replies belong to a connection that is gone.
       (message) => {
         if (tab.relay === relay && tabs.get(keyOf(tab.key)) === tab) {
           emit({ type: "cdp", ...tab.key, message });
@@ -197,7 +184,6 @@ export const make = Effect.gen(function* () {
     return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_DOWNLOAD_WINDOW_MS;
   };
 
-  // Read when a backend starts, not when the host is built.
   const announceAll = Effect.suspend(() =>
     Effect.forEach(
       [...tabs.values()],

@@ -92,7 +92,6 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
   const repository = input.repository.toLowerCase();
   const url =
     changeRequestUrlFor(
-      // The project's kind only describes its own host; another host gets no URL guess.
       host === projectHost.host ? projectHost.kind : null,
       host,
       repository,
@@ -150,10 +149,6 @@ export function listThreadPullRequests(
   };
 }
 
-/**
- * Host reads are scoped to a project, so a repository with no checkout in this
- * environment cannot be guided from it.
- */
 function projectForPullRequest(
   projects: ReadonlyArray<OrchestrationProjectShell>,
   target: { readonly host: string; readonly repository: string },
@@ -268,8 +263,6 @@ const make = Effect.gen(function* () {
       return yield* new PullRequestWatchFromSubagentError();
     }
     const before = watchedLink(thread);
-    // A merged pull request cannot reopen. A closed one can, and its saved state may be stale,
-    // so the watch starts and its first read ends it if the host still says closed.
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
     }
@@ -311,7 +304,6 @@ const make = Effect.gen(function* () {
       .listShells()
       .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
     const callerProject = known.find((project) => project.id === callerThread?.projectId);
-    // Each target resolves on its own, so one bad URL in a batch is that entry's failure only.
     return yield* Effect.forEach(targets, (input) =>
       resolveTarget(input, callerProject).pipe(
         Effect.map((target) => ({
@@ -340,7 +332,6 @@ const make = Effect.gen(function* () {
   const guideFailureDetail = (error: { readonly message: string }) =>
     "detail" in error && typeof error.detail === "string" ? error.detail : error.message;
 
-  /** A tool that changes `threadId`, or the caller's own thread when it is omitted. */
   const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
     handle: (params: P) => Effect.Effect<A, E, R>,
   ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
@@ -369,8 +360,6 @@ const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.as(false),
-            // The decider rejects a second link of the same PR; for the agent that is
-            // the outcome it asked for, not an error.
 
             Effect.catchCause(dispatchFailure(PullRequestLinkFailedError)),
           );

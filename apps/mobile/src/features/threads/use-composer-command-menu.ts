@@ -108,8 +108,6 @@ export function buildComposerSlashCommandItems(input: {
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
-    // T3's own limits command is answered by the thread composer; New Task has
-    // nowhere to show it. A provider's same-named command is left alone.
     if (command.name === USAGE_LIMITS_COMMAND.name && input.offersUsageLimits && !input.hasThread) {
       continue;
     }
@@ -204,7 +202,6 @@ export function useComposerCommandMenu({
   readonly enabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
-  /** Picking /usage-limits is the action itself; the draft keeps nothing of it. */
   readonly onUsageLimits?: () => void;
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
@@ -213,9 +210,6 @@ export function useComposerCommandMenu({
     setSelection(nextSelection);
   }, []);
   useEffect(() => {
-    // An insert (attachment, terminal capture, review comment) rewrites the draft and records
-    // the caret that belongs after the new chip. Clamping alone would keep the old offset,
-    // which sits before it.
     const inserted = ownerKey ? readComposerDraftSelection(ownerKey, draftMessage) : null;
     if (inserted) {
       setSelection((current) =>

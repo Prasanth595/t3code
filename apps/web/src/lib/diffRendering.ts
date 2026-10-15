@@ -207,10 +207,6 @@ export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
   return fileDiff.name ?? fileDiff.prevName ?? "";
 }
 
-/**
- * Only a rename makes it differ from the current path, and the hosts that resolve a
- * diff position against both sides need both names.
- */
 export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string {
   return fileDiff.prevName ?? fileDiff.name ?? "";
 }
@@ -237,8 +233,8 @@ function hashFileDiffPart(hash: number, value: string | number | boolean | undef
 }
 
 /**
- * Content-only version for CodeView reconciliation. Pierre's cache key includes
- * the whole patch, so using it here would repaint every file when one changes.
+ * Pierre's cache key includes the whole patch, so using it here would repaint
+ * every file when one changes.
  */
 export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number {
   let hash = FNV_OFFSET_BASIS_32;

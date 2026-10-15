@@ -35,7 +35,6 @@ interface BufferedAnalyticsEvent {
 interface DeliveryState {
   readonly failedBatch: ReadonlyArray<BufferedAnalyticsEvent>;
   readonly batchAttempts: number;
-  /** Failed sends since the last success. Sets the backoff delay. */
   readonly failures: number;
   readonly retryAt: number;
 }

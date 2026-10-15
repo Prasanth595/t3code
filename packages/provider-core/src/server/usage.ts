@@ -15,19 +15,11 @@ export interface UsageRecord {
   readonly provider: UsageProviderKind;
   readonly timestampMs: number;
   readonly model: string;
-  /**
-   * Rate-table key when the provider's display name carries tiers the table
-   * does not know, such as Cursor's `claude-opus-5-5-high`. Defaults to `model`.
-   */
   readonly rateModel?: string;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
   readonly reportedCostUsd: number | null;
   readonly speed: UsageSpeed;
-  /**
-   * Key for cross-file de-duplication, or `null` when the record is inherently
-   * unique and needs no dedup.
-   */
   readonly dedupeKey: string | null;
 }
 
@@ -49,7 +41,6 @@ export function totalTokens(totals: UsageTokenTotals): number {
   );
 }
 
-/** A token count from untrusted JSON: a positive finite number, truncated, else 0. */
 export function tokenCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
@@ -60,13 +51,8 @@ export function parseTimestampMs(value: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-/** JSON fields a format reads. `true` keeps the whole subtree. */
 export type SelectedFields = { readonly [key: string]: true | SelectedFields };
 
-/**
- * A line too large to parse whole is projected to `selectFields` and handed to
- * `parseProjected` instead of `parseLine`.
- */
 export interface TranscriptUsageFormat<State> {
   readonly selectFields: SelectedFields;
   /**
@@ -100,25 +86,20 @@ export interface ProviderUsageInstance<Config> {
    * history on disk, so readers that need no config read it anyway.
    */
   readonly config: Config | undefined;
-  /** The instance's environment merged over the host environment. */
   readonly environment: NodeJS.ProcessEnv;
   readonly configured: boolean;
 }
 
 export interface ProviderUsageScan {
   readonly dir: string;
-  /** Identity of the source across hosts. Defaults to the filesystem identity of `dir`. */
   readonly volumeId?: string;
-  /** Overrides the server's host name in the source fingerprint, for account-wide sources. */
   readonly hostId?: string;
   readonly status?: UsageSource["status"];
   readonly message?: string;
   readonly action?: UsageSource["action"];
-  /** Parsed records per file, or `null` when the source does not exist. */
   readonly files:
     | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
     | null;
-  /** Answered from a cache while a refresh runs. */
   readonly refreshing?: true;
 }
 
@@ -126,7 +107,6 @@ export interface ProviderUsageScanInput<Config> {
   readonly instances: ReadonlyArray<ProviderUsageInstance<Config>>;
   readonly settings: ServerSettings;
   readonly windowStartMs: number;
-  /** The oldest usage the server keeps; account caches cover back to here. */
   readonly retentionCutoffMs: number;
   readonly awaitRefresh: boolean;
 }
@@ -136,10 +116,6 @@ export type ProviderUsageReader<Config, R> =
       readonly kind: "transcripts";
       readonly provider: UsageProviderKind;
       readonly format: TranscriptUsageFormat<unknown>;
-      /**
-       * Transcript directories for one instance. The server canonicalizes,
-       * de-duplicates and scans them; `fileName` limits a walk to one basename.
-       */
       readonly directories: (
         instance: ProviderUsageInstance<Config>,
       ) => Effect.Effect<

@@ -82,9 +82,6 @@ export function GuideTour({
   };
   const step = (delta: 1 | -1) => goTo(stepTourPosition(position, delta, stopCount));
 
-  // J and K step through the tour whenever it is the tab on screen, wherever focus is, unless
-  // the reader is typing: clicking a stop in the rail leaves focus on a button outside any
-  // element that could hold a key handler of its own.
   const stepFromKey = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || isCommandPaletteOpen()) return;
     if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;

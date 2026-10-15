@@ -29,7 +29,6 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-/** OpenCode stores uncached input and reasoning separately from input/output. */
 function parseOpenCodeMessage(
   source: string,
   fallback: {
@@ -130,7 +129,6 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     Effect.flatMap((names) =>
       Effect.filter(
         names.filter((name) => /^opencode(?:-[a-zA-Z0-9_-]+)?\.db$/.test(name)),
-        // One database removed between listing and stat must not hide the rest.
         (name) =>
           entryInfo(path.join(root, name)).pipe(
             Effect.map((info) => info.type === "File"),
@@ -233,8 +231,6 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
     );
   }
 
-  // Do not follow symlinks, including cycles. Database records win over their
-  // old JSON copies when OpenCode has migrated a store in place.
   const directories = [path.join(root, "storage", "message")];
   while (directories.length > 0) {
     const directory = directories.pop()!;
@@ -276,7 +272,6 @@ export const readOpenCodeUsage = Effect.fn("readOpenCodeUsage")(function* (
             const skip =
               seen.has(`opencode:${id}`) ||
               Option.exists(info.mtime, (mtime) => mtime.getTime() < sinceMs);
-            // A skipped file only matters as proof that the store exists.
             if (found && skip) continue;
             if (yield* isSymbolicLink(entry)) continue;
             found = true;

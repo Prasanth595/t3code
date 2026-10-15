@@ -188,20 +188,11 @@ function getShortcutContext() {
 export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
-  /**
-   * Narrows the list to one host, named as the host itself: two GitHub installs are two
-   * accounts, and their shared provider kind cannot tell them apart. Absent means every host.
-   */
   readonly host?: string;
   readonly repository?: string;
   readonly number?: number;
   readonly selectedProjectId?: ProjectId;
-  /** Host of the open review; changing tabs must not narrow the list host filter. */
   readonly selectedHost?: string;
-  /**
-   * A project id only names a project on its own server, so this is what tells two servers
-   * holding one project apart.
-   */
   readonly selectedEnvironmentId?: EnvironmentId;
 }
 
@@ -351,9 +342,6 @@ function PullRequestsRouteView() {
   const navigate = useNavigate({ from: Route.fullPath });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
-  // Every connected environment that has said it can list pull requests. Sorted, so the query
-  // keys, the scope key and the stored snapshot all read the same whichever order the
-  // connections happened to come up in.
   const capableEnvironments = useMemo(
     () =>
       environments
@@ -384,9 +372,6 @@ function PullRequestsRouteView() {
     () => pullRequestEnvironmentSetKey(environmentIds),
     [environmentIds],
   );
-  // An environment may still be connecting, or may predate this feature. Until at least one has
-  // reported, an empty set means "not known yet" rather than "no environment can", and the page
-  // waits rather than telling a reader to upgrade a server that has not spoken.
   const capabilityKnown = environments.some((environment) => environment.serverConfig !== null);
   const pullRequestsSupported = environmentIds.length > 0;
   const allProjects = useProjects();
@@ -428,8 +413,6 @@ function PullRequestsRouteView() {
         project.repositoryIdentity.name &&
         `${project.repositoryIdentity.owner}/${project.repositoryIdentity.name}`.toLowerCase() ===
           repository &&
-        // The same `owner/name` can exist on two hosts. Without this the first match wins, and
-        // a link that named its host opens the pull request from the other one.
         (selectedHost === undefined ||
           pullRequestHostOf(
             project.repositoryIdentity,
@@ -456,8 +439,6 @@ function PullRequestsRouteView() {
     () => findScopedProject(projects, selectedEnvironmentId, selectedProjectId),
     [projects, selectedEnvironmentId, selectedProjectId],
   );
-  // Its ref uses a fixed sentinel environment, not whichever server happens to sort first, so the
-  // tab strip survives a capable server disconnecting or losing the pull-requests capability.
   const rightPanelRef = capableEnvironments.length === 0 ? null : PULL_REQUESTS_PANEL_REF;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(rightPanelRef);
   const rightPanelState = useRightPanelStore((state) =>
@@ -497,8 +478,6 @@ function PullRequestsRouteView() {
       [Key in keyof PullRequestsSearch]?: PullRequestsSearch[Key] | undefined;
     }) =>
       void navigate({
-        // Rebuilt rather than spread so a cleared field leaves the URL instead of
-        // lingering as an explicit `undefined`.
         search: (previous: PullRequestsSearch): PullRequestsSearch => {
           const next = { ...previous, ...patch };
           return {
@@ -542,8 +521,6 @@ function PullRequestsRouteView() {
       involvement: patch.involvement ?? search.involvement,
       state: patch.state ?? search.state,
     });
-    // Opening a selected-only link does not save its default all/open list. Once a list control
-    // changes, the entire visible scope is intentional and becomes the next sidebar destination.
     writePullRequestListPreferences(currentPreferences);
     updateSearch(patch);
   };
@@ -576,10 +553,6 @@ function PullRequestsRouteView() {
     [menuFilters, typedParsed.filters],
   );
   const hasLocalFilters = Object.keys(localFilters).length > 0;
-  // Where an id is ambiguous — two servers holding the same project id, with no server named —
-  // only the servers that actually hold that id are asked: a server without it may still hold an
-  // unrelated project of its own under the same string, and asking it would return that project's
-  // rows rather than an honest empty answer.
   const queryEnvironmentIds = useMemo(
     () =>
       resolveQueryEnvironmentIds(
@@ -591,11 +564,6 @@ function PullRequestsRouteView() {
       ),
     [environmentIds, projects, projectsKnown, scopedProject, scopedProjectId],
   );
-  /**
-   * Two servers holding the same repository would both list the same pull requests, so each
-   * repository is listed by one of them — the first, which is where the page's actions land — and
-   * the others are asked only for what is theirs alone.
-   */
   const environmentQueries = useMemo((): ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly projectIds?: ReadonlyArray<ProjectId>;
@@ -618,8 +586,6 @@ function PullRequestsRouteView() {
       return [{ environmentId, projectIds }];
     });
   }, [projects, projectsKnown, queryEnvironmentIds, scopedProjectId]);
-  // Part of the scope, since a different split is a different question and its answers must not
-  // be filed under the same page state.
   const assignmentKey = useMemo(
     () =>
       environmentQueries
@@ -652,9 +618,6 @@ function PullRequestsRouteView() {
   const sentCursors = page.key === filterKey ? page.cursors : null;
   const sentRegrown = page.key === filterKey ? page.regrown : [];
 
-  // Typing a search, or clearing one, starts the list again at its first page. Without this the
-  // paging state from before the search is still filed under these filters and comes back with
-  // it, so clearing would return to the slice that had been scrolled to rather than to the list.
   useEffect(() => {
     setPage({ key: filterKey, size: PAGE_SIZE, cursors: null, regrown: [] });
   }, [filterKey]);
@@ -671,9 +634,6 @@ function PullRequestsRouteView() {
             environmentId,
             input: {
               state: search.state,
-              // The hosts narrow by involvement themselves — GitHub by author and review
-              // request, and so on — so asking them is the difference between a page of results
-              // and a page of everything with the answer somewhere further down it.
               involvement: search.involvement,
               limit: pageSize,
               ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
@@ -752,17 +712,11 @@ function PullRequestsRouteView() {
     }));
   }, [environmentQueries, filtersOpen, scopedProjectId, search.host, search.involvement]);
   const facetQuery = usePullRequestList(facetTargets);
-  // The feed below is paginated by recency, so an older authored or review-requested row can be
-  // missing from its first page; partitioned from these server-filtered reads instead, the
-  // priority view is complete up front and a continuation can only ever append below what is
-  // already on screen.
   const partitionsWanted = search.involvement === "all" && typedQuery.length === 0;
-  // Built together so the two reads share one memo, and in the same field order the feed's own
-  // input uses: the atoms are keyed by their input, so the Authored tab then reads this answer.
   const partitionTargets = useMemo(() => {
     // The main list goes first. Besides putting the visible rows on screen sooner, it proves
     // which repositories the host search indexes, so an empty partition does not trigger the
-    // expensive per-repository fallback. With no rows at all both partitions are already empty.
+    // expensive per-repository fallback.
     if (
       !partitionsWanted ||
       baselineQuery.data === null ||
@@ -796,8 +750,6 @@ function PullRequestsRouteView() {
   ]);
   const authoredQuery = usePullRequestList(partitionTargets.authored);
   const reviewingQuery = usePullRequestList(partitionTargets.reviewing);
-  // The header's refresh punches through the server's cache before re-reading; the error and
-  // empty states retry plainly, because a failure is never cached.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
   const [invalidating, setInvalidating] = useState(false);
@@ -865,7 +817,6 @@ function PullRequestsRouteView() {
     setOverrides((current) => new Map(current).set(pullRequestEntryKey(entry), override));
     return token;
   };
-  /** A rollback for one write only: a later action's note over the same row is left alone. */
   const revertOverride = (key: string, token: number | null) => {
     if (token === null) return;
     setOverrides((current) => {
@@ -907,10 +858,6 @@ function PullRequestsRouteView() {
     });
   }, [environmentKey]);
   useEffect(() => {
-    // Only once this query has settled. While a search is being swapped in or out the text has
-    // already changed and the data has not, so recording them together would file the previous
-    // answer under the new question — which is how a search's answer came to speak for the
-    // workspace after the search was cleared.
     if (!listQuery.data || listQuery.isPending) return;
     const data = listQuery.data;
     setLoaded((current) => {
@@ -924,11 +871,6 @@ function PullRequestsRouteView() {
                 current.scope === scopeKey
               ? current.partitions
               : undefined;
-      // What is written is what the reader is actually looking at, not this round's own answer: a
-      // continuation only asks the environments still paging, so its answer alone is missing both
-      // the rows read on earlier pages and the hosts of whichever environment had already run out
-      // of cursors. `ordered` carries the accumulated rows, and the baseline read — which never
-      // drops an environment for lack of a cursor — carries the full hosts.
       if (environmentKey.length > 0 && sentQuery.length === 0) {
         const accumulatedEntries = ordered?.key === filterKey ? ordered.entries : data.entries;
         writePullRequestListSnapshot(
@@ -1023,8 +965,6 @@ function PullRequestsRouteView() {
         ),
       };
     });
-    // The host's word outranks the reader's, once it has actually said it: an override is
-    // cleared by an answer that agrees with it, not by any answer that happens to land.
     setOverrides((current) =>
       settlePullRequestOverrides(current, answered.entries, pullRequestEntryKey, Date.now()),
     );
@@ -1064,10 +1004,6 @@ function PullRequestsRouteView() {
     });
   };
 
-  // A refresh means the whole visible list again, and a cursored query cannot answer that: it
-  // re-reads only its own slice, so the rows loaded before it would never see a merge, a close,
-  // or a retitle. Going back to a single page long enough to cover everything on screen lets the
-  // merge above bring every row up to date in place.
   const refreshList = (includeRelated = false, actedEnvironmentId?: EnvironmentId) => {
     const related = (
       includeRelated
@@ -1205,8 +1141,6 @@ function PullRequestsRouteView() {
 
   const groups = useMemo(() => {
     if (search.involvement !== "all") return [{ key: "others" as const, label: "", entries }];
-    // An empty whole-list answer also empties the priority groups. Their old snapshot must
-    // not restore the last merged rows after the partition reads are no longer mounted.
     if (baselineEmpty) {
       return groupPullRequestsByInvolvement(entries, viewers);
     }
@@ -1245,8 +1179,6 @@ function PullRequestsRouteView() {
     viewers,
   ]);
 
-  // Date sorts keep optional line-count reads near the viewport. Size and readiness sorts need
-  // every loaded count before their order is final. Counts stay cached across both policies.
   const entriesByStatsKey = useRef<ReadonlyMap<string, EnvironmentPullRequestEntry>>(new Map());
   entriesByStatsKey.current = new Map(
     groups.flatMap((group) =>
@@ -1424,9 +1356,6 @@ function PullRequestsRouteView() {
   const shownCount = displayGroups.reduce((count, group) => count + group.entries.length, 0);
   const [hosts, setHosts] = useState<PullRequestListResult["providers"]>([]);
   useEffect(() => {
-    // Only from an answer to these filters. Rows carried over from the previous ones bring the
-    // host summaries of the question they answered, and coming back from one host to all of them
-    // would take the switcher's other hosts out of it on the strength of the narrowed answer.
     if (answered === null) return;
     setHosts((previous) =>
       search.host === undefined || previous.length === 0 ? answered.providers : previous,
@@ -1876,8 +1805,6 @@ function PullRequestsRouteView() {
       onHost={(host) => updateListScope({ host })}
       server={scopedEnvironmentId ?? undefined}
       serverOptions={serverMenuOptions}
-      // Narrowing to one server drops a project scope belonging to another, which would
-      // otherwise narrow the list to nothing with no visible filter to explain it.
       onServer={(server) => updateListScope({ environmentId: server, projectId: undefined })}
       projects={scopedProjects}
       projectId={scopedProjectId}
@@ -1920,9 +1847,7 @@ function PullRequestsRouteView() {
     titlebarControls:
       // While the panel is closed the strip lives inside the header: a no-drag
       // descendant beats the header's desktop drag-region, where a floating
-      // sibling loses (app-region hit-testing ignores z-index). While the
-      // floating strip crosses the header during motion, the narrow extension
-      // keeps that overlap non-draggable without moving the toggle.
+      // sibling loses (app-region hit-testing ignores z-index).
       pullRequestsSupported ? (
         rightPanelPresent ? (
           <span
@@ -1973,7 +1898,6 @@ function PullRequestsRouteView() {
     selectSurfaceInUrl(null);
   };
 
-  // This page has no ChatView, so it handles the shared panel shortcuts itself.
   const copyPullRequestFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (!openPanelPullRequestUrl) return;
     event.preventDefault();
@@ -2023,7 +1947,6 @@ function PullRequestsRouteView() {
       if (command === "rightPanel.toggleMaximized") toggleRightPanelMaximizedFromShortcut(event);
       if (command === "thread.copyReference") copyPullRequestFromShortcut(event);
     };
-    // Let panel shortcuts consume Escape before page navigation at window.
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [keybindings]);
@@ -2122,8 +2045,6 @@ function PullRequestsRouteView() {
                 ) ?? null
               }
               refreshToken={detailRefreshToken}
-              // Host actions can change both readiness and diff size, so refresh the counts
-              // alongside the list. The panel already refreshes itself after each action.
               onActed={(action, phase = "done") => {
                 // From every row held, not the ones on screen: a pull request closed from an open
                 // list has left the screen, and reopening it has to find it anyway.
@@ -2264,7 +2185,6 @@ function ExpandableSearch({
   searchValue: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Bumped to pull focus into the input while it is already showing — the Mod+F path. */
   focusToken: number;
   /**
    * An unmount fires no blur, which is the point: whoever unmounted this can still see the reader
@@ -2367,16 +2287,11 @@ function PullRequestsColumn({
   }, []);
   // Typing into the topbar search narrows the list, and a short enough list un-scrolls the
   // page — which dissolves the condensed topbar and unmounts the very input being typed in.
-  // The two inputs are one search to the reader, so the focus follows the value into the
-  // in-flow bar, caret at the end, and the sentence continues.
   const topbarSearchFocusedRef = useRef(false);
   const inFlowSearchRef = useRef<HTMLDivElement | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchFocusToken, setSearchFocusToken] = useState(0);
   const searchExpanded = searchOpen || searchValue.length > 0;
-  // Mod+F belongs to this page's own search: the desktop shell binds no find-in-page, so the
-  // shortcut would otherwise do nothing. Condensed, it unfolds the topbar search; at the top,
-  // it focuses the in-flow bar and selects the query the way a find field would.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;

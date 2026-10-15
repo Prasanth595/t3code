@@ -112,13 +112,10 @@ export const T3ProjectFile = Schema.Struct({
 export type T3ProjectFile = typeof T3ProjectFile.Type;
 
 /**
- * Settings a repository can also declare in t3.json. A key here must be
- * nullable on `ServerSettings` (null means inherit) so both the project
- * override and the environment value can defer to the file; `field` names
- * the t3.json field carrying the same value and `builtIn` is what applies
- * when every tier is unset. `resolveProjectSettings` walks project override,
- * environment value, file, built-in, so listing a key here is the whole
- * change for a new file-backed setting.
+ * A key here must be nullable on `ServerSettings` (null means inherit) so both
+ * the project override and the environment value can defer to the file; `field`
+ * names the t3.json field carrying the same value and `builtIn` is what applies
+ * when every tier is unset.
  */
 export const PROJECT_FILE_BACKED_SETTINGS = {
   defaultThreadEnvMode: { field: "defaultThreadEnvMode", builtIn: "local" },

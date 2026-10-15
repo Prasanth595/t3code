@@ -8,10 +8,6 @@ const decodeJsonThreadTitle = Schema.decodeOption(
 );
 
 export function toJsonSchemaObject(schema: Schema.Top): unknown {
-  // The type side, so decoding defaults do not turn required fields into
-  // optional ones, and closed objects (`additionalProperties: false`):
-  // structured-output modes require both, and closed was the generator
-  // default before effect rc.113.
   const document = Schema.toJsonSchemaDocument(Schema.toType(schema), {
     onExcessProperty: "error",
   });
@@ -48,8 +44,6 @@ export function sanitizePrTitle(raw: string): string {
   return "Update project changes";
 }
 
-// Prompts ask for under 40 characters. This cap only stops a runaway model
-// from pushing a paragraph into the sidebar, header, and window title.
 const MAX_THREAD_TITLE_CHARS = 120;
 
 export function sanitizeThreadTitle(raw: string): string {

@@ -102,7 +102,7 @@ export function AgentActivity(
   };
   // Past the stale date the system stops vouching for the content, so every
   // in-flight row degrades to "stale" rather than claiming an agent is still
-  // working. Terminal phases keep their own state.
+  // working.
   const activities: ReadonlyArray<AgentActivityRowProps> = environment.isStale
     ? props.activities.map((row) =>
         row.phase === "completed" || row.phase === "failed"
@@ -130,10 +130,6 @@ export function AgentActivity(
       ? phaseTint(failedRow.phase)
       : tint;
 
-  // The outcome is derived here from the rows rather than taken from the server
-  // subtitle (which keys off the newest terminal row): every presentation —
-  // header text, tint, count slots, minimal glyph — must agree, and a failure
-  // anywhere should dominate a newer success.
   const allDone = props.activeCount === 0;
   const doneLabel = failedRow ? "Failed" : "Done";
   const outcomeLabel = failedRow ? "Agent work failed" : "Agent work completed";
@@ -206,9 +202,7 @@ export function AgentActivity(
       {/* No layoutPriority and no frame on the project: two bare texts take
           their ideal width when it fits and shrink proportionally only when it
           doesn't — so short rows never truncate, and long title + long project
-          truncate together. (A maxWidth frame is greedy and reserved its full
-          width even for short names; layoutPriority let the project starve the
-          title.) */}
+          truncate together. */}
       <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}>
         {row.projectTitle}
       </Text>
@@ -228,8 +222,7 @@ export function AgentActivity(
   // Image views only honor `resizable` directly (frame/foregroundStyle are
   // dropped), so we size it via a container frame the resizable image fills and
   // tint it through the container's foreground style, which the template image
-  // inherits. The 3:2 frame matches the glyph's aspect ratio so it never
-  // distorts.
+  // inherits.
   const renderLogo = (height: number, color: Foreground) => (
     <HStack modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color)]}>
       <Image assetName="T3Mark" modifiers={[resizable()]} />
@@ -344,9 +337,6 @@ export function AgentActivity(
         </Text>
       </HStack>
     ),
-    // No center content: the phase glyphs + statuses in expandedBottom already
-    // carry the attention signal, and the expanded island's height budget is
-    // tight enough that a summary line there pushed the third row off.
     expandedCenter: null,
     expandedTrailing: null,
     expandedBottom: (

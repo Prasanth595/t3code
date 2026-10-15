@@ -7,10 +7,6 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 
-/**
- * Kept minimal so the timeline can hold a content-stable snapshot: run status/timestamps churn on
- * every stream event, but these fields only change when a run is added.
- */
 export type HandoffTimelineRun = Pick<
   OrchestrationV2Run,
   "id" | "ordinal" | "providerInstanceId" | "modelSelection"
@@ -32,8 +28,7 @@ export function resolvePendingHandoff(
   const needsHandoff =
     from.instanceId === selection.instanceId
       ? from.model !== selection.model && target?.requiresNewThreadForModelChange === true
-      : // Accounts sharing a continuation group resume the same native thread.
-        source?.continuation?.groupKey === undefined ||
+      : source?.continuation?.groupKey === undefined ||
         source.driver !== target?.driver ||
         source.continuation.groupKey !== target.continuation?.groupKey;
   return needsHandoff ? { from: [from], to: selection } : null;
@@ -46,9 +41,6 @@ export function resolveHandoffEndpoints(
   >,
   runs: ReadonlyArray<HandoffTimelineRun>,
 ) {
-  // Items persisted before models were stamped only carry instance ids;
-  // recover the models from the thread's runs (the handoff's own run is
-  // the target, the newest earlier run per source instance is the origin).
   const handoffRun = item.runId === null ? undefined : runs.find((run) => run.id === item.runId);
   const toModel =
     item.toModel ??

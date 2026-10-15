@@ -15,10 +15,6 @@ import * as GitCafeHosts from "./gitCafeHosts.ts";
 const NO_REDIRECT: RequestInit = { redirect: "manual" };
 const TIMEOUT = Duration.seconds(30);
 
-/**
- * Why a request failed, as far as a caller needs to act on it: a missing CLI or refused token
- * disables the provider, a limit pauses the host, and the rest belong to the one request.
- */
 export const GitCafeApiFailure = Schema.Literals([
   "missing-tool",
   "unauthenticated",
@@ -44,7 +40,6 @@ export interface GitCafeApiRequest {
   readonly host: string;
   readonly operation: string;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  /** Below `/api`, query string included, e.g. `/repos/owner/repo/pulls/7`. */
   readonly path: string;
   readonly body?: unknown;
 }
@@ -56,7 +51,6 @@ export class GitCafeApi extends Context.Service<
   }
 >()("@t3tools/source-control-gitcafe/server/GitCafeApi") {}
 
-/** GitCafe's RFC 7807 error body, e.g. `{"type":"https://cafe.sh/errors/not-found",...}`. */
 const decodeProblem = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({

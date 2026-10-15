@@ -1,7 +1,6 @@
 // @effect-diagnostics globalTimers:off - Display timing for React hooks, outside an Effect runtime.
 
 export const STATUS_SHOW_DELAY_MS = 400;
-/** How long a shown status stays up, so it cannot flash at the show delay. */
 export const STATUS_MIN_VISIBLE_MS = 400;
 
 export interface ShownStatus<A> {
@@ -10,9 +9,7 @@ export interface ShownStatus<A> {
 }
 
 export interface DelayedStatus<A> {
-  /** Reports the real status for `key`. A new key drops the shown status at once. */
   readonly update: (key: string, value: A | null) => void;
-  /** Cancels pending timers. A later `update` starts again from the real status. */
   readonly dispose: () => void;
 }
 
@@ -35,7 +32,6 @@ export function createDelayedStatus<A>(
     shown = null;
     onChange(null);
   };
-  // Every shown value, including a new label, gets the full minimum visible time.
   const show = (value: A) => {
     shown = value;
     onChange({ key, value });

@@ -37,7 +37,6 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         mcpSession: undefined,
         extensionPath: undefined,
         ephemeral: true,
-        // No user is present to answer a text-generation extension dialog.
         disableExtensions: true,
         // Background naming/content helpers must never mutate the workspace.
         disableTools: true,

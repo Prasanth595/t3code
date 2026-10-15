@@ -16,7 +16,6 @@ type ThreadPullRequestKeySource = ThreadPullRequestKey & {
   readonly url?: string;
 };
 
-/** Normalize stored links, recovering Forgejo HTTP ports from old links' URLs. */
 export function normalizeThreadPullRequestKey(
   key: ThreadPullRequestKeySource,
 ): ThreadPullRequestKey {
@@ -37,7 +36,6 @@ export function normalizeThreadPullRequestKey(
   };
 }
 
-/** Legacy Azure selectors omit the organization and project; recover those from the PR URL. */
 export function legacyThreadPullRequestKey(
   linked: Pick<ThreadLinkedPullRequest, "repository" | "number" | "url">,
   fallbackHost?: string,
@@ -64,7 +62,6 @@ export function legacyThreadPullRequestKey(
   };
 }
 
-/** Identity comparison for links: host-level, case-insensitive on host and repository. */
 export function threadPullRequestKeysEqual(
   left: ThreadPullRequestKeySource,
   right: ThreadPullRequestKeySource,
@@ -77,7 +74,7 @@ export function threadPullRequestKeyOf(key: ThreadPullRequestKeySource): string 
   return `${normalized.host}/${normalized.repository}#${normalized.number}`;
 }
 
-/** Links a user should see. Tombstoned stack members stay in the array only so the
+/** Tombstoned stack members stay in the array only so the
  * sync reactor does not re-add them. */
 export function visibleThreadPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
@@ -86,8 +83,6 @@ export function visibleThreadPullRequests(
 }
 
 function isOpen(link: ThreadPullRequestLink): boolean {
-  // Unsynced links are treated as open: they were just linked, and hiding them
-  // behind a terminal PR until the first sync would make the link look lost.
   return link.snapshot === null || link.snapshot.state === "open";
 }
 
@@ -105,10 +100,6 @@ export type ThreadCurrentPullRequest =
       readonly top: ThreadPullRequestLink;
     };
 
-/**
- * Prefer open work and the highest open layer within a chain. A completed chain still
- * points at its top; unrelated terminal links use the most recently updated request.
- */
 export function resolveThreadCurrentPullRequest(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ThreadCurrentPullRequest | null {
@@ -148,14 +139,12 @@ export function resolveThreadCurrentPullRequestLink(
   return current.kind === "single" ? current.link : current.top;
 }
 
-/** Legacy clients can only route links belonging to the thread's own repository. */
 export function legacyLinkedPullRequestOf(
   links: ReadonlyArray<ThreadPullRequestLink>,
   projectId: ThreadLinkedPullRequest["projectId"],
   identity: RepositoryIdentity | null | undefined,
 ): ThreadLinkedPullRequest | null {
   if (!identity) return null;
-  // A local-path remote has no host segment and no provider, so there is no host to match.
   const host = pullRequestHostOf(identity, identity.provider as SourceControlProviderKind);
   if (typeof host !== "string") return null;
   const repository = sourceControlRepositorySelector(identity);
@@ -179,9 +168,7 @@ export function legacyLinkedPullRequestOf(
               parsed.authority === remote.host && parsed.repository === repository.toLowerCase()
             );
           }
-        } catch {
-          // SSH web ports are resolved by the provider's configured login.
-        }
+        } catch {}
         return parsed.host === host && parsed.repository === repository.toLowerCase();
       }
       return (
@@ -201,15 +188,9 @@ export function legacyLinkedPullRequestOf(
 
 export interface ThreadPullRequestChain {
   readonly kind: "native" | "derived";
-  /** Bottom to top. */
   readonly layers: ReadonlyArray<ThreadPullRequestLink>;
 }
 
-/**
- * Groups a thread's links into stacks. Native stacks come from the host and win; the rest
- * are chained by matching one link's base branch to another's head branch within the same
- * repository. A link that chains to nothing is a one-layer chain.
- */
 export function resolveThreadPullRequestChains(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ReadonlyArray<ThreadPullRequestChain> {
@@ -238,7 +219,6 @@ export function resolveThreadPullRequestChains(
     const key = normalizeThreadPullRequestKey(link);
     return `${key.host}/${key.repository}:${branch}`;
   };
-  // Reused head names cannot identify a parent unambiguously.
   const byHead = new Map<string, ThreadPullRequestLink | null>();
   for (const link of remaining) {
     if (link.snapshot === null) continue;
@@ -265,7 +245,6 @@ export function resolveThreadPullRequestChains(
     }
     if (layers.length > 0) chains.push({ kind: "derived", layers });
   }
-  // Cycles have no top. Keep those links visible without inventing a stack order.
   for (const link of remaining) {
     if (!placed.has(threadPullRequestKeyOf(link))) {
       chains.push({ kind: "derived", layers: [link] });

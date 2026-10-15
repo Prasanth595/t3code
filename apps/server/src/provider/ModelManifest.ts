@@ -61,10 +61,6 @@ const ManifestProviderCatalog = Schema.Struct({
   models: Schema.Array(ManifestProviderModel),
 });
 
-/**
- * `version` gates breaking schema changes. Provider catalogs are additive so
- * clients that only understand `currentModels` keep accepting this v1 file.
- */
 const ModelManifestEnvelopeSchema = Schema.Struct({
   version: Schema.Literal(1),
   /**
@@ -169,14 +165,11 @@ export const encodeManifestCache = Schema.encodeEffect(
 export class ModelManifest extends Context.Service<
   ModelManifest,
   {
-    /** Manifest already in memory (disk cache or bundle); never fetches.
-     * Snapshot classification reads this, so it never waits on the network. */
+    /**  Snapshot classification reads this, so it never waits on the network. */
     readonly current: Effect.Effect<ModelManifestData>;
-    /** Manifest after a TTL-gated remote refresh; never fails. */
     readonly refresh: Effect.Effect<ModelManifestData>;
-    /** Explicit refresh bypasses freshness and retry timers, retaining last-good data. */
     readonly forceRefresh: Effect.Effect<ModelManifestData>;
-    /** Forks `refresh` into the service's own scope. Drivers call this from
+    /** Drivers call this from
      * provider checks: the fetch is process-shared state, so it must survive
      * the teardown of whichever instance happened to trigger it. */
     readonly refreshInBackground: Effect.Effect<void>;
@@ -237,10 +230,6 @@ export const make = Effect.gen(function* () {
     if (!force && isWithin(fetchedAtMs, MANIFEST_TTL_MS)) return manifest;
     if (!force && isWithin(lastAttemptMs, MANIFEST_RETRY_MS)) return manifest;
 
-    // The same switch that gates provider CLI update checks. It stops network
-    // fetches only: a manifest already cached on disk from an earlier fetch
-    // stays in effect, since the setting is about phoning home, not about
-    // discarding data the server already holds.
     const settings = yield* settingsService.getSettings.pipe(
       Effect.catchCause(() => Effect.succeed(null)),
     );

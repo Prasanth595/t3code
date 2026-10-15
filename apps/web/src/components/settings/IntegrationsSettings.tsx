@@ -122,7 +122,6 @@ type BrowserProfileDataBridge = Pick<
   "clearCookies" | "clearCache"
 >;
 
-/** Environments that host server-runtime tabs keep their own copy of each profile. */
 export interface ServerProfileData {
   readonly environmentIds: ReadonlyArray<EnvironmentId>;
   readonly clear: (environmentId: EnvironmentId, profileId: string) => Promise<void>;
@@ -930,15 +929,6 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
-/**
- * Built-ins render without a rename field: they are synthesized rather than
- * stored, so there is nothing to rename and removing them would strand every
- * tab that opened under them.
- *
- * Sources are listed lazily on open: detection touches the other browser's
- * files, and the answer changes while the app is running (quitting the browser
- * clears `browserRunning`), so a value cached at mount would go stale.
- */
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
@@ -983,10 +973,6 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const profileWritesDisabled = disabled || !settingsHydrated;
 
   const profiles = resolveBrowserProfiles(userProfiles);
-  // Incognito is deliberately not a row — it holds nothing to manage — so the
-  // default has to resolve against the list that renders. A stored
-  // `browserDefaultProfileId` of "incognito" would otherwise leave the section
-  // with no Default badge at all.
   const listedProfiles = profiles.filter((profile) => profile.kind !== "incognito");
   const resolvedDefaultId =
     findBrowserProfile(listedProfiles, defaultProfileId)?.id ?? DEFAULT_BROWSER_PROFILE_ID;
@@ -1050,8 +1036,6 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     }
     setProfileRemovalError(null);
     setProfileRemovalInFlight(true);
-    // Drop the partition's data too, otherwise a removed profile's cookies
-    // stay on disk with nothing in the UI pointing at them.
     try {
       await clearBrowserProfileData(
         previewBridge,
@@ -1282,10 +1266,6 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             >
               <span className="flex min-w-0 flex-1 items-center gap-2">
                 {builtIn ? (
-                  // Dimmed here rather than on the table: a wrapper-level dim
-                  // stacks with the rename field's and the row menu button's
-                  // own, landing them near 0.41 while every other disabled
-                  // control in the block sits at 0.64.
                   <span
                     className={cn(
                       "truncate text-sm text-foreground",
@@ -1339,7 +1319,6 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                   <MenuItem
                     disabled={!settingsHydrated || !removalAvailable}
                     onClick={() => {
-                      // Clearing a server copy closes its open tabs, so it asks first.
                       if (serverProfileData.environmentIds.length > 0) {
                         setProfilePendingClear(profile);
                       } else clearProfileData(profile.id, profile.name);
@@ -1502,8 +1481,6 @@ export function IntegrationsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      {/* Server-authoritative agent access is scoped by the header selection;
-          the preview defaults below are device-local and ignore it. */}
       <ProjectDefaultsSettings category="integrations" />
       <SettingsSection id="browser" title="Browser">
         {previewDefaultsDisabled ? (

@@ -148,7 +148,6 @@ export type TimelineEntry = (
       readonly kind: "mcp-app";
       readonly createdAt: string;
       readonly runId: RunId | null;
-      /** The thread and item that own the app; a fork's inherited app is its source's. */
       readonly sourceThreadId: ThreadId;
       readonly itemId: TurnItemId;
       readonly revision: string;
@@ -180,9 +179,6 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   );
 }
 
-/** Severe failures keep the red treatment ordinary tool failures lost: provider
- *  runtime errors mean the turn or a core side effect broke, not that a
- *  command exited nonzero. */
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
   return entry.itemType === "error";
 }
@@ -813,7 +809,6 @@ export function selectMessageImageResources(
     : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
 }
 
-/** Handoffs need server URLs even while their message rows are unmounted. */
 export function selectHandoffImageResources(
   messages: ReadonlyArray<Pick<ChatMessage, "id" | "role" | "attachments">> | undefined,
   handoffs: Readonly<Record<string, ReadonlyArray<string>>>,
@@ -831,7 +826,6 @@ export function selectHandoffImageResources(
     : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
 }
 
-/** Own one mapper per preview stage. Immutable messages retain unchanged preview objects. */
 export function createMessageAttachmentPreviewProjector() {
   const attachmentsBySource = new WeakMap<
     ReadonlyArray<ChatAttachment>,
@@ -879,7 +873,6 @@ export function createMessageAttachmentPreviewProjector() {
   };
 }
 
-/** Text and update time do not change a streaming assistant message's row structure. */
 export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMessage): boolean {
   if (
     previous.role !== "assistant" ||
@@ -894,7 +887,6 @@ export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMe
   return shallow(previousMetadata, nextMetadata);
 }
 
-/** Keep provenance and execution metadata in the rebuild boundary, including inspector data. */
 export function isStreamingTurnItemTextUpdate(
   previous: OrchestrationV2ProjectedTurnItem,
   next: OrchestrationV2ProjectedTurnItem,
@@ -993,7 +985,6 @@ function reuseTimelineEntries(
   return entries;
 }
 
-/** Reuse immutable entries during streaming without reordering the canonical v2 sequence. */
 export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   input: TimelineEntriesInput,
   previous: TimelineEntriesProjection | null = null,
@@ -1004,8 +995,6 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   if (previous === null || !shallow(input.attachmentUrlById, previous.input.attachmentUrlById)) {
     return { input, entries };
   }
-  // Tool output and lifecycle changes rebuild grouping, but unchanged message
-  // objects and previews still let memoized history rows stay mounted.
   const previousMessages = new Map(
     previous.entries.flatMap((entry) =>
       entry.kind === "message" ? [[entry.id, entry] as const] : [],
@@ -1071,8 +1060,6 @@ export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase 
 /**
  * The server settles a preparing or starting run on `run.interrupt`
  * (Orchestrator.dispatchRunInterrupt), so Stop must not wait for the phase to reach "running".
- * A queued thread offers Stop only while an earlier run is still interruptible; Stop targets
- * that run.
  */
 export function deriveCanInterruptRunningThread(
   hasActiveThread: boolean,

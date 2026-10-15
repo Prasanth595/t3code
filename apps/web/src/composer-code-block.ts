@@ -5,10 +5,6 @@ import type { EditorView } from "@tiptap/pm/view";
 
 import { isClosingFence, parseOpeningFence, serializeSelection } from "~/composer-rich-text-doc";
 
-/**
- * Spaces rather than a tab: the fence round-trips through Markdown on its way to the agent, and a
- * literal tab there renders at whatever width the reader happens to use.
- */
 export const CODE_BLOCK_INDENT = "  ";
 
 export function leadingWhitespace(line: string): string {
@@ -24,8 +20,6 @@ export function outdentLine(line: string): string {
 
 export function indentLines(lines: ReadonlyArray<string>, direction: "in" | "out"): string[] {
   return lines.map((line) => {
-    // Indenting a blank line would leave trailing whitespace behind on a line
-    // the user cannot see the caret move on, so leave it be.
     if (direction === "in") return line.length === 0 ? line : `${CODE_BLOCK_INDENT}${line}`;
     return outdentLine(line);
   });
@@ -49,10 +43,6 @@ function codeBlockRange(
   return { from, to: from + parent.content.size, text: parent.textContent };
 }
 
-/**
- * ProseMirror's default splits the text but starts the new line at column zero, which means
- * re-typing the indent on every line of a nested block.
- */
 export function indentedNewlineInCodeBlock(
   state: EditorState,
   dispatch?: (transaction: Transaction) => void,
@@ -65,8 +55,6 @@ export function indentedNewlineInCodeBlock(
   const currentLine = beforeCursor.slice(beforeCursor.lastIndexOf("\n") + 1);
   const indent = leadingWhitespace(currentLine);
 
-  // Nothing to carry, so let the default newline handle it and keep this path
-  // out of the undo history.
   if (indent.length === 0) return false;
 
   if (dispatch) {
@@ -79,11 +67,6 @@ export function indentedNewlineInCodeBlock(
   return true;
 }
 
-/**
- * Without this a fence at the end of the prompt is a trap: Enter only ever adds another line and
- * there is no way back to prose. A line holding only the indentation Enter carried forward counts
- * as blank, and is removed with the rest.
- */
 export function exitCodeBlockOnTrailingBlankLines(view: EditorView): boolean {
   const { $from, empty } = view.state.selection;
   if (!empty || $from.parent.type.spec.code !== true) return false;
@@ -100,12 +83,6 @@ export function exitCodeBlockOnTrailingBlankLines(view: EditorView): boolean {
   return exitCode(view.state, (tr) => view.dispatch(tr.scrollIntoView()));
 }
 
-/**
- * Enter at the end of a line that would close the fence, such as ```` ``` ````
- * typed under the code, ends the block there. That line becomes the closing
- * fence, and any lines after it continue as paragraphs after a new empty one,
- * which is how the stored draft reads them.
- */
 export function exitCodeBlockOnClosingFence(
   state: EditorState,
   dispatch?: (transaction: Transaction) => void,
@@ -142,11 +119,6 @@ export function exitCodeBlockOnClosingFence(
   return true;
 }
 
-/**
- * Tab and Shift+Tab inside a fence. A collapsed cursor indents at the caret so
- * Tab works mid-line the way typing does; any selection spanning text indents
- * the whole lines it touches, which is what makes re-indenting a block possible.
- */
 export function indentCodeBlock(
   state: EditorState,
   direction: "in" | "out",
@@ -168,7 +140,6 @@ export function indentCodeBlock(
   }
 
   const lineStart = block.text.lastIndexOf("\n", Math.max(0, startOffset - 1)) + 1;
-  // A selection ending at the start of a line does not touch that line.
   const newlineAfter = block.text.indexOf("\n", Math.max(startOffset, endOffset - 1));
   const lineEnd = newlineAfter === -1 ? block.text.length : newlineAfter;
 
@@ -182,8 +153,6 @@ export function indentCodeBlock(
       block.from + lineStart,
       block.from + lineEnd,
     );
-    // Keep the same lines selected after the shift, so repeated Tab presses
-    // keep indenting the block rather than collapsing the selection.
     const firstDelta = (nextLines[0]?.length ?? 0) - (originalLines[0]?.length ?? 0);
     const totalDelta = nextLines.join("\n").length - originalLines.join("\n").length;
     const nextFrom = Math.max(block.from + lineStart, from + firstDelta);
@@ -207,9 +176,6 @@ export function convertCodeFenceOnEnter(
   // to write a fence into, so one created inside them would vanish.
   if (!empty || $from.parent.type.name !== "paragraph" || $from.depth !== 1) return false;
   if ($from.parentOffset !== $from.parent.content.size) return false;
-  // The parser's own grammar, read from the line's stored source, so a line
-  // Enter turns into a fence is exactly one the stored draft reads back as a
-  // fence, info string and all, including any chip's source in it.
   const opening = parseOpeningFence(serializeSelection(state.doc, $from.start(), $from.end()));
   const codeBlock = state.schema.nodes.codeBlock;
   if (!opening || !codeBlock) return false;

@@ -1,9 +1,7 @@
 /**
- * Framing follows Pi's spec: LF-delimited only, with a trailing `\r`
- * stripped. Lines are split manually (never with `readline`, which also
- * splits on U+2028/U+2029 and would corrupt frames). Records that fail to
- * parse as JSON are dropped with a debug log rather than failing the
- * transport, so a chatty extension cannot take the session down.
+ * Framing follows Pi's spec: LF-delimited only, with a trailing `\r` stripped.
+ * Lines are split manually (never with `readline`, which also splits on
+ * U+2028/U+2029 and would corrupt frames).
  */
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -64,11 +62,6 @@ export function piRecordNumber(input: unknown, key: string): number | undefined 
   return Predicate.isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-/**
- * Splits a `provider/model` slug into the two fields `set_model` expects.
- * Returns null for slugs without a usable separator so callers can reject the
- * selection instead of silently leaving Pi on its configured default.
- */
 export function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
   const separator = slug.indexOf("/");
   if (separator <= 0 || separator === slug.length - 1) return null;
@@ -83,29 +76,13 @@ export interface PiRpcSpawnOptions {
 }
 
 export interface PiRpcConnection {
-  /** Fire-and-forget write (used for `extension_ui_response`). */
   readonly send: (record: PiRpcRecord) => Effect.Effect<void, PiRpcError>;
-  /**
-   * Correlated request: assigns an `id`, waits for the matching response
-   * record, and returns its `data` (undefined when the command carries none).
-   * Fails on `success: false`, transport death, or timeout.
-   */
   readonly request: (
     record: PiRpcRecord,
     timeoutMs?: number,
   ) => Effect.Effect<unknown, PiRpcError | PiRpcTimeoutError>;
-  /**
-   * Session events (every non-response stdout record) in arrival order. The
-   * full queue is exposed so consumers can append order-preserving synthetic
-   * records of their own (see PiAdapterV2's settle probe).
-   */
   readonly events: Queue.Queue<PiRpcRecord, PiRpcError>;
   readonly exited: Effect.Effect<number, PiRpcError>;
-  /**
-   * Used by Stop-with-restart when the process may be wedged and `abort` cannot
-   * be trusted to land. The transport fails and the session manager respawns a
-   * fresh process on the next turn.
-   */
   readonly terminate: Effect.Effect<void>;
 }
 
@@ -157,10 +134,6 @@ const encodeJsonLine = Schema.encodeSync(UnknownFromJsonString);
 
 const PI_ERROR_DETAIL_MAX_CHARS = 200;
 
-/**
- * The untruncated value stays on the error's `cause`, so `message` never
- * carries unbounded remote text while logs keep something diagnostic.
- */
 function summarizePiError(error: unknown): string {
   const text = typeof error === "string" ? error : JSON.stringify(error);
   if (text === undefined) return "unknown error";
@@ -170,10 +143,8 @@ function summarizePiError(error: unknown): string {
 }
 
 /**
- * Stdout closure is not enough to diagnose an early crash: Pi 0.84+ can exit
- * 1 on import before writing any protocol line. The numeric exit code is
- * sanitized; stderr stays out of public details because it can carry
- * credentials or prompt text.
+ * Stdout closure is not enough to diagnose an early crash: Pi 0.84+ can exit 1
+ * on import before writing any protocol line.
  */
 function describePiStdoutClosure(exitCode: number | undefined): string {
   if (exitCode === undefined || !Number.isFinite(exitCode)) {
@@ -241,7 +212,6 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     }
   };
 
-  /** Signal 0 probes liveness without delivering anything. */
   const hasExited = (): boolean => {
     if (childExited) return true;
     try {
@@ -289,8 +259,6 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
         pendingRequests.delete(key);
         yield* Deferred.fail(pending.deferred, error);
       }
-      // Closing `outgoing` is what makes `send` non-racy: once the writer is
-      // gone every later offer is refused rather than silently buffered.
       yield* Queue.fail(outgoing, error);
       yield* Queue.fail(events, error);
     });
@@ -424,9 +392,6 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
         outgoing,
         new TextEncoder().encode(`${encodeJsonLine(record)}\n`),
       );
-      // A refused offer means `failTransport` already closed the queue, so the
-      // write can never land; surface the transport error instead of
-      // reporting a success the caller cannot rely on.
       if (!accepted) {
         return yield* Deferred.await(transportDown);
       }
@@ -443,10 +408,6 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       yield* send({ ...record, id }).pipe(
         Effect.tapError(() => Effect.sync(() => pendingRequests.delete(id))),
       );
-      // Raced against the transport: a death that lands after this request was
-      // registered (or between `send`'s check and its enqueue) would otherwise
-      // leave the caller waiting out the full timeout for a reply that is
-      // never coming.
       return yield* Effect.raceFirst(Deferred.await(deferred), Deferred.await(transportDown)).pipe(
         Effect.timeoutOrElse({
           duration: Duration.millis(timeoutMs),

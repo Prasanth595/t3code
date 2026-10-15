@@ -62,20 +62,12 @@ const WEBHOOK_MAX_QUEUED_PER_TASK = 20;
 /** Accepted deliveries per task per minute, enforced here as well as on the relay because the tunnel hostname is public too. */
 const WEBHOOK_RATE_LIMIT_PER_MINUTE = 60;
 
-/**
- * Where a webhook task's public URL points: `${relayHookBaseUrl}/${taskId}/${token}`.
- * Null when the environment has no managed tunnel on T3 Connect; clients then show the path.
- */
 interface WebhookOrigin {
   readonly relayHookBaseUrl: string | null;
 }
 
 const ENDPOINT_KEY = /^[0-9a-f]{16}$/;
 
-/**
- * The relay finds the environment by its managed tunnel's key (the tunnel
- * name's last segment), so the URL never reveals the environment id.
- */
 export function relayHookBaseUrl(input: {
   readonly relayUrl: string;
   readonly tunnelName: string | undefined;
@@ -108,14 +100,10 @@ export interface WebhookTriggerRequest extends WebhookRequest {
   readonly hookId: string;
   readonly token: string;
   readonly body: Uint8Array;
-  /** Set by T3 Connect; the same id is never dispatched twice. */
   readonly relayDeliveryId?: string;
   readonly receivedAt?: string;
 }
 
-/**
- * Sent back to the relay as `x-t3-hook-outcome`; never request contents.
- */
 export type WebhookDeliveryOutcome =
   | "accepted"
   | "duplicate"
@@ -207,7 +195,6 @@ export class ScheduledTaskService extends Context.Service<
   ScheduledTaskService,
   {
     readonly list: () => Effect.Effect<ScheduledTaskListResult, ScheduledTaskError>;
-    /** Emits the full task list on subscribe and again after every change (CRUD, run transitions, reschedules). */
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
@@ -300,8 +287,6 @@ const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
     return yield* decodeTask({
-      // The stored id decodes through the task schema so a corrupt value fails
-      // as a typed parse error, not a `ScheduledTaskId.make` defect.
       id: row.task_id,
       title: row.title,
       prompt: row.prompt,
@@ -326,8 +311,6 @@ const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =
     });
   }).pipe(
     Effect.mapError((cause) => {
-      // The typed diagnostic can only carry an id that itself decodes; a
-      // corrupt stored id is omitted rather than re-thrown as a defect.
       const taskId = decodeTaskId(row.task_id);
       return taskError("Could not decode schedule task row.", {
         ...(Option.isSome(taskId) ? { taskId: taskId.value } : {}),
@@ -381,8 +364,6 @@ export const layer = Layer.effect(
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
-    // Webhook deliveries for one task dispatch in arrival order rather than
-    // being dropped while an earlier delivery is still dispatching.
     const webhookPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
       new Map(),
     );
@@ -506,7 +487,6 @@ export const layer = Layer.effect(
       webhook: {
         readonly token: string | null;
         readonly secret: string | null;
-        /** False when the save carried no new secret, so a concurrent change survives. */
         readonly secretChanged: boolean;
       },
     ) =>
@@ -610,9 +590,6 @@ export const layer = Layer.effect(
           ),
         );
 
-    // Run-state transitions use targeted UPDATEs (never the full-row upsert) so
-    // a completing run cannot resurrect a deleted task or clobber concurrent
-    // edits to the task definition.
     const markRunning = (id: ScheduledTaskId, startedAtIso: string) =>
       sql<{ task_id: string }>`
         UPDATE scheduled_tasks
@@ -626,7 +603,6 @@ export const layer = Layer.effect(
         Effect.mapError((cause) =>
           taskError("Could not mark schedule task as running.", { taskId: id, cause }),
         ),
-        // A task deleted after the re-read must not be dispatched from the stale snapshot.
         Effect.flatMap((rows) =>
           rows.length > 0 ? Effect.void : taskError("Schedule task not found.", { taskId: id }),
         ),
@@ -664,9 +640,6 @@ export const layer = Layer.effect(
     const releaseStuckRun = (task: ScheduledTask, message: string) =>
       Effect.gen(function* () {
         const now = yield* localNow;
-        // Compute the next occurrence from the current row so a schedule
-        // edited while the run was in flight is honoured; fall back to the
-        // run's snapshot only if the re-read itself fails.
         const reread = yield* Effect.result(findTask(task.id));
         if (Result.isSuccess(reread) && reread.success === null) return;
         const source = Result.isSuccess(reread) && reread.success !== null ? reread.success : task;
@@ -726,8 +699,6 @@ export const layer = Layer.effect(
           }
           return task;
         }
-        // A next_run_at corrupted between the poll read and this re-read must
-        // not defect the poll; an unparseable value is treated as not due.
         const parsedNextRunAt =
           active.nextRunAt === null ? Option.none() : DateTime.make(active.nextRunAt);
         if (
@@ -762,9 +733,7 @@ export const layer = Layer.effect(
             : `${active.id}:webhook:${webhook.deliveryId}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
-        // Dispatch from the fresh row so prompt/model/binding edits made
-        // after the poll read are honoured. A webhook prompt was rendered
-        // from the row when the request arrived.
+        // A webhook prompt was rendered from the row when the request arrived.
         const prompt = webhook?.prompt ?? active.prompt;
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
@@ -801,7 +770,6 @@ export const layer = Layer.effect(
                   text: prompt,
                   attachments: [],
                   modelSelection: active.modelSelection,
-                  // Scheduled prompts must not interrupt tools in the bound thread.
                   mode: "queue",
                   createdBy: active.createdBy,
                   creationSource: active.creationSource,
@@ -812,8 +780,6 @@ export const layer = Layer.effect(
         const runSucceeded = result._tag === "Success";
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
-        // Re-read the task so the next run is computed from the schedule as it
-        // is *now* (the user may have edited or deleted it while we ran).
         const current = yield* findTask(task.id);
         const scheduleSource = current ?? task;
         const completed: ScheduledTask = {
@@ -852,8 +818,6 @@ export const layer = Layer.effect(
       );
     });
 
-    // A due fixed-time run that is long past its slot (server was off or
-    // asleep) is skipped and re-aimed at its next occurrence, not fired late.
     const rescheduleMissedRun = Effect.fn("ScheduledTaskService.rescheduleMissedRun")(function* (
       task: ScheduledTask,
       now: DateTime.DateTime,
@@ -902,11 +866,7 @@ export const layer = Layer.effect(
     });
 
     // Recover from a crash or hard shutdown mid-run: rows stuck in 'running'
-    // would otherwise be skipped by the due-task filter forever. The dispatch
-    // may already have gone out before the crash, so next_run_at must advance
-    // and run_count must count the attempt — otherwise the first poll after
-    // every restart re-fires the interrupted task (same rationale as
-    // releaseStuckRun).
+    // would otherwise be skipped by the due-task filter forever.
     yield* Effect.gen(function* () {
       const rows = yield* selectAllRows();
       const stuck = rows.filter((row) => row.last_run_status === "running");
@@ -929,9 +889,6 @@ export const layer = Layer.effect(
               `;
               return;
             }
-            // The schedule cannot be decoded, so the next occurrence cannot
-            // be computed — still release the row so it is not stuck in
-            // 'running' (the lenient poller skips it, so it cannot re-fire).
             yield* Effect.logWarning(
               "Recovering undecodable schedule task row without rescheduling",
               { taskId: row.task_id, cause: decoded.failure },
@@ -1346,8 +1303,6 @@ export const layer = Layer.effect(
         });
       });
 
-    // Detached from the request so the HTTP response does not wait for the
-    // run; scoped to the service so shutdown interrupts it.
     const serviceScope = yield* Effect.scope;
 
     const observeDelivery = (
@@ -1438,11 +1393,10 @@ export const layer = Layer.effect(
                 )}`
             : `delivery:relay:${request.relayDeliveryId}`,
         );
-        // A held request may already have reached this environment directly
-        // before a timeout; it runs once. Claimed in its own table, kept longer
-        // than the relay holds a request, because the delivery log is trimmed.
-        // A rate-limited delivery stays held on the relay, so it must give up
-        // its claim or the next pass would treat it as already delivered.
+        // Claimed in its own table, kept longer than the relay holds a request,
+        // because the delivery log is trimmed. A rate-limited delivery stays
+        // held on the relay, so it must give up its claim or the next pass
+        // would treat it as already delivered.
         const releaseClaim = <A>(result: A) =>
           request.relayDeliveryId === undefined
             ? Effect.succeed(result)
@@ -1472,7 +1426,6 @@ export const layer = Layer.effect(
                 yield* observe("duplicate");
                 return { _tag: "accepted" as const, deliveryId, outcome: "duplicate" as const };
               }
-              // Older claims can no longer be replayed by the relay.
               yield* sql`
                 DELETE FROM scheduled_task_webhook_relay_deliveries
                 WHERE seen_at < ${iso(DateTime.subtract(now, { hours: 48 }))}
@@ -1543,9 +1496,8 @@ export const layer = Layer.effect(
             }
 
             const rendered = renderWebhookPrompt(task.prompt, request);
-            // A provider refuses a turn this long, so it is not started. The
-            // delivery is not retryable, so the claim is kept. Providers trim
-            // the prompt before checking, so whitespace around it is free.
+            // Providers trim the prompt before checking, so whitespace around
+            // it is free.
             if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
               yield* log("dispatch_failed", {
                 signatureVerified: signature !== null,
@@ -1557,8 +1509,7 @@ export const layer = Layer.effect(
               return { _tag: "accepted" as const, deliveryId, outcome: "prompt_too_long" as const };
             }
             // Bound the deliveries one task holds, so steady traffic to a stuck
-            // task cannot pile up parked fibers. A refused request is not logged,
-            // so it cannot push real deliveries out of the log.
+            // task cannot pile up parked fibers.
             const queueKey = `${task.id}\u0000${task.createdAt}`;
             const queued = yield* Ref.modify(webhookQueued, (counts) => {
               const count = counts.get(queueKey) ?? 0;
@@ -1615,7 +1566,6 @@ export const layer = Layer.effect(
                 ),
               ),
               permit.withPermits(1),
-              // Its own trace: the request that triggered it has already been answered.
               Effect.withSpan("ScheduledTaskService.runWebhookDelivery", {
                 root: true,
                 attributes: {

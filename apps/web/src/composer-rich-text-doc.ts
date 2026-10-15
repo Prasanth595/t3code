@@ -24,7 +24,6 @@ import { collectInlineContextIds } from "~/lib/composerContextReferences";
 
 export type SkillMeta = { label: string; description: string | null };
 
-/** Outermost mark first, so closers mirror openers when nested. */
 const MARK_NESTING_ORDER: RichTextMark[] = ["strike", "bold", "italic", "code"];
 
 const MARK_TO_TIPTAP: Record<RichTextMark, string> = {
@@ -85,8 +84,7 @@ export const ComposerTaskListExtension = TaskList.extend({
 /**
  * Tiptap's Tab and Shift-Tab sink and lift an item without touching its
  * `indent`, so the stored draft keeps the old nesting and the next rebuild
- * undoes the move. The composer nests through its own Tab, which edits the
- * source the way plain mode does.
+ * undoes the move.
  */
 const LIST_NESTING_KEYS = ["Tab", "Shift-Tab"];
 
@@ -105,15 +103,6 @@ export const ComposerTaskItemExtension = TaskItem.extend({
   },
 }).configure({ nested: true });
 
-/**
- * Fenced code blocks keep their exact source delimiters so a fence round-trips
- * byte-identically: `fence` is the opening run of backticks or tildes,
- * `language` its info string, and `close` the closing newline and fence, or
- * the empty string when the fence was never closed.
- *
- * Neither delimiter owns a document character, so the caret can never land
- * inside a fence — the same deal as a checkbox marker.
- */
 export const ComposerCodeBlockExtension = CodeBlock.extend({
   addAttributes() {
     return {
@@ -161,9 +150,8 @@ function codeBlockSource(
   const language = typeof attrs.language === "string" ? attrs.language : "";
   let close = typeof attrs.close === "string" ? attrs.close : "";
   const content = node.textContent;
-  // Code holding a line that would close the fence, such as a pasted fence,
-  // is written inside a longer one, so the agent reads all of it as code. A
-  // parsed block never holds such a line, so its source stays byte-identical.
+  // Code holding a line that would close the fence, such as a pasted fence, is
+  // written inside a longer one, so the agent reads all of it as code.
   const longest = Math.max(
     0,
     ...content
@@ -198,8 +186,6 @@ const ComposerListItemExtension = ListItem.extend({
       Delete: () => deleteAcrossList(this.editor),
     };
   },
-  // The source marker rides on the item so the composer draws `3)` and a
-  // nested `7.` as written, rather than the browser own numbering.
   renderHTML({ node, HTMLAttributes }) {
     return ["li", mergeAttributes(HTMLAttributes, { "data-marker": node.attrs.marker }), 0];
   },
@@ -229,10 +215,6 @@ const ComposerBlockquoteExtension = Blockquote.extend({
   },
 });
 
-/**
- * A rule cannot hold the caret, so a document never ends in one: an empty
- * line follows it, which the draft does not write (see `isTrailingLineAfterRule`).
- */
 const ComposerHorizontalRuleExtension = HorizontalRule.extend({
   addAttributes() {
     return { ...this.parent?.(), source: { default: "---" } };
@@ -477,15 +459,11 @@ export function buildTiptapContent(
   }
   const styling = options?.styling ?? true;
   const blockSyntax = styling && (options?.blocks ?? true);
-  // Hide token source from the markdown parser, then restore the atoms with
-  // the marks of their surrounding text. Choose a sentinel absent from input.
   let sentinel = "\uFFFC";
   for (let codePoint = 0xe000; value.includes(sentinel); codePoint += 1) {
     sentinel = String.fromCodePoint(codePoint);
   }
   const atoms: InlineJson[] = [];
-  // Code fences hold no chips, so their lines put the original source back in
-  // place of the sentinel rather than building an atom for it.
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
   const text = splitPromptIntoComposerSegments(value.slice(literal.length))
@@ -534,8 +512,6 @@ export function buildTiptapContent(
 
   for (let index = 0; index < sourceLines.length; index += 1) {
     const line = sourceLines[index]!;
-    // The rest of the literal's line continues the text before the caret, so
-    // it cannot open a block.
     if (index === 0 && literal) {
       entries.push({
         line: { list: null, inline: [textJsonForSpan(literal, []), ...buildInline(line)] },
@@ -544,8 +520,6 @@ export function buildTiptapContent(
     }
     const opening = blockSyntax ? parseOpeningFence(line) : null;
     if (!opening) {
-      // A thematic break outranks a list: `- - -` and `* * *` are rules, and
-      // `***` on its own line is a rule rather than an empty bold span.
       if (blockSyntax && /^([-*_])(?:[ \t]*\1){2,}[ \t]*\r?$/.test(line)) {
         entries.push({ rule: line });
         continue;
@@ -778,8 +752,6 @@ function appendInlineRuns(
       children.push(child);
       return;
     }
-    // Separate boundary whitespace so delimiters can move past it without
-    // changing the document offsets or marks on the visible text.
     const text = child.text!;
     const start = text.length - text.trimStart().length;
     const end = Math.max(start, text.trimEnd().length);
@@ -789,8 +761,6 @@ function appendInlineRuns(
       offset = boundary;
     }
   });
-  // Emphasis cannot open or close next to whitespace. Retain a whitespace
-  // mark only when its range has visible content on both sides.
   for (const mark of MARK_NESTING_ORDER) {
     if (mark === "code") continue;
     for (const direction of [1, -1]) {
@@ -819,8 +789,6 @@ function appendInlineRuns(
       }
     }
   }
-  // Longer shared marks surround shorter ones. This keeps both nested
-  // formatting and formatting across chips inside a single delimiter pair.
   const markEnds = new Map<RichTextMark, number>();
   const orderedMarks: RichTextMark[][] = [];
   for (let index = children.length - 1; index >= 0; index -= 1) {
@@ -895,7 +863,6 @@ function appendInlineRuns(
     acc.collapsed += collapsedLen;
     acc.md += mdText.length;
   });
-  // Empty paragraphs have an editable position even though they emit no text.
   if (children.length === 0) {
     acc.runs.push({
       kind: "text",
@@ -922,8 +889,6 @@ const LIST_ITEM_NODE_NAMES = new Set(["taskItem", "listItem"]);
  */
 function alignListItemWithSiblings(tr: Transaction, itemType: string): void {
   const $pos = tr.selection.$from;
-  // A lift out of the list leaves the caret in a paragraph, possibly inside
-  // an item of another kind, which did not move.
   if ($pos.depth < 3 || $pos.node(-1).type.name !== itemType) return;
   const item = $pos.node(-1);
   const list = $pos.node(-2);
@@ -944,9 +909,6 @@ function alignListItemWithSiblings(tr: Transaction, itemType: string): void {
   }
 }
 
-/**
- * Only marker attributes change, so positions stay valid while walking.
- */
 function renumberFollowingItems(
   tr: Transaction,
   listPos: number,
@@ -973,7 +935,6 @@ export function splitOrLiftListItem(editor: Editor): boolean {
   const itemType = listItemTypeAt($from);
   if (!itemType) return false;
   const empty = $from.parent.content.size === 0;
-  // One transaction, so the split or lift and the realignment undo together.
   const move: Command = ({ commands, tr }) => {
     const moved =
       commands.splitListItem(
@@ -987,10 +948,6 @@ export function splitOrLiftListItem(editor: Editor): boolean {
   return editor.can().command(move) && editor.chain().command(move).run();
 }
 
-/**
- * A task list holds only tasks, so the bullet list splits around it into
- * sibling lists, which is also how the parser reads a change of list kind.
- */
 export function convertBulletItemToTask(
   tr: Transaction,
   from: number,
@@ -1022,7 +979,6 @@ export function convertBulletItemToTask(
   ];
   const listStart = $pos.before(-2);
   tr.replaceWith(listStart, listStart + list.nodeSize, lists);
-  // Into the task list, its item and its paragraph.
   const caret = listStart + (before.length > 0 ? lists[0]!.nodeSize : 0) + 3;
   tr.setSelection(TextSelection.create(tr.doc, caret));
 }
@@ -1048,8 +1004,7 @@ export function backspaceAcrossList(editor: Editor): boolean {
       return moved;
     };
     // Not `can()` first: a dry run of the lift skips the schema check, so it
-    // says yes to a task under a bullet, which has no list to lift into. Its
-    // text joins the line above instead.
+    // says yes to a task under a bullet, which has no list to lift into.
     return editor.chain().command(lift).run() || joinBackward(state, editor.view.dispatch);
   }
   const before = $from.depth === 1 ? $from.node(0).maybeChild($from.index(0) - 1) : null;
@@ -1061,9 +1016,7 @@ export function backspaceAcrossList(editor: Editor): boolean {
 
 /**
  * Tiptap's default would instead nest the next item, or a whole list, under
- * this one at its old indent. Before a fence, anywhere, it does nothing:
- * pulling the code into the line would drop the fence from the draft and leave
- * the rest of the code as stray lines.
+ * this one at its old indent.
  */
 export function deleteAcrossList(editor: Editor): boolean {
   const { state } = editor;
@@ -1091,8 +1044,6 @@ function listItemPrefix(item: ProseMirrorNode, empty: boolean): string {
     return `${indent}-${markerSpace}[${attrs.checked === true ? "x" : " "}]${contentSpace}`;
   }
   const marker = typeof attrs.marker === "string" && attrs.marker ? attrs.marker : "-";
-  // A bare `-` keeps its missing space only while the item is empty: once it
-  // has text, `-text` would not be a list line any more.
   const space =
     typeof attrs.space === "string" ? attrs.space || (empty ? "" : " ") : empty ? "" : " ";
   return `${indent}${marker}${space}`;
@@ -1108,8 +1059,6 @@ function walkList(list: ProseMirrorNode, listStart: number, acc: RichAccumulator
     const first = item.firstChild;
     const empty = first?.type.name === "paragraph" && first.content.childCount === 0;
     const prefix = listItemPrefix(item, empty);
-    // The marker owns no document characters; every prefix offset clamps
-    // to the start of the item text, exactly like style markers.
     acc.runs.push({
       kind: "prefix",
       flatStart: acc.flat,
@@ -1142,9 +1091,6 @@ function walkList(list: ProseMirrorNode, listStart: number, acc: RichAccumulator
 }
 
 /**
- * `nodeName` keeps the marker decorations off it: a code block is drawn as a
- * block, not revealed a character at a time.
- *
  * The code is literal text in the editor, but the draft store still counts a
  * chip's source in it as one cursor position, as it does everywhere. So the
  * run splits at each chip source, which spans its characters in the document
@@ -1221,8 +1167,7 @@ function walkBlockquote(quote: ProseMirrorNode, quoteStart: number, acc: RichAcc
 
 /**
  * A slice holds only the content of the blocks the ends share, so items or
- * quote lines arrive without the list or quote that writes their markers. The
- * shared block is put back around them, and an item's list around it.
+ * quote lines arrive without the list or quote that writes their markers.
  */
 export function serializeSelection(doc: ProseMirrorNode, from: number, to: number): string {
   const slice = doc.slice(from, to);
@@ -1321,9 +1266,9 @@ function lastRunEnd(map: RichDocMap, space: "collapsed" | "md"): number {
 
 /**
  * The end of a run belongs to the next run, which is how the end of `**bold**`
- * lands after its markers. A fence is the exception: its close is a line of
- * its own, so the end of the code stays inside the block rather than jumping
- * past the closing fence. Inline marks keep their trailing position.
+ * lands after its markers. A fence is the exception: its close is a line of its
+ * own, so the end of the code stays inside the block rather than jumping past
+ * the closing fence.
  */
 function runOwnsOffset(run: RichRun, flatOffset: number): boolean {
   const end = run.flatStart + run.docLen;
@@ -1363,8 +1308,6 @@ export function flatToMarkdown(map: RichDocMap, flatOffset: number): number {
 export function collapsedToFlat(map: RichDocMap, collapsedOffset: number): number {
   for (const run of map.runs) {
     if (collapsedOffset < run.collapsedStart + run.collapsedLen) {
-      // Checkbox prefixes and style markers are shown, never edited: every
-      // offset inside them clamps to the adjacent document position.
       if (run.kind === "prefix") return run.flatStart;
       if (run.kind === "text" || run.kind === "token") {
         const within = collapsedOffset - run.collapsedStart;
@@ -1408,11 +1351,9 @@ export function pmToFlat(map: RichDocMap, pmPos: number): number {
 }
 
 // Markers are decorations, not text, so the position where styled text meets
-// unstyled text (or a paragraph edge) is a single document position. The
-// caret gets two stops there: one that types with the marks before the edge
-// and one that types with the marks after it. Stored marks pick the stop, and
-// the revealed markers render on the matching side of the caret, so a pasted
-// `**bold**` at the start of a line can still be typed in front of.
+// unstyled text (or a paragraph edge) is a single document position. The caret
+// gets two stops there: one that types with the marks before the edge and one
+// that types with the marks after it.
 
 function styledEdge(state: EditorState) {
   const { selection } = state;
@@ -1431,9 +1372,8 @@ export function caretTakesMarksBefore(state: EditorState): boolean {
 }
 
 /**
- * Moves the caret to the other stop of the styled edge it sits on, toward
- * `direction`. Returns null when there is no stop to take, so the arrow key
- * moves the caret as usual.
+ * Returns null when there is no stop to take, so the arrow key moves the caret
+ * as usual.
  */
 export function stepCaretAcrossStyledEdge(
   state: EditorState,
@@ -1441,7 +1381,6 @@ export function stepCaretAcrossStyledEdge(
 ): Transaction | null {
   const edge = styledEdge(state);
   if (!edge) return null;
-  // Marks the user toggled by hand (neither stop) are theirs: move as usual.
   if (!Mark.sameSet(edge.current, edge.before) && !Mark.sameSet(edge.current, edge.after)) {
     return null;
   }

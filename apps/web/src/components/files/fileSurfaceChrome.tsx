@@ -58,10 +58,6 @@ export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   }
 `;
 
-/**
- * A `pressed` action is a toggle and says so; a command (Copy, Save, Close) is a plain button,
- * because announcing it as an unpressed toggle tells a screen reader it has a state it has not.
- */
 export function FileSurfaceAction(props: {
   readonly label: string;
   readonly pressed?: boolean;

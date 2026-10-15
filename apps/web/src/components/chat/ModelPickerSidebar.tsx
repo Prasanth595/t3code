@@ -41,13 +41,8 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   showFavorites?: boolean;
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
-  /** Non-ready instances whose selected unavailable model remains reachable. */
   selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
   getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
-  /**
-   * Callers pass the subset of default built-in ids they want flagged (custom instances are never
-   * flagged — the user just made them).
-   */
   newBadgeInstanceIds?: ReadonlySet<ProviderInstanceId>;
 }) {
   const handleSelect = (instanceId: ProviderInstanceId | "favorites") => {

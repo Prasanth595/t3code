@@ -62,10 +62,6 @@ const chunk = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>
 const detailablePaths = (files: ReadonlyArray<Json.GitCafeDiffFile>) =>
   files.filter((file) => !file.binary && !file.tooLarge).map((file) => file.path);
 
-/**
- * A blocker without strategies (changes requested, a lock) still leaves Merge offered, so
- * pressing it shows GitCafe's own reason.
- */
 const mergeStrategyOpen = (status: typeof Status.Type, strategy: string) =>
   status.merge.permitted !== false &&
   status.merge.strategies.includes(strategy) &&
@@ -454,7 +450,6 @@ export const make = Effect.gen(function* () {
       },
       MergeOutcome,
     );
-    // An accepted merge is GitCafe's to finish; the pull request's state reports when it has.
     if (outcome.state === "failed")
       return yield* failure("merge", outcome.reason ?? "GitCafe could not merge the pull request.");
   });
@@ -496,7 +491,6 @@ export const make = Effect.gen(function* () {
             actorId = options.value.actors.find(
               (actor) => actor.handle.toLowerCase() === input.viewer.toLowerCase(),
             )?.actorId;
-            // A viewer GitCafe knows no actor for has authored and been asked to review nothing.
             if (actorId === undefined) return { items: [], truncated: false, continues: false };
           }
         }
@@ -528,8 +522,6 @@ export const make = Effect.gen(function* () {
         return {
           items: items.slice(0, limit).map((pull) => {
             const item = Json.toChangeRequest(pull, input);
-            // GitCafe filtered by reviewer, so the viewer is one even where the pull omits it. An
-            // unnarrowed listing (no actor to filter by) says nothing about who was asked.
             return input.involvement === "reviewing" && actorId !== undefined
               ? {
                   ...item,

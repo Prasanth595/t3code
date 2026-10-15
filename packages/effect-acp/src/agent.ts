@@ -381,8 +381,6 @@ export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
   );
 
   yield* RpcServer.make(AcpRpcs.AgentRpcs, { disableFatalDefects: true }).pipe(
-    // runHandler logs handler defects with their method. A reporter inherited
-    // from the caller (a WebSocket request, say) would log them again.
     Effect.provideService(ErrorReporter.CurrentErrorReporters, new Set()),
     Effect.provideService(RpcServer.Protocol, transport.serverProtocol),
     Effect.provide(layerAgentHandler),

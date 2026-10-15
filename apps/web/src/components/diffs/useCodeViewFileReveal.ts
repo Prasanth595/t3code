@@ -6,7 +6,6 @@ interface FileRevealHandle {
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
-// Keep scope stable until the diff or external file selection changes.
 export function useCodeViewFileReveal<TScope>(
   viewer: FileRevealHandle | null,
   scope: TScope,

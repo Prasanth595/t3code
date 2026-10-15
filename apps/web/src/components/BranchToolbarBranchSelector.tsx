@@ -122,7 +122,6 @@ export function BranchToolbarBranchSelector({
     threadEnvironment.updateMetadata,
     "thread metadata update",
   );
-  // An automatic default loses to any launch that lands first; that rejection is expected.
   const updateEmptyThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -192,7 +191,6 @@ export function BranchToolbarBranchSelector({
             threadId: activeThreadId,
             branch,
             worktreePath,
-            // A launched thread records its own worktree; a late default must not reset it.
             ...(automatic ? { expectedEmpty: true } : {}),
           },
         });
@@ -290,9 +288,6 @@ export function BranchToolbarBranchSelector({
       : null;
   const canCreateBranch =
     canChangeThreadBranch && !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
-  // The ref is created under its sanitized name, so the collision check has to
-  // use that name too. Matching on the raw query would offer to create a ref
-  // that already exists whenever sanitizing changes the name.
   const newRefName = sanitizeNewRefName(trimmedBranchQuery);
   const hasExactBranchMatch = branchByName.has(newRefName);
   const createBranchItemValue = canCreateBranch

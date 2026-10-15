@@ -38,9 +38,6 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   const navigation = useNavigation();
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
 
-  // Keyed on the params object so a fresh navigation to this (already
-  // mounted) screen produces a new reference, letting the draft screen
-  // re-apply the requested project.
   const initialProjectRef = useMemo(
     () => ({
       environmentId: Array.isArray(params.environmentId)

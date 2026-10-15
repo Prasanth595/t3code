@@ -35,7 +35,6 @@ const requireForNodePty = NodeModule.createRequire(import.meta.url);
 const loadNodePty: NodePtyModuleLoader = () =>
   Promise.resolve().then(() => requireForNodePty("node-pty") as typeof import("node-pty"));
 
-/** Injectable so tests can substitute a fake module; `require` bypasses module mocks. */
 export const NodePtyModuleLoaderRef = Context.Reference<NodePtyModuleLoader>(
   "server/terminal/NodePtyModuleLoader",
   { defaultValue: () => loadNodePty },
@@ -79,7 +78,6 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
     return;
   }
 
-  // Best-effort: avoid FileSystem.stat in packaged mode where some fs metadata can be missing.
   yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
 });
 
@@ -144,7 +142,6 @@ const waitForWindowsPid = (
 /**
  * Cancels Windows startup without waiting for the first output, unlike public kill().
  * The private agent can cancel the pending connection before a child exists.
- * Cleanup failures are logged without replacing the startup failure.
  */
 const killStartingWindowsPty = (process: import("node-pty").IPty) =>
   Effect.try(() => {
@@ -178,7 +175,6 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   constructor(process: import("node-pty").IPty, platform: NodeJS.Platform) {
     this.process = process;
     this.platform = platform;
-    // Retain exits while Windows readiness and the manager hand off the process.
     this.exitSubscription = process.onExit((event) => {
       if (this.exitEvent) return;
       this.exitEvent = { exitCode: event.exitCode, signal: event.signal ?? null };

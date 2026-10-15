@@ -51,10 +51,6 @@ export type PersistedAttachmentVerification =
   | { readonly status: "missing" }
   | { readonly status: "failed"; readonly error: unknown };
 
-/**
- * `verified` means the send can reuse the stored bytes, `missing` means the upload expired and
- * the bytes must be uploaded again, `failed` means the server could not be asked.
- */
 export async function verifyPersistedAttachmentUpload<A, E>(input: {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly createAssetUrl: (query: {
@@ -112,7 +108,6 @@ export function deletePendingAttachmentUpload<E>(input: {
   );
 }
 
-/** A running byte transfer: resolves when the server accepted the bytes. */
 export interface AttachmentByteUpload {
   readonly done: Promise<void>;
   readonly abort: () => void;
@@ -142,7 +137,6 @@ export async function runAttachmentUploadCycle<E, RE>(input: {
   readonly upload: AttachmentCreateUploadUrlInput;
   readonly resolveUploadUrl: (relativeUrl: string) => string | null;
   readonly transport: (url: string) => AttachmentByteUpload;
-  /** Observe the minted id (for cancellation bookkeeping) before bytes move. */
   readonly onMinted?: (attachmentId: string) => "continue" | "cancel";
   readonly onTransferStart?: (abort: () => void) => void;
 }): Promise<AttachmentUploadCycleResult> {

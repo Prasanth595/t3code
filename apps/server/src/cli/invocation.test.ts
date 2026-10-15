@@ -98,7 +98,6 @@ it("formats serve suggestions to match the launching command", () => {
 });
 
 it.layer(NodeServices.layer)("root CLI commands", (it) => {
-  /** `sudo t3 browser setup` as this process would render it, with `t3` on PATH or not. */
   const rootCommand = (input: {
     readonly node: string;
     readonly entry: string;
@@ -114,7 +113,6 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
       Effect.provideService(HostProcess.Environment, { PATH: input.path ?? "", ...input.env }),
     );
 
-  /** A directory holding an executable `t3`, to stand in for one on PATH. */
   const pathWithT3 = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -157,13 +155,13 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
         entry: "/tmp/.mount_T3abc/resources/app.asar/apps/server/dist/bin.mjs",
         env: { T3CODE_CLI_PATH: shim },
       };
-      // The desktop app's shim, quoted for the shell and run as root as is.
+
       expect(yield* rootCommand(desktop)).toBe(`sudo '${shim}' browser setup`);
-      // A `t3` the person put on PATH still wins.
+
       expect(yield* rootCommand({ ...desktop, path: yield* pathWithT3 })).toBe(
         'sudo env "PATH=$PATH" t3 browser setup',
       );
-      // A standalone binary names itself.
+
       expect(
         yield* rootCommand({
           node: "/opt/t3/t3",
@@ -171,7 +169,7 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
           executable: true,
         }),
       ).toBe("sudo /opt/t3/t3 browser setup");
-      // A stale shim path, then no launcher at all, fall back to plain `t3`.
+
       expect(
         yield* rootCommand({ ...desktop, env: { T3CODE_CLI_PATH: path.join(home, "gone") } }),
       ).toBe('sudo env "PATH=$PATH" t3 browser setup');

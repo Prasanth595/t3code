@@ -320,10 +320,8 @@ const TurnStartedPayload = Schema.Struct({
 export type TurnStartedPayload = typeof TurnStartedPayload.Type;
 
 /**
- * Normalized main-agent usage for one turn. Input includes cache reads and
- * writes. Output includes reasoning, and reasoningTokens is an optional subset.
- * Complete means the provider supplied full input and output totals. Partial
- * means every included count is valid, but the full turn total is not known.
+ * Input includes cache reads and writes. Output includes reasoning, and
+ * reasoningTokens is an optional subset.
  */
 const TurnTokenUsageCommonFields = {
   usageScope: Schema.Literal("main_agent"),
@@ -441,11 +439,6 @@ export const ItemLifecyclePayload = Schema.Struct({
   toolIcon: Schema.optional(ToolActivityIcon),
   toolSource: Schema.optional(ToolActivitySource),
   data: Schema.optional(Schema.Unknown),
-  /**
-   * Owning agent when this item ran inside a subagent (resolved from the
-   * SDK's parent_tool_use_id). Clients re-home attributed items out of the
-   * main timeline and into the owning agent's Agents-surface row.
-   */
   agentId: Schema.optional(TrimmedNonEmptyStringSchema),
   parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
@@ -488,7 +481,6 @@ export const UserInputQuestion = Schema.Struct({
   question: TrimmedNonEmptyStringSchema,
   options: Schema.Array(UserInputQuestionOption),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
-  /** Editable initial text. Answers preserve whitespace and allow an empty string when present. */
   initialAnswer: Schema.optional(Schema.String),
   multiSelect: Schema.optional(Schema.Boolean).pipe(
     Schema.withConstructorDefault(Effect.succeed(false)),
@@ -543,22 +535,11 @@ export type TaskRunHandles = typeof TaskRunHandles.Type;
  */
 const taskAgentLinkageFields = {
   taskType: Schema.optional(TrimmedNonEmptyStringSchema),
-  /**
-   * Server-stamped classification, set at ingestion.
-   * Clients trust this stamp outright; rows without it (legacy, pre-stamp)
-   * fall back to client-side heuristics.
-   */
   agentKind: Schema.optional(Schema.Literals(["agent", "background"])),
-  /**
-   * Owning agent when the task itself was launched from inside a subagent
-   * (e.g. a subagent's background shell). Clients treat such tasks as
-   * agent-internal and keep them out of the parent work log.
-   */
   agentId: Schema.optional(TrimmedNonEmptyStringSchema),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   role: Schema.optional(TrimmedNonEmptyStringSchema),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
-  /** Reasoning effort when known (e.g. "high"). Open string: provider vocabularies differ. */
   effort: Schema.optional(TrimmedNonEmptyStringSchema),
   toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   parentAgentId: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -613,10 +594,6 @@ const TaskProgressPayload = Schema.Struct({
 });
 export type TaskProgressPayload = typeof TaskProgressPayload.Type;
 
-/**
- * killed→cancelled and paused→idle are mapped at the adapter so the wire only
- * carries the shared vocabulary.
- */
 const TaskUpdatedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   status: Schema.optional(RuntimeTaskStatus),

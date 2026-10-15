@@ -161,8 +161,7 @@ export interface OrchestratorMcpServiceShape {
     input: OrchestratorMcpDeleteScheduledTaskInput,
   ) => Effect.Effect<OrchestratorMcpDeleteScheduledTaskResult, OrchestratorMcpFailure>;
   /**
-   * Asks the user for a secret through a card in the calling thread and waits
-   * for the answer. The value never reaches the agent: the result is a status.
+   * The value never reaches the agent: the result is a status.
    */
   readonly requestSecret: (
     scope: McpInvocationScope,
@@ -363,7 +362,6 @@ export function hasPendingChildRuns(
   childProjection: Pick<OrchestrationV2ThreadProjection, "runs">,
   delegatedRun: OrchestrationV2Run | undefined,
 ): boolean {
-  // Held queued runs wait for the user to resume the child; task_cancel holds them.
   return childProjection.runs.some(
     (run) =>
       !ThreadManagementService.isTerminalRunStatus(run.status) &&
@@ -522,10 +520,6 @@ function interactionModeRank(mode: ProviderInteractionMode): number {
   return mode === "plan" ? 0 : 1;
 }
 
-/**
- * A provider runs a mode it does not offer as Supervised, so an explicit request for one is
- * refused, and an inherited one steps down to the broadest mode the provider offers.
- */
 export function resolveRuntimeMode(
   parentMode: RuntimeMode,
   requested: OrchestratorMcpRuntimeMode | undefined,
@@ -974,10 +968,6 @@ const make = Effect.gen(function* () {
       )
       .pipe(Effect.mapError(threadManagementFailure));
 
-  /**
-   * A thread caller is capped by its own modes; an OAuth client by the ceiling chosen when it was
-   * approved.
-   */
   const loadCaller = (scope: McpInvocationScope) =>
     Effect.gen(function* () {
       yield* requireCapability(scope);
@@ -1101,10 +1091,6 @@ const make = Effect.gen(function* () {
 
   const loadProviders = providerRegistry.getProviders;
 
-  /**
-   * Capability reporting and target resolution must not advertise a set narrower (or wider) than
-   * what dispatch can actually serve.
-   */
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
@@ -1424,7 +1410,6 @@ const make = Effect.gen(function* () {
             : subagentResultForRun(childProjection, terminalRun).text
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
-        // A finished task has no question of its own; later child runs belong to other tasks.
         hasPendingQuestion:
           !isTerminalTaskStatus(status) &&
           childControls.runtimeRequests.some(
@@ -1545,8 +1530,6 @@ const make = Effect.gen(function* () {
         caller.parent === undefined
           ? scope.client?.access !== "read-only"
           : Exit.isSuccess(yield* Effect.exit(assertLiveCaller(scope, caller.parent)));
-      // This runs after a save, so a failed lookup of the bound thread hides
-      // the webhook URL instead of reporting a saved task as an error.
       const modes = yield* scheduledTaskRunModes(task).pipe(Effect.option);
       return scheduledTaskSummary(
         task,
@@ -1750,8 +1733,6 @@ const make = Effect.gen(function* () {
         const runId = run.id;
         const nodeId = run.rootNodeId;
         const key = yield* requestKey(input.clientRequestId);
-        // Turn item ids are global; scope the key to this thread. A retry with
-        // the same clientRequestId finds this card, answered or not.
         const turnItemId = TurnItemId.make(
           `turn-item:secret-request:${stablePart(threadId)}:${stablePart(key)}`,
         );
@@ -1784,8 +1765,7 @@ const make = Effect.gen(function* () {
         yield* record("pending");
         // Only this call can hand the agent its ref, so the card must not
         // outlive it: a timeout, a failed wait or an aborted call closes it as
-        // cancelled. If even that fails, the server still refuses an answer
-        // once the run ends, and an unused value expires.
+        // cancelled.
         const closeCard = record("cancelled").pipe(
           Effect.catch((error) =>
             Effect.logWarning("Could not close a secret request card", { error: error.message }),
@@ -1830,7 +1810,6 @@ const make = Effect.gen(function* () {
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : closeCard)),
         );
         if (Option.isNone(answered)) yield* closeCard;
-        // An answer that raced the timeout still wins: the card is answered once.
         const status = Option.isSome(answered)
           ? answered.value
           : yield* threadManagement
@@ -1851,8 +1830,6 @@ const make = Effect.gen(function* () {
         yield* Effect.annotateCurrentSpan({ "secret_request.status": status });
         yield* Metrics.increment(Metrics.secretRequestsTotal, { status });
         if (status !== "saved") return { status };
-        // Saved means the value was stored before the card said so; a missing
-        // value is a storage fault, not an answer the agent can act on.
         const secretRef = yield* secretRequests.savedRef({ threadId: threadId, turnItemId });
         if (Option.isNone(secretRef)) {
           return yield* failure(
@@ -2049,8 +2026,7 @@ const make = Effect.gen(function* () {
           return waited.value;
         }
         // An incomplete wait gives up delivery: upgrade so a later terminal
-        // wakes the parent even mid-turn. Best effort; settled_only still
-        // wakes a settled parent if the upgrade fails.
+        // wakes the parent even mid-turn.
         yield* threadManagement
           .dispatch({
             type: "delegated_task.wake-policy",
@@ -2103,7 +2079,6 @@ const make = Effect.gen(function* () {
             const shell = yield* threadManagement
               .getThreadShell(threadId)
               .pipe(Effect.mapError(threadManagementFailure));
-            // A deleted thread takes no stop, but the tasks under it still do.
             if (shell !== null && shell.deletedAt === null) {
               yield* resolveRuntimeMode(parentProjection.thread.runtimeMode, shell.runtimeMode);
               yield* resolveInteractionMode(
@@ -2165,7 +2140,6 @@ const make = Effect.gen(function* () {
                 ),
               ),
             );
-          // A retry with the same clientRequestId repeats only the stops that failed.
           yield* threadManagement
             .stopDelegatedTasks({ threadId: current.childThreadId, commandId, reason })
             .pipe(
@@ -2209,8 +2183,6 @@ const make = Effect.gen(function* () {
             status: current.status,
           } satisfies OrchestratorMcpTaskCancelResult;
         }
-        // A task waiting on its own delegates has work to stop below it. One with neither
-        // a running turn nor delegates (such as one awaiting a restart) keeps its delivery.
         const child = yield* loadProjection(current.childThreadId);
         if (
           current.workState !== "waiting_for_children" &&

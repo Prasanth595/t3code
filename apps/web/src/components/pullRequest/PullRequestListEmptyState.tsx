@@ -59,7 +59,6 @@ export function PullRequestListEmptyState({
 }: {
   query: string;
   filtered: boolean;
-  /** A search is in flight; the rows on screen are the previous answer. */
   searching: boolean;
   hasProjects: boolean;
   canLoadMore: boolean;

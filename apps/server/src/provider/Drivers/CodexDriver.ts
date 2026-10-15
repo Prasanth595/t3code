@@ -58,8 +58,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
-// The standalone installer lays out `<CODEX_HOME>/packages/standalone/…`;
-// CODEX_HOME is not always `~/.codex`.
 function isCodexStandaloneCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).includes("/packages/standalone/");
 }
@@ -312,10 +310,8 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
             ),
             // The windows just changed; re-probe so the snapshot says so. A
             // failed probe republishes the pre-redemption limits rather than
-            // marking them failed, so "confirmed" means `checkedAt` moved
-            // past what was published before the redemption started. Only a
-            // reset claims the limits changed, so only a reset reports an
-            // unconfirmed refresh.
+            // marking them failed, so "confirmed" means `checkedAt` moved past
+            // what was published before the redemption started.
             Effect.tap((outcome) =>
               Effect.gen(function* () {
                 const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;

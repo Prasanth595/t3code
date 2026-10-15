@@ -7,7 +7,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 export const SETUP_SUBCOMMAND = "browser setup";
 
-/** What Chrome prints before aborting when it cannot sandbox itself. */
 export const NO_SANDBOX_SIGNATURE = "No usable sandbox";
 
 export const sandboxDisabled = (env: Readonly<Record<string, string | undefined>>) =>
@@ -77,7 +76,6 @@ export class PreviewBrowserLibrariesError extends Schema.TaggedError<PreviewBrow
 export type PreviewBrowserHostError = PreviewBrowserSandboxError | PreviewBrowserLibrariesError;
 
 const MISSING_LIBRARY = /^\s*(\S+) => not found$/gm;
-/** glibc's loader abort, naming the first library it could not load. */
 const LOADER_ERROR = /error while loading shared libraries: ([^:\s]+)/;
 
 export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunchFailure")(

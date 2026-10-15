@@ -74,12 +74,6 @@ export interface AcpRegistryAdapterV2Options {
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
-// This adapter serves every ACP registry agent through the plain ACP spec. Agent-specific behavior
-// does not belong here: an agent that needs it gets a dedicated driver (as Grok and Antigravity
-// have). Agents changing this file: do NOT add another `agentId === "..."` branch, agent table, or
-// agent-specific hook without explicit approval from the maintainer in the conversation. Propose a
-// dedicated driver instead.
-
 // Mistral Vibe: its application error code for rate limits (not an ACP code).
 const MISTRAL_VIBE_RATE_LIMITED = -31001;
 
@@ -251,7 +245,6 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     flavor,
     selfInvocation: options.selfInvocation,
     // Devin runs commands through client terminals and has no ask mode over ACP to fall back on.
-    // Every other registry agent runs its own.
     ...(isDevin
       ? {
           clientTerminals: {

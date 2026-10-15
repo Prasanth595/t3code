@@ -16,10 +16,6 @@ const SUPPRESS: NotificationBehavior = {
   shouldSetBadge: false,
 };
 
-/**
- * `deepLinkOnScreen` is the normalized `/threads/:env/:thread` path of the
- * current route, or null when no thread is open.
- */
 export function foregroundNotificationBehavior(
   notification: Notification,
   deepLinkOnScreen: string | null,

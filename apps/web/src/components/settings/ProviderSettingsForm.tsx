@@ -37,7 +37,7 @@ export interface ProviderSettingsFieldModel {
   /** Kept in the server's secret store: a saved value arrives as `SECRET_REDACTED` and never shows. */
   readonly secret?: boolean | undefined;
   readonly defaultBooleanValue?: boolean | undefined;
-  /** Choices for a `select` control. The first entry is the default. */
+
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
 }
 
@@ -297,7 +297,6 @@ interface ProviderSettingsFormProps {
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }
 
-/** Stores the default choice as an omitted key so unchanged configs stay small. */
 function ProviderSettingsSelect({
   field,
   value,

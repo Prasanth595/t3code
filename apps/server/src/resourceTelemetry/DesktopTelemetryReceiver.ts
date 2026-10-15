@@ -182,9 +182,6 @@ export class DesktopTelemetryReceiver extends Context.Service<
     readonly cancelDesktopUpdate: (
       requestId: string,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
-    /** The
-        desktop replays its latest report when the backend attaches, so this
-        is populated shortly after startup on desktop-managed servers. */
     readonly desktopUpdates: Effect.Effect<
       {
         readonly latest: Option.Option<DesktopUpdateStatusReport>;

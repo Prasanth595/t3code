@@ -18,11 +18,6 @@ const PREVIEW_MINI_PLAYER_MIN_SIZE = { width: 240, height: 150 } as const;
 
 export interface PreviewMiniPlayerFrame extends PreviewMiniPlayerPosition, PreviewMiniPlayerSize {}
 
-/**
- * The rendered size of what the floating player mirrors: the device viewport
- * when one is set, otherwise the size the webview had when it was floated
- * (`fittedSourceContent`), which the hosted webview keeps as its CSS viewport.
- */
 export function resolvePreviewMiniPlayerSourceSize(
   viewport: PreviewViewportSetting,
   fittedSourceContent: BrowserSurfaceContentPresentation | null,
@@ -36,12 +31,6 @@ export function resolvePreviewMiniPlayerSourceSize(
   };
 }
 
-/**
- * The device screen as the user sees it, so a rotated phone floats as a
- * landscape box. Before the stream reports its size the platform's usual phone
- * shape stands in, matching the stream view's own placeholder aspect; the
- * nominal width only keeps the source cap above any sensible player width.
- */
 export function resolveDeviceMiniPlayerSourceSize(
   platform: DevicePlatform,
   screen: DeviceScreenSize | null,
@@ -111,11 +100,6 @@ function ceilingFor(span: HorizontalSpan, obstacles: PreviewMiniPlayerObstacles)
   return detailsCard && spansOverlap(span, detailsCard) ? Math.max(0, detailsCard.bottom) : 0;
 }
 
-/**
- * A player with a position keeps the rows its own columns have, so a tall frame parked beside
- * the composer survives the next layout pass; without one it takes the rows above the composer,
- * which every column has.
- */
 const availableArea = (
   container: PreviewMiniPlayerSize,
   obstacles: PreviewMiniPlayerObstacles,
@@ -129,11 +113,6 @@ const availableArea = (
     PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
 });
 
-/**
- * Width is the player's only free dimension; height always follows the source
- * aspect ratio so the webview fills the box without letterboxing. The player
- * may upscale the source, and a tight container wins over the minimum.
- */
 function fitPreviewMiniPlayerWidth(
   desiredWidth: number,
   source: PreviewMiniPlayerSize,
@@ -194,11 +173,6 @@ const overlapsObstacle = (
   );
 };
 
-/**
- * When nothing leaves it clear it keeps its columns and sits below the card; the composer is
- * where the user is typing, but a player under the card cannot be reached at all. minimumX
- * reserves room to the player's left without changing its size.
- */
 export function clampPreviewMiniPlayerPosition(
   position: PreviewMiniPlayerPosition,
   container: PreviewMiniPlayerSize,
@@ -276,9 +250,6 @@ export function resolvePreviewMiniPlayerFrame(input: {
     source,
     availableArea(
       container,
-      // A stored player keeps its size under the details card — the card's
-      // ceiling is a placement concern, not a sizing one, and the clamp pass
-      // relocates the frame into columns the card leaves open.
       position && width ? { composer: obstacles.composer, detailsCard: null } : obstacles,
       position && width ? spanOf(position.x, width) : null,
     ),
@@ -295,11 +266,6 @@ export function resolvePreviewMiniPlayerFrame(input: {
   return { ...clampPreviewMiniPlayerPosition(anchored, container, size, obstacles), ...size };
 }
 
-/**
- * The edge opposite the dragged one stays anchored, so growth stops at the container on that
- * axis and the pointer keeps tracking the grabbed edge. On a plain edge drag the perpendicular
- * axis may use the whole container, and the player shifts as needed to stay inside.
- */
 export function resizePreviewMiniPlayer(input: {
   readonly start: PreviewMiniPlayerFrame;
   readonly direction: BrowserViewportResizeDirection;

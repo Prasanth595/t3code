@@ -1,14 +1,9 @@
 "use strict";
 
-// expo-widgets generates ExpoWidgetsTarget without a Resources build phase and
-// has no asset support, so this plugin (a) writes an SVG template image set into
-// the generated widget asset catalog and (b) wires that catalog into the widget
-// target with an actool build phase. ORDERING: must be listed BEFORE
-// "expo-widgets" in the plugins array. Expo chains same-type mods so the
-// last-registered runs FIRST; registering this plugin earlier makes its mods run
-// AFTER expo-widgets' mods. That matters twice: expo-widgets' dangerous mod
-// rmSync's ios/ExpoWidgetsTarget/ (deleting any catalog written before it), and
-// its xcodeproj mod is what creates the widget target.
+// ORDERING: must be listed BEFORE "expo-widgets" in the plugins array. That
+// matters twice: expo-widgets' dangerous mod rmSync's ios/ExpoWidgetsTarget/
+// (deleting any catalog written before it), and its xcodeproj mod is what
+// creates the widget target.
 
 const path = require("path");
 const fs = require("fs");

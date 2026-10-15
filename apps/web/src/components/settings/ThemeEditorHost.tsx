@@ -10,9 +10,6 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { useThemeEditorStore } from "./themeEditorStore";
 
-// The host mounts above the router on every page, but the editor body only
-// renders once a session opens; lazy-loading it keeps the editor UI out of
-// the startup chunk.
 const ThemeEditorPanel = lazy(() =>
   import("./ThemeEditorPanel").then((module) => ({ default: module.ThemeEditorPanel })),
 );

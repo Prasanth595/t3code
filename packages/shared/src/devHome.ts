@@ -11,10 +11,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 /**
- * A linked worktree's lives at `<common-dir>/worktrees/<name>`; a submodule's
- * at `<super-git-dir>/modules/<name>`. Both are files, so the pointer — not the
- * file-vs-directory distinction alone — is what identifies a worktree.
- *
  * The common dir is not necessarily named `.git`: a worktree of a bare repo
  * points at `<repo>.git/worktrees/<name>`, and `$GIT_COMMON_DIR` can be
  * anything. So match on the `worktrees/<name>` tail, which git always uses,
@@ -30,8 +26,6 @@ const pointsAtLinkedWorktree = (gitFileContents: string, path: Path.Path): boole
   if (gitdir === undefined || gitdir.length === 0) {
     return false;
   }
-  // Compare as path segments so a directory merely named `…worktrees…` cannot
-  // match as a substring.
   const segments = path
     .normalize(gitdir.replaceAll("\\", "/"))
     .split(/[/\\]/)
@@ -51,8 +45,6 @@ export const resolveGitWorktreePath = (
       const gitPath = path.join(directory, ".git");
       const info = yield* fileSystem.stat(gitPath).pipe(Effect.option);
       if (Option.isSome(info)) {
-        // A directory means the main checkout. Stop either way: nesting one
-        // repository inside another does not make the outer one this root.
         if (info.value.type !== "File") {
           return undefined;
         }

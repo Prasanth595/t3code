@@ -52,10 +52,6 @@ export const ProviderOptionSelection = Schema.Struct({
 });
 export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
 
-/**
- * Legacy on-disk shape for provider option selections, kept readable by the
- * decoder so we can tolerate stored data written before the v3 array shape.
- */
 const LegacyProviderOptionSelectionsObject = Schema.Record(Schema.String, Schema.Unknown);
 
 const ProviderOptionSelectionsFromLegacyObject = LegacyProviderOptionSelectionsObject.pipe(
@@ -68,11 +64,6 @@ const ProviderOptionSelectionsFromLegacyObject = LegacyProviderOptionSelectionsO
   ),
 );
 
-/**
- * Always normalizes to the canonical array on decode and re-encodes as the
- * canonical array, so any legacy storage gets cleaned up the next time the
- * containing record is written back.
- */
 export const ProviderOptionSelections = Schema.Union([
   Schema.Array(ProviderOptionSelection),
   ProviderOptionSelectionsFromLegacyObject,
@@ -113,11 +104,6 @@ export const ModelCapabilities = Schema.Struct({
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
-/**
- * `name` and `capabilities` are optional so a bare slug keeps its
- * driver-default presentation; when `capabilities` is set, its descriptors
- * replace the driver default in the model picker.
- */
 export const CustomModelEntry = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: Schema.optional(TrimmedNonEmptyString),

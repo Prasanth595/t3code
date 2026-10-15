@@ -121,7 +121,6 @@ export const migrationEntries = [
   [52, "ProjectionThreadTitleState", Migration0052],
   [53, "PullRequestFilesViewed", Migration0053],
   [54, "ProjectionThreadsAutoSettleDisabledAt", Migration0054],
-  // Released as 53 and 54 in V2 previews; reconcileV2PreviewMigration preserves their ledger.
   // Preserve this migration's schema. Future V2 schema changes need new migrations.
   [55, "OrchestrationV2", Migration0055],
   [56, "RemoveRedundantProjectionIndexes", Migration0056],
@@ -150,8 +149,7 @@ const FIRST_V2_MIGRATION_ID = 55;
  * Fail before migrating when the migrator would skip one of V2's own
  * migrations. It skips every id up to the highest recorded one, whatever name
  * was recorded, so a database that took a V2 id for another migration would
- * start without V2's schema and fail on first use. Earlier ids keep the
- * warning below: databases with a site-local migration there still work.
+ * start without V2's schema and fail on first use.
  */
 const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* (
   throughId?: number,

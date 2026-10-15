@@ -34,9 +34,7 @@ const isCredentialedHost = (url: string) => {
 };
 
 const MAX_REDIRECTS = 3;
-/** Following the redirect here, rather than in `fetch`, is what keeps the token on GitHub. */
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
-/** Passed through so a seek in a long video costs one upstream range request, not a full download. */
 const FORWARDED_REQUEST_HEADERS = ["range", "if-range"] as const;
 const FORWARDED_RESPONSE_HEADERS = [
   "content-type",
@@ -66,9 +64,6 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   let target = url;
   for (let hop = 0; ; hop += 1) {
-    // The credential rides only on a request to GitHub itself. A redirect leads to a signed
-    // object URL that authorizes on its own, and the store it lives in has no business seeing
-    // a token — deciding that from the target, not from the hop count, is what makes it so.
     const authorization =
       token !== null && isCredentialedHost(target) ? `Bearer ${Redacted.value(token)}` : null;
     const response: HttpClientResponse.HttpClientResponse = yield* httpClient
@@ -104,8 +99,6 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     if (value !== undefined) forwarded[name] = value;
   }
   const response = yield* fetchFollowingRedirects(asset.url, forwarded, token);
-  // An upload GitHub hosts never changes under its URL, so the only thing a cached copy must
-  // not outlive is the signed URL that granted it — which is the same bound the URL itself has.
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
   const headers: Record<string, string> = {
     "cache-control":
@@ -113,7 +106,6 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     "x-content-type-options": "nosniff",
   };
   if (response === null) return HttpServerResponse.empty({ status: 502, headers });
-  // An upstream refusal is the client's answer, not this server's fault; only a broken hop is.
   // It carries none of the upstream entity headers: a `content-length` with no body behind it
   // holds the connection open until the browser gives up on it.
   if (response.status >= 400) {
@@ -122,8 +114,6 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
       headers,
     });
   }
-  // Only pictures and recordings leave this origin, and never on GitHub's word alone: the raw
-  // host labels every committed binary `application/octet-stream`, so the name decides those.
   const upstreamType =
     response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   const contentType = MEDIA_CONTENT_TYPE_PATTERN.test(upstreamType)

@@ -75,7 +75,6 @@ export function createMobileThemeSelectionPatch(
   return {
     lightThemeId: nextThemeIds.light,
     darkThemeId: nextThemeIds.dark,
-    // Keep older OTA bundles on the theme for the appearance currently in use.
     themeId: nextThemeIds[activeAppearance],
   };
 }
@@ -144,9 +143,9 @@ function rgbChannels(color: string): readonly [number, number, number] | null {
 }
 
 /**
- * An opaque form of a theme colour, composited over the surface behind it. Native chip drawing
- * parses only opaque hex — an `rgba()` string falls back to a default that is nothing like the
- * colour asked for — so a translucent role like `--color-border` has to be flattened first.
+ * Native chip drawing parses only opaque hex — an `rgba()` string falls back to a default that
+ * is nothing like the colour asked for — so a translucent role like `--color-border` has to be
+ * flattened first.
  */
 export function flattenThemeColor(color: string, surface: string): string {
   const alphaHex = /^#([\da-f]{6})([\da-f]{2})$/i.exec(color);

@@ -464,7 +464,6 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
   });
   useEffect(() => {
     if (!saved) return;
-    // Let the native removal guard turn off before popping the saved form.
     const frame = requestAnimationFrame(() => {
       if (navigation.isFocused()) navigation.goBack();
     });
@@ -681,7 +680,6 @@ function TaskForm({
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
     };
-    // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
     setSaving(true);
     const result = await upsert({ environmentId, input });
@@ -952,8 +950,6 @@ function TaskForm({
           <>
             <WebhookScheduleDetails
               environmentId={environmentId}
-              // The live row, so a rotated URL shows up without reopening the form.
-              // Once the list has loaded, a missing task is gone; don't keep showing its URL.
               task={
                 tasks.data
                   ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)
@@ -1051,7 +1047,6 @@ function WebhookScheduleDetails({
   const httpBaseUrl =
     preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null;
   const webhook = task?.schedule.type === "webhook" ? task.webhook : undefined;
-  // Without T3 Connect, the path is resolved on the address this phone uses.
   const resolved = webhook ? webhookAddress(webhook, httpBaseUrl) : null;
   return (
     <View className="gap-2 border-t border-border-subtle px-4 py-3">
@@ -1068,7 +1063,6 @@ function WebhookScheduleDetails({
             accessibilityRole="button"
             accessibilityLabel="Copy webhook URL"
             accessibilityHint="Copies the URL to the clipboard"
-            // A bare path is not something a sender can call, so only full URLs copy.
             disabled={!resolved.copyable}
             onPress={() => void tryCopyTextWithHaptic(resolved.address)}
             className="gap-1 active:opacity-70"

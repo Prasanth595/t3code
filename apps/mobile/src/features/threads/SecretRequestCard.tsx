@@ -20,11 +20,6 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RequestActionButton } from "./RequestActionButton";
 
-/**
- * The typed value lives only in this component's state and the RPC payload: it
- * is never logged, alerted, or persisted, and the field clears once the answer
- * is sent.
- */
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
 const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
 

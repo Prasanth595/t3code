@@ -14,15 +14,10 @@ export interface ReopenOwnerState {
   environmentKnown: boolean;
   catalogReady: boolean;
   ownerExists: boolean;
-  /** A live shell that lacks the thread means it was deleted; a cached one may just be stale. */
   shellLive: boolean;
   panel: ThreadRightPanelState;
 }
 
-/**
- * A thread missing from a live shell is skipped but kept; anything not yet knowable stops
- * the scan with no restore.
- */
 export function planNextReopen(
   entries: readonly ClosedViewEntry[],
   ownerState: (entry: ClosedViewEntry) => ReopenOwnerState,

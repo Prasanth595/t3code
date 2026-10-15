@@ -6,9 +6,6 @@ export interface SqlStatementCounter {
 }
 
 /**
- * Counts the client spans the Effect SQL client opens once per statement. Our
- * SQLite client names them after its `db.system.name`, `sqlite`.
- *
  * Install the same counter on every runtime under test, otherwise statements
  * run by background reactors and statements run by request handlers land in
  * different counters.

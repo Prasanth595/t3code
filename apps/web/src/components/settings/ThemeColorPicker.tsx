@@ -28,10 +28,6 @@ export function getThemeRoleLabel(role: ThemeColorRole): string {
   return role.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase());
 }
 
-/**
- * Alpha is preserved separately and re-attached on commit so adjusting hue or
- * brightness cannot change transparency.
- */
 function themePickerAlphaSuffix(value: string): string {
   const normalized = themeColorToHex(value) ?? "";
   const alpha = normalized.length === 9 ? normalized.slice(7) : "";

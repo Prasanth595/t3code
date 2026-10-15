@@ -95,9 +95,6 @@ export function getThemeCardDefinition(theme: ThemeDefinition): ThemeCardDefinit
   };
 }
 
-// Interpolating in oklab keeps the glow falloff perceptually even (no gray
-// mid-tones or banding rings), and premultiplied alpha keeps the fade to
-// transparent clean.
 function getThemePreviewStyle(
   colors: ThemeCardPreviewColors,
   mode: ThemeAppearance,
@@ -115,8 +112,6 @@ function getThemePreviewStyle(
   };
 }
 
-// The gradient halves of each ball can match the card surface, so every ball
-// carries a faint mode-appropriate inner ring to keep its silhouette legible.
 function themePreviewEdgeShadow(mode: ThemeAppearance): string {
   return mode === "dark"
     ? "inset 0 0 0 1px rgb(255 255 255 / 0.14), 0 1px 2px rgb(0 0 0 / 0.18)"

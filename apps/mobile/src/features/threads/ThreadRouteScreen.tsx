@@ -103,8 +103,6 @@ function InspectorPaneRoleActivation() {
   return null;
 }
 
-// A blank param (a hand-typed deep link) is treated as missing, since branded
-// IDs reject whitespace-only values.
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return first === undefined || first.trim().length === 0 ? null : first;
@@ -407,9 +405,6 @@ function ThreadRouteContent(
     useCallback(() => {
       return () => {
         if (props.renderInspector === undefined) {
-          // Inspectors are contextual to this chat destination. Clear the
-          // hidden chat copy after a native push so returning from Files,
-          // Review, or Terminal cannot reserve an empty trailing pane.
           setInspectorSelection(null);
         }
       };
@@ -551,9 +546,6 @@ function ThreadRouteContent(
     },
     [fileInspector.supported, navigation, selectedThread],
   );
-  // The workspace inspector column spans the full window height. On iOS the
-  // panes bring their own nested native headers (which underlap the status
-  // bar); elsewhere the pane content pads itself below the top inset.
   const safeAreaInsets = useSafeAreaInsets();
   const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
   const GitInspector = useCallback(
@@ -612,9 +604,6 @@ function ThreadRouteContent(
     ],
   );
   const activeInspectorRenderer = inspectorMode === null ? undefined : renderInspectorStack;
-  // Hand the inspector to the workspace so it renders beside the navigator,
-  // outside this screen's native header — the terminal/git/files toolbar
-  // stays anchored to the chat pane instead of floating above the inspector.
   useRegisterWorkspaceInspector(activeInspectorRenderer);
 
   const handleOpenConnectionEditor = useCallback(() => {

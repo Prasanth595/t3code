@@ -170,12 +170,7 @@ function apiProviderAuthMetadata(
 /**
  * The capability probe resolves for a logged-out CLI, so a completed probe only proves Claude
  * Code started. `tokenSource: "none"` is the CLI reporting it found no token at all, and is the
- * one shape that disproves authentication. Everything else either names a credential or, on a
- * third-party backend, omits these fields by design because auth lives with AWS or gcloud
- * instead. Profile-authenticated installs report no token source, and a CLI too old to send an
- * account payload reports nothing at all; treating either as logged out would sign working
- * setups out of Settings. `apiKeySource: "none"` means no API key is in use, so it is no
- * evidence either.
+ * one shape that disproves authentication.
  */
 function claudeAuthStatus(
   capabilities: Pick<
@@ -199,10 +194,6 @@ function claudeAuthStatus(
 // backend and runs the `awsAuthRefresh` credential hook before returning account info.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 
-/**
- * Keep workspace-scoped command discovery intact while isolating the periodic
- * health check from configured MCP servers.
- */
 export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "user",
   "project",
@@ -254,10 +245,6 @@ function nonEmptyProbeString(value: string): string | undefined {
 
 type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
-  /**
-   * The organization UUID from the login's `.claude.json`. The driver reads it
-   * in the same cached probe, so it describes the same login as the rest.
-   */
   readonly workspaceId?: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
@@ -353,7 +340,7 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * We pass a never-yielding AsyncIterable as the prompt so that no user message is ever written
  * to the subprocess stdin. This means the Claude Code subprocess completes its local
  * initialization IPC (returning account info and slash commands) but never starts an API
- * request to Anthropic. We read the init data and then abort the subprocess.
+ * request to Anthropic.
  */
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,

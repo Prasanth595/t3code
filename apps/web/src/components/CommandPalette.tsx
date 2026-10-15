@@ -419,8 +419,6 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      // Resolve with the complete shortcut context so customized bindings
-      // using any documented `when` condition (e.g. previewFocus) work.
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
@@ -606,9 +604,6 @@ function OpenCommandPaletteDialog(props: {
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const resultListRef = useRef<LegendListRef | null>(null);
-  // Typing or entering a submenu clears the highlight. Base UI keeps its own on the
-  // first row, but the palette shows none until the user navigates, and the first
-  // ArrowDown lands on it.
   const highlightClearedRef = useRef(false);
   function clearTypedHighlight(): void {
     highlightClearedRef.current = true;
@@ -731,11 +726,6 @@ function OpenCommandPaletteDialog(props: {
         serverConfig?.providers ??
         (environment.environmentId === primaryEnvironmentId ? providers : []);
       const derived = deriveProviderInstanceEntries(environmentProviders);
-      // Settings fill the ACP registry identity (agent id, icon URL) the
-      // derived entries alone do not carry. This map is keyed by environment,
-      // not project, because it backs thread rows across every project on
-      // that environment; `enabled` stays machine-scoped (`null`) since no
-      // single project applies.
       const entries = serverConfig
         ? applyProviderInstanceSettings(derived, serverConfig.settings, null)
         : derived;
@@ -782,7 +772,6 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [newProjectFlow, setNewProjectFlow] = useState<{
     readonly environmentId: EnvironmentId;
-    /** Machine of the Add project sources view under this step; null from the palette root. */
     readonly sourcesEnvironmentId: EnvironmentId | null;
   } | null>(null);
   const [newProjectPublishes, setNewProjectPublishes] = useState(false);
@@ -960,8 +949,7 @@ function OpenCommandPaletteDialog(props: {
   // Map the browsed desktop-local env to its desktop pool instance id (e.g.
   // "wsl:ubuntu"). The catalog environmentId is descriptor-derived and won't
   // route on the desktop side; pickFolder only recognizes the pool id, which
-  // the bootstrap list exposes. Match on backend URL, exactly as Sidebar's
-  // LocalSecondaryStatus does (environment.displayUrl === bootstrap.httpBaseUrl).
+  // the bootstrap list exposes.
   const browseDesktopInstanceId = useMemo(() => {
     if (!browseEnvironmentIsDesktopLocal || browseEnvironment === null) {
       return null;
@@ -1429,7 +1417,6 @@ function OpenCommandPaletteDialog(props: {
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
     } else if (newProjectFlow?.sourcesEnvironmentId) {
-      // The machine switcher may have moved off the sources view's machine.
       setAddProjectEnvironmentId(newProjectFlow.sourcesEnvironmentId);
     }
     setViewStack((previousViews) => previousViews.slice(0, -1));
@@ -1846,7 +1833,6 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  // Read once per open: the palette is a snapshot of the composer, not a live view of it.
   const promptLinkTarget = paletteRouteTarget
     ? paletteRouteTarget.kind === "server"
       ? paletteRouteTarget.threadRef
@@ -1948,9 +1934,6 @@ function OpenCommandPaletteDialog(props: {
       searchTerms: ["restart", "reset", "reload", "agent", "session", "skills", "plugins", "mcp"],
       title: "Restart agent session",
       icon: <RotateCcwIcon className={ITEM_ICON_CLASS} />,
-      // Stopping the provider process keeps the conversation: the next message
-      // spawns a fresh one that resumes it and reloads skills, plugins, and MCP
-      // servers. The fresh workspace scan updates the composer's slash menu.
       run: async () => {
         const { environmentId } = thread;
         if (thread.runtime !== null) {
@@ -1960,8 +1943,6 @@ function OpenCommandPaletteDialog(props: {
           });
           if (stopped._tag === "Failure") throw squashAtomCommandFailure(stopped);
         }
-        // The server stops the process after accepting the command. A failed
-        // stop shows in the thread.
         toastManager.add({
           type: "success",
           title: "Agent session will restart",
@@ -2674,8 +2655,6 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    // Only problems found before git runs (bad destination, unknown repository)
-    // come back here.
     const projectId = newProjectId();
     setIsRemoteProjectCloning(true);
     const startResult = await startProjectClone({
@@ -2703,9 +2682,6 @@ function OpenCommandPaletteDialog(props: {
     }
     setOpen(false);
     const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
-    // The create event usually lands before this call returns; give the shell
-    // stream a moment so the draft opens with its project resolved instead of
-    // flashing the project picker.
     await waitForProject(projectRef, 3_000).catch(() => null);
     const navigationResult = await settlePromise(() => handleNewThread(projectRef));
     if (navigationResult._tag === "Failure") {
@@ -2766,10 +2742,6 @@ function OpenCommandPaletteDialog(props: {
     );
   }, [browseNavigation, browsePath.parentPath, pinnedCloneDirectoryName, prefetchBrowsePath]);
 
-  // Resolve the add-project path from browse data when available. When the
-  // query has a trailing separator (e.g. "~/projects/foo/"), parentPath is the
-  // directory itself. Otherwise the user typed a partial leaf name, so we need
-  // the exact browse entry's fullPath or fall back to the raw query.
   const resolvedAddProjectPath = hasTrailingPathSeparator(query)
     ? (browseResult?.parentPath ?? query.trim())
     : (exactBrowseEntry?.fullPath ?? query.trim());
@@ -2821,8 +2793,6 @@ function OpenCommandPaletteDialog(props: {
     popView();
     startAddProjectSourceSelection(environmentId);
   };
-  // Switching machines keeps the typed name; the GitHub option follows the
-  // machine because source control discovery reads addProjectEnvironmentId.
   const switchNewProjectEnvironment = (environmentId: EnvironmentId) => {
     setNewProjectFlow((flow) => (flow === null ? flow : { ...flow, environmentId }));
     setAddProjectEnvironmentId(environmentId);
@@ -3163,9 +3133,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    // Base UI ignores navigation keys with modifiers, so these fallbacks do too.
     if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
-    // Base UI only keeps a hidden highlight on the first row when it auto-highlights.
     const firstItemValue = autoHighlightsFirstRow ? resultRows.itemValues[0] : undefined;
     if (
       event.key === "ArrowDown" &&
@@ -3242,9 +3210,6 @@ function OpenCommandPaletteDialog(props: {
         browseEnvironmentId === primaryEnvironmentId && browseEnvironmentPlatform === "Linux"
           ? ((await window.desktopBridge?.getWslState().catch(() => null)) ?? null)
           : null;
-      // Route the picker to the browsed env's backend filesystem. The desktop
-      // only resolves a "wsl:*" pool instance id, so for a desktop-local env we
-      // pass the bootstrap-mapped instance id (not the catalog environmentId).
       // A WSL-only primary has no secondary bootstrap, so resolve its instance
       // id from desktop settings. Windows and combo-mode primaries still omit
       // the target to preserve the native primary picker. The desktop converts
@@ -3279,9 +3244,7 @@ function OpenCommandPaletteDialog(props: {
             ?.getLocalEnvironmentBootstraps()
             .find((bootstrap) => bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID)?.runningDistro ??
           null;
-      } catch {
-        // Keep UNC routing strict when the live primary identity cannot be read.
-      }
+      } catch {}
       const selection = resolveWslProjectSelection(
         pickedPath,
         applyWslEnvironmentConfiguration(

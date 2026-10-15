@@ -534,7 +534,6 @@ export function buildTraitsTriggerDisplay(input: {
               input.reportedModelSelection,
             );
     if (typeof label === "string" && label.length > 0) {
-      // Custom models retain descriptor order, so the primary select can be context.
       if (
         reasoningLabelIndex === -1 &&
         descriptor.type === "select" &&
@@ -546,9 +545,6 @@ export function buildTraitsTriggerDisplay(input: {
     }
   }
 
-  // Only fall back to text when fast mode is genuinely the sole trait. Keying
-  // off an empty label list alone would also catch descriptors that resolved to
-  // no label at all, printing a bogus "Normal" for a model without fast mode.
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
     return { label: fastModeFallbackLabel };
   }
@@ -650,8 +646,6 @@ export const TraitsPicker = memo(function TraitsPicker({
           }
         >
           {isCodexStyle ? (
-            // The label truncates itself; clipping the wrapper too would cut off
-            // the chevron, whose negative end margin overhangs the wrapper edge.
             <span
               className={cn(
                 "flex min-w-0 w-full items-center",

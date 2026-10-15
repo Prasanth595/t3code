@@ -1,20 +1,13 @@
 /**
- * Fenced code blocks and tables report an intrinsic width equal to their widest
- * line, which is effectively unbounded. A user bubble sizes itself from its
- * content (`maxWidth` with no `width`), so Android lays the bubble's children
- * out during the unclamped intrinsic pass — where the surrounding paragraphs
- * collapse to a single line — and never repositions them once the width is
- * clamped back to `maxWidth`. Pinning the bubble's width removes the intrinsic
- * pass entirely, which is the same reason review-comment bubbles already carry
- * an explicit width.
- *
- * Ordered lists hit the same Android layout bug because each item contains a
- * flexing content column inside a shrink-to-fit row.
+ * A user bubble sizes itself from its content (`maxWidth` with no `width`), so
+ * Android lays the bubble's children out during the unclamped intrinsic pass —
+ * where the surrounding paragraphs collapse to a single line — and never
+ * repositions them once the width is clamped back to `maxWidth`. Ordered lists
+ * hit the same Android layout bug because each item contains a flexing content
+ * column inside a shrink-to-fit row.
  */
 
 const FENCED_CODE_BLOCK = /^ {0,3}(?:```|~~~)/m;
-// Trades some precision for a simple check, favoring false positives over false
-// negatives: list-shaped paragraph may get a wider bubble
 const ORDERED_LIST_ITEM = /^ {0,3}\d{1,9}[.)](?:[ \t]+|$)/;
 const INDENTED_ORDERED_LIST_ITEM = /^( {4,})\d{1,9}[.)](?:[ \t]+|$)/;
 const ANY_LIST_ITEM = /^( *)(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)/;

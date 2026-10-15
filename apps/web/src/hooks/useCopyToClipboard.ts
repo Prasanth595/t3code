@@ -51,7 +51,6 @@ export class ClipboardReadError extends Schema.TaggedError<ClipboardReadError>()
   }
 }
 
-/** Copy fallback for remote web pages served over plain HTTP. */
 function writeTextWithExecCommand(
   value: string,
   extraFlavors?: Readonly<Record<string, string>>,
@@ -131,8 +130,6 @@ export async function writeTextToClipboard(
   }
 
   try {
-    // Custom flavors need ClipboardItem; when it is missing or refuses the type, plain text
-    // still lands so the copy never silently fails.
     if (extraFlavors && typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
       try {
         await navigator.clipboard.write([

@@ -7,12 +7,10 @@ export type UsageChartMetric = "cost" | "tokens";
 
 export interface UsageChartDay {
   readonly day: string;
-  /** In {@link PROVIDER_ORDER}, i.e. bottom of the stack first. */
   readonly values: readonly { readonly provider: UsageProviderKind; readonly value: number }[];
   readonly total: number;
 }
 
-/** One entry per day in the window, zero-filled where nothing happened. */
 export function buildChartDays(
   days: readonly string[],
   daily: readonly DailyTotals[],

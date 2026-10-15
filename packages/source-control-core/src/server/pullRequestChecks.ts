@@ -1,6 +1,5 @@
 import type { PullRequestCheck } from "@t3tools/contracts";
 
-/** ISO-8601 timestamps in UTC compare correctly as plain text, which is all the ordering needs. */
 function isAtLeastAsNew(candidate: string | null, kept: string | null): boolean {
   if (candidate === null) return kept === null;
   return kept === null || candidate >= kept;
@@ -12,11 +11,6 @@ function isAtLeastAsNew(candidate: string | null, kept: string | null): boolean 
  * the reader as what looks like a duplicate. Nothing in a check carries an id, so the name is what
  * identifies it, qualified by the workflow it belongs to since two workflows are free to name a
  * job the same thing.
- *
- * A tie goes to whichever came last, because a host lists a re-run after the run it repeats.
- *
- * The order is the host's own, held at the place each check first appeared, so a re-run landing
- * mid-read replaces a row where it stands instead of reshuffling the list under the reader.
  */
 export function dedupeChecks(
   entries: ReadonlyArray<{

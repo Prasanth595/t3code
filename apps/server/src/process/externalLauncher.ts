@@ -469,14 +469,13 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
   },
 );
 
-// Editor discovery walks PATH for every known editor and runs for every client
-// connect (the server config embeds the available editors). Callers apply a
-// timeout (`resolveAvailableEditorsForConfig`) and disconnect mid-connect;
-// neither may cancel a scan other connects are waiting on, or throw away work a
-// slow host (a busy server at startup, a long PATH) needs more than one connect
-// to finish. Expiry uses the monotonic clock (Clock.monotonicTimeNanos),
-// matching the command-resolution cache in @t3tools/shared/shell, so a backward
-// wall-clock adjustment cannot keep an expired entry alive.
+// Callers apply a timeout (`resolveAvailableEditorsForConfig`) and disconnect
+// mid-connect; neither may cancel a scan other connects are waiting on, or
+// throw away work a slow host (a busy server at startup, a long PATH) needs
+// more than one connect to finish. Expiry uses the monotonic clock
+// (Clock.monotonicTimeNanos), matching the command-resolution cache in
+// @t3tools/shared/shell, so a backward wall-clock adjustment cannot keep an
+// expired entry alive.
 const EDITOR_DISCOVERY_CACHE_TTL_NANOS = 60_000_000_000n;
 
 interface EditorDiscoveryCacheEntry {
@@ -636,9 +635,6 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
       }
       return fileExplorerRevealLaunch(target, explorerTarget, WSL_POWERSHELL_COMMAND);
     }
-    // Without interop PowerShell the capability advertised the Linux "files"
-    // kind when it advertised anything at all, so the reveal must open the
-    // Linux file manager the label promised, not File Explorer.
     if (hasGraphicalLinuxSession(env) && (yield* isUsableFileManagerCommand("xdg-open", env))) {
       const path = yield* Path.Path;
       return { editor: "file-manager", target, command: "xdg-open", args: [path.dirname(target)] };

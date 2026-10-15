@@ -10,7 +10,6 @@ const CHECKOUT_COMMAND = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
 
-/** `az repos pr checkout` names the pull request by `--id`, `-i`, or its first plain argument. */
 function checkoutCommandId(args: string): string | null {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   for (const [index, part] of parts.entries()) {
@@ -32,7 +31,6 @@ export const definition = defineSourceControlClient({
   publicHost: null,
   publishDescription: "dev.azure.com",
   publishHost: () => "dev.azure.com",
-  // A new repository belongs to a project, which the account does not name.
   newRepositoryOwner: () => null,
   defaultCloneTransport: "ssh",
   changeRequestUrl: ({ host, repository, number }) =>
@@ -57,7 +55,6 @@ export const definition = defineSourceControlClient({
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
   changeRequestUrlHost: (url) => url.hostname,
   checkoutChangeRequestHost: () => null,
-  // The legacy and SSH spellings of one repository all canonicalise to dev.azure.com.
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestAuthorityOfProject(identity, link) &&
     canonicalRepositoryKey(identity.canonicalKey.toLowerCase()) ===

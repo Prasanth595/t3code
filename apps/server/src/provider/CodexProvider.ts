@@ -115,7 +115,6 @@ function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["accoun
   return codexPlanLabel(account.planType);
 }
 
-/** Shared with usage-limit sources, which report the same `planType` slugs. */
 export function codexPlanLabel(planType: string | null | undefined): string | undefined {
   switch (planType) {
     case "free":
@@ -333,7 +332,6 @@ const decodeCodexModelsCacheStamp = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ fetched_at: Schema.String })),
 );
 
-/** When Codex last wrote `models_cache.json`, in epoch millis; NaN when unreadable. */
 const readCodexModelsCacheFetchedAt = Effect.fn("readCodexModelsCacheFetchedAt")(function* (
   codexHome: string,
 ) {
@@ -349,14 +347,10 @@ const readCodexModelsCacheFetchedAt = Effect.fn("readCodexModelsCacheFetchedAt")
 });
 
 /**
- * `model/list` serves `CODEX_HOME/models_cache.json` while it is under five
- * minutes old. Every Codex client on the machine shares that file, and the
- * backend tailors the catalog to each client's originator: the plain CLI does
- * not get Sol Ultrafast. So the first answer can be another client's catalog.
- * App-server refreshes the catalog online at startup, so wait until a write
- * newer than this process's spawn lands, then list again. If no refresh
- * lands in time, keep the first answer. Another client writing in the same
- * few hundred milliseconds can still win; the next probe corrects it.
+ * Every Codex client on the machine shares that file, and the backend tailors
+ * the catalog to each client's originator: the plain CLI does not get Sol
+ * Ultrafast. App-server refreshes the catalog online at startup, so wait until
+ * a write newer than this process's spawn lands, then list again.
  */
 const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(function* (input: {
   readonly client: CodexClient.CodexAppServerClient["Service"];
@@ -381,11 +375,10 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
 });
 
 /**
- * Codex sends its client name as the `originator` header, and the backend
- * tailors the model catalog to it. App-server starts its catalog refresh
- * before `initialize` names the client, so that first fetch goes out as the
- * plain CLI, misses tiers like Sol Ultrafast, and overwrites the shared
- * `models_cache.json`. Naming the originator at spawn closes that race.
+ * App-server starts its catalog refresh before `initialize` names the client,
+ * so that first fetch goes out as the plain CLI, misses tiers like Sol
+ * Ultrafast, and overwrites the shared `models_cache.json`. Naming the
+ * originator at spawn closes that race.
  */
 export const codexAppServerEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
@@ -417,7 +410,6 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
   // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
-  // Expand here for parity with `CodexTextGeneration`.
   const resolvedHomePath = input.homePath
     ? expandHomePath(input.homePath, yield* HostProcess.HomeDirectory)
     : undefined;
@@ -492,8 +484,6 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       accountResponse.account?.type === "chatgpt"
         ? requestCodexChatGptModels({ client, codexHome: initialize.codexHome, spawnedAtMs })
         : requestAllCodexModels(client),
-      // Usage is an enrichment: a failure or a slow answer degrades to "no
-      // usage this probe" rather than costing the account and models.
       input.skipNativeUsage
         ? Effect.succeed(undefined)
         : client.request("account/rateLimits/read", null).pipe(
@@ -592,8 +582,6 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
 } {
   const authLabel = codexAccountAuthLabel(account.account);
   const authEmail = codexAccountEmail(account.account);
-  // One email can hold several workspaces, each with its own quota; the usage
-  // read names the one this login draws on.
   const workspaceId =
     rateLimits && "accountId" in rateLimits ? rateLimits.accountId?.trim() : undefined;
   const auth = {

@@ -197,7 +197,6 @@ function delegatedCompletionNotification(
   };
 }
 
-/** Keep the delivery message intact while projecting its trigger as an activity. */
 export function notificationTurnItem(
   item: OrchestrationV2TurnItem,
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,

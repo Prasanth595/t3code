@@ -197,7 +197,6 @@ const parseLsofOutput = (
       const key = `localhost:${portMatch}`;
       const terminal = pid === null ? null : (terminalByProcessId.get(pid) ?? null);
       const existing = seen.get(key);
-      // A port receives probes only when T3 terminals own all of its listeners.
       if (existing) {
         if (terminal === null) seen.set(key, { ...existing, terminal: null });
         continue;
@@ -255,9 +254,6 @@ const parseWindowsListenerLine = (
     };
   }
 
-  // `netstat.exe -ano -p tcp` / `tcpv6`:
-  //   TCP    127.0.0.1:3773         0.0.0.0:0              LISTENING       34280
-  //   TCP    [::1]:35783            [::]:0                 LISTENING       22876
   // Foreign port `:0` identifies a listening TCP socket regardless of Windows locale.
   const fields = trimmed.split(/\s+/);
   if (fields.length < 4 || fields[0]?.toUpperCase() !== "TCP") return null;
@@ -279,11 +275,9 @@ const parseWindowsListenerLine = (
   };
 };
 
-/** `ProcessRunner` reports a nonzero exit as a result, not a failure. */
 const exitedWithError = (result: ProcessRunner.ProcessRunOutput): boolean =>
   result.code !== null && result.code !== 0;
 
-/** Reads the image name from `tasklist.exe /FO CSV /NH /FI "PID eq <pid>"` output. */
 const parseTasklistProcessName = (raw: string, pid: number): string | null => {
   for (const line of raw.split(/\r?\n/g)) {
     const match = /^"([^"]*)","(\d+)"/.exec(line.trim());
@@ -320,7 +314,6 @@ const parseWindowsListenerOutput = (
   return [...seen.values()].toSorted((left, right) => left.port - right.port);
 };
 
-/** `/proc/net/tcp` state for a listening socket. */
 const PROC_TCP_LISTEN = "0A";
 
 /** Each 32-bit word of the hex address is little-endian. */
@@ -330,7 +323,6 @@ const procLocalAddress = (hex: string): boolean => {
   }
   if (hex.length !== 32) return false;
   if (hex === "0".repeat(32) || hex === `${"0".repeat(24)}01000000`) return true;
-  // IPv4-mapped (::ffff:a.b.c.d): wildcard or 127.0.0.0/8.
   return hex.startsWith(`${"0".repeat(16)}FFFF0000`) && procLocalAddress(hex.slice(24));
 };
 
@@ -392,11 +384,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
   const scanSemaphore = yield* Semaphore.make(1);
   const lsofMissingRef = yield* Ref.make(false);
-  /** Windows image names by PID; netstat reports only PIDs. */
   const windowsProcessNamesRef = yield* Ref.make<
     ReadonlyMap<number, { readonly name: string | null; readonly expiresAtMillis: number }>
   >(new Map());
-  /** Confirmed owners of listening socket inodes. */
   const socketOwnersRef = yield* Ref.make<
     ReadonlyMap<string, { readonly pid: number; readonly processName: string | null }>
   >(new Map());
@@ -414,7 +404,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     let budget = PROC_FD_WALK_LIMIT;
     for (const pidText of pids) {
       if (owners.size === inodes.size || budget <= 0) break;
-      // Other users' fds are unreadable; their ports still list, without a pid.
       const fds = yield* fileSystem
         .readDirectory(`/proc/${pidText}/fd`)
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -483,7 +472,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         url: `http://localhost:${port}`,
         processName: owner?.processName ?? null,
         pid: owner?.pid ?? null,
-        // A replaced listener had no known owner, so the port stays unowned.
         terminal: existing ? null : terminal,
       });
     }
@@ -660,7 +648,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             maxOutputBytes: 64 * 1024,
           })
           .pipe(
-            // Only a completed lookup is cached; failures retry on the next scan.
             Effect.map((result) =>
               exitedWithError(result)
                 ? []

@@ -39,9 +39,6 @@ export function useDeviceState(environmentId: EnvironmentId | null): {
   return { state: query.data ?? EMPTY_DEVICE_STATE, loaded: query.data !== undefined };
 }
 
-/**
- * Keyed on the prepared connection so a re-pair produces new credentials.
- */
 const deviceHubAccessAtom = Atom.family((environmentId: EnvironmentId) =>
   connectionAtomRuntime
     .atom((get) => {

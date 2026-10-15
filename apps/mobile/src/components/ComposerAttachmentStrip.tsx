@@ -93,11 +93,6 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
   );
 }
 
-/**
- * File-backed previews rebase into the current iOS data container (its UUID
- * changes across installs); the raw persisted URI renders meanwhile, which is
- * correct everywhere but after a container move.
- */
 const PREVIEW_CACHE_DIRECTORY = "t3-composer-previews";
 
 /**
@@ -106,7 +101,6 @@ const PREVIEW_CACHE_DIRECTORY = "t3-composer-previews";
  * UI-thread commits (the question card's coverage animation) win the race every
  * time until the renderer aborts.
  */
-/** Roughly 192KB of base64: small enough that re-parsing it per layout stays imperceptible. */
 const INLINE_PREVIEW_FALLBACK_MAX_CHARS = 256_000;
 
 async function materializeDataUrlPreview(id: string, dataUrl: string): Promise<string | null> {
@@ -161,8 +155,6 @@ function useComposerImagePreviewUri(attachment: DraftComposerImageAttachment): s
   if (fileUri !== undefined) return previewUri.startsWith("data:") ? fileUri : previewUri;
   if (inlinePreview) {
     if (materialized?.id !== id) return null;
-    // Small ones are cheap enough to render directly rather than leaving the thumbnail
-    // blank forever.
     return (
       materialized.uri ??
       (previewUri.length <= INLINE_PREVIEW_FALLBACK_MAX_CHARS ? previewUri : null)
@@ -188,8 +180,6 @@ function ComposerImageAttachment(
         onPress={() =>
           props.onPressPreview?.(
             withGallery(
-              // File-backed images open through the retain-lease + container
-              // rebase path; legacy drafts still carry their inline bytes.
               isFileBackedComposerAttachment(attachment)
                 ? { kind: "image", attachment, name: attachment.name, sourceIdentifier }
                 : {

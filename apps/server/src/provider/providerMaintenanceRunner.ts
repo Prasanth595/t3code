@@ -137,8 +137,6 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
             Stream.tap((chunk) => {
               const split = splitOutputLines(partialLine, decoder.decode(chunk, { stream: true }));
               partialLine = split.partialLine;
-              // A progress bar that redraws with a leading `\r` keeps its newest
-              // frame unterminated, so that frame is the latest status.
               const line =
                 toProgressLine(split.partialLine) ??
                 split.lines.map(toProgressLine).findLast((value) => value !== null);

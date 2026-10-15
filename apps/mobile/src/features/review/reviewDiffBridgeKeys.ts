@@ -1,7 +1,5 @@
 import type { NativeReviewDiffHighlightScheme } from "../diffs/nativeReviewDiffHighlighter";
 
-// Kept free of react-native / hook imports so they stay unit-testable in node.
-
 function hashReviewDiffKey(diff: string | null | undefined): string {
   if (!diff) {
     return "empty";

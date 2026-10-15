@@ -132,7 +132,6 @@ function SegmentPopover({
   readonly window: LimitPoolMember["window"];
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly now: number;
-  /** Redeem state owned by the segment, since the confirm lives outside this popover. */
   readonly redeem: ReturnType<typeof useResetCredit> | null;
   readonly onRedeem: () => void;
 }) {
@@ -220,7 +219,6 @@ function PoolSegment({
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly color: string;
   readonly now: number;
-  /** 1-based position in the bar, shown on the strip and its legend row to tie them together. */
   readonly index: number;
   readonly showAccountName: boolean;
 }) {
@@ -270,7 +268,6 @@ function PoolSegment({
             />
           ) : null}
           <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-          {/* Countdown and badge get their own plate: fill and hatching run under them otherwise. */}
           <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
             {resetsIn?.replace("resets in ", "↻ ") ?? ""}
             {credits ? (
@@ -370,7 +367,6 @@ function LegendRow({
   );
 }
 
-/** Split out so the redeem hook only runs for accounts that can redeem. */
 function RedeemableSegmentPopup({
   account,
   window,
@@ -418,10 +414,6 @@ function RedeemableSegmentPopup({
   );
 }
 
-/**
- * Equal widths are honest: every account contributes the same share of the
- * pool, whatever its plan.
- */
 function PoolBar({
   pool,
   color,

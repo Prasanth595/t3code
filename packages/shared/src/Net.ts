@@ -29,19 +29,10 @@ const closeServer = (server: NodeNet.Server) => {
 export interface NetServiceShape {
   readonly canListenOnHost: (port: number, host: string) => Effect.Effect<boolean>;
 
-  /**
-   * Checks loopback availability on both IPv4 and IPv6 localhost addresses.
-   */
   readonly isPortAvailableOnLoopback: (port: number) => Effect.Effect<boolean>;
 
-  /**
-   * Unlike the bind-side checks this works for privileged ports (<1024).
-   */
   readonly hasListenerOnHost: (port: number, host: string) => Effect.Effect<boolean>;
 
-  /**
-   * Reserve an ephemeral loopback port and release it immediately.
-   */
   readonly reserveLoopbackPort: (host?: string) => Effect.Effect<number, NetError>;
 
   readonly findAvailablePort: (preferred: number) => Effect.Effect<number, NetError>;

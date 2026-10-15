@@ -188,8 +188,7 @@ const HTTP_ROUTER_CONFIG = {
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
-// already closes the websocket gracefully. Do not add an artificial drain before
-// those finalizers get a chance to run.
+// already closes the websocket gracefully.
 const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
 const layerResourceAttribution = ResourceAttribution.layer;
 const layerApplicationObservability = EventLoopMonitor.layer.pipe(
@@ -198,8 +197,7 @@ const layerApplicationObservability = EventLoopMonitor.layer.pipe(
 );
 
 // One rotating store behind both logger views, so driver instances never race
-// its rotation. Diagnostics must not block startup: a store that cannot open
-// degrades to the no-op loggers.
+// its rotation.
 const layerProviderEventLoggers = Layer.effect(
   ProviderEventLoggers.ProviderEventLoggers,
   Effect.gen(function* () {
@@ -455,7 +453,6 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   ScheduledTaskWebhookOrigin,
   Effect.gen(function* () {
     const secrets = yield* ServerSecretStore.ServerSecretStore;
-    // The reference holds an effect so each read sees the current link state.
     return Effect.gen(function* () {
       const [relayUrl, tunnelConfig] = yield* Effect.all([
         secrets.get(RELAY_URL_SECRET),
@@ -576,8 +573,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(layerServerSettings),
-  // The asset route uses the registry's GitHub credential for private PR media, which the
-  // built-in drivers' layer provides alongside the registry.
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
@@ -598,8 +593,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
 
 const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerPtyAdapter),
-  // Search, prepare, status inspection, and turn launch share one registry
-  // cache so every client and provider instance sees the same prepared agents.
   Layer.provideMerge(AcpRegistrySupport.layerFromHost.pipe(Layer.provide(ProviderHostLive.layer))),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -682,9 +675,6 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
   ),
-  // The orchestrator toolkit resolves delegation targets through the same live
-  // adapter facade the V2 orchestrator uses, so MCP capability reporting can
-  // never drift from what dispatch can actually serve.
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
@@ -694,8 +684,7 @@ const layerMakeRoutes = Layer.mergeAll(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
   // Both transports consume the same service instance, so caches single-flight across clients
-  // and mutations observed on WebSocket invalidate patches subsequently read over HTTP. Provided
-  // after the guide service so it reaches that too.
+  // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
   Layer.provide(PreviewBrowser.layer),
@@ -823,12 +812,11 @@ const layerMakeServer = Layer.unwrap(
           ),
           Effect.asVoid,
         );
-        // A launcher trial can be stopped before activation. The previous
-        // server is already gone, so the trial owns cleanup immediately; the
-        // pending-state check keeps the tunnel for normal commit or rollback,
-        // while the launcher's explicit-stop marker allows it to be released.
-        // Other runtimes wait for activation so a failed standby cannot tear
-        // down the active runtime's tunnel.
+        // The previous server is already gone, so the trial owns cleanup
+        // immediately; the pending-state check keeps the tunnel for normal
+        // commit or rollback, while the launcher's explicit-stop marker allows
+        // it to be released. Other runtimes wait for activation so a failed
+        // standby cannot tear down the active runtime's tunnel.
         const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
         if (cleanupBeforeActivation) {
           yield* Effect.addFinalizer(() => releaseManagedTunnel);
@@ -885,10 +873,6 @@ const layerMakeServer = Layer.unwrap(
               Stream.runForEach(recoverManagedTunnel),
               Effect.forkScoped,
             );
-            // No settling delay before the first attempt: routes are already
-            // serving by the time activation opens this gate (the startup
-            // sequence awaits routesReady), and the retry schedule below covers
-            // anything this sleep used to hedge against.
             const wantsCliLink = hasCloudPublicConfig
               ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
                   Effect.catch((cause) =>
@@ -899,8 +883,7 @@ const layerMakeServer = Layer.unwrap(
                 )
               : false;
             // A failed read must not end this fiber before it registers
-            // recovery and starts consuming recovery requests. "managed" is
-            // what a missing value means, so it is the safe fallback.
+            // recovery and starts consuming recovery requests.
             const desiredCliLinkMode = wantsCliLink
               ? yield* CloudCliState.readCliDesiredLinkMode.pipe(
                   Effect.catch((cause) =>
@@ -974,9 +957,6 @@ const layerMakeServer = Layer.unwrap(
               desiredCliLinkMode === "publish_only"
                 ? { status: "not_linked" as const }
                 : yield* registerManagedTunnel;
-            // A terminal registration failure also allows the stored config
-            // to start. Transient outages use the fallback above and keep
-            // registration retrying in this scoped startup fiber.
             if (registration.status === "unavailable" && !startedConfirmed) {
               yield* startStoredManagedTunnel;
             }
@@ -1064,7 +1044,6 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
-      // PR reads, Git operations, and WebSocket discovery share one process limiter.
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),

@@ -27,7 +27,6 @@ export interface SourceControlProviderContext {
   readonly provider: SourceControlProviderInfo;
   readonly remoteName: string;
   readonly remoteUrl: string;
-  /** An explicit web authority can disambiguate Forgejo logins sharing an SSH alias. */
   readonly requestedHost?: string;
 }
 
@@ -39,10 +38,6 @@ export interface SourceControlRefSelector {
 
 const MAX_ERROR_TRANSPORT_VALUE_LENGTH = 256;
 
-/**
- * This is intentionally narrower than request validation: it only strips URL
- * secrets and bounds diagnostic values sent over transport.
- */
 export function transportSafeSourceControlErrorValue(value: string): string {
   let printable = "";
   for (const character of value) {
@@ -111,8 +106,7 @@ export class SourceControlProvider extends Context.Service<
     readonly kind: SourceControlProviderKind;
     /**
      * The caller checks the owner against what comes back, so a host that cannot search
-     * `owner:branch` can drop those selectors without losing anything. Absent asks about every
-     * selector, reading 1 for the open lookup and 20 for any state.
+     * `owner:branch` can drop those selectors without losing anything.
      */
     readonly headBranchProbe?: (input: {
       readonly headSelectors: ReadonlyArray<string>;
@@ -127,9 +121,6 @@ export class SourceControlProvider extends Context.Service<
      * more than that (Forgejo's HTTP installation mount). Absent means the whole path.
      */
     readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
-    /**
-     * Only consulted for identities this host may own.
-     */
     readonly refineRepositoryIdentity?: (input: {
       readonly identity: RepositoryIdentity;
       readonly resolveContext: (input: {

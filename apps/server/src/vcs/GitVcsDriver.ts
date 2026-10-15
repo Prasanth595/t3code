@@ -84,7 +84,6 @@ export interface GitStatusDetails {
 }
 
 export interface GitLocalStatusOptions {
-  /** Skip revision walks and return zero divergence counts for local-only consumers. */
   readonly includeDivergence?: boolean;
   readonly includeBranchChanges?: boolean;
 }
@@ -129,7 +128,6 @@ export interface CreateWorktreeProgress {
     total: number;
   }) => Effect.Effect<void, never>;
   readonly onSubmodulesStarted?: () => Effect.Effect<void, never>;
-  /** Fires when `.gitmodules` exists but the resolved submodule mode is `"none"`. */
   readonly onSubmodulesDisabled?: (input: {
     source: "settings" | "t3.json";
   }) => Effect.Effect<void, never>;
@@ -143,9 +141,8 @@ export interface CreateWorktreeProgress {
 export interface CreateWorktreeOptions {
   readonly progress?: CreateWorktreeProgress;
   /**
-   * The project-over-environment `worktreeSubmodules` setting. Null (or
-   * omitted, for callers without settings access) defers to the checkout's
-   * own t3.json.
+   * Null (or omitted, for callers without settings access) defers to the
+   * checkout's own t3.json.
    */
   readonly submodules?: WorktreeSubmodules | null;
   readonly worktreesDirectory?: string;
@@ -190,7 +187,6 @@ export interface GitRangeContext {
 }
 
 export interface GitRenameBranchInput {
-  /** Fail on a name collision instead of appending a numeric suffix. */
   exactName?: boolean;
   cwd: string;
   oldBranch: string;
@@ -351,7 +347,6 @@ export class GitVcsDriver extends Context.Service<
     readonly fetchPullRequestBranch: (
       input: GitFetchPullRequestBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
-    /** Fetches `refs/pull/<n>/head` without writing a branch, for heads that exist nowhere else. */
     readonly fetchPullRequestHeadCommit: (
       input: GitFetchPullRequestHeadCommitInput,
     ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;
@@ -390,10 +385,6 @@ export class GitVcsDriver extends Context.Service<
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
     }) => Effect.Effect<void, GitCommandError>;
-    /**
-     * Absolute paths of every live worktree of the repository at `cwd`, the
-     * main checkout included. Worktrees whose directory is gone are left out.
-     */
     readonly listWorktreePaths: (cwd: string) => Effect.Effect<string[], GitCommandError>;
     readonly deleteLocalBranch: (
       input: GitDeleteLocalBranchInput,
@@ -820,7 +811,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
       };
 
-      // Forced process termination can leave Git's private index lock behind.
       const cleanupTempIndex = Effect.forEach(
         [tempIndexPath, `${tempIndexPath}.lock`],
         (indexFile) => fileSystem.remove(indexFile, { force: true }).pipe(Effect.ignore),
@@ -858,7 +848,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
             if (indexTime <= 0) return false;
             yield* fileSystem.copyFile(indexPath.stdout.trim(), tempIndexPath);
-            // Retain stat data only where the copied index already matches HEAD.
             yield* execute({
               operation,
               cwd: input.cwd,
@@ -914,7 +903,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 maxOutputBytes: 1,
                 outputMode: "truncate",
               });
-              // Any selected skipped file has a manual flag, not a sparse exclusion.
               specialFlags = selected.stdout.length > 0 || selected.stdoutTruncated;
             }
             // Sparse Git clears skip-worktree for present files. Manual flags still need a reset.
@@ -943,7 +931,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             yield* execute({
               operation,
               cwd: input.cwd,
-              // A fresh sparse index represents excluded directories without marking them deleted.
               args: sparseCheckout
                 ? [...indexConfig, "-c", "index.sparse=true", "read-tree", "--reset", "HEAD"]
                 : ["read-tree", "HEAD"],
@@ -956,7 +943,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           execute({
             operation,
             cwd: input.cwd,
-            // Preserve absent skipped entries, but capture present nonignored files outside the cone.
             args: [
               ...indexConfig,
               ...durableWrite,
@@ -987,7 +973,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   entry.endsWith("/"),
                 );
                 if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
-                // Discover each child's repository instead of inheriting the server's Git bindings.
                 const nestedRepoEnv: NodeJS.ProcessEnv = {
                   ...process.env,
                   GIT_DIR: undefined,
@@ -1239,7 +1224,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           `${input.toCheckpointRef}^{commit}`,
         ],
       });
-      // Each line is "<parent> <committer time>". The parent is the HEAD at capture.
       const [fromLine = "", toLine = ""] = heads.stdout.trimEnd().split("\n");
       const [startHead = "", capturedAt = ""] = fromLine.split(" ");
       const [endHead = ""] = toLine.split(" ");

@@ -69,7 +69,6 @@ function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {
         },
       ];
     }
-    // Use actions even for checked entries: the app owns their durable state.
     return [
       {
         id: childId,

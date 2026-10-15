@@ -23,11 +23,6 @@ const text = (annotations: Schema.Annotations.Key<string>) =>
     Schema.annotateKey(annotations),
   );
 
-/**
- * Bitbucket API credentials, used before the `T3CODE_BITBUCKET_*` environment variables: an
- * access token, or an Atlassian account email with an API token. The access token wins when both
- * are saved.
- */
 export const settings = makeProviderSettingsSchema(
   {
     accessToken: text({

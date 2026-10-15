@@ -285,10 +285,6 @@ export function DraftHeroHeadline({
       <Tooltip>
         <TooltipTrigger
           render={
-            // The trigger's accessible name comes from its visible text (the
-            // project title) so the hero sentence reads naturally: an
-            // aria-label here would replace the title with an action phrase
-            // mid-sentence and baffle screen-reader users.
             <ComboboxTrigger
               render={<InlineButton tone="picker" />}
               data-draft-project-trigger=""
@@ -351,10 +347,6 @@ export function DraftHeroHeadline({
     </button>
   );
 
-  // The composer hero is a sentence, so the heading's accessible name must be
-  // a complete sentence too. The project picker is a control rendered inline
-  // in the h1; without an explicit label its widget state bleeds into the
-  // announced phrase.
   const headingLabel = isScratchDraft
     ? "What should we work on?"
     : hasResolvedProject
@@ -404,8 +396,7 @@ export function DraftHeroHeadline({
           <>Add a project to start</>
         )}
       </h1>
-      {/* Reserved whenever threads can skip a project, so the heading does not
-          move. Without a project, the picker moves here to choose one. */}
+      {}
       {scratchWorkspaceRoot === null ? null : (
         <p className="mt-2 flex h-6 items-center text-sm">
           {isScratchDraft ? projectSelector : orStartWithoutProject}

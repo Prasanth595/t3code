@@ -20,7 +20,6 @@ const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
   actions: [...definition.changeRequestActions],
-  // GitLab offers all three, though a project settles on one; `mergeCapabilities` narrows it.
   mergeMethods: ["merge", "squash", "rebase"],
   // Rebase alone: GitLab moves a stale branch onto its target by replaying it, and has nothing
   // that merges the target back in the way GitHub's update button can.
@@ -58,8 +57,6 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
  * GitLab's REST API reports the viewer's role on the project but never whether they opened this
  * merge request — and its author may close it, reopen it and move it in and out of draft
  * whatever their role, just as the author of a note may resolve the discussion it started.
- * Asking for a review is granted for the same reason: GitLab takes a reviewer set from the
- * author and from anyone with the Developer role, and states neither of those two facts here.
  */
 export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
@@ -119,8 +116,6 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          // GitLab is asked for its merge requests by update, newest first, whether or not it is
-          // being carried on from — so every page it answers is one a cursor can continue.
           Effect.map((batch) => ({ ...batch, continues: true })),
         ),
 
@@ -167,8 +162,6 @@ export const make = Effect.gen(function* () {
           cli
             .listDiscussions(input)
             .pipe(Effect.orElseSucceed(() => ({ threads: [], truncated: true }))),
-          // The notes endpoint carries no award of any kind, so they are read alongside it. A
-          // failed read costs the conversation its reactions rather than its words.
           cli.listReactions(input).pipe(
             Effect.orElseSucceed(() => ({
               reactions: [] as ReadonlyArray<PullRequestReaction>,
@@ -185,9 +178,6 @@ export const make = Effect.gen(function* () {
             ...comment,
             reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
           })),
-          // GitLab reports no count of its own, so the walk's own total is the host's: the
-          // notes endpoint carries every comment on the merge request, including the ones
-          // written under a discussion, and it is read until GitLab runs out.
           commentCount: notes.comments.length,
           commentsTruncated: notes.truncated || discussions.truncated,
           reviewThreads: discussions.threads.map((thread) => ({
@@ -201,8 +191,6 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
-    // The same read the detail takes it from, on its own: `user.can_merge` lives on the merge
-    // request, so there is no cheaper thing to ask GitLab.
     getViewerPermissions: (input) =>
       cli
         .getMergeRequestDetail(input)
@@ -267,8 +255,6 @@ export const make = Effect.gen(function* () {
 
     comment: (input) => cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
 
-    // The kind is not read: every comment this provider hands out, positioned or not, carries a
-    // plain REST note id, and one endpoint rewrites both.
     updateComment: (input) =>
       cli
         .updateNote({

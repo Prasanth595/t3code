@@ -66,13 +66,9 @@ function isDetailDone<E>(result: AsyncResult.AsyncResult<EnvironmentThreadState,
 }
 
 /**
- * Keeps the thread state atom mounted for each running thread in the listed
- * environments. Mount the result; its value is only bookkeeping.
- *
- * The shell and detail streams are independent, so the shell can report a
- * stop before the detail loads or catches up. A stopped thread stays mounted
- * until its own detail is live and shows the stop too. Then the stream closes
- * and saves the settled state to disk.
+ * The shell and detail streams are independent, so the shell can report a stop
+ * before the detail loads or catches up. A stopped thread stays mounted until
+ * its own detail is live and shows the stop too.
  */
 export function createRunningThreadKeepAliveAtom<E>(input: {
   readonly environmentIdsAtom: Atom.Atom<ReadonlyArray<EnvironmentId>>;
@@ -84,8 +80,6 @@ export function createRunningThreadKeepAliveAtom<E>(input: {
     threadId: ThreadId,
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentThreadState, E>>;
 }) {
-  // Keeps its identity until a thread starts or stops, so ordinary shell
-  // updates do not rebuild the keep-alive set.
   const runningThreadIdsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyArray<ThreadId> = [];
     return Atom.make((get) => {

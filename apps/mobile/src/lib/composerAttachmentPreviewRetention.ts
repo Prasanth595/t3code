@@ -16,7 +16,6 @@ export function registerComposerAttachmentUnusedHandler(handler: UnusedAttachmen
   onAttachmentUnused = handler;
 }
 
-/** Keeps a native preview or upload readable until it finishes, then retries ownership cleanup. */
 export function retainComposerAttachmentFileForPreview(
   attachment: FileBackedComposerAttachment,
 ): () => void {

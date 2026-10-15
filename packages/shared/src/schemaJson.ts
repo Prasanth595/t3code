@@ -158,7 +158,6 @@ export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
 const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const parseLenientJsonGetter = SchemaGetter.transformEffect((input: string) => {
-  // Strip single-line comments - alternation preserves quoted strings.
   let stripped = input.replace(
     /("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g,
     (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
@@ -169,9 +168,6 @@ const parseLenientJsonGetter = SchemaGetter.transformEffect((input: string) => {
     (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
   );
 
-  // Strip trailing commas before `}` or `]`. The alternation preserves quoted
-  // strings so a comma inside a string value (e.g. `{"note":"a,]"}`) is not
-  // mistaken for a trailing comma and removed.
   stripped = stripped.replace(
     /("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g,
     (match, stringLiteral: string | undefined, bracket: string | undefined) =>
@@ -190,10 +186,6 @@ const prettyJsonString = SchemaGetter.parseJson<string>().pipe(
   SchemaGetter.compose(SchemaGetter.stringifyJson({ space: 2 })),
 );
 
-/**
- * Drop-in replacement for `Schema.fromJsonString(schema)` that tolerates trailing commas and
- * comments in the input.
- */
 export const fromLenientJson = <S extends Schema.Top>(schema: S) =>
   Schema.String.pipe(Schema.decodeTo(schema, fromLenientJsonString));
 

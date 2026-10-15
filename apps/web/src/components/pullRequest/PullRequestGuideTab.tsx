@@ -44,7 +44,6 @@ export function PullRequestGuideTab({
     | null;
   onFinishReview: (() => void) | null;
   onOpenFile: (path: string) => void;
-  /** Told when a written guide comes on screen; a run in progress is not one. */
   onTourShown?: (() => void) | undefined;
 }) {
   const { query, data, running, canWrite, write } = useReviewGuideWriter({
@@ -53,7 +52,6 @@ export function PullRequestGuideTab({
     title,
   });
   const runKey = guideRunKey(environmentId, reference);
-  // Line comments join the review the Code tab collects, so either place shows and sends them.
   const reviewKey = pullRequestReviewKey(reference);
   const pending = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);

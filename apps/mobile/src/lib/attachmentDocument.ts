@@ -53,8 +53,6 @@ export function useAttachmentDocument(input: {
     [content, delimiter],
   );
   const [error, setError] = useState<string | null>(null);
-  // Reading source is a separate failure from loading the file: a rendered HTML page can be
-  // fine while its bytes are not UTF-8, and switching back to the page must not stay stuck.
   const [contentError, setContentError] = useState<string | null>(null);
   const textReadUrl = useRef<{ uri: string; authorizedAt: number } | null>(null);
   const [rendered, setRendered] = useState(true);

@@ -1,10 +1,3 @@
-/**
- * Each entry pins its own paths and credential-store coordinates rather than
- * deriving them, because the forks do not agree. macOS uses service/account
- * pairs, while Linux Chromium uses a custom libsecret schema keyed by an
- * `application` attribute. The user-data directory also differs per fork and
- * per platform.
- */
 import type { BrowserImportSourceId, BrowserImportSourceProfile } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -33,10 +26,8 @@ export interface BrowserImportSourceDefinition {
   readonly engine: BrowserImportEngine;
   readonly platforms: ReadonlyArray<NodeJS.Platform>;
   readonly userDataDirectory: (context: BrowserImportPathContext) => string | undefined;
-  /** Chromium on macOS only: where the OSCrypt key lives in the keychain. */
   readonly keychainService?: string;
   readonly keychainAccount?: string;
-  /** Chromium's `application` attribute in the Linux libsecret schema. */
   readonly linuxSecretApplication?: string;
 }
 
@@ -84,8 +75,7 @@ const chromiumSource = (input: {
 export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition> = [
   // No Chromium fork is importable on Windows: since Chrome 127 their cookies
   // are encrypted to the browser's own identity (App-Bound Encryption), so no
-  // other process can read them. macOS and Linux keep working, so only the
-  // Windows segments are omitted.
+  // other process can read them.
   chromiumSource({
     id: "chrome",
     name: "Chrome",
@@ -400,7 +390,6 @@ const listSafariProfiles = Effect.fnUntraced(function* (
       name: profile.title?.trim() || profile.external_uuid,
     });
   }
-  // If Safari's metadata is unavailable, recover stores that have cookies.
   // With readable metadata, avoid resurrecting deleted profiles left on disk.
   if (declared.length === 0) {
     const entries = yield* fileSystem.readDirectory(stores).pipe(Effect.orElseSucceed(() => []));
@@ -432,12 +421,11 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
       Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
     );
     // `profiles.ini` also lists profiles the installer created but the user
-    // never launched, which hold no cookie database and nothing to import.
-    // Only keep the ones a database proves exist, like the directory scans
-    // below do. When none of the declared profiles has one, fall through to
-    // the scan rather than returning empty: `profiles.ini` can list stale or
-    // never-launched profiles while the cookies live in one it does not
-    // mention, and an empty answer here hides the browser entirely.
+    // never launched, which hold no cookie database and nothing to import. When
+    // none of the declared profiles has one, fall through to the scan rather
+    // than returning empty: `profiles.ini` can list stale or never-launched
+    // profiles while the cookies live in one it does not mention, and an empty
+    // answer here hides the browser entirely.
     if (declared.length > 0) {
       const found = yield* Effect.forEach(declared, (profile) =>
         Effect.forEach(
@@ -553,7 +541,6 @@ export const chromiumProcessIsAlive = (
 ) =>
   Effect.sync(() => {
     try {
-      // Signal 0 performs a read-only existence/permission check.
       signalProcess(pid, 0);
       return true;
     } catch (cause) {
@@ -634,10 +621,6 @@ export const windowsChromiumCookiesAreHeld = Effect.fnUntraced(function* (
   return held.some(Boolean);
 });
 
-/**
- * Whether a Firefox `lock` symlink's `<ip>:[+]<pid>` target still names a live
- * owner.
- */
 export const firefoxSymlinkLockIsHeld = Effect.fnUntraced(function* (
   target: string,
   localAddresses: ReadonlySet<string>,
@@ -681,14 +664,12 @@ const FCNTL_PROBE_SCRIPT =
   "  print('free')";
 
 /**
- * The answer is trusted only when the script itself spoke. A verdict of
- * `held` or `free` on stdout is the probe's own, and stands. Anything else —
- * no interpreter on any candidate path, or one that refused to run the script
- * (Apple's shim without the developer tools) — is the probe being unavailable,
- * not evidence about the lock. That case falls back to "not held" rather than
- * "held": reporting every profile as locked forever would block Firefox import
- * outright on such machines, and the SQLite snapshot already copes with a
- * live database's WAL, as it does for every other engine.
+ * Anything else — no interpreter on any candidate path, or one that refused to
+ * run the script (Apple's shim without the developer tools) — is the probe
+ * being unavailable, not evidence about the lock. That case falls back to "not
+ * held" rather than "held": reporting every profile as locked forever would
+ * block Firefox import outright on such machines, and the SQLite snapshot
+ * already copes with a live database's WAL, as it does for every other engine.
  */
 export const posixLockIsHeld = Effect.fnUntraced(function* (
   path: string,
@@ -727,8 +708,6 @@ export const posixLockIsHeld = Effect.fnUntraced(function* (
 const firefoxProfileIsHeld = Effect.fnUntraced(function* (
   directory: string,
   context: BrowserImportPathContext,
-  // Resolved once by the caller: it involves a DNS lookup of the hostname and
-  // is the same for every profile.
   localAddresses: ReadonlySet<string>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;

@@ -101,8 +101,6 @@ function scrollAndFocusSettingsTarget(target: HTMLElement, highlight = true): vo
   if (!highlight || prefersReducedMotion) return;
   void target.offsetWidth;
   target.classList.add("settings-search-target-pulse");
-  // The class also suppresses the focus outline (the pulse is the destination
-  // indicator), so drop it once the element is no longer the destination.
   target.addEventListener("blur", () => target.classList.remove("settings-search-target-pulse"), {
     once: true,
   });
@@ -257,7 +255,6 @@ export function SettingsRow({
   description?: ReactNode;
   status?: ReactNode;
   resetAction?: ReactNode;
-  /** Replaces the default override clear for rows with side effects beyond the settings key. */
   onResetOverride?: () => void;
   control?: ReactNode;
   serverScoped?: boolean;
@@ -284,8 +281,6 @@ export function SettingsRow({
   const isProjectScope =
     context !== null && (context.scope.kind === "project" || context.scope.kind === "checkout");
   const scopedKeys = settingKeys.filter(isProjectScopedSettingKey);
-  // A project scope can only edit keys that support overrides; the rest stay
-  // visible so the user sees the inherited value, but cannot change it here.
   const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
   const mixed =
     mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
@@ -349,7 +344,6 @@ export function SettingsRow({
     <Tooltip>
       <TooltipTrigger
         render={
-          // Focusable so keyboard users can still reach the explanation.
           <span
             tabIndex={0}
             className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[32rem]/settings-row:w-auto"

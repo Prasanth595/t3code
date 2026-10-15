@@ -30,7 +30,6 @@ const platformLabel = (platform: DevicePlatform) =>
 const deviceKey = (device: Pick<DeviceSummary, "hostId" | "id">) =>
   `${device.hostId}\u0000${device.id}`;
 
-/** Each surface owns one host/device; only the visible surface streams. */
 export function DevicePanel(props: {
   readonly mode: PreviewPanelMode;
   readonly threadRef: ScopedThreadRef;

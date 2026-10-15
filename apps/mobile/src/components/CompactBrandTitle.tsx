@@ -9,10 +9,6 @@ import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
-/**
- * Horizontal correction applied to content rendered in the brand title slot,
- * shared with the connection-status swap so both align identically.
- */
 export function brandTitleOffset(): number {
   if (Platform.OS !== "ios") return 0;
   return Platform.isPad && !NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? IPAD_HOME_TITLE_OFFSET : 0;

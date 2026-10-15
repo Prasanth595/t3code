@@ -210,10 +210,9 @@ export function persistClientSettingsPatch(
 }
 
 /**
- * Persists a client-settings update before publishing it to the in-memory
- * snapshot. If another settings write lands while persistence is pending, the
- * updater is reapplied to that newer snapshot and persisted again so neither
- * change is lost.
+ * If another settings write lands while persistence is pending, the updater is
+ * reapplied to that newer snapshot and persisted again so neither change is
+ * lost.
  */
 export async function persistClientSettingsUpdate(
   update: (current: ClientSettings) => ClientSettings,
@@ -262,9 +261,7 @@ export function getClientSettings(): ClientSettings {
 
 /**
  * Failed reads reject and remain retryable. They must not allow defaults to overwrite saved
- * preferences. The pre-hydration snapshot is just the schema defaults, so imperative paths that
- * open a preview must await this or they bake the built-in viewport, zoom and appearance into a
- * tab that never picks up the user's saved values.
+ * preferences.
  */
 export function ensureClientSettingsHydrated(): Promise<void> {
   return hydrateClientSettings();
@@ -360,10 +357,7 @@ export function resolveEnvironmentIdentificationMode(input: {
   paletteThemeActive?: boolean;
   paletteThemeAllowsArtwork?: boolean;
 }): EnvironmentIdentificationMode {
-  // Avoid briefly rendering the default artwork before a persisted pill/none choice loads.
   if (!input.settingsHydrated) return "none";
-  // Artwork palettes are maintained for built-ins only. Keep an explicit
-  // "none", but use the theme-aware pill for user-controlled palettes.
   return input.paletteThemeActive && !input.paletteThemeAllowsArtwork && input.mode === "artwork"
     ? "pill"
     : input.mode;
@@ -400,7 +394,6 @@ export function useLegacySidebarEnabled(): boolean {
   return settingsHydrated && legacySidebarEnabled;
 }
 
-/** Hydrate legacy preferences before a mutation can claim either server-owned list. */
 export async function prepareModelPreferencesPatch(
   settings: ServerSettings,
   patch: ServerSettingsPatch,
@@ -530,7 +523,6 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
   return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
-/** Atomically mutate one provider instance against the server's latest settings snapshot. */
 export function usePersistEnvironmentProviderInstanceMutation(environmentId: EnvironmentId) {
   const mutateProviderInstance = useAtomCommand(serverEnvironment.mutateProviderInstance, {
     reportFailure: false,
@@ -561,10 +553,9 @@ export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE =
   "This setting is saved on a server, and the hosted app is not anchored to one. Change it from the desktop app or from the server's own address.";
 
 /**
- * Whether primary-scoped server settings have a server to live on. The
- * hosted app connects to every environment as a remote, so it has no primary:
- * `usePrimarySettings` reads schema defaults there and writes have nowhere
- * to go. Desktop and server-served web always have one.
+ * The hosted app connects to every environment as a remote, so it has no
+ * primary: `usePrimarySettings` reads schema defaults there and writes have
+ * nowhere to go.
  */
 export function usePrimarySettingsAvailable(): boolean {
   const primaryEnvironment = usePrimaryEnvironment();
@@ -595,11 +586,6 @@ function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<E
   return useAtomValue(writableTargetsAtom);
 }
 
-/**
- * Shared server keys (see `SHARED_SERVER_SETTING_KEYS`) are written to every eligible sync
- * target, not only the selected target, so a user preference does not silently drift between
- * machines.
- */
 function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const persist = useAtomCommand(serverEnvironment.updateSettings, {

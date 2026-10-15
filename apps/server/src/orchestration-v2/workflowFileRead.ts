@@ -57,8 +57,6 @@ export const readContainedWorkflowFile = Effect.fn("orchestration.readContainedW
 
     // fd inode vs path inode catches a swapped leaf, not a swapped intermediate
     // dir; root is 0700 ~/.claude, so that already needs the uid we run as.
-    // Both containment checks fail with their own tagged reason; "read-failed"
-    // is reserved for genuine platform failures with the real cause attached.
     const read = yield* Effect.tryPromise({
       try: async () => {
         const handle = await NodeFSP.open(

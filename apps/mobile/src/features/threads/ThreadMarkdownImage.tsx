@@ -25,10 +25,8 @@ import {
 /**
  * Width the feed lays markdown out in. The feed already knows this from its
  * viewport, so an image can size its frame on the first render instead of
- * waiting for its own onLayout, which would change the row's height once
- * more after the list has positioned the rows below it. It is an upper
- * bound: a list item or blockquote indents its column, and the measured
- * width takes over once it is known.
+ * waiting for its own onLayout, which would change the row's height once more
+ * after the list has positioned the rows below it.
  */
 export const MarkdownImageAvailableWidthContext = createContext(0);
 
@@ -63,8 +61,6 @@ export function ThreadMarkdownImageView(props: {
     setFailedUri(null);
   }, [props.uri]);
 
-  // The decoded size is what the platform actually drew, so it wins over the
-  // server's header hint once it exists.
   const sourceSize = decodedSize ?? props.knownSize ?? null;
   const displaySize: MarkdownImageDisplaySize | null =
     sourceSize === null || availableWidth <= 0

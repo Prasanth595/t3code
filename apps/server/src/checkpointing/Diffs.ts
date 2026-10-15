@@ -35,10 +35,6 @@ export function parseTurnDiffFilesFromNumstat(numstat: string): ReadonlyArray<Tu
   return files.toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
-/**
- * `authoredPaths` comes from `CheckpointStore.listAuthoredPaths`; null means nothing was imported.
- * A rename stays visible when either side was authored, because the summary shows it as one file.
- */
 export function isGitImport(
   file: TurnDiffFileSummary,
   authoredPaths: ReadonlySet<string> | null,

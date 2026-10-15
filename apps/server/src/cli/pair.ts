@@ -149,8 +149,6 @@ export const resolveTailscaleLocalTarget = (
       ? { localPort }
       : { localPort, localHost: devUrl.hostname };
   }
-  // A server bound to one specific interface does not answer on loopback, so
-  // the proxy has to target that interface directly.
   if (state.host !== undefined && !isWildcardHost(state.host) && !isLoopbackHost(state.host)) {
     return { localPort: state.port, localHost: formatHostForUrl(state.host) };
   }
@@ -177,11 +175,6 @@ const formatPairOutput = (input: {
     "",
   ].join("\n");
 
-/**
- * Three outcomes, because they drive different decisions: a T3 descriptor
- * (pair with it), nothing answering (safe to configure Tailscale Serve), or
- * something answering that is not a T3 server (do NOT overwrite its mapping).
- */
 type EnvironmentProbeResult =
   | { readonly _tag: "descriptor"; readonly descriptor: ExecutionEnvironmentDescriptor }
   | { readonly _tag: "unreachable" }

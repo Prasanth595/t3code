@@ -120,7 +120,6 @@ export function inferImageExtension(input: { mimeType: string; fileName?: string
     return fromMime;
   }
 
-  // The registry returns bare extensions ("png"); the safe list is dotted.
   const fromMimeExtension = Option.map(Mime.getExtension(input.mimeType), (ext) => `.${ext}`);
   if (Option.isSome(fromMimeExtension) && SAFE_IMAGE_FILE_EXTENSIONS.has(fromMimeExtension.value)) {
     return fromMimeExtension.value;

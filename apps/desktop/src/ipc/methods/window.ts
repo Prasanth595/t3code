@@ -102,16 +102,7 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
       const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
       const config = yield* instance.currentConfig;
       const snapshot = yield* instance.snapshot;
-      // We surface it as a *pending* bootstrap (null endpoints, no token) so the renderer can
-      // show a "Connecting…" indicator while it retries — null endpoints keep the renderer from
-      // dialing the dead port, avoiding the needless /api/auth/bootstrap/bearer error cycles a
-      // real endpoint would trigger.
       if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) {
-        // Skip the primary (same-origin, no "connecting" affordance) and skip a
-        // secondary whose preflight failed *fatally* (no node, wrong version,
-        // missing build tools): it has stopped retrying, so an indefinite
-        // "Connecting…" would be misleading — its error is surfaced by the
-        // WSL-state UI instead.
         const fatalPreflight =
           Option.isSome(config) &&
           Option.isSome(config.value.preflightFailure) &&
@@ -152,8 +143,6 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
-// Returns null for "wsl:default", which is the sentinel for "track the user's WSL default
-// distro" and maps to the wslEnv-derived default at picker time.
 function extractWslDistroFromEnvironmentId(envId: string): string | null {
   if (!envId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX)) {
     return null;
@@ -363,8 +352,6 @@ export const pasteAsText = DesktopIpc.makeIpcMethod({
   }),
 });
 
-/** Theme files are a few KB; anything larger returns empty text and lets the
- *  renderer reject it by size without the contents ever crossing the bridge. */
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
 
 export const pickThemeFiles = DesktopIpc.makeIpcMethod({

@@ -14,10 +14,6 @@ export interface AzureDevOpsDiffCursor {
 
 const CURSOR_SEPARATOR = ":";
 
-/**
- * Restricts each half to plain decimal, so `Number` cannot read a foreign cursor's `0x3` as
- * three.
- */
 const CURSOR_COMPONENT = /^\d+$/;
 
 export function formatAzureDevOpsDiffCursor(cursor: AzureDevOpsDiffCursor): string {
@@ -42,23 +38,13 @@ export function parseAzureDevOpsDiffCursor(
 export interface AzureDevOpsFileTexts {
   readonly oldContents: string;
   readonly newContents: string;
-  /** Azure's own flag for a file it hands back base64-encoded instead of as text. */
   readonly binary: boolean;
 }
 
 export interface AzureDevOpsFilePatch {
   readonly section: string;
-  /** The file changed but its hunks are not in the section, so the patch has a hole in it. */
   readonly truncated: boolean;
-  /**
-   * The diff was given up on partway, having spent the whole edit budget, so a caller reading a
-   * run of files stops here rather than paying that again for each one behind it.
-   */
   readonly abandoned: boolean;
-  /**
-   * Lines added or removed, which is the edit distance the diff had to search out, and what a
-   * slice's budget is spent in: a file of short lines is cheap on the wire and dear to diff.
-   */
   readonly edits: number;
 }
 
@@ -77,10 +63,6 @@ const PATCH_CONTEXT_LINES = 3;
  */
 export const MAX_FILE_DIFF_EDITS = 2_000;
 
-/**
- * The ceiling rather than this is what decides a patch's shape: a timeout that fires would slice
- * the same change one way here and another on a busier host.
- */
 const MAX_FILE_DIFF_MILLIS = 2_000;
 
 export const MAX_DIFF_SLICE_EDITS = 6_000;
@@ -102,7 +84,6 @@ function contentLines(contents: string): ReadonlyArray<string> {
   return lines;
 }
 
-/** A NUL byte is git's own test for it, and it survives Azure's JSON envelope intact. */
 function isBinary(contents: string): boolean {
   return contents.includes("\u0000");
 }
@@ -158,10 +139,6 @@ function replacementSection(header: string, texts: AzureDevOpsFileTexts): string
   ].join("\n");
 }
 
-/**
- * One file's section of a unified patch, built here because Azure has no route that returns one:
- * its diff routes name the files that changed, and the contents are a separate read per side.
- */
 export function azureDevOpsFilePatch(input: {
   readonly change: AzureDevOpsChangeEntry;
   readonly texts: AzureDevOpsFileTexts;
@@ -179,8 +156,6 @@ export function azureDevOpsFilePatch(input: {
     return { section: `${header}\n`, truncated: true, abandoned: false, edits: 0 };
   }
 
-  // A creation or deletion has nothing on one side, so writing both sides in full is already the
-  // minimal patch and needs no diff search.
   const created = oldContents === "" && newContents !== "";
   const deleted = newContents === "" && oldContents !== "";
   if (created || deleted) {

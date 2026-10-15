@@ -37,8 +37,6 @@ const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
 const MAX_COMMANDS = 128;
 const MAX_COMMAND_LINE_LENGTH = 2_048;
-// Covers a cold package command launch and ACP initialization after registry
-// preparation globally installs the exact package.
 const PROBE_TIMEOUT_SECONDS = 60;
 const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
@@ -302,7 +300,6 @@ export type AcpRegistryConfigurationProbe<Requirements = never> = (
   input: AcpRegistryConfigurationProbeInput,
 ) => Effect.Effect<AcpRegistryConfigurationProbeResult, AcpRegistryOperationError, Requirements>;
 
-/** Starts and immediately disposes an ACP session for one already-decoded configuration. */
 export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeConfiguration")(
   function* (
     input: AcpRegistryConfigurationProbeInput,

@@ -3,19 +3,13 @@ import { create } from "zustand";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 /**
- * Field-wise ref equality. `scopedThreadKey` joins with `:`, so two distinct
- * refs can collide when an id itself contains one; drops must never cross
- * threads on that account.
+ * `scopedThreadKey` joins with `:`, so two distinct refs can collide when an id
+ * itself contains one; drops must never cross threads on that account.
  */
 export function isSameSidebarThreadRef(a: ScopedThreadRef, b: ScopedThreadRef): boolean {
   return a.environmentId === b.environmentId && a.threadId === b.threadId;
 }
 
-/**
- * Drops queue up instead of replacing each other, so a second drop onto the
- * same thread before it opens keeps both files; each entry carries its own id
- * so a stale navigation can only ever clear the drop that started it.
- */
 export interface SidebarPendingFileDrop {
   id: string;
   threadRef: ScopedThreadRef;
@@ -27,10 +21,6 @@ interface SidebarPendingFileDropStoreState {
   queuePendingFileDrop: (entry: Omit<SidebarPendingFileDrop, "id">) => string;
   clearPendingFileDrop: (id: string) => void;
   clearPendingFileDropsForThread: (threadRef: ScopedThreadRef) => void;
-  /**
-   * Returns every queued drop's files for `threadRef`, oldest first, and
-   * removes them; returns null (leaving state untouched) when none match.
-   */
   consumePendingFileDrop: (threadRef: ScopedThreadRef) => File[] | null;
 }
 

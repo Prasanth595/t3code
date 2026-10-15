@@ -4,9 +4,7 @@ import { dataUrlToFile } from "./imageCompression";
 
 export type PreviewAnnotationCapture =
   | { readonly status: "captured"; readonly file: File }
-  /** The pick carried no crop, which is normal for comment-only annotations. */
   | { readonly status: "none" }
-  /** The crop could not be decoded. Send the annotation without it. */
   | { readonly status: "failed" };
 
 const PNG_DATA_URL_PREFIX = "data:image/png;base64,";

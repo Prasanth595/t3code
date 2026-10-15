@@ -4,9 +4,7 @@ import { Argument, Command } from "effect/cli";
 import { runAcpMcpCliFastPath } from "../mcp/AcpMcpStdioBridge.ts";
 
 /**
- * The credential stays in the environment, never on the command line. Real invocations dispatch
- * through the bin.ts fast path before the CLI graph loads; these definitions keep the commands
- * wired for help and for anything that drives the full CLI programmatically.
+ * The credential stays in the environment, never on the command line.
  */
 export const acpMcpBridgeCommand = Command.make("acp-mcp-bridge").pipe(
   Command.withDescription("Bridge T3 Code's MCP endpoint to stdio for ACP agents."),

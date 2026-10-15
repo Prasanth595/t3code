@@ -48,8 +48,6 @@ export function resolveSettledThreadTimestamp(thread: SettledThreadTimestampInpu
   return toSortableTimestamp(thread.updatedAt) === null ? null : thread.updatedAt;
 }
 
-/** Each key resolves once per sort, not once
-    per comparison. */
 export function sortSettledThreads<T extends SettledThreadTimestampInput & { readonly id: string }>(
   threads: readonly T[],
 ): T[] {
@@ -115,10 +113,6 @@ export function getThreadSortTimestamp(
   return getLatestUserMessageTimestamp(thread);
 }
 
-/**
- * The list stays static between lifecycle transitions, but an un-settled thread
- * surfaces at the top instead of sinking back to its creation-order slot.
- */
 export function activeThreadAnchorTimestampMs(thread: {
   readonly createdAt: string;
   readonly unsettledAt?: string | null | undefined;
@@ -168,12 +162,6 @@ export function getLatestThreadForProject<
   return latest;
 }
 
-// Pinned threads carry an optional pinOrderKey (a base-26 string). The
-// pinned block sorts keyed threads by plain string comparison, so a drag
-// (web) or Move up/down (mobile) writes ONE key to ONE thread on that
-// thread's own server — neighbors, possibly living on other servers, are
-// never touched, and every client connected to the same servers converges
-// on the same order.
 const PIN_ORDER_DIGITS = "abcdefghijklmnopqrstuvwxyz";
 
 function isValidPinOrderKey(key: string): boolean {
@@ -217,8 +205,6 @@ export function pinOrderKeyBetween(before: string | null, after: string | null):
   return pinOrderMidpoint(a, b);
 }
 
-/** Wider keys keep a large
-    active list from exhausting the space between two-digit keys. */
 export function generateSpreadPinOrderKeys(count: number): string[] {
   let width = 2;
   let space = PIN_ORDER_DIGITS.length ** width;
@@ -309,8 +295,6 @@ export function sortPinnedThreadsByOrderKey<
   return [...keyed, ...keyless];
 }
 
-/** New and reopened threads lead the active list. Arranged threads follow
-    their saved keys; activity leaves both groups in place. */
 export function sortActiveThreadsByOrderKey<
   T extends {
     readonly id: string;

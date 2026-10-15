@@ -28,12 +28,6 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
 
 const FILTER_THRESHOLD = 8;
 
-/**
- * Claude and Cursor report fast mode as a boolean `fastMode` option; Codex
- * reports it as a `serviceTier` select whose fast tier is labelled "Fast"
- * (catalog id `priority`, or `fast` from the speed-tier fallback), matching the
- * composer.
- */
 function describeModelCapabilities(model: ServerProviderModel): string[] {
   const descriptors = model.capabilities?.optionDescriptors ?? [];
   const labels: string[] = [];
@@ -61,11 +55,6 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
   return labels;
 }
 
-/**
- * Hidden models sink so the list reads top-down as "what the picker shows";
- * moves only swap rows within the same group, and the resulting display order
- * is what gets persisted as `modelOrder`.
- */
 export function groupModelsForDisplay<
   T extends { readonly slug: string; readonly isCustom: boolean },
 >(
@@ -114,10 +103,6 @@ interface ProviderModelsSectionProps {
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
-  /**
-   * Caller is responsible for routing the write to the correct storage (legacy
-   * `settings.providers[kind]` vs. `providerInstances[id].config`).
-   */
   readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => void;
   readonly onHiddenModelsChange: (
     next: ReadonlyArray<string>,
@@ -180,8 +165,6 @@ export function ProviderModelsSection({
       )
     : displayModels;
 
-  // The parent commits the new custom model and hands back an updated
-  // `models` list, so the row can only be scrolled to after that render.
   useEffect(() => {
     const slug = scrollToSlugRef.current;
     if (slug === null) return;
@@ -213,8 +196,6 @@ export function ProviderModelsSection({
       return;
     }
 
-    // Clear the filter so the new row renders even when it does not match,
-    // which is also what lets the pending scroll target resolve and clear.
     scrollToSlugRef.current = normalized;
     setFilter("");
     onChange([...customModels, { slug: normalized, name: normalized, capabilities: null }]);
@@ -413,15 +394,11 @@ export function ProviderModelsSection({
   const renderRow = (model: DisplayModel) => {
     const capLabels = describeModelCapabilities(model);
     const group = groupOf(model);
-    // Hidden is read from the preference itself: a favorited model can still be
-    // hidden, and its switch must say so even though it sits in the favorites group.
     const isHidden = !model.isCustom && hiddenModelSet.has(model.slug);
     const isFavorite = group === "favorite";
     const index = displayModels.indexOf(model);
     const previousModel = displayModels[index - 1];
     const nextModel = displayModels[index + 1];
-    // Reordering a filtered view would be ambiguous, so arrows only show on
-    // the full list.
     const canMoveUp =
       !isFiltering && previousModel !== undefined && groupOf(previousModel) === group;
     const canMoveDown = !isFiltering && nextModel !== undefined && groupOf(nextModel) === group;

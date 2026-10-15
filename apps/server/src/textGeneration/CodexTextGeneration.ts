@@ -91,8 +91,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   // Deliberately unscoped: text generation runs from background fibers whose
   // ambient scope may already be closed (a closed scope reaps the temp
-  // directory the moment it is created). Each allocation removes its own
-  // directory on failure; success-path cleanup is explicit in runCodexJson.
+  // directory the moment it is created).
   const writeTempFile = (
     operation: string,
     prefix: string,

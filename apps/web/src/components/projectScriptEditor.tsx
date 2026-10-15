@@ -90,7 +90,6 @@ export interface NewProjectScriptInput {
   command: string;
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
-  /** Setup scripts only: hold the agent until the script exits. */
   waitForSetup: boolean;
   runOnSettle: boolean;
   /** Omit to preserve the current shortcut when the form did not edit it. */
@@ -113,7 +112,6 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   autoOpenPreview: false,
 };
 
-/** `scriptId: null` means "add". */
 export interface ProjectScriptEditorRequest {
   scriptId: string | null;
   initial: NewProjectScriptInput;
@@ -182,7 +180,6 @@ export function ProjectScriptEditorDialog({
   const isEditing = request?.scriptId != null;
   const isSaving = request !== null && savingRequest === request;
 
-  // A save completion must not affect a replacement request or an unmounted editor.
   useLayoutEffect(
     () => () => {
       if (pendingSubmissionRef.current?.request === request) {

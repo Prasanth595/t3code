@@ -35,9 +35,7 @@ import * as BitbucketClient from "../client/definition.ts";
 import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
-/** A response body past this is cut short, so one huge diff cannot exhaust the server. */
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-/** Bitbucket redirects a diff once; this leaves room without following a chain forever. */
 const MAX_REDIRECTS = 3;
 const BITBUCKET_API_REQUEST_TIMEOUT = "30 seconds";
 
@@ -327,19 +325,10 @@ export class BitbucketApi extends Context.Service<
   {
     readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
 
-    /**
-     * Bitbucket answers most endpoints with JSON and a few — a pull request diff, for one — with
-     * plain text, so the body is handed back undecoded for the caller to read as it sees fit.
-     */
     readonly request: (input: {
       readonly method: "GET" | "POST" | "PUT" | "DELETE";
-      /**
-       * A path below the API base, or a whole URL as a paged response reports its next page.
-       * A whole URL is refused unless it belongs to the configured Bitbucket.
-       */
       readonly url: string;
       readonly body?: string;
-      /** Response bytes to keep; past this the body comes back cut short and marked. */
       readonly maxBytes?: number;
     }) => Effect.Effect<{ readonly body: string; readonly truncated: boolean }, BitbucketApiError>;
     readonly listPullRequests: (input: {
@@ -617,8 +606,6 @@ function responseError(
   operation: BitbucketApiOperation,
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<never, BitbucketApiError> {
-  // Bounded like any other body: an error response is no smaller than a successful one, and
-  // only its length is reported anyway.
   return Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const retryAt = retryAtFromHeader(response.headers["retry-after"], now);
@@ -655,7 +642,6 @@ export const make = Effect.gen(function* () {
 
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
-  // Read on every request so credentials saved in settings apply without a restart.
   const currentCredential = host.settings.get.pipe(
     Effect.map((settings) =>
       resolveCredential(
@@ -1092,8 +1078,6 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map(defaultChangeRequestTargetBranch),
       ),
-    // Bitbucket Cloud pull requests are Git-backed and Bitbucket does not provide an official
-    // checkout CLI.
     checkoutPullRequest: (input) =>
       Effect.gen(function* () {
         const destinationRepository = yield* resolveRepository(input);

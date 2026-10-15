@@ -116,7 +116,6 @@ function shouldDropMissingPartialTurnItem(
   ) {
     return false;
   }
-  // Later items of a run already in the window can raise the watermark first.
   if (
     projection.visibleTurnItems.some(
       (row) =>

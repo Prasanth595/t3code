@@ -47,7 +47,6 @@ export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProp
   const navigation = useNavigation();
   const onClose = useCallback(() => navigation.goBack(), [navigation]);
   const { environmentId, threadId } = route.params;
-  // A hand-typed deep link can carry a blank ID, which the branded IDs reject.
   const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
   useEffect(() => {
     if (isBlankLink) onClose();
@@ -113,7 +112,6 @@ function DevicePreviewScreen({
     });
     return () => subscription.remove();
   }, [focused, foreground]);
-  // Android back reveals the controls first, so leaving takes a deliberate second press.
   useEffect(() => {
     if (controlsVisible) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {

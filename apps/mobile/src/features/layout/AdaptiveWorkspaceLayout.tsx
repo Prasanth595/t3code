@@ -84,12 +84,6 @@ interface AdaptiveWorkspaceContextValue {
   readonly primarySidebarSearchQuery: string;
   readonly selectThread: (thread: EnvironmentThreadShell) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
-  /**
-   * Returns a deactivate callback: the pane animates closed (content kept
-   * mounted for the exit transition) unless a newer registration already took
-   * over — stale deactivates never clobber it. Prefer
-   * useRegisterWorkspaceInspector over calling this directly.
-   */
   readonly registerWorkspaceInspector: (render: () => ReactNode) => () => void;
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
   readonly showAuxiliaryPane: (role: WorkspaceAuxiliaryPaneRole) => void;
@@ -139,9 +133,7 @@ export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
 /**
  * The column renders BESIDE the navigator — outside any screen — so the
  * registering screen's navigation and route contexts are captured here and
- * re-provided around the portal content. Without them, useNavigation/useRoute
- * inside the pane (e.g. GitOverviewSheet via useThreadSelection) throw
- * "Couldn't find a route object".
+ * re-provided around the portal content.
  *
  * Registration is FOCUS-scoped, driven by navigation events rather than the
  * screen's own render cycle: react-native-screens freezes blurred screens, so a
@@ -150,8 +142,6 @@ export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
  */
 export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefined) {
   const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
-  // Raw context values (not the useNavigation/useRoute wrappers) so the
-  // portal re-provides exactly what this screen sees.
   const navigation = use(NavigationContext);
   const route = use(NavigationRouteContext);
 
@@ -330,10 +320,6 @@ function AdaptiveWorkspaceLayoutContent(
       return null;
     }
   }, [environmentId, threadId]);
-  // Wrapped in an object: bare functions in useState would be treated as
-  // lazy initializers/updaters. `active: false` keeps the outgoing route's
-  // content mounted so the pane can animate closed (or be replaced
-  // seamlessly by the next route's registration in the same commit).
   const [workspaceInspector, setWorkspaceInspector] = useState<{
     readonly render: () => ReactNode;
     readonly active: boolean;
@@ -514,8 +500,6 @@ function AdaptiveWorkspaceLayoutContent(
       viewportWidth,
       target: contentTargetWidth,
       sidebarVisible: panes.primarySidebarVisible,
-      // Clip the wide navigator during expansion, then reflow once at the end.
-      // Narrowing it first exposes an empty strip before the sidebar arrives.
       width: openingSidebar
         ? Math.max(contentSizing.width ?? 0, contentTargetWidth ?? 0)
         : contentTargetWidth,

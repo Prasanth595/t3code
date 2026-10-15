@@ -20,7 +20,7 @@ export interface ComposerThreadItem {
 
 /**
  * The agent can only read threads on its own server, so candidates stay within the
- * composer's environment. A query is required: bare `@` stays a file picker.
+ * composer's environment.
  */
 export function matchComposerThreadItems(input: {
   shells: ReadonlyArray<ComposerThreadCandidate>;

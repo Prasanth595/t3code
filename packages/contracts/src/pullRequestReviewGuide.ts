@@ -3,20 +3,12 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 
-/**
- * The one call a maintainer should make at a stop. Not a bug or a review nit; those belong to the
- * review agents. The kind says what sort of judgment it asks for.
- */
 export const PullRequestReviewGuideAttention = Schema.Struct({
   kind: Schema.Literals(["tradeoff", "contract", "product", "risk", "accessibility"]),
   note: TrimmedNonEmptyString,
 });
 export type PullRequestReviewGuideAttention = typeof PullRequestReviewGuideAttention.Type;
 
-/**
- * Lines worth reading, always inside the change. `old` shows removed code, for a change that is
- * mostly deletion; line numbers are on the side named.
- */
 export const PullRequestReviewGuideExcerpt = Schema.Struct({
   path: TrimmedNonEmptyString,
   side: Schema.Literals(["new", "old"]),
@@ -26,9 +18,6 @@ export const PullRequestReviewGuideExcerpt = Schema.Struct({
 });
 export type PullRequestReviewGuideExcerpt = typeof PullRequestReviewGuideExcerpt.Type;
 
-/**
- * An explanation, not a finding. Anchored inside one of its stop's excerpts.
- */
 export const PullRequestReviewGuideNote = Schema.Struct({
   path: TrimmedNonEmptyString,
   line: PositiveInt,
@@ -42,10 +31,6 @@ export const PullRequestReviewGuideStop = Schema.Struct({
   summary: Schema.String,
   attention: Schema.NullOr(PullRequestReviewGuideAttention),
   excerpts: Schema.Array(PullRequestReviewGuideExcerpt),
-  /**
-   * Changed files the tour never excerpts, each listed by one stop. A file the tour does show may
-   * be excerpted by several stops, each showing the part that stop is about.
-   */
   files: Schema.Array(
     Schema.Struct({
       path: TrimmedNonEmptyString,
@@ -58,7 +43,6 @@ export const PullRequestReviewGuideStop = Schema.Struct({
 export type PullRequestReviewGuideStop = typeof PullRequestReviewGuideStop.Type;
 
 export const PullRequestReviewGuide = Schema.Struct({
-  /** The head the guide was written against. A different head means the guide is stale. */
   headSha: TrimmedNonEmptyString,
   generatedAt: IsoDateTime,
   modelSelection: ModelSelection,
@@ -66,11 +50,6 @@ export const PullRequestReviewGuide = Schema.Struct({
 });
 export type PullRequestReviewGuide = typeof PullRequestReviewGuide.Type;
 
-/**
- * A run reads the change in a checkout and takes minutes on a large one, so it runs on the
- * server and the page watches this instead of holding a request open. A server restart drops
- * a run in progress; nothing claims it.
- */
 export const PullRequestReviewGuideRun = Schema.Union([
   Schema.TaggedStruct("Running", {
     headSha: TrimmedNonEmptyString,
@@ -84,9 +63,6 @@ export const PullRequestReviewGuideRun = Schema.Union([
 ]);
 export type PullRequestReviewGuideRun = typeof PullRequestReviewGuideRun.Type;
 
-/**
- * `run` is the generation in progress, or the last failed one; a finished run leaves only `guide`.
- */
 export const PullRequestReviewGuideResult = Schema.Struct({
   guide: Schema.NullOr(PullRequestReviewGuide),
   run: Schema.NullOr(PullRequestReviewGuideRun),

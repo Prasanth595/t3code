@@ -126,12 +126,8 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 });
 
 /**
- * Keys each report by the account it draws on. One email can belong to
- * several workspaces, each with its own quota, so a report that names its
- * workspace is keyed by it too. One that does not (a hub, an older server)
- * joins the only workspace known for its email, and gets no key when there
- * are several, since it cannot say which one it read. Pass every enabled
- * login, read or not, so an unreadable workspace still counts as one.
+ * Pass every enabled login, read or not, so an unreadable workspace still
+ * counts as one.
  */
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
@@ -170,11 +166,6 @@ export interface LimitAccount {
   readonly limits: ServerProviderUsageLimits;
 }
 
-/**
- * Every account with usable windows across the connected environments, one
- * entry per distinct account. The freshest reads supply windows and credits;
- * native instances supply names and environment labels.
- */
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
@@ -215,8 +206,6 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       ),
     ];
     const winner = fresher ? next : previous;
-    // Credits and their redemption target travel together. A failed credit
-    // probe must not erase a successful read from another environment.
     const creditSource = creditSources.get(key);
     accounts.set(key, {
       ...previous,
@@ -331,7 +320,6 @@ export interface LimitPoolWindow {
   readonly kind: ServerProviderUsageWindow["kind"];
   readonly label: string;
   readonly members: readonly LimitPoolMember[];
-  /** Fixed account positions across rows; a null window leaves a gap. */
   readonly columns: ReadonlyArray<{
     readonly account: LimitAccount;
     readonly window: ServerProviderUsageWindow | null;
@@ -342,7 +330,6 @@ export interface LimitPoolWindow {
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
-    /** Points of the pool the reset restores: the member's used share over the member count. */
     readonly restoresPercent: number;
   }>;
 }
@@ -439,8 +426,6 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
   const pools = [...byKey].map(([key, members]): LimitPoolWindow => {
     const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
-    // Pooled Codex slots take the pool's own key, so the id stays the same
-    // whichever account sorts first.
     const id = members[0]!.account.driver === "codex" ? key : first.id;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
     // Pace compares spend against the clock, so it is judged only over the
@@ -504,7 +489,6 @@ function resetMillis(window: ServerProviderUsageWindow): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
-/** Elapsed share of the window, 0..1, or null when its length or reset is unknown. */
 export function elapsedShare(window: ServerProviderUsageWindow, now: number): number | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null || window.windowDurationMins === undefined) return null;
@@ -554,10 +538,6 @@ export function isUsageLimitsCommand(prompt: string): boolean {
   return prompt.trim().toLowerCase() === "/usage-limits";
 }
 
-/**
- * A source that failed to read keeps no accounts, so its error counts for every driver rather
- * than disappearing until the next successful refresh.
- */
 export function hasProviderUsageLimits(
   driver: ServerProvider["driver"],
   providers: readonly ServerProvider[],
@@ -573,10 +553,6 @@ export function hasProviderUsageLimits(
   );
 }
 
-/**
- * Two snapshots with the same coverage need no catalog republish, however much their quotas
- * moved.
- */
 export function sameUsageLimitCommandCoverage(
   previous: UsageLimitSourceSnapshots,
   next: UsageLimitSourceSnapshots,
@@ -620,7 +596,6 @@ export function withUsageLimitsCommands(
   });
 }
 
-/** A point-in-time report; never refreshes or guesses which pooled account serves a turn. */
 export function collectProviderUsageLimits(
   instanceId: ProviderInstanceId,
   providers: readonly ServerProvider[],
@@ -662,14 +637,6 @@ export function collectProviderUsageLimits(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
       )[0];
-    // Two independent decisions. Which balance to *display* follows whichever
-    // snapshot is fresher. Which path to *redeem through* always prefers the
-    // hub, because only the hub path clears the routing cooldown it holds for
-    // that account; redeeming natively against the same account resets the
-    // subscription upstream but leaves the hub refusing to route to it until
-    // its own cooldown expires. A hub credit id that a fresher native redeem
-    // already spent comes back as `alreadyRedeemed`, which still clears the
-    // cooldown, so preferring it is safe even when the hub snapshot is stale.
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&

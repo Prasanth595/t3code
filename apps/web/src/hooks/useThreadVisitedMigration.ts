@@ -6,10 +6,6 @@ import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useUiStateStore } from "../uiStateStore";
 
-// Module-level so each thread is considered once per page load. The visit
-// command is idempotent server-side (the server keeps max(stored, supplied)),
-// so repeats across page loads are harmless — this only avoids re-dispatching
-// within a session.
 const migratedThreadKeys = new Set<string>();
 
 export function useThreadVisitedMigration(): void {

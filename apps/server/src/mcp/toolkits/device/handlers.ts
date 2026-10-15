@@ -204,7 +204,6 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const sessions = yield* devices.sessionsForThread(scope.thread.threadId);
-      // Only devices this thread opened: another thread's device is not this agent's to watch.
       const hostId =
         input.deviceId === undefined ? input.hostId : (input.hostId ?? LOCAL_DEVICE_HOST_ID);
       const target = sessions.findLast(

@@ -61,8 +61,6 @@ function AppSettingsSection() {
     if (updateInFlight.current) return;
     updateInFlight.current = true;
     try {
-      // The user asked for this restart by tapping the version row, so it may
-      // apply immediately instead of prompting.
       await runAppUpdateCheck({
         applyMode: "immediate",
         onFailure: (message) => Alert.alert("Update failed", message),
@@ -87,9 +85,7 @@ function AppSettingsSection() {
       ? "Checking…"
       : updateState === "downloading"
         ? "Downloading…"
-        : // "ready" appears only when this check joined an in-flight background-mode
-          // check; that download installs at the next backgrounding.
-          updateState === "ready"
+        : updateState === "ready"
           ? "Update ready"
           : updateState === "restarting"
             ? "Restarting…"

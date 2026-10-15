@@ -63,8 +63,6 @@ export function resolveSidebarRowAccessibility(input: {
 // visible, so this limit is a direct renderer-heap and server-load multiplier —
 // keep it small; cold opens still render instantly from the cached snapshot.
 const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
-// A small buffer keeps the next few rows warm without leasing every row that
-// content-visibility leaves mounted below the scroll viewport.
 const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
 
 export function useSidebarRowSubscriptionLease(isActive: boolean): {
@@ -103,9 +101,6 @@ export function useSidebarRowSubscriptionLease(isActive: boolean): {
   };
 }
 
-// A row keeps the last live value it rendered so a released lease never
-// blanks its badge. The value is bound to `key`, so a different worktree or
-// linked pull request cannot reuse the previous one.
 export function useRetainedValue<T>(key: string | null, value: T | null): T | null {
   const retained = React.useRef<{ readonly key: string; readonly value: T } | null>(null);
   if (key !== null && value !== null) {
@@ -137,8 +132,6 @@ export function resolveSidebarThreadSection(input: {
   return "active";
 }
 
-/** Sortable ids: thread rows use their scoped key; structural items use a
-    colon-free prefix: scoped thread keys always contain a colon. */
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =
@@ -218,11 +211,6 @@ export type SidebarThreadDropPlan =
       readonly order: readonly string[];
       readonly assignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
     }
-  /**
-   * Fresh pins take `orderKey`
-      on the pin command. `extraAssignments` land afterward, including the
-      moved row when it was already pinned beneath a snooze.
-   */
   | {
       readonly kind: "pin";
       readonly order: readonly string[];
@@ -231,7 +219,6 @@ export type SidebarThreadDropPlan =
     }
   | {
       readonly kind: "move-active";
-      /** Null when the inbox is time-ordered: the drop has no placement. */
       readonly order: readonly string[] | null;
       readonly assignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
       readonly unpin: boolean;
@@ -266,10 +253,6 @@ export function resolveSidebarSweepKeys(
   return orderedKeys.slice(Math.min(origin, target), Math.max(origin, target) + 1).filter(canApply);
 }
 
-/** The thread row at a pointer height, clamped to the rows visible in the
-    sidebar's scroll viewport. A gap between rows resolves to the row above
-    it. Rows carry their key in data-thread-item, which departing motion
-    clones drop. */
 export function sidebarThreadKeyAtY(list: HTMLElement, y: number): string | null {
   const viewport = list.closest('[data-slot="scroll-area-viewport"]')?.getBoundingClientRect();
   const visibleY = viewport ? Math.min(Math.max(y, viewport.top), viewport.bottom - 1) : y;
@@ -284,7 +267,6 @@ export function sidebarThreadKeyAtY(list: HTMLElement, y: number): string | null
 export function planSidebarThreadDrop(input: {
   readonly activeKey: string;
   readonly activeSection: SidebarSection;
-  /** Snoozed threads can retain pinning and settlement beneath the shelf. */
   readonly activePinned?: boolean;
   readonly activeSettled?: boolean;
   readonly supportsSettlement?: boolean;
@@ -313,9 +295,6 @@ export function planSidebarThreadDrop(input: {
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }
-  // Rows whose server cannot store an order (an older server, or a machine that
-  // is offline) are never written. Keyless ones sort outside the keyed run, so
-  // they leave the plan; keyed ones stay as bounds.
   const arrange = (
     order: readonly string[],
     keysById: ReadonlyMap<string, string | null | undefined>,
@@ -393,10 +372,6 @@ export function planSidebarThreadDrop(input: {
   }
 }
 
-/**
- * Reusing
-    the server's re-entry rules keeps the preview in place when events arrive.
- */
 export function applySidebarThreadDrop<
   T extends Pick<
     SidebarThreadSummary,
@@ -899,12 +874,6 @@ export function resolveThreadRowClassName(input: {
   );
 }
 
-// Waiting (runtime status "idle") is the agent stopped with background work
-// that will wake it (subagents, monitors): not the user's turn yet, so it
-// renders grey like working, not as a false Done. Commands it left running,
-// such as a dev server, do not hold the thread; it reads as ready. Unread
-// completion is tracked separately: it describes whether a ready thread needs
-// attention, not what the thread is currently doing.
 export type SidebarThreadStatus =
   | "approval"
   | "input"
@@ -1019,10 +988,6 @@ export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3t
 
 const EMPTY_CONTENT_MATCH_KEYS: ReadonlySet<string> = new Set<string>();
 
-/**
- * Keeping the input order means lifecycle ordering (active, snoozed, settled)
- * remains stable while the user narrows the list.
- */
 export function searchSidebarThreads<
   T extends {
     readonly environmentId: EnvironmentId;
@@ -1056,10 +1021,6 @@ export function searchSidebarThreads<
   return [...titleMatches, ...contentMatches];
 }
 
-/**
- * Search results use this to pick the PR number to show, so it has to accept
- * the multi-token queries the command palette matches on.
- */
 export function pullRequestMatchesSearchQuery(
   pullRequest: Parameters<typeof threadPullRequestSearchTerms>[0],
   query: string,
@@ -1104,9 +1065,6 @@ export function reduceSidebarProjectScopeMenuState(
   }
 }
 
-/** The timestamp a working thread's elapsed label counts from: when its
-    current work started (request time until adoption). Background wakes do
-    not reset it. Malformed timestamps fall through to the next candidate. */
 export function resolveWorkingStartedAt(
   thread: Pick<SidebarThreadSummary, "latestRun" | "runtime">,
 ): string | null {
@@ -1364,10 +1322,6 @@ export function sortSidebarV2ProjectGroups<
   );
 }
 
-/**
- * Project ids are only unique within an environment, and archived threads
- * must not make a project appear recently active.
- */
 export function sortScopedProjectsForSidebar<
   TProject extends ScopedSidebarProject,
   TThread extends ScopedSidebarThread,

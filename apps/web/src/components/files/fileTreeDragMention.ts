@@ -17,11 +17,6 @@ export interface FileTreeDragMentionHost {
 }
 
 export interface FileTreeDragMentionController {
-  /**
-   * True from the moment a row drag starts until it ends. The tree selects
-   * the dragged row as part of the gesture; selection changes made while
-   * this is set are gesture side effects, not requests to open a file.
-   */
   isDragInProgress(): boolean;
   handleSelectionChange(selectedPaths: ReadonlyArray<string>): void;
   handleDragStart(event: FileTreeDragStartEvent): void;
@@ -36,12 +31,6 @@ const itemPathOf = (node: unknown): string | null => {
   return typeof element.getAttribute === "function" ? element.getAttribute("data-item-path") : null;
 };
 
-/**
- * Tags file-tree drags with the composer mention payload and keeps the drag
- * from acting like a click: while the drag runs, selection changes are
- * suppressed, and when it ends the dragged rows are deselected so nothing is
- * left highlighted and a later click on them still fires a selection change.
- */
 export function createFileTreeDragMentionController(
   host: FileTreeDragMentionHost,
 ): FileTreeDragMentionController {

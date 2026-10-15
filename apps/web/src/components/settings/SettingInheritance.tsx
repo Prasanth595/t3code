@@ -81,10 +81,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
 }
 
 /**
- * The layers a setting resolves through for one target, top-down: the
- * project override when the target is a project, the environment's value,
- * the checkout's t3.json for file-backed keys, and the built-in default. The
- * first layer that is set wins. Same order as `resolveProjectSettings`.
+ * Same order as `resolveProjectSettings`.
  */
 export function settingInheritanceLayers(
   target: ScopedSettingsTarget,

@@ -19,9 +19,7 @@ import type { ServerSettings } from "@t3tools/contracts";
 
 import * as GitHubClient from "../client/definition.ts";
 
-/** How long a token is reused before `gh` is asked again, so a `gh auth switch` applies soon. */
 const TOKEN_TTL = Duration.minutes(5);
-/** No credential is retried sooner, so a fresh `gh auth login` takes effect on the next read. */
 const MISSING_TTL = Duration.seconds(10);
 
 export const GitHubCredentialSource = Schema.Literals(["settings", "env", "gh"]);
@@ -31,7 +29,6 @@ export interface GitHubCredential {
   readonly host: string;
   readonly token: Redacted.Redacted<string>;
   readonly source: GitHubCredentialSource;
-  /** A digest of host and token: safe for cache keys and rate-limit scopes, never the token. */
   readonly fingerprint: string;
 }
 
@@ -85,7 +82,6 @@ export class GitHubCredentials extends Context.Service<
     readonly get: (
       host: string,
     ) => Effect.Effect<GitHubCredential, GitHubCredentialUnavailableError>;
-    /** Drops the held token after GitHub refused it, so the next read asks its source again. */
     readonly invalidate: (host: string) => Effect.Effect<void>;
   }
 >()("@t3tools/source-control-github/server/GitHubCredentials") {}
@@ -187,16 +183,12 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  /** Cache key: the host plus its pinned account, so a changed pin misses the cache. */
   const cacheKey = (host: string, account: string | undefined) =>
     account === undefined ? host : `${host}\u0000${account}`;
 
   const lookup = Effect.fn("GitHubCredentials.lookup")(function* (key: string) {
     const [host = key, choice] = key.split("\u0000");
-    // An environment token wins over a pinned account, exactly as it does in gh.
     const fromEnv = environmentToken(host, environment);
-    // A pinned login gh no longer holds (logged out, expired) falls back to the active one,
-    // which is what discovery reports as the account in use.
     const token =
       fromEnv ??
       (yield* fromGh(host, choice).pipe(
@@ -215,7 +207,6 @@ export const make = Effect.gen(function* () {
 
   const cache = yield* Cache.makeWith(lookup, {
     capacity: 32,
-    // A transient gh failure (a timeout, a locked keyring) is asked again on the next read.
     timeToLive: (exit) =>
       Exit.isSuccess(exit)
         ? TOKEN_TTL
@@ -233,8 +224,6 @@ export const make = Effect.gen(function* () {
       if (choice?.enabled === false) {
         return yield* new GitHubHostDisabledError({ host });
       }
-      // A token saved in Settings is the most deliberate choice, so it comes before the
-      // environment and gh. It is read from the secret store each time, so it needs no cache.
       const saved = yield* savedToken(host);
       if (saved !== null) {
         return {

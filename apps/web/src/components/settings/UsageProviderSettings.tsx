@@ -130,7 +130,6 @@ export function UsageProviderSettings({
   );
 }
 
-/** Removing a hub deletes its stored management key, so it requires confirmation. */
 function RemoveUsageProviderButton({
   label,
   onConfirm,

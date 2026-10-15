@@ -17,17 +17,14 @@ import { SecretInput } from "./SecretInput";
 import { Label } from "../ui/label";
 
 /**
- * Stable per hub and readable in settings.json. Dots and dashes in the host
- * are kept so `foo-bar.com` and `foo.bar.com` do not collide; anything else
- * (a port's colon, a path) is folded to a dash.
+ * Dots and dashes in the host are kept so `foo-bar.com` and `foo.bar.com` do
+ * not collide; anything else (a port's colon, a path) is folded to a dash.
  */
 function sourceIdFromUrl(url: string): UsageLimitSourceId {
   let host = url;
   try {
     host = new URL(url).host;
-  } catch {
-    // Keep the raw text; the server reports the bad URL on its row.
-  }
+  } catch {}
   const slug = host
     .toLowerCase()
     .replace(/[^a-z0-9.-]+/g, "-")
@@ -66,7 +63,6 @@ export function AddUsageLimitSourceDialog({
   const save = () => {
     if (!canSave) return;
     const id = sourceIdFromUrl(trimmedUrl);
-    // The patch names only this entry; the server merges it into its map.
     updateSettings({
       usageLimitSources: {
         [id]: {

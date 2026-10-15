@@ -6,10 +6,7 @@ import * as Layer from "effect/Layer";
 import { Agent, createAgentPlatform, SqliteLocalAgentStore } from "./sdk.ts";
 
 /**
- * The Cursor Agent SDK runs in this process and spawns a shell for tool calls. The command is
- * Cursor's sandbox wrapper (`dump_zsh_state`, `dump_bash_state`,
- * `__CURSOR_SANDBOX_ENV_RESTORE`). A bad working directory makes Node report `spawn /bin/zsh
- * ENOENT`. The SDK listens for that error, then rejects an internal promise nothing awaits.
+ * The SDK listens for that error, then rejects an internal promise nothing awaits.
  * Node exits on that unhandled rejection and takes the server with it.
  */
 const CURSOR_SHELL_SPAWN_MARKERS = [
@@ -42,7 +39,6 @@ function onUnhandledRejection(reason: unknown): void {
     console.error("Cursor shell spawn failed. The server will keep running.", reason);
     return;
   }
-  // Another handler registered besides this one owns the decision.
   if (process.listenerCount("unhandledRejection") > 1) {
     return;
   }

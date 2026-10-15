@@ -24,14 +24,9 @@ const DEPTH = 0.075;
 const INSET = 0.026;
 const CREASE = 0.004;
 const BEVEL = 0.008;
-// The hinge axis sits just above the inner screens so closed halves meet face to face.
 const PIVOT_Z = DEPTH / 2 + 0.005;
 const SPINE_RADIUS = PIVOT_Z + DEPTH / 2 - 0.002;
 export const DEFAULT_FOLD_INNER_ASPECT = 2076 / 2152;
-/**
- * Unfolded inner displays are near square in either orientation. Cover displays are
- * phone shaped (about 0.4-0.5, or 2-2.6 when rotated), so they never retune the body.
- */
 export const isFoldInnerAspect = (aspect: number) =>
   Number.isFinite(aspect) && aspect > 0.75 && aspect < 1.5;
 
@@ -177,7 +172,6 @@ export function createAndroidFoldScene(
     );
     frame.position.z = DEPTH / 2 + 0.001;
     group.add(frame);
-    // A back-facing shape mirrors X, so it is drawn from the opposite side's outline.
     const rear = new Mesh(
       new ShapeGeometry(
         panelPath(halfWidth, side === "left" ? "right" : "left", 0.01, 0.095, 0.002),

@@ -28,7 +28,6 @@ interface Props {
   canGoForward: boolean;
   refreshDisabled: boolean;
   inputDisabled?: boolean | undefined;
-  /** Bumping this value re-focuses and selects the URL input. */
   focusUrlNonce?: number | undefined;
   onBack: () => void;
   onForward: () => void;

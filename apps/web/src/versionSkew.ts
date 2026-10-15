@@ -19,8 +19,6 @@ export interface VersionMismatch {
 
 const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY = "t3code:version-mismatch-dismissals:v1";
 
-// Runtime failures retain their identity until the next attempt. Dismiss only
-// that attempt, across chat remounts, without clearing the error in Settings.
 const dismissedServerUpdateFailures = new WeakSet<ServerUpdateState>();
 
 export function isServerUpdateFailureDismissed(state: ServerUpdateState): boolean {
@@ -46,13 +44,6 @@ function versionCore(version: string): string {
   return version.replace(/[-+].*$/, "");
 }
 
-/**
- * Two nightly builds compare their full versions, including the date and run.
- * Other combinations compare their core `major.minor.patch` only, so a stable
- * build and a nightly build with the same core do not cause an update warning.
- * A server ahead of the client does not need an update. Versions that do not
- * parse as semver fall back to plain string inequality.
- */
 export function resolveVersionMismatch(
   serverVersion: string | null | undefined,
   clientVersion: string = APP_VERSION,
@@ -92,8 +83,6 @@ export function resolveServerConfigVersionMismatch(
   return resolveVersionMismatch(serverConfig?.environment.serverVersion);
 }
 
-/** The update path the connected server offers, or null when it only
-    supports a manual relaunch (older servers, dev checkouts, Windows). */
 export function resolveServerSelfUpdateCapability(
   serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
 ): ServerSelfUpdateCapability | null {

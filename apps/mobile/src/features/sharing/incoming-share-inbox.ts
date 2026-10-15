@@ -105,8 +105,6 @@ export class IncomingShareInbox {
       });
       const { draft } = built;
       if (!hasIncomingShareContent(draft)) {
-        // Unsupported native payloads cannot become actionable on retry and
-        // would otherwise reopen the project picker on every foreground.
         await this.cleanup(built.cleanup);
         this.clearNativePayloads();
         throw new Error(

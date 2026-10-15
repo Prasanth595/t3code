@@ -44,7 +44,6 @@ type SessionSetupResult = Pick<
   "configOptions" | "models"
 >;
 
-/** Keep the native model IDs, including model-specific thinking levels. */
 export function buildAntigravityModelsFromSession(
   setup: SessionSetupResult,
 ): ReadonlyArray<ServerProviderModel> {
@@ -146,8 +145,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         installed: false,
         version: null,
         status: "warning",
-        // The configured method rides along so the registry can tell a saved
-        // account for this method from one left by a previous configuration.
         auth: { status: "unknown", ...(options.auth ? { type: options.auth.type } : {}) },
         message: settings.enabled
           ? "Checking Antigravity availability."
@@ -402,8 +399,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   ) {
     if (skills) {
       discoveredSkills.set(cwd, skills);
-      // A rescan replaces the stored entry's skills. Session callbacks and
-      // health checks republish that entry, so it must not keep old ones.
       yield* SubscriptionRef.update(metadata, (state) =>
         state.draft.workspaceSnapshots?.some((entry) => entry.cwd === cwd)
           ? {

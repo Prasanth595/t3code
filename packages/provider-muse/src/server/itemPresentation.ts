@@ -35,7 +35,6 @@ type MuseToolPresentation = {
   | Fields<"dynamic_tool", "type" | "toolName" | "input" | "output">
 );
 
-/** Unrecognized native terminal states must not appear as successful work. */
 export function museItemStatus(item: MuseItem): OrchestrationV2TurnItemStatus {
   if (item.status === "inProgress") return "running";
   if (item.status === "cancelled") return "cancelled";

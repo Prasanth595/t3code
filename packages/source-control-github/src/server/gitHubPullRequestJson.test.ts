@@ -31,10 +31,6 @@ import {
   pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
 
-/**
- * Rows as a repository's own GraphQL list answers them. Entries may use flat shapes for brevity:
- * `reviewRequests` and `latestReviews` as arrays, and `checks` as the rollup state.
- */
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
   return JSON.stringify({
     data: {
@@ -227,8 +223,6 @@ describe("pull request search decoding", () => {
   });
 
   it("maps the rollup enum the search answers with onto the same three words", () => {
-    // The search asks GitHub for the verdict rather than the checks behind it, so this path sees
-    // one enum where the listing sees an array.
     const batch = expectSuccess(
       decodePullRequestSearchJson(
         searchJson(["SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED", null]),
@@ -278,7 +272,6 @@ describe("pull request detail decoding", () => {
     ],
   });
 
-  /** The same conversation as the GraphQL activity query answers it. */
   const activityJson = (raw: Record<string, unknown>) =>
     JSON.stringify({
       data: {
@@ -393,7 +386,6 @@ describe("pull request detail decoding", () => {
       armed({ autoMergeRequest: { enabledBy: { login: "octocat" }, mergeMethod: "SQUASH" } }),
     ).toMatchObject({ autoMergeEnabled: true, autoMergeMethod: "squash" });
     expect(armed({ autoMergeRequest: null }).autoMergeEnabled).toBe(false);
-    // `gh` not answering for the field at all is not GitHub saying the merge is unarmed.
     expect(armed({}).autoMergeEnabled).toBeUndefined();
   });
 
@@ -454,7 +446,6 @@ describe("pull request detail decoding", () => {
       startedAt: "2026-10-08T04:06:13Z",
       completedAt: "0001-01-01T00:00:00Z",
     };
-    // A run still queued has not started either, so it carries no time at all.
     const queued = { ...running, status: "QUEUED", startedAt: "0001-01-01T00:00:00Z" };
     const raw = JSON.parse(detailJson) as Record<string, unknown>;
     const checksOf = (statusCheckRollup: ReadonlyArray<object>) => {
@@ -464,7 +455,6 @@ describe("pull request detail decoding", () => {
       return [detail.checks.map((check) => [check.name, check.status]), detail.checksState];
     };
 
-    // Both listing orders, so the run still going wins on its own rather than by coming last.
     for (const rollup of [
       [finished, running],
       [running, finished],
@@ -477,7 +467,6 @@ describe("pull request detail decoding", () => {
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
     const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
-    // r2 approved without writing anything, which is still the event worth seeing.
     expect(detail.comments.map((comment) => comment.id)).toEqual(["r1", "c1", "r2"]);
     expect(detail.comments.at(-1)?.reviewState).toBe("APPROVED");
   });
@@ -496,8 +485,6 @@ describe("pull request detail decoding", () => {
       activity({
         ...raw,
         reviews: [
-          // What a reviewer leaving inline comments produces: a container with a state but
-          // nothing to read. Its comments come from the review threads instead.
           { id: "r4", body: "", state: "COMMENTED", submittedAt: "2026-07-07T00:00:00Z" },
           {
             id: "r5",
@@ -549,7 +536,6 @@ describe("review thread decoding", () => {
       data: { repository: { pullRequest: { reviewThreads: { totalCount, pageInfo, nodes } } } },
     });
 
-  /** The same query carries the review roster, so it is built alongside the threads. */
   const reviewJson = (input: {
     readonly requested?: ReadonlyArray<unknown>;
     readonly reviewed?: ReadonlyArray<unknown>;
@@ -573,8 +559,6 @@ describe("review thread decoding", () => {
       decodeReviewThreadsJson(
         reviewJson({
           requested: [{ login: "julius", name: "Julius", avatarUrl: "https://avatars/j.png" }],
-          // An app that has reviewed is no longer an outstanding request, which is why asking
-          // only for requests reported nobody on a pull request a bot had reviewed.
           reviewed: [
             {
               __typename: "Bot",
@@ -724,7 +708,6 @@ describe("review thread decoding", () => {
     const result = expectSuccess(
       decodeReviewThreadsJson(
         reviewJson({
-          // Recorded from pingdotgg/t3code#12329, where CODEOWNERS asked the team.
           requested: [
             {
               combinedSlug: "pingdotgg/ping-devs",
@@ -910,14 +893,11 @@ describe("reaction decoding", () => {
             viewerHasReacted: true,
             reactors: { totalCount: 2, nodes: [{ login: "julius" }, { login: "bilal" }] },
           },
-          // Not one of the eight the contract carries.
           {
             content: "PARTY_PARROT",
             reactors: { totalCount: 1, nodes: [{ login: "hubot" }] },
           },
-          // Nobody behind it, which GitHub still answers a group for.
           { content: "HEART", reactors: { totalCount: 0, nodes: [] } },
-          // More reactors than the bounded read named, and no `viewerHasReacted` at all.
           {
             content: "ROCKET",
             reactors: { totalCount: 140, nodes: [{ login: "a" }, { login: "b" }, { login: "c" }] },
@@ -1014,8 +994,6 @@ describe("repository access decoding", () => {
   });
 
   it("withholds write where gh names no permission, which is not a standing it gave", () => {
-    // The one place an unknown answer is not granted: a Merge button a reader cannot use wastes
-    // the press, where a missing one still leaves the pull request open on its host.
     expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson())).canWrite).toBe(false);
   });
 
@@ -1080,9 +1058,6 @@ describe("viewer permission decoding", () => {
   });
 
   it("reads silence as permission, but not as authorship", () => {
-    // A node the viewer cannot see comes back null. Updating is a permission, so an unknown
-    // answer grants it and lets the host refuse; authorship is a fact about who wrote the change,
-    // and claiming it for someone who did not is how an author's own rules get handed out.
     expect(expectSuccess(decodeViewerPermissionsJson(viewerJson({ pullRequest: null })))).toEqual({
       mergeCapabilities: { merge: true, squash: false, rebase: true },
       canWrite: false,
@@ -1183,7 +1158,6 @@ describe("review thread decoding", () => {
     });
 
   it("carries what the reader may do with the pull request, off the conversation read", () => {
-    // The same response the threads arrive in, so knowing this costs no request of its own.
     expect(
       expectSuccess(
         decodeReviewThreadsJson(
@@ -1271,7 +1245,6 @@ describe("review thread decoding", () => {
             isResolved: true,
             isOutdated: true,
             path: "src/a.ts",
-            // GitHub reports no current line once the thread has fallen off the diff.
             line: null,
             diffSide: "RIGHT",
             comments: { totalCount: 1, nodes: [comment("c3", "stale")] },
@@ -1301,8 +1274,6 @@ describe("review thread decoding", () => {
         ]),
       ),
     );
-    // A resolved conversation is finished work, not unsaid work: the timeline reads it and the
-    // diff pins it to its line, the same as any other.
     const threads = decoded.threads.map((entry) => entry.thread);
     expect(reviewThreadConversation(threads).map((comment) => comment.id)).toEqual(["c4"]);
     expect(threads).toHaveLength(1);
@@ -1430,7 +1401,6 @@ describe("REVIEW_THREADS_GRAPHQL_QUERY", () => {
 
   it("asks for reactionGroups on the pull request itself, its comments, its reviews and each thread's comments", () => {
     expect(REVIEW_THREADS_GRAPHQL_QUERY.match(/reactionGroups/g)).toHaveLength(4);
-    // The reviews connection is new: only reactions were ever wanted off it.
     expect(REVIEW_THREADS_GRAPHQL_QUERY).toContain("reviews(first:");
   });
 });
@@ -1497,8 +1467,6 @@ describe("reviewer candidate decoding", () => {
   });
 
   it("keeps a requested team apart from the people, so the request can be taken back", () => {
-    // A team is never among the assignable users, and a request that cannot be seen cannot be
-    // undone — so the ones GitHub reports are carried, marked as the teams they are.
     const list = expectSuccess(
       decodeReviewerCandidatesJson(
         candidatesJson({
@@ -1509,7 +1477,6 @@ describe("reviewer candidate decoding", () => {
     );
     expect(list.candidates).toEqual([
       {
-        // Asked by slug, shown by the same `org/slug` as its reviewer row.
         id: "reviewers",
         kind: "team",
         login: "acme/reviewers",
@@ -1733,7 +1700,6 @@ describe("decodePullRequestFilesJson", () => {
     const result = expectSuccess(
       decodePullRequestFilesJson(
         JSON.stringify([
-          // Binary: it changed, and none of it can be shown.
           { filename: "logo.png", status: "modified", additions: 4, deletions: 2 },
           {
             filename: "src/app.ts",
@@ -1746,7 +1712,6 @@ describe("decodePullRequestFilesJson", () => {
       ),
     );
 
-    // Dropping it would take the file out of the change altogether, not just its contents.
     expect(result.patch).toContain("diff --git a/logo.png b/logo.png");
     expect(result.patch).toContain("diff --git a/src/app.ts b/src/app.ts");
     expect(result.truncated).toBe(true);
@@ -1872,7 +1837,6 @@ describe("buildSetFilesViewedGraphQlMutation", () => {
 });
 
 describe("host-native stack decoding", () => {
-  /** A stack as the preview lists it, bottom to top, with the fields it answers today. */
   function stack(overrides: Record<string, unknown> = {}) {
     return {
       id: 42,
@@ -1896,7 +1860,6 @@ describe("host-native stack decoding", () => {
     };
   }
 
-  /** The one stack a listing answered with, which these reads all expect to find. */
   function expectStack(overrides: Record<string, unknown> = {}) {
     const decoded = expectSuccess(decodePullRequestStacksJson(JSON.stringify([stack(overrides)])));
     if (decoded === null) throw new Error("expected a stack");
@@ -2063,7 +2026,6 @@ describe("batched pull request summaries", () => {
       mergeability: "unknown",
       additions: 0,
     });
-    // The document did not ask about stacks, so the summary does not claim an answer.
     expect(decoded.success.get(0)).not.toHaveProperty("stack");
   });
 
@@ -2183,7 +2145,6 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
-    // A pull request GitHub had no answer for is left for a full read.
     expect(decode(null, pullRequest(base)).has(0)).toBe(false);
   });
 });

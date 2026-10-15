@@ -6,9 +6,6 @@ import { collectComposerContextReferences } from "./composerContextReferences.ts
  * Serializes a canonical message (inline reference links plus records) into the pre-inline-context
  * wire shape, for servers that do not advertise `inlineMessageContext`. Those servers drop the
  * records and forward the links as literal text, so the payload has to travel inside the message.
- *
- * The output is the format `upgradeLegacyContextMessage` parses, so a newer client reading the
- * resulting message reconstructs the same records.
  */
 export function serializeLegacyContextMessage(input: {
   text: string;
@@ -45,8 +42,6 @@ export function serializeLegacyContextMessage(input: {
       .map(renderReviewComment),
   ].filter((block) => block.length > 0);
 
-  // Review comments already inlined their payload above; anything else unreferenced still ships
-  // its block so no context is silently dropped.
   return [text.trimEnd(), ...blocks].filter((part) => part.length > 0).join("\n\n");
 }
 

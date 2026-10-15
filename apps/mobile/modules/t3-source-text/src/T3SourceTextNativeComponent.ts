@@ -5,10 +5,6 @@ interface TargetedEvent {
   target: CodegenTypes.Int32;
 }
 
-/**
- * @property start - The start index of the selected range (0-based)
- * @property end - The end index of the selected range (0-based, exclusive)
- */
 interface SelectionChangeEvent extends TargetedEvent {
   start: CodegenTypes.Int32;
   end: CodegenTypes.Int32;

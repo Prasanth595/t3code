@@ -93,7 +93,6 @@ describe("environmentToken", () => {
     expect(GitHubCredentials.environmentToken("acme.ghe.com", { GITHUB_TOKEN: "github" })).toBe(
       "github",
     );
-    // An enterprise token only goes to the host GH_HOST names, never to whatever a remote says.
     expect(GitHubCredentials.environmentToken("git.acme.internal", env)).toBeNull();
     expect(
       GitHubCredentials.environmentToken("git.acme.internal", {
@@ -119,7 +118,6 @@ describe("GitHubApi", () => {
       expect(body).toContain('"login":"julius"');
       expect(requests[0]!.url).toBe("https://api.github.com/graphql");
       expect(requests[0]!.headers.authorization).toBe("Bearer first");
-      // No `rateLimit` selection is added: the quota is read off the response headers.
       const sent = requests[0]!.body;
       expect(sent._tag === "Uint8Array" ? new TextDecoder().decode(sent.body) : "").toContain(
         '"query":"query { viewer { login } }"',
@@ -207,7 +205,6 @@ describe("GitHubApi", () => {
           "http.response.status_code": 200,
           "github.ratelimit.remaining": 4800,
         });
-        // Nothing recorded carries the query string, the variables, or the token.
         const everything = spans
           .flatMap((span) => [...span.attributes].map(([key, value]) => `${key}=${String(value)}`))
           .join("\n");
@@ -303,18 +300,15 @@ describe("GitHubApi", () => {
       yield* TestClock.setTime(NOW);
       const api = yield* GitHubApi.GitHubApi;
       const read = { host: "github.com", operation: "sweep", path: "repos/acme/web/pulls" };
-      // The first answer leaves 499 of 5000, under the last tenth; the next background read waits.
       yield* api.rest(read);
       const refused = yield* Effect.flip(api.rest(read));
       expect(refused).toMatchObject({
         _tag: "SourceControlRateLimitPausedError",
         retryAt: reset * 1000,
       });
-      // A user's own request may spend the reserve, and GraphQL has a quota of its own.
       yield* api.rest(read).pipe(Effect.provideService(SourceControlRateLimit.Interactive, true));
       yield* api.graphql({ host: "github.com", operation: "x", query: "query { viewer { id } }" });
       expect(requests).toHaveLength(3);
-      // The reset gives the background its quota back.
       yield* TestClock.setTime(reset * 1000);
       yield* api.rest(read);
       expect(requests).toHaveLength(4);

@@ -11,7 +11,6 @@ export interface ComposerContextReference {
   label: string;
 }
 
-/** Only for importing canonical records: undo one namespace before rebuilding a draft. */
 export function producerIdFromComposerContextId(
   kind: ComposerContextKind,
   contextId: string,
@@ -28,7 +27,6 @@ export function formatInlineContextReference(reference: ComposerContextReference
   });
 }
 
-/** Payload ids referenced by the prompt, once each in first-occurrence order. */
 export function collectInlineContextIds(prompt: string): string[] {
   return Array.from(
     new Set(collectComposerContextReferences(prompt).map((occurrence) => occurrence.contextId)),
@@ -43,7 +41,6 @@ function isBoundaryWhitespace(char: string | undefined): boolean {
   return char === undefined || char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
-/** Replaces a selected range with chips, keeping word boundaries and the trailing caret space. */
 export function inlineContextReferenceReplacement(
   prompt: string,
   selection: { start: number; end: number },
@@ -80,7 +77,6 @@ export function appendInlineContextReference(
   return insertInlineContextReference(prompt, prompt.length, reference).prompt;
 }
 
-/** Removes every reference to `contextId` plus one neighbouring space each so words don't join. */
 export function removeInlineContextReference(
   prompt: string,
   contextId: string,
@@ -105,7 +101,6 @@ export function removeInlineContextReference(
   return { prompt: result, cursor };
 }
 
-/** Appends links for records the prompt does not reference yet, in the order given. */
 export function ensureInlineContextReferences(
   prompt: string,
   references: ReadonlyArray<ComposerContextReference>,

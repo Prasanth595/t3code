@@ -66,17 +66,8 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
   );
 }
 
-/**
- * Covers poll jitter and short sleeps, while a server booted hours after the
- * slot skips to the next occurrence instead of firing stale work at a random
- * time.
- */
 const MISSED_FIXED_TIME_GRACE_MS = 10 * MINUTE_MS;
 
-/**
- * Interval schedules are never considered missed: an overdue interval task
- * catching up with a single run is the desired behaviour.
- */
 export function isMissedFixedTimeRun(
   schedule: ScheduledTaskSchedule,
   dueAt: DateTime.DateTime,

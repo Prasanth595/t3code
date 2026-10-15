@@ -174,9 +174,6 @@ rl.on("line", (line) => {
         write({ jsonrpc: "2.0", id: request.id, method: request.method, params: request.params });
         continue;
       }
-      // Scripted server->client requests (approval prompts). String values in
-      // params may reference "${threadId}" / "${turnId}" placeholders that are
-      // substituted with the ids this peer actually allocated.
       const requestId = 9000 + index;
       const label = request.label ?? `approval-${requestId}`;
       openServerRequests.set(requestId, { label, itemId: request.params?.itemId });
@@ -224,8 +221,6 @@ rl.on("line", (line) => {
       return;
     }
     if (script.hangInterruptFor && script.hangInterruptFor === target) {
-      // Never respond: simulates a wedged child whose RPC neither resolves
-      // nor rejects. The runtime's bounded deadline must move on.
       return;
     }
     write({ id, result: {} });

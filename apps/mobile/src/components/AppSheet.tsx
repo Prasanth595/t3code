@@ -13,7 +13,6 @@ const NativeHeader = withUniwind(ScreenStackHeaderConfig, {
   titleColor: { fromClassName: "titleColorClassName", styleProperty: "accentColor" },
 });
 
-/** Native presentation for local context whose owner supplies its dismissal callback. */
 export function AppSheet(props: {
   readonly title: string;
   readonly children: ReactNode;

@@ -129,11 +129,9 @@ export interface ReviewGuidePromptInput {
   title: string;
   description: string;
   baseBranch: string;
-  /** The commit the change is measured from, already present in the checkout. */
   baseCommit: string;
   settledReview: string;
   instructions?: string | undefined;
-  /** The stack the change is a layer of, bottom first. */
   stack?: ReadonlyArray<ReviewGuideStackLayer> | undefined;
 }
 
@@ -162,7 +160,6 @@ function reviewGuideStack(
   ];
 }
 
-/** The maintainer's taste, kept below the fixed format and coverage rules it cannot override. */
 function reviewGuidePreferences(instructions: string | undefined): string[] {
   const trimmed = instructions?.trim();
   return trimmed
@@ -176,9 +173,6 @@ function reviewGuidePreferences(instructions: string | undefined): string[] {
     : [];
 }
 
-/**
- * Line numbers it returns are only trusted after the server clamps them to the change's hunks.
- */
 export function buildReviewGuidePrompt(input: ReviewGuidePromptInput) {
   const base = input.baseCommit;
   const range = `${base}...HEAD`;
@@ -346,8 +340,7 @@ export interface ThreadTitlePromptInput {
   policy?: TextGenerationPolicy | undefined;
 }
 
-// Keep shared editorial rules in these two prompts in sync. Regeneration
-// intentionally adds guidance for thread history and the previous title.
+// Keep shared editorial rules in these two prompts in sync.
 const INITIAL_THREAD_TITLE_PROMPT = `Generate a title that will help the user recognize this T3 Code thread weeks later.
 Return JSON with keys title and needsRefinement.
 Set needsRefinement to true only if the subject is still unknown, such as an unresolved link, "fix this", or an unexplained attachment. Otherwise set it to false.

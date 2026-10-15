@@ -124,7 +124,6 @@ interface RightPanelTabsProps {
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
-  /** Tabs are draggable only when the owner can persist the new order. */
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   onCopyFilePath: (relativePath: string) => void;
   onAddBrowser: () => void;
@@ -263,12 +262,9 @@ export function surfaceShortcutActionForKey<
 }
 
 /**
- * A focused editable is a typing context whether or not it has text yet: an
- * empty chat composer at rest is still where the user's next keystrokes are
- * meant to land, and claiming launcher letters from it would redirect prompts
- * into whatever surface opens. The `:not` clause lets `closest` see past
- * non-editable islands (`contenteditable="false"`) to an editable host around
- * them, matching ComposerPendingUserInputPanel's typing guard.
+ * The `:not` clause lets `closest` see past non-editable islands
+ * (`contenteditable="false"`) to an editable host around them, matching
+ * ComposerPendingUserInputPanel's typing guard.
  */
 export function surfaceShortcutTargetsTypingContext(
   target: { closest(selectors: string): unknown } | null,
@@ -396,8 +392,6 @@ function RightPanelEmptyState(props: {
   const highlightIndex =
     availableActions.length === 0 ? -1 : Math.min(highlight, availableActions.length - 1);
 
-  // Capture phase so app-level key handlers cannot swallow the event first;
-  // typing contexts and already-handled events are left alone.
   const shortcutActionsRef = useRef(availableActions);
   useEffect(() => {
     shortcutActionsRef.current = availableActions;
@@ -407,7 +401,6 @@ function RightPanelEmptyState(props: {
       const action = surfaceShortcutActionForKey(shortcutActionsRef.current, event);
       if (!action) return;
       if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
-      // The composed path starts at the real target, which may sit inside a shadow root.
       const target = event.composedPath()[0] ?? event.target;
       if (target instanceof Element && surfaceShortcutTargetsTypingContext(target)) return;
       event.preventDefault();
@@ -471,8 +464,6 @@ function RightPanelEmptyState(props: {
       data-surface-launcher-keys={availableActions.map((action) => action.shortcut).join("")}
       className={cn(
         "scrollbar-gutter-both flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 outline-none",
-        // The panel topbar sits above this container; matching bottom padding
-        // keeps the list centered against the full panel, not the leftover.
         "pb-(--workspace-topbar-height)",
       )}
     >
@@ -481,8 +472,6 @@ function RightPanelEmptyState(props: {
         <div className="flex flex-col gap-0.5">
           {actions.map((action) =>
             action.available ? (
-              // The row is itself a button, so the profile chooser sits beside
-              // it in a wrapper rather than inside it.
               <div
                 key={action.label}
                 className="group relative"
@@ -986,8 +975,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         : null;
       const menuMuted = menuOverlay?.audioMuted ?? false;
       if (surface.kind === "preview") {
-        // Not gated on audibility: silencing a quiet tab ahead of time is the
-        // point, so the item is offered whenever the tab is mutable at all.
         items.push({
           id: "toggle-mute",
           ...tabMuteMenuItem({
@@ -1125,9 +1112,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div
         className={cn(
           "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
-          // The sheet overlays from the viewport top, so its tab bar keeps
-          // the titlebar's height: a compact row re-centers the layout
-          // controls a few pixels higher and the cluster jumps on open.
           props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
@@ -1312,10 +1296,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                                 typeof event.nativeEvent.pointerType === "string"
                                   ? event.nativeEvent.pointerType
                                   : undefined;
-                              // Touch has no hover path to the profile choices:
-                              // its first tap opens the submenu, then a profile
-                              // is selected there. Mouse click keeps the common
-                              // default-profile action at one click.
                               if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType))
                                 return;
                               setAddSurfaceMenuOpen(false);
@@ -1326,11 +1306,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                             {action.label}
                             <MenuShortcut>{action.shortcut}</MenuShortcut>
                           </MenuSubTrigger>
-                          {/*
-                            Capped and truncated: profile names are user-supplied
-                            and run to 48 characters, which would otherwise widen
-                            the popup to fit-content and wrap.
-                          */}
                           <MenuSubPopup className="max-w-56">
                             {browserProfiles.map((profile) => (
                               <MenuItem

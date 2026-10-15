@@ -16,9 +16,6 @@ const SESSION_COOKIE_NAME = "t3_session";
  * live on one hostname at once need separate names — otherwise the second
  * clobbers the first's session and both sides see "Invalid session token
  * signature" until someone clears cookies by hand.
- *
- * Remote web servers use their persisted environment identity and omit the
- * port, so the name survives state-directory moves and public port changes.
  */
 export function resolveSessionCookieName(input: {
   readonly mode: "web" | "desktop";
@@ -45,9 +42,6 @@ export function resolveSessionCookieName(input: {
     return `${SESSION_COOKIE_NAME}_${instanceHash}`;
   }
 
-  // Cookies are scoped by host, not port. Loopback development servers need an
-  // instance-specific name or parallel agents overwrite each other's session,
-  // and a server that later reuses the port receives a token signed elsewhere.
   return `${SESSION_COOKIE_NAME}_${input.port}_${instanceHash}`;
 }
 

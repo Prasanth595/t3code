@@ -126,7 +126,6 @@ export function dedupeShellEnrichment<E, R>(
     return stream.pipe(
       Stream.filter((item) => {
         if (item.kind !== "snapshot") {
-          // A project delta may change which projects/identities a later refresh repairs.
           if (item.kind === "project.updated" || item.kind === "project.removed")
             previous = undefined;
           return true;
@@ -176,10 +175,6 @@ export function shellStreamItemFromEnrichmentRefresh(input: {
   };
 }
 
-/**
- * Initial subscribe frames: always emit the unmarked authoritative snapshot,
- * then a same-sequence enrichment frame only when some roots already resolved.
- */
 export function shellStreamItemsFromInitialSnapshot(input: {
   readonly snapshot: OrchestrationV2ShellSnapshot;
   readonly resolvedRepositoryIdentityRoots: ReadonlyArray<string>;
@@ -208,7 +203,6 @@ export function shellStreamItemsFromInitialSnapshot(input: {
   ];
 }
 
-/** Resume after HTTP/cache hydration with metadata only, never another full shell body. */
 export function shellStreamItemsFromResumeSnapshot(input: {
   readonly snapshot: OrchestrationV2ShellSnapshot;
   readonly resolvedRepositoryIdentityRoots: ReadonlyArray<string>;
@@ -225,8 +219,7 @@ const UNCHANGED_THREAD_SHELL_RESEND_MS = 5_000;
 /**
  * A skipped delta leaves the client cursor behind, and a resume replays the events after that
  * cursor. So an unchanged shell is still sent once its last send is
- * `UNCHANGED_THREAD_SHELL_RESEND_MS` old. That bounds both the replay and how stale the client's
- * `updatedAt` can get.
+ * `UNCHANGED_THREAD_SHELL_RESEND_MS` old.
  */
 export function skipUnchangedThreadShells<A extends OrchestrationV2ShellStreamItem, E, R>(
   stream: Stream.Stream<A, E, R>,
@@ -275,9 +268,6 @@ export function coalesceStoredThreadEvents(
   );
 }
 
-/**
- * `shell` is null when the thread is deleted or unknown.
- */
 export function shellStreamItemFromThreadShell(input: {
   readonly stored: Extract<ShellApplicationEvent, { readonly event: unknown }>;
   readonly shell: OrchestrationV2ThreadShell | null;

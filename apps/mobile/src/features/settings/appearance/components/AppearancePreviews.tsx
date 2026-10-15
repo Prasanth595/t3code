@@ -48,9 +48,6 @@ export function TerminalAppearancePreview(props: { readonly fontSize: number }) 
     fontSize: props.fontSize,
     lineHeight,
   } as const;
-  // AppText stamps the sans font on every node, so nested spans must
-  // re-apply the terminal font instead of relying on inheritance, exactly
-  // like the code preview's tokens below.
   const span = (color: string, extra?: TextStyle): StyleProp<TextStyle> => [
     lineStyle,
     { color, ...extra },

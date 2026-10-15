@@ -54,7 +54,6 @@ export type ThreadToastData = {
     | "secondary";
   expandableContent?: ReactNode;
   expandableLabels?: { expand?: string; collapse?: string };
-  /** When set with `expandableContent`, the summary + label act as one text disclosure (no separate chevron row). */
   expandableDescriptionTrigger?: boolean;
   actionLayout?: "inline" | "stacked-end";
   actionVariant?:
@@ -80,7 +79,6 @@ const TOAST_ICONS = {
   warning: TriangleAlertIcon,
 } as const;
 
-/** Visually shorten long error bodies; clipboard copy still uses the full `description` string. */
 const ERROR_DESCRIPTION_CLAMP_MIN_CHARS = 180;
 function errorDescriptionClampClass(type: unknown, description: unknown): string | undefined {
   if (type !== "error" || typeof description !== "string") {
@@ -580,8 +578,6 @@ function Toasts({ position }: { position: ToastPosition }) {
                 "after:absolute after:left-0 after:h-[calc(var(--toast-gap)+1px)] after:w-full",
                 "data-[position*=top]:after:top-full",
                 "data-[position*=bottom]:after:bottom-full",
-                // `--toast-calc-height`: behind + collapsed = peek height only (content `opacity-0`);
-                // max(front, own) there produced a tall empty shell for long bodies.
                 visibleIndex > 0
                   ? "not-data-expanded:[--toast-calc-height:var(--toast-frontmost-height)] data-expanded:[--toast-calc-height:max(var(--toast-frontmost-height,var(--toast-height)),var(--toast-height))]"
                   : "[--toast-calc-height:max(var(--toast-frontmost-height,var(--toast-height)),var(--toast-height))]",

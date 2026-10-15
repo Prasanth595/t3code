@@ -21,7 +21,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// Guards for the untyped `initialize._meta` states some agents (Grok) advertise.
 // Modes were removed from ACP v2, so the v1 wire schema is the source of truth.
 const isSessionModelState = Schema.is(EffectAcpSchema.SessionModelState);
 const isSessionModeState = Schema.is(EffectAcpSchemaV1.SessionModeState);
@@ -73,10 +72,6 @@ function isBase64DataCode(code: number): boolean {
   );
 }
 
-/**
- * Invalid frames are dropped rather than failed so one misbehaving agent frame cannot take down
- * session-update handling.
- */
 function decodeBase64TerminalFrame(encoded: string): Uint8Array | undefined {
   if (encoded.length > Math.ceil(MAX_ACP_TERMINAL_FRAME_BYTES / 3) * 4) {
     return undefined;
@@ -297,7 +292,6 @@ const boundedContentUri = (value: string | null | undefined): string => {
   return uri.toLowerCase().startsWith("data:") ? "" : uri;
 };
 
-/** Convert every ACP output block into bounded, displayable text without retaining base64 data. */
 export function acpContentBlockDisplayText(
   content: EffectAcpSchema.ContentBlock,
 ): string | undefined {
@@ -620,9 +614,7 @@ function locationsFromToolCallInput(input: {
 // output on every `tool_call_update` notification instead of a delta, so a redrawing
 // terminal progress bar can balloon a single tool call to hundreds of KB per update at
 // several updates per second. Cap what we retain/emit to a bounded tail so one busy tool
-// call cannot flood runtime event ingestion. We always keep the tail: `tool_call_update`
-// deltas routinely omit `kind`, so there is no reliable way to tell a redrawing terminal
-// from another tool here, and the end is the useful part of any live-growing output.
+// call cannot flood runtime event ingestion.
 const TOOL_CALL_CONTENT_MAX_CHARS = 8_000;
 const TOOL_CALL_CONTENT_TRUNCATION_MARKER = "[Earlier output truncated]\n\n";
 
@@ -668,10 +660,6 @@ function toolCallContentText(entry: EffectAcpSchema.ToolCallContent): string | u
   return entry.content.text;
 }
 
-// Trim is used for display `text`, so whitespace-only (or whitespace-padded) entries never
-// contribute to `chunks` and used to take the early returns with the original array. Bound
-// each text entry independently so those paths cannot persist an unbounded terminal buffer
-// on `toolCall.data.content` / `rawPayload`.
 function boundToolCallContentEntries(
   content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
 ): ReadonlyArray<EffectAcpSchema.ToolCallContent> {
@@ -933,10 +921,7 @@ export function mergeToolCallState(
 
 // Even with bounded content (see TOOL_CALL_CONTENT_MAX_CHARS above), a redrawing terminal
 // can still shift its bounded tail window on nearly every notification, which would emit
-// a runtime event per redraw. Coalesce those: only emit early when the tool call's detail
-// has grown meaningfully since the last emission, otherwise batch up to a small number of
-// skipped updates before emitting anyway, so the UI still gets periodic progress and the
-// final (completed/failed) state is always emitted immediately.
+// a runtime event per redraw.
 const TOOL_CALL_UPDATE_MIN_DETAIL_GROWTH_CHARS = 256;
 const TOOL_CALL_UPDATE_COALESCE_LIMIT = 10;
 
@@ -1107,8 +1092,6 @@ export function extractMcpToolCallIdentity(
       ? meta.goose.toolCall
       : undefined
     : undefined;
-  // qwen asserts the origin server explicitly, so any known tool suffix in
-  // its toolName identifies the call even under future prefix formats.
   const metaServerId = typeof meta?.serverId === "string" ? meta.serverId.trim() : "";
   const metaToolName = typeof meta?.toolName === "string" ? meta.toolName.trim() : "";
   if (/^t3[-_ ]?code$/i.test(metaServerId) && metaToolName.length > 0) {
@@ -1129,10 +1112,9 @@ export function extractMcpToolCallIdentity(
   const assertsForeignOrigin =
     (metaServerId.length > 0 && !/^t3[-_ ]?code$/i.test(metaServerId)) ||
     (gooseExtension.length > 0 && !/^t3[-_ ]?code$/i.test(gooseExtension));
-  // A foreign origin never brands as T3. qwen's serverId marks a real MCP
-  // server, but goose reports its built-in extensions (developer__shell,
-  // edits) the same way as user MCP servers, so goose stays unclassified and
-  // keeps its command and file-change projections.
+  // qwen's serverId marks a real MCP server, but goose reports its built-in
+  // extensions (developer__shell, edits) the same way as user MCP servers, so
+  // goose stays unclassified and keeps its command and file-change projections.
   if (assertsForeignOrigin) {
     if (metaServerId.length === 0 || metaToolName.length === 0) return undefined;
     const prefix = [`mcp__${metaServerId}__`, `mcp::${metaServerId}::`].find((prefix) =>
@@ -1170,8 +1152,6 @@ export function extractMcpToolCallIdentity(
   for (const command of commands) {
     const match = ACP_MCP_FALLBACK_CALL.exec(command);
     if (match?.[1] !== undefined) {
-      // The acp-mcp-call CLI exists only as T3's bridge fallback, so the
-      // server identity is T3's by construction.
       const input = acpMcpFallbackInput(match[2]);
       return { server: "t3-code", tool: match[1], ...(input === undefined ? {} : { input }) };
     }
@@ -1231,7 +1211,6 @@ export function sessionUpdateIsReplay(params: EffectAcpSchema.SessionNotificatio
   return isRecord(meta) && meta.isReplay === true;
 }
 
-/** Replay chunks and substantive updates during session/load; not Grok keepalives. */
 export function sessionUpdateCountsAsLoadReplayActivity(
   params: EffectAcpSchema.SessionNotification,
   gatedSessionId?: string,
@@ -1299,10 +1278,6 @@ export const waitForSessionLoadReplayIdle = (input: {
     }
   });
 
-/**
- * Model state some agents (Grok) advertise in `initialize._meta.modelState`, before any session
- * exists.
- */
 export function sessionModelStateFromInitialize(
   initializeResult: EffectAcpSchema.InitializeResponse,
 ): EffectAcpSchema.SessionModelState | undefined {

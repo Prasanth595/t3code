@@ -78,9 +78,7 @@ async function configureVoiceRecordingAudio(): Promise<void> {
   } catch (error) {
     try {
       await releaseVoiceRecordingAudio();
-    } catch {
-      // Keep the setup error. The controller has not started a recorder yet.
-    }
+    } catch {}
     throw error;
   }
 }
@@ -188,7 +186,6 @@ function useVoiceInputRuntime() {
 
   useEffect(
     () => () => {
-      // Dispose first so an active recording is stopped before the recorder is released.
       controller.dispose();
       recorder.release();
     },

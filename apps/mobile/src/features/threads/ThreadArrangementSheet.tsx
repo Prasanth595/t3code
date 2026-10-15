@@ -210,8 +210,6 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
         ordered: sections[section],
         allThreads: threads,
         section,
-        // A time-ordered inbox has no slots, so Active takes no drops while
-        // the Working beta is on. The saved arrangement stays untouched.
         reorderableEnvironmentIds: new Set(
           [...configs].flatMap(([id, config]) =>
             (
@@ -508,7 +506,6 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                             if (frame.current !== null) cancelAnimationFrame(frame.current);
                             frame.current = null;
                             drag.current = null;
-                            // Retain the gap until the saved order arrives, avoiding a flash back.
                             void moveThread(current.thread, current.destination).finally(stop);
                           }}
                         />

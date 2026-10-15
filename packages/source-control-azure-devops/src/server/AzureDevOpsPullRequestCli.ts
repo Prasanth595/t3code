@@ -102,7 +102,6 @@ export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsReviewerNameError
   | AzureDevOpsViewerUnavailableError;
 
-/** The version every REST call below is pinned to, so a new default cannot reshape a response. */
 const REST_API_VERSION = "7.1";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 /**
@@ -160,7 +159,6 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       {
         readonly items: ReadonlyArray<AzureDevOpsPullRequest>;
         readonly truncated: boolean;
-        /** Raw Azure rows consumed to produce this page, including malformed rows. */
         readonly cursorAdvance: number;
       },
       AzureDevOpsPullRequestCliError
@@ -287,12 +285,10 @@ function actionArgs(
       return ["--draft", "true"];
     case "close":
       return ["--status", "abandoned"];
-    // Never reached: this host does not declare the action, so nothing offers it.
     case "update-branch":
       return [];
     case "reopen":
       return ["--status", "active"];
-    // Never reached: this host does not declare the action, so the service refuses it first.
     case "revert":
     case "approve-workflows":
     case "delete-branch":
@@ -313,9 +309,7 @@ function isReviewerName(value: string): boolean {
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
-  // Every command resolves the organization, project and repository from the checkout, which is
-  // what the rest of the Azure wrapper does. The remote takes three shapes and only `az` knows
-  // how to read all of them.
+  // The remote takes three shapes and only `az` knows how to read all of them.
   const detectArgs = ["--detect", "true"] as const;
 
   const executeJson = (input: {
@@ -511,8 +505,7 @@ export const make = Effect.gen(function* () {
         }),
         // `az devops login` signs in with a personal access token, which `az account show` knows
         // nothing about, and nothing in `az` prints whose token it is. `--creator me` is resolved
-        // by the extension itself, so the viewer's own pull request names them. Someone with none
-        // stays unnamed: `me` would read as nobody everywhere a row is compared with the viewer.
+        // by the extension itself, so the viewer's own pull request names them.
         Effect.catchIf(
           (error) => error._tag !== "AzureDevOpsCliUnavailableError",
           () =>
@@ -554,10 +547,6 @@ export const make = Effect.gen(function* () {
         involvement: input.involvement,
         viewer: input.viewer,
         limit: input.limit,
-        // Azure counts rather than filters, so a slice carries on by stepping over every raw row
-        // the prior slice consumed. That is an offset into a list that can shift underneath it:
-        // a pull request opened between two slices moves everything down one, and the row on the
-        // seam is the one that pays for it.
         skip: input.cursor?.delivered ?? 0,
         cursorAdvance: 0,
         items: [],

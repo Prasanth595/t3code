@@ -32,8 +32,6 @@ export const PRIMARY_INSTANCE_ID = DesktopBackendManager.PRIMARY_INSTANCE_ID;
 export type DesktopBackendInstance = DesktopBackendManager.DesktopBackendInstance;
 export type BackendInstanceSpec = DesktopBackendManager.BackendInstanceSpec;
 
-// The pool refuses overwrites so two independent orchestrators racing on the same id surface as a
-// typed failure instead of one silently winning.
 export class DesktopBackendPoolInstanceAlreadyRegisteredError extends Schema.TaggedError<DesktopBackendPoolInstanceAlreadyRegisteredError>()(
   "DesktopBackendPoolInstanceAlreadyRegisteredError",
   {
@@ -58,22 +56,11 @@ export class DesktopBackendPool extends Context.Service<
   DesktopBackendPool,
   {
     readonly get: (id: BackendInstanceId) => Effect.Effect<Option.Option<DesktopBackendInstance>>;
-    // Snapshot of all currently-registered instances. Order is unspecified;
-    // callers that need a canonical "primary first" view should sort by id.
     readonly list: Effect.Effect<readonly DesktopBackendInstance[]>;
     readonly primary: Effect.Effect<DesktopBackendInstance>;
-    // The pool owns the instance's scope: unregister(id) or pool teardown closes it and runs the
-    // instance's auto-stop finalizer. The returned instance has not been started — callers decide
-    // when to start it (and can call start more than once if a retry-after-failure story makes
-    // sense for them).
     readonly register: (
       spec: BackendInstanceSpec,
     ) => Effect.Effect<DesktopBackendInstance, DesktopBackendPoolInstanceAlreadyRegisteredError>;
-    // Stop the named instance and remove it from the registry. Closing the
-    // instance's scope triggers its auto-stop finalizer; the registry is
-    // updated atomically with the scope close so subsequent get(id) calls
-    // observe the unregister before the underlying child process has fully
-    // exited.
     readonly unregister: (
       id: BackendInstanceId,
     ) => Effect.Effect<void, DesktopBackendPoolCannotUnregisterPrimaryError>;
@@ -126,7 +113,6 @@ export const layer = Layer.effect(
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
 
-    // A WSL preflight failure on the primary only happens in wsl-only mode.
     // Fatal configuration failures persist the Windows fallback. Bounded
     // transport failures use an in-memory fallback for this launch so the app
     // opens without overwriting the user's WSL preference.

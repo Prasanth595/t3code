@@ -28,7 +28,6 @@ const ANDROID_APK_RELEASE_URL = "https://github.com/pingdotgg/t3code/releases/ta
 const ROW_ID = "nightly-mobile-beta";
 const NOTICE_DISMISSED_STORAGE_KEY = "t3code:nightly-mobile-beta-notice-dismissed:v1";
 
-// Guards against a second toast from a remount or a Strict Mode effect replay.
 let noticeShown = false;
 
 function isNoticeDismissed(): boolean {
@@ -93,9 +92,6 @@ function BetaLinkQr({ url, label }: { url: string; label: string }) {
   );
 }
 
-/**
- * Render it only for Nightly.
- */
 export function NightlyMobileBetaRow() {
   return (
     <SettingsRow

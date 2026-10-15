@@ -43,7 +43,6 @@ const BROWSER_CONTEXT_ID = "t3-preview";
 const ANNOUNCE = Symbol("announce");
 const PAGE_SESSION_ID = "t3-preview-page";
 
-/** Browser-level commands that only need acknowledging for a page the desktop owns. */
 const ACKNOWLEDGED = new Set([
   "Target.setDiscoverTargets",
   "Browser.grantPermissions",
@@ -129,7 +128,6 @@ export function createCdpRelayConnection(
       case "Target.setAutoAttach": {
         if (attached) return {};
         attached = true;
-        // The page is announced once, right after this reply, as Chromium does.
         const info = await targetInfo();
         return {
           [ANNOUNCE]: {

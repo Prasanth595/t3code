@@ -66,10 +66,6 @@ interface ResolvedLink {
   readonly url: string;
 }
 
-/**
- * A URL carries its own host and repository; a bare `#123` can only mean the
- * thread's own repository.
- */
 export function resolveLinkPullRequestInput(input: {
   readonly reference: string;
   readonly project: {

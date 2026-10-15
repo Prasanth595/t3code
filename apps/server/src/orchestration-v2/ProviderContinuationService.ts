@@ -95,7 +95,6 @@ export const layer = Layer.effectDiscard(
               delegatedCompletionRetryKey(request, request.delegatedCompletion),
             );
           }
-          // No continuation turn will start to clear the adapter's sticky offer.
           if (request.clearIfCurrent !== undefined) {
             yield* request.clearIfCurrent();
           } else if (request.dispatchIfCurrent !== undefined) {
@@ -135,12 +134,6 @@ export const layer = Layer.effectDiscard(
               },
             })
             .pipe(
-              // The finalize that claimed this delivery already wrote the
-              // children's results to the parent's history unconditionally, so
-              // nothing is lost: acknowledge each task administratively
-              // (observedByRunId: null, the same shape task_status uses when no
-              // run observed it) to consume this delivery instead of leaving it
-              // open to retry.
               Effect.catchTags({
                 ThreadManagementProviderInstanceDisabledError: (error) =>
                   Effect.logInfo(
@@ -187,8 +180,6 @@ export const layer = Layer.effectDiscard(
           yield* clearRetryAttempt(retryKey);
           return;
         }
-        // The ordinal is display metadata only: allocate.message appends a
-        // random UUID, so a stale projection read here cannot collide ids.
         const messageId =
           request.messageId ??
           (yield* ids.allocate.message({

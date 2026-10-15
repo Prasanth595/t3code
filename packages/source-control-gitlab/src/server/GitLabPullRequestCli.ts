@@ -187,13 +187,11 @@ const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 export interface GitLabMergeRequestListBatch {
   readonly items: ReadonlyArray<GitLabMergeRequestListItem>;
   readonly truncated: boolean;
-  /** Raw GitLab rows consumed to produce this page, including malformed rows. */
   readonly cursorAdvance: number;
 }
 
 export interface GitLabMergeRequestDiffSlice {
   readonly patch: string;
-  /** Files in this slice had their hunks withheld, as opposed to there being more slices. */
   readonly truncated: boolean;
   readonly nextCursor: string | null;
 }
@@ -212,7 +210,6 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly involvement: PullRequestInvolvement;
       readonly viewer: string;
       readonly limit: number;
-      /** Free text for GitLab's own `search`, which matches title and description. */
       readonly query?: string | undefined;
       readonly cursor?: ProviderListCursor | undefined;
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
@@ -243,7 +240,6 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
       readonly cursor?: string | undefined;
-      /** One commit's own changes, rather than everything the merge request carries. */
       readonly commit?: string | undefined;
     }) => Effect.Effect<GitLabMergeRequestDiffSlice, GitLabPullRequestCliError>;
 
@@ -265,12 +261,6 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
     }) => Effect.Effect<PullRequestMergeCapabilities, GitLabPullRequestCliError>;
 
-    /**
-     * The head sha comes from the merge request's own diff refs, so the answer is the version a
-     * reader is looking at rather than whatever the source branch has moved on to. A path the
-     * head does not have is answered as the empty revision, since the batch it was asked in was
-     * looked at; a batch GitLab did not answer for is left out instead.
-     */
     readonly getFileRevisions: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -369,10 +359,6 @@ export class GitLabPullRequestCli extends Context.Service<
       GitLabPullRequestCliError
     >;
 
-    /**
-     * Awards an emoji, or takes the award back. `noteId` is a note of the merge request; absent
-     * awards the merge request itself, which is where its description's reactions live.
-     */
     readonly setReaction: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -405,8 +391,6 @@ function gitLabReviewPositionLines(
 }
 
 function stateParam(state: PullRequestListState): string {
-  // GitLab's `closed` already excludes merged merge requests, so no extra filter is needed,
-  // and it spans every state under `all`.
   return state === "open" ? "opened" : state;
 }
 
@@ -424,11 +408,6 @@ function involvementParams(input: {
   }
 }
 
-/**
- * The cursor arrives from the reader as a string and goes straight into a query, so it is
- * parsed rather than trusted; the length bound keeps a page number out of exponential
- * notation.
- */
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
 }
@@ -476,9 +455,6 @@ function actionArgs(
       return ["update", "--draft"];
     case "close":
       return ["close"];
-    // A rebase, because GitLab has no other way to move a branch onto its target: there is no
-    // merge-the-target-in equivalent of GitHub's update button, which is why this host declares
-    // `rebase` alone and never has to read the method it was handed.
     case "update-branch":
       return ["rebase"];
     case "reopen":
@@ -685,11 +661,6 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  /**
-   * GitLab pages by offset and reports no total, so a short page is the only thing that says
-   * it is done — and the raw count decides, not the kept one: the notes GitLab wrote itself
-   * are dropped, and a whole page of them still means there is more to read.
-   */
   const notesPage = (input: {
     readonly cwd: string;
     readonly repository: string;
@@ -860,8 +831,6 @@ export const make = Effect.gen(function* () {
   }): Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
-      // How far behind the target branch this one is comes only when asked for by name, and it
-      // is asked for here rather than on a second read because it is the same merge request.
       path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}?${query([
         ["include_diverged_commits_count", "true"],
       ])}`,
@@ -1265,8 +1234,7 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((mergeRequest) => {
           // GitLab has no endpoint that adds or removes one reviewer: `reviewer_ids` replaces the
           // whole set, so the set that is already there is read first and the change applied to
-          // it. Asking again for somebody already on it writes the same set back, which is how
-          // GitLab re-requests a review.
+          // it.
           const ids = new Set(mergeRequest.reviewerIds);
           for (const reviewer of input.reviewers) {
             const id = Number(reviewer.id);

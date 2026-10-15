@@ -30,7 +30,6 @@ import { resolveRelayClerkTokenOptions } from "./publicConfig";
 export interface CloudLinkDesiredState {
   readonly managedTunnel: boolean;
   readonly publish: boolean;
-  /** Omit to leave the webhook-hold setting as it is. */
   readonly holdWebhooksWhileOffline?: boolean;
 }
 
@@ -38,8 +37,6 @@ export interface CloudLinkDesiredState {
  * The local tunnel config can outlive a relay link that drifted to
  * publish-only, and clients then get `endpoint_provider_not_managed`. So when
  * relay discovery has this environment's record, it must also say managed.
- * Older environment servers predate managedTunnelActive; for them a link always
- * implies a tunnel.
  */
 function isManagedTunnelActive(
   linkState: EnvironmentCloudLinkStateResult,
@@ -53,13 +50,6 @@ function isManagedTunnelActive(
   );
 }
 
-/**
- * T3 Connect (managed tunnel) and agent-activity publishing are independent
- * capabilities backed by a single relay link, so consumers express the full
- * desired state and `reconcileCloudState` applies it: unlink when neither is
- * wanted, otherwise (re)link with the mode the managed-tunnel bit implies and
- * set the publish preference.
- */
 export function useCloudLinkController() {
   const { getToken, isSignedIn } = useAuth();
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {

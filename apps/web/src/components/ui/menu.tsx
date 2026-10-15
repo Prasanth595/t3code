@@ -103,7 +103,6 @@ function MenuItem({
   );
 }
 
-// Symmetric padding keeps accents and descenders inside truncated labels.
 function MenuItemLabel({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span

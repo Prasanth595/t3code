@@ -52,8 +52,8 @@ const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
 
 // Python splits BROWSER on the platform path separator before it parses quotes.
-// Keep this source free of both colons and semicolons. EPIPE must still exit 0
-// so Python does not fall back to an OS browser after cancellation.
+// EPIPE must still exit 0 so Python does not fall back to an OS browser after
+// cancellation.
 const browserHelperSource =
   `process.stderr.on("error",()=>process.exit(0)).write(` +
   `"${ANTIGRAVITY_AUTH_BROWSER_MARKER}"+JSON.stringify(process.argv[1])+"\\n",` +
@@ -89,10 +89,6 @@ export interface AntigravityProfile {
   readonly browserCommand: string;
 }
 
-/**
- * The agent reads the API key from its environment and the GCP project and location from
- * `settings.json` in the profile. Empty strings mean "not set".
- */
 export interface AntigravityAuthConfig {
   readonly authMethod: AntigravityAuthMethod;
   readonly apiKey: string;
@@ -174,7 +170,6 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
 }
 
 export interface AntigravityInstanceDirectories {
-  /** GEMINI_HOME for the agent. Holds the instance's Google sign-in. */
   readonly profile: string;
   /**
    * It sits beside the profile, not inside it: the agent unpacks members up to 120 characters deep,
@@ -219,9 +214,9 @@ function antigravityEnvironment(
       : auth.authMethod === "agent-platform" && auth.apiKey
         ? { GOOGLE_API_KEY: auth.apiKey }
         : {};
-  // The agent is a PyInstaller one-file bundle. It unpacks about 1 GB into
-  // the system temp directory per launch and a force kill leaves that behind.
-  // Point it at a T3-owned directory so the driver can reclaim the space.
+  // It unpacks about 1 GB into the system temp directory per launch and a force
+  // kill leaves that behind. Point it at a T3-owned directory so the driver can
+  // reclaim the space.
   const tempDirectory = runtimeTempDirectory ?? profile.tempDirectory;
   return {
     ...environment,
@@ -241,9 +236,7 @@ function antigravityEnvironment(
  * The agent reads its user-global skills under `GEMINI_HOME`, which T3 points
  * at the private profile. Link the two skill directories back to the user's
  * real `~/.gemini` so global skills load, while MCP servers, hooks, and
- * credentials stay isolated. Best effort: a link that cannot be made only
- * costs global skills, never the session. A real directory at the link path
- * is the user's own content and is left alone.
+ * credentials stay isolated.
  */
 const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
   readonly profileDirectory: string;
@@ -283,14 +276,12 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
   }
 });
 
-/** Prepares a private profile without reading or copying Google credentials. */
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
   readonly profileDirectory: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly runtimeExecutablePath?: string;
   readonly platform?: NodeJS.Platform;
   readonly auth?: AntigravityAuthConfig;
-  /** Home the agent expands `~` against. Defaults to the launch environment's. */
   readonly userHome?: string;
   readonly tempDirectory?: string;
 }) {
@@ -402,7 +393,6 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         );
     }
   }
-  // Rewriting on every launch keeps a method, project, or location edit in Settings effective.
   yield* fs
     .writeFileString(path.join(acpDirectory, "settings.json"), antigravityProfileSettings(auth))
     .pipe(
@@ -423,7 +413,6 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
-  /** Per-process temp directory. Defaults to the profile's shared temp directory. */
   readonly runtimeTempDirectory?: string;
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
@@ -443,7 +432,6 @@ export function buildAntigravityAcpSpawnInput(input: {
   };
 }
 
-/** Reads only the public authorization request, never an OAuth token file. */
 export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAuthorizationUrl")(
   function* (
     authorizationUrl: string,

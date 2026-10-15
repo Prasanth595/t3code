@@ -50,11 +50,6 @@ export class ProviderRegistry extends Context.Service<
   {
     readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
-    /**
-     * Refresh all providers, or the default instance of the specified
-     * kind when supplied.
-     * @deprecated prefer `refreshInstance` for new call sites.
-     */
     readonly refresh: (
       provider?: ProviderDriverKind,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
@@ -68,21 +63,12 @@ export class ProviderRegistry extends Context.Service<
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
-    /**
-     * A cwd that already has a snapshot is left alone unless `fresh` is set. A
-     * fresh scan also refreshes the instance's machine snapshot and drops other
-     * instances' snapshots for the cwd.
-     */
     readonly refreshWorkspaceSnapshot: (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
       readonly fresh?: boolean;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
-    /**
-     * Falls back to manual-only capabilities when the instance is not live.
-     * `fresh` re-derives ownership from the executable instead of the cache.
-     */
     readonly getProviderMaintenanceCapabilitiesForInstance: (
       instanceId: ProviderInstanceId,
       provider: ProviderDriverKind,
@@ -95,10 +81,6 @@ export class ProviderRegistry extends Context.Service<
       readonly state: ServerProviderUpdateState | null;
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
-    /**
-     * Stream of provider snapshot updates — one emission per aggregated
-     * change. The array contains the full current state.
-     */
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
   }
 >()("t3/provider/ProviderRegistry") {}
@@ -188,7 +170,6 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     return false;
   }
 
-  // Successful discovery replaces these inventories so cached retired models disappear.
   // Antigravity's local health check does not authenticate or discover models.
   const isPendingAntigravityAuthentication =
     isAntigravity && provider.status === "warning" && provider.auth.status === "unknown";
@@ -210,12 +191,6 @@ const mergeProviderModels = (
   nextModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
-  // Custom rows are derived from settings and every snapshot carries the full
-  // current list, so a custom model missing from `nextModels` was removed by
-  // the user and must not be resurrected from the previous snapshot.
-  // A model the installed CLI is too old to run was offered by the pending
-  // snapshot, before the version was known; retaining it would make it
-  // selectable again.
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
   const retainablePreviousModels = previousModels.filter(
     (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
@@ -277,8 +252,6 @@ export const mergeProviderSnapshot = (
     return nextProvider;
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
-  // "Google account access is not checked yet" describes the probe, not the
-  // account; it must not outlive the state it explained.
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
@@ -460,8 +433,6 @@ export const layer = Layer.effect(
     const liveSubsRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ProviderInstance>>(
       new Map(),
     );
-    // Serialize `syncLiveSources` so a rapid burst of reconciles doesn't
-    // interleave two passes clobbering each other's fiber bookkeeping.
     const syncSemaphore = yield* Semaphore.make(1);
 
     const getLiveSources: Effect.Effect<ReadonlyArray<ProviderSnapshotSource>> = Ref.get(
@@ -637,9 +608,6 @@ export const layer = Layer.effect(
       Option.none(),
     );
 
-    // Untargeted refreshes probe every live source, so any read-scoped client
-    // can request them. Concurrent callers share one in-flight pass instead of
-    // each starting their own set of provider processes.
     const refreshAll = Effect.fn("refreshAll")(function* () {
       const claimed = yield* Ref.modify(
         refreshAllInFlightRef,
@@ -784,10 +752,6 @@ export const layer = Layer.effect(
         }
         yield* Effect.yieldNow;
 
-        // Snapshot current state without starting a probe. Managed providers
-        // launch their startup refresh independently, so this closes the
-        // subscription race without putting external work on the registry
-        // or HTTP server construction path.
         yield* Effect.forEach(
           newlyAdded,
           ([, instance]) =>
@@ -851,11 +815,6 @@ export const layer = Layer.effect(
     );
 
     yield* upsertProviders(fallbackProviders, { publish: false });
-    // Subscribe to registry mutations BEFORE running the initial sync.
-    // `subscribeChanges` acquires the dequeue synchronously in this
-    // fibre; the subscription is active the instant this `yield*`
-    // returns. Forking the consumer loop later cannot lose a publish
-    // because no publish can reach a not-yet-subscribed dequeue.
     const instanceChanges = yield* instanceRegistry.subscribeChanges;
     yield* syncLiveSources;
     yield* Stream.runForEach(
@@ -895,9 +854,6 @@ export const layer = Layer.effect(
       readonly cwd: string;
       readonly fresh?: boolean;
     }) {
-      // Fresh scans drop other instances' snapshots for this cwd first, so a
-      // composer on one of them scans again on next use, even when this
-      // instance is gone or cannot be scanned.
       if (input.fresh) {
         yield* updateProviders((providers) =>
           providers.map((candidate) =>
@@ -935,7 +891,6 @@ export const layer = Layer.effect(
         next.set(instance, new Set(current).add(input.cwd));
         return [true, next] as const;
       });
-      // A fresh scan never joins a running one, which may predate the change.
       if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
@@ -950,8 +905,6 @@ export const layer = Layer.effect(
             : instanceRegistry.getInstance(input.instanceId).pipe(
                 Effect.flatMap((currentInstance) => {
                   if (currentInstance !== instance) return Ref.get(providersRef);
-                  // Write only if the cwd's snapshot did not change during the
-                  // scan. A session event or another scan that landed first is newer.
                   return updateProviders((currentProviders) =>
                     currentProviders.map((candidate) =>
                       candidate.instanceId === input.instanceId &&

@@ -38,7 +38,6 @@ export function usePreviewBridge(input: {
   threadRef: ScopedThreadRef;
   tabId: string;
   runtimeTabId: string;
-  /** The server drives this tab and reports its navigation itself. */
   serverDriven?: boolean;
 }): void {
   const { threadRef, tabId, runtimeTabId, serverDriven = false } = input;
@@ -57,8 +56,6 @@ export function usePreviewBridge(input: {
     ? new URL(preparedConnection.value.httpBaseUrl).hostname
     : undefined;
 
-  // One bridge subscription does both jobs (mirror state + forward to
-  // server) so the desktop bridge keeps a single listener entry per tab.
   const lastReportedUrl = useRef<string | null>(null);
   const lastReportedKind = useRef<DesktopPreviewTabState["navStatus"]["kind"] | null>(null);
   const lastDesktopNavStatus = useRef<DesktopPreviewTabState["navStatus"] | null>(null);
@@ -129,10 +126,6 @@ export function projectDesktopState(state: DesktopPreviewTabState): DesktopPrevi
   };
 }
 
-/**
- * - Idle never reports — the tab is post-close or pre-load and the server
- *   already knows the canonical state from `open` / `closed`.
- */
 function buildReportInput(args: {
   readonly threadId: ThreadId;
   readonly tabId: string;

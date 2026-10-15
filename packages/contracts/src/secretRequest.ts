@@ -3,8 +3,8 @@ import * as Schema from "effect/Schema";
 import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
 /**
- * The user's answer to an agent's request for a secret. A saved value is kept
- * by the server under a one-use SecretRef; the thread learns only the status.
+ * A saved value is kept by the server under a one-use SecretRef; the thread
+ * learns only the status.
  */
 export const SecretRequestAnswerInput = Schema.Struct({
   threadId: ThreadId,

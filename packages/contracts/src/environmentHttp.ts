@@ -413,20 +413,15 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   cloudUserId: Schema.NullOr(Schema.String),
   relayUrl: Schema.NullOr(Schema.String),
   relayIssuer: Schema.NullOr(Schema.String),
-  // False for a publish-only link (activity publishing without a relay-managed tunnel), so clients
-  // can present the two capabilities as independent settings.
   managedTunnelActive: Schema.optional(Schema.Boolean),
   publishAgentActivity: Schema.Boolean,
   holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
-  // The relay rejected this link's credential, usually because the environment was deregistered
-  // from T3 Connect. The link stays stored until it is linked again.
   linkRevoked: Schema.optional(Schema.Boolean),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
 export const EnvironmentCloudPreferencesRequest = Schema.Struct({
   publishAgentActivity: Schema.Boolean,
-  // Omit to leave the current value unchanged.
   holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
 });
 export type EnvironmentCloudPreferencesRequest = typeof EnvironmentCloudPreferencesRequest.Type;
@@ -528,12 +523,6 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
-/**
- * The OAuth authorization server outside agents use to sign in to `/mcp`.
- * `authorize` is where the agent sends the browser: it answers a redirect to
- * the web app's approval page, or a plain error page for a request that names
- * an unverified client or redirect, so the response is not a schema.
- */
 class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   .add(
     HttpApiEndpoint.get("protectedResource", "/.well-known/oauth-protected-resource", {
@@ -584,10 +573,6 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
-/**
- * `compactTurnItems=1` opts into `turnItemsOmitLocalVisible`. Other values are
- * ignored, and older servers ignore the whole query.
- */
 const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
   compactTurnItems: Schema.optionalKey(Schema.String),
 });
@@ -665,7 +650,6 @@ class EnvironmentProjectsHttpApi extends HttpApiGroup.make("projects")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
-/** Large, compressible pull-request payloads travel over HTTP rather than the RPC socket. */
 class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").add(
   HttpApiEndpoint.post("diff", "/api/pull-requests/diff", {
     headers: OptionalBearerHeaders,

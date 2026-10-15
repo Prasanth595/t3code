@@ -4,12 +4,6 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-/**
- * The one client-mediated path left is Devin's `terminal/*`, which runs with the T3 server's
- * own privileges; it resolves through {@link acpOperationDisposition} so a client terminal can
- * never do more than an execute permission request.
- */
-
 export interface AcpRuntimePolicy {
   readonly runtimeMode: RuntimeMode;
   readonly cwd: string | null;
@@ -67,8 +61,6 @@ function acpCanonicalPathForContainment(path: string): string | undefined {
 
     try {
       NodeFS.lstatSync(candidate);
-      // The entry exists but realpath could not resolve it, as with a broken
-      // symlink. Treat it as untrusted rather than authorizing its lexical path.
       return undefined;
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
@@ -158,9 +150,6 @@ function acpWorkspaceWriteAllowsMutation(
   return true;
 }
 
-/**
- * Shared by provider permission requests and the client fs/terminal handlers.
- */
 function acpOperationDisposition(
   runtimePolicy: AcpRuntimePolicy,
   operation: AcpPolicyOperation,
@@ -193,8 +182,6 @@ function acpOperationDisposition(
       return "allow";
     case undefined:
       if (runtimePolicy.runtimeMode === "approval-required") return "deny";
-      // Auto-accept edits approves file changes wherever the agent makes them
-      // (ACP prompts need not carry locations to confine); other actions still ask.
       if (
         runtimePolicy.runtimeMode === "auto-accept-edits" &&
         runtimePolicy.approvalPolicy === undefined &&
@@ -240,7 +227,6 @@ export function acpMcpToolApprovalElicitationDisposition(
   return acpPolicyRequiresApproval(runtimePolicy) ? "ask" : "allow";
 }
 
-/** Disposition of a client-mediated `terminal/create` (Devin's client terminals). */
 export function acpClientExecuteDisposition(
   runtimePolicy: AcpRuntimePolicy,
 ): AcpPermissionDisposition {

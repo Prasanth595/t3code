@@ -186,7 +186,6 @@ export function useThreadFind({
     });
   };
 
-  // An identity anchor keeps newly inserted matches from shifting the selection.
   const refreshLiveResultsRef = useRef(() => {});
   useLayoutEffect(() => {
     refreshLiveResultsRef.current = () => {
@@ -247,7 +246,6 @@ export function useThreadFind({
   const timelineProps = useMemo(
     () => ({
       findOpen: isOpen,
-      // Keep folds open between keystrokes while the next result loads.
       findExpanded,
       findPositionReaderRef,
       findQuery,
@@ -290,7 +288,6 @@ export function useThreadFind({
   };
 }
 
-/** A response for an older anchor can update counts without undoing newer local steps. */
 function rebaseLocalSelection(
   selection: typeof CLOSED_FIND.localSelection,
   data: OrchestrationV2SearchThreadResult | null,
@@ -305,7 +302,6 @@ function rebaseLocalSelection(
   return activeIndex === selection.activeIndex ? selection : { ...selection, activeIndex };
 }
 
-/** Query atoms cancel obsolete requests; navigation retains only the current query's result. */
 function useServerResults(
   thread: ScopedThreadRef | null,
   query: string,

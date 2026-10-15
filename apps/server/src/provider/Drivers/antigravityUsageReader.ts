@@ -13,7 +13,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 type FieldValue = number | bigint | Uint8Array;
 type Fields = Map<number, FieldValue[]>;
 
-/** Antigravity stores usage metadata as protobuf, independently of conversation text. */
 function fields(bytes: Uint8Array): Fields {
   let offset = 0;
   const result: Fields = new Map();
@@ -211,7 +210,6 @@ const readDatabase = Effect.fn("readDatabase")(function* (
       const entries: Array<{ idx: number; entry: Metadata }> = [];
       let after = -Infinity;
       while (true) {
-        // Untraced: a cold read runs one of these per generation.
         const rows = yield* sql
           .unsafe<{
             readonly row_id: number;
@@ -337,11 +335,6 @@ interface CachedDatabase {
  */
 export const makeAntigravityUsageCache = () => new Map<string, CachedDatabase>();
 
-/**
- * Reads and merges aliases across every configured Antigravity store before date
- * filtering. With a cache, databases unchanged since the previous read are not
- * decoded again.
- */
 export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* (
   conversationsDirectories: string | readonly string[],
   sinceMs: number,

@@ -62,8 +62,6 @@ export interface AcpMcpToolCallOptions {
 }
 
 /**
- * Call one MCP tool through a fresh authenticated HTTP session.
- *
  * This is the terminal fallback for ACP agents that accept `mcpServers` in
  * `session/new` but fail to expose those tools to their model. Compliant ACP
  * agents continue to use the stdio bridge above.

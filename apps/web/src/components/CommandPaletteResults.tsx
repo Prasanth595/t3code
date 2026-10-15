@@ -74,9 +74,6 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   );
 }
 
-/**
- * Rows outside the rendered window fall back to the list's own scrolling.
- */
 export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowIndex: number) {
   const element = list?.getState?.().elementAtIndex(rowIndex);
   if (element instanceof HTMLElement) {

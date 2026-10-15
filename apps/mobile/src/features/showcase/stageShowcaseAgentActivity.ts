@@ -13,8 +13,6 @@ export async function stageShowcaseAgentActivity(
   activity: AgentActivityProps,
   now: number,
 ): Promise<true | string> {
-  // The runner answers the iOS prompt and pre-grants Android's, so this only
-  // settles the permission the runner's alert delivery depends on.
   const permission = await Notifications.requestPermissionsAsync({
     ios: { allowAlert: true, allowBadge: true, allowSound: true },
   });

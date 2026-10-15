@@ -20,7 +20,6 @@ export type AppNativeStackNavigationOptions = Omit<
   NativeStackNavigationOptions,
   "headerTintColor" | "unstable_headerLeftItems" | "unstable_headerRightItems"
 > & {
-  /** Nested navigator leaves apply their own horizontal safe area. */
   readonly nativeContentInsetHorizontally?: boolean;
   readonly headerTintColor?: string | ColorValue;
   readonly unstable_headerCenterItems?: unknown;

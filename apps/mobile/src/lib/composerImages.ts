@@ -80,9 +80,7 @@ export type DraftComposerAttachment = DraftComposerImageAttachment | DraftCompos
 /**
  * The chip is not optional for a non-media file. Every path that attaches one also writes
  * its reference, so a file with no chip means the draft lost it rather than that the strip
- * should stand in. Which attachments carry a chip is therefore not consulted at all; surfaces
- * whose attachments never get chips (a question answer) pass them to the strip directly
- * instead of through this filter.
+ * should stand in.
  */
 export function composerStripAttachments(
   attachments: ReadonlyArray<DraftComposerAttachment>,
@@ -113,8 +111,7 @@ export function isFileBackedComposerAttachment(
 /**
  * A picture taken from the photo library or the clipboard owns no file and carries its bytes
  * inline, and its `attachmentId` is a local draft id the server has never seen — so falling
- * back to a remote asset for one only ever fails. Returns undefined when the attachment
- * really is remote-only.
+ * back to a remote asset for one only ever fails.
  */
 export function composerAttachmentInlineUri(
   attachment: DraftComposerAttachment | undefined,
@@ -360,7 +357,6 @@ export async function pickComposerImages(input: { readonly existingCount: number
   };
 }
 
-/** Videos use file uploads; omit maxVideoBytes for image-only destinations. */
 export async function pickComposerMedia(input: {
   readonly existingCount: number;
   readonly maxVideoBytes?: number;
@@ -467,8 +463,7 @@ export async function pickComposerMedia(input: {
       sourceBytes = null;
     }
     // Originals the provider can read and that fit the cap pass through byte for byte so
-    // transparency and animation survive. Everything else (HEIC/HEIF, oversized JPEGs,
-    // unmeasurable sources) is rendered to a bounded JPEG off the JS thread.
+    // transparency and animation survive.
     const originalMimeType =
       mimeType !== undefined &&
       isProviderSendTurnSupportedImageMimeType(mimeType) &&
@@ -531,7 +526,6 @@ export async function pickComposerMedia(input: {
   };
 }
 
-/** Clipboard images take priority over their alternate text representation. */
 export async function pasteComposerClipboard(input: { readonly existingCount: number }): Promise<
   | {
       readonly images: ReadonlyArray<DraftComposerImageAttachment>;

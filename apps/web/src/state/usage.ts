@@ -31,11 +31,6 @@ export interface EnvironmentUsageStatus {
   readonly needsCursorKeychainAccess: boolean;
 }
 
-/**
- * Keyed by the serialised window so switching ranges does not thrash the atom
- * cache, and so each environment's query is shared with any other reader of the
- * same window.
- */
 const usageByWindowAtom = Atom.family((windowKey: string) =>
   Atom.make((get): readonly EnvironmentUsageStatus[] => {
     const input = JSON.parse(windowKey) as UsageSummaryInput;
@@ -85,26 +80,12 @@ export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
-  /** True until at least one selected environment has answered. */
   readonly isPending: boolean;
-  /**
-   * The usage to draw: this window's once a selected environment answers,
-   * until then the last window answered for the same selection. Null while
-   * nothing has answered and something still could.
-   */
   readonly shown: { readonly window: UsageSummaryInput; readonly merged: MergedUsage } | null;
-  /**
-   * True while environments that have not failed are still answering. Failed
-   * environments are reported through their own error rows: totals will not
-   * improve by waiting on them, so they must not read as "still reporting".
-   */
   readonly isPartial: boolean;
   readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
-/**
- * Session counts are per directory and are not narrowed.
- */
 export function mergeAnsweredUsage(
   environments: readonly EnvironmentUsageStatus[],
   keepBucket?: (bucket: UsageBucket) => boolean,
@@ -193,8 +174,6 @@ export function useUsage(
         registry: appAtomRegistry,
         server: serverEnvironment,
         presentations: environmentPresentations,
-        // Only environments this connection may read; the others report a
-        // permission error instead of a stale or failed rescan.
         environmentIds: selectedEnvironments
           .filter(
             (environment) =>
@@ -220,8 +199,6 @@ export function useUsage(
   ).length;
   const isPending = answeredCount === 0 && stillReporting > 0;
 
-  // Stored during render, as React recommends for state that follows props, so
-  // the kept usage is on screen in the same frame the new window starts pending.
   const [lastAnswered, setLastAnswered] = useState<
     | (NonNullable<UsageView["shown"]> & {
         readonly selection: typeof selectedEnvironmentIds;

@@ -19,14 +19,10 @@ export interface WebSocketCatchUpMeasurement extends WebSocketTransferTotals {
 export interface TransferBudgetRun {
   readonly provider: ProviderDriverKind;
   readonly threadSnapshot: HttpTransferMeasurement;
-  /** One socket holding only the thread subscription. This is the capped measurement. */
   readonly measuredTurnWebSocket: WebSocketTransferTotals;
   readonly shellSnapshot: HttpTransferMeasurement;
-  /** One socket holding only the shell (sidebar) subscription during the same turn. */
   readonly measuredTurnShellWebSocket: WebSocketTransferTotals;
-  /** A second client: one socket holding both the thread and shell subscriptions. */
   readonly measuredTurnSecondClientWebSocket: WebSocketTransferTotals;
-  /** The second client resubscribes after the turn from the cursor it held before it. */
   readonly reconnectThread: WebSocketCatchUpMeasurement;
   readonly reconnectShell: WebSocketCatchUpMeasurement;
   readonly measuredTurnSqlStatements: number;
@@ -41,10 +37,6 @@ interface ProviderTransferBudget {
   readonly measuredTurnWebSocketMessages: number;
 }
 
-// These caps leave at least 30% headroom above the client projection of the
-// deterministic 9 MB retained-result fixture. Full MCP results stay in
-// persistence, so accidentally shipping them again exceeds these caps by orders
-// of magnitude.
 const TRANSFER_BUDGET = {
   totalWireBytes: 7_000,
   threadSnapshotWireBytes: 5_000,

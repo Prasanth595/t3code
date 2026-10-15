@@ -9,12 +9,7 @@ export type ThreadHistoryMeta = {
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
   readonly error: string | null;
-  /** True after at least one older page was merged; skip monolithic cache growth. */
   readonly expanded: boolean;
-  /**
-   * Max local turn ordinal known for partial progressive windows. Null when
-   * unknown (legacy cache) or when history meta is cleared for a full snapshot.
-   */
   readonly latestLocalTurnOrdinal: number | null;
 };
 
@@ -34,10 +29,6 @@ export function isActiveHistoryRequestCursor(
   return history.historyCursor === requestCursor;
 }
 
-/**
- * Clear history loading after an interrupted load-earlier only when the
- * request cursor is still active. Does not touch stream/status/error.
- */
 export function clearActiveHistoryLoading(
   requestCursor: string,
   history: ThreadHistoryMeta,
@@ -58,10 +49,6 @@ function renumberVisible(
   return rows.map((row, position) => (row.position === position ? row : { ...row, position }));
 }
 
-/**
- * Dedupes by sourceThreadId + sourceItemId, keeps chronological order (older first), and
- * preserves newer live rows already present in state.
- */
 export function mergeOlderHistoryIntoProjection(
   projection: OrchestrationV2ThreadProjection,
   olderItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
@@ -85,8 +72,6 @@ export function mergeOlderHistoryIntoProjection(
       (row.visibility === "local" || row.sourceThreadId === projection.thread.id)
     ) {
       const currentItem = turnItemById.get(String(row.sourceItemId));
-      // Hidden live items stay hidden. Cold snapshots also retain interrupt
-      // requests outside the visible window; paging may reveal those requests.
       if (currentItem !== undefined) {
         if (
           currentItem.type !== "run_interrupt_request" ||
@@ -110,8 +95,6 @@ export function mergeOlderHistoryIntoProjection(
       turnItemById.set(String(row.sourceItemId), row.item);
   }
   if (page.length === 0) return projection;
-  // Server page order fills gaps between rows from a partial conversation load.
-  // Existing rows supply live values; rows outside this range keep their order.
   const visible = [
     ...page,
     ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),

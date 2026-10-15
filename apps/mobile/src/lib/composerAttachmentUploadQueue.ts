@@ -69,12 +69,6 @@ export function canUploadComposerAttachment(
   );
 }
 
-/**
- * Only a failed upload blocks sending: the outbox drain would hit the same
- * failure, so the user has to retry or remove the file first. An upload still
- * in flight does not block; the message queues and the drain reuses the
- * finished upload (or re-sends the local bytes) when it delivers.
- */
 export function composerAttachmentUploadBlockReason(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -104,7 +98,6 @@ export function composerAttachmentsStillUploading(input: {
   });
 }
 
-/** Bounds transfers across environments; disconnected or discarded drafts keep their local bytes. */
 export function createComposerAttachmentUploadQueue(options: {
   readonly upload: (
     request: ComposerAttachmentUploadRequest,

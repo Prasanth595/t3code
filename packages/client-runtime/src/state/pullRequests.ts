@@ -54,7 +54,6 @@ export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
 
 const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
 
-/** Keep confirmed edits on the same cached reference regardless of input property order. */
 function writableQueryFamily<A, E>(
   family: (target: {
     readonly environmentId: EnvironmentId;
@@ -115,7 +114,6 @@ function createPullRequestRefreshAtomFamily<R, E>(
   });
 }
 
-/** A merged pull request is not re-read. */
 export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
@@ -163,10 +161,6 @@ export function pullRequestDetailToVcsStatus(
   };
 }
 
-/**
- * Mutations run serially per environment: actions on the same pull request are
- * order-sensitive.
- */
 export function createPullRequestEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<
     EnvironmentRegistry | PullRequestDiffLoader.PullRequestDiffLoader | R,
@@ -218,7 +212,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
-  // The stored guide only changes when somebody generates one, which refreshes it below.
   const reviewGuide = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:review-guide",
@@ -258,8 +251,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     /**
      * Its own query because the listing is quicker without them — measured over twelve
      * repositories, ~4.0s against ~7.1s — so the rows arrive first and their stats a moment
-     * later. Kept longer than the listing: a change request's size only moves when somebody
-     * pushes to it.
+     * later.
      */
     listStats: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list-stats",
@@ -527,15 +519,12 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         }),
     }),
     reviewGuide,
-    /** Runs a model on the environment; never fired without the reader asking for it. */
     generateReviewGuide: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:generate-review-guide",
       tag: WS_METHODS.pullRequestsGenerateReviewGuide,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsGenerateReviewGuide, input),
       onSuccess: (target, registry, result) =>
         Effect.sync(() => {
-          // The command returns the accepted run. Publish it before starting ends so readers
-          // never fall back to the empty/failed state while the follow-up query is in flight.
           updateCached(registry, reviewGuide(target), () => result, true);
         }),
     }),

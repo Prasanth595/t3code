@@ -74,7 +74,6 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
     readonly environmentId: EnvironmentIdType;
     readonly input: Input;
   }) => Atom.Atom<unknown> | undefined;
-  /** A value that can no longer change. It stops the interval and `refreshTrigger` re-reads. */
   readonly isFinal?: (value: A) => boolean;
 }
 
@@ -113,10 +112,6 @@ export interface AtomCommand<W, A, E> {
 export type AtomCommandConcurrency<W> =
   | { readonly mode: "parallel" }
   | {
-      /**
-       * `serial` preserves every invocation in FIFO order, `singleFlight` shares an active
-       * invocation, and `latest` coalesces queued invocations to the newest input.
-       */
       readonly mode: "serial" | "singleFlight" | "latest";
       readonly key: (input: W) => string;
     };
@@ -371,8 +366,6 @@ export async function executeAtomQuery<A, E>(
       yield* AtomRegistry.mount(registry, atom);
       if (options.refresh) {
         yield* Effect.sync(() => {
-          // Only a settled value can be a leftover from an earlier read; a
-          // computation that mounting just started is already fresh.
           const current = registry.get(atom);
           if (current._tag !== "Initial" && !current.waiting) {
             registry.refresh(atom);

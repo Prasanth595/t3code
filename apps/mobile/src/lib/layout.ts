@@ -6,11 +6,6 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-/**
- * The height floor deliberately keeps every current iPhone in the compact shell
- * when it rotates to landscape, while still allowing iPad and foldable-sized
- * windows to adopt the persistent sidebar as they resize.
- */
 export const SPLIT_LAYOUT_MIN_WIDTH = 720;
 export const SPLIT_LAYOUT_MIN_HEIGHT = 600;
 
@@ -28,7 +23,6 @@ export function deriveThreadWorkLogSizing(input: {
 }) {
   const lineHeight = scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.footnote, input.baseFontSize);
   return {
-    // Different text metrics can share the same minimum row height.
     textSizeKey: `${input.baseFontSize}:${input.fontScale}`,
     estimatedRowHeight: Math.max(
       THREAD_WORK_ROW_MIN_HEIGHT,

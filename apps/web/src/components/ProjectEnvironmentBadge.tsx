@@ -9,8 +9,6 @@ export function ProjectEnvironmentBadge(props: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;
 }) {
-  // Member order follows registration order and can differ between sessions,
-  // so sort by label to keep the icon and tooltip stable.
   const remoteMembers = props.group.memberProjects
     .filter((member) => member.environmentId !== props.primaryEnvironmentId)
     .map((member) => ({ ...member, environmentLabel: member.environmentLabel ?? "Remote" }))

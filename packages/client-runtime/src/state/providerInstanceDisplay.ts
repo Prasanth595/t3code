@@ -13,11 +13,6 @@ function humanizeSlug(slug: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-/**
- * For non-default instances, a humanized `instanceId` — the server fell back to the driver-level
- * label (the same for every instance of that kind), so the slug is what keeps "Codex" and "Codex
- * Personal" apart.
- */
 export function resolveProviderInstanceDisplayName(
   snapshot: Pick<ServerProvider, "instanceId" | "driver" | "displayName">,
 ): string {
@@ -47,9 +42,6 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
 }
 
-/**
- * ACP agents have distinct glyphs even though they share the registry driver.
- */
 export function shouldShowInstanceBadge(
   entry: {
     readonly driverKind: ProviderDriverKind;

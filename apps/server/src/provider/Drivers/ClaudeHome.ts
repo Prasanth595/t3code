@@ -9,13 +9,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
-/**
- * Resolve the Claude config directory the CLI would use: the instance's
- * `homePath` (exported as `CLAUDE_CONFIG_DIR`), then an inherited
- * `CLAUDE_CONFIG_DIR`, then Claude's default `~/.claude`. Empty must not
- * fall back to bare `$HOME` — that leftover from the old HOME override
- * produced a different continuation group than an explicit `~/.claude`.
- */
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
   environment?: NodeJS.ProcessEnv,
@@ -44,7 +37,6 @@ export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function
   const resolvedHomePath = yield* resolveClaudeHomePath(config);
   return {
     ...resolvedBaseEnv,
-    // Isolate this instance's config via CLAUDE_CONFIG_DIR rather than HOME.
     // Overriding HOME also relocates the macOS login keychain lookup
     // ($HOME/Library/Keychains), so the spawned CLI can't find its stored
     // OAuth credentials and reports "Not logged in". CLAUDE_CONFIG_DIR points

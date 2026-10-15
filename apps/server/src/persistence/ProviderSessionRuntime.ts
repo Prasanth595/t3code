@@ -29,11 +29,6 @@ const ProviderSessionRuntimeStatus = Schema.Literals(["starting", "running", "st
 export const ProviderSessionRuntime = Schema.Struct({
   threadId: ThreadId,
   providerName: Schema.String,
-  /**
-   * Nullable only at the storage/migration boundary: rows persisted before the
-   * driver/instance split carry only `providerName`. Repository consumers must
-   * materialize a concrete instance id before routing.
-   */
   providerInstanceId: Schema.NullOr(ProviderInstanceId),
   adapterKey: Schema.String,
   runtimeMode: RuntimeMode,
@@ -63,16 +58,11 @@ export interface ProviderSessionRuntimeUpsertOptions {
 export class ProviderSessionRuntimeRepository extends Context.Service<
   ProviderSessionRuntimeRepository,
   {
-    /**
-     * Upserts by canonical `threadId`, retaining imported transcript records
-     * from the current database row.
-     */
     readonly upsert: (
       runtime: ProviderSessionRuntime,
       options?: ProviderSessionRuntimeUpsertOptions,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
-    /** Record one source file without replacing the current session state. */
     readonly recordImportedTranscript: (
       input: RecordImportedTranscriptInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
@@ -84,10 +74,6 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
       ProviderSessionRuntimeRepositoryError
     >;
 
-    /**
-     * Returned in ascending last-seen order. `excludeStopped` filters stopped
-     * rows in SQL. Long-lived installs keep thousands for their resume cursors.
-     */
     readonly list: (options?: {
       readonly excludeStopped?: boolean;
     }) => Effect.Effect<
@@ -405,9 +391,6 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((rows) =>
-        // Skip rows that no longer decode (e.g. written by an older build)
-        // instead of failing the whole list — one stale row must not disable
-        // every consumer that enumerates sessions, such as the reaper.
         Effect.forEach(rows, (row) =>
           decodeRuntimeRow(row).pipe(
             Effect.asSome,

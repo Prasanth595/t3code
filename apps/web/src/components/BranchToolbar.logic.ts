@@ -16,7 +16,6 @@ export {
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
-  /** Null when the machine's "No project" folder is not created yet. */
   projectId: ProjectId | null;
   label: string;
   isPrimary: boolean;
@@ -53,9 +52,6 @@ export function resolveEnvironmentOptionLabel(input: {
   return runtimeLabel ?? savedLabel ?? input.environmentId;
 }
 
-// A remote (non-primary) environment is always surfaced, even when it is the
-// only environment available: with a single connected machine there is nothing
-// to pick, but the user still needs to see where the project runs.
 export function shouldShowEnvironmentIndicator(input: {
   activeEnvironment: Pick<EnvironmentOption, "isPrimary"> | null;
   canPickEnvironment: boolean;
@@ -107,8 +103,6 @@ export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null):
   return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
 }
 
-// A locked thread in worktree mode with no path is still creating its
-// worktree, so it reads as a new worktree rather than the project checkout.
 export function resolveLockedWorkspaceLabel(
   activeWorktreePath: string | null,
   effectiveEnvMode: EnvMode,
@@ -122,8 +116,6 @@ export interface PreviousWorktreeSeed {
   worktreePath: string;
 }
 
-// Archived threads don't compete — the rest of the UI hides them, so their worktrees shouldn't
-// resurface here.
 export function resolvePreviousWorktreeSeed(input: {
   threads: ReadonlyArray<{
     branch: string | null;
@@ -309,9 +301,6 @@ export function shouldIncludeBranchPickerItem(input: {
     return true;
   }
 
-  // A query containing whitespace can only ever match a ref under its sanitized
-  // name, because that is the name such a ref would have been created with.
-  // Without this, typing "new branch" hides an existing "new-branch".
   const sanitizedQuery = sanitizeNewRefName(normalizedQuery);
   return (
     sanitizedQuery.length > 0 &&

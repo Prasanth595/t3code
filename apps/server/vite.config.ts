@@ -24,9 +24,6 @@ const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version
 // executable needs a host Node that supports `--build-sea` (25.7+), so this is
 // a separate mode rather than a second entry in the default build.
 const packExecutable = process.env.T3CODE_PACK_EXE === "1";
-// The Node inside the executable is pinned here rather than taken from the
-// build host, so every archive of a release embeds the same runtime no matter
-// which Node happens to run the build.
 const SEA_NODE_VERSION = "26.8.2";
 const SEA_TARGETS = {
   "darwin-arm64": { platform: "darwin", arch: "arm64" },
@@ -77,9 +74,7 @@ export default mergeConfig(
               outDir: "dist-exe",
               ...(packExecutableTargets ? { targets: packExecutableTargets } : {}),
               // Node's SEA docs: `import()` does not work when useCodeCache is
-              // true, and the server reaches several modules that way. The
-              // cache is also platform-bound, so leaving it off keeps the
-              // build correct on any host.
+              // true, and the server reaches several modules that way.
               seaConfig: { useCodeCache: false },
             },
           }
@@ -123,8 +118,6 @@ export default mergeConfig(
       sequence: { sequencer: WeightedShardSequencer },
       // Appended to the root setup, which mergeConfig concatenates.
       setupFiles: ["./src/testUtils/gitConfig.setup.ts"],
-      // Server integration tests exercise sqlite, git, and orchestration together.
-      // Under package-wide runs they can exceed the default budget on loaded CI hosts.
       hookTimeout: 120_000,
       testTimeout: 120_000,
     },

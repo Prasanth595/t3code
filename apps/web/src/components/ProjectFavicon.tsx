@@ -23,9 +23,7 @@ function DynamicProjectIconFallback() {
 }
 
 // Every surface must pass the project record itself (or a snapshot spread from it)
-// so the saved title, favicon and icon override always travel together. Passing a
-// display label as the title changes the automatic icon, which is how the command
-// palette drifted once.
+// so the saved title, favicon and icon override always travel together.
 export type ProjectFaviconProject = Pick<
   EnvironmentProject,
   "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"

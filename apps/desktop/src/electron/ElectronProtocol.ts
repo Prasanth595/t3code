@@ -94,8 +94,6 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
-    // Document viewers use local Blob URLs and signed assets from runtime environments.
-    // HTML viewers retain their own sandbox; the renderer's script policy stays unchanged.
     "frame-src 'self' blob: http: https:",
     "form-action 'self'",
   ].join("; ");
@@ -159,8 +157,6 @@ const netFetch = (url: string, init: RequestInit) =>
     catch: (cause) => new ElectronProtocolFetchError({ cause }),
   });
 
-// The dev renderer target can briefly refuse connections while Vite restarts:
-// retry idempotent requests after 50ms, then 150ms, and keep the last failure.
 const fetchWithTransientRetry = (url: string, init: RequestInit) =>
   netFetch(url, init).pipe(
     Effect.retry({ schedule: Schedule.exponential("50 millis", 3), times: 2 }),

@@ -33,11 +33,6 @@ export interface McpSessionRegistryShape {
   readonly resolve: (
     rawToken: string,
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
-  /**
-   * Records a sign of life for every credential bound to `threadId`. Provider
-   * turns call this so that a session which is plainly alive keeps its
-   * credential even when it goes a long time without touching an MCP tool.
-   */
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
@@ -76,8 +71,6 @@ const bytesToHex = (bytes: Uint8Array): string =>
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
 
-// A wildcard bind is reachable on loopback, which is where the provider
-// subprocesses run; anything else is announced as the address it bound.
 const getHttpMcpEndpointHost = (address: NetAddress.IpAddress): string =>
   NetAddress.isUnspecified(address)
     ? "127.0.0.1"

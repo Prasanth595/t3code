@@ -119,10 +119,6 @@ function parseThemeCollection(value: unknown): ThemeCollection | undefined {
     : undefined;
 }
 
-/**
- * Tolerates unknown roles and malformed values so themes written by other
- * builds (for example one that adds a new role) keep their remaining colors.
- */
 export function lenientThemeColorOverrides(
   value: Readonly<Record<string, unknown>>,
 ): Partial<Record<ThemeColorRole, string>> {
@@ -298,10 +294,6 @@ function normalizeThemeId(themeId: string): string {
   return LEGACY_THEME_ID_ALIASES[themeId] ?? themeId;
 }
 
-/**
- * The legacy dark-variant id stays as-is because it still carries the
- * appearance hint getThemePreferenceMode reads.
- */
 export function canonicalThemePreference(theme: string): string {
   return theme === LEGACY_T3_CHAT_DARK_THEME_ID ? theme : normalizeThemeId(theme);
 }
@@ -314,10 +306,6 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
   return theme === LEGACY_T3_CHAT_DARK_THEME_ID ? "dark" : null;
 }
 
-/**
- * Distinct from {@link getDefaultThemeColors}, which carries the flagship T3
- * Chat palette used to fill roles omitted by theme files.
- */
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
   if (appearance === "dark") {
     return (standardDarkThemeColors ??= decodeThemeColors(T3_CODE_DARK_THEME_COLORS));
@@ -566,11 +554,6 @@ function solveOklchLightness(
   return { ...base, L: direction === "lighter" ? high : low };
 }
 
-/**
- * Generated palettes fall back to these instead of the flagship theme's, so an
- * imported or created theme never inherits a brand tint on destructive buttons
- * and warnings.
- */
 const STANDARD_STATUS_COLORS = {
   light: {
     error: "#fb2c36",
@@ -594,9 +577,6 @@ function standardStatusColors(canvas: ThemeRgbColor): {
   warningForeground: string;
   warningSurface: string;
 } {
-  // Keyed off the canvas rather than the appearance slot: a dark canvas saved
-  // as a light theme still needs the dark pair, or the alert foreground lands
-  // on a dark surface unreadable.
   const appearance: ThemeAppearance = themeRelativeLuminance(canvas) < 0.179 ? "dark" : "light";
   const standard = STANDARD_STATUS_COLORS[appearance];
   const surfaceMix = appearance === "dark" ? 0.16 : 0.08;
@@ -607,7 +587,6 @@ function standardStatusColors(canvas: ThemeRgbColor): {
       solveOklchLightness(
         themeRgbToOklch(parseThemeRgbColor(foreground, canvas)),
         surface,
-        // Leave a little headroom for browser color conversion at render time.
         4.6,
         appearance === "dark" ? "lighter" : "darker",
       ),
@@ -637,10 +616,8 @@ export function createVividThemeColors(
   const accentRgb = parseThemeRgbColor(accentValue, { r: 168, g: 67, b: 112 });
   const canvas = themeRgbToOklch(canvasRgb);
   const accent = themeRgbToOklch(accentRgb);
-  // The ramp and every contrast search follow the canvas the user actually
-  // picked, not the appearance slot, so a dark canvas saved as a light theme
-  // still gets light text and raised surfaces. 0.179 is the relative
-  // luminance where white and black text have equal contrast headroom.
+  // 0.179 is the relative luminance where white and black text have equal
+  // contrast headroom.
   const dark = themeRelativeLuminance(canvasRgb) < 0.179;
   const hue = accent.C < 0.02 ? canvas.h : accent.h;
   const tintC = Math.min(0.045, Math.max(0.008, accent.C * 0.22));
@@ -697,7 +674,6 @@ export function createVividThemeColors(
   const mutedForeground = themeRgbToThemeColor(readableThemeText(mutedRgb, textRgb, 1, 4.6));
   const placeholder = themeRgbToThemeColor(readableThemeText(surfaceRaisedRgb, textRgb, 1, 4.6));
 
-  // Keep matches visible even when an imported theme has no accent colour.
   const searchMatch = themeOklchToRgb(surfaceAt(0.22, Math.min(0.12, accent.C)));
   const searchMatchActive = themeOklchToRgb(surfaceAt(0.4, Math.min(0.18, accent.C)));
 
@@ -794,9 +770,6 @@ function readableThemeText(
   const softened = mixThemeRgbColors(foreground, background, amount);
   if (themeContrastRatio(softened, background) >= minimumRatio) return softened;
 
-  // Returning the primary foreground here made secondary labels jump from
-  // slightly too dim to full brightness, which is especially conspicuous in
-  // dark custom themes.
   let readable = foreground;
   let lowerAmount = 0;
   let upperAmount = amount;
@@ -813,8 +786,6 @@ function readableThemeText(
   return readable;
 }
 
-// These are the measured contrast ratios of zinc-500 on the standard light
-// canvas and #818181 on the standard dark canvas.
 const STANDARD_LIGHT_MUTED_CONTRAST = 4.705;
 const STANDARD_DARK_MUTED_CONTRAST = 5.082;
 
@@ -833,10 +804,6 @@ export function getDefaultThemeColors(appearance: ThemeAppearance): ThemeColors 
   return appearance === "dark" ? T3_CHAT_THEME.variants!.dark! : T3_CHAT_THEME.colors;
 }
 
-/**
- * Update one Advanced-editor color family without normalizing the rest of an
- * imported or hand-tuned palette.
- */
 export function updateThemeColorFamily(
   appearance: ThemeAppearance,
   colors: ThemeColors,
@@ -1042,14 +1009,11 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
     getCustomThemes().find((definition) => definition.id === themeId) ??
-    // Resolved last so a theme the user saved always wins over one the
-    // machine happens to publish under the same id.
     environmentThemeDefinitions.find((definition) => definition.id === themeId) ??
     null
   );
 }
 
-/** Artwork palettes are reviewed alongside built-ins; user themes always use the pill fallback. */
 export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
   const themeId = themeIdFromPreference(theme);
   return (
@@ -1470,13 +1434,10 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   const root = document.documentElement;
   if (!root?.style) return;
 
-  // Drafts become user-controlled themes when saved, so their preview keeps
-  // the fixed stage artwork hidden even when it was seeded from a built-in.
   setThemePreviewSidebarArtwork(false);
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
-    // A half-typed hex keeps the last good value instead of blanking the role.
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
 }
@@ -1516,8 +1477,6 @@ export function resolveThemeAppearance(
   const systemAppearance = systemDark ? "dark" : "light";
   const mode = appearanceMode ?? ((followSystem ?? theme === "system") ? "system" : null);
   if (mode === "system") {
-    // A configured half guarantees the appearance is renderable even when the
-    // base theme lacks that mode.
     if (halves?.[systemAppearance]) return systemAppearance;
     const definition = getThemeDefinition(theme);
     return definition && getThemeColorsForMode(definition, systemAppearance) === null
@@ -1566,10 +1525,6 @@ export function isKnownThemePreference(theme: string): boolean {
   return getThemeDefinition(theme) !== null;
 }
 
-/**
- * Halves only name real themes that can render their half; anything else is
- * dropped so a stale mix degrades to the base preference.
- */
 export type ThemeHalves = Readonly<{ light?: string; dark?: string }>;
 
 export function parseThemeHalves(raw: string | null): ThemeHalves | null {
@@ -1583,8 +1538,6 @@ export function parseThemeHalves(raw: string | null): ThemeHalves | null {
       if (typeof themeId !== "string") continue;
       const definition = getThemeDefinition(themeId);
       if (definition && getThemeColorsForMode(definition, appearance) !== null) {
-        // Store the definition's id so legacy aliases resolve to the same
-        // value the runtime applies to the document.
         halves[appearance] = definition.id;
       }
     }

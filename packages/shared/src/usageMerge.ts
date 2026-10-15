@@ -32,15 +32,7 @@ export interface ModelTotals {
   readonly totalTokens: number;
   readonly tokens: UsageTokenTotals;
   readonly records: number;
-  /**
-   * Records whose tokens are counted here but which contributed nothing to
-   * `costUsd`. When it equals `records` the cost is unknown, not zero.
-   */
   readonly unpricedRecords: number;
-  /**
-   * Tokens with no known rates, which a custom price would cover. A cell that
-   * mixes these with reported costs counts its tokens by record share.
-   */
   readonly unpricedTokens: number;
   readonly costShare: number;
   readonly tokenShare: number;
@@ -76,10 +68,6 @@ export interface CostQuality {
   readonly cacheSavingsUsd: number;
 }
 
-/**
- * `costUsd` by token category. `unsplit` is cost no rates could split,
- * including all cost from servers that predate the split.
- */
 export interface CategoryCost {
   readonly input: number;
   readonly cacheRead: number;
@@ -88,12 +76,10 @@ export interface CategoryCost {
   readonly unsplit: number;
 }
 
-/** `costUsd` by request speed. Servers that predate speeds count as standard. */
 export interface SpeedCost {
   readonly standard: number;
   readonly fast: number;
   readonly ultrafast: number;
-  /** What fast and ultrafast requests cost above the standard rate. */
   readonly premium: number;
 }
 
@@ -176,8 +162,6 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
       a.environmentId.localeCompare(b.environmentId),
   );
 
-  // A complete scan takes precedence over a newer partial scan of the same
-  // directory. Partial history still contributes when no complete copy exists.
   for (const status of ["ok", "partial", "failed"] as const) {
     for (const environment of ordered) {
       for (const source of environment.summary.sources) {
@@ -321,12 +305,6 @@ const EMPTY_MERGED: MergedUsage = {
   contractMismatches: [],
 };
 
-/**
- * `expectedContractVersion` guards against incompatible server code: rather than blocking the page,
- * its data is excluded and the mismatch direction is reported so the UI can identify which side
- * needs updating. Versions in [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge, so an
- * additive provider expansion does not drop Claude/Codex totals from older servers.
- */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
   expectedContractVersion: number,

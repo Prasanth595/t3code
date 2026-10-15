@@ -13,8 +13,7 @@ import { useResizeDrag } from "./useResizeDrag";
 const WidthSchema = Schema.Finite;
 
 /**
- * Custom property the host element must size itself from. The drag handle sits
- * directly inside the host, and a drag writes this property on it each frame.
+ * Custom property the host element must size itself from.
  */
 export const RESIZABLE_WIDTH_PROPERTY = "--resizable-width";
 
@@ -52,7 +51,6 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     [defaultWidth, maxWidth, minWidth],
   );
 
-  // No cross-tab subscription: panel width is per-window state.
   const readWidth = () => {
     if (typeof window === "undefined") return defaultWidth;
     try {
@@ -64,7 +62,6 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     }
   };
   const [widthState, setWidthState] = useState(() => ({ storageKey, width: readWidth() }));
-  // Panels stay mounted across threads; restore the destination width before paint.
   if (widthState.storageKey !== storageKey) {
     setWidthState({ storageKey, width: readWidth() });
   }

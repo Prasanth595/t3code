@@ -10,9 +10,7 @@ type Frame = { readonly x: number; readonly y: number; readonly width: number };
 
 /**
  * Android only delivers drags to views inside their parent's bounds, so a popover hung above the
- * composer with `bottom-full` takes taps but its list never scrolls. Render it into
- * ComposerPopoverHost instead, which shares the composer's keyboard transform, so only the
- * composer's resting layout needs measuring.
+ * composer with `bottom-full` takes taps but its list never scrolls.
  */
 export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
   const host = useComposerPopoverHost();

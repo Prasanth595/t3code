@@ -22,7 +22,6 @@ import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
   readonly environmentId: EnvironmentId;
-  /** Derived from the environment's configured scratch root, never persisted. */
   readonly isScratch?: true;
 }
 
@@ -64,8 +63,6 @@ export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | und
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
-/** Archiving may discard queued work, but it must not detach a provider that
- * is preparing, starting, or running a turn. */
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
   if (runtime?.status === "queued") return runtime.activeRunId === null;
   return (
@@ -102,18 +99,14 @@ export interface EnvironmentThreadShell {
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
   readonly latestUserMessageAt: string | null;
-  /** The last message the user wrote. `undefined` means the server predates it. */
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
-  /** What a live subagent below this thread waits on the user for. Subagent
-      rows are hidden, so the threads above them carry it. */
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   readonly hasActionableProposedPlan: boolean;
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
   >;
-  /** Provider instances that have owned the root conversation, oldest first. */
   readonly providerInstanceHistory: ReadonlyArray<ProviderInstanceId>;
   readonly goal: OrchestrationV2ProviderGoal | null;
   readonly itemCount: number;
@@ -166,13 +159,11 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
 // Only work that wakes the agent holds it: commands it left running, such as a
 // dev server, present the run's own status (#14872). The server suppresses the
 // roster while an interruptible activity run exists, so a remaining roster is
-// stronger than checkpoint-oriented waiting. A failed latest run outranks the
-// roster, so the failure stays visible.
+// stronger than checkpoint-oriented waiting.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
   const parkAtIdle =
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     thread.status !== "failed";
-  // A pull request watch can hold a thread that never ran.
   if (thread.latestRunId === null && thread.activeProviderThreadId === null && !parkAtIdle) {
     return null;
   }
@@ -299,11 +290,6 @@ export function scopeThreadShell(
 
 const THREAD_PROVIDER_STACK_LIMIT = 3;
 
-/**
- * Provider instances to draw in a thread row's trailing stack, back to front:
- * the current one is always last, earlier owners precede it oldest first.
- * Newest history wins when the thread has been handed off more times than fit.
- */
 export function resolveThreadProviderStack(
   thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
 ): ReadonlyArray<ProviderInstanceId> {
@@ -326,7 +312,6 @@ export function resolveThreadWorkingStartedAt(input: {
   const valid = (value: string | null | undefined) =>
     value != null && Number.isFinite(Date.parse(value)) ? value : null;
   if (input.runtime?.activityStartedAt !== undefined) return valid(input.runtime.activityStartedAt);
-  // Older servers can supply a timestamp only if the newest run owns the work.
   const run = input.latestRun;
   if (run?.completedAt === null && run.runId === input.runtime?.activeRunId) {
     return valid(run.startedAt) ?? valid(run.requestedAt);

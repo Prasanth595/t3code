@@ -127,7 +127,6 @@ export const GitRunStackedActionInput = Schema.Struct({
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
-  /** The thread the action runs beside; a pull request it creates is linked to it. */
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
 });
@@ -208,10 +207,6 @@ const VcsStatusChangeRequest = Schema.Struct({
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
   isDraft: Schema.optional(Schema.Boolean),
-  /**
-   * Last provider-side activity (ISO), including comments and metadata edits.
-   * This is not the time a change request closed or merged.
-   */
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
@@ -233,10 +228,6 @@ const VcsStatusLocalShape = {
     insertions: NonNegativeInt,
     deletions: NonNegativeInt,
   }),
-  /**
-   * Totals for the diff panel's Changes view: merge-base with the base branch to the
-   * working tree, untracked files included. Absent on older servers.
-   */
   branchChanges: Schema.optional(
     Schema.Struct({
       baseRef: Schema.NullOr(TrimmedNonEmptyStringSchema),

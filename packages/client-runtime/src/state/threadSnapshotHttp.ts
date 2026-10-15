@@ -21,15 +21,9 @@ const DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS = 20_000;
 export type ThreadSnapshotHistoryMeta = {
   readonly historyCursor: string | null;
   readonly hasMoreHistory: boolean;
-  /** Max local turn ordinal from the full projection; optional on older servers. */
   readonly latestLocalTurnOrdinal?: number | null;
 };
 
-/**
- * - `present`: snapshot body is available (seed projection, resume via socket). - `missing`:
- * server definitively reported the thread does not exist (404). - `unavailable`:
- * transport/timeout/5xx/etc.; fall back to the socket path.
- */
 export type ThreadSnapshotLoadResult =
   | {
       readonly _tag: "present";

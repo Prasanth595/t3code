@@ -35,12 +35,6 @@ const REF_PATTERN = /^secret-ref:[0-9a-f]{32}$/;
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
 const STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
 
-/**
- * Each request has exactly one ref, derived from where it was asked. Its
- * length never depends on the thread id, so the store's file names stay
- * within filesystem limits, and the requesting tool finds it without a
- * second record. Unguessable without the server's own salt.
- */
 const refFor = (salt: string, threadId: ThreadId, turnItemId: string) =>
   SecretRef.make(
     `${SECRET_REF_PREFIX}${NodeCrypto.createHmac("sha256", salt)
@@ -63,10 +57,6 @@ export class SecretRequests extends Context.Service<
       readonly threadId: ThreadId;
       readonly turnItemId: string;
     }) => Effect.Effect<Option.Option<SecretRef>>;
-    /**
-     * Reads and deletes a ref's value. Fails for unknown or used refs, and
-     * for refs entered in another project.
-     */
     readonly consume: (input: {
       readonly ref: SecretRef;
       readonly projectId: ProjectId;
@@ -102,8 +92,6 @@ const make = Effect.gen(function* () {
       if (item.secretStatus !== "pending") {
         return yield* new SecretRequestError({ reason: "already_answered" });
       }
-      // The agent is waiting inside the run that asked; once it has ended,
-      // nobody will ever receive the ref, so a value saved now would be lost.
       const run = records.runs.find((candidate) => candidate.id === item.runId);
       if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) {
         return yield* new SecretRequestError({ reason: "agent_stopped" });
@@ -217,7 +205,6 @@ const make = Effect.gen(function* () {
         return yield* new SecretRequestError({ reason: "ref_unavailable" });
       }
       if ((yield* Clock.currentTimeMillis) - decoded.value.savedAt > SECRET_REF_TTL_MS) {
-        // The hourly sweep retries a removal that fails here.
         yield* removeLogged(storeName(input.ref));
         return yield* new SecretRequestError({ reason: "ref_expired" });
       }

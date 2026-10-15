@@ -11,17 +11,12 @@ import * as GitHubApi from "./GitHubApi.ts";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
 
-/**
- * One request as the fake saw it, flattened to words: the path or document, then each variable
- * or body field as `name=value`, so an assertion reads as "this request carried that value".
- */
 type Call = ReadonlyArray<string>;
 type Send = (
   call: Call,
   kind: "graphql" | "rest",
 ) => Effect.Effect<string, GitHubApi.GitHubApiError>;
 
-/** Every git command the cascade ran, in order; none actually runs. */
 let gitCalls: Array<ReadonlyArray<string>> = [];
 const fakeGit = Layer.mergeAll(
   TestSourceControlHost.layer({
@@ -369,7 +364,6 @@ it.effect("rebases the open layers bottom to top in a scratch clone, each onto t
     gitCalls = [];
     const api = fake([stack, access]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    // GitHub is only read; every change is a git push with a lease on the reviewed head.
     expect(api.calls.some(isMutation)).toBe(false);
     const rebases = gitCalls.filter((args) => args[0] === "rebase");
     expect(rebases).toEqual([

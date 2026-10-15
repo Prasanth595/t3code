@@ -41,8 +41,6 @@ function createUniwindCompilerLoader(uniwindPackageJson) {
       if (request.startsWith(".")) {
         return load(path.resolve(path.dirname(resolved), request));
       }
-      // uniwind's own dependencies (lightningcss, culori, ...) resolve through
-      // the package's dependency tree, like they do inside the Metro bundle.
       return uniwindRequire(request);
     };
 
@@ -95,7 +93,6 @@ async function main() {
     androidUtilities: utilityCountIn(platformBlock("android")),
   };
   for (const platform of ["ios", "android"]) {
-    // Same config the app's withUniwindConfig produces (polyfills.rem: 14).
     const bundlerConfig = { platform, themes: ["light", "dark"], polyfills: { rem: 14 } };
     const processor = new ProcessorBuilder(bundlerConfig);
     processor.transform(tailwindCSS);

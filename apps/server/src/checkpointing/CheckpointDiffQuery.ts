@@ -28,14 +28,12 @@ import { isGitImport, parseTurnDiffFilesFromNumstat, type TurnDiffFileSummary } 
 // Windows limits a command line to 32,767 characters. Leave room for the rest of git's arguments.
 const MAX_PATHSPEC_CHARS = 24_000;
 
-/** Splits files into pathspec lists that each fit on one git command line. Renames keep both paths together. */
 function batchFilePaths(files: ReadonlyArray<TurnDiffFileSummary>) {
   const batches: string[][] = [];
   let batch: string[] = [];
   let length = 0;
   for (const file of files) {
     const paths = file.previousPath === undefined ? [file.path] : [file.previousPath, file.path];
-    // Each pathspec also carries a `:(top,literal)` prefix and a separator.
     const size = paths.reduce((total, path) => total + path.length + 16, 0);
     if (batch.length > 0 && length + size > MAX_PATHSPEC_CHARS) {
       batches.push(batch);
@@ -163,8 +161,6 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      // The root scope is shared by every run in this thread. Its runId
-      // tracks the latest owner, while ordinal zero stays the baseline.
       const firstScope =
         input.fromTurnCount === 0
           ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
@@ -195,8 +191,6 @@ export const make = Effect.gen(function* () {
         fallbackFromToHead: false,
         ignoreWhitespace,
       };
-      // Leave out files that a pull, merge, or rebase brought in, matching the turn's file summary.
-      // Filtering is optional: when it cannot run, the complete diff still loads.
       const authoredPaths = yield* checkpointStore
         .listAuthoredPaths(comparison)
         .pipe(Effect.orElseSucceed(() => null));

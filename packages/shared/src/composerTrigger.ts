@@ -45,11 +45,6 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
-/**
- * Accepts an optional `isWhitespaceChar` override so callers with inline
- * placeholder characters (e.g. terminal context chips on web) can treat
- * those as token boundaries.
- */
 export function detectComposerTrigger(
   text: string,
   cursorInput: number,

@@ -50,9 +50,6 @@ function stringifyYaml(options?: YamlStringifyOptions): SchemaGetter.Getter<stri
   );
 }
 
-/**
- * Decode and encode failures become `InvalidValue` schema issues.
- */
 export const fromYamlString = new SchemaTransformation.Transformation<unknown, string>(
   parseYaml(),
   stringifyYaml(),

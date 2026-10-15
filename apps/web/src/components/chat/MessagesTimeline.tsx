@@ -305,10 +305,6 @@ import {
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
 
-// Propagates through LegendList's memo boundaries for shared callbacks and
-// non-row-scoped state. `nowIso` is intentionally excluded — self-ticking
-// components (LiveElapsed) handle it.
-
 interface TimelineRowSharedState {
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
@@ -320,18 +316,11 @@ interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   providerStatuses: ReadonlyArray<ServerProvider>;
-  /** Projection runs, for recovering handoff models on legacy items. */
   runs: ReadonlyArray<HandoffTimelineRun>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
-  /** Sends text an MCP App asked to post, after the user approved it. */
   onSendAppMessage: ((text: string) => Promise<void>) | undefined;
-  /**
-   * An MCP App row entering or leaving full screen. The row stays rendered
-   * and the list stops following new output meanwhile, so the app is not
-   * virtualized away while the reader is using it.
-   */
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
   findActive: boolean;
@@ -410,9 +399,6 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
   on: {
     dataChange: true,
-    // Composer inset changes must not move already-visible messages. New
-    // rows and row growth still keep live-follow pinned through the other
-    // triggers below.
     footerLayout: false,
     itemLayout: true,
     layout: true,
@@ -440,7 +426,6 @@ interface MessagesTimelineProps {
     sourceAnchor: AssistantCitationSourceAnchor,
   ) => boolean;
   isWorking: boolean;
-  /** The live work belongs to a runless root turn (a provider-native subagent). */
   runlessWorkActive?: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt?: string | null;
@@ -462,7 +447,6 @@ interface MessagesTimelineProps {
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
   displayThreadKey?: string;
-  /** The rows are a held snapshot of the previous thread while the next one loads. */
   paintOnly?: boolean;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
@@ -506,10 +490,6 @@ interface MessagesTimelineProps {
    * the user drifts near the bottom.
    */
   liveFollowEnabled: boolean;
-  /**
-   * Whether the real rows extend past the viewport above the composer.
-   * Reported after scrolls, row size changes, and viewport resizes.
-   */
   onContentOverflowChange?: (overflows: boolean) => void;
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
@@ -631,8 +611,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestRunRef = useRef(latestRun);
-  // The list stays mounted across thread switches. Its first end pins on the
-  // new thread must snap, not glide, even if that thread is mid-turn.
   const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(listIdentityKey);
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
@@ -683,7 +661,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   useEffect(() => {
     if (settlingListIdentity === null) return;
-    // Two frames covers the fresh-data layout pass and the initial end pin.
     let second: number | null = null;
     const first = requestAnimationFrame(() => {
       second = requestAnimationFrame(() => {
@@ -704,8 +681,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (element) element.scrollTop = element.scrollHeight;
   }, [listRef]);
 
-  // Settles two frames after the last toggle, or after the last row resize
-  // while pinned to the end, since tool output can render a few frames late.
   const scheduleDisclosureSettle = useCallback(() => {
     if (disclosureSettleFrameRef.current !== null) {
       cancelAnimationFrame(disclosureSettleFrameRef.current);
@@ -722,8 +697,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
         disclosureSettleSecondFrameRef.current = null;
-        // Wait for row measurement and the disclosure click's blur check.
-        // Closing output can reveal the end without a scroll event.
         if (
           disclosureCollapsedRef.current &&
           resolveTimelineIsAtEnd(listRef.current?.getState()) === true
@@ -945,7 +918,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       if (cancelled) return;
       cancelled = true;
       if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      // Supersede any pending estimated-index scroll before the browser applies the gesture.
       if (viewport) void list.scrollToOffset({ offset: viewport.scrollTop, animated: false });
       setPositionedThreadKey(listIdentityKey);
     };
@@ -1048,7 +1020,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
-  // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
     target: readyCitationRequest,
@@ -1076,9 +1047,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const onAppFullscreenChange = useCallback((rowId: string, fullscreen: boolean) => {
     setFullscreenAppRowId((current) => (fullscreen ? rowId : current === rowId ? null : current));
   }, []);
-  // Every pin holds at once, so navigating to a citation or restoring a
-  // position never drops a full-screen app's row. The app is pinned by key,
-  // which stays right as earlier rows load in.
   const alwaysRender = useMemo(() => {
     const indices = restoringAlwaysRender?.indices ?? [];
     const keys = [
@@ -1146,8 +1114,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     [contentInsetEndAdjustment, listRef],
   );
   // LegendList lays rows out from layout effects, so a read on the next frame
-  // sees the settled positions. One frame is shared across bursts of size
-  // changes.
+  // sees the settled positions.
   const contentOverflowFrameRef = useRef<number | null>(null);
   const cancelContentOverflowFrame = useCallback(() => {
     if (contentOverflowFrameRef.current !== null) {
@@ -1170,11 +1137,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     reportContentOverflow();
   }, [pinDisclosureToEnd, reportContentOverflow, scheduleDisclosureSettle]);
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
-  // The list's own layout effects have already run here, so estimated row
-  // positions are in place. Reporting before the first paint lets a thread
-  // open in its final composer layout instead of correcting it a frame later.
-  // A frame scheduled with the previous inset would overwrite this read, so
-  // it is dropped first.
   useLayoutEffect(() => {
     cancelContentOverflowFrame();
     onContentOverflowChange?.(measureContentOverflow());
@@ -1194,7 +1156,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
           listIdentityKey,
           {
             ...position,
-            // DOM geometry includes the header and the virtualizer's layout adjustment.
             offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
             scrollOffset: element.scrollTop,
             atEnd: isAtEnd,
@@ -1567,8 +1528,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     footer === null
   ) {
     if (hideEmptyPlaceholder) {
-      // Occupy the pane with the theme surface so a thread switch cannot
-      // punch a hole through to the window chrome (white in light mode).
       return <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />;
     }
     return (
@@ -1726,9 +1685,8 @@ function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
   return target instanceof Element && target.closest("[data-minimap-preview]") !== null;
 }
 
-// Calls `onRelease` once no mouse button is held. A release outside the window
-// can skip `mouseup`, so the next button-free `mousemove` also counts. Returns a
-// function that stops listening.
+// A release outside the window can skip `mouseup`, so the next button-free
+// `mousemove` also counts.
 function onMouseButtonsReleased(onRelease: () => void): () => void {
   const check = (event: globalThis.MouseEvent) => {
     if (event.buttons !== 0) return;
@@ -1771,10 +1729,6 @@ function TimelineMinimap({
     [onWheel],
   );
 
-  // A held drag that started on the minimap (the strip or its turn buttons) is a
-  // scrub; one that started anywhere else is a text selection. While a selection
-  // crosses the minimap, the minimap lets the pointer through so the selection
-  // keeps following the text underneath, until the button is released.
   const pressedOnStripRef = useRef(false);
   const [passThrough, setPassThrough] = useState(false);
 
@@ -1863,8 +1817,6 @@ function TimelineMinimap({
         <div
           className={cn(
             "absolute top-1/2 left-3 -translate-y-1/2",
-            // The strip is width-capped to the side gutter so it never overlays
-            // the centered content column; with no usable gutter it goes inert.
             hitStripWidth > 0 && !passThrough ? "pointer-events-auto" : "pointer-events-none",
           )}
           onMouseDown={() => {
@@ -2254,9 +2206,6 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
   );
 }
 
-// Screen readers skim a transcript by heading, so every message announces its
-// author as one. The thread title in ChatHeader is an <h2>; headings written
-// inside a message are exposed below this level.
 const MESSAGE_HEADING_LEVEL = 3;
 
 function MessageAuthorHeading({ children }: { children: string }) {
@@ -2282,8 +2231,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     );
     return projectPreviews(row.message, (attachment) => urlsById.get(attachment.id));
   }, [previewUrls, projectPreviews, resources, row.message]);
-  // The attachment union has an open member, so guards (not literal type
-  // comparisons) split it. Unknown types render as inert rows below the files.
   const userImages = useMemo(
     () => (messageWithPreviews.attachments ?? []).filter(isImageAttachment),
     [messageWithPreviews.attachments],
@@ -2304,8 +2251,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     [userImages],
   );
   const revertTurnCount = row.revertTurnCount;
-  // A file with a chip in the prose needs no standalone row. Media is the exception: the
-  // thumbnail is the only way to actually see it, so it shows whether or not it has a chip.
   const chippedAttachmentIds = new Set(
     collectComposerContextReferences(resolvedContext.text).flatMap((occurrence) => {
       const record = asKnownContextRecord(resolvedContext.recordsById.get(occurrence.contextId));
@@ -2338,10 +2283,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           },
           records: resolvedContext.records,
         });
-  // Chips inside the selection copy as their links (data-markdown-copy); the structured
-  // fragment rides beside so a paste into a draft brings the payloads along. Only records
-  // for chips that are actually inside the selection travel, so copying prose next to an
-  // image never starts importing that image somewhere else.
   const onBodyCopyCapture = (event: React.ClipboardEvent<HTMLDivElement>) => {
     if (resolvedContext.records.length === 0 || !event.clipboardData) return;
     const selection = window.getSelection();
@@ -2378,8 +2319,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const renderContextReference = useCallback(
     (reference: ChatMarkdownContextReference) => {
       const record = asKnownContextRecord(resolvedContext.recordsById.get(reference.contextId));
-      // Structured annotations point at the image record, which in turn points at the persisted
-      // attachment. Filename and order are compatibility fallbacks for legacy messages only.
       const annotationImage =
         record?.kind === "preview-annotation"
           ? resolvePreviewAnnotationImage({
@@ -2614,7 +2553,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             )}
             {resolvedContext.text && (
               <MessageCopyButton
-                // Structured paste needs the canonical links to retain their positions.
                 text={contextClipboardFragment ? resolvedContext.text : plainText}
                 {...(contextClipboardFragment
                   ? {
@@ -2737,11 +2675,6 @@ function RevertUserMessageButton({
   );
 }
 
-/**
- * Visibility changes immediately so leaving flow cannot overlap text during a
- * fade-out. Place it before any trailing disclosure control so revealing the
- * time does not move the chevron.
- */
 function TimelineRowTimestamp({
   createdAt,
   timestampFormat,
@@ -3042,7 +2975,6 @@ function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "htm
   return (
     <div className="min-w-0 px-1">
       <HtmlRenderFrame
-        // A recycled row must not keep another page's frozen frame.
         key={row.htmlRender.attachmentId}
         environmentId={ctx.activeThreadEnvironmentId}
         htmlRender={row.htmlRender}
@@ -3060,7 +2992,6 @@ function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mcp-app
   return (
     <div className="min-w-0 px-1">
       <McpAppFrame
-        // A recycled row must not keep another app's live document.
         key={row.mcpApp.attachmentId}
         environmentId={ctx.activeThreadEnvironmentId}
         threadId={row.sourceThreadId}
@@ -3347,10 +3278,6 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
   );
 }
 
-/**
- * A settled member without a completion time leaves the end unknown, so the
- * span is withheld rather than cut short.
- */
 function subagentGroupTiming(
   agents: ReadonlyArray<{
     status: OrchestrationV2TurnItem["status"];
@@ -3591,7 +3518,6 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   );
 }
 
-// Matches the grouped WorkLog row's min-h-6.
 const compactWorkEntryHeight = 24;
 
 function ExpandedWorkGroupEntries({
@@ -3766,7 +3692,6 @@ function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
 
 const failedToolIconClassName = "text-tool-error-icon/40";
 
-/** Image icons cannot take a currentColor tint, so failed rows get a trailing x. */
 function toolIconAcceptsTint(toolIcon: ToolActivityIcon | undefined): boolean {
   return toolIcon === undefined;
 }
@@ -3774,8 +3699,6 @@ function toolIconAcceptsTint(toolIcon: ToolActivityIcon | undefined): boolean {
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
-  // One span for every label so the setup-to-working handoff swaps text in
-  // place instead of remounting the row.
   const shimmer = isPreparingWorktree || isCompacting;
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
@@ -3855,7 +3778,6 @@ function CompactingLabel() {
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
-  // Reserve the activity row during setup so the handoff keeps the same height.
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
   const { groupId } = row;
@@ -4597,7 +4519,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
     },
     {
       kind: "file",
-      // `isFileAttachment` excludes pictures, which a legacy `file` attachment may still be.
       canRender: (record, context) =>
         record.kind === "file" && context.attachment !== null && context.attachment.type === "file",
       render: (record, context) => {
@@ -5588,7 +5509,6 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             viewedImage ? viewedImagePath : null,
           )
       : null;
-  // Reads and skills still fetch the output the timeline withheld.
   const plainOutputFetches =
     plainOutput !== undefined &&
     workEntry.projectedItem !== undefined &&

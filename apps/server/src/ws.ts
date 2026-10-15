@@ -297,13 +297,6 @@ const resolveEditorConfig = <E, R>(
     };
   });
 
-/**
- * A busy host can outlast the snapshot's discovery timeouts, which send no
- * editors, or no reveal kind for the file manager. The scan keeps running, so
- * once it lands this resends the config: clients replace theirs on any
- * snapshot. The resent config is folded from the live updates already sent, so
- * it cannot roll back a change that landed while the scan ran.
- */
 export const withLateEditorConfig = <E, R>(
   config: ClientServerConfig,
   liveUpdates: Stream.Stream<ServerConfigStreamEvent, E, R>,
@@ -618,8 +611,6 @@ export function shouldUseBoundedThreadSnapshot(input: {
   return input.acceptBoundedSnapshot === true;
 }
 
-// Lenient by design: absent or malformed values degrade to {} so a connection
-// never fails over attribution metadata.
 function readClientConnectionOrigin(
   request: HttpServerRequest.HttpServerRequest,
 ): OrchestrationClientOrigin {
@@ -1041,10 +1032,6 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
       Stream.filter((change) => change.repositoryIdentityResolved),
       Stream.groupedWithin(64, Duration.millis(25)),
-      // Build the refresh from the identities the changes carry. Re-enriching
-      // every project here re-requested each expired root, whose resolution
-      // published again, so one expiry kept every subscriber reloading every
-      // project's metadata once a minute.
       Stream.mapEffect((changes) =>
         Effect.gen(function* () {
           const identities = new Map(
@@ -1074,16 +1061,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     );
 
     // Always attach the enrichment subscription before the first load so
-    // completions that race HTTP snapshot fetch still push a refresh.
-    // When the client already holds a shell snapshot (cached, or loaded
-    // over HTTP) it passes that snapshot's sequence. We still emit one
-    // compact metadata refresh up front: getAvailable may have been cold on the
-    // HTTP path (null identity), and enrichment PubSub events published
-    // before this subscribe attached are dropped. Rehydrating here fills
-    // repositoryIdentity for cross-environment project grouping even on
-    // afterSequence resumes. Application events after the sequence still
-    // stream as deltas; overlapping events are deduped by sequence on the
-    // client.
+    // completions that race HTTP snapshot fetch still push a refresh. We still
+    // emit one compact metadata refresh up front: getAvailable may have been
+    // cold on the HTTP path (null identity), and enrichment PubSub events
+    // published before this subscribe attached are dropped.
     const completionMarker =
       input.requestCompletionMarker === true
         ? Stream.make({ kind: "synchronized" as const })
@@ -1324,8 +1305,6 @@ const layerWsRpc = (
           : {
               tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
             };
-      // RpcScopeAuthorization checks each RPC's declared scope before its handler
-      // runs. This covers the one RPC whose scope depends on its input.
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,
         effect: Effect.Effect<A, E, R>,
@@ -1695,8 +1674,6 @@ const layerWsRpc = (
             issues: keybindingsConfig.issues,
             providers,
             ...editorConfig,
-            // Same discovery-with-timeout treatment as editors: a slow probe
-            // must not stall server.getConfig, so it degrades to no targets.
             remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
               remoteOpenTargets.resolveTargets(),
             ),
@@ -2520,19 +2497,19 @@ const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.setReaction(input)),
         [WS_METHODS.pullRequestsReportState]: (input) => pullRequests.reportState(input),
         [WS_METHODS.pullRequestsInvalidate]: (input) =>
-          pullRequests.invalidate(input, { notifyReaders: true }).pipe(
-            // A reader asking for fresh host state also wants the thread badges it feeds to
-            // catch up, including a merged link the sweep would otherwise never revisit.
-            Effect.andThen(
-              input.reference === undefined || input.filesViewedOnly === true
-                ? Effect.void
-                : resolvePullRequestSyncKey(input.reference).pipe(
-                    Effect.flatMap((key) =>
-                      key === null ? Effect.void : pullRequestSync.requestSync(key),
+          pullRequests
+            .invalidate(input, { notifyReaders: true })
+            .pipe(
+              Effect.andThen(
+                input.reference === undefined || input.filesViewedOnly === true
+                  ? Effect.void
+                  : resolvePullRequestSyncKey(input.reference).pipe(
+                      Effect.flatMap((key) =>
+                        key === null ? Effect.void : pullRequestSync.requestSync(key),
+                      ),
                     ),
-                  ),
+              ),
             ),
-          ),
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => pullRequests.subscribeRefreshes,
         [WS_METHODS.pullRequestsReviewerCandidates]: (input) =>
           withPullRequestViewer(input, pullRequests.reviewerCandidates(input)),
@@ -2698,12 +2675,10 @@ const layerWsRpc = (
         [WS_METHODS.assetsCreateUrl]: (input) =>
           Effect.gen(function* () {
             const path = yield* Path.Path;
-            // An absolute media path can be linked from a thread on another environment.
             if (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
               input.resource._tag === "tool-output-image" ||
-              // GitHub media names the repository it authenticates through itself.
               input.resource._tag === "github-media" ||
               (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
             ) {
@@ -2968,8 +2943,6 @@ const layerWsRpc = (
                   providerRegistry.streamChanges,
                 ),
                 usageLimitSources.streamChanges.pipe(
-                  // Quota updates already have their own stream. Republish the model
-                  // catalog only when the set of providers offered the command changes.
                   Stream.changesWith(
                     usageLimitsCommand ? sameUsageLimitCommandCoverage : () => true,
                   ),
@@ -3193,7 +3166,6 @@ export const layer = Layer.unwrap(
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(OtlpEndpointCheck.layer),
-              // Shared like the pull request service, so concurrent generations single-flight.
               Layer.provide(
                 Layer.succeed(
                   PullRequestReviewGuideService.PullRequestReviewGuideService,

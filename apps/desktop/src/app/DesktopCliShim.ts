@@ -12,7 +12,6 @@ const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
 export const MARKER = "Written by T3 Code: runs the desktop app's bundled t3 CLI.";
 
-/** Server entry inside the app, relative to its server root (an asar archive when packaged). */
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
 
 const shellWord = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -49,9 +48,9 @@ export const renderCliShim = (input: {
       `rem ${MARKER}`,
       // Delayed expansion would rewrite `!name!` in paths and arguments.
       "setlocal EnableExtensions DisableDelayedExpansion",
-      // The file is UTF-8. Only a non-ASCII path needs the console switched to
-      // UTF-8 to read it; a Ctrl-C that ends the batch skips the restore, so the
-      // switch is left out for the common all-ASCII install.
+      // Only a non-ASCII path needs the console switched to UTF-8 to read it; a
+      // Ctrl-C that ends the batch skips the restore, so the switch is left out
+      // for the common all-ASCII install.
       ...(utf8
         ? [
             `for /f "tokens=2 delims=:." %%c in ('chcp') do set "t3_codepage=%%c"`,
@@ -143,7 +142,6 @@ export const install = Effect.gen(function* () {
           appImage,
           executableName: path.basename(process.execPath),
         }),
-        // macOS and .deb installs live at a fixed path, so the launcher runs the app directly.
         onNone: () => ({ kind: "direct" as const, executable: process.execPath, entry }),
       });
   const content = renderCliShim({ target, shimPath, t3Home: environment.baseDir });
@@ -156,7 +154,6 @@ export const install = Effect.gen(function* () {
     }
     if (Option.getOrUndefined(existing) !== content) {
       yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
-      // Written beside the launcher and renamed over it, so a running `t3` never reads half a file.
       const staging = `${shimPath}.${process.pid}.tmp`;
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
@@ -164,7 +161,6 @@ export const install = Effect.gen(function* () {
     }
     return Option.some(shimPath);
   }).pipe(
-    // Best-effort: nothing here may block the backend's start; commands then fall back to plain `t3`.
     Effect.catchCause((cause) =>
       logWarning("could not install t3 launcher", { shimPath, cause: Cause.pretty(cause) }).pipe(
         Effect.as(Option.none<string>()),

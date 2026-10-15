@@ -13,12 +13,10 @@ import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface SidebarThreadHeaderProps {
-  /** Lands on the search field so a popup can anchor to its width. */
   searchFieldRef?: RefObject<HTMLDivElement | null>;
   hasProjects: boolean;
   projectScope: ReactNode;
   onNewProject: () => void;
-  /** Receives the click so Shift+click can skip the project picker. */
   onNewThread: (event: ReactMouseEvent) => void;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
@@ -139,11 +137,6 @@ export function SidebarThreadHeader({
   );
 }
 
-/**
- * Icon button with a tooltip, sized for the header's segmented pair. Spreads
- * unknown props through so it can serve as a popup trigger's render target,
- * which injects its own handlers, ref and aria state.
- */
 export function SidebarHeaderIconButton({
   label,
   tooltip = label,

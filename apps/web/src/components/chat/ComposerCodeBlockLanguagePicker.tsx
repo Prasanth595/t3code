@@ -53,9 +53,6 @@ export function ComposerCodeBlockLanguagePicker(props: {
   const selected = items.find((entry) => entry.id === current) ?? null;
 
   return (
-    // The trigger's pill pads its content by 8px (padding plus border) and the
-    // button pulls a leading icon back 2px; offsetting the difference lines
-    // the icon up with the code below while keeping the hover pill.
     <span className="-ml-1.5 flex min-w-0">
       <Combobox
         items={items}

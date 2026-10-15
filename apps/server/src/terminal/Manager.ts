@@ -141,25 +141,15 @@ class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSigna
 export class TerminalManager extends Context.Service<
   TerminalManager,
   {
-    /**
-     * Reuses an existing session for the same thread/terminal id and restores
-     * persisted history on first open.
-     */
     readonly open: (
       input: TerminalOpenInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
-    /**
-     * Attach to a terminal and stream its initial snapshot followed by live events.
-     *
-     * Returns an unsubscribe function.
-     */
     readonly attachStream: (
       input: TerminalAttachInput,
       listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void, TerminalError>;
 
-    /** Observe an existing session without starting or changing its process. */
     readonly observeStream: (
       input: TerminalObserveInput,
       listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
@@ -183,12 +173,6 @@ export class TerminalManager extends Context.Service<
      */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
 
-    /**
-     * Close a thread's terminals that wait at an idle shell prompt. A terminal
-     * that runs a command stays open. When `terminalId` is set, only that
-     * terminal is considered. Used when a thread settles and when a setup
-     * script finishes.
-     */
     readonly closeIdle: (input: {
       readonly threadId: string;
       readonly terminalId?: string;
@@ -198,11 +182,6 @@ export class TerminalManager extends Context.Service<
       listener: (event: TerminalEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void>;
 
-    /**
-     * Subscribe to lightweight terminal metadata with an initial full snapshot.
-     *
-     * Returns an unsubscribe function.
-     */
     readonly subscribeMetadata: (
       listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void>;
@@ -266,7 +245,6 @@ interface TerminalSessionState {
   exitSignal: number | null;
   updatedAt: string;
   eventSequence: number;
-  /** Counts writes, so closeIdle can see input that has not echoed yet. */
   inputCount: number;
   cols: number;
   rows: number;
@@ -1087,8 +1065,6 @@ function sanitizeTerminalHistoryChunk(
   pendingControlSequence: string,
   data: string,
 ): { visibleText: string; pendingControlSequence: string } {
-  // Plain output has nothing to filter. A pending sequence still needs the parser
-  // even when this chunk only contains its final bytes.
   if (pendingControlSequence.length === 0 && !HISTORY_SEQUENCE_START.test(data)) {
     return { visibleText: data, pendingControlSequence: "" };
   }
@@ -1233,13 +1209,6 @@ function shouldExcludeTerminalEnvKey(key: string): boolean {
 }
 
 const APPIMAGE_RUNTIME_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
-// Colon-separated search-path variables the AppImage runtime points at its
-// temporary mount (e.g. /tmp/.mount_T3-XXXX/usr/bin, the bundled glib schemas,
-// and an $APPDIR/usr/share XDG data entry). Only the mount segments are
-// dropped; the user's real entries are preserved. When nothing but mount
-// segments remain the variable is removed entirely so consumers fall back to
-// their platform default (e.g. gsettings finds the host schemas instead of
-// reporting "No schemas installed"). See issues #1699 and #5059.
 const APPIMAGE_PATH_LIKE_ENV_KEYS = [
   "PATH",
   "LD_LIBRARY_PATH",
@@ -1255,9 +1224,8 @@ function isPathSegmentUnderAppDir(segment: string, appDir: string): boolean {
 // injects APPIMAGE/APPDIR/ARGV0/OWD plus mount entries on PATH/LD_LIBRARY_PATH.
 // The integrated terminal inherits the server process environment, so without
 // this scrub those leak into the PTY and tools resolve against the AppImage
-// mount instead of the user's real environment (e.g. `php` reporting
-// PHP_BINARY as the AppImage path). See issue #1699. The scrub is gated on an
-// actual AppImage launch so non-AppImage environments are left untouched.
+// mount instead of the user's real environment (e.g. `php` reporting PHP_BINARY
+// as the AppImage path). See issue #1699.
 function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (env.APPIMAGE === undefined && env.APPDIR === undefined) return env;
 
@@ -1307,8 +1275,6 @@ function createTerminalSpawnEnv(
         key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value, home) : value;
     }
   }
-  // An explicit empty override opts out for terminals started without a client.
-  // Otherwise both PTY backends feed truecolor-capable terminal clients.
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
@@ -1483,11 +1449,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const fetchProcessTableSnapshot: Effect.Effect<
     {
       readonly snapshot: TerminalProcessTableSnapshot;
-      /**
-       * False when the sidecar snapshot failed and this table came from the
-       * spawned fallback. The data is still applied, but the tick counts as
-       * a failure so polling backs off instead of hot-looping the fallback.
-       */
       readonly snapshotSucceeded: boolean;
     },
     TerminalSubprocessCheckError
@@ -2957,7 +2918,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const resizeLocked = Effect.fn("terminal.resize")(function* (input: TerminalResizeInput) {
     const session = yield* getSession(input.threadId, input.terminalId);
-    // ResizeObserver traffic can already be in flight when the UI closes the session.
     if (Option.isNone(session)) {
       return;
     }
@@ -3120,9 +3080,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             (input.terminalId === undefined || session.terminalId === input.terminalId),
         );
         if (running.length === 0) return;
-        // A command started during the process check can miss the snapshot,
-        // but its input or echo still lands. Both counters only grow, so the
-        // sum changes when either one does.
         const activityMark = (session: TerminalSessionState) =>
           session.eventSequence + session.inputCount;
         const marks = new Map(

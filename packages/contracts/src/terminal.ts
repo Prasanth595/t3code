@@ -2,9 +2,6 @@ import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
-/**
- * Ids are uniformly `term-N`; there's no "default" intrinsic.
- */
 export const DEFAULT_TERMINAL_ID = "term-1";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
@@ -108,7 +105,6 @@ export const TerminalSessionSnapshot = Schema.Struct({
   history: Schema.String,
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
-  /** Server-computed display title (idle shell vs subprocess command). */
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
   sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -125,7 +121,6 @@ export const TerminalSummary = Schema.Struct({
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
   hasRunningSubprocess: Schema.Boolean,
-  /** Server-computed display title (idle shell vs subprocess command). */
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
 });

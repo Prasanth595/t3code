@@ -19,7 +19,6 @@ const repositoryKey = (repository: PromptLinkRepository) =>
 
 /**
  * Callers pass projects most recently active first, so the user lands where they last worked.
- * A fork only matches its own owner, not its upstream.
  */
 export function findPromptLinkProject<
   P extends { readonly repositoryIdentity?: RepositoryIdentity | null | undefined },
@@ -32,7 +31,6 @@ export function findPromptLinkProject<
   );
 }
 
-/** The most recently updated thread linked to the pull request, across every environment given. */
 export function findPromptLinkPullRequestThread<
   T extends {
     readonly updatedAt: string;
@@ -59,9 +57,9 @@ export function findPromptLinkPullRequestThread<
 const PROVIDER_ALIASES: Record<string, string> = { claude: "claudeagent" };
 
 /**
- * The selection a link asks for, on one of the user's own provider instances. `exact` is false
- * when the instance exists but the model does not, so its default model stands in. Null when
- * no usable instance of that provider exists; the user's default applies then.
+ * `exact` is false when the instance exists but the model does not, so its default model
+ * stands in. Null when no usable instance of that provider exists; the user's default
+ * applies then.
  */
 export function resolvePromptLinkModelSelection(
   providers: ReadonlyArray<

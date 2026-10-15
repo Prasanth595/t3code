@@ -28,11 +28,6 @@ export const GitHubHostChoice = Schema.Struct({
 });
 export type GitHubHostChoice = typeof GitHubHostChoice.Type;
 
-/**
- * `hosts` pins one of the logins `gh` holds for a host instead of its active one, or turns the
- * host off; `tokens` holds a token per host, used before `GH_TOKEN` and friends, which win over
- * `gh`.
- */
 export const settings = makeProviderSettingsSchema({
   hosts: Schema.Record(GitHubHost, GitHubHostChoice).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),

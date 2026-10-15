@@ -72,7 +72,6 @@ interface PreviewSessionState {
 
 interface ManagerState {
   readonly sessions: ReadonlyMap<string, PreviewSessionState>;
-  /** Global monotonic revision establishing list/event ordering. */
   readonly revision: number;
 }
 
@@ -125,16 +124,12 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const crypto = yield* Crypto.Crypto;
   const serverEpoch = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
-  // Unbounded PubSub is fine here — events are tiny and we don't want to
-  // block publishers if a subscriber is slow. WS clients backpressure on
-  // their own queues downstream.
   const eventsPubSub = yield* PubSub.unbounded<PreviewEvent>();
   const events: Stream.Stream<PreviewEvent> = Stream.fromPubSub(eventsPubSub);
 
   /**
-   * The event is published INSIDE the lock so observers see events in the
-   * same order as the underlying state transitions. Publishing an unbounded
-   * PubSub is non-blocking, so this is cheap.
+   * The event is published INSIDE the lock so observers see events in the same
+   * order as the underlying state transitions.
    */
   const mutateExistingSession = <R, E>(
     threadId: string,
@@ -356,7 +351,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             ...(input.zoomFactor === undefined ? {} : { zoomFactor: input.zoomFactor }),
             updatedAt,
           };
-          // One-off requests ride on the event for the server's browser to act on.
           const request =
             input.hardReload || input.clear
               ? {
@@ -385,8 +379,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   const refresh: PreviewManager["Service"]["refresh"] = Effect.fn("PreviewManager.refresh")(
     function* (input) {
-      // Verify the session exists; the desktop bridge handles the actual reload
-      // and will report progress back via `reportStatus`. No event emitted.
       yield* mutateExistingSession(input.threadId, input.tabId, (session) =>
         Effect.succeed({ next: session, emit: null, result: undefined as void }),
       );

@@ -104,7 +104,6 @@ export function getOptimisticProjectFileQueryData(
   return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? null;
 }
 
-/** The contents the Files panel shows, read outside React so it is current within a frame. */
 export function getProjectFileContents(
   environmentId: EnvironmentId,
   cwd: string,
@@ -213,9 +212,7 @@ export function useProjectEntriesQuery(
 /**
  * An empty query is a valid request — the index answers it with
  * frecency-ordered files, so the picker's initial view is recent files without
- * transferring the full workspace listing. `matchedQuery` is the query the
- * returned entries were computed for, so the caller can highlight against
- * results instead of half-typed input.
+ * transferring the full workspace listing.
  */
 export function useProjectFilePickerQuery(
   environmentId: EnvironmentId,

@@ -70,7 +70,6 @@ export interface AntigravityAdapterV2Options {
     EffectAcpErrors.AcpError | ProviderSetupError,
     Scope.Scope
   >;
-  /** Serialises process ownership against sign-in and sign-out. */
   readonly withProcess: AntigravityAuth["withProcess"];
   readonly defaultModel: Effect.Effect<string | undefined>;
   readonly onSessionStarted?: (
@@ -119,15 +118,10 @@ interface AntigravityFlavorServices {
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
-  // The attachments dir grant lets the agent read pasted files at the paths the turn text
-  // references. A session without a workspace gets no workspace root rather than the server's
-  // cwd.
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
     Effect.gen(function* () {
-      // AcpAdapterV2 owns the runtime scope; sign-in and sign-out stop the
-      // process by closing a child of it, and the adapter respawns on the next turn.
       const scope = yield* Scope.fork(yield* Effect.scope);
       const runtime = yield* options
         .withProcess(

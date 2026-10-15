@@ -39,7 +39,6 @@ const InstallManifest = Schema.Struct({
 });
 const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(InstallManifest));
 
-/** Prove the running package and its global bin belong together before suggesting an update. */
 export const resolveServerInstallation = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -58,8 +57,6 @@ export const resolveServerInstallation = Effect.gen(function* () {
       ? null
       : ({ kind: runner === "pnpm dlx" ? "pnpm-dlx" : runner } satisfies ServerInstallation);
   }
-  // A global prefix can contain runner-like names; prove its ownership first.
-  // Windows shims and other package managers need their own ownership proof.
   if (platform === "win32") return null;
   const prefix = match[1] || "/";
   if (
@@ -127,12 +124,6 @@ export const resolveCliCommand = (subcommand: string) =>
 const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
-/**
- * The launcher a person can type to run this install when `t3` is not on
- * PATH: the desktop app's `t3` shim, which the app and the shim itself name in
- * `T3CODE_CLI_PATH`, or a standalone binary's own path. Script installs (a
- * repo checkout) have no single launcher and keep plain `t3`.
- */
 const resolveInstallLauncher = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
@@ -172,7 +163,6 @@ export const resolveRootCliCommand = (subcommand: string) =>
     return systemNode ? `sudo ${command}` : `sudo env "PATH=$PATH" ${command}`;
   });
 
-/** Debian and Ubuntu's sudo `secure_path`, minus snap. */
 const ROOT_PATH_DIRECTORIES = [
   "/usr/local/sbin",
   "/usr/local/bin",

@@ -6,12 +6,6 @@ import type {
 } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 
-/**
- * Two axes. `machine` narrows the environment axis (absent = all
- * environments); `project` and `checkout` narrow the project axis (absent =
- * environment defaults). Device-local preferences are not a scope: they
- * render regardless of the selection because they never touch a server.
- */
 export interface SettingsScopeSearch {
   project?: string | undefined;
   machine?: string | undefined;

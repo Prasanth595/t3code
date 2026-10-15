@@ -58,7 +58,6 @@ type GitOverviewSheetProps = StaticScreenProps<{
 export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const navigation = useNavigation();
   const { environmentId, threadId } = props.route.params;
-  // A hand-typed deep link can carry a blank ID, which the branded IDs reject.
   const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
   useEffect(() => {
     if (isBlankLink) navigation.goBack();
@@ -251,9 +250,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
 
-  // Deterministic refresh state. Tying RefreshControl to the query's
-  // isPending flag left the spinner stuck (the status query reports pending
-  // during quiet background refreshes too).
+  // Tying RefreshControl to the query's isPending flag left the spinner stuck
+  // (the status query reports pending during quiet background refreshes too).
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);

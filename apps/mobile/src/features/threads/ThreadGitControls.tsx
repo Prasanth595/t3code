@@ -89,7 +89,6 @@ export type ThreadGitMenuProps = {
   readonly gitOperationLabel: string | null;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
-  /** Present only on a thread whose work can be merged into the one it came from. */
   readonly onMergeBack?: () => void;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;

@@ -12,9 +12,6 @@ import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 
 import { DIFF_VIEW_UNSAFE_CSS } from "../../diffs/StyledDiffCodeView";
 
-/**
- * The row above it names the file, so the renderer's own header is left off.
- */
 export function GuideFileDiff({
   file,
   loadDiffFiles,

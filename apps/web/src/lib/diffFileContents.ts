@@ -21,7 +21,6 @@ interface GitDiffFileContentsSource {
   readonly sourceKind: ReviewDiffPreviewSourceKind;
   readonly baseRef: string | null;
   readonly headRef: string | null;
-  /** The comparison identity Pierre carries into its hydrated render cache. */
   readonly cacheKey: string;
 }
 
@@ -99,7 +98,6 @@ export function createGitDiffFileContentsLoader<E>(
   }, source.cacheKey);
 }
 
-/** Loads host-backed PR files, which may name revisions this checkout has never fetched. */
 export function createPullRequestDiffFileContentsLoader<E>(
   getDiffFileContents: GetPullRequestDiffFileContents<E>,
   source: PullRequestDiffFileContentsSource,

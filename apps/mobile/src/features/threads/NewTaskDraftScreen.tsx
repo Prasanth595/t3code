@@ -236,17 +236,12 @@ export function NewTaskDraftScreen(props: {
   const taskPermissionReason =
     environmentConnected && !canOperate ? "This connection cannot start tasks." : null;
   const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
-  // A project added by cloning exists before its files do: the prompt can be
-  // written meanwhile, but Start waits for the clone.
   const projectCloneState = useProjectClone(
     selectedProject
       ? { environmentId: selectedProject.environmentId, projectId: selectedProject.id }
       : null,
   );
   const projectClone = projectCloneState === "pending" ? null : projectCloneState;
-  // Before the clone stream delivers, only the project this draft was opened
-  // for by Add Project is known to be cloning; any other project (offline
-  // included) must still be able to queue a task.
   const awaitingKnownClone =
     projectCloneState === "pending" &&
     props.initialProjectRef?.cloning === true &&
@@ -272,8 +267,6 @@ export function NewTaskDraftScreen(props: {
     }
   };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
-  // The delete is awaited; by then the picker may point somewhere else, and
-  // only the removed project's draft should leave the screen.
   const selectedProjectRef = useRef(selectedProject);
   useEffect(() => {
     selectedProjectRef.current = selectedProject;
@@ -469,8 +462,6 @@ export function NewTaskDraftScreen(props: {
     [environments.length],
   );
   useHardwareKeyboardCommand(cycleEnvironmentCommands, cycleEnvironment);
-  // Also guard while a submit is in flight: an Android back press or iOS
-  // Cancel would otherwise abandon the screen while the task still starts.
   const offersUsageLimits =
     flow.selectedProviderStatus !== null &&
     hasProviderUsageLimits(
@@ -528,8 +519,6 @@ export function NewTaskDraftScreen(props: {
     if (preventRemove || submitNavigationAction === null) {
       return;
     }
-    // Give the guard update a frame to reach the parent sheet before navigating,
-    // just like the project-picker fallback below.
     const frame = requestAnimationFrame(() => {
       setSubmitNavigationAction(null);
       (navigation.getParent() ?? navigation).dispatch(submitNavigationAction);
@@ -594,11 +583,9 @@ export function NewTaskDraftScreen(props: {
   }, []);
 
   const { beginEditingPendingTask, cancelEditingPendingTask, editingPendingTask, openDraft } = flow;
-  // Drafts hydrate from disk and projects arrive with the shell snapshot, so
-  // on a cold launch the draft or its project can be missing for a moment;
-  // wait for hydration and retry while projects load. Attempt each id once
-  // after that so a draft discarded mid-session does not keep bouncing to
-  // the picker.
+  // Drafts hydrate from disk and projects arrive with the shell snapshot, so on
+  // a cold launch the draft or its project can be missing for a moment; wait
+  // for hydration and retry while projects load.
   const attemptedDraftIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!props.draftId || props.pendingTaskId) {
@@ -633,8 +620,6 @@ export function NewTaskDraftScreen(props: {
     if (!props.pendingTaskId || editingPendingTask?.messageId === props.pendingTaskId) {
       return;
     }
-    // Attempt each pending task once: after it is delivered or deleted the
-    // editing session legitimately ends, and re-running must not navigate.
     if (attemptedPendingTaskIdRef.current === props.pendingTaskId) {
       return;
     }
@@ -660,9 +645,6 @@ export function NewTaskDraftScreen(props: {
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);
 
   useEffect(() => {
-    // Pending-task editing and draft resumption own project selection (and
-    // must not fall through to the replace("NewTask") fallback while their
-    // hydration is in flight).
     if (props.pendingTaskId || props.draftId) {
       return;
     }
@@ -718,9 +700,6 @@ export function NewTaskDraftScreen(props: {
       }
 
       if (projects.length > 0) {
-        // Never fall through to the flow provider's temporary first-project
-        // default. Return to the picker with the share id intact so the user
-        // can choose an available destination.
         setIsReturningToProjectPicker(true);
       }
       return;
@@ -974,8 +953,6 @@ export function NewTaskDraftScreen(props: {
       })
       .finally(() => {
         if (startedShareImportKeyRef.current === importKey) {
-          // Every terminal path, including an invalidated operation, must
-          // release the synchronous start latch so this transfer can retry.
           startedShareImportKeyRef.current = null;
         }
         if (shareImportMountedRef.current && activeShareImportTokenRef.current === importToken) {
@@ -1299,8 +1276,6 @@ export function NewTaskDraftScreen(props: {
         }
       : makeTurnCommandMetadata();
     const message = flow.buildPendingTaskMessage(metadata, {
-      // A task that waits in the outbox cannot know the checkout it will
-      // drain against; one that sends now runs against the live one.
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
     });
     if (!message) {
@@ -1431,7 +1406,6 @@ export function NewTaskDraftScreen(props: {
         }}
         ref={promptInputRef}
         autoFocus={false}
-        // Clipboard imports use the editor's read-only mode to retain keyboard focus.
         editable={!isIncomingShareTransferPending && !flow.submitting}
         readOnly={voiceInput.freezesEditor}
         multiline

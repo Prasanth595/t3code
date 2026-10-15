@@ -29,7 +29,6 @@ export class WorktreeSetupTracker extends Context.Service<
       readonly branch: string | null;
       readonly baseRef: string | null;
       readonly stages: ReadonlyArray<WorktreeSetupStageId>;
-      /** Interrupting this fiber cancels the bootstrap. */
       readonly fiber: Fiber.Fiber<unknown, unknown> | null;
     }) => Effect.Effect<void>;
     readonly update: (
@@ -62,14 +61,8 @@ export class WorktreeSetupTracker extends Context.Service<
      * back a thread whose agent has already started.
      */
     readonly markUncancellable: (threadId: ThreadId) => Effect.Effect<void>;
-    /**
-     * Interrupts the running bootstrap and waits for it to unwind, so the
-     * caller's dispatch has already failed and rolled back when this returns.
-     * Returns false when nothing is running or the setup is past cancellation.
-     */
     readonly cancel: (threadId: ThreadId) => Effect.Effect<boolean>;
     readonly get: (threadId: ThreadId) => Effect.Effect<WorktreeSetupSnapshot | null>;
-    /** Emits the current snapshot (or null) first, then every change until unsubscribed. */
     readonly stream: (threadId: ThreadId) => Stream.Stream<WorktreeSetupSnapshot | null>;
   }
 >()("t3/project/WorktreeSetupTracker") {}
@@ -82,7 +75,6 @@ function clampText(text: string, maxLength: number): string {
 
 const clampDetail = (detail: string | null): string | null =>
   detail === null ? null : clampText(detail, WORKTREE_SETUP_DETAIL_MAX_LENGTH);
-/** Finished snapshots stay visible this long so a late subscriber sees the outcome. */
 const FINISHED_RETENTION = "30 seconds";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -273,7 +265,6 @@ export const make = Effect.gen(function* () {
         Effect.delay(FINISHED_RETENTION),
         Effect.ensuring(
           Effect.sync(() => {
-            // Only drop our own entry: a newer setup may have replaced it.
             if (retentionFibers.get(threadId) === fiber) retentionFibers.delete(threadId);
           }),
         ),
@@ -307,9 +298,9 @@ export const make = Effect.gen(function* () {
     Ref.get(setups).pipe(Effect.map((current) => current.get(threadId)?.snapshot ?? null));
 
   /**
-   * Each subscriber gets a one-slot sliding mailbox: a slow WebSocket only
-   * ever holds the newest snapshot, so a chatty setup script cannot grow the
-   * server heap. Snapshots are whole states, so skipping intermediates is safe.
+   * Each subscriber gets a one-slot sliding mailbox: a slow WebSocket only ever
+   * holds the newest snapshot, so a chatty setup script cannot grow the server
+   * heap.
    */
   const stream: WorktreeSetupTracker["Service"]["stream"] = (threadId) =>
     Stream.callback<WorktreeSetupSnapshot | null>(

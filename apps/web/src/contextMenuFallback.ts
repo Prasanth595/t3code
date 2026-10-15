@@ -202,18 +202,11 @@ export function isContextMenuOpen(): boolean {
   return activeContextMenuDismiss !== null;
 }
 
-/**
- * Closes the currently open fallback context menu, resolving its show() with
- * null (the same result as dismissing by outside click or Escape).
- */
 export function dismissContextMenu(): void {
   activeContextMenuDismiss?.();
   activeContextMenuDismiss = null;
 }
 
-/**
- * Supports nested submenus and resolves with the clicked leaf item id.
- */
 export function showContextMenuFallback<T extends string>(
   items: readonly ContextMenuItem<T>[],
   position?: { x: number; y: number },

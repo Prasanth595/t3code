@@ -58,10 +58,6 @@ function failureToast(title: string, error: unknown) {
   );
 }
 
-/**
- * Unlike the sidebar, settle and snooze here never navigate away: the caller is acting on the
- * thread they are reading, and ChatView's parked-thread banner already offers the way back.
- */
 export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
@@ -126,8 +122,6 @@ export function useThreadActionMenu(input: {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
-        // Snapshot at open time — the menu is modal, so state read now is
-        // what the user is looking at.
         const thread = readThreadShell(threadRef);
         if (!thread) return;
         const now = new Date();

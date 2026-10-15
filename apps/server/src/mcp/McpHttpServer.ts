@@ -101,10 +101,6 @@ const unauthorized = (input: {
   );
 };
 
-/**
- * Resolves a bearer token that is not a provider-session token: an OAuth
- * client signed in from outside T3. Undefined when the token is not one.
- */
 export class McpClientAuthenticator extends Context.Service<
   McpClientAuthenticator,
   {
@@ -513,7 +509,6 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                     ? bounded.value
                     : { ...bounded.value, omitted: bounded.omitted },
                 content: [
-                  // Keep the page identity readable even if a provider truncates the snapshot.
                   {
                     type: "text",
                     text: encodeJsonText({
@@ -558,8 +553,8 @@ interface ImageToolResult {
 
 /**
  * Failures surface only their tag unless the tool describes them: the remote
- * message may carry renderer or device output the agent should not see, and
- * the tag is what it can act on. A describer returns a server-built message.
+ * message may carry renderer or device output the agent should not see, and the
+ * tag is what it can act on.
  */
 const imageToolFailure =
   <E>(toolName: string, operation: string, failureText: string | ((error: E) => string)) =>
@@ -606,10 +601,8 @@ const imageToolFailure =
   };
 
 /**
- * `McpServer.toolkit` serializes every result as JSON text, which is the
- * wrong shape for a screenshot: the model needs image content. Tools whose
- * result carries a `screenshot` field are registered by hand so the PNG goes
- * out as an image block and the rest of the payload as JSON metadata.
+ * `McpServer.toolkit` serializes every result as JSON text, which is the wrong
+ * shape for a screenshot: the model needs image content.
  */
 const registerImageTool = <T extends Tool.Any, E, R>(
   tool: T,
@@ -729,7 +722,7 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
         Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
       ),
     "preview",
-    // Parameter errors and HTML render errors are both written by the server for the agent.
+
     (error) =>
       isOrchestratorMcpFailure(error) || AiError.isAiError(error)
         ? error.message
@@ -738,9 +731,6 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
 });
 
 /**
- * `McpServer.toolkit` for handlers that declared their access (see
- * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
- *
  * `McpServer.toolkit` asks for every service its tools declare when it
  * registers them, but the auth middleware provides `McpInvocationContext` to
  * each request instead. Registration must not get one: the services it
@@ -760,7 +750,6 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   return registered.pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
 };
 
-/** A hand-registered tool, also only with handlers that declared their access. */
 const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, EX, RX>(
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,

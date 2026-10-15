@@ -68,7 +68,6 @@ export function GuideStop({
   commenting: ExcerptCommenting | null;
   onStep: (delta: 1 | -1) => void;
   onAsk: ((question: string) => void) | null;
-  /** Opens the review composer, on the last stop. Null where the reader cannot review. */
   onFinish: (() => void) | null;
   onOpenFile: (path: string) => void;
 }) {
@@ -242,7 +241,6 @@ export function GuideStop({
                     <GuideProse text={question} />
                   </div>
                 ) : (
-                  // A question is a sentence, so it wraps rather than truncating as a button would.
                   <button
                     key={question}
                     type="button"

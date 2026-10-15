@@ -507,8 +507,6 @@ export const parseNetError = (errorText: string) => {
   return { description, code: NET_ERROR_CODES[description] ?? -2 };
 };
 
-// Resizes are letterboxed into the first frame; the agent cursor is drawn here
-// so it never changes the page under test.
 export const RECORDING_ENCODER_SCRIPT = `(() => {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");

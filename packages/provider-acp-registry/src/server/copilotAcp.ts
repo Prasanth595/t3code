@@ -7,11 +7,10 @@ import type {
   AcpAdapterV2SubagentUpdate,
 } from "@t3tools/provider-acp/server/adapter";
 
-// Copilot CLI streams subagent text as plain `agent_message_chunk`s on the
-// root session. Only its opt-in raw event feed says who wrote a chunk: each
-// chunk is preceded by an `assistant.*_delta` carrying the spawning `task`
-// tool call id. Both arrive inline on the same reader, in wire order, so the
-// delta just before a chunk is that chunk's author.
+// Only its opt-in raw event feed says who wrote a chunk: each chunk is preceded
+// by an `assistant.*_delta` carrying the spawning `task` tool call id. Both
+// arrive inline on the same reader, in wire order, so the delta just before a
+// chunk is that chunk's author.
 
 const COPILOT_META_KEY = "github.com/copilot";
 const COPILOT_SESSION_EVENT = "github.com/copilot/sessionEvent";
@@ -44,12 +43,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
 const childSessionId = (taskToolCallId: string) => `copilot-task:${taskToolCallId}`;
 
 interface CopilotSessionAttribution {
-  /** The last raw delta, consumed by the chunk that follows it. */
   delta: { readonly kind: string; readonly text: string; readonly task?: string } | undefined;
   readonly taskByAgentId: Map<string, string>;
 }
 
-/** Per adapter instance; entries are keyed by root session and drop once idle. */
 export function makeCopilotSubagentRouting() {
   const sessions = new Map<string, CopilotSessionAttribution>();
   const session = (sessionId: string) => {
@@ -146,7 +143,6 @@ export function makeCopilotSubagentRouting() {
   return { registerExtensions, normalizeSessionUpdate };
 }
 
-/** Copilot's `task` tool launches a subagent; its id names the child session. */
 export function extractCopilotSubagentUpdate(
   tool: AcpToolCallState,
 ): AcpAdapterV2SubagentUpdate | undefined {

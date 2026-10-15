@@ -32,9 +32,7 @@ import type { FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
-const CONTROL_HEIGHT = 38.5; // The collapsed composer capsule starts 6 below its overlay's top edge, so
-// the pill sits at (gap - 6) above the overlay to leave the same gap to the
-// capsule as the feed's end inset leaves between it and the last row.
+const CONTROL_HEIGHT = 38.5;
 const CONTROL_GAP = 8;
 const COMPOSER_CAPSULE_INSET = 6;
 const GLASS_MERGE_SPACING = 12;
@@ -126,8 +124,6 @@ export function FloatingWorkingControl(props: {
     measuredWidthRef.current = width;
     capsuleWidth.value = first ? width : withTiming(width, CONTROL_TIMING);
   };
-  // Forget the width while no label is shown so the next one appears at its
-  // own size instead of animating from the previous label's.
   const hasStatus = props.status !== null;
   const hasCapsule = hasStatus || hasQueue || hasAgents || hasPreview;
   useEffect(() => {
@@ -409,8 +405,6 @@ function FloatingStatusLabel(props: {
         className="gap-2"
         onLayout={props.onLayout}
       >
-        {/* A dev server can run for hours after the agent is done, so only work
-            that will wake the agent gets the bolt. */}
         <SymbolView
           name={props.status.waiting ? { ios: "bolt", android: "bolt" } : "terminal"}
           size={13}

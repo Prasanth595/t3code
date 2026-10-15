@@ -56,8 +56,6 @@ function sceneFromPathname(pathname: string): ShowcaseScene | null {
   return null;
 }
 
-// Showcase capture only runs in showcase builds. Gate the mount so normal builds
-// never subscribe to workspace, project, or thread shell state.
 export function ShowcaseCaptureCoordinator(props: { readonly pathname: string }) {
   if (!SHOWCASE_ENABLED) return null;
   return <EnabledShowcaseCaptureCoordinator pathname={props.pathname} />;
@@ -104,9 +102,6 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     const readLaunchRequest = () => {
       const values = getNativeShowcasePairingUrls();
       if (values.length === 0) return;
-      // The palette rides the same launch request as the pairing URLs, so
-      // reading it here settles it without a timeout that could expire while
-      // the request is still on its way.
       setRequestedTheme(getNativeShowcaseTheme());
       setThemeRequestSettled(true);
       setPairingUrls(values);
@@ -152,20 +147,13 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
     return () => clearInterval(interval);
   }, []);
 
-  // Captures pick a palette for both color schemes so the requested theme is
-  // used whichever system appearance the runner set on the device.
   const themeApplied =
     requestedTheme === null
       ? themeRequestSettled
       : themeIds.light === requestedTheme && themeIds.dark === requestedTheme;
 
   useEffect(() => {
-    if (
-      requestedTheme === null ||
-      themeApplied ||
-      // Writing before stored preferences load would be overwritten by them.
-      !appearancePreferencesReady
-    ) {
+    if (requestedTheme === null || themeApplied || !appearancePreferencesReady) {
       return;
     }
     setThemeIdForBothAppearances(requestedTheme);
@@ -245,7 +233,6 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       navigation.dispatch(StackActions.popToTop());
       return;
     }
-    // Follows the environments scene, whose settings sheet popToTop leaves open.
     if (requestedScene === "agent-activity") {
       navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: "Home" }] }));
       return;
@@ -307,8 +294,6 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
         lastOutcome = outcome;
         return false;
       },
-      // The first attempt waits on the notification permission prompt until
-      // the runner answers it.
       { isCancelled: () => cancelled, attemptTimeoutMs: 60_000 },
     ).then((staged) => {
       if (!cancelled && staged) setAgentActivityStaged(true);
@@ -324,8 +309,6 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       requestedScene === null ||
       scene !== requestedScene ||
       !hasFixture ||
-      // Never report a scene ready while the capture orientation is still
-      // being applied — a screenshot taken early has the wrong dimensions.
       !orientationSettled ||
       !themeApplied ||
       (scene === "agent-activity" && !agentActivityStaged) ||

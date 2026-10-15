@@ -94,12 +94,8 @@ export const layer: Layer.Layer<
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
             );
           const currentSession = currentSessions.find(isLiveProviderSession);
-          // Negotiated capabilities describe the provider, not the dead
-          // process; the newest record still reports what the instance
-          // supports after its session stops.
           const negotiatedCapabilities =
             currentSession?.capabilities ?? currentSessions[0]?.capabilities;
-          // Detaching a process removes its session binding, not its native history.
           const currentProviderThread = projection.providerThreads.find(
             (thread) =>
               thread.id === projection.thread.activeProviderThreadId &&

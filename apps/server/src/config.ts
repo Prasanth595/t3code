@@ -58,10 +58,6 @@ export class ServerConfig extends Context.Service<
     readonly otlpTracesUrl: string | undefined;
     readonly otlpMetricsUrl: string | undefined;
     readonly otlpLogsUrl: string | undefined;
-    /**
-     * Read instead of a process-wide setting so the wire format, credential,
-     * and schedule travel with the endpoint they were configured beside.
-     */
     readonly otlpTracesExport: SignalExport;
     readonly otlpMetricsExport: SignalExport;
     readonly otlpLogsExport: SignalExport;
@@ -91,7 +87,6 @@ export class ServerConfig extends Context.Service<
     readonly tailscaleServePort: number;
   }
 >()("t3/config/ServerConfig") {
-  /** @deprecated Import and use `layerTest` from this module. */
   static readonly layerTest = (
     cwd: string,
     baseDirOrPrefix: string | { readonly prefix: string },
@@ -100,12 +95,6 @@ export class ServerConfig extends Context.Service<
 
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
 
-/**
- * Resource attributes shared by every OTLP exporter, so traces, metrics, and
- * logs report the same service identity to the collector. `host.name` keeps
- * servers apart when several export to one collector; a `host.name` set in
- * `OTEL_RESOURCE_ATTRIBUTES` wins, since explicit attributes override it.
- */
 export const otlpResource = (
   config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,
   hostName: string,

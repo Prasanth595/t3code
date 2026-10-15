@@ -31,15 +31,9 @@ import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 
-/**
- * Chromium's viewer opens with its own toolbar, a thumbnail rail and a small
- * zoom. The panel header is the only chrome we want, so ask for the page alone,
- * fitted to the panel width.
- */
 const PDF_VIEWER_FRAGMENT = "#toolbar=0&view=FitH";
 
 /**
- * Shortcuts that still work while a focused HTML render holds the keyboard.
  * The page reports the keys, and a page script can report any key it likes,
  * so only commands that change what the reader sees are here, never one that
  * changes a thread.
@@ -116,7 +110,6 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onContentHeight?: (height: number) => void;
-  /** Called when the page has loaded. */
   readonly onLoad?: () => void;
 }) {
   const theme = useHtmlRenderTheme();
@@ -128,7 +121,6 @@ export function HtmlRenderDocument(props: {
   };
   useEffect(postTheme, [theme]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  // Chat also resolves project scripts from the thread's own environment.
   const environmentKeybindings = useAtomValue(
     serverEnvironment.configValueAtom(props.threadRef?.environmentId ?? null),
   )?.keybindings;
@@ -169,7 +161,7 @@ export function HtmlRenderDocument(props: {
   // The page reports the key and code, and a page script can report any pair,
   // so a key that could match another command's binding is never replayed. A
   // named key (Backspace, Enter) must be the shortcut's own, since some app
-  // handlers read `event.key` directly. A dead key matches by its code.
+  // handlers read `event.key` directly.
   const isShortcut = useEffectEvent(
     (key: NonNullable<ReturnType<typeof readHtmlRenderKeyDown>>) => {
       const matches = (shortcut: HtmlRenderShortcut) =>
@@ -206,11 +198,10 @@ export function HtmlRenderDocument(props: {
     }
     void openLink(url, { event: modifiers }).catch((cause: unknown) => console.error(cause));
   });
-  // The page cannot open windows itself (an inline page runs unopened, and
-  // desktop sends any window to the browser). It asks the client, which opens
-  // the link only while this frame has focus and the reader has just used the
-  // app. A page can take focus by script, so this stops opens on load, not a
-  // page that waits for the reader's next click or key.
+  // It asks the client, which opens the link only while this frame has focus
+  // and the reader has just used the app. A page can take focus by script, so
+  // this stops opens on load, not a page that waits for the reader's next click
+  // or key.
   useEffect(() => {
     const openLink = (event: MessageEvent) => {
       const frame = frameRef.current;
@@ -230,10 +221,6 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("message", openLink);
     return () => window.removeEventListener("message", openLink);
   }, []);
-  // A focused frame takes every key, so app shortcuts would stop until the
-  // reader clicked out. The page passes on the chords posted to it, which replay
-  // on the frame element and bubble to the app's window listeners. A report is
-  // gated like a link and must be one of those chords.
   useEffect(() => {
     const replayKey = (event: MessageEvent) => {
       const frame = frameRef.current;
@@ -279,7 +266,6 @@ export function HtmlRenderDocument(props: {
       loading="lazy"
       onLoad={() => {
         setLoaded(true);
-        // Covers a theme change that landed while the page was loading.
         postTheme();
         postShortcuts();
         props.onLoad?.();

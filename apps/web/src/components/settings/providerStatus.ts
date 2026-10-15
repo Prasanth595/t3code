@@ -21,10 +21,6 @@ export const PROVIDER_STATUS_STYLES = {
 
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
-/**
- * A ready provider without account metadata remains available and does not
- * imply an authentication failure.
- */
 export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
     return {
@@ -81,7 +77,6 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
 export function getProviderVersionLabel(version: string | null | undefined) {
   if (!version) return null;
   // Antigravity reports a release tag such as `agy_acp_server_20260818_01_RC01`.
-  // Show the date and candidate so the row title keeps room for the name.
   const antigravity = /^agy_acp_server_(\d{4})(\d{2})(\d{2})_\d+(?:_(\w+))?$/.exec(version);
   if (antigravity) {
     const [, year, month, day, candidate] = antigravity;

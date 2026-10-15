@@ -7,12 +7,6 @@ import {
   type KnownComposerContextRecord,
 } from "@t3tools/contracts";
 
-/**
- * Canonical inline reference: `[label](t3-context://v1/<kind>/<contextId>)`, or the image
- * form `![label](...)`. The link carries position and identity only; the payload lives in the
- * message's context records. Labels are display text and never identity.
- */
-
 const CONTEXT_PROTOCOL = "t3-context:";
 const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
 const CONTEXT_KIND_PATTERN = /^[a-z][a-z0-9-]{0,39}$/;
@@ -24,9 +18,8 @@ const CONTEXT_LINK = new RegExp(
 );
 
 /**
- * Two independent FNV-1a passes, one forward and one with a different offset basis over the
- * reversed input. 64 bits of digest, because the slug in front of it is truncated: two long
- * producer ids that agree on their first 48 characters are told apart by this alone.
+ * 64 bits of digest, because the slug in front of it is truncated: two long producer
+ * ids that agree on their first 48 characters are told apart by this alone.
  */
 function fnv1a64(value: string): string {
   let forward = 0x811c9dc5;
@@ -40,12 +33,6 @@ function fnv1a64(value: string): string {
   return `${forward.toString(16).padStart(8, "0")}${reverse.toString(16).padStart(8, "0")}`;
 }
 
-/**
- * Producers mint ids in their own grammars (`pull-request-finding:42`,
- * `file-comment-<ms>-<n>`). A context id must survive a Markdown link and the wire
- * schema, so anything outside `[a-z0-9_-]` is folded into a readable slug plus a hash of
- * the original. Deterministic, so the same producer id always maps to the same context id.
- */
 export function toComposerContextId(producerId: string): ComposerContextId {
   if (CONTEXT_ID_PATTERN.test(producerId)) return producerId as ComposerContextId;
   const slug = producerId
@@ -55,7 +42,6 @@ export function toComposerContextId(producerId: string): ComposerContextId {
   return `${slug || "ctx"}-${fnv1a64(producerId)}` as ComposerContextId;
 }
 
-/** Raw producer IDs are always scoped, even when they already start with the kind name. */
 export function toKindScopedComposerContextId(
   kind: ComposerContextKind,
   producerId: string,
@@ -113,8 +99,6 @@ export function collectComposerContextReferences(
   text: string,
 ): ComposerContextReferenceOccurrence[] {
   const occurrences: ComposerContextReferenceOccurrence[] = [];
-  // No link can match without the protocol prefix; skip the scan entirely on
-  // plain prose so long messages never pay for a regex walk per `[`.
   if (!text.includes("](t3-context:")) return occurrences;
   for (const match of text.matchAll(CONTEXT_LINK)) {
     const parsed = parseComposerContextHref(match[3]!);
@@ -177,8 +161,8 @@ export function formatComposerContextProviderMarker(
 }
 
 /**
- * Captured text is data. A terminal line or PR comment that contains `</t3_context>` or
- * `</context>` must not be able to close the envelope and forge a record.
+ * A terminal line or PR comment that contains `</t3_context>` or `</context>`
+ * must not be able to close the envelope and forge a record.
  */
 function escapeComposerContextPayloadText(text: string): string {
   return text.replace(
@@ -302,11 +286,6 @@ function formatEnvelopeEntry(
   return `${open}>\n${escapeComposerContextPayloadText(body)}\n</${CONTEXT_ENTRY_TAG}>`;
 }
 
-/**
- * What the provider reads: every reference becomes an in-place marker, and each unique
- * referenced payload appears once in a trailing envelope, in first-reference order.
- * Unreferenced records are not emitted. Binary attachments travel on their own channel.
- */
 export function projectComposerContextForProvider(input: {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;
@@ -315,7 +294,6 @@ export function projectComposerContextForProvider(input: {
   if (occurrences.length === 0) return input.text;
   const recordsById = new Map<ComposerContextId, ComposerContextRecord | undefined>();
   for (const record of input.records) {
-    // Even callers that bypass the wire schema must not silently select an ambiguous payload.
     recordsById.set(record.contextId, recordsById.has(record.contextId) ? undefined : record);
   }
   const body = replaceComposerContextReferences(input.text, (occurrence) =>

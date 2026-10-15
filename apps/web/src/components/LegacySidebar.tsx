@@ -444,16 +444,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   });
   const environment = useEnvironment(thread.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  // No primary (the hosted app) means every thread is remote, and the machine
-  // glyph is what tells the environments apart.
   const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
   const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
-  // A desktop-local secondary backend (e.g. the WSL backend) shows up as a
-  // bearer environment whose connection id is prefixed "local:". It runs on the
-  // user's own machine, so the cloud icon is misleading, label it "Local" and
-  // suppress the cloud icon (the project header already shows a
-  // local-environment icon for desktop-local projects, see sidebarProjectGrouping).
   const isDesktopLocalThread =
     environment !== null && isDesktopLocalConnectionTarget(environment.entry.target);
   const threadEnvironmentLabel = isRemoteThread
@@ -539,13 +532,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const handleRowDoubleClick = useCallback(
     (event: React.MouseEvent) => {
       if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return;
-      // Already renaming this row: a double-click on the row chrome (outside the
-      // input) must not restart and discard the in-progress edit.
       if (renamingThreadKey === threadKey) return;
       // On mobile the first tap navigates and closes the sidebar sheet, so the
       // inline rename can't be shown. Renaming there stays on the context menu.
       if (isMobile) return;
-      // cmd/ctrl/shift double-clicks are multi-select intent, not rename.
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       if ((event.target as HTMLElement).closest("button, a")) return;
       event.preventDefault();
@@ -730,8 +720,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       onMouseLeave={handleMouseLeave}
       onBlurCapture={handleBlurCapture}
     >
-      {/* A thread row is the legacy sidebar's own control (a focusable div that hosts nested
-          links and buttons), not a SidebarMenuSubButton, so it owns its look here. */}
       <div
         role="button"
         tabIndex={0}
@@ -2063,8 +2051,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         setOpenMobile(false);
       }
       void (async () => {
-        // No options: branch, worktree, and env mode come from the user's
-        // configured defaults, never from the currently viewed thread.
         const result = await settlePromise(() =>
           handleNewThread(scopeProjectRef(member.environmentId, member.id)),
         );
@@ -2483,8 +2469,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               </span>
             ) : null}
           </span>
-          {/* Keeps the name clear of the environment badge and new-thread button overlaid on
-              the row's end (two slots on touch, where both stay visible). */}
           <span aria-hidden className="w-4 shrink-0 max-sm:w-10" />
         </SidebarMenuButton>
 
@@ -2711,14 +2695,9 @@ const SidebarProjectListRow = memo(function SidebarProjectListRow(props: Sidebar
 function LocalSecondaryStatus() {
   const { environments } = useEnvironments();
   // The desktop reports which local secondary backends (e.g. the WSL backend)
-  // exist; the hook polls because the bridge has no change event. A backend that
-  // is still cold-booting has no httpBaseUrl yet and isn't in the catalog, so we
-  // surface "Connecting" straight from the bootstrap list and clear it once the
-  // matching environment reports a connected phase.
+  // exist; the hook polls because the bridge has no change event.
   const secondaries = useDesktopLocalBootstraps();
 
-  // Connected desktop-local environments keyed by their backend URL so we can
-  // match a bootstrap (which only knows the URL) to its connection phase.
   const localEnvByUrl = useMemo(() => {
     const map = new Map<string, { phase: string; error: string | null }>();
     for (const environment of environments) {
@@ -3047,8 +3026,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   return (
     <SidebarContent
       fixedHeader={
-        // Lifted above the stage backdrop, whose fade bleeds below the
-        // header and would otherwise paint across the search row's outline.
         <SidebarGroup className="z-[1]">
           <SidebarMenu>
             <SidebarMenuItem>

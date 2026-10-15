@@ -305,7 +305,6 @@ const CompatRequestPermissionRpc = Rpc.make(CLIENT_METHODS.session_request_permi
 });
 
 const CompatElicitationRpc = Rpc.make(CLIENT_METHODS.elicitation_create, {
-  // Decode in the handler so malformed requests receive ACP's invalid-params error.
   payload: Schema.Unknown,
   success: Schema.Union([
     AcpSchema.CreateElicitationResponse,

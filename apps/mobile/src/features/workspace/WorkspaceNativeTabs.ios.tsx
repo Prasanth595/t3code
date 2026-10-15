@@ -44,10 +44,6 @@ function RetainedWorkspaceTab(props: {
   ) : null;
 }
 
-/**
- * On phones, compose is UIKit's own search-role tab, detached like Photos' search button; it never
- * becomes selected and opens a new chat instead.
- */
 export function WorkspaceNativeTabs(props: {
   readonly children: ReactNode;
   readonly hidden: boolean;

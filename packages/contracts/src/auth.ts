@@ -75,7 +75,6 @@ export type AuthGrantScope = typeof AuthGrantScope.Type;
 export const AuthGrantScopes = Schema.Array(AuthGrantScope);
 export type AuthGrantScopes = typeof AuthGrantScopes.Type;
 
-// Frozen wire vocabulary for clients released before granular permissions.
 const legacyScopes = new Set<AuthEnvironmentScope>([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -87,7 +86,6 @@ const legacyScopes = new Set<AuthEnvironmentScope>([
   AuthRelayWriteScope,
 ]);
 
-/** Format public auth metadata without changing the server's authorization grant. */
 export function authScopeResponse(scopes: ReadonlyArray<AuthEnvironmentScope>) {
   return { scopes: scopes.filter((scope) => legacyScopes.has(scope)), permissions: scopes };
 }
@@ -138,7 +136,6 @@ export function sessionGrantsScope(
   return parent !== undefined && session.scopes?.includes(parent) === true;
 }
 
-/** Old-only grants lost the child permissions formerly implied by their broad scopes. */
 export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean {
   const permissions = session.permissions;
   return (
@@ -257,7 +254,6 @@ export const AuthPairingCredentialResult = Schema.Struct({
 });
 export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Type;
 
-// Read models contain metadata only. Credentials are returned by creation alone.
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
   ...authScopeResponseFields,
@@ -395,10 +391,6 @@ export const AuthSessionState = Schema.Struct({
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
 
-/**
- * What an agent signed in through MCP OAuth may do, least to most: only read,
- * or act on threads that never run above the given runtime mode.
- */
 export const AuthMcpClientAccess = Schema.Literals([
   "read-only",
   "approval-required",
@@ -408,7 +400,6 @@ export const AuthMcpClientAccess = Schema.Literals([
 ]);
 export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
 
-/** RFC 9728 metadata for an environment's `/mcp` resource. */
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,
   authorization_servers: Schema.Array(Schema.String),
@@ -418,7 +409,6 @@ export const AuthMcpProtectedResourceMetadata = Schema.Struct({
 });
 export type AuthMcpProtectedResourceMetadata = typeof AuthMcpProtectedResourceMetadata.Type;
 
-/** RFC 8414 metadata for the authorization server MCP clients sign in through. */
 export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
   issuer: Schema.String,
   authorization_endpoint: Schema.String,
@@ -433,7 +423,6 @@ export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
 });
 export type AuthMcpAuthorizationServerMetadata = typeof AuthMcpAuthorizationServerMetadata.Type;
 
-/** RFC 7591 client metadata. Fields the server does not use are dropped. */
 export const AuthMcpClientRegistration = Schema.Struct({
   client_name: Schema.optionalKey(Schema.String),
   redirect_uris: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -451,7 +440,6 @@ export const AuthMcpRegisteredClient = Schema.Struct({
 }).pipe(HttpApiSchema.status(201));
 export type AuthMcpRegisteredClient = typeof AuthMcpRegisteredClient.Type;
 
-/** RFC 7591 §3.2.2 registration error. */
 export class AuthMcpRegistrationError extends Schema.Error<AuthMcpRegistrationError>(
   "AuthMcpRegistrationError",
 )(
@@ -487,13 +475,8 @@ export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Typ
 export const AuthMcpApprovalDetails = Schema.Struct({
   /** Self-declared by the client, so shown as such. */
   clientName: Schema.String,
-  /**
-   * Where the code goes: a loopback address on the browser's machine (a CLI
-   * agent), or an https host (a hosted agent).
-   */
   redirectHost: Schema.String,
   environmentHost: Schema.String,
-  /** Present when this browser's session may approve without a pairing code. */
   csrfToken: Schema.optionalKey(Schema.String),
   /**
    * What that session may approve in one click: only access whose scopes it
@@ -527,14 +510,12 @@ export const AuthMcpApprovalDecisionRequest = Schema.Struct({
 });
 export type AuthMcpApprovalDecisionRequest = typeof AuthMcpApprovalDecisionRequest.Type;
 
-/** A problem the approval page shows the user without redirecting anywhere. */
 export class AuthMcpApprovalError extends Schema.TaggedError<AuthMcpApprovalError>()(
   "AuthMcpApprovalError",
   { message: Schema.String },
   { httpApiStatus: 400 },
 ) {}
 
-/** RFC 6749 §4.1.3 token request. */
 export const AuthMcpTokenRequest = Schema.Struct({
   grant_type: Schema.optionalKey(Schema.String),
   code: Schema.optionalKey(Schema.String),
@@ -553,7 +534,6 @@ export const AuthMcpTokenResult = Schema.Struct({
 });
 export type AuthMcpTokenResult = typeof AuthMcpTokenResult.Type;
 
-/** RFC 6749 §5.2 token error. */
 export class AuthMcpTokenError extends Schema.Error<AuthMcpTokenError>("AuthMcpTokenError")(
   {
     error: Schema.Literals([

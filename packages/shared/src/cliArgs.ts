@@ -64,10 +64,6 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
   return tokens;
 }
 
-/**
- * Accepts a string (quote-aware tokenized) or a pre-split argv array.
- * Supports `--key value`, `--key=value`, and `--flag` (boolean) syntax.
- */
 export function parseCliArgs(
   args: string | readonly string[],
   options?: ParseCliArgsOptions,

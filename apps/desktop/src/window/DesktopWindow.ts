@@ -60,15 +60,7 @@ const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
-const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
-  -2, // ERR_FAILED
-  -7, // ERR_TIMED_OUT
-  -9, // ERR_UNEXPECTED (custom protocol handler rejected)
-  -102, // ERR_CONNECTION_REFUSED
-  -105, // ERR_NAME_NOT_RESOLVED
-  -106, // ERR_INTERNET_DISCONNECTED
-  -118, // ERR_CONNECTION_TIMED_OUT
-]);
+const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([-2, -7, -9, -102, -105, -106, -118]);
 
 type WindowTitleBarOptions = Pick<
   Electron.BrowserWindowConstructorOptions,
@@ -105,10 +97,6 @@ export class DesktopWindow extends Context.Service<
     readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
     readonly showConnectingSplash: Effect.Effect<void>;
     readonly handleBackendReady: (httpBaseUrl: URL) => Effect.Effect<void, DesktopWindowError>;
-    // Called when the backend transitions back to "not ready" (clean stop,
-    // restart, crash). Clears the latch that lets `activate` auto-create a
-    // window so a "macOS dock click" while the backend is down doesn't
-    // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
     readonly prepareCaptureReveal: Effect.Effect<void>;
@@ -116,10 +104,6 @@ export class DesktopWindow extends Context.Service<
       action: string,
       options?: { readonly reveal?: boolean },
     ) => Effect.Effect<void, DesktopWindowError>;
-    /**
-     * Only `started` reveals the window; the rest must not interrupt the app
-     * the user has switched to.
-     */
     readonly dispatchSnapShotEvent: (
       event: DesktopSnapShotEvent,
     ) => Effect.Effect<void, DesktopWindowError>;
@@ -127,9 +111,6 @@ export class DesktopWindow extends Context.Service<
     // has keyboard focus, so with an embedded preview WebContentsView (or
     // DevTools) focused they zoom the guest page instead of the app UI.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
-    // Reload and DevTools for the main window's own webContents, for the same
-    // reason as zoomMain: the Electron roles act on the focused webContents,
-    // which is a preview guest whenever a browser page has focus.
     readonly runMainContentsCommand: (command: MainWindowContentsCommand) => Effect.Effect<void>;
     readonly syncAppearance: Effect.Effect<void>;
   }
@@ -142,7 +123,7 @@ function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
   platform: NodeJS.Platform,
 ): { icon: string } | Record<string, never> {
-  if (platform === "darwin") return {}; // macOS uses .icns from app bundle
+  if (platform === "darwin") return {};
   const ext = platform === "win32" ? "ico" : "png";
   return Option.match(iconPaths[ext], {
     onNone: () => ({}),
@@ -193,8 +174,6 @@ export function resolveInitialMainWindowBounds(
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
-// Inlined as a data URL so it needs no bundled asset and no backend — pure CSS,
-// no JS.
 function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
   const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
@@ -395,7 +374,6 @@ export const make = Effect.gen(function* () {
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
       webPreferences: {
         preload: environment.preloadPath,
-        // The window boots hidden (show: false until ready-to-show), and
         // Chromium throttles hidden renderers: timers coalesce and rAF stops,
         // which stalls first paint. Boot unthrottled; the first-reveal trigger
         // re-enables throttling so a hidden or minimized window goes back to
@@ -779,11 +757,8 @@ export const make = Effect.gen(function* () {
         details.reason === "crashed" ||
         details.reason === "oom" ||
         details.reason === "abnormal-exit";
-      // Without a reload the user is left staring at a dead white window while
-      // agents keep running invisibly, so recover by reloading — the renderer
-      // rehydrates from the backend, which is unaffected. Recovery attempts are
-      // bounded so a renderer that dies immediately on boot cannot reload-loop
-      // forever.
+      // Recovery attempts are bounded so a renderer that dies immediately on
+      // boot cannot reload-loop forever.
       runFork(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
@@ -819,8 +794,6 @@ export const make = Effect.gen(function* () {
       if (!window.isDestroyed()) {
         window.webContents.setBackgroundThrottling(true);
       }
-      // Reveal the real window, then close the connecting splash (if any) so the
-      // two don't overlap and there's no blank gap between them.
       if (persistedSettings.mainWindowMaximized) {
         window.maximize();
       }
@@ -862,8 +835,6 @@ export const make = Effect.gen(function* () {
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
-  // With the local environment disabled there is no backend to wait for: the
-  // renderer is served from bundled assets and only talks to remote environments.
   const waitingForBackend = Effect.gen(function* () {
     if (yield* Ref.get(backendReadyRef)) return false;
     return (yield* desktopSettings.get).localEnvironmentEnabled;
@@ -1004,7 +975,6 @@ export const make = Effect.gen(function* () {
         return;
       }
       const webContents = window.value.webContents;
-      // Same step size as the Electron zoomIn/zoomOut menu roles.
       webContents.setZoomLevel(
         direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
       );

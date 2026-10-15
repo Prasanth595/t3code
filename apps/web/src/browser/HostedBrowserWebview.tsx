@@ -166,9 +166,7 @@ export function HostedBrowserWebview(props: {
           if (Number.isInteger(webContentsId) && webContentsId > 0) {
             await bridge.registerWebview(runtimeTabId, webContentsId);
           }
-        } catch {
-          // did-attach/dom-ready will retry if the guest was not ready yet.
-        }
+        } catch {}
       })();
     };
     const recoverGuest = () => {
@@ -297,8 +295,6 @@ export function HostedBrowserWebview(props: {
     active,
     renderingActive,
     // Electron 43 can permanently blank a macOS webview after `visibility: hidden`.
-    // Inactive macOS guests intentionally remain paintable offscreen; other platforms still
-    // suspend them, and automation continues to see the macOS guests as inactive.
     keepPaintableWhenInactive: isMacPlatform(navigator.platform),
     cornerRadius: presentation.cornerRadius,
     zIndex: presentation.zIndex,

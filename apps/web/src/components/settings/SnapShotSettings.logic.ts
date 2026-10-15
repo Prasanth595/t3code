@@ -56,7 +56,6 @@ export function snapShotSetupButtonLabel(state: DesktopSnapShotState | null): st
   return desktop ? `Set up ${desktop} capture` : "Continue setup";
 }
 
-// Windows needs no permissions or setup: turning capture on is enough.
 export function snapShotSetupComplete(
   state: DesktopSnapShotState | null,
   includeAccessibility: boolean,

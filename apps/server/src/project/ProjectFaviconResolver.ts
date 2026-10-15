@@ -14,9 +14,6 @@ import * as Schema from "effect/Schema";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
-// Resolution probes 23 well-known paths plus 7 source files, so a miss
-// costs ~30 filesystem probes. AssetAccess resolves on every project-favicon
-// asset URL, and a project's icon does not move, so the answer is cached.
 const FAVICON_CACHE_CAPACITY = 512;
 const FAVICON_POSITIVE_CACHE_TTL = Duration.minutes(10);
 const FAVICON_NEGATIVE_CACHE_TTL = Duration.minutes(1);
@@ -120,8 +117,6 @@ export class ProjectFaviconResolver extends Context.Service<
 function extractIconHref(source: string): string | null {
   const htmlMatch = source.match(LINK_ICON_HTML_RE);
   if (htmlMatch?.[1]) return htmlMatch[1];
-  // Icon metadata counts when `rel` and `href` share a brace-free run, so a run holding `rel`
-  // but no href falls through to the next one rather than ending the search.
   for (const run of source.split("}")) {
     if (!ICON_REL_RE.test(run)) continue;
     const hrefMatch = run.match(ICON_HREF_RE);
@@ -272,8 +267,6 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    // A grouped project's saved path can be absent from one checkout. Use it
-    // where it exists and retain automatic discovery for the other checkouts.
     if (faviconPath !== undefined) {
       const existing = yield* findExistingFile(projectCwd, [faviconPath], "filesystem");
       if (existing) {
@@ -329,9 +322,6 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    // A hit still confirms the file with one stat rather than the ~20 probes a
-    // full walk costs, so a deleted icon falls back at once instead of after
-    // the TTL.
     const stats = yield* optionOnNotFound(fileSystem.stat(cached)).pipe(
       Effect.mapError(
         (cause) =>

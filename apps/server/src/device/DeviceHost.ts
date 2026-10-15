@@ -62,14 +62,12 @@ export class AgentDeviceStartError extends Schema.TaggedError<AgentDeviceStartEr
 }
 
 export interface DeviceHubEndpoint {
-  /** Loopback origin of expo-device-hub, e.g. `http://127.0.0.1:3400`. */
   readonly origin: string;
 }
 
 export interface AgentDeviceEndpoint {
   readonly baseUrl: string;
   readonly token: string;
-  /** Host-local path of the agent-device entry script. The provider uses a separate local CLI install. */
   readonly entryPath: string;
 }
 
@@ -100,23 +98,16 @@ export class DeviceHost extends Context.Service<
     readonly platformAvailability: (
       platform: DevicePlatform,
     ) => Effect.Effect<DevicePlatformAvailability>;
-    /**
-     * Idempotent: concurrent callers share one start, and a ready host returns
-     * immediately.
-     */
     readonly ensureReady: (
       onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
     ) => Effect.Effect<DeviceHostReady, DeviceHostError | NodeRuntimeUnavailableError>;
-    /** Installs and starts agent-device after the user grants agent access. */
     readonly ensureAgentReady: (
       onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
     ) => Effect.Effect<
       DeviceHostAgentReady,
       DeviceHostError | DeviceHostTimeoutError | AgentDeviceStartError | NodeRuntimeUnavailableError
     >;
-    /** Current endpoints when already running, without starting anything. */
     readonly current: Effect.Effect<DeviceHostReady | null>;
-    /** Stops only agent-device. Manual viewing through the hub stays available. */
     readonly stopAgent: Effect.Effect<void>;
     /** Stops helpers. Devices themselves keep running; the user owns those. */
     readonly stop: Effect.Effect<void>;

@@ -164,9 +164,6 @@ export function getAddProjectInitialQuery(baseDirectory: string | null | undefin
 export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | undefined): string {
   const withoutQuery = (repositoryOrRemoteUrl ?? "").split(/[?#]/)[0]?.trim() ?? "";
   const schemeIndex = withoutQuery.indexOf("://");
-  // A remote URL carries a host before the repository path. The host is never
-  // the repository, so a link that stops at the host, or at a port, names
-  // nothing and the destination falls back to the browsed folder.
   const hasHost = schemeIndex >= 0 || /^[^/\\:]+@[^/\\:]+:/.test(withoutQuery);
   const pathPart = schemeIndex >= 0 ? withoutQuery.slice(schemeIndex + "://".length) : withoutQuery;
   const segments = pathPart.split(/[/\\:]+/).filter((segment) => segment.trim().length > 0);
@@ -175,9 +172,6 @@ export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | und
   }
 
   const lastSegment = segments.at(-1)?.trim() ?? "";
-  // A port can only sit directly behind the authority, so it is a port only
-  // when nothing follows it. Deeper segments are path, even when numeric: the
-  // repository in `https://host/acme/123` really is named `123`.
   if (hasHost && segments.length === 2 && /^\d+$/.test(lastSegment)) {
     return "";
   }
@@ -195,17 +189,12 @@ export function getCloneDestinationPath(
   return `${ensureBrowseDirectoryPath(directoryPath)}${name}`;
 }
 
-/**
- * Where `projects.createNew` will put a project named `name`. The server adds
- * `-2`, `-3`, ... when that folder is taken, so this is a preview.
- */
 export function getNewProjectPathPreview(newProjectsRoot: string, name: string): string {
   return getCloneDestinationPath(newProjectsRoot, newProjectFolderName(name));
 }
 
 export interface NewProjectPublishTarget {
   readonly definition: SourceControlClientDefinition;
-  /** Null lets the host's CLI place it under the signed-in user. */
   readonly owner: string | null;
 }
 

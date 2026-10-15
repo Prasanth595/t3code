@@ -1,9 +1,8 @@
 /**
- * The column is nullable on purpose — backfilling it during the migration
- * would require knowing which configured instance "owned" each historical
- * session, and that mapping is ambiguous when the user later configures
- * multiple instances of the same driver. Keeping that compatibility at the
- * persistence boundary keeps the fallback out of active routing code.
+ * The column is nullable on purpose — backfilling it during the migration would
+ * require knowing which configured instance "owned" each historical session,
+ * and that mapping is ambiguous when the user later configures multiple
+ * instances of the same driver.
  */
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Effect from "effect/Effect";

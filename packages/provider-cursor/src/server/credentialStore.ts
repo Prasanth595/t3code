@@ -21,10 +21,6 @@ const Credentials = Schema.fromJsonString(
 const decodeCredentials = Schema.decodeUnknownEffect(Credentials);
 const encodeCredentials = Schema.encodeEffect(Credentials);
 
-/**
- * `legacyFile` is the SDK file store earlier versions used; its sign-in moves into the secret
- * store once and the file is deleted.
- */
 export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(function* (
   instanceId: ProviderInstanceId,
   legacyFile?: string,
@@ -35,7 +31,6 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
     yield* Effect.gen(function* () {
       const legacy = yield* fileSystem.readFileString(legacyFile).pipe(Effect.option);
       if (Option.isNone(legacy)) return;
-      // A stored sign-in wins unless it is damaged; the SDK would ignore it anyway.
       const stored = yield* credentials.get;
       const storedIsValid =
         Option.isSome(stored) &&

@@ -16,7 +16,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * Grok reports cost in integer ticks where `1 USD = 10^10` ticks. See Grok
- * headless `total_cost_usd_ticks`. Convert to dollars for pricing.
+ * headless `total_cost_usd_ticks`.
  */
 export const GROK_COST_USD_TICKS_PER_DOLLAR = 10_000_000_000;
 

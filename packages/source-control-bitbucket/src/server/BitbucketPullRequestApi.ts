@@ -115,8 +115,8 @@ function isRepositoryPermissionUnavailableError(
 }
 
 /**
- * Bitbucket's own ceiling. Asking for more does not fail — it answers with an empty page and no
- * error at all, so this is a number to respect rather than to push against.
+ * Asking for more does not fail — it answers with an empty page and no error at
+ * all, so this is a number to respect rather than to push against.
  */
 const MAX_PAGE_SIZE = 50;
 const MAX_LIST_PAGES = 10;
@@ -172,11 +172,6 @@ export class BitbucketPullRequestApi extends Context.Service<
     }) => Effect.Effect<BitbucketDiffStat, BitbucketPullRequestApiError>;
 
     /**
-     * What the pull request's head has of each of these paths, as opaque ids, read off the pull
-     * request's own patch, the only place Bitbucket states a file's version. A path the patch does
-     * not carry is answered as the empty revision, and left out altogether when the patch was cut
-     * short at the byte ceiling and so cannot be spoken for.
-     *
      * Answers with every file the patch carries rather than only the paths asked about, since
      * reading one file's version here means parsing all of them. `complete` is false for a patch
      * cut short, which cannot speak for what came after the cut.
@@ -280,7 +275,6 @@ export class BitbucketPullRequestApi extends Context.Service<
   }
 >()("@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi") {}
 
-/** `workspace/slug`; Bitbucket has no deeper nesting to address. */
 function repositorySegments(
   repository: string,
 ): Result.Result<
@@ -327,9 +321,7 @@ function stateParams(state: PullRequestListState): ReadonlyArray<string> {
 
 /**
  * The parentheses matter, because the expression is ANDed with the state filter beside it and
- * an unbracketed `OR` would swallow it. A string literal in that grammar is delimited by double
- * quotes, so the reader's text is escaped before it goes inside one — a quote would otherwise
- * end the literal and leave the rest of the text standing as filter syntax.
+ * an unbracketed `OR` would swallow it.
  */
 function searchFilter(query: string): string {
   const literal = filterLiteral(query);
@@ -337,8 +329,8 @@ function searchFilter(query: string): string {
 }
 
 /**
- * Text as a string literal of Bitbucket's filter grammar. The backslash is escaped first, or
- * escaping the quote would only produce a literal backslash followed by a live quote.
+ * The backslash is escaped first, or escaping the quote would only produce a literal
+ * backslash followed by a live quote.
  */
 function filterLiteral(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
@@ -349,7 +341,6 @@ function mergeStrategy(method: PullRequestMergeMethod | undefined): string {
     case "squash":
       return "squash";
     case "rebase":
-      // The linear history GitHub calls "rebase and merge".
       return "rebase_fast_forward";
     default:
       return "merge_commit";
@@ -387,10 +378,6 @@ export const make = Effect.gen(function* () {
       : Effect.fail(segments.failure);
   };
 
-  /**
-   * Bitbucket pages with a cursor rather than an offset, so the walk follows the `next` URL it
-   * sends.
-   */
   const listPage = (input: {
     readonly url: string;
     readonly limit: number;
@@ -413,9 +400,6 @@ export const make = Effect.gen(function* () {
         if (next === null || collected.length >= input.limit || input.page >= MAX_LIST_PAGES) {
           return Effect.succeed({
             items: collected.slice(0, input.limit),
-            // Bitbucket pages in fifties whatever was asked for, so a walk that stopped on the
-            // count rather than on the last page is holding rows it is about to drop. Those are
-            // more results just as surely as another page would be.
             truncated: next !== null || collected.length > input.limit,
           });
         }
@@ -554,8 +538,6 @@ export const make = Effect.gen(function* () {
     },
     {
       capacity: REVISION_PATCH_CAPACITY,
-      // A failure is not held: the tick after it should reach Bitbucket rather than be handed the
-      // same error for as long as a good patch would have lasted.
       timeToLive: (exit) => (Exit.isSuccess(exit) ? REVISION_PATCH_TTL : Duration.zero),
     },
   );
@@ -802,8 +784,6 @@ export const make = Effect.gen(function* () {
       withRepository(input.repository, (path) =>
         bitbucket
           .request({
-            // Bitbucket keeps a pull request's remarks and its line comments in the one
-            // collection, so this endpoint rewrites either kind.
             method: "PUT",
             url: `${path}/pullrequests/${input.number}/comments/${encodeURIComponent(
               input.commentId,
@@ -871,7 +851,6 @@ export const make = Effect.gen(function* () {
       withRepository(input.repository, (path) =>
         bitbucket
           .request({
-            // Resolving is a sub-resource that is created and deleted, rather than a field.
             method: input.resolved ? "POST" : "DELETE",
             url: `${path}/pullrequests/${input.number}/comments/${encodeURIComponent(
               input.commentId,

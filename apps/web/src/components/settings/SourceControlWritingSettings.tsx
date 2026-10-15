@@ -69,8 +69,6 @@ export function SourceControlWritingSettingsSection() {
   const mixedReviewGuidesEnabled = useScopedSettingsMixed(["reviewGuidesEnabled"]);
   const navigate = useNavigate();
   const { environment, connectedEnvironments, targets, target } = useSettingsScope();
-  // The representative supplies the provider list; a model choice is checked
-  // against every target before it fans out.
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const serverProviders = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
@@ -114,7 +112,6 @@ export function SourceControlWritingSettingsSection() {
       target?.projectId ?? null,
     ),
   );
-  // The environment default can name an instance this project turned off.
   const projectEnabledInstanceIds = new Set(
     instanceEntries
       .filter((entry) => entry.enabled && entry.isAvailable)
@@ -165,7 +162,6 @@ export function SourceControlWritingSettingsSection() {
     },
     textGenerationProviders,
   );
-  // Its own list: a custom model chosen for guides is not among the writer model's options.
   const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     textGenerationProviders,
@@ -436,7 +432,6 @@ export function SourceControlWritingSettingsSection() {
         }
       />
 
-      {/* A beta the server owns: off hides the Guide tab in every client and refuses agents. */}
       <SettingsRow
         serverScoped
         settingKeys={["reviewGuidesEnabled"]}
@@ -531,7 +526,6 @@ export function SourceControlWritingSettingsSection() {
                         updateSettings({ reviewGuideModelSelection: null });
                         return;
                       }
-                      // Every selected target gets this model, so it must run on all of them.
                       const reason = writerModelDisabledReason(
                         activeSelection.instanceId,
                         activeSelection.model,

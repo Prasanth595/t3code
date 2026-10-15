@@ -44,7 +44,6 @@ export function splitSharedServerPatch(patch: ServerSettingsPatch): {
   };
 }
 
-/** Filter unsupported preferences; direct model writes retain the server's fallback behavior. */
 export function filterSharedServerPatch(
   patch: ServerSettingsPatch,
   capabilities: Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation"> | undefined,
@@ -85,10 +84,6 @@ export function pickSharedServerSettings(
   );
 }
 
-/**
- * Whether an environment can participate in shared-settings sync right now.
- * Auto-settlement establishes baseline support; newer preferences are filtered separately.
- */
 export function supportsSharedSettingsSync(environment: {
   readonly connection: { readonly phase: EnvironmentConnectionPhase };
   readonly serverConfig: {

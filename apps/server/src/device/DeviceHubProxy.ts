@@ -2,8 +2,7 @@
  * The hub binds loopback and is never reachable directly: serve-sim exposes a shell-exec route
  * and serve-emu's action routes are unauthenticated, so the only way to a device stream is
  * through this route, which requires an environment session with read scope (operate scope for
- * input and tuning). Reusing the T3 origin is also what makes remote connections work unchanged —
- * Tailscale and T3 Connect already carry `/api/*` and WebSocket upgrades for the app itself.
+ * input and tuning).
  */
 import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -45,7 +44,6 @@ const ALLOWED_WS_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-emu\/ws$/,
 ];
 
-/** Hop-by-hop and origin headers that must not cross the proxy. */
 const DROPPED_REQUEST_HEADERS = new Set([
   "host",
   "connection",
@@ -165,9 +163,6 @@ const handler = Effect.gen(function* () {
   if (!ready) {
     return HttpServerResponse.text("Device hub is not running", { status: 503 });
   }
-  // The hub runs in standalone mode at its origin root; the panel builds every
-  // stream and socket URL itself, so nothing depends on the hub knowing the
-  // T3 prefix.
   // The ticket authenticates here and must not travel on to the hub.
   const upstreamSearch = new URLSearchParams(url.value.search);
   upstreamSearch.delete("wsTicket");

@@ -1,10 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off
 // The SDK's host factory is Promise-based and owns a raw child process, as production's does.
-/**
- * Uses the machine's own `muse login`. `T3_MUSE_BIN` picks the binary. The
- * recording replays itself through the fixture's assertions before it is
- * written, so a run that fails them never replaces the existing transcript.
- */
 import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -135,7 +130,6 @@ function makeRecordingCreateHost(
       entries.push({ type, ...(label === undefined ? {} : { label }), frame });
     };
     record("expect_outbound", { type: "host_start", args });
-    // The binary named by T3_MUSE_BIN, so the recorded version matches what ran.
     const child = NodeChildProcess.spawn(museStart.command, [...museStart.args, ...args], {
       cwd: options.cwd,
       env: options.environment ?? makeMuseEnvironment(),
@@ -146,7 +140,6 @@ function makeRecordingCreateHost(
     );
     async function* incoming() {
       let buffer = "";
-      // utf8 decoding keeps a character split across chunks intact.
       for await (const chunk of child.stdout.setEncoding("utf8")) {
         buffer += String(chunk);
         const lines = buffer.split("\n");
@@ -270,7 +263,6 @@ const record = Effect.gen(function* () {
       model: variant.modelSelection.model,
       commandIds,
     },
-    // The verbatim root first: it contains the canonical path.
     entries: normalizeEntries(entries, [
       yield* museWorkspaceRoot(canonicalWorkspace),
       canonicalWorkspace,

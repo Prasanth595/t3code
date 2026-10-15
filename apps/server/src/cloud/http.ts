@@ -83,7 +83,6 @@ const toHttpError = <A, R>(effect: Effect.Effect<A, ConnectFailure, R>) =>
     ),
   );
 
-/** Relay configuration is the one route that answers 503 when the tunnel cannot serve. */
 const toHttpErrorOrUnavailable = <A, R>(
   effect: Effect.Effect<A, ConnectFailure | CloudLink.CloudLinkEndpointUnavailableError, R>,
 ) =>

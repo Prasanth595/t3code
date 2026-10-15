@@ -27,11 +27,8 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as McpAppModelContext from "./McpAppModelContext.ts";
 
 /**
- * The app is resolved from the tool call that produced it, so it reaches only
- * that server, and each request runs through the thread's live provider
- * session, whose MCP client owns the connection and its credentials. A stopped
- * session is reported, never started: an app view must not spend a provider
- * turn.
+ * A stopped session is reported, never started: an app view must not spend a
+ * provider turn.
  */
 export class McpAppRequests extends Context.Service<
   McpAppRequests,
@@ -75,7 +72,6 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) {
-    // The stored item, not the wire projection, so the reference is intact.
     const item = yield* orchestrator
       .getTurnItem({ threadId: input.threadId, itemId: input.itemId })
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
@@ -166,9 +162,6 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
   });
 
-  // Context is state for the agent's next turn, so it needs the app but not a
-  // live session. Text blocks are kept as written and structured content as
-  // JSON; other content kinds are not declared by the host.
   const descendsFrom = Effect.fn("McpAppRequests.descendsFrom")(function* (
     threadId: ThreadId,
     ancestorId: ThreadId,
@@ -206,7 +199,6 @@ const make = Effect.gen(function* () {
     if (input.structuredContent !== undefined) {
       texts.push(encodeJson(input.structuredContent));
     }
-    // Kept as sent; blank text clears the app's context in the store.
     const text = texts.join("\n");
     if (utf8.encode(text).byteLength > McpAppModelContext.MCP_APP_MODEL_CONTEXT_MAX_BYTES) {
       return yield* fail(

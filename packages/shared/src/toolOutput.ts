@@ -168,9 +168,6 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     delete output.threadId;
     delete output.status;
   }
-  // An app's declared origins are the only unbounded-ish part of its
-  // reference; hosting works without them (the stored document carries its
-  // own policy), so they go before the app does.
   const app = output[MCP_APP_OUTPUT_KEY];
   if (app?.csp !== undefined && oversized()) {
     const { csp: _csp, ...rest } = app;
@@ -218,7 +215,6 @@ export function toolOutputIndicatesFailure(text: string): boolean {
   );
 }
 
-/** An image a tool returned inline. `data` is base64; a detail read omits it. */
 export interface ToolOutputImage {
   readonly mimeType: string;
   readonly data?: string;
@@ -247,10 +243,8 @@ function outputBlocks(value: unknown): ReadonlyArray<unknown> {
   return [value];
 }
 
-/** A tool returns one screenshot or a few frames; more would only flood the timeline. */
 export const MAX_TOOL_OUTPUT_IMAGES = 8;
 
-/** The largest image a `tool-output-image` asset serves: a provider turn's limit, as base64. */
 export const MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH =
   Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4;
 
@@ -272,10 +266,6 @@ export function toolOutputImages(value: unknown): ReadonlyArray<ToolOutputImage>
   return toolOutputImageBlocks(value).flatMap((block) => readToolOutputImage(block) ?? []);
 }
 
-/**
- * Replaces each image's bytes with `{ type: "image", mimeType }` and keeps its
- * position, so detail reads stay small and clients load the bytes as assets.
- */
 export function omitToolOutputImageData(value: unknown): unknown {
   const omit = (block: unknown) => {
     const image = readToolOutputImage(block);

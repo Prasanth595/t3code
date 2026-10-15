@@ -71,8 +71,6 @@ export function ProjectActionsSettings() {
       return [
         {
           environmentId: candidate.environmentId,
-          // Writes read the raw environment settings so an override entry is
-          // extended, not derived from already-resolved values.
           settings: environment.serverConfig.settings,
           keybindings: environment.serverConfig.keybindings,
           ...(member ? { project: member } : {}),

@@ -1,10 +1,3 @@
-/**
- * Providers run inside a T3 server but must not import it. The server provides this one
- * service; everything a provider needs from its environment (settings, the process runner)
- * goes through it, so a provider package depends only on `@t3tools/source-control-core` and
- * its own API and CLI code. HTTP, the filesystem, and paths come from Effect's platform
- * services directly.
- */
 import type {
   GitCommandError,
   ServerSettings,
@@ -30,7 +23,6 @@ export interface SourceControlProcessInput {
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
-  /** What happens past `maxOutputBytes`: fail the run, or keep the first bytes. */
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly appendTruncationMarker?: boolean;
 }

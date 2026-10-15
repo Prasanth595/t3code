@@ -97,7 +97,6 @@ export interface GitRunStackedActionOptions {
 }
 
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
-  /** Retry a cached missing PR without clearing known PRs or failed lookup backoff. */
   readonly refreshMissingPullRequest?: boolean;
 }
 
@@ -152,10 +151,6 @@ export class GitManager extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
-    /**
-     * Pull requests a branch PR lookup saw in a new state (merged, closed, reopened), so thread
-     * links can catch up before the next sync sweep. Best effort.
-     */
     readonly subscribePullRequestStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
       never,
@@ -170,21 +165,11 @@ const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
 const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
-// Matches the automatic settlement sweep cadence so every background sweep
-// reads fresh branch state: an external merge settles within about a minute
-// instead of waiting out a longer cache.
 const PR_LOOKUP_CACHE_TTL = Duration.seconds(60);
-// Answers without an open PR ("no PR yet", merged, closed) only change when
-// someone opens a PR, and the paths that do that in-app (turn end, push,
-// create PR, user refresh) bypass this cache. Re-asking every minute for each
-// idle branch was the bulk of background GitHub quota use, so these wait out
-// a longer TTL and a PR opened outside the app shows up within minutes.
 const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(5);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
-// Matches PR_LOOKUP_NO_OPEN_PR_CACHE_TTL, the delay already accepted for a
-// change made outside the app.
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
@@ -763,8 +748,6 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const root = yield* fileSystem.realPath(cwd);
       const instructionPath = yield* fileSystem.realPath(path.join(root, fileName));
-      // A drive root such as `D:\` already ends with a separator, so compare
-      // with path.relative instead of a `${root}${sep}` prefix.
       const relative = path.relative(root, instructionPath);
       if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
         return "";
@@ -1111,11 +1094,6 @@ export const make = Effect.gen(function* () {
     normalizeStatusCacheKey(cwd).pipe(
       Effect.flatMap((cacheKey) => Cache.invalidate(localStatusResultCache, cacheKey)),
     );
-  // PR lookups hit the hosting provider's API (gh/glab/...), so they refresh
-  // on their own, slower cadence: ahead/behind counts stay fresh on every
-  // status poll while the PR association is re-fetched at most once per
-  // PR_LOOKUP_CACHE_TTL per branch. Git actions and user-driven refreshes bump
-  // the epoch (invalidateStatus) to bypass the cache immediately.
   const prLookupEpochByCwd = new Map<string, number>();
   const prLookupEpoch = (cwd: string) => prLookupEpochByCwd.get(cwd) ?? 0;
   const bumpPrLookupEpoch = (cwd: string) =>
@@ -1124,8 +1102,6 @@ export const make = Effect.gen(function* () {
         prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
       }),
     );
-  // Automatic settlement validates repository URLs against the cached value
-  // before it uses a pull request decision.
   const prLookupCacheKey = (
     cwd: string,
     details: {
@@ -1160,8 +1136,6 @@ export const make = Effect.gen(function* () {
     prLookupFailureStreakByKey.set(key, streak);
     return prLookupFailureTtl(streak);
   };
-  // The thread details panel shows this lookup, so a merge it sees must reach the thread's
-  // link and settlement right away.
   const pullRequestStateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
   const lookupStates = new Map<string, PullRequestInfo["state"]>();
   const noteLookupState = (pr: PullRequestInfo) =>
@@ -1170,7 +1144,6 @@ export const make = Effect.gen(function* () {
       if (parsed === null || parsed.number !== pr.number) return Effect.void;
       const key = normalizeThreadPullRequestKey(parsed);
       const id = threadPullRequestKeyOf(key);
-      // An unseen pull request counts as open, so only a terminal first read announces.
       const previous = lookupStates.get(id) ?? "open";
       lookupStates.delete(id);
       if (lookupStates.size >= PR_LOOKUP_CACHE_CAPACITY) {
@@ -1228,10 +1201,6 @@ export const make = Effect.gen(function* () {
     },
   );
   const getPrLookup = (key: string) => detachStackFrame(Cache.get(prLookupCache, key));
-  // A transient lookup failure (rate limit, network blip) must not clear an
-  // already-known PR badge, so the last successful answer per branch sticks
-  // around as the fallback. Keep the resolved head context with it so a
-  // branch retargeted to another remote/fork cannot inherit the old badge.
   interface LastKnownPr {
     readonly pr: ReturnType<typeof toStatusPr> | null;
     readonly upstreamRef: string | null;
@@ -1271,10 +1240,6 @@ export const make = Effect.gen(function* () {
       return lastKnown.headRemoteUrlKey === current.headRemoteUrlKey ? lastKnown.pr : null;
     }
 
-    // If the remote URL can't be compared, fall back to the remote identity
-    // encoded by tracked branches — same "both sides known" requirement, for
-    // the same reason. A null-to-non-null transition (upstream/remoteName)
-    // is allowed because that is the expected first-push case.
     if (
       lastKnown.upstreamRef !== null &&
       current.upstreamRef !== null &&
@@ -1310,7 +1275,6 @@ export const make = Effect.gen(function* () {
     return yield* getPrLookup(cacheKey).pipe(
       Effect.map(({ latest, headContext }) => {
         if (!latest) return { pr: null, headContext };
-        // On the default branch, only surface open PRs.
         // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
         if (details.isDefaultBranch && latest.state !== "open") {
           return { pr: null, headContext };
@@ -1467,7 +1431,6 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  // Most branches track origin, so read it once.
   const resolveHeadAndOriginContexts = (cwd: string, remoteName: string | null) =>
     remoteName === "origin"
       ? resolveRemoteRepositoryContext(cwd, "origin").pipe(
@@ -1598,9 +1561,6 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  // A no-upstream branch may have local commits after its last push. Prefer a
-  // unique exact ref, then a unique remote tip in its history; never break a
-  // fork tie by remote order.
   const findPublishedBranchRemote = Effect.fn("findPublishedBranchRemote")(function* (
     cwd: string,
     branch: string,
@@ -1688,9 +1648,7 @@ export const make = Effect.gen(function* () {
   // `git worktree add -b feature origin/main` makes the new local branch track
   // origin/main. That upstream is the branch's base, not its published PR head.
   // Looking up PRs for it can attach an old reverse merge from main and
-  // auto-settle an unrelated feature thread. Both the cached lookup and the
-  // failure fallback resolve through here so the last-known PR compares against
-  // the same head branch.
+  // auto-settle an unrelated feature thread.
   const resolveLookupHeadContext = Effect.fn("resolveLookupHeadContext")(function* (
     cwd: string,
     details: {
@@ -1739,13 +1697,6 @@ export const make = Effect.gen(function* () {
     return { headContext: ownNameContext, lookup: true };
   });
 
-  /**
-   * `git push` writes the remote-tracking ref even without `-u` (how most
-   * terminal and agent pushes land), and configured upstream metadata survives
-   * when a merged change request's remote branch is deleted. A repository that
-   * tracks no remotes at all cannot answer the question, because then every
-   * branch looks unpublished; it, and any failed probe, keeps the lookup.
-   */
   const isUnpublishedBranch = Effect.fn("isUnpublishedBranch")(function* (
     cwd: string,
     headContext: Pick<BranchHeadContext, "headBranch" | "localBranch">,
@@ -1977,10 +1928,6 @@ export const make = Effect.gen(function* () {
       return defaultFromProvider;
     }
 
-    // The provider lookup can fail for reasons unrelated to the branch, so fall
-    // back to what the remote itself records before assuming a name. A repository
-    // whose default branch is master would otherwise get a base branch that does
-    // not exist.
     const defaultFromRemote = yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
       Effect.flatMap((remoteName) => gitCore.resolveDefaultBranchName(cwd, remoteName)),
       Effect.orElseSucceed(() => null),
@@ -2508,8 +2455,6 @@ export const make = Effect.gen(function* () {
       ...(localBranchExists ? {} : { remoteName }),
     });
     if (options.refresh) {
-      // A completed turn can create a PR or reuse a merged PR's branch.
-      // Refresh successful answers, but keep failed lookups' retry backoff.
       const cached = yield* Cache.getOption(prLookupCache, cacheKey).pipe(
         Effect.orElseSucceed(() => Option.none()),
       );
@@ -2611,9 +2556,6 @@ export const make = Effect.gen(function* () {
     function* (cwd) {
       yield* invalidateLocalStatusResultCache(cwd);
       yield* invalidateRemoteStatusResultCache(cwd);
-      // Full invalidation is the explicit-freshness path (git actions, user
-      // refresh); it also bypasses the slow PR-lookup cache. The periodic
-      // status poll only invalidates local/remote and keeps the PR cache warm.
       yield* bumpPrLookupEpoch(cwd);
       yield* forgetPrLookupGitState(cwd);
     },
@@ -2710,9 +2652,7 @@ export const make = Effect.gen(function* () {
 
       // Git refuses to move a branch that is checked out in a worktree, so the
       // reuse paths cannot go through materializePullRequestHeadBranch and instead
-      // advance the checkout from inside the worktree. A worktree that cannot be
-      // moved (no reachable head, local commits, dirty tree) is still handed
-      // back, because stranding the thread is worse than reporting the staleness.
+      // advance the checkout from inside the worktree.
       const reuseExistingWorktree = Effect.fn("reuseExistingWorktree")(function* (
         worktreePath: string,
         checkedOutBranch: string,

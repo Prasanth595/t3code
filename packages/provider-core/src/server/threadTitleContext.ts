@@ -12,7 +12,6 @@ const MAX_MESSAGE = 2_000;
 const OMITTED = "[Earlier content truncated]\n\n";
 const TRUNCATED = "\n[Content truncated]\n";
 
-/** Keep the request and its final constraints when a message is too long. */
 export function limitTitleMessage(text: string, budget: number): string {
   if (text.length <= budget) return text;
   if (budget <= TRUNCATED.length) return "";
@@ -22,7 +21,6 @@ export function limitTitleMessage(text: string, budget: number): string {
   return `${text.slice(0, head)}${TRUNCATED}${tail > 0 ? text.slice(-tail) : ""}`;
 }
 
-/** Reserve space for user intent before adding assistant findings, in conversation order. */
 export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>) {
   const sections = messages.flatMap((message, index) => {
     // Thinking traces are working notes, not what the thread is about, and they

@@ -17,7 +17,6 @@ export function isPasteAsTextShortcut(
 }
 
 /**
- * Large clipboard text becomes a file so an agent can inspect it selectively.
  * The threshold is byte-based: character counts substantially understate the
  * context cost of some Unicode-heavy clipboard contents.
  */

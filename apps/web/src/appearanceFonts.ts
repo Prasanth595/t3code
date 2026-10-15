@@ -20,10 +20,6 @@ export const DEFAULT_CODE_FONT_STACK =
 
 export const TYPOGRAPHY_ADVANCED_STORAGE_KEY = "t3code:typography-advanced";
 
-/**
- * In Advanced mode an empty terminal preference means the terminal default,
- * keeping later code-font changes isolated to code surfaces.
- */
 export function resolveTerminalFontPreference(input: {
   readonly advanced: boolean;
   readonly code: string;
@@ -102,8 +98,6 @@ export function applyAppearanceFontVariables(
   root.style.setProperty("--font-size-code", `${code}px`);
   root.style.setProperty("--diffs-font-size", `${code}px`);
 
-  // Inherited from the root; only macOS engines honor the property, so no
-  // platform gate is needed here.
   if (preferences.smoothing) {
     root.style.setProperty("-webkit-font-smoothing", "antialiased");
   } else {
@@ -183,10 +177,6 @@ export function areFontAdvancesMonospace(advances: readonly number[]): boolean {
   return advances.every((advance) => Math.abs(advance - reference) < MONOSPACE_ADVANCE_TOLERANCE);
 }
 
-/**
- * Unmeasurable environments answer true, so a missing canvas never blocks a
- * legitimate font.
- */
 export function isMonospaceFamily(family: string): boolean {
   const families = cssFontFamilies(family);
   if (families === null) return true;
@@ -196,8 +186,6 @@ export function isMonospaceFamily(family: string): boolean {
     }
     if (fontProbeContext === null) return true;
     const context = fontProbeContext;
-    // Fall back to a generic mono so an absent face measures as monospace and
-    // is left for the normal fallback chain to resolve.
     for (const variant of MONOSPACE_PROBE_VARIANTS) {
       context.font = `${variant} 32px ${families}, monospace`;
       const advances = MONOSPACE_PROBE_GLYPHS.map((glyph) => context.measureText(glyph).width);
@@ -313,8 +301,7 @@ let installedFamiliesCache: InstalledFontFamiliesResult | null = null;
 
 /**
  * Call from a user gesture: the first call raises the browser's local-fonts
- * permission prompt. A denial is not cached, so reopening the picker can ask
- * again after the user changes the site setting.
+ * permission prompt.
  */
 export async function queryInstalledFontFamilies(): Promise<InstalledFontFamiliesResult> {
   if (installedFamiliesCache !== null) return installedFamiliesCache;

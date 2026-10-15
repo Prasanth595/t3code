@@ -1,17 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-/**
- * Each wrapped command runs with a high `oom_score_adj`, so the kernel OOM killer picks it
- * before the server. Under a systemd user manager it also runs in its own transient scope, so
- * systemd-oomd (which kills whole leaf cgroups) kills one agent instead of the server and every
- * other agent.
- */
 export interface AgentScopeShape {
-  /**
-   * `env` is the environment the command will run with, used to resolve it on PATH. A command
-   * that does not resolve stays unwrapped, so a missing binary still fails at spawn.
-   */
   readonly wrap: (input: {
     readonly command: string;
     readonly args: ReadonlyArray<string>;
@@ -25,11 +15,6 @@ export interface AgentScopeShape {
      */
     readonly survivesRestart?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
-  /**
-   * Whether the latest agent scope of this thread was killed because the
-   * machine or the agents slice ran out of memory. The answer holds until the
-   * thread launches its next agent, so a retried failure reads the same.
-   */
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
   /**
    * Forgets the thread's scope. The session manager calls it before it opens
@@ -52,18 +37,11 @@ export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/Ag
   }),
 });
 
-/**
- * The thread an ACP runtime is spawned for. ACP runtimes are shared by several
- * provider flavors and do not take a thread id, so the ACP adapter provides it.
- */
 export const AgentScopeThreadId = Context.Reference<string | undefined>(
   "@t3tools/shared/AgentScope/ThreadId",
   { defaultValue: () => undefined },
 );
 
-/**
- * An unprivileged process may raise its own score, never lower it.
- */
 export const AGENT_OOM_SCORE_ADJ = 800;
 
 export const RAISE_OOM_SCORE_LINE = `{ echo ${AGENT_OOM_SCORE_ADJ} >/proc/self/oom_score_adj; } 2>/dev/null`;

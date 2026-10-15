@@ -46,7 +46,6 @@ const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof Ga
   under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
 };
 
-/** The series colour the cost chart uses for this driver, so the two views read as one. */
 export function barColor(driver: ServerProvider["driver"]): string {
   const kind: UsageProviderKind | undefined =
     driver === "codex"
@@ -91,7 +90,6 @@ function WindowBar({
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const elapsed = elapsedShare(window, now);
-  // The fill is quota left, so the even-spending mark is the time left.
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt

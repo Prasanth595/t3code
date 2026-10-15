@@ -31,7 +31,6 @@ import { toastManager } from "../ui/toast";
 import { handoffPrompt, handoffReviewComments, readableFailure } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 
-/** Resolve on demand so hidden quick actions do not rebuild the legacy project grouping. */
 export function usePullRequestDefaultMergeMethodResolver(
   environmentId: EnvironmentId,
   projectId: ProjectId,
@@ -176,7 +175,6 @@ export function usePullRequestCloseBatch(onClosed: (entry: EnvironmentPullReques
     async (entries: readonly EnvironmentPullRequestEntry[]) => {
       const batch = entries.filter((entry) => {
         const key = pullRequestEntryKey(entry);
-        // The sweep only gathers rows whose host can close them, so state is all that is left.
         if (entry.state !== "open" || pending.current.has(key)) return false;
         pending.current.add(key);
         return true;
@@ -235,12 +233,6 @@ export type PullRequestHandoffDetail = Pick<
   "projectId" | "workspaceRoot" | "url"
 >;
 
-/**
- * What the last hand-off wrote into each draft, kept outside React because the panel that wrote
- * it is closed by the time the next one opens. It is how a prompt the reader has since edited
- * is told apart from the one they were handed: only the sentence still exactly as written may
- * be replaced.
- */
 const lastHandoffPromptByDraft = new Map<DraftId, string>();
 
 export function usePullRequestHandoffs({
@@ -313,8 +305,6 @@ export function usePullRequestHandoffs({
     toastManager.add({
       type: "success",
       title: "Asked in a thread",
-      // "Ask" leaves the composer empty on purpose, so saying the question is in it would send
-      // the reader looking for something that is not there. The chips are what landed.
       description:
         task.prompt.length > 0
           ? "The question is in the composer — read it over, then send."
@@ -325,7 +315,6 @@ export function usePullRequestHandoffs({
   const startHandoff = async (
     kind: string,
     task: PullRequestThreadTask | null,
-    // A worktree leaves whatever is open alone, which is why it is the default.
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!detail || handoff !== null) return;
@@ -379,9 +368,6 @@ export function usePullRequestHandoffs({
     );
     if (!pointed) {
       setHandoff(null);
-      // The checkout is on disk; only the thread failed to move onto it. Writing the task now
-      // would send the agent at whatever the thread was already open on — which is the one
-      // outcome worth stopping for, since it reads as success and is not.
       toastManager.update(toastId, {
         type: "error",
         title: "Checked out, but the thread stayed where it was",
@@ -390,8 +376,6 @@ export function usePullRequestHandoffs({
       return;
     }
     setHandoff(null);
-    // A worktree that was already there and had been worked in keeps whatever it holds, so the
-    // thread opens on older code than the pull request carries.
     const staleCheckoutToast = {
       type: "warning",
       title: "Checked out, but not on the latest commits",

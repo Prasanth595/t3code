@@ -39,7 +39,6 @@ export interface PendingThreadRequests {
   readonly userInputs: ReadonlyArray<ThreadPendingUserInput>;
 }
 
-/** Seed each question once. Existing edits, cleared answers, and option selections win. */
 export function seedUserInputDraftAnswers<Draft extends { readonly customAnswer?: string }>(
   questions: ReadonlyArray<
     Pick<OrchestrationV2UserInputQuestion, "id" | "allowCustomAnswer" | "initialAnswer">
@@ -111,7 +110,6 @@ export function derivePendingThreadRequests(
   return { approvals, userInputs };
 }
 
-/** Older V2 answers were saved on requests without updating their timeline items. */
 export function createQuestionHistoryProjector() {
   type Rows = OrchestrationV2ThreadProjection["visibleTurnItems"];
   type Requests = OrchestrationV2ThreadProjection["runtimeRequests"];
