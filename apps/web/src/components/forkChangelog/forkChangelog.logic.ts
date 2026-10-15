@@ -211,9 +211,6 @@ export function buildForkChangelogAgentTask(
   };
 }
 
-/** The update popup lists at most this many commits. The changelog shows the rest. */
-export const UPDATE_CHANGES_LIMIT = 8;
-
 /** The releases an update brings: newer than the installed version, up to the offered one. */
 export function releasesInUpdate<Release extends Pick<ForkRelease, "version">>(
   releases: ReadonlyArray<Release>,

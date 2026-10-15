@@ -2,22 +2,20 @@ import { useAtomValue } from "@effect/atom-react";
 import type { DesktopUpdateState, EnvironmentId, ForkCommit } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { ChevronRightIcon, GitCommitHorizontalIcon, TagIcon } from "lucide-react";
+import { TagIcon } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { forkReleaseChanges, forkReleases } from "../../state/forkChangelog";
 import { useEnvironmentQuery } from "../../state/query";
 import { SidebarUpdateReleaseNotes } from "../sidebar/SidebarUpdateReleaseNotes";
-import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { ChangelogClockProvider, CommitList, Hint } from "./ForkChangelogDialog";
-import { releasesInUpdate, UPDATE_CHANGES_LIMIT } from "./forkChangelog.logic";
+import { releasesInUpdate } from "./forkChangelog.logic";
 
 interface ForkUpdateChangesProps {
   readonly state: DesktopUpdateState;
   readonly tooltip: string;
-  readonly onOpenChangelog: () => void;
 }
 
 interface UpdateReleasesProps extends ForkUpdateChangesProps {
@@ -29,7 +27,9 @@ interface UpdateReleasesProps extends ForkUpdateChangesProps {
 
 /**
  * Fork feature: the update popup body. It lists the commits of the releases between the installed
- * version and the offered one, as the changelog shows them. Reads run only while the popup is open.
+ * version and the offered one, as the changelog shows them, all in one scrolling list. Reads run
+ * only while the popup is open. Limit: each release costs two GitHub requests (cached on the
+ * server for an hour). Revisit when an update often spans dozens of releases.
  */
 export function ForkUpdateChanges(props: ForkUpdateChangesProps) {
   const environmentId = usePrimaryEnvironmentId();
@@ -58,7 +58,6 @@ function UpdateReleases({
   state,
   tooltip,
   fallback,
-  onOpenChangelog,
 }: UpdateReleasesProps) {
   const releases = useEnvironmentQuery(forkReleases({ environmentId, input: {} }));
   if (releases.error !== null) return fallback;
@@ -68,12 +67,9 @@ function UpdateReleases({
   return (
     <UpdateCommits
       environmentId={environmentId}
-      // Each release has at least one commit, so the newest releases fill the list.
-      tags={inUpdate.slice(0, UPDATE_CHANGES_LIMIT).map((release) => release.tag)}
-      releaseCount={inUpdate.length}
+      tags={inUpdate.map((release) => release.tag)}
       tooltip={tooltip}
       fallback={fallback}
-      onOpenChangelog={onOpenChangelog}
     />
   );
 }
@@ -81,18 +77,14 @@ function UpdateReleases({
 function UpdateCommits({
   environmentId,
   tags,
-  releaseCount,
   tooltip,
   fallback,
-  onOpenChangelog,
 }: {
   readonly environmentId: EnvironmentId;
   /** Newest first. */
   readonly tags: ReadonlyArray<string>;
-  readonly releaseCount: number;
   readonly tooltip: string;
   readonly fallback: ReactNode;
-  readonly onOpenChangelog: () => void;
 }) {
   const tagsKey = tags.join("\n");
   const changesAtom = useMemo(
@@ -108,50 +100,26 @@ function UpdateCommits({
   if (results.some(AsyncResult.isFailure)) return fallback;
   const changes = results.flatMap((result) => Option.toArray(AsyncResult.value(result)));
   if (changes.length < results.length) return <Reading tooltip={tooltip} />;
-
   const commits: ForkCommit[] = changes.flatMap((change) => change.commits);
-  const shown = commits.slice(0, UPDATE_CHANGES_LIMIT);
-  const hiddenCommits = commits.length - shown.length;
-  const unreadReleases = releaseCount - tags.length;
 
   return (
     <PopupBody tooltip={tooltip}>
       <div className="flex shrink-0 px-1 pt-1">
         <Hint
-          label={`${releaseCount} new ${releaseCount === 1 ? "release" : "releases"}`}
+          label={`${tags.length} new ${tags.length === 1 ? "release" : "releases"}`}
           render={
             <span className="flex items-center gap-1 text-muted-foreground text-xs tabular-nums" />
           }
         >
           <TagIcon aria-hidden className="size-3" />
-          {releaseCount}
+          {tags.length}
         </Hint>
       </div>
       <div className="min-h-0 overflow-y-auto">
         <ChangelogClockProvider>
-          <CommitList commits={shown} />
+          <CommitList commits={commits} />
         </ChangelogClockProvider>
       </div>
-      {hiddenCommits > 0 || unreadReleases > 0 ? (
-        <div className="shrink-0 px-1 pt-1">
-          <Hint
-            label={moreLabel(hiddenCommits, unreadReleases)}
-            render={<Button size="xs" variant="ghost" onClick={onOpenChangelog} />}
-          >
-            {hiddenCommits > 0 ? (
-              <span className="flex items-center gap-1 tabular-nums">
-                <GitCommitHorizontalIcon aria-hidden className="size-3" />+{hiddenCommits}
-              </span>
-            ) : null}
-            {unreadReleases > 0 ? (
-              <span className="flex items-center gap-1 tabular-nums">
-                <TagIcon aria-hidden className="size-3" />+{unreadReleases}
-              </span>
-            ) : null}
-            <ChevronRightIcon aria-hidden className="size-3" />
-          </Hint>
-        </div>
-      ) : null}
     </PopupBody>
   );
 }
@@ -180,15 +148,4 @@ function PopupBody({
       {children}
     </div>
   );
-}
-
-/** The accessible name and tooltip of the button that opens the changelog. */
-function moreLabel(hiddenCommits: number, unreadReleases: number): string {
-  const commits = `${hiddenCommits} more ${hiddenCommits === 1 ? "commit" : "commits"}`;
-  const releases = `${unreadReleases} older ${unreadReleases === 1 ? "release" : "releases"}`;
-  const parts = [
-    ...(hiddenCommits > 0 ? [commits] : []),
-    ...(unreadReleases > 0 ? [releases] : []),
-  ];
-  return `${parts.join(" and ")} in the changelog`;
 }

@@ -581,14 +581,7 @@ function SidebarUpdateControl() {
             tooltipStyle
           >
             {forkChangelogEnabled ? (
-              <ForkUpdateChanges
-                state={state}
-                tooltip={tooltip}
-                onOpenChangelog={() => {
-                  releaseNotesPopoverHandle.close();
-                  setIsForkChangelogOpen(true);
-                }}
-              />
+              <ForkUpdateChanges state={state} tooltip={tooltip} />
             ) : (
               <SidebarUpdateReleaseNotes
                 shell={window.desktopBridge}
