@@ -185,7 +185,7 @@ import {
   saveRequestHeaders as saveRequestHeadersAtom,
 } from "~/connection/onboarding";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
-import { useSiblingSignInNeeded } from "~/connection/siblingEnvironments";
+import { type SiblingIssue, useSiblingIssues } from "~/connection/siblingEnvironments";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -2075,16 +2075,32 @@ function CloudLinkRow({
   return <ConfiguredCloudLinkRow canManageRelay={canManageRelay} />;
 }
 
-// Fork: trusted siblings that could not pair yet, most often because the
-// browser has no Cloudflare Access cookie for them. Opening one signs in;
-// the page retries when it gets focus again.
+// Fork: trusted siblings that could not pair yet. Most often the browser has no
+// Cloudflare Access cookie for them: opening one signs in, and the page tries
+// again when it gets focus. A browser key can also wait for approval (MM-918),
+// or the machine map can be paused (MM-718).
+const SIBLING_ISSUE_TEXT: Record<SiblingIssue, { title: string; description: string }> = {
+  "sign-in": {
+    title: "Sign in at",
+    description: "Open it once to sign in with Cloudflare Access, then come back to this tab.",
+  },
+  waiting: {
+    title: "Waiting for approval at",
+    description: "Approve this browser in the machine map portal. The page checks every minute.",
+  },
+  paused: {
+    title: "Paused at",
+    description: "The machine map is paused. The page tries again in 10 minutes.",
+  },
+};
+
 function SiblingSignInRows() {
-  const origins = useSiblingSignInNeeded();
-  return origins.map((origin) => (
+  const issues = useSiblingIssues();
+  return [...issues].map(([origin, issue]) => (
     <SettingsRow
       key={origin}
-      title={`Sign in at ${origin}`}
-      description="Open it once to sign in with Cloudflare Access, then come back to this tab."
+      title={`${SIBLING_ISSUE_TEXT[issue].title} ${origin}`}
+      description={SIBLING_ISSUE_TEXT[issue].description}
       control={
         <Button
           size="xs"

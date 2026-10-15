@@ -982,7 +982,7 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError(toBootstrapExchangeError));
     yield* rejectTunnelDesktopBootstrap(grant.method, forwarded);
     // Fork (MM-922): a client cookie session lasts 1 day.
-    const clientTtl = clientBrowserSessionTtl(grant.subject);
+    const clientTtl = clientBrowserSessionTtl(grant);
     const session = yield* sessions
       .issue({
         method: "browser-session-cookie",
@@ -1066,6 +1066,10 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
+            // Fork (MM-922): the bearer of a browser client's sibling lasts 1 day.
+            const clientTtl = input?.proofKeyThumbprint
+              ? undefined
+              : clientBrowserSessionTtl(grant);
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
@@ -1077,6 +1081,7 @@ export const make = Effect.gen(function* () {
                       ttl: Duration.hours(1),
                     }
                   : {}),
+                ...(clientTtl === undefined ? {} : { ttl: clientTtl }),
                 // Desktop restarts forget the previous bearer token. Replace
                 // its session, including stale entries left by older versions.
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",

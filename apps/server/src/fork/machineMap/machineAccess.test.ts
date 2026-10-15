@@ -113,7 +113,7 @@ describe("browserGrantFor (MM-917, MM-918)", () => {
     expect(browserGrantFor(withLaptop(), "laptop-key", NOW, "observe")).toEqual({
       subject: "client:client-laptop",
       scopes: MACHINE_LEVEL_SCOPES.standard,
-      label: "client Laptop",
+      label: "browser client Laptop",
     });
     // MM-918: enforce gives the full level of the arrow, without access:write and relay:write.
     expect(browserGrantFor(withLaptop(), "laptop-key", NOW, "enforce")?.scopes).toEqual(

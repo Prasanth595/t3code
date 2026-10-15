@@ -518,9 +518,12 @@ export const layer = HttpApiBuilder.group(
                 ServerAuthMachinePausedError: () => failEnvironmentAuthInvalid("machine_paused"),
               }),
             );
-            // Fork (MM-918): a sibling of a waiting browser stays unpaired until the approval.
-            if (issued === undefined || "_tag" in issued) {
+            if (issued === undefined) {
               return yield* failEnvironmentAuthInvalid("invalid_credential");
+            }
+            // Fork (MM-918): a sibling of a waiting browser stays unpaired until the approval.
+            if ("_tag" in issued) {
+              return yield* failEnvironmentAuthInvalid("client_pending");
             }
             yield* appendCredentialResponseHeaders;
             return issued;

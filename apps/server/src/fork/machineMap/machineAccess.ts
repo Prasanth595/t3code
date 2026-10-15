@@ -131,7 +131,7 @@ export const browserGrantFor = (
     scopes: MACHINE_LEVEL_SCOPES[
       mode === "observe" && level === "admin" ? "standard" : level
     ].filter((scope) => scope !== AuthAccessWriteScope && scope !== AuthRelayWriteScope),
-    label: `client ${client.name}`,
+    label: `${BROWSER_CLIENT_LABEL_PREFIX}${client.name}`,
   };
 };
 
@@ -154,12 +154,26 @@ const peerOfSubject = (desired: MachineDesiredState, subject: string): PeerMachi
 
 export const isMachineSubject = (subject: string) => subject.startsWith(MACHINE_SUBJECT_PREFIX);
 
+/** MM-922: the label of a pairing credential that a browser client got with its key (MM-917). */
+const BROWSER_CLIENT_LABEL_PREFIX = "browser client ";
+
 /**
- * MM-922: the life of a browser cookie session of a client. The cookie is not bound to the browser
- * key, so it lasts 1 day, and the browser signs in again with its key without user action.
+ * MM-922: the life of a session that a browser client got through Cloudflare Access with its key:
+ * the page cookie and the bearer of a sibling. Neither is bound to the key, so it lasts 1 day, and
+ * the browser signs in or pairs again with its key without user action. Owner, pairing-link and
+ * app token sessions keep the normal life.
+ *
+ * Known limit: a stolen one works for up to 1 day. Revisit when upstream gives DPoP a bootstrap
+ * source that is not the T3 Connect cloud session; then siblings can use key-bound DPoP tokens.
  */
-export const clientBrowserSessionTtl = (subject: string): Duration.Duration | undefined =>
-  subject.startsWith(CLIENT_SUBJECT_PREFIX) ? Duration.days(1) : undefined;
+export const clientBrowserSessionTtl = (grant: {
+  readonly subject: string;
+  readonly label?: string | undefined;
+}): Duration.Duration | undefined =>
+  grant.subject.startsWith(CLIENT_SUBJECT_PREFIX) &&
+  grant.label?.startsWith(BROWSER_CLIENT_LABEL_PREFIX) === true
+    ? Duration.days(1)
+    : undefined;
 
 /** A session that exists only through the map: a machine (MM-1305) or a client (MM-912). */
 export const isMapSubject = (subject: string) =>

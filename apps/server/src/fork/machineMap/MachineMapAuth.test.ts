@@ -19,6 +19,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -256,6 +257,22 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
         expect(session?.subject).toBe(`client:${LAPTOP}`);
         expect(session?.scopes).toEqual(AuthStandardClientScopes);
       }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "observe"))),
+  );
+
+  it.effect("a browser client's sibling bearer lasts 1 day, an owner one does not (MM-922)", () =>
+    Effect.gen(function* () {
+      yield* saveDesired(withLaptopAdmin);
+      const now = yield* Clock.currentTimeMillis;
+      const lifeInDays = (session: { readonly expiresAt?: DateTime.DateTime } | undefined) =>
+        session?.expiresAt === undefined
+          ? undefined
+          : Math.round((session.expiresAt.epochMilliseconds - now) / 86_400_000);
+      const browser = yield* pairAs({ email: "dev@example.com" }, yield* browserProof());
+      expect(browser?.subject).toBe(`client:${LAPTOP}`);
+      expect(lifeInDays(browser)).toBe(1);
+      // Without a key proof, observe keeps the owner login and its normal life.
+      expect(lifeInDays(yield* pairAs({ email: "dev@example.com" }))).not.toBe(1);
+    }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "observe"))),
   );
 
   it.effect("with clientAccess off, an approved browser key keeps the owner login (MM-916)", () =>
