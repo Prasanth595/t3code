@@ -23,7 +23,7 @@ export function PullRequestDiffUnavailableState({
   const { title, description } = describePullRequestDiffError(error, providerName);
 
   return (
-    <Empty size="compact" className="min-h-full" role="alert">
+    <Empty size="compact" className="min-h-full" role="status">
       <div className="flex size-11 items-center justify-center rounded-full bg-warning-surface text-warning">
         <TriangleAlertIcon aria-hidden className="size-5" />
       </div>
