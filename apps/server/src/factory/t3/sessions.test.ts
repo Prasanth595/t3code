@@ -901,6 +901,34 @@ describe("FactorySessions.archive", () => {
     }),
   );
 
+  it.effect("of a blank thread id succeeds without a read or a dispatch", () =>
+    Effect.gen(function* () {
+      const counter = { gets: 0, records: 0 };
+      const commands: Array<Command> = [];
+      yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        yield* sessions.archive("");
+      }).pipe(
+        Effect.provide(
+          layerSessions(
+            readsInTurn(["live"], counter),
+            {},
+            {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  commands.push(command);
+                  return {} as never;
+                }),
+            },
+          ),
+        ),
+      );
+      assert.strictEqual(commands.length, 0);
+      assert.strictEqual(counter.gets, 0);
+      assert.strictEqual(counter.records, 0);
+    }),
+  );
+
   it.effect("still archives when the first read fails otherwise", () =>
     Effect.gen(function* () {
       const { results, commands } = yield* runArchive(["broken"], false);
@@ -1105,17 +1133,54 @@ describe("FactorySessions.removeWorktree", () => {
           ),
           Effect.forkChild({ startImmediately: true }),
         );
-        // The wait is registered after git and a disk check, so move the
-        // clock until the removal has finished rather than once.
-        yield* Fiber.join(fiber).pipe(
-          Effect.race(
-            Effect.forever(TestClock.adjust("3 seconds").pipe(Effect.andThen(Effect.yieldNow))),
-          ),
-        );
+        // Git and the disk check run first, then the fiber parks on the 3 s
+        // wait: one tick short of it the directory must still be there.
+        // The disk check is real IO, so give it real time to finish.
+        yield* TestClock.withLive(Effect.sleep("200 millis"));
+        yield* TestClock.adjust("2999 millis");
+        assert.isUndefined(fiber.pollUnsafe());
+        assert.isTrue(yield* fs.exists(dir));
+        yield* TestClock.adjust("1 millis");
+        yield* Fiber.join(fiber);
         assert.isFalse(yield* fs.exists(dir));
         assert.strictEqual(calls.length, 1);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "fails and keeps the directory when git itself fails while the worktree is on disk",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-sessions-remove-" });
+          const error = yield* Effect.flip(removeWorktree(dir)).pipe(
+            Effect.provide(
+              layerSessions(
+                {},
+                {},
+                {},
+                recordingGit([], () =>
+                  Effect.fail(
+                    new GitCommandError({
+                      operation: "factory.sessions.removeWorktree",
+                      command: "git worktree remove",
+                      cwd: dir,
+                      detail: "spawn git EACCES",
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          );
+          assert.strictEqual(error._tag, "FactorySessionsError");
+          if (error._tag === "FactorySessionsError") {
+            assert.strictEqual(error.operation, "remove-worktree");
+          }
+          assert.isTrue(yield* fs.exists(dir));
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("fails and keeps the directory on any other git error", () =>

@@ -314,6 +314,14 @@ it.live(
           const resent = yield* sessions.status(launched.threadId);
           assert.strictEqual(resent.runOrdinal, 2);
           assert.include(resent.lastAssistantMessage ?? "", "second fixture turn complete");
+          // The one-message proof does not lean on runOrdinal alone: the thread
+          // holds the second prompt once, under the id the command id gave it.
+          const projection = yield* ProjectionStore.ProjectionStoreV2;
+          const records = yield* projection.getThreadRecords(threadId, ["messages"], {
+            messageRoles: ["user"],
+          });
+          const sent = records.messages.filter((message) => message.id === `message:${sendId}`);
+          assert.strictEqual(sent.length, 1);
 
           // Archiving twice, and a thread T3 does not know, change nothing.
           yield* sessions.archive(launched.threadId);
