@@ -601,22 +601,23 @@ export function makeBrowserGitHubRoutingPermissions(
   });
 }
 
-// A message task lets input and rendering run between encoding chunks. Unlike a zero-delay
-// timer it is neither clamped to 4 ms after a few chained yields nor stretched to a second
-// or more per chunk in a background tab.
+// A posted message resumes in a fresh task, so input and rendering get a turn between
+// encoding chunks. A zero-delay timer would not do: browsers clamp nested timers to
+// 4 ms and throttle them to once a second or less in a background tab.
 const yieldToBrowserTask = Effect.callback<void>((resume) => {
-  const channel = new MessageChannel();
-  const onMessage = () => {
-    channel.port1.close();
-    resume(Effect.void);
-  };
-  channel.port1.addEventListener("message", onMessage, { once: true });
-  channel.port1.start();
-  channel.port2.postMessage(null);
-  return Effect.sync(() => {
-    channel.port1.removeEventListener("message", onMessage);
-    channel.port1.close();
-  });
+  const { port1, port2 } = new MessageChannel();
+  port1.addEventListener(
+    "message",
+    () => {
+      port1.close();
+      resume(Effect.void);
+    },
+    { once: true },
+  );
+  port1.start();
+  port2.postMessage(null);
+  // A closed port delivers nothing, so interruption needs no listener bookkeeping.
+  return Effect.sync(() => port1.close());
 });
 
 export const layer = Layer.effectContext(
