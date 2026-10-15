@@ -327,6 +327,7 @@ const ComposerSkillExtension = Node.create({
   addAttributes() {
     return {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     };
@@ -348,7 +349,11 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skillName = (node.attrs.skillName as string) ?? "";
   const skillLabel = (node.attrs.skillLabel as string) || skillName;
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
-  const skill = skills.find((candidate) => candidate.name === skillName);
+  const skillPath = (node.attrs.skillPath as string | null) ?? null;
+  // A linked mention names its SKILL.md; a plain `$name` takes the first skill with that name.
+  const skill = skillPath
+    ? skills.find((candidate) => candidate.path === skillPath)
+    : skills.find((candidate) => candidate.name === skillName);
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ContextChipPopover
