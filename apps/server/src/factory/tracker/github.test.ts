@@ -1342,3 +1342,589 @@ it("error text escapes newlines in other arguments", () => {
     "cannot start `gh --body`: nope",
   );
 });
+
+// ---- pullRequest ----
+
+const HEAD_SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+const PR_VIEW =
+  '{"baseRefName":"main","headRefName":"t3code/2bb65018","headRefOid":"4f1c2d3e4a5b60718293a4b5c6d7e8f901234567","isCrossRepository":false,"isDraft":true,"number":2,"state":"OPEN"}';
+const prView = (state: string, draft: boolean) =>
+  `{"baseRefName":"main","headRefName":"x","headRefOid":"${HEAD_SHA}","isCrossRepository":false,"isDraft":${draft},"number":9,"state":"${state}"}`;
+const prViewCall = (number: string) => [
+  "pr",
+  "view",
+  number,
+  "--repo",
+  REPO,
+  "--json",
+  "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid",
+];
+
+it.effect("pullRequest reads the real shape with the exact call", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(PR_VIEW));
+    const pr = yield* t.ok(t.github.pullRequest(2));
+    assert.deepStrictEqual(t.calls(), [prViewCall("2")]);
+    assert.deepStrictEqual(pr, {
+      number: 2,
+      isDraft: true,
+      open: true,
+      merged: false,
+      headRef: "t3code/2bb65018",
+      crossRepository: false,
+      baseRef: "main",
+      headSha: HEAD_SHA,
+    });
+  }),
+);
+
+it.effect("pullRequest says when it is merged and is then not open", () =>
+  Effect.gen(function* () {
+    const merged = setup(reply(PR_VIEW.replace('"state":"OPEN"', '"state":"MERGED"')));
+    const pr = yield* merged.ok(merged.github.pullRequest(2));
+    assert.isTrue(pr?.merged);
+    assert.isFalse(pr?.open);
+    const closed = setup(reply(PR_VIEW.replace('"state":"OPEN"', '"state":"CLOSED"')));
+    const other = yield* closed.ok(closed.github.pullRequest(2));
+    assert.isFalse(other?.merged);
+    assert.isFalse(other?.open);
+  }),
+);
+
+it.effect("pullRequest from a fork and into another base says so", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(
+        `{"baseRefName":"release/1.0","headRefName":"t3code/x","headRefOid":"${HEAD_SHA}","isCrossRepository":true,"isDraft":true,"number":4,"state":"OPEN"}`,
+      ),
+    );
+    const pr = yield* t.ok(t.github.pullRequest(4));
+    assert.isTrue(pr?.crossRepository);
+    assert.strictEqual(pr?.baseRef, "release/1.0");
+    assert.strictEqual(pr?.headRef, "t3code/x");
+  }),
+);
+
+it.effect("a pullRequest view without the fork or base fields is a parse error", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(
+        `{"headRefName":"x","headRefOid":"${HEAD_SHA}","isDraft":true,"number":3,"state":"OPEN"}`,
+      ),
+    );
+    const error = yield* t.err(t.github.pullRequest(3));
+    assert.strictEqual(error._tag, "GitHubParse");
+  }),
+);
+
+it.effect("a pullRequest view without the head commit is a parse error", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(
+        '{"baseRefName":"main","headRefName":"x","isCrossRepository":false,"isDraft":true,"number":3,"state":"OPEN"}',
+      ),
+    );
+    const error = yield* t.err(t.github.pullRequest(3));
+    assert.strictEqual(error._tag, "GitHubParse");
+  }),
+);
+
+it.effect("pullRequest reads the head commit as given", () =>
+  Effect.gen(function* () {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const t = setup(
+      reply(
+        `{"baseRefName":"main","headRefName":"x","headRefOid":"${sha}","isCrossRepository":false,"isDraft":true,"number":3,"state":"OPEN"}`,
+      ),
+    );
+    assert.strictEqual((yield* t.ok(t.github.pullRequest(3)))?.headSha, sha);
+  }),
+);
+
+it.effect("pullRequest merged and closed are not open", () =>
+  Effect.gen(function* () {
+    for (const state of ["MERGED", "CLOSED"]) {
+      const t = setup(reply(prView(state, false)));
+      const pr = yield* t.ok(t.github.pullRequest(9));
+      assert.isFalse(pr?.open, state);
+      assert.isFalse(pr?.isDraft, state);
+    }
+  }),
+);
+
+it.effect("a pullRequest that does not exist is null", () =>
+  Effect.gen(function* () {
+    for (const stderr of [
+      "GraphQL: Could not resolve to a PullRequest with the number of 999. (repository.pullRequest)\n",
+      "graphql: could not resolve to a pullrequest with the number of 999.",
+      "GRAPHQL: COULD NOT RESOLVE TO A PULLREQUEST",
+    ]) {
+      const t = setup(fail(1, stderr));
+      assert.isNull(yield* t.ok(t.github.pullRequest(999)), stderr);
+    }
+  }),
+);
+
+it.effect("any other pullRequest failure stays an error", () =>
+  Effect.gen(function* () {
+    for (const stderr of [
+      "HTTP 502: Bad Gateway",
+      "Could not resolve host: api.github.com",
+      "Could not resolve to an Issue with the number of 5.",
+      "",
+    ]) {
+      const t = setup(fail(1, stderr));
+      const error = yield* t.err(t.github.pullRequest(999));
+      assert.strictEqual(error._tag, "GitHubFailed", stderr);
+      if (error._tag === "GitHubFailed") assert.strictEqual(error.status, 1, stderr);
+    }
+    const t = setup(spawnError());
+    const error = yield* t.err(t.github.pullRequest(999));
+    assert.strictEqual(error._tag, "GitHubSpawnError");
+  }),
+);
+
+it.effect("pullRequest errors are typed", () =>
+  Effect.gen(function* () {
+    const failed = setup(fail(1, "no pull requests found"));
+    assert.strictEqual((yield* failed.err(failed.github.pullRequest(2)))._tag, "GitHubFailed");
+    const parse = setup(reply("{}"));
+    assert.strictEqual((yield* parse.err(parse.github.pullRequest(2)))._tag, "GitHubParse");
+  }),
+);
+
+it.effect("issue and pullRequest calls use the number they are given", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(issueJson(["factory:ready"], [], '"b"')), reply(prView("OPEN", true)));
+    yield* t.ok(t.github.issue(7));
+    yield* t.ok(t.github.pullRequest(3));
+    assert.deepStrictEqual(t.calls(), [
+      [
+        "issue",
+        "view",
+        "7",
+        "--repo",
+        REPO,
+        "--json",
+        "number,title,body,labels,assignees,state,author",
+      ],
+      prViewCall("3"),
+    ]);
+  }),
+);
+
+// ---- markPrReady, markPrDraft, commentOnPr ----
+
+const readyCall = ["pr", "ready", "9", "--repo", REPO];
+const undoCall = [...readyCall, "--undo"];
+
+it.effect("markPrReady runs gh pr ready", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(""));
+    yield* t.ok(t.github.markPrReady(9));
+    assert.deepStrictEqual(t.calls(), [readyCall]);
+
+    const failed = setup(fail(1, "not a draft"));
+    const error = yield* failed.err(failed.github.markPrReady(9));
+    assert.strictEqual(error._tag, "GitHubFailed");
+  }),
+);
+
+it.effect("markPrReady on a PR that is already ready is success", () =>
+  Effect.gen(function* () {
+    // What `gh` 2.102 does: it warns on stderr and exits 0.
+    const stderr = '! Pull request rawphp/softfac#9 is already "ready for review"\n';
+    const warned = setup(reply("", stderr));
+    yield* warned.ok(warned.github.markPrReady(9));
+
+    // Should a version exit non-zero for it, the PR is still ready: that is success too.
+    const failed = setup(fail(1, stderr));
+    yield* failed.ok(failed.github.markPrReady(9));
+    assert.deepStrictEqual(failed.calls(), [readyCall]);
+  }),
+);
+
+it.effect("markPrReady still fails for a closed PR or any other error", () =>
+  Effect.gen(function* () {
+    for (const stderr of [
+      '! Pull request rawphp/softfac#9 is closed. Only draft pull requests can be marked as "ready for review"\n',
+      "GraphQL: Resource not accessible by integration\n",
+      "",
+    ]) {
+      const t = setup(fail(1, stderr));
+      const error = yield* t.err(t.github.markPrReady(9));
+      assert.strictEqual(error._tag, "GitHubFailed", stderr);
+    }
+  }),
+);
+
+it.effect("markPrDraft runs gh pr ready --undo", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(""));
+    yield* t.ok(t.github.markPrDraft(9));
+    assert.deepStrictEqual(t.calls(), [undoCall]);
+
+    const failed = setup(fail(1, "GraphQL: Resource not accessible by integration\n"));
+    const error = yield* failed.err(failed.github.markPrDraft(9));
+    assert.strictEqual(error._tag, "GitHubFailed");
+  }),
+);
+
+it.effect("markPrDraft on a PR that is already a draft is success", () =>
+  Effect.gen(function* () {
+    // What `gh` does for `--undo` on a draft: it warns on stderr and exits 0. Should a version
+    // exit non-zero for it, the PR is still a draft: that is success too.
+    const stderr = '! Pull request rawphp/softfac#9 is already "in draft"\n';
+    const warned = setup(reply("", stderr));
+    yield* warned.ok(warned.github.markPrDraft(9));
+
+    const failed = setup(fail(1, stderr));
+    yield* failed.ok(failed.github.markPrDraft(9));
+    assert.deepStrictEqual(failed.calls(), [undoCall]);
+  }),
+);
+
+it.effect("markPrDraft on a PR that is closed or merged is done whatever gh says", () =>
+  Effect.gen(function* () {
+    // The words of the refusal are not relied on: the pull request's state decides.
+    for (const state of ["CLOSED", "MERGED"]) {
+      for (const stderr of [
+        "! Pull request rawphp/softfac#9 is closed. Only open pull requests can be converted to draft\n",
+        "GraphQL: Something unforeseen\n",
+      ]) {
+        const t = setup(fail(1, stderr), reply(prView(state, false)));
+        yield* t.ok(t.github.markPrDraft(9));
+        assert.deepStrictEqual(t.calls(), [undoCall, prViewCall("9")], `${state}: ${stderr}`);
+      }
+    }
+  }),
+);
+
+it.effect("markPrDraft that fails on an open PR or cannot read it is the original error", () =>
+  Effect.gen(function* () {
+    // Open: the failure is real.
+    const open = setup(
+      fail(1, "GraphQL: Resource not accessible by integration\n"),
+      reply(prView("OPEN", false)),
+    );
+    const onOpen = yield* open.err(open.github.markPrDraft(9));
+    assert.strictEqual(onOpen._tag, "GitHubFailed");
+    if (onOpen._tag === "GitHubFailed") assert.include(onOpen.stderr, "not accessible");
+
+    // The read fails too: still the original error.
+    const unread = setup(
+      fail(1, "GraphQL: Resource not accessible by integration\n"),
+      fail(1, "HTTP 502: Bad Gateway"),
+    );
+    const onUnread = yield* unread.err(unread.github.markPrDraft(9));
+    assert.strictEqual(onUnread._tag, "GitHubFailed");
+    if (onUnread._tag === "GitHubFailed") assert.include(onUnread.stderr, "not accessible");
+
+    // One that is gone: nothing to draft either.
+    const gone = setup(
+      fail(1, "boom"),
+      fail(1, "GraphQL: Could not resolve to a PullRequest with the number of 9."),
+    );
+    const onGone = yield* gone.err(gone.github.markPrDraft(9));
+    assert.strictEqual(onGone._tag, "GitHubFailed");
+    if (onGone._tag === "GitHubFailed") assert.include(onGone.stderr, "boom");
+  }),
+);
+
+it.effect("commentOnPr appends the marker", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(""));
+    yield* t.ok(t.github.commentOnPr(9, "gate passed"));
+    assert.deepStrictEqual(t.calls(), [
+      ["pr", "comment", "9", "--repo", REPO, "--body", "gate passed\n\n<!-- softfac -->"],
+    ]);
+
+    const failed = setup(spawnError());
+    const error = yield* failed.err(failed.github.commentOnPr(9, "x"));
+    assert.strictEqual(error._tag, "GitHubSpawnError");
+  }),
+);
+
+// ---- compare ----
+
+const compareCall = (range: string) => [
+  "api",
+  `repos/rawphp/softfac/compare/${range}?per_page=1`,
+  "--jq",
+  ".status",
+];
+
+it.effect("compare asks for the status of the two refs with the exact call", () =>
+  Effect.gen(function* () {
+    const t = setup(reply("ahead\n"));
+    assert.strictEqual(yield* t.ok(t.github.compare("main", BASE_SHA)), "ahead");
+    assert.deepStrictEqual(t.calls(), [compareCall(`main...${BASE_SHA}`)]);
+  }),
+);
+
+it.effect("compare reads each status GitHub gives", () =>
+  Effect.gen(function* () {
+    for (const [text, relation] of [
+      ["ahead", "ahead"],
+      ["behind\n", "behind"],
+      ["identical\n", "identical"],
+      ["diverged", "diverged"],
+    ] as const) {
+      const t = setup(reply(text));
+      assert.strictEqual(yield* t.ok(t.github.compare("main", BASE_SHA)), relation, text);
+    }
+  }),
+);
+
+it.effect("compare of a commit GitHub does not know is null", () =>
+  Effect.gen(function* () {
+    const t = setup(fail(1, "gh: No commit found for SHA: 9f8e7d6 (HTTP 404)"));
+    assert.isNull(yield* t.ok(t.github.compare("main", BASE_SHA)));
+  }),
+);
+
+it.effect("compare keeps every other failure an error", () =>
+  Effect.gen(function* () {
+    for (const answer of [
+      fail(1, "gh: API rate limit exceeded (HTTP 403)"),
+      fail(1, "gh: Server Error (HTTP 500)"),
+      fail(4, "gh: To get started with GitHub CLI, please run: gh auth login"),
+      spawnError(),
+    ]) {
+      const t = setup(answer);
+      yield* t.err(t.github.compare("main", BASE_SHA));
+    }
+  }),
+);
+
+it.effect("compare refuses a status it does not know", () =>
+  Effect.gen(function* () {
+    for (const answer of ["", "sideways", '"ahead"', "null", "{}"]) {
+      const t = setup(reply(answer));
+      const error = yield* t.err(t.github.compare("main", BASE_SHA));
+      assert.strictEqual(error._tag, "GitHubParse", answer);
+    }
+  }),
+);
+
+it.effect("compare encodes a branch and refuses a ref that could leave the compare path", () =>
+  Effect.gen(function* () {
+    const t = setup(reply("behind"));
+    yield* t.ok(t.github.compare("release/1.0", BASE_SHA));
+    assert.strictEqual(
+      t.calls()[0]![1],
+      `repos/rawphp/softfac/compare/release/1.0...${BASE_SHA}?per_page=1`,
+    );
+    for (const [base, head] of [
+      ["", BASE_SHA],
+      ["main", ""],
+      ["..", BASE_SHA],
+      ["a..b", BASE_SHA],
+      ["main", "../x"],
+      ["main", "a...b"],
+      ["a/../b", BASE_SHA],
+    ]) {
+      const refused = setup(reply("ahead"));
+      const error = yield* refused.err(refused.github.compare(base!, head!));
+      assert.strictEqual(error._tag, "GitHubInvalidArgument", `${base} ${head}`);
+      assert.deepStrictEqual(refused.calls(), [], `${base} ${head}`);
+    }
+  }),
+);
+
+// ---- checks ----
+
+const run = (name: string, status: string, conclusion: string | null) => ({
+  id: 1,
+  name,
+  status,
+  conclusion,
+  html_url: `https://github.com/rawphp/softfac/actions/runs/1/job/${name}`,
+  app: { slug: "github-actions" },
+});
+const page = (runs: ReadonlyArray<unknown>) => JSON.stringify(runs);
+const checksCall = [
+  "api",
+  `repos/rawphp/softfac/commits/${BASE_SHA}/check-runs?per_page=100&filter=latest`,
+  "--paginate",
+  "--jq",
+  "[.check_runs[] | {name, status, conclusion, html_url}]",
+];
+
+it.effect("checks reads the check runs of the commit with the exact call", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(page([run("gate", "completed", "success")])));
+    const checks = yield* t.ok(t.github.checks(BASE_SHA, ["gate"]));
+    assert.deepStrictEqual(t.calls(), [checksCall]);
+    assert.deepStrictEqual(checks, [
+      {
+        name: "gate",
+        state: "passed",
+        conclusion: "success",
+        url: "https://github.com/rawphp/softfac/actions/runs/1/job/gate",
+      },
+    ]);
+  }),
+);
+
+it.effect("checks answers for each name asked in the order asked and ignores other runs", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(
+        page([
+          run("lint", "completed", "success"),
+          run("other", "completed", "failure"),
+          run("gate", "completed", "success"),
+        ]),
+      ),
+    );
+    const checks = yield* t.ok(t.github.checks(BASE_SHA, ["gate", "lint"]));
+    assert.deepStrictEqual(
+      checks.map((c) => [c.name, c.state]),
+      [
+        ["gate", "passed"],
+        ["lint", "passed"],
+      ],
+    );
+  }),
+);
+
+it.effect("a completed run passes on success and neutral and fails on anything else", () =>
+  Effect.gen(function* () {
+    for (const conclusion of ["success", "neutral"]) {
+      const t = setup(reply(page([run("gate", "completed", conclusion)])));
+      const got = yield* t.ok(t.github.checks(BASE_SHA, ["gate"]));
+      assert.strictEqual(got[0]!.state, "passed", conclusion);
+    }
+    for (const conclusion of [
+      "failure",
+      "cancelled",
+      "timed_out",
+      "action_required",
+      "stale",
+      "startup_failure",
+      "something_new",
+    ]) {
+      const t = setup(reply(page([run("gate", "completed", conclusion)])));
+      const got = yield* t.ok(t.github.checks(BASE_SHA, ["gate"]));
+      assert.strictEqual(got[0]!.state, "failed", conclusion);
+      assert.strictEqual(got[0]!.conclusion, conclusion);
+    }
+    // Completed with no conclusion is not a pass.
+    const t = setup(reply(page([run("gate", "completed", null)])));
+    const got = yield* t.ok(t.github.checks(BASE_SHA, ["gate"]));
+    assert.strictEqual(got[0]!.state, "failed");
+    assert.strictEqual(got[0]!.conclusion, "completed");
+  }),
+);
+
+it.effect("a run that has not completed is pending", () =>
+  Effect.gen(function* () {
+    for (const status of ["queued", "in_progress", "waiting", "pending", "requested"]) {
+      const t = setup(reply(page([run("gate", status, null)])));
+      const got = yield* t.ok(t.github.checks(BASE_SHA, ["gate"]));
+      assert.strictEqual(got[0]!.state, "pending", status);
+      assert.strictEqual(got[0]!.conclusion, status);
+    }
+  }),
+);
+
+it.effect("a check with no run is missing and not pending", () =>
+  Effect.gen(function* () {
+    const t = setup(reply("[]"));
+    const got = yield* t.ok(t.github.checks(BASE_SHA, ["gate"]));
+    assert.deepStrictEqual(got, [{ name: "gate", state: "missing", conclusion: "", url: null }]);
+  }),
+);
+
+it.effect("a name that is not exactly the run's is missing", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(page([run("Gate", "completed", "success")])));
+    const got = yield* t.ok(t.github.checks(BASE_SHA, ["gate"]));
+    assert.strictEqual(got[0]!.state, "missing");
+  }),
+);
+
+it.effect("a skipped run is not a result so the check stays missing", () =>
+  Effect.gen(function* () {
+    // The factory's pull request is a draft until the checks pass, and a job guarded by
+    // "not a draft" is skipped on it: nothing ran, so nothing passed.
+    const t = setup(reply(page([run("gate", "completed", "skipped")])));
+    const got = yield* t.ok(t.github.checks(BASE_SHA, ["gate"]));
+    assert.strictEqual(got[0]!.state, "missing");
+    assert.strictEqual(got[0]!.conclusion, "skipped");
+  }),
+);
+
+it.effect("several runs of one name fail before they pend and pend before they pass", () =>
+  Effect.gen(function* () {
+    type Run = readonly [string, string | null];
+    const state = (a: Run, b: Run) =>
+      Effect.gen(function* () {
+        const t = setup(reply(page([run("gate", a[0], a[1]), run("gate", b[0], b[1])])));
+        return (yield* t.ok(t.github.checks(BASE_SHA, ["gate"])))[0]!.state;
+      });
+    assert.strictEqual(yield* state(["completed", "success"], ["completed", "failure"]), "failed");
+    assert.strictEqual(yield* state(["in_progress", null], ["completed", "success"]), "pending");
+    assert.strictEqual(yield* state(["completed", "success"], ["completed", "neutral"]), "passed");
+    // A failure is not hidden by a run that is going again, in either order.
+    assert.strictEqual(yield* state(["completed", "failure"], ["in_progress", null]), "failed");
+    assert.strictEqual(yield* state(["in_progress", null], ["completed", "failure"]), "failed");
+    // One skipped run among passing ones is not every run passing.
+    assert.strictEqual(yield* state(["completed", "success"], ["completed", "skipped"]), "missing");
+    assert.strictEqual(yield* state(["completed", "skipped"], ["completed", "success"]), "missing");
+  }),
+);
+
+it.effect("checks reads every page", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(
+        `${page([run("gate", "completed", "success")])}\n${page([run("lint", "in_progress", null)])}`,
+      ),
+    );
+    const got = yield* t.ok(t.github.checks(BASE_SHA, ["gate", "lint"]));
+    assert.strictEqual(got[0]!.state, "passed");
+    assert.strictEqual(got[1]!.state, "pending");
+  }),
+);
+
+it.effect("checks keeps a details link only when it is a GitHub one", () =>
+  Effect.gen(function* () {
+    const odd = setup(
+      reply(page([{ ...run("gate", "completed", "failure"), html_url: "https://evil.example/x" }])),
+    );
+    assert.isNull((yield* odd.ok(odd.github.checks(BASE_SHA, ["gate"])))[0]!.url);
+    const none = setup(reply(page([{ ...run("gate", "completed", "failure"), html_url: null }])));
+    assert.isNull((yield* none.ok(none.github.checks(BASE_SHA, ["gate"])))[0]!.url);
+  }),
+);
+
+it.effect("checks refuses a commit that is not a full id before any call", () =>
+  Effect.gen(function* () {
+    for (const sha of ["", "main", "9f8e7d6", "../x", BASE_SHA.replaceAll("9", "g")]) {
+      const t = setup(reply("[]"));
+      const error = yield* t.err(t.github.checks(sha, ["gate"]));
+      assert.strictEqual(error._tag, "GitHubInvalidArgument", sha);
+      assert.deepStrictEqual(t.calls(), [], sha);
+    }
+  }),
+);
+
+it.effect("checks refuses an answer that is not a list of runs", () =>
+  Effect.gen(function* () {
+    for (const answer of ["{}", "not json", '[{"name":"gate"}]']) {
+      const t = setup(reply(answer));
+      const error = yield* t.err(t.github.checks(BASE_SHA, ["gate"]));
+      assert.strictEqual(error._tag, "GitHubParse", answer);
+    }
+  }),
+);
+
+it.effect("checks that gh cannot read is the gh failure", () =>
+  Effect.gen(function* () {
+    const t = setup(fail(1, "gh: Not Found (HTTP 404)"));
+    const error = yield* t.err(t.github.checks(BASE_SHA, ["gate"]));
+    assert.strictEqual(error._tag, "GitHubFailed");
+  }),
+);
