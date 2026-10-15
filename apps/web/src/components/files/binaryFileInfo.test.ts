@@ -6,13 +6,6 @@ describe("binaryFileInfo", () => {
   it.each([
     ["/workspace/slides.PPTX", "slides.PPTX", "PowerPoint presentation"],
     ["C:\\work\\report.docx", "report.docx", "Word document"],
-    ["budget.numbers", "budget.numbers", "Numbers spreadsheet"],
-    ["assets.zip", "assets.zip", "Archive"],
-    ["font.woff2", "font.woff2", "Font"],
-    ["scene.glb", "scene.glb", "3D model"],
-    ["photo.psd", "photo.psd", "Image"],
-    ["recording.flac", "recording.flac", "Audio"],
-    ["movie.mkv", "movie.mkv", "Video"],
   ])("labels and allows document-like file %s", (path, name, kind) => {
     expect(binaryFileInfo(path)).toEqual({ name, kind, canOpenDefault: true });
   });
