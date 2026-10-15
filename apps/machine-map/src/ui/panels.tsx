@@ -1164,13 +1164,13 @@ function ClientPanel({ id }: { id: string }) {
         {client.name}
       </h2>
       <p className="desc">
-        {client.email ?? "No email"} · approved {timeAgo(client.createdAt, now)}
+        {client.email ?? "No email"} · added {timeAgo(client.createdAt, now)}
       </p>
 
       <Section>Access</Section>
       <p className="hint">
-        A client starts with no access. Machines enforce these levels once they turn on client
-        access.
+        A client starts with no access. Machines enforce these levels for its app token now, and for
+        its browser keys once they turn on client access.
       </p>
       <ClientAccess client={client} />
 
