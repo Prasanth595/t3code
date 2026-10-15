@@ -52,3 +52,56 @@ export function pickWorkspaceBasenameMatch(
   );
   return foldedMatches.length === 1 ? (foldedMatches[0]?.path ?? null) : null;
 }
+
+function slashPath(path: string): string {
+  return path.trim().replaceAll("\\", "/");
+}
+
+/**
+ * The one indexed file whose path ends with every segment of `relativePath`,
+ * e.g. `docs/plan.md` in `BudgetLens/docs/plan.md`. Two candidates have no
+ * right answer, so they resolve to nothing.
+ */
+export function pickWorkspaceSuffixMatch(
+  relativePath: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  const target = slashPath(relativePath);
+  if (!target) return null;
+  const files = entries.filter((entry) => entry.kind === "file");
+  const matching = (fold: (path: string) => string) => {
+    const suffix = fold(target);
+    return files.filter((entry) => {
+      const path = fold(slashPath(entry.path));
+      return path === suffix || path.endsWith(`/${suffix}`);
+    });
+  };
+  const exact = matching((path) => path);
+  const matches = exact.length > 0 ? exact : matching((path) => path.toLowerCase());
+  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
+}
+
+/**
+ * Which workspace file a chip's workspace-relative path opens, or null to keep
+ * the literal path. Agents name files relative to the folder they work in, so
+ * a bare name asks the index, and a path with directories asks it only when
+ * the literal file is missing: the index skips ignored files, so its silence
+ * proves nothing about the literal path.
+ */
+export async function findWorkspaceFileMatch(
+  relativePath: string,
+  lookup: {
+    /** False only when the literal file is known to be missing. */
+    readonly literalExists: () => Promise<boolean>;
+    /** Indexed candidates for the query, or null when the search failed. */
+    readonly searchFiles: (query: string) => Promise<ReadonlyArray<WorkspaceEntryCandidate> | null>;
+  },
+): Promise<string | null> {
+  if (needsWorkspaceBasenameLookup(relativePath)) {
+    const entries = await lookup.searchFiles(relativePath);
+    return entries ? pickWorkspaceBasenameMatch(relativePath, entries) : null;
+  }
+  if (!/[\\/]/.test(relativePath) || (await lookup.literalExists())) return null;
+  const entries = await lookup.searchFiles(relativePath);
+  return entries ? pickWorkspaceSuffixMatch(relativePath, entries) : null;
+}
