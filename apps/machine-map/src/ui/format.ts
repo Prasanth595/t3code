@@ -8,7 +8,7 @@ import type {
   MapActor,
   MapPosition,
 } from "@t3tools/contracts/machineMap";
-import type { HealthAlertKind } from "@t3tools/contracts/machineMapResources";
+import type { BatteryReading, HealthAlertKind } from "@t3tools/contracts/machineMapResources";
 
 import { hasJoined } from "../rules/map.ts";
 
@@ -170,6 +170,7 @@ export const ALERT_STICKER: Record<HealthAlertKind, string> = {
   memory: "full",
   disk: "disk",
   swap: "swap",
+  battery: "low",
   offline: "down",
 };
 
@@ -178,6 +179,7 @@ export const ALERT_TEXT: Record<HealthAlertKind, string> = {
   memory: "Memory is almost full",
   disk: "Disk is almost full",
   swap: "Swap thrashing",
+  battery: "Battery is low",
   offline: "Offline",
 };
 
@@ -185,6 +187,7 @@ export const ALERT_TEXT: Record<HealthAlertKind, string> = {
 export function alertValue(kind: HealthAlertKind, value: number, threshold: number): string {
   if (kind === "offline") return `${value} min (over ${threshold} min)`;
   if (kind === "swap") return `${value} MB/s (over ${threshold} MB/s)`;
+  if (kind === "battery") return `${Math.round(value)}% (under ${threshold}%)`;
   return `${Math.round(value)}% (over ${threshold}%)`;
 }
 
@@ -213,4 +216,31 @@ export function duration(fromIso: string, toMs: number): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`;
   return `${Math.round(hours / 24)} days`;
+}
+
+/**
+ * MM-1510: the portal shows a battery only while it charges or runs on it. On power and not
+ * charging, for example a charge limit at 80%, it stays hidden like a full one.
+ */
+export const batteryShown = (battery: BatteryReading | null): battery is BatteryReading =>
+  battery !== null &&
+  (battery.state === "charging" || battery.state === "discharging") &&
+  battery.percent < 100;
+
+const minutesText = (minutes: number) =>
+  minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+
+/** MM-1510: a battery in words, for example "78%, on battery, 3 h 41 min left". */
+export function batteryText(battery: BatteryReading): string {
+  const left = battery.minutesLeft;
+  switch (battery.state) {
+    case "discharging":
+      return `${battery.percent}%, on battery${left === null ? "" : `, ${minutesText(left)} left`}`;
+    case "charging":
+      return `${battery.percent}%, charging${left === null ? "" : `, full in ${minutesText(left)}`}`;
+    case "plugged":
+      return `${battery.percent}%, on power, not charging`;
+    case "full":
+      return `${battery.percent}%, full`;
+  }
 }

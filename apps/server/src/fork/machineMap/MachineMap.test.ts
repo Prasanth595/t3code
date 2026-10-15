@@ -95,6 +95,7 @@ const SAMPLE: ResourceSample = {
   agents: null,
   topCpu: null,
   topMemory: null,
+  battery: null,
 };
 
 /**

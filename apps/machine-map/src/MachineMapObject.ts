@@ -275,6 +275,7 @@ const ALERT_PUSH: Record<HealthAlertKind, { readonly title: string; readonly uni
   disk: { title: "disk is full", unit: "%" },
   swap: { title: "swap traffic is high", unit: " MB/s" },
   offline: { title: "is down", unit: " minutes offline" },
+  battery: { title: "battery is low", unit: "%" },
 };
 
 const nowIso = () => new Date().toISOString();

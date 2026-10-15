@@ -20,6 +20,8 @@ const point = (cpu: number): ResourcePoint => ({
   busy: null,
   pressure: null,
   steal: null,
+  battery: null,
+  discharging: null,
   memory: null,
   disk: null,
   swap: null,
