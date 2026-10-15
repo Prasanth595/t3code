@@ -1,5 +1,6 @@
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
+import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 /**
  * Multi-instance validation slices for the live `ProviderInstanceRegistry`.
@@ -208,6 +209,11 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   const layerBaseDeps = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
+    Layer.provideMerge(
+      Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
+        endpoint: Effect.succeed("unused-private-pipe"),
+      }),
+    ),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
       Layer.mock(CodexInstallation.CodexInstallation)({
@@ -618,6 +624,11 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
   // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
   // `FileSystem` dep while keeping everything else surfaced to the test.
   const layerInfra = OpenCodeRuntime.layer.pipe(
+    Layer.provideMerge(
+      Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
+        endpoint: Effect.succeed("unused-private-pipe"),
+      }),
+    ),
     Layer.provide(OpenCodeServerLedger.layerTest),
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(
