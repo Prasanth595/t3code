@@ -9,6 +9,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import {
+  encodeHtmlRenderOutline,
+  HTML_RENDER_COLUMN_WIDTH,
+  HTML_RENDER_OUTLINE_MAX_BOXES,
+} from "@t3tools/shared/htmlRender";
 
 import { publicProxy } from "./publicProxy.ts";
 
@@ -156,6 +161,63 @@ const SETTLE_EXPRESSION =
 // reports its own box height instead.
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
+
+// The page's main blocks in document order, for a client's loading skeleton:
+// media and solid shapes, text with its line count, tables with their row
+// count, and boxes with their own background or border, whose contents follow.
+// Past the detail budget, remaining blocks are kept whole so the outline still
+// reaches the bottom of the page.
+const OUTLINE_EXPRESSION = `(() => {
+  const boxes = [], detail = ${HTML_RENDER_OUTLINE_MAX_BOXES - 12}, max = ${HTML_RENDER_OUTLINE_MAX_BOXES};
+  const media = "canvas,svg,img,video,picture,iframe,object,embed,input,select,textarea,button";
+  const pageBackground = getComputedStyle(document.documentElement).backgroundColor;
+  const filled = (s) => (s.backgroundColor !== "rgba(0, 0, 0, 0)" && s.backgroundColor !== pageBackground) || s.backgroundImage !== "none" || parseFloat(s.borderTopWidth) + parseFloat(s.borderBottomWidth) + parseFloat(s.borderLeftWidth) > 0;
+  const add = (kind, r, lines) => boxes.push([kind, r.left + scrollX, r.top + scrollY, r.width, r.height, lines]);
+  const lineCount = (s, r) => Math.max(1, Math.round(r.height / (parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.5 || 20)));
+  // Text's own extent, so a short heading in a wide block stays short.
+  const addText = (el, s, r) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const t = range.getBoundingClientRect();
+    const box = t.width >= 2 && t.height >= 2 ? t : r;
+    add("text", box, lineCount(s, box));
+  };
+  const walk = (parent) => {
+    for (const el of parent.children) {
+      if (boxes.length >= max) return;
+      const s = getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") continue;
+      if (s.display === "contents") { walk(el); continue; }
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) continue;
+      const tag = el.localName;
+      if (el.matches(media)) { add("media", r, 1); continue; }
+      if (tag === "table") { add("table", r, el.rows.length); continue; }
+      const text = [...el.childNodes].some((n) => n.nodeType === 3 && n.data.trim() !== "");
+      if (boxes.length >= detail) { if (el.textContent.trim() !== "" && !el.querySelector(media)) addText(el, s, r); else add("media", r, 1); continue; }
+      if (text) { addText(el, s, r); continue; }
+      if (el.children.length === 0) { if (filled(s)) add("media", r, 1); continue; }
+      if (filled(s) && r.height >= 24) add("panel", r, 1);
+      walk(el);
+    }
+  };
+  walk(document.body);
+  return boxes;
+})()`;
+const Outlined = Schema.Struct({
+  result: Schema.Struct({
+    value: Schema.Array(
+      Schema.Tuple([
+        Schema.Literals(["text", "media", "table", "panel"]),
+        Schema.Finite,
+        Schema.Finite,
+        Schema.Finite,
+        Schema.Finite,
+        Schema.Finite,
+      ]),
+    ),
+  }),
+});
 
 const Ignored = Schema.Unknown;
 const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
@@ -511,7 +573,28 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Effect.ignore,
     );
 
-    return { load, screenshot, consoleMessages, close };
+    /** The loaded page's outline, encoded for an `HtmlRenderReference`. */
+    const outline = send(
+      "Runtime.evaluate",
+      { expression: OUTLINE_EXPRESSION, returnByValue: true },
+      Outlined,
+      sessionId,
+    ).pipe(
+      Effect.map(({ result }) =>
+        encodeHtmlRenderOutline(
+          result.value.map(([kind, x, y, boxWidth, height, lines]) => ({
+            kind,
+            x,
+            y,
+            width: boxWidth,
+            height,
+            lines,
+          })),
+        ),
+      ),
+    );
+
+    return { load, outline, screenshot, consoleMessages, close };
   });
 
   return { openPage };
@@ -568,7 +651,8 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 /**
  * Content heights of the page at each width, each from a fresh load, since
  * pages often lay themselves out from the width once at load. One browser,
- * a few widths at a time.
+ * a few widths at a time. The load at the column width also reads the page's
+ * outline; an outline that cannot be read is left out.
  */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;
@@ -585,15 +669,27 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
     profileDirectory: path.join(directory, "profile"),
   });
   const body = pageBody(input.html);
-  return yield* Effect.forEach(
+  let outline: string | undefined;
+  const heights = yield* Effect.forEach(
     input.widths,
     (width) =>
       browser.openPage(width).pipe(
         Effect.flatMap((page) =>
-          page.load(body, input.urlFragment).pipe(Effect.ensuring(page.close)),
+          page.load(body, input.urlFragment).pipe(
+            Effect.tap(() =>
+              width === HTML_RENDER_COLUMN_WIDTH
+                ? page.outline.pipe(
+                    Effect.tap((value) => Effect.sync(() => (outline = value))),
+                    Effect.ignore,
+                  )
+                : Effect.void,
+            ),
+            Effect.ensuring(page.close),
+          ),
         ),
         Effect.map((height) => [width, height] as const),
       ),
     { concurrency: MEASURE_CONCURRENCY },
   );
+  return { heights, outline };
 }, Effect.scoped);

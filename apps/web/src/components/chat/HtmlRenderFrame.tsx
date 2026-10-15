@@ -3,6 +3,8 @@ import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
   htmlRenderFrameHeight,
+  htmlRenderOutlineBoxes,
+  type HtmlRenderOutlineBox,
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
@@ -114,7 +116,13 @@ export function HtmlRenderFrame(props: {
 
   return (
     <div ref={boxRef} className="group/html-render relative" style={{ height }}>
-      {!ready && !failed ? <HtmlRenderSkeleton title={title} height={height} /> : null}
+      {!ready && !failed ? (
+        <HtmlRenderSkeleton
+          title={title}
+          height={height}
+          outline={htmlRenderOutlineBoxes(props.htmlRender, width)}
+        />
+      ) : null}
       {src !== null ? (
         <>
           <HtmlRenderDocument
@@ -175,11 +183,65 @@ export function HtmlRenderFrame(props: {
   );
 }
 
-// One heading, a line of text, and a chart-sized block, the shape most pages
-// take, repeated to fill the frame's reserved height.
+// Without an outline: one heading, a line of text, and a chart-sized block,
+// the shape most pages take, repeated to fill the frame's reserved height.
 const SKELETON_SECTION_HEIGHT = 264;
 
-function HtmlRenderSkeleton(props: { readonly title: string; readonly height: number }) {
+const OUTLINE_BOX_CLASS = {
+  media: "rounded-lg bg-muted-foreground/15",
+  panel: "rounded-lg border border-muted-foreground/15",
+  text: "",
+  table: "",
+} as const;
+
+const OUTLINE_BAR = "color-mix(in srgb, var(--color-muted-foreground) 15%, transparent)";
+
+// Text lines and table rows are bars painted by one gradient per box, so a
+// long page costs one element per block rather than one per line.
+function outlineBoxStyle(box: HtmlRenderOutlineBox): React.CSSProperties {
+  const style: React.CSSProperties = {
+    left: box.x,
+    top: box.y,
+    width: box.width,
+    height: box.height,
+  };
+  if (box.kind !== "text" && box.kind !== "table") return style;
+  const step = box.height / box.lines;
+  const bar = Math.min(box.kind === "table" ? 12 : 10, step * 0.6);
+  const start = (step - bar) / 2;
+  return {
+    ...style,
+    backgroundImage: `repeating-linear-gradient(to bottom, transparent 0 ${start}px, ${OUTLINE_BAR} ${start}px ${start + bar}px, transparent ${start + bar}px ${step}px)`,
+  };
+}
+
+/**
+ * Holds the frame's place while the page loads: the page's own blocks when the
+ * server measured an outline, else a generic page shape. The outline pulses
+ * as one layer.
+ */
+function HtmlRenderSkeleton(props: {
+  readonly title: string;
+  readonly height: number;
+  readonly outline: ReadonlyArray<HtmlRenderOutlineBox>;
+}) {
+  if (props.outline.length > 0) {
+    return (
+      <div
+        role="status"
+        aria-label={`Loading ${props.title}`}
+        className="pointer-events-none absolute inset-0 overflow-hidden motion-safe:animate-skeleton"
+      >
+        {props.outline.map((box) => (
+          <div
+            key={`${box.kind}:${box.x}:${box.y}:${box.width}:${box.height}`}
+            className={cn("absolute", OUTLINE_BOX_CLASS[box.kind])}
+            style={outlineBoxStyle(box)}
+          />
+        ))}
+      </div>
+    );
+  }
   const sections = Math.ceil(props.height / SKELETON_SECTION_HEIGHT);
   return (
     <div
