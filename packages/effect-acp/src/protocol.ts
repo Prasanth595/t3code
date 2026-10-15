@@ -166,6 +166,17 @@ const makeStrictNdJsonRpcParser = () => {
   };
 };
 const MAX_BUFFERED_RAW_NOTIFICATIONS = 32;
+
+/** A decode failure's structural diagnostics, without its cause or any wire payload. */
+const decodeFailureDiagnostics = (error: AcpError.AcpProtocolParseError) => ({
+  operation: error.operation,
+  ...(error.method === undefined ? {} : { method: error.method }),
+  ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
+  ...(error.issueCount === undefined ? {} : { issueCount: error.issueCount }),
+  ...(error.issueKinds === undefined ? {} : { issueKinds: error.issueKinds }),
+  ...(error.maximumPathDepth === undefined ? {} : { maximumPathDepth: error.maximumPathDepth }),
+  ...(error.issueSummary === undefined ? {} : { issueSummary: error.issueSummary }),
+});
 // Outbound JSON-RPC notification: no `id`, so peers never treat it as a request.
 const encodeJsonRpcNotification = Schema.encodeUnknownExit(
   Schema.fromJsonString(
@@ -499,26 +510,41 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       );
   };
 
+  // A notification has no reply to fail, so one the schema rejects is logged
+  // and dropped. Ending the connection over it would kill a working session
+  // because one update, possibly from a newer spec, did not parse.
+  const dropUndecodableNotification = (method: string) => (cause: Schema.SchemaError) => {
+    const error = AcpError.AcpProtocolParseError.fromSchemaError(
+      "decode-notification-payload",
+      method,
+      cause,
+    );
+    return logProtocol({
+      direction: "incoming",
+      stage: "decode_failed",
+      payload: decodeFailureDiagnostics(error),
+    }).pipe(
+      Effect.andThen(
+        Effect.logWarning("Dropped an ACP notification that failed to decode").pipe(
+          Effect.annotateLogs(decodeFailureDiagnostics(error)),
+        ),
+      ),
+    );
+  };
+
   const handleRequestEncoded = (message: RpcMessage.RequestEncoded) => {
     if (message.id === "") {
       if (message.tag === CLIENT_METHODS.session_update) {
         return decodeSessionUpdate(message.payload).pipe(
-          Effect.map(
-            (params) =>
-              ({
+          Effect.matchEffect({
+            onFailure: dropUndecodableNotification(CLIENT_METHODS.session_update),
+            onSuccess: (params) =>
+              dispatchNotification({
                 _tag: "SessionUpdate",
                 method: CLIENT_METHODS.session_update,
                 params: options.transformSessionUpdate?.(params) ?? params,
-              }) satisfies AcpIncomingNotification,
-          ),
-          Effect.mapError((cause) =>
-            AcpError.AcpProtocolParseError.fromSchemaError(
-              "decode-notification-payload",
-              CLIENT_METHODS.session_update,
-              cause,
-            ),
-          ),
-          Effect.flatMap(dispatchNotification),
+              }),
+          }),
         );
       }
       if (
@@ -527,22 +553,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       ) {
         const method = message.tag;
         return decodeElicitationComplete(message.payload).pipe(
-          Effect.map(
-            (params) =>
-              ({
-                _tag: "ElicitationComplete",
-                method,
-                params,
-              }) satisfies AcpIncomingNotification,
-          ),
-          Effect.mapError((cause) =>
-            AcpError.AcpProtocolParseError.fromSchemaError(
-              "decode-notification-payload",
-              method,
-              cause,
-            ),
-          ),
-          Effect.flatMap(dispatchNotification),
+          Effect.matchEffect({
+            onFailure: dropUndecodableNotification(method),
+            onSuccess: (params) =>
+              dispatchNotification({ _tag: "ElicitationComplete", method, params }),
+          }),
         );
       }
       return dispatchNotification({
@@ -696,16 +711,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
           logProtocol({
             direction: "incoming",
             stage: "decode_failed",
-            payload: {
-              operation: error.operation,
-              ...(error.method === undefined ? {} : { method: error.method }),
-              ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
-              ...(error.issueCount === undefined ? {} : { issueCount: error.issueCount }),
-              ...(error.issueKinds === undefined ? {} : { issueKinds: error.issueKinds }),
-              ...(error.maximumPathDepth === undefined
-                ? {}
-                : { maximumPathDepth: error.maximumPathDepth }),
-            },
+            payload: decodeFailureDiagnostics(error),
           }),
         ),
         Effect.flatMap((messages) =>
