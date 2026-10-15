@@ -1899,6 +1899,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         path,
         rawProviderInstanceId: instanceId,
         stateDir: serverConfig.stateDir,
+        cwd: process.cwd(),
         env: undefined,
       });
       const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);

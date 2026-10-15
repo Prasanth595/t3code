@@ -2280,12 +2280,18 @@ it.layer(
         const providerInstanceId = ProviderInstanceId.make("codex_sqlite");
         const { manager, ptyAdapter } = yield* createManager(5, {
           env: { [inheritedKey]: "/inherited/sqlite", T3CODE_SECRET: "server-only" },
-          resolveProviderInstanceEnvironment: (rawProviderInstanceId, env, inheritedEnvironment) =>
+          resolveProviderInstanceEnvironment: (
+            rawProviderInstanceId,
+            env,
+            inheritedEnvironment,
+            cwd,
+          ) =>
             TerminalManager.resolveProviderInstanceTerminalEnvironment({
               serverSettings,
               path,
               rawProviderInstanceId,
               stateDir: "/test/state",
+              cwd,
               env,
               inheritedEnvironment,
             }),
@@ -2328,6 +2334,474 @@ it.layer(
         ),
       ),
   );
+
+  for (const platform of ["linux", "win32"] as const) {
+    for (const source of ["inherited", "request", "provider"] as const) {
+      for (const entry of ["database", "dangling sidecar"] as const) {
+        it.effect.skipIf(!symlinksSupported)(
+          `blocks the actual terminal home from ${source} (${platform}, ${entry})`,
+          () =>
+            Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-home-" });
+              const sharedHome = path.join(root, "shared");
+              const actualHome = path.join(root, "legacy");
+              const cwd = path.join(root, "worktree");
+              for (const directory of [sharedHome, actualHome, cwd]) {
+                yield* fs.makeDirectory(directory);
+              }
+              const providerInstanceId = ProviderInstanceId.make("codex_actual_home");
+              const generatedHome = path.join(
+                root,
+                "providers",
+                "codex",
+                providerInstanceId,
+                "shadow",
+              );
+              const database = path.join(sharedHome, "state_5.sqlite");
+              const linkPath = path.join(
+                actualHome,
+                entry === "database" ? "state_5.sqlite" : "STATE_5.SQLITE-WAL",
+              );
+              const target = entry === "database" ? database : path.join(sharedHome, "missing-wal");
+              yield* fs.writeFileString(database, "shared database");
+              yield* fs.symlink(target, linkPath);
+              const sidecars =
+                entry === "database" ? ["wal", "shm", "journal"] : ["shm", "journal"];
+              for (const sidecar of sidecars) {
+                yield* fs.writeFileString(
+                  path.join(actualHome, `state_5.sqlite-${sidecar}`),
+                  sidecar,
+                );
+              }
+              const key = platform === "win32" ? "codex_home" : "CODEX_HOME";
+              const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+                Effect.provide(
+                  ServerSettings.layerTest({
+                    providerInstances: {
+                      [providerInstanceId]: {
+                        driver: ProviderDriverKind.make("codex"),
+                        config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
+                        environment:
+                          source === "provider"
+                            ? [{ name: key, value: actualHome, sensitive: false }]
+                            : [],
+                      },
+                    },
+                  }),
+                ),
+              );
+              const { manager, ptyAdapter } = yield* createManager(5, {
+                env: source === "inherited" ? { [key]: actualHome } : {},
+                resolveProviderInstanceEnvironment: (
+                  rawProviderInstanceId,
+                  env,
+                  inheritedEnvironment,
+                  cwd,
+                ) =>
+                  TerminalManager.resolveProviderInstanceTerminalEnvironment({
+                    serverSettings,
+                    path,
+                    rawProviderInstanceId,
+                    stateDir: root,
+                    env,
+                    inheritedEnvironment,
+                    cwd,
+                  }),
+              });
+              const input = openInput({
+                providerInstanceId,
+                cwd,
+                env: source === "request" ? { [key]: actualHome } : undefined,
+              });
+              for (let attempt = 0; attempt < 2; attempt += 1) {
+                const result = yield* Effect.result(
+                  source === "request"
+                    ? manager.restart({ ...input, cols: 100, rows: 24 }).pipe(Effect.asVoid)
+                    : source === "inherited"
+                      ? manager.attachStream(input, () => Effect.void).pipe(Effect.asVoid)
+                      : manager.open(input).pipe(Effect.asVoid),
+                );
+                expect(result._tag).toBe("Failure");
+                if (result._tag !== "Failure") return;
+                expect(result.failure).toMatchObject({
+                  _tag: "TerminalProviderEnvironmentError",
+                  cause: { _tag: "CodexShadowHomeSqliteRecoveryRequiredError", linkPath },
+                });
+                expect(result.failure.message).toContain("Codex SQLite recovery is required");
+                expect(result.failure.message).not.toContain(root);
+                expect(ptyAdapter.spawnInputs).toHaveLength(0);
+                expect(yield* fs.readLink(linkPath)).toBe(target);
+                expect(yield* fs.readFileString(database)).toBe("shared database");
+                for (const sidecar of sidecars) {
+                  expect(
+                    yield* fs.readFileString(path.join(actualHome, `state_5.sqlite-${sidecar}`)),
+                  ).toBe(sidecar);
+                }
+                expect(yield* fs.exists(generatedHome)).toBe(false);
+                if (entry === "dangling sidecar") {
+                  expect(yield* fs.exists(target)).toBe(false);
+                  expect(yield* fs.exists(path.join(actualHome, "state_5.sqlite"))).toBe(false);
+                }
+              }
+            }).pipe(Effect.provideService(HostProcess.Platform, platform)),
+        );
+      }
+    }
+  }
+
+  for (const mode of ["cwd-symlink", "home-symlink", "absolute-home-symlink"] as const) {
+    for (const physicalUnsafe of [true, false]) {
+      it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
+        `preserves physical terminal home selection (${mode}, unsafe=${physicalUnsafe})`,
+        () =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-physical-" });
+            const work = path.join(root, "work");
+            const child = path.join(root, "physical", "child");
+            yield* fs.makeDirectory(work);
+            yield* fs.makeDirectory(child, { recursive: true });
+            let cwd = work;
+            let home = "hop/../legacy";
+            let lexicalHome = path.join(work, "legacy");
+            const physicalHome = path.join(root, "physical", "legacy");
+            if (mode === "cwd-symlink") {
+              cwd = path.join(root, "alias");
+              yield* fs.symlink(child, cwd);
+              home = "../legacy";
+              lexicalHome = path.join(root, "legacy");
+            } else {
+              yield* fs.symlink(child, path.join(work, "hop"));
+              if (mode === "absolute-home-symlink") home = `${work}/hop/../legacy`;
+            }
+            yield* fs.makeDirectory(lexicalHome);
+            yield* fs.makeDirectory(physicalHome);
+            const database = path.join(root, "shared.sqlite");
+            yield* fs.writeFileString(database, "preserved database");
+            const unsafeHome = physicalUnsafe ? physicalHome : lexicalHome;
+            const linkPath = path.join(unsafeHome, "state_5.sqlite");
+            yield* fs.symlink(database, linkPath);
+            for (const sidecar of ["wal", "shm", "journal"]) {
+              yield* fs.writeFileString(
+                path.join(unsafeHome, `state_5.sqlite-${sidecar}`),
+                sidecar,
+              );
+            }
+            const providerInstanceId = ProviderInstanceId.make("codex_physical");
+            const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+              Effect.provide(
+                ServerSettings.layerTest({
+                  providerInstances: {
+                    [providerInstanceId]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
+                    },
+                  },
+                }),
+              ),
+            );
+            const { manager, ptyAdapter } = yield* createManager(5, {
+              env: {},
+              resolveProviderInstanceEnvironment: (
+                rawProviderInstanceId,
+                env,
+                inheritedEnvironment,
+                cwd,
+              ) =>
+                TerminalManager.resolveProviderInstanceTerminalEnvironment({
+                  serverSettings,
+                  path,
+                  rawProviderInstanceId,
+                  stateDir: root,
+                  cwd,
+                  env,
+                  inheritedEnvironment,
+                }),
+            });
+            const input = openInput({ providerInstanceId, cwd, env: { CODEX_HOME: home } });
+            const lookupHome = path.isAbsolute(home) ? home : `${cwd}/${home}`;
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              const result = yield* manager.open(input).pipe(Effect.result);
+              expect(result._tag).toBe(physicalUnsafe ? "Failure" : "Success");
+              if (physicalUnsafe && result._tag === "Failure") {
+                expect(result.failure).toMatchObject({
+                  _tag: "TerminalProviderEnvironmentError",
+                  cause: {
+                    _tag: "CodexShadowHomeSqliteRecoveryRequiredError",
+                    linkPath: `${lookupHome}/state_5.sqlite`,
+                  },
+                });
+                expect(result.failure.message).not.toContain(root);
+                expect(yield* fs.readLink(`${lookupHome}/state_5.sqlite`)).toBe(database);
+                expect(ptyAdapter.spawnInputs).toHaveLength(0);
+              } else if (!physicalUnsafe) {
+                expect(ptyAdapter.spawnInputs).toHaveLength(1);
+                expect(ptyAdapter.spawnInputs[0]?.cwd).toBe(cwd);
+                expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBe(home);
+              }
+              expect(yield* fs.readLink(linkPath)).toBe(database);
+              expect(yield* fs.readFileString(database)).toBe("preserved database");
+              for (const sidecar of ["wal", "shm", "journal"]) {
+                expect(
+                  yield* fs.readFileString(path.join(unsafeHome, `state_5.sqlite-${sidecar}`)),
+                ).toBe(sidecar);
+              }
+              expect(yield* fs.exists(path.join(root, "providers"))).toBe(false);
+            }
+          }),
+      );
+    }
+  }
+
+  for (const source of ["inherited", "request", "provider"] as const) {
+    for (const form of ["relative", "tilde"] as const) {
+      it.effect.skipIf(!symlinksSupported)(
+        `checks the terminal cwd and expansion for ${source} ${form} homes`,
+        () =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-path-" });
+            const cwd = path.join(root, "worktree");
+            const home = path.join(root, "home");
+            // Inherited values are not shell-expanded by terminal environment composition.
+            const actualHome = path.join(
+              form === "tilde" && source !== "inherited" ? home : cwd,
+              ...(form === "tilde" && source === "inherited" ? ["~", "legacy"] : ["legacy"]),
+            );
+            yield* fs.makeDirectory(actualHome, { recursive: true });
+            yield* fs.makeDirectory(home, { recursive: true });
+            yield* fs.makeDirectory(cwd, { recursive: true });
+            const linkPath = path.join(actualHome, "state_5.sqlite-shm");
+            const target = path.join(root, "missing-shm");
+            yield* fs.symlink(target, linkPath);
+            const value = form === "tilde" ? "~/legacy" : "legacy";
+            const lookupHome =
+              form === "tilde" && source !== "inherited" ? actualHome : `${cwd}${path.sep}${value}`;
+            const providerInstanceId = ProviderInstanceId.make("codex_relative_home");
+            const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+              Effect.provide(
+                ServerSettings.layerTest({
+                  providerInstances: {
+                    [providerInstanceId]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
+                      environment:
+                        source === "provider"
+                          ? [{ name: "CODEX_HOME", value, sensitive: false }]
+                          : [],
+                    },
+                  },
+                }),
+              ),
+            );
+            const { manager, ptyAdapter } = yield* createManager(5, {
+              env: source === "inherited" ? { CODEX_HOME: value } : {},
+              resolveProviderInstanceEnvironment: (
+                rawProviderInstanceId,
+                env,
+                inheritedEnvironment,
+                cwd,
+              ) =>
+                TerminalManager.resolveProviderInstanceTerminalEnvironment({
+                  serverSettings,
+                  path,
+                  rawProviderInstanceId,
+                  stateDir: root,
+                  env,
+                  inheritedEnvironment,
+                  cwd,
+                }),
+            });
+            const error = yield* manager
+              .open(
+                openInput({
+                  providerInstanceId,
+                  cwd,
+                  env: source === "request" ? { CODEX_HOME: value } : undefined,
+                }),
+              )
+              .pipe(Effect.provideService(HostProcess.HomeDirectory, home), Effect.flip);
+            expect(error).toMatchObject({
+              _tag: "TerminalProviderEnvironmentError",
+              cause: {
+                _tag: "CodexShadowHomeSqliteRecoveryRequiredError",
+                linkPath: `${lookupHome}${path.sep}state_5.sqlite-shm`,
+              },
+            });
+            expect(error.message).not.toContain(root);
+            expect(ptyAdapter.spawnInputs).toHaveLength(0);
+            expect(yield* fs.readLink(linkPath)).toBe(target);
+            expect(yield* fs.exists(target)).toBe(false);
+          }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+      );
+    }
+  }
+
+  for (const { platform, winner, inheritedKey, requestKey, providerKey } of [
+    {
+      platform: "linux" as const,
+      winner: "request",
+      inheritedKey: "CODEX_HOME",
+      requestKey: "CODEX_HOME",
+      providerKey: "CODEX_HOME",
+    },
+    {
+      platform: "linux" as const,
+      winner: "provider",
+      inheritedKey: "CODEX_HOME",
+      requestKey: "CODEX_HOME",
+      providerKey: "CODEX_HOME",
+    },
+    {
+      platform: "win32" as const,
+      winner: "request",
+      inheritedKey: "codex_home",
+      requestKey: "CODEX_HOME",
+      providerKey: "codex_home",
+    },
+    {
+      platform: "win32" as const,
+      winner: "request",
+      inheritedKey: "CODEX_HOME",
+      requestKey: "codex_home",
+      providerKey: "CODEX_HOME",
+    },
+    {
+      platform: "win32" as const,
+      winner: "provider",
+      inheritedKey: "CODEX_HOME",
+      requestKey: "CODEX_HOME",
+      providerKey: "codex_home",
+    },
+    {
+      platform: "win32" as const,
+      winner: "provider",
+      inheritedKey: "codex_home",
+      requestKey: "codex_home",
+      providerKey: "CODEX_HOME",
+    },
+    {
+      platform: "win32" as const,
+      winner: "home",
+      inheritedKey: "codex_home",
+      requestKey: "CoDeX_HoMe",
+      providerKey: "codex_home",
+    },
+    {
+      platform: "win32" as const,
+      winner: "shadow",
+      inheritedKey: "codex_home",
+      requestKey: "CODEX_HOME",
+      providerKey: "codex_home",
+    },
+  ]) {
+    it.effect.skipIf(!symlinksSupported)(
+      `inspects only the selected terminal home: ${winner} (${platform}, ${requestKey}, ${providerKey})`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-home-priority-" });
+          const unsafeHome = path.join(root, "unsafe");
+          const safeHome = path.join(root, "fresh");
+          yield* fs.makeDirectory(unsafeHome);
+          const linkPath = path.join(unsafeHome, "state_5.sqlite-wal");
+          const target = path.join(root, "missing-wal");
+          yield* fs.symlink(target, linkPath);
+          const providerInstanceId = ProviderInstanceId.make("codex_home_priority");
+          const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+            Effect.provide(
+              ServerSettings.layerTest({
+                providerInstances: {
+                  [providerInstanceId]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: {
+                      setupMode: "managed",
+                      homePath: winner === "home" ? safeHome : "",
+                      shadowHomePath: winner === "shadow" ? safeHome : "",
+                    },
+                    environment: [
+                      ...(winner === "request"
+                        ? []
+                        : [
+                            {
+                              name: providerKey,
+                              value: winner === "provider" ? safeHome : unsafeHome,
+                              sensitive: false,
+                            },
+                          ]),
+                      { name: "PROVIDER_SECRET", value: "provider-visible", sensitive: true },
+                    ],
+                  },
+                },
+              }),
+            ),
+          );
+          const { manager, ptyAdapter } = yield* createManager(5, {
+            env: {
+              [inheritedKey]: unsafeHome,
+              CODEX_SQLITE_HOME: "/chosen/sqlite",
+              T3CODE_SECRET: "server-only",
+            },
+            resolveProviderInstanceEnvironment: (
+              rawProviderInstanceId,
+              env,
+              inheritedEnvironment,
+              cwd,
+            ) =>
+              TerminalManager.resolveProviderInstanceTerminalEnvironment({
+                serverSettings,
+                path,
+                rawProviderInstanceId,
+                stateDir: root,
+                env,
+                inheritedEnvironment,
+                cwd,
+              }),
+          });
+          const input = openInput({
+            providerInstanceId,
+            cwd: root,
+            env: { [requestKey]: winner === "request" ? safeHome : unsafeHome },
+          });
+          const snapshot = yield* manager.open(input);
+          expect(ptyAdapter.spawnInputs).toHaveLength(1);
+          const environment = ptyAdapter.spawnInputs[0]?.env ?? {};
+          expect(
+            Object.entries(environment)
+              .filter(([key]) => key.toUpperCase() === "CODEX_HOME")
+              .map(([, value]) => value),
+          ).toEqual([safeHome]);
+          expect(environment.CODEX_SQLITE_HOME).toBe("/chosen/sqlite");
+          expect(environment.PROVIDER_SECRET).toBe("provider-visible");
+          expect(environment.T3CODE_SECRET).toBeUndefined();
+          expect(snapshot).not.toHaveProperty("env");
+          expect(yield* fs.exists(safeHome)).toBe(false);
+          expect(yield* fs.readLink(linkPath)).toBe(target);
+          expect(yield* fs.exists(target)).toBe(false);
+
+          // Attaching to the running shell must not launch again. A new launch
+          // must still refuse links introduced since the original inspection.
+          yield* fs.makeDirectory(safeHome);
+          const selectedLink = path.join(safeHome, "state_5.sqlite-shm");
+          yield* fs.symlink(target, selectedLink);
+          const unsubscribe = yield* manager.attachStream(input, () => Effect.void);
+          yield* Effect.sync(unsubscribe);
+          const error = yield* manager.restart({ ...input, cols: 100, rows: 24 }).pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "TerminalProviderEnvironmentError",
+            cause: { _tag: "CodexShadowHomeSqliteRecoveryRequiredError", linkPath: selectedLink },
+          });
+          expect(ptyAdapter.spawnInputs).toHaveLength(1);
+          expect(ptyAdapter.processes[0]?.killed).toBe(false);
+          expect(yield* fs.readLink(selectedLink)).toBe(target);
+        }).pipe(Effect.provideService(HostProcess.Platform, platform)),
+    );
+  }
 
   for (const shadowMode of ["explicit", "managed"] as const) {
     for (const orphan of [false, true]) {
@@ -2380,12 +2854,14 @@ it.layer(
                 rawProviderInstanceId,
                 env,
                 inheritedEnvironment,
+                cwd,
               ) =>
                 TerminalManager.resolveProviderInstanceTerminalEnvironment({
                   serverSettings,
                   path,
                   rawProviderInstanceId,
                   stateDir: root,
+                  cwd,
                   env,
                   inheritedEnvironment,
                 }),
@@ -2466,6 +2942,7 @@ it.layer(
         path,
         rawProviderInstanceId: providerInstanceId,
         stateDir: "/test/state",
+        cwd: process.cwd(),
         env: undefined,
       }).pipe(Effect.flip);
 
@@ -2510,6 +2987,7 @@ it.layer(
         path,
         rawProviderInstanceId: "configured_home",
         stateDir: "/test/state",
+        cwd: process.cwd(),
         env: undefined,
       });
 
@@ -2543,6 +3021,7 @@ it.layer(
         path,
         rawProviderInstanceId: "codex",
         stateDir: "/test/state",
+        cwd: process.cwd(),
         env: undefined,
       });
 
@@ -2570,6 +3049,7 @@ it.layer(
         path,
         rawProviderInstanceId: "claudeAgent",
         stateDir: "/test/state",
+        cwd: process.cwd(),
         env: undefined,
       });
 
@@ -2597,6 +3077,7 @@ it.layer(
         path,
         rawProviderInstanceId: "codex",
         stateDir: "/test/state",
+        cwd: process.cwd(),
         env: { CODEX_HOME: "/inherited/codex-home" },
       });
 
@@ -2615,6 +3096,7 @@ it.layer(
         path,
         rawProviderInstanceId: "codex_unknown",
         stateDir: "/test/state",
+        cwd: process.cwd(),
         env: undefined,
       }).pipe(Effect.flip);
 
@@ -2651,12 +3133,19 @@ it.layer(
       const providerInstanceId = ProviderInstanceId.make("codex_restart");
       const { manager, ptyAdapter, logsDir } = yield* createManager(2, {
         historyByteLimit: 8,
-        resolveProviderInstanceEnvironment: (rawProviderInstanceId, env) =>
+        resolveProviderInstanceEnvironment: (
+          rawProviderInstanceId,
+          env,
+          inheritedEnvironment,
+          cwd,
+        ) =>
           TerminalManager.resolveProviderInstanceTerminalEnvironment({
             serverSettings,
             path,
             rawProviderInstanceId,
             stateDir: "/test/state",
+            cwd,
+            inheritedEnvironment,
             env,
           }),
       });

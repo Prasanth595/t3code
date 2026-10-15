@@ -419,7 +419,9 @@ export const inspectCodexShadowSqlite = Effect.fn("inspectCodexShadowSqlite")(fu
   // links for operator recovery instead of giving launch paths different rules.
   for (const entryName of shadowEntryNames) {
     if (!SQLITE_ENTRY_NAME.test(entryName)) continue;
-    const linkPath = path.join(effectiveHomePath, entryName);
+    // Preserve the directory lookup spelling: path.join would collapse '..'
+    // before the filesystem can resolve an earlier directory symlink.
+    const linkPath = `${effectiveHomePath}${effectiveHomePath.endsWith(path.sep) ? "" : path.sep}${entryName}`;
     const state = yield* readLinkState({
       fileSystem,
       sharedHomePath: layout.sharedHomePath,
