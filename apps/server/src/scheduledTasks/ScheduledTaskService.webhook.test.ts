@@ -80,6 +80,7 @@ const withService = <A, E>(
       NodePlatformCrypto.layer,
       Scheduler.layer,
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        checkWorktreeBase: () => Effect.void,
         launch: (input) =>
           Queue.offer(launches, input).pipe(
             Effect.andThen(options.gate ? Deferred.await(options.gate) : Effect.void),

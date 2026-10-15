@@ -3,7 +3,7 @@ import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskError } from "@t3tools/contracts";
+import { ScheduledTaskError, ScheduledTaskUpsertInput } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -22,6 +22,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
+const decodeUpsertInput = Schema.decodeEffect(ScheduledTaskUpsertInput);
 
 const insertRow = (
   sql: SqlClient.SqlClient,
@@ -199,6 +200,7 @@ it.effect(
               ScheduledTaskService.layer,
               Layer.mergeAll(
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                  checkWorktreeBase: () => Effect.void,
                   launch: () =>
                     Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
                       Effect.andThen((n) =>
@@ -297,6 +299,7 @@ it.effect(
               ScheduledTaskService.layer,
               Layer.mergeAll(
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                  checkWorktreeBase: () => Effect.void,
                   launch: () =>
                     Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
                       // A concurrent writer (the CLI shares the SQLite file)
@@ -350,4 +353,47 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("records a run whose worktree cannot be made as failed instead of launching it", () =>
+  Effect.gen(function* () {
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      // No launch: a run that got past the check would die on the mock.
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        checkWorktreeBase: ({ projectId }) =>
+          Effect.fail(
+            new ThreadLaunchService.ThreadLaunchNotRepositoryError({
+              projectId,
+              projectTitle: "No project",
+              workspaceRoot: "/scratch",
+            }),
+          ),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert(
+        yield* decodeUpsertInput({
+          title: "Morning check",
+          prompt: "Check the inbox.",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: "project-no-repo",
+          workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+      const { task: ran } = yield* service.runNow({ id: task.id });
+      assert.equal(ran.lastRunStatus, "failed");
+      assert.include(ran.lastRunError, "is not a Git repository");
+      const [listed] = (yield* service.list()).tasks;
+      assert.equal(listed?.lastRunStatus, "failed");
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
