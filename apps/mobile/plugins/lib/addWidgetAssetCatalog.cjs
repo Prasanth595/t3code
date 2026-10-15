@@ -36,6 +36,10 @@ function findByName(map, name) {
   return null;
 }
 
+/**
+ * @param {import('xcode').XcodeProject} proj
+ * @param {{ targetName: string }} opts
+ */
 function addWidgetAssetCatalog(proj, opts) {
   const objects = proj.hash.project.objects;
   const target = findByName(objects.PBXNativeTarget, opts.targetName);
