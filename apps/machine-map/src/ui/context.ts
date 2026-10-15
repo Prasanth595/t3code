@@ -13,6 +13,7 @@ import type {
 import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
 import type {
+  ClientInvite,
   PauseView,
   PendingClient,
   PendingRotation,
@@ -78,6 +79,8 @@ export interface Portal {
   readonly joins: Readonly<Record<string, number>>;
   /** MM-906: browser keys that wait for approval or that the owner rejected. Null until the first list. */
   readonly pending: ReadonlyArray<PendingClient> | null;
+  /** MM-913: invites of native apps that wait to be used. */
+  readonly invites: ReadonlyArray<ClientInvite>;
   readonly draft: ReadonlyArray<DraftChange> | null;
   readonly now: number;
   readonly route: Route;

@@ -286,6 +286,16 @@ export const InviteRequest = Schema.Struct({
 });
 export type InviteRequest = typeof InviteRequest.Type;
 
+/** MM-913: a waiting invite of a native app, without its code. */
+export const ClientInvite = Schema.Struct({ clientId: ClientId, expiresAt: Text });
+export type ClientInvite = typeof ClientInvite.Type;
+
+/** Page event with every waiting invite, on connection and on each change. */
+export const ClientInvitesEvent = Schema.TaggedStruct("clientInvites", {
+  invites: Schema.Array(ClientInvite),
+});
+export type ClientInvitesEvent = typeof ClientInvitesEvent.Type;
+
 export interface InviteResponse {
   readonly clientId: ClientId;
   /** The QR and the link: `https://<portal>/enroll/client#code=<code>`. */

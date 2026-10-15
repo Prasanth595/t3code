@@ -1262,6 +1262,25 @@ function ClientPanel({ id }: { id: string }) {
       )}
 
       <Section>App</Section>
+      {portal.invites
+        .filter((invite) => invite.clientId === client.id)
+        .map((invite) => (
+          <div className="row callout" key={invite.expiresAt}>
+            <div className="v">An invite waits. It expires {timeUntil(invite.expiresAt, now)}.</div>
+            <button
+              type="button"
+              className="btn small"
+              onClick={() =>
+                portal.call(
+                  () => callApi("POST", "/api/clients/invites/cancel", { clientId: client.id }),
+                  "The invite no longer works.",
+                )
+              }
+            >
+              Cancel invite
+            </button>
+          </div>
+        ))}
       {client.serviceToken ? (
         <p className="small">
           <span className="sticker ok flat">app</span> A native app holds the token{" "}

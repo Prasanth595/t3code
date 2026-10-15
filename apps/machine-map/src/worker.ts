@@ -226,6 +226,12 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.approvalsStatus(owner, url.host));
     case "POST /clients/approvals":
       return toResponse(await stub.setUpApprovals(owner, url.host));
+    case "POST /clients/invites/cancel": {
+      const body = await readBody(request, RemoveClientRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.cancelInvites(owner, body.clientId));
+    }
     case "POST /clients/remove": {
       const body = await readBody(request, RemoveClientRequest);
       return body instanceof Response

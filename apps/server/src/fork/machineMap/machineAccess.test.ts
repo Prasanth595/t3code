@@ -75,6 +75,14 @@ describe("clientGrantFor (MM-912)", () => {
       clientGrantFor(withPhone("admin", "2026-10-13T11:00:00.000Z"), "phone.access", NOW),
     ).toBeUndefined();
     expect(clientsWithChangedLevel(withPhone("standard"), desiredState({}), NOW)).toEqual([PHONE]);
+    // The portal drops an expired client from the desired state; its sessions still end.
+    expect(
+      clientsWithChangedLevel(
+        withPhone("admin", "2026-10-13T11:00:00.000Z"),
+        desiredState({}),
+        NOW,
+      ),
+    ).toEqual([PHONE]);
   });
 });
 

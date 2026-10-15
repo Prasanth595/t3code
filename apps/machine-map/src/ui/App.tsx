@@ -323,6 +323,7 @@ export function App() {
     health: state.health,
     joins: state.joins,
     pending: state.pending,
+    invites: state.invites,
     draft,
     now,
     route,

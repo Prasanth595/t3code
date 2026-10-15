@@ -208,6 +208,13 @@ describe("checkEditableChanges", () => {
     expect(() =>
       checkEditableChanges(withApp, [{ _tag: "removeClient", clientId: client().id }]),
     ).toThrow();
+    // Undo of a rename from before the app joined keeps the token (MM-720).
+    const rename = applyChanges(withApp, [
+      { _tag: "putClient", client: client({ name: "iPhone", serviceToken: null }) },
+    ]);
+    expect(() =>
+      checkEditableChanges(rename.map, undoChanges(rename.map, rename.inverse)),
+    ).not.toThrow();
   });
 
   it("lets a browser key in only through an approval (MM-907)", () => {

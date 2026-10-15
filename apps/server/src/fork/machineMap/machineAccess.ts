@@ -78,21 +78,17 @@ export const clientGrantFor = (
 };
 
 /**
- * MM-912: the clients whose level on this machine differs between two desired states. A client
- * that left the desired state counts as a change to `none`, so its sessions end.
+ * MM-912: the clients whose level on this machine changed between two desired states, read like
+ * `sourcesWithChangedLevel`. A client that left the desired state counts as a change to `none`.
  */
 export const clientsWithChangedLevel = (
   previous: MachineDesiredState | null,
   next: MachineDesiredState | null,
   nowMs: number,
 ): ReadonlyArray<DesiredClient["id"]> => {
-  const levels = (desired: MachineDesiredState | null) =>
-    new Map((desired?.clients ?? []).map((client) => [client.id, effectiveLevel(client, nowMs)]));
-  const before = levels(previous);
-  const after = levels(next);
-  return [...new Set([...before.keys(), ...after.keys()])].filter(
-    (id) => (before.get(id) ?? "none") !== (after.get(id) ?? "none"),
-  );
+  const clients = (desired: MachineDesiredState | null) =>
+    (desired?.clients ?? []).map((client) => [client.id, client] as const);
+  return sourcesWithChangedLevel(clients(previous), clients(next), nowMs);
 };
 
 const MACHINE_SUBJECT_PREFIX = "machine:";

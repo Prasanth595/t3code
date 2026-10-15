@@ -49,6 +49,7 @@ import type {
   AddMachineRequest,
   ApprovalsStatus,
   ApproveClientRequest,
+  ClientInvitesEvent,
   ChangesRequest,
   InviteRequest,
   InviteResponse,
@@ -88,6 +89,7 @@ import {
   approvalsAppProblem,
   CLIENT_POLICY_NAME,
   CloudflareApi,
+  goneIsDone,
   tunnelTarget,
   type ApprovalsApp,
 } from "./cloudflare.ts";
@@ -221,7 +223,7 @@ type PauseRecord = typeof PauseRecord.Type;
 const decodePause = decodeJson(PauseRecord);
 const decodeApprovalsApp = decodeJson(Schema.Struct({ id: Schema.String, aud: Schema.String }));
 /** MM-913: an invite of a native app works this long. */
-const INVITE_MINUTES = 24 * 60;
+const INVITE_MINUTES = 15;
 const decodeHelloProtocol = Schema.decodeUnknownOption(
   Schema.TaggedStruct("hello", { protocol: Schema.Number }),
 );
@@ -593,6 +595,16 @@ export class MachineMapObject extends DurableObject<Env> {
     }));
   }
 
+  /** MM-913: the waiting invites, without their codes. */
+  #invitesEvent(): ClientInvitesEvent {
+    return {
+      _tag: "clientInvites",
+      invites: this.#sql<{ client_id: string; expires_at: string }>(
+        "SELECT client_id, expires_at FROM client_invites ORDER BY expires_at",
+      ).map((row) => ({ clientId: ClientId.make(row.client_id), expiresAt: row.expires_at })),
+    };
+  }
+
   #pendingEvent(): PendingClientsEvent {
     return { _tag: "pendingClients", pending: this.#pendingClients() };
   }
@@ -686,6 +698,8 @@ export class MachineMapObject extends DurableObject<Env> {
     if (!api) return "Approvals need the CF_API_TOKEN secret (MM-1205).";
     const stored = this.#approvalsApp();
     if (!stored) return "Set up approvals first.";
+    // A portal that set up approvals before app invites has no `/client` app yet (MM-914).
+    if (this.clientAppAud() === null) return "Set up approvals again, to add the app path.";
     let app: ApprovalsApp;
     let methods: ReadonlyArray<string>;
     try {
@@ -715,7 +729,8 @@ export class MachineMapObject extends DurableObject<Env> {
       | HealthEvent
       | ResourceSampleEvent
       | EnrolledEvent
-      | PendingClientsEvent,
+      | PendingClientsEvent
+      | ClientInvitesEvent,
   ): void {
     const text = JSON.stringify(event);
     for (const ws of this.ctx.getWebSockets(PAGE_TAG)) {
@@ -785,6 +800,7 @@ export class MachineMapObject extends DurableObject<Env> {
       server.send(JSON.stringify(this.#pauseEvent()));
       server.send(JSON.stringify(this.#healthEvent()));
       server.send(JSON.stringify(this.#pendingEvent()));
+      server.send(JSON.stringify(this.#invitesEvent()));
       return new Response(null, { status: 101, webSocket: client });
     }
     if (pathname === "/connect") {
@@ -1782,7 +1798,11 @@ export class MachineMapObject extends DurableObject<Env> {
         ],
       );
     }
-    this.#sql("DELETE FROM client_invites WHERE expires_at <= ?", new Date(now).toISOString());
+    const expiredInvites = this.#sql<{ client_id: string }>(
+      "DELETE FROM client_invites WHERE expires_at <= ? RETURNING client_id",
+      new Date(now).toISOString(),
+    );
+    if (expiredInvites.length > 0) this.#broadcast(this.#invitesEvent());
     const stale = this.#sql<{ thumbprint: string }>(
       "DELETE FROM pending_clients WHERE last_seen < ? RETURNING thumbprint",
       new Date(now - PENDING_KEEP_MS).toISOString(),
@@ -2394,7 +2414,6 @@ export class MachineMapObject extends DurableObject<Env> {
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('client_app_aud', ?)",
         await api.ensureClientTokensApp(host),
       );
-      await api.ensureInviteBypassApp(host);
       const problem = await this.#approvalsProblem(host);
       return problem === null ? { _tag: "ready" } : { _tag: "missing", reason: problem };
     });
@@ -2562,13 +2581,15 @@ export class MachineMapObject extends DurableObject<Env> {
       // A 128-bit code: it travels in a QR or a link, never typed.
       const code = randomHex(16);
       const expiresAt = addMinutes(Date.now(), INVITE_MINUTES);
+      const codeHash = await sha256Hex(code);
       this.#sql("DELETE FROM client_invites WHERE client_id = ?", clientId);
       this.#sql(
         "INSERT INTO client_invites (code_hash, client_id, expires_at) VALUES (?, ?, ?)",
-        await sha256Hex(code),
+        codeHash,
         clientId,
         expiresAt,
       );
+      this.#broadcast(this.#invitesEvent());
       return { clientId, url: `https://${host}/enroll/client#code=${code}`, expiresAt };
     });
   }
@@ -2604,28 +2625,45 @@ export class MachineMapObject extends DurableObject<Env> {
         codeHash,
       );
       if (claimed.length === 0) throw new PortalError(404, "Unknown or used invite.");
+      this.#broadcast(this.#invitesEvent());
       const created = await api.createServiceToken(`t3-client-${slug(client.name)}`);
+      const dropCreated = async () => {
+        await goneIsDone(api.removeTokenFromApp(appId, created.id, CLIENT_POLICY_NAME)).catch(
+          () => undefined,
+        );
+        await goneIsDone(api.deleteServiceToken(created.id)).catch(() => undefined);
+      };
       try {
         await api.addTokenToApp(appId, created.id, CLIENT_POLICY_NAME);
       } catch (error) {
-        await api.deleteServiceToken(created.id).catch(() => undefined);
+        await dropCreated();
         throw error;
       }
-      await this.#dropClientToken(api, appId, client.id);
+      // The map can change during the Cloudflare calls: read the client again.
+      const current = findClient(this.#map, client.id);
+      if (!current) {
+        await dropCreated();
+        throw new PortalError(404, "The client of this invite is gone.");
+      }
+      if (this.#pause?.before.clientArrows.some((a) => a.client === current.id)) {
+        await dropCreated();
+        throw new PortalError(423, "Everything is paused. Ask for a new invite after Resume.");
+      }
+      await this.#dropClientToken(api, appId, current.id);
       this.#sql(
         "INSERT OR REPLACE INTO client_tokens (client_id, token_id) VALUES (?, ?)",
-        client.id,
+        current.id,
         created.id,
       );
-      const next: ClientRecord = { ...client, serviceToken: { clientId: created.client_id } };
+      const next: ClientRecord = { ...current, serviceToken: { clientId: created.client_id } };
       this.#commit(
         { _tag: "portal", reason: "app invite" },
-        `${client.name} joined from ${request.device || "an app"}`,
+        `${next.name} joined from ${request.device || "an app"}`,
         [{ _tag: "putClient", client: next }],
       );
       return {
-        clientId: client.id,
-        name: client.name,
+        clientId: next.id,
+        name: next.name,
         serviceToken: { clientId: created.client_id, clientSecret: created.client_secret },
         machines: this.#clientMachines(next),
         machinesUrl: `https://${host}/client/machines`,
@@ -2649,20 +2687,24 @@ export class MachineMapObject extends DurableObject<Env> {
       clientId,
     )[0];
     if (!row) return;
-    await api.removeTokenFromApp(appId, row.token_id, CLIENT_POLICY_NAME);
-    await api.deleteServiceToken(row.token_id);
+    // A token or policy that someone deleted in the dashboard is already gone, so removal goes on.
+    await goneIsDone(api.removeTokenFromApp(appId, row.token_id, CLIENT_POLICY_NAME));
+    await goneIsDone(api.deleteServiceToken(row.token_id));
     this.#sql("DELETE FROM client_tokens WHERE client_id = ?", clientId);
   }
 
   /**
-   * MM-915: removes a client. Its app token ends in Cloudflare first, so the edge refuses the app
-   * at once; then machines end its sessions with the new desired state.
+   * MM-915: removes a client. Its app token ends in Cloudflare first, so the edge refuses new
+   * requests signed with it; then machines end its sessions when they get the new desired state.
    */
   removeClient(owner: OwnerContext, clientId: ClientId) {
     return this.#run(owner, async (): Promise<WriteResult> => {
       const client = findClient(this.#map, clientId);
       if (!client) throw new PortalError(404, "This client is gone.");
-      if (client.serviceToken) {
+      // The stored token id decides, so a live token never stays in the policy.
+      const hasToken =
+        this.#sql("SELECT 1 FROM client_tokens WHERE client_id = ?", client.id).length > 0;
+      if (hasToken) {
         const api = this.#cloudflare();
         if (!api) {
           throw new PortalError(
@@ -2675,10 +2717,24 @@ export class MachineMapObject extends DurableObject<Env> {
         await this.#dropClientToken(api, appId, client.id);
       }
       this.#sql("DELETE FROM client_invites WHERE client_id = ?", client.id);
+      this.#broadcast(this.#invitesEvent());
       const revision = this.#commit(ownerActor(owner), `Removed ${client.name}`, [
         { _tag: "removeClient", clientId: client.id },
       ]);
       return { _tag: "applied", revision: revision.revision };
+    });
+  }
+
+  /** MM-913: the way back from an invite. Its code stops working at once. */
+  cancelInvites(owner: OwnerContext, clientId: ClientId) {
+    return this.#run(owner, () => {
+      const removed = this.#sql<{ client_id: string }>(
+        "DELETE FROM client_invites WHERE client_id = ? RETURNING client_id",
+        clientId,
+      );
+      if (removed.length === 0) throw new PortalError(404, "No invite waits for this client.");
+      this.#broadcast(this.#invitesEvent());
+      return { cancelled: removed.length };
     });
   }
 

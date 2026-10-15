@@ -25,6 +25,7 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 - A change that raises access of the agent's own machine always waits for the owner.
 - While the owner's emergency pause is on, the portal refuses every agent call. Each machine also locks T3 Code for every client except its own desktop app (MM-718). Only the owner can resume, in the portal.
 - The owner HTTP API (`apps/machine-map/src/worker.ts`, `/api/*`) needs the owner's Cloudflare Access login. Agents do not use it. Use the MCP tools.
+- Clients (browsers and phones of the owner, MM-904) are owner-only. Agents never approve, invite, rename, remove or change the arrows of a client, not even as a proposal (MM-807). `machines_read` shows them. To give a phone access, ask the owner to use "Invite an app" in the portal.
 
 | Task                                    | Do this                                                                                                                                                                                               |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

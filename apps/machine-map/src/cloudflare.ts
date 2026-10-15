@@ -194,8 +194,7 @@ export const CLIENT_POLICY_NAME = "t3 client tokens";
 const CLIENT_APP_NAME = "t3 portal client tokens";
 /** MM-914: the path of that app. */
 export const CLIENT_PATH = "/client";
-/** MM-913: the Bypass Access app of the invite path. The invite code is the credential. */
-const INVITE_APP_NAME = "t3 portal app invites";
+/** MM-913: the invite path. The Bypass Access app of `/enroll` covers it; the code is the credential. */
 export const INVITE_PATH = "/enroll/client";
 
 export interface OwnerSession {
@@ -208,6 +207,23 @@ export interface OwnerSession {
 
 const isoFromSeconds = (seconds: number | undefined): string | null =>
   seconds === undefined ? null : new Date(seconds * 1000).toISOString();
+
+/** A refused Cloudflare API call, with its HTTP status. */
+export class CloudflareApiError extends Error {
+  override readonly name = "CloudflareApiError";
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** Runs a delete that may meet a resource that is gone already. A 404 counts as done. */
+export const goneIsDone = (work: Promise<void>): Promise<void> =>
+  work.catch((error: unknown) => {
+    if (error instanceof CloudflareApiError && error.status === 404) return;
+    throw error;
+  });
 
 export class CloudflareApi {
   readonly #token: string;
@@ -242,7 +258,10 @@ export class CloudflareApi {
     const envelope = decodeEnvelope(await response.json());
     if (!response.ok || !envelope.success) {
       const detail = envelope.errors.map((e) => `${e.code} ${e.message}`).join("; ");
-      throw new Error(`Cloudflare API ${method} ${path} failed: ${detail || response.status}`);
+      throw new CloudflareApiError(
+        response.status,
+        `Cloudflare API ${method} ${path} failed: ${detail || response.status}`,
+      );
     }
     return decode(envelope.result);
   }
@@ -522,25 +541,6 @@ export class CloudflareApi {
       ],
     });
     return app.aud;
-  }
-
-  /** MM-913: creates the Bypass Access app of the invite path once, so an app reaches it unsigned. */
-  async ensureInviteBypassApp(host: string): Promise<void> {
-    const found = await this.#call(
-      "GET",
-      `/access/apps?name=${encodeURIComponent(INVITE_APP_NAME)}&exact=true`,
-      decodeApprovalsApps,
-    );
-    if (found.some((a) => a.name === INVITE_APP_NAME)) return;
-    const domain = `${host}${INVITE_PATH}`;
-    await this.#call("POST", "/access/apps", ignoreResult, {
-      type: "self_hosted",
-      name: INVITE_APP_NAME,
-      domain,
-      destinations: [{ type: "public", uri: domain }],
-      app_launcher_visible: false,
-      policies: [{ name: "everyone", decision: "bypass", include: [{ everyone: {} }] }],
-    });
   }
 
   approvalsApp(appId: string): Promise<ApprovalsApp> {

@@ -676,6 +676,20 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
               <CopyIcon />
               Copy link
             </button>
+            <button
+              type="button"
+              className="btn danger"
+              onClick={() =>
+                portal.call(async () => {
+                  await callApi("POST", "/api/clients/invites/cancel", {
+                    clientId: invite.clientId,
+                  });
+                  close();
+                }, "The invite no longer works.")
+              }
+            >
+              Cancel invite
+            </button>
             <button type="button" className="btn primary" onClick={close}>
               Done
             </button>
