@@ -446,8 +446,12 @@ export const layerAssetRoute = HttpRouter.add(
     }
     if (asset.kind === "github-media" || asset.kind === "bitbucket-media") {
       return yield* pullRequestMediaResponse(asset, request.headers).pipe(
-        Effect.tapError((cause) =>
-          Effect.logWarning("Failed to fetch pull request media.", { url: asset.url, cause }),
+        // Only the reason: a failed hop's message names its URL, and a redirect's is a signed one.
+        Effect.tapError((error) =>
+          Effect.logWarning("Failed to fetch pull request media.", {
+            kind: asset.kind,
+            reason: error.reason._tag,
+          }),
         ),
         Effect.orElseSucceed(() =>
           HttpServerResponse.empty({
