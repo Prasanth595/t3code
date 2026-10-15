@@ -4,7 +4,7 @@ import {
   Button,
   OutlinedButton,
   Icon,
-  Row,
+  FlowRow,
   Column,
   OutlinedTextField,
   Text,
@@ -231,7 +231,7 @@ function DialogPresentation(props: DialogPresentationProps) {
         ) : null}
         {actions.length > 1 ? (
           <AlertDialog.DismissButton>
-            <Row>{actions.slice(0, -1).map(renderAction)}</Row>
+            <FlowRow>{actions.slice(0, -1).map(renderAction)}</FlowRow>
           </AlertDialog.DismissButton>
         ) : null}
         {actions.length > 0 ? (
