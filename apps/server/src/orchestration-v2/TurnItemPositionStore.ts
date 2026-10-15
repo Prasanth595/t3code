@@ -16,6 +16,8 @@ export class TurnItemPositionStoreError extends Schema.TaggedError<TurnItemPosit
 
 const isTurnItemPositionStoreError = Schema.is(TurnItemPositionStoreError);
 
+const POSITIONS_PER_RUN = 1_000_000;
+
 export interface TurnItemPositionStoreV2Shape {
   readonly allocate: (input: {
     readonly threadId: ThreadId;
@@ -38,6 +40,35 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
   TurnItemPositionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+
+    /**
+     * A run's items go in the bucket of its ordinal. A queued run can start
+     * after a later run, such as a restart continuation. Its items then go in
+     * the newest bucket, so they show below what already ran. Runs that share
+     * a bucket stay in start order because each item takes the next position.
+     */
+    const runBucket = (input: {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly runOrdinal: number;
+    }) =>
+      Effect.gen(function* () {
+        const newest = yield* sql<{ readonly ordinal: number | null }>`
+          SELECT MAX(ordinal) AS ordinal
+          FROM orchestration_v2_turn_item_positions
+          WHERE thread_id = ${input.threadId}
+        `;
+        const newestBucket = Math.floor((newest[0]?.ordinal ?? 0) / POSITIONS_PER_RUN);
+        if (newestBucket <= input.runOrdinal) return input.runOrdinal;
+        // A run that already shows items keeps their bucket for its late items.
+        const shown = yield* sql<{ readonly ordinal: number | null }>`
+          SELECT MAX(ordinal) AS ordinal
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${input.threadId} AND run_id = ${input.runId}
+        `;
+        const shownOrdinal = shown[0]?.ordinal ?? null;
+        return shownOrdinal === null ? newestBucket : Math.floor(shownOrdinal / POSITIONS_PER_RUN);
+      });
 
     const allocate: TurnItemPositionStoreV2Shape["allocate"] = ({
       threadId,
@@ -64,8 +95,12 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
                 LIMIT 1
               `;
         const runOrdinal = suppliedRunOrdinal ?? runRows[0]?.ordinal ?? null;
-        const lowerBound = runOrdinal === null ? 0 : runOrdinal * 1_000_000;
-        const upperBound = runOrdinal === null ? 999_999 : lowerBound + 999_999;
+        const bucket =
+          runId === null || runOrdinal === null
+            ? 0
+            : yield* runBucket({ threadId, runId, runOrdinal });
+        const lowerBound = bucket * POSITIONS_PER_RUN;
+        const upperBound = lowerBound + POSITIONS_PER_RUN - 1;
         yield* sql`
           INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
           SELECT
