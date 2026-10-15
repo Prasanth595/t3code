@@ -16,10 +16,10 @@ const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 const MAX_BUFFERED_RAW_MESSAGES = 32;
-// Longest incoming JSONL line, in UTF-16 code units, LF excluded.
+// Longest incoming JSONL line, in UTF-8 bytes, LF excluded.
 // Codex diffs reach ~49M characters; a far longer line could exhaust the heap
 // during join and parse.
-const MAX_INCOMING_MESSAGE_LENGTH = 128 * 1024 * 1024;
+const MAX_INCOMING_MESSAGE_BYTES = 128 * 1024 * 1024;
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -43,8 +43,8 @@ export interface CodexAppServerPatchedProtocolOptions {
   readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
-  // Test override; production uses MAX_INCOMING_MESSAGE_LENGTH.
-  readonly maxIncomingMessageLength?: number;
+  // Test override; production uses MAX_INCOMING_MESSAGE_BYTES.
+  readonly maxIncomingMessageBytes?: number;
   readonly logger?: (event: CodexAppServerProtocolLogEvent) => Effect.Effect<void, never>;
   readonly onNotification?: (
     notification: CodexAppServerIncomingNotification,
@@ -170,10 +170,9 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       yield* Queue.sliding<CodexAppServerIncomingRequest>(MAX_BUFFERED_RAW_MESSAGES);
     const pending = yield* Ref.make(new Map<string, CodexAppServerPendingRequest>());
     const nextRequestId = yield* Ref.make(1);
-    const maxIncomingMessageLength =
-      options.maxIncomingMessageLength ?? MAX_INCOMING_MESSAGE_LENGTH;
+    const maxIncomingMessageBytes = options.maxIncomingMessageBytes ?? MAX_INCOMING_MESSAGE_BYTES;
     const remainder: Array<string> = [];
-    let remainderLength = 0;
+    let remainderBytes = 0;
     const terminationHandled = yield* Ref.make(false);
     const terminationFailure = yield* Ref.make(Option.none<CodexError.CodexAppServerError>());
     const terminationSignal = yield* Deferred.make<void>();
@@ -413,27 +412,26 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
           let start = 0;
           while (start < chunk.length) {
             const newline = chunk.indexOf("\n", start);
-            const end = newline === -1 ? chunk.length : newline;
-            remainderLength += end - start;
+            const fragment = chunk.slice(start, newline === -1 ? chunk.length : newline);
+            // decodeText holds back split UTF-8 sequences, so fragment byte sums are exact.
+            remainderBytes += Buffer.byteLength(fragment, "utf8");
             // Reject an oversized message before it is joined, logged or parsed.
-            if (remainderLength > maxIncomingMessageLength) {
+            if (remainderBytes > maxIncomingMessageBytes) {
               remainder.length = 0;
               const error = new CodexError.CodexAppServerTransportError({
                 operation: "read-input-stream",
-                cause: new Error(
-                  `Incoming message exceeded ${maxIncomingMessageLength} characters.`,
-                ),
+                cause: new Error(`Incoming message exceeded ${maxIncomingMessageBytes} bytes.`),
               });
               return Effect.forEach(lines, handleLine, { discard: true }).pipe(
                 Effect.andThen(Effect.fail(error)),
               );
             }
             // Keep unfinished lines in fragments so each chunk is scanned only once.
-            remainder.push(chunk.slice(start, end));
+            remainder.push(fragment);
             if (newline === -1) break;
             lines.push(remainder.join("").replace(/\r$/, ""));
             remainder.length = 0;
-            remainderLength = 0;
+            remainderBytes = 0;
             start = newline + 1;
           }
           return Effect.forEach(lines, handleLine, { discard: true });
