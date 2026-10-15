@@ -2630,6 +2630,31 @@ it.effect.each([
 );
 
 it.effect.each([
+  { name: "already exists", branches: ["main", "docs/taken"] },
+  { name: "a branch blocks", branches: ["main", "docs"] },
+])("refuses a new worktree whose branch $name", (testCase) =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      git: { listLocalBranchNames: () => Effect.succeed(testCase.branches) },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const error = yield* launches
+        .checkWorktreeBase({
+          projectId,
+          workspaceStrategy: { type: "worktree", baseRef: "main", branch: "docs/taken" },
+        })
+        .pipe(Effect.flip);
+      assert.deepInclude(error, {
+        _tag: "ThreadLaunchBranchExistsError",
+        projectId,
+        branch: "docs/taken",
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect.each([
   { name: "a base ref that resolves", baseRef: "main", commits: ["main", "HEAD"] },
   // Provisioning fetches it; the ref may exist nowhere else yet.
   {
