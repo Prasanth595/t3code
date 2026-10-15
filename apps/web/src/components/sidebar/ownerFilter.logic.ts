@@ -1,6 +1,6 @@
 /**
  * Fork: the sidebar owner filter. With "is" it shows only the projects whose repository owner
- * (`repositoryOwnerOf`) is selected, and with "is_not" it hides them. Threads follow their
+ * (`repositoryOwnerOf` with `"grouping"`) is selected, and with "is_not" it hides them. Threads follow their
  * projects. If upstream T3 Code ships an owner or organization filter for the sidebar, drop this
  * fork version and use theirs.
  */
@@ -18,7 +18,7 @@ export type SidebarOwner = string | null;
 function sidebarProjectGroupOwner(
   group: Pick<SidebarProjectSnapshot, "repositoryIdentity">,
 ): SidebarOwner {
-  return group.repositoryIdentity ? repositoryOwnerOf(group.repositoryIdentity) : null;
+  return repositoryOwnerOf(group.repositoryIdentity, "grouping");
 }
 
 export function sidebarOwnerLabel(owner: SidebarOwner): string {

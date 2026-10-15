@@ -42,11 +42,12 @@ export function pullRequestMenuOwnerFilter(
 const isEmptyOwnerFilter = (filter: PullRequestOwnerFilter) =>
   filter.include.length === 0 && filter.exclude.length === 0;
 
-/** Lowercase, so that the filter compares owners without case. Null without a repository. */
-function ownerOf(project: OwnedProject): string | null {
-  if (!project.repositoryIdentity) return null;
-  return repositoryOwnerOf(project.repositoryIdentity)?.toLowerCase() ?? null;
-}
+/**
+ * The owner of the repository that the project's pull requests come from. A fork checkout reads
+ * its upstream owner here, while the sidebar groups it under the fork owner.
+ */
+const ownerOf = (project: OwnedProject) =>
+  repositoryOwnerOf(project.repositoryIdentity, "canonical");
 
 /**
  * Fork: the owners for the owner menu: the distinct owners of the projects that have threads,

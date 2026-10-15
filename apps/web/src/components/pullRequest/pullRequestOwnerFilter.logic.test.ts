@@ -40,7 +40,7 @@ function project(
 
 const app = project("app", "github.com/qlik-trial/app");
 const dotfiles = project("dotfiles", "github.com/yarden-zamir/dotfiles");
-// A fork of an upstream repository counts as the fork owner's project.
+// A fork checkout lists the pull requests of its upstream, so it counts as the upstream owner's.
 const fork = project(
   "t3code",
   "github.com/pingdotgg/t3code",
@@ -105,7 +105,7 @@ describe("narrowing projects by repository owner", () => {
         [...projects, other, clone],
         [threadIn(app), threadIn(other), threadIn(fork), threadIn(scratch)],
       ),
-    ).toEqual(["qlik-trial", "yarden-zamir"]);
+    ).toEqual(["pingdotgg", "qlik-trial"]);
   });
 
   const ids = (owners: ReadonlyArray<string>, operator: "is" | "is_not") =>
@@ -117,7 +117,8 @@ describe("narrowing projects by repository owner", () => {
   });
 
   it("keeps the projects of the selected owners without case, and drops one without a repository", () => {
-    expect(ids(["Yarden-Zamir"], "is")).toEqual(["dotfiles", "t3code"]);
+    expect(ids(["Yarden-Zamir"], "is")).toEqual(["dotfiles"]);
+    expect(ids(["pingdotgg"], "is")).toEqual(["t3code"]);
     expect(ids(["qlik-trial", "nobody"], "is")).toEqual(["app"]);
   });
 
@@ -128,7 +129,7 @@ describe("narrowing projects by repository owner", () => {
   it("applies typed owners to keep and owners to drop together", () => {
     const keep = (include: string[], exclude: string[]) =>
       projectsOfOwners(projects, { include, exclude }).map(({ id }) => id);
-    expect(keep(["yarden-zamir", "qlik-trial"], ["qlik-trial"])).toEqual(["dotfiles", "t3code"]);
+    expect(keep(["yarden-zamir", "pingdotgg"], ["pingdotgg"])).toEqual(["dotfiles"]);
     expect(keep(["qlik-trial"], ["qlik-trial"])).toEqual([]);
   });
 });

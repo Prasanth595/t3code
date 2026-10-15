@@ -71,7 +71,7 @@ export function buildSidebarGroupProjectFacts(
           : {
               repository: repositoryGroupingKeyOf(identity),
               repositoryLabel: repositoryGroupingDisplayNameOf(identity) ?? null,
-              owner: repositoryOwnerOf(identity),
+              owner: repositoryOwnerOf(identity, "grouping"),
             },
       ] as const;
     }),
