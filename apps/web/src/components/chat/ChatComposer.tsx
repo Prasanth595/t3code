@@ -1106,6 +1106,7 @@ import {
   PencilRulerIcon,
   PlayIcon,
   ShieldIcon,
+  SquareDashedIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
@@ -1259,15 +1260,69 @@ const supervisedRuntimeModeOption = {
   mode: "approval-required" as const,
   ...runtimeModeConfig["approval-required"],
 };
+const BLANK_SLATE_DESCRIPTION =
+  "The agent starts without T3 instructions or tools, and without your or the project's instruction files, skills, hooks, and memory.";
+
+const ComposerBlankSlateControl = memo(function ComposerBlankSlateControl(props: {
+  blankSlate: boolean;
+  size: "sm" | "xs";
+  /** Absent once the thread exists: the choice is fixed at creation. */
+  onToggleBlankSlate: (() => void) | undefined;
+}) {
+  if (!props.blankSlate && props.onToggleBlankSlate === undefined) return null;
+  const tooltip =
+    props.onToggleBlankSlate === undefined
+      ? `Blank slate thread. ${BLANK_SLATE_DESCRIPTION}`
+      : props.blankSlate
+        ? `Blank slate on. ${BLANK_SLATE_DESCRIPTION} Click to turn off.`
+        : `Start a blank slate thread. ${BLANK_SLATE_DESCRIPTION}`;
+  return (
+    <>
+      <ComposerControlSeparator size={props.size} />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ComposerControl
+              size={props.size}
+              className="shrink-0 whitespace-nowrap"
+              aria-pressed={props.blankSlate}
+              aria-disabled={props.onToggleBlankSlate === undefined || undefined}
+              type="button"
+              onClick={props.onToggleBlankSlate}
+              aria-label={tooltip}
+            />
+          }
+        >
+          <ComposerControlIcon
+            icon={SquareDashedIcon}
+            size={props.size}
+            className={props.blankSlate ? "text-current opacity-100" : undefined}
+          />
+          {props.blankSlate ? (
+            <span data-composer-control-label className="sr-only sm:not-sr-only">
+              Blank slate
+            </span>
+          ) : null}
+        </TooltipTrigger>
+        <TooltipPopup side="top" className="max-w-72">
+          {tooltip}
+        </TooltipPopup>
+      </Tooltip>
+    </>
+  );
+});
+
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
+  blankSlate: boolean;
   size?: "sm" | "xs";
   hidden?: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onToggleBlankSlate: (() => void) | undefined;
 }) {
   const size = props.size ?? "sm";
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -1372,6 +1427,11 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
       </Tooltip>
 
       {interactionModeToggle}
+      <ComposerBlankSlateControl
+        blankSlate={props.blankSlate}
+        size={size}
+        onToggleBlankSlate={props.onToggleBlankSlate}
+      />
     </>
   );
 });
@@ -1720,6 +1780,9 @@ export interface ChatComposerProps {
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  blankSlate: boolean;
+  /** Only drafts can change it; see OrchestrationV2AppThread.blankSlate. */
+  onToggleBlankSlate: (() => void) | undefined;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -1829,6 +1892,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     toggleInteractionMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
+    blankSlate,
+    onToggleBlankSlate,
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
@@ -5602,10 +5667,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           interactionMode={interactionMode}
           runtimeMode={compatibleRuntimeMode}
           runtimeModeOptions={compatibleRuntimeModeOptions}
+          blankSlate={blankSlate}
           size={composerControlsCollapsed ? "xs" : "sm"}
           hidden={composerControlsHidden || restingHiddenBlockCount > 0}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
+          onToggleBlankSlate={onToggleBlankSlate}
         />
       ),
     },
@@ -5774,6 +5841,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
             onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}
+            {...(hiddenRestingBlockIds.includes("mode") ? { blankSlate, onToggleBlankSlate } : {})}
           />
         </div>
       </>

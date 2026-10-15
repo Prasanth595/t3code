@@ -302,6 +302,12 @@ const CURSOR_AGENT_SETTING_SOURCES = [
   "plugins",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+/** Blank-slate threads keep only administrator policy. */
+const CURSOR_BLANK_SLATE_SETTING_SOURCES = [
+  "team",
+  "mdm",
+] as const satisfies ReadonlyArray<SettingSource>;
+
 export function makeCursorAgentOptions(input: {
   readonly apiKey?: string;
   readonly modelSelection: ModelSelection;
@@ -319,7 +325,11 @@ export function makeCursorAgentOptions(input: {
     local: {
       ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
       autoReview: policy.autoReview,
-      settingSources: [...CURSOR_AGENT_SETTING_SOURCES],
+      settingSources: [
+        ...(input.runtimePolicy.blankSlate === true
+          ? CURSOR_BLANK_SLATE_SETTING_SOURCES
+          : CURSOR_AGENT_SETTING_SOURCES),
+      ],
       sandboxOptions: {
         enabled: policy.sandboxEnabled,
       },
@@ -2176,7 +2186,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const text =
+            turnInput.runtimePolicy.blankSlate === true
+              ? userText
+              : `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
           return images.length === 0
             ? text
             : ({

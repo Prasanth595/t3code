@@ -3,6 +3,7 @@ import { memo, type ReactNode } from "react";
 import { EllipsisIcon } from "lucide-react";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -31,6 +32,9 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   hidden?: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  /** Set while the mode block is folded into this menu. */
+  blankSlate?: boolean;
+  onToggleBlankSlate?: (() => void) | undefined;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const size = props.size ?? "sm";
@@ -89,6 +93,18 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
+        {props.blankSlate === true || props.onToggleBlankSlate !== undefined ? (
+          <>
+            <MenuDivider />
+            <MenuCheckboxItem
+              checked={props.blankSlate === true}
+              disabled={props.onToggleBlankSlate === undefined}
+              onCheckedChange={() => props.onToggleBlankSlate?.()}
+            >
+              Blank slate
+            </MenuCheckboxItem>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

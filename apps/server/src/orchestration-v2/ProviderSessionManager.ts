@@ -484,6 +484,13 @@ export const layerWithOptions = (
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
+                const thread = yield* projectionStore
+                  .getThread(threadId)
+                  .pipe(Effect.orElseSucceed(() => undefined));
+                if (thread?.blankSlate === true) {
+                  yield* mcpSessions.clear(threadId);
+                  return { mcpCredentialId: undefined, issued: false };
+                }
                 // Reuse a still-valid credential for this thread instead of
                 // rotating: long-lived provider processes (codex app-server)
                 // build their MCP client once per conversation and keep using

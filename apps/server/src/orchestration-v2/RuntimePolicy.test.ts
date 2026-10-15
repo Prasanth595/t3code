@@ -134,6 +134,18 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 
+  it.effect("carries a thread's blank slate to every provider session", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolve = (thread: ReturnType<typeof makeThread>) =>
+        policy.resolve({ thread, modelSelection });
+      const regular = makeThread({ now, worktreePath: null });
+      assert.isTrue((yield* resolve({ ...regular, blankSlate: true })).blankSlate);
+      assert.isUndefined((yield* resolve(regular)).blankSlate);
+    }),
+  );
+
   it.effect("runs a mode the provider does not offer in Supervised", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;

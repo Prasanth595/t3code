@@ -129,6 +129,7 @@ export const layerFromProjectStore: Layer.Layer<
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
+          ...(input.thread.blankSlate === true ? { blankSlate: true } : {}),
         });
       }),
     });

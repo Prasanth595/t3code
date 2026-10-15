@@ -1324,6 +1324,17 @@ export const CODEX_THREAD_CONFIG = {
   mcp_optional_startup_grace_ms: 10_000,
 } as const;
 
+/**
+ * Blank-slate threads skip project AGENTS.md files, the skills catalog, and
+ * memories. Codex has no override for `$CODEX_HOME/AGENTS.md` or the MCP
+ * servers in the user's config.toml.
+ */
+export const CODEX_BLANK_SLATE_THREAD_CONFIG = {
+  project_doc_max_bytes: 0,
+  "skills.include_instructions": false,
+  "memories.use_memories": false,
+} as const;
+
 // T3 wait tools can block for up to an hour. Keep Codex's MCP timeout above
 // that limit so the server's own wait timeout ends a long call.
 const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
@@ -1343,6 +1354,7 @@ export function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...(input.runtimePolicy?.blankSlate === true ? CODEX_BLANK_SLATE_THREAD_CONFIG : {}),
       ...(mcpSession === undefined
         ? {}
         : {

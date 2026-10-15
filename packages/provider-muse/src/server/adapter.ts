@@ -2023,14 +2023,18 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               "turn/start",
               {
                 input: [
-                  {
-                    type: "text",
-                    text: buildRuntimeInstructions({
-                      harness: "Muse Code",
-                      model: session.model ?? undefined,
-                      reasoningEffort: effort,
-                    }),
-                  },
+                  ...(turnInput.runtimePolicy.blankSlate === true
+                    ? []
+                    : [
+                        {
+                          type: "text" as const,
+                          text: buildRuntimeInstructions({
+                            harness: "Muse Code",
+                            model: session.model ?? undefined,
+                            reasoningEffort: effort,
+                          }),
+                        },
+                      ]),
                   ...parts,
                 ],
                 displayText: turnInput.message.text || "Image attachment",

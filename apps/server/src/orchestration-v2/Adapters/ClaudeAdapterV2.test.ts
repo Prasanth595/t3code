@@ -296,6 +296,40 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.deepEqual(options.supportedDialogKinds, ["resume_return"]);
   });
 
+  it("isolates blank-slate threads from settings, skills, hooks, memory, and MCP", () => {
+    const base = {
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-thread-blank-slate",
+      resume: false,
+      cwd: "/workspace",
+      environment: { PATH: "/usr/bin" },
+    };
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      ...base,
+      blankSlate: { managedMcpConfig: false },
+    });
+
+    assert.deepEqual(options.systemPrompt, { type: "preset", preset: "claude_code" });
+    assert.deepEqual(options.settingSources, []);
+    assert.deepEqual(options.skills, []);
+    assert.deepEqual(options.mcpServers, {});
+    assert.isTrue(options.strictMcpConfig);
+    assert.include(options.settings, { disableAllHooks: true, autoMemoryEnabled: false });
+    assert.deepEqual(options.env, { PATH: "/usr/bin", ENABLE_CLAUDEAI_MCP_SERVERS: "false" });
+    assert.isNull(options.extraArgs?.["no-chrome"]);
+
+    // Claude refuses --strict-mcp-config next to a managed-mcp.json.
+    const managed = ClaudeAdapterV2.makeClaudeQueryOptions({
+      ...base,
+      blankSlate: { managedMcpConfig: true },
+    });
+    assert.isUndefined(managed.strictMcpConfig);
+
+    const regular = ClaudeAdapterV2.makeClaudeQueryOptions(base);
+    assert.isUndefined(regular.settingSources);
+    assert.include((regular.systemPrompt as { append?: string }).append ?? "", "<runtime_info>");
+  });
+
   it("projects AskUserQuestion input with question text as the answer key", () => {
     assert.deepEqual(
       ClaudeAdapterV2.claudeUserInputQuestions({

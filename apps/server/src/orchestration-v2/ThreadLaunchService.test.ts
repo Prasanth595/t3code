@@ -409,6 +409,20 @@ it.effect("retains automation and sender attribution while a message waits in th
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("persists a blank-slate launch on the created thread", () => {
+  const harness = makeHarness({ runSetup: () => Effect.never });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch({
+      ...launchInput({ command: "command:blank-slate", thread: "thread:blank-slate" }),
+      blankSlate: true,
+    });
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    assert.isTrue(projection.thread.blankSlate);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("returns a visible preparing message while provisioning is still blocked", () =>
   Effect.gen(function* () {
     const worktreeEntered = yield* Deferred.make<void>();

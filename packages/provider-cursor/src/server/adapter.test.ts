@@ -884,6 +884,24 @@ describe("CursorAdapterV2", () => {
     }
   });
 
+  it("keeps only administrator policy layers for blank-slate threads", () => {
+    const options = makeCursorAgentOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("cursor"),
+        model: "composer-2.5",
+      },
+      runtimePolicy: {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: "/workspace",
+        blankSlate: true,
+      },
+      threadId: ThreadId.make("thread-cursor-blank-slate"),
+      mcpSession: undefined,
+    });
+    assert.deepEqual(options.local?.settingSources, ["team", "mdm"]);
+  });
+
   it("injects thread-scoped MCP credentials without logging them", () => {
     const threadId = ThreadId.make("thread-cursor-mcp");
     const mcpSession = {
