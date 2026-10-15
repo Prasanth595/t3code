@@ -27,6 +27,7 @@ import {
   assumeComposerControlledState,
   isComposerNativeEcho,
   pruneAcknowledgedComposerNativeEvents,
+  reconcileComposerSubmitSnapshot,
   resolveComposerControlledEventCount,
   type ComposerNativeEventSnapshot,
 } from "./composerEditorRevision";
@@ -254,22 +255,27 @@ export function ComposerEditor({
       prepareForSubmit: async (isCurrent) => {
         const editor = nativeRef.current;
         const snapshot = await editor?.prepareForSubmit();
-        if (!snapshot || nativeRef.current !== editor || !isCurrent()) return false;
-        const acknowledgedEventCount = acceptNativeEvent(
-          snapshot.eventCount,
-          snapshot.value,
-          snapshot.selection,
+        if (!snapshot || nativeRef.current !== editor) return false;
+        const current = isCurrent();
+        const reconciled = reconcileComposerSubmitSnapshot(
+          mostRecentEventCountRef.current,
+          nativeEventSnapshotsRef.current,
+          snapshot,
+          current,
         );
-        if (acknowledgedEventCount === false) return false;
+        if (!reconciled) return false;
+        mostRecentEventCountRef.current = reconciled.eventCount;
+        nativeEventSnapshotsRef.current = reconciled.snapshots;
+        setMostRecentEventCount(reconciled.eventCount);
+        if (!current) return false;
         onChangeText(snapshot.value);
         onSelectionChange?.(snapshot.selection);
-        setMostRecentEventCount(acknowledgedEventCount);
         return true;
       },
       setSelection: (nextSelection) =>
         void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
     }),
-    [acceptNativeEvent, onChangeText, onSelectionChange],
+    [onChangeText, onSelectionChange],
   );
   const themeJson = JSON.stringify(createNativeComposerTheme(theme));
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
