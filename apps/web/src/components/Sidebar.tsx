@@ -1,4 +1,6 @@
 import {
+  knownSlotLayout,
+  THREAD_CARD_ELEMENTS,
   type EnvironmentId,
   type ScopedProjectRef,
   type ThreadCardLayout,
@@ -2476,7 +2478,12 @@ export default function Sidebar() {
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   // Read from the primary environment. The hosted app has none, so it keeps the
   // built-in card until it can read one; revisit if hosted users ask for layouts.
-  const cardLayout = usePrimarySettings((s) => s.threadCardLayouts.desktop);
+  const storedCardLayout = usePrimarySettings((s) => s.threadCardLayouts.desktop);
+  const cardLayout = useMemo(
+    () =>
+      storedCardLayout === null ? null : knownSlotLayout(storedCardLayout, THREAD_CARD_ELEMENTS),
+    [storedCardLayout],
+  );
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {

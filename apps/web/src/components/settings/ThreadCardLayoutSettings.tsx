@@ -1,6 +1,7 @@
 import {
   DEFAULT_MOBILE_THREAD_CARD_LAYOUT,
   DEFAULT_THREAD_CARD_LAYOUT,
+  knownSlotLayout,
   type MobileThreadCardElement,
   type MobileThreadCardLayout,
   MOBILE_THREAD_CARD_ELEMENTS,
@@ -33,7 +34,7 @@ import {
   TerminalIcon,
   TypeIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 
@@ -99,6 +100,17 @@ export function ThreadCardLayoutSettingsRows() {
   const [surface, setSurface] = useState<ThreadCardSurface>("desktop");
   const layouts = settings.threadCardLayouts;
   const layout = layouts[surface];
+  // The builder keeps its draft while the layout object stays the same.
+  const desktopLayout = useMemo(
+    () =>
+      layouts.desktop === null ? null : knownSlotLayout(layouts.desktop, THREAD_CARD_ELEMENTS),
+    [layouts.desktop],
+  );
+  const mobileLayout = useMemo(
+    () =>
+      layouts.mobile === null ? null : knownSlotLayout(layouts.mobile, MOBILE_THREAD_CARD_ELEMENTS),
+    [layouts.mobile],
+  );
   const surfaceLabel = surface === "desktop" ? "desktop and web" : "mobile";
 
   const setDesktop = (next: ThreadCardLayout | null) =>
@@ -147,10 +159,10 @@ export function ThreadCardLayoutSettingsRows() {
           />
         }
       >
-        {surface === "desktop" && layouts.desktop !== null ? (
+        {surface === "desktop" && desktopLayout !== null ? (
           <div className="flex flex-col gap-3 pt-3">
             <SlotLayoutBuilder
-              layout={layouts.desktop}
+              layout={desktopLayout}
               elements={DESKTOP_OPTIONS}
               required={REQUIRED_THREAD_CARD_ELEMENTS}
               onChange={setDesktop}
@@ -160,10 +172,10 @@ export function ThreadCardLayoutSettingsRows() {
             />
           </div>
         ) : null}
-        {surface === "mobile" && layouts.mobile !== null ? (
+        {surface === "mobile" && mobileLayout !== null ? (
           <div className="flex flex-col gap-3 pt-3">
             <SlotLayoutBuilder
-              layout={layouts.mobile}
+              layout={mobileLayout}
               elements={MOBILE_OPTIONS}
               required={REQUIRED_THREAD_CARD_ELEMENTS}
               onChange={setMobile}

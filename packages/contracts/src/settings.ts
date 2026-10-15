@@ -30,7 +30,7 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
-import { MobileThreadCardLayout, ThreadCardLayout, ThreadCardLayouts } from "./slotLayout.ts";
+import { StoredThreadCardLayout, ThreadCardLayouts } from "./slotLayout.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
@@ -1886,8 +1886,8 @@ export const ServerSettingsPatch = Schema.Struct({
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */
   threadCardLayouts: Schema.optionalKey(
     Schema.Struct({
-      desktop: Schema.optionalKey(Schema.NullOr(ThreadCardLayout)),
-      mobile: Schema.optionalKey(Schema.NullOr(MobileThreadCardLayout)),
+      desktop: Schema.optionalKey(Schema.NullOr(StoredThreadCardLayout)),
+      mobile: Schema.optionalKey(Schema.NullOr(StoredThreadCardLayout)),
     }),
   ),
   clientAccess: Schema.optionalKey(ClientAccessMode),
