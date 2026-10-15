@@ -414,6 +414,35 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect(
+    "counts each incoming message from zero and handles earlier lines before rejecting",
+    () =>
+      Effect.gen(function* () {
+        const { stdio, input } = yield* makeInMemoryStdio();
+        const notifications: Array<CodexProtocol.CodexAppServerIncomingNotification> = [];
+        const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+        yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+          stdio,
+          maxIncomingMessageLength: 16,
+          onNotification: (notification) =>
+            Effect.sync(() => {
+              notifications.push(notification);
+            }),
+          onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+        });
+
+        yield* Queue.offer(input, encoder.encode('{"method":"x/a"}\n{"meth'));
+        yield* Queue.offer(input, encoder.encode('od":"x/c"}\n{"method":"x/b","p":1}\n'));
+        yield* Queue.end(input);
+
+        assert.instanceOf(
+          yield* Deferred.await(termination),
+          CodexError.CodexAppServerTransportError,
+        );
+        assert.deepEqual(notifications, [{ method: "x/a" }, { method: "x/c" }]);
+      }),
+  );
+
   it.effect("reports a malformed fragmented final line before input stream termination", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
