@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - binds a free loopback port before sshd starts.
-// OpenSSH plus bubblewrap integration. CI installs both. bubblewrap hides the host
-// /usr/local and /opt trees so the adapter's added PATH entries cannot see an emulator.
+// Linux OpenSSH integration lane. macOS and Windows skip this file's test.
+// Server CI installs openssh-server and bubblewrap, then runs it with the suite.
+// bubblewrap hides host /usr/local and /opt so the adapter PATH cannot see an emulator.
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -88,11 +89,10 @@ const idleHandle = (input: {
     unref: Effect.succeed(Effect.void),
   });
 
-it.live(
+it.live.skipIf(process.platform !== "linux")(
   "keeps iOS and physical Android devices when the real SSH adapter cannot find the emulator",
   () =>
     Effect.gen(function* () {
-      if (process.platform === "win32") return;
       const fs = yield* FileSystem.FileSystem;
       const real = yield* ChildProcessSpawner.ChildProcessSpawner;
       const [sshd, ssh, sshKeygen, sshKeyscan, bwrap] = yield* Effect.all(
