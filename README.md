@@ -1,6 +1,6 @@
 # Yarden-zamir fork of T3 Code
 
-This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Every fork behavior in the app is a setting, and each setting is off by default. Details and setup: [docs/fork.md](docs/fork.md).
+This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Each fork behavior is a setting that starts on when it only adds something, and off when it changes behavior, installs or restarts anything, changes access or needs setup. Details and setup: [docs/fork.md](docs/fork.md).
 
 ## Fork features
 
@@ -18,33 +18,33 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now", also at the end of "update everything".
 - **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`). The machine map Install update works on it too, now or when idle.
 - **Local deploy:** `scripts/fork-deploy-local.sh <ssh-host>` builds this checkout for a headless Linux server and switches its background service to it, without a release.
-- **Changelog:** a timeline of fork releases with every fork and upstream commit, the pending upstream commits, a "Start Fork Sync" button, and an "Ask agent" menu (`forkChangelogEnabled`).
+- **Changelog:** a timeline of fork releases with every fork and upstream commit, the pending upstream commits, a "Start Fork Sync" button, and an "Ask agent" menu (`forkChangelogEnabled`, on by default).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
 - **Repair agent:** a failed sync or release calls a webhook that starts a repair agent.
 
 **Agents**
 
 - **Recover interrupted agents:** after a restart, each cut-off thread gets a "Recover and continue" message. Subagents get their own message. Snoozed and settled threads stay asleep (`recoverInterruptedTurns`).
-- **Background work details:** background work notifications name their tasks and output files, and a popover shows the details with links (`backgroundWorkDetails`).
+- **Background work details:** background work notifications name their tasks and output files, and a popover shows the details with links (`backgroundWorkDetails`, on by default).
 - **Pull requests from origin:** a fork checkout lists, reads and watches the pull requests of its fork, not of upstream (`preferOriginRemote`).
 - **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request, by author role, login and agent marker (`pullRequestWatchRemarkFilter`).
 - **Agent session import limits:** set the import window and the message limit for imported agent sessions (`agentSessionImportWindowDays`, `agentSessionImportMaxMessages`).
 
 **Threads**
 
-- **Sidebar groups:** thread groups as tabs above the sidebar list. Drag threads into groups, or let rules on project, owner, status, provider, creator, background work and title sort them. Views such as "All" show other groups. The machine map syncs the groups to every machine (`sidebarGroupsEnabled`, on by default; `sidebarGroupSingleThreadOpens`; `sidebarGroups`).
+- **Sidebar groups:** thread groups as tabs above the sidebar list. Drag threads into groups, or let rules on project, owner, status, provider, creator, background work and title sort them. Views such as "All" show other groups. The machine map syncs the groups to every machine (`sidebarGroupsEnabled`; `sidebarGroupSingleThreadOpens`; `sidebarGroups`).
 - **Snooze quick options:** edit the choices of the snooze menus. Each choice snoozes for a time, or until a time of day, with an optional label (`snoozeQuickOptions`).
 
 **Filters**
 
-- **Repository owner filters:** filter the pull request page and the sidebar by the account or organization that owns each repository. Show only some owners, or hide them. Type `org:` or `-org:` in the pull request search (`repositoryOwnerFilters`).
-- **Pull request filter chips:** the active pull request filters show as chips above the list. Flip a chip between "is" and "is not", or remove it. An empty list names the filters that emptied it (`pullRequestFilterChips`).
+- **Repository owner filters:** filter the pull request page and the sidebar by the account or organization that owns each repository. Show only some owners, or hide them. Type `org:` or `-org:` in the pull request search (`repositoryOwnerFilters`, on by default).
+- **Pull request filter chips:** the active pull request filters show as chips above the list. Flip a chip between "is" and "is not", or remove it. An empty list names the filters that emptied it (`pullRequestFilterChips`, on by default).
 
 **Scripts and terminal**
 
 - **Global scripts:** scripts for every project and pinned script buttons. Global pins show in the title bar and next to the thread details toggle; project pins show only next to the toggle. Right-click opens the in-app pin menu. A global script's preview opens as a floating popup. An action with "Open as an app overlay" opens its page in a large panel over the app instead, and runs its command only when the page is down (`previewOverlay`). Scripts can run in the background (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`).
 - **App toggle shortcuts:** global keys that show and hide the desktop app at once, like a Raycast hotkey (`appToggleShortcuts`).
-- **Terminal settings:** app shortcuts first in the terminal, and a confirmation before a terminal closes (`terminalAppShortcutsFirst`, `confirmTerminalClose`).
+- **Terminal settings:** app shortcuts first in the terminal, and a confirmation before a terminal closes (`terminalAppShortcutsFirst`; `confirmTerminalClose`, on by default).
 
 **Themes and look**
 
