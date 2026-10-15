@@ -461,6 +461,8 @@ the notification starts a turn, that queued turn is cancelled. Approvals are not
 routed, because those tools cannot answer them.
 A parent still blocked in a `delegate_task` wait gets the blocking question
 through that wait instead.
+If the provider cuts that wait short, a still-pending live question wakes the
+parent when its launching run ends.
 
 A failed run exposes its provider error before any progress text. Successful
 results use the latest assistant content from the final work turn.

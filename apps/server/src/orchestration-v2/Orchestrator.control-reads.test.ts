@@ -675,21 +675,24 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       creationSource: "mcp",
     });
     const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
+    const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs[0]!;
     const now = yield* DateTime.now;
     const requestEvent = (
       eventId: string,
       requestId: string,
       responseCapability: "live" | "message" = "message",
       kind: "user_input" | "command" = "user_input",
+      run = childRun,
     ) =>
       ({
         id: EventId.make(eventId),
         type: "runtime-request.updated",
         threadId: task.childThreadId!,
+        runId: run.id,
         occurredAt: now,
         payload: {
           id: RuntimeRequestId.make(requestId),
-          nodeId: NodeId.make(`node:${requestId}`),
+          nodeId: run.rootNodeId!,
           providerTurnId: null,
           nativeRequestRef: null,
           kind,
@@ -704,20 +707,11 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       }) satisfies OrchestrationV2DomainEvent;
     const question = requestEvent("event:question", "request:question", "live");
     const asyncQuestion = requestEvent("event:async-question", "request:async-question");
-    const answered = requestEvent("event:answered", "request:answered");
+    const answered = requestEvent("event:answered", "request:answered", "live");
     const approval = requestEvent("event:approval", "request:approval", "message", "command");
     const eventSink = yield* EventSink.EventSinkV2;
     yield* eventSink.write({
-      events: [
-        question,
-        asyncQuestion,
-        {
-          ...answered,
-          id: EventId.make("event:answered-resolved"),
-          payload: { ...answered.payload, status: "resolved", resolvedAt: now },
-        },
-        approval,
-      ],
+      events: [question, asyncQuestion, answered, approval],
     });
 
     yield* reactor.handle(question);
@@ -734,6 +728,16 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       1,
     );
     yield* reactor.handle(asyncQuestion);
+    yield* reactor.handle(answered);
+    yield* eventSink.write({
+      events: [
+        {
+          ...answered,
+          id: EventId.make("event:answered-resolved"),
+          payload: { ...answered.payload, status: "resolved", resolvedAt: now },
+        },
+      ],
+    });
     yield* reactor.handle(answered);
     yield* reactor.handle(approval);
 
@@ -773,18 +777,37 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       )?.status,
       "cancelled",
     );
-    yield* eventSink.write({
-      events: [
-        {
-          id: EventId.make("event:question-parent-completed"),
-          type: "run.updated",
-          threadId: parentThreadId,
-          runId: parentRun.id,
-          occurredAt: now,
-          payload: { ...parentRun, status: "completed", completedAt: now },
-        },
-      ],
-    });
+    const parentCompleted = {
+      id: EventId.make("event:question-parent-completed"),
+      type: "run.updated",
+      threadId: parentThreadId,
+      runId: parentRun.id,
+      occurredAt: now,
+      payload: { ...parentRun, status: "completed", completedAt: now },
+    } satisfies OrchestrationV2DomainEvent;
+    yield* eventSink.write({ events: [parentCompleted] });
+    yield* reactor.handle(parentCompleted);
+    yield* reactor.handle(parentCompleted);
+    const caughtUp = (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
+      (message) => message.notification !== undefined,
+    );
+    assert.equal(caughtUp.length, 2);
+    assert.equal(
+      caughtUp.filter((message) => message.text.includes(`requestId ${question.payload.id}.`))
+        .length,
+      1,
+    );
+    assert.include(caughtUp[1]?.text, "is blocked on a question");
+    assert.isFalse(
+      caughtUp.some((message) => message.text.includes(`requestId ${answered.payload.id}.`)),
+    );
+    yield* reactor.handle(question);
+    assert.equal(
+      (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
+        (message) => message.notification !== undefined,
+      ).length,
+      2,
+    );
     const terminalQuestion = requestEvent(
       "event:terminal-question",
       "request:terminal-question",
@@ -796,7 +819,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
         (message) => message.notification !== undefined,
       ).length,
-      2,
+      3,
     );
     yield* eventSink.write({
       events: [
@@ -828,9 +851,20 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
         (message) => message.notification !== undefined,
       ).length,
-      3,
+      4,
     );
-    const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs[0]!;
+    const waitDelivered = requestEvent("event:wait-delivered", "request:wait-delivered", "live");
+    const waitDeliveredParentCompleted = {
+      ...parentCompleted,
+      id: EventId.make("event:wait-delivered-parent-completed"),
+    };
+    yield* eventSink.write({ events: [waitDelivered, waitDeliveredParentCompleted] });
+    yield* reactor.handle(waitDeliveredParentCompleted);
+    assert.isFalse(
+      (yield* projections.getThreadProjection(parentThreadId)).messages.some((message) =>
+        message.text.includes(`requestId ${waitDelivered.payload.id}.`),
+      ),
+    );
     yield* eventSink.write({
       commandId: CommandId.make("command:runtime-reconcile:question-followup"),
       events: [
@@ -871,12 +905,42 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     )!;
     assert.isDefined(followup.delegatedTaskId);
     assert.notEqual(followup.delegatedTaskId, task.id);
-    const followupQuestion = {
-      ...requestEvent("event:followup-question", "request:followup-question"),
-      runId: followup.id,
-    };
+    const followupQuestion = requestEvent(
+      "event:followup-question",
+      "request:followup-question",
+      "live",
+      "user_input",
+      followup,
+    );
     yield* eventSink.write({ events: [followupQuestion] });
-    yield* reactor.handle(followupQuestion);
+    yield* orchestrator.dispatch({
+      type: "delegated_task.wake-policy",
+      commandId: CommandId.make("followup-question-wait"),
+      parentThreadId,
+      taskId: followup.delegatedTaskId!,
+      completionWake: "settled_only",
+    });
+    const followupParent = yield* projections.getThreadRecords(parentThreadId, [
+      "subagents",
+      "runs",
+    ]);
+    const followupTask = followupParent.subagents.find(
+      (row) => row.id === followup.delegatedTaskId,
+    )!;
+    const followupParentRun = followupParent.runs.find((run) => run.id === followupTask.runId)!;
+    const followupParentCompleted = {
+      ...parentCompleted,
+      id: EventId.make("event:followup-parent-completed"),
+      runId: followupParentRun.id,
+      payload: { ...followupParentRun, status: "completed" as const, completedAt: now },
+    };
+    yield* eventSink.write({ events: [followupParentCompleted] });
+    yield* reactor.handle(followupParentCompleted);
+    assert.isFalse(
+      (yield* projections.getThreadProjection(parentThreadId)).messages.some((message) =>
+        message.text.includes(`requestId ${waitDelivered.payload.id}.`),
+      ),
+    );
     const followupWake = (yield* projections.getThreadRecords(parentThreadId, [
       "messages",
     ])).messages.find((message) =>
@@ -887,5 +951,6 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       taskIds: [followup.delegatedTaskId],
       childThreadId: task.childThreadId!,
     });
+    yield* reactor.handle(followupQuestion);
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
