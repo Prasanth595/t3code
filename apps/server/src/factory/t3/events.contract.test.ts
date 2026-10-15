@@ -13,6 +13,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
 import * as EffectWorker from "../../orchestration-v2/EffectWorker.ts";
@@ -59,45 +61,47 @@ it.live(
               message: SIMPLE_PROMPT,
               model: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
             });
-          const untilTerminal = (threadId: ThreadId) =>
+          /** The statuses a thread's run goes through, each change once, up to its terminal one. */
+          const statusesUntilTerminal = (threadId: ThreadId) =>
             sink.stream({ threadId, eventType: "run.updated" }).pipe(
-              Stream.filter(
-                (stored) =>
-                  stored.event.type === "run.updated" &&
-                  TERMINAL_RUN_STATUSES.has(stored.event.payload.status),
+              Stream.filterMap((stored) =>
+                stored.event.type === "run.updated"
+                  ? Result.succeed(stored.event.payload.status as Sessions.RunStatus)
+                  : Result.failVoid,
               ),
-              Stream.map(
-                (stored) => stored.event.payload as { readonly status: Sessions.RunStatus },
-              ),
-              Stream.take(1),
+              Stream.changes,
+              Stream.takeUntil((status) => TERMINAL_RUN_STATUSES.has(status)),
               Stream.runCollect,
             );
 
-          // The factory wakes on an id and reads the thread, so the stream
-          // is done once an id leads to a finished run.
-          const arrived = yield* events.runStatusChanges.pipe(
-            Stream.mapEffect((id) => sessions.status(id).pipe(Effect.map((s) => ({ id, s })))),
-            Stream.filter(({ s }) => s.run !== null && TERMINAL_RUN_STATUSES.has(s.run)),
-            Stream.take(1),
-            Stream.mapEffect(({ id, s }) =>
-              Clock.currentTimeMillis.pipe(Effect.map((at) => ({ id, at, run: s.run }))),
+          // Every id the stream emits, with when it arrived. The consumer
+          // starts before anything is launched, so this half is live.
+          const arrivals = yield* Queue.unbounded<{ readonly id: string; readonly at: number }>();
+          yield* events.runStatusChanges.pipe(
+            Stream.mapEffect((id) =>
+              Clock.currentTimeMillis.pipe(Effect.map((at) => ({ id, at }))),
             ),
-            Stream.runHead,
-            Effect.timeout("60 seconds"),
+            Stream.runForEach((arrival) => Queue.offer(arrivals, arrival)),
             Effect.forkScoped,
           );
 
           const launchedA = yield* launch("a");
-          const terminalA = yield* untilTerminal(ThreadId.make(launchedA.threadId));
-          assert.strictEqual(terminalA[0]?.status, "completed");
+          const statusesA = yield* statusesUntilTerminal(ThreadId.make(launchedA.threadId));
+          assert.strictEqual(statusesA.at(-1), "completed");
           const terminalAt = yield* Clock.currentTimeMillis;
 
-          const head = yield* Fiber.join(arrived);
-          assert.isTrue(head._tag === "Some");
-          if (head._tag !== "Some") return;
-          assert.strictEqual(head.value.id, launchedA.threadId);
-          assert.strictEqual(head.value.run, "completed");
-          assert.isBelow(head.value.at - terminalAt, 10_000);
+          // One id per status change A's run went through, the last of them
+          // (the completion) within 10 s of the terminal event. A missing
+          // emission leaves this waiting; the bound only guards a hang.
+          const arrivedA = yield* Queue.takeN(arrivals, statusesA.length).pipe(
+            Effect.timeout("60 seconds"),
+          );
+          assert.deepStrictEqual(
+            arrivedA.map((arrival) => arrival.id),
+            statusesA.map(() => launchedA.threadId),
+          );
+          assert.isBelow(arrivedA.at(-1)!.at - terminalAt, 10_000);
+          assert.strictEqual((yield* sessions.status(launchedA.threadId)).run, "completed");
 
           // The run is history now. Replay precedes live, so a stream that
           // replayed history would emit A's id (lower sequence) before B's.
@@ -121,7 +125,7 @@ it.live(
           assert.strictEqual(first.value, launchedB.threadId);
 
           // Let B's run end so the harness does not tear down under it.
-          yield* untilTerminal(ThreadId.make(launchedB.threadId));
+          yield* statusesUntilTerminal(ThreadId.make(launchedB.threadId));
         }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir })));
       }),
     ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),

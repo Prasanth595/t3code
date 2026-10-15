@@ -41,7 +41,9 @@ export interface RunUpdate {
  * queued run cancelled before it started must not hide the completion of the
  * run that is working.
  *
- * State belongs to one run of the returned stream, so each run starts empty.
+ * State belongs to one run of the returned stream, so each run starts empty:
+ * the first update it sees for a thread already in flight emits once, as a
+ * wake that costs the consumer one status read.
  */
 export const latestRunStatusChanges = <E, R>(
   updates: Stream.Stream<RunUpdate, E, R>,
@@ -78,7 +80,9 @@ export class FactoryEvents extends Context.Service<
   {
     /**
      * The id of a thread each time its latest run changes status. Each run of
-     * the stream starts at the live position and replays no history.
+     * the stream starts at the live position and replays no history. A stream
+     * that fails ends: run it again, and let the next pass read the status
+     * changes that fell in the gap, since they are never replayed.
      */
     readonly runStatusChanges: Stream.Stream<string, EventsError>;
   }
