@@ -61,13 +61,20 @@ composer commands.
 
 Turn on **Fork subagents** in the Claude provider settings to let Claude start
 forked subagents, which inherit the whole conversation instead of starting from a
-fresh prompt. The switch is the instance's `CLAUDE_CODE_FORK_SUBAGENT` environment
-variable: on sets it to `1` for that instance's threads and provider terminals, and
-off removes it. A value you already added under **Environment variables** moves to
-this switch, so the switch always shows the instance's setting.
+fresh prompt. With fork mode on, Claude Code also runs the subagents it spawns in
+the background. See Claude Code's
+[fork mode guide](https://code.claude.com/docs/en/sub-agents#turn-fork-mode-on-or-off).
 
-The instance setting takes precedence over the environment T3 Code starts in. With
-the switch off, a `CLAUDE_CODE_FORK_SUBAGENT` exported there still applies.
+The switch is the instance's `CLAUDE_CODE_FORK_SUBAGENT` environment variable: on
+sets it to `1` for that instance's threads and provider terminals, and off removes
+it. A value you already added under **Environment variables** moves to this switch,
+so the switch always shows the instance's setting.
+
+With the switch off, Claude Code's own default applies: off in threads, and on in
+provider terminals from Claude Code v2.1.232. A `CLAUDE_CODE_FORK_SUBAGENT` exported
+in the environment T3 Code starts in also still applies; with the switch on, the
+switch wins. To turn fork mode off everywhere, add `CLAUDE_CODE_FORK_SUBAGENT` with
+the value `0` under **Environment variables**.
 
 ## Usage limits
 
