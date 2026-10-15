@@ -26,8 +26,7 @@ function LoadedMediaVideo(props: {
   readonly paused: boolean;
 }) {
   const focused = useIsFocused();
-  // The native fullscreen player (iOS) owns playback while open; inline
-  // players pause instead of playing underneath it.
+  // Inline players pause instead of playing under the iOS fullscreen player.
   const nativeVideoOpen = useSyncExternalStore(subscribeFullscreenVideo, isFullscreenVideoOpen);
   const paused = props.paused || nativeVideoOpen;
   const active = useRef(focused && AppState.currentState === "active");
@@ -41,8 +40,6 @@ function LoadedMediaVideo(props: {
   });
   const { status } = useEvent(player, "statusChange", { status: player.status });
   const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
-  // The last inline player to pause, finish, or unmount releases the iOS
-  // audio session expo-video activated, so interrupted audio can resume.
   useEffect(() => {
     if (!isPlaying) return;
     videoPlaybackStarted();

@@ -52,7 +52,6 @@ function NativeVideoPreview(props: {
       : null;
 
   useEffect(() => Keyboard.dismiss(), []);
-  // Inline players pause while this presentation owns playback and audio.
   useEffect(() => {
     fullscreenVideoOpened();
     return () => fullscreenVideoClosed();

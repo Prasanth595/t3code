@@ -152,9 +152,9 @@ final class T3NativeVideoPresentation: NSObject, AVPlayerViewControllerDelegate,
     if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
     backgroundObserver = nil
     let audioSession = AVAudioSession.sharedInstance()
-    // Only release the session when it still matches what present() set (an
-    // expo-video .mixWithOthers flip while open is still ours). If a recorder
-    // or another feature has since claimed it, leave it alone.
+    // Still what present() set, allowing the .mixWithOthers flip expo-video
+    // makes when the inline players pause under this preview. A recorder that
+    // claimed the session since owns it.
     if let previousAudioSession, audioSession.category == .playback,
       audioSession.mode == .moviePlayback,
       audioSession.categoryOptions.isSubset(of: [.mixWithOthers]) {
@@ -163,9 +163,7 @@ final class T3NativeVideoPresentation: NSObject, AVPlayerViewControllerDelegate,
         mode: previousAudioSession.mode,
         options: previousAudioSession.options
       )
-      // AVPlayer activated the session for this preview; nothing in-app is
-      // playing once the modal that covered the feed is gone. Deactivating
-      // with notification is what lets interrupted apps resume.
+      // Deactivating with notification lets interrupted apps resume.
       try? audioSession.setActive(false, options: [.notifyOthersOnDeactivation])
     }
     completion(playbackError)
