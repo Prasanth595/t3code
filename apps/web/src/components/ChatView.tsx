@@ -1579,6 +1579,22 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
 /** Runs with a workspace preparation retry in flight, across ChatView instances. */
 const retryingWorkspacePreparationRunIds = new Set<RunId>();
 
+/**
+ * Names typed for new threads, by thread key, until the first turn starts. A launch can create
+ * the thread and then fail, and a retry from the thread's own screen must keep the name.
+ */
+const typedThreadNamesByThreadKey = new Map<string, string>();
+
+/**
+ * The typed name for a thread's next send. On the draft screen the field decides, so a cleared
+ * field forgets the name. Without a draft (`draftName` null) the name the draft sent stays.
+ */
+function resolveTypedThreadName(threadKey: string, draftName: string | null) {
+  if (draftName === "") typedThreadNamesByThreadKey.delete(threadKey);
+  else if (draftName !== null) typedThreadNamesByThreadKey.set(threadKey, draftName);
+  return typedThreadNamesByThreadKey.get(threadKey);
+}
+
 export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,
@@ -9647,6 +9663,12 @@ export default function ChatView(props: ChatViewProps) {
               const supportsInlineMessageContext =
                 appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
                   .capabilities.inlineMessageContext === true;
+              const targetThreadKey = scopedThreadKey(
+                scopeThreadRef(environmentId, targetThreadId),
+              );
+              if (draftThreadName) {
+                typedThreadNamesByThreadKey.set(targetThreadKey, draftThreadName);
+              }
               requestMayHaveStarted = true;
               const result = await startThreadTurn({
                 environmentId,
@@ -9699,6 +9721,7 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 throw error;
               }
+              typedThreadNamesByThreadKey.delete(targetThreadKey);
               startedCount += 1;
             } catch (error) {
               if (requestMayHaveStarted && !uncertainMultipleSubmissionsRef.current.has(retryKey)) {
@@ -10043,6 +10066,8 @@ export default function ChatView(props: ChatViewProps) {
                 : {}),
             }
           : undefined;
+      const threadNameKey = scopedThreadKey(scopeThreadRef(environmentId, threadIdForSend));
+      const threadName = resolveTypedThreadName(threadNameKey, draftId ? draftThreadName : null);
       const backgroundThreadRef =
         submissionIntent === "background" && isLocalDraftThread
           ? scopeThreadRef(environmentId, threadIdForSend)
@@ -10086,7 +10111,7 @@ export default function ChatView(props: ChatViewProps) {
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
-          ...(draftThreadName ? { title: draftThreadName } : {}),
+          ...(threadName ? { title: threadName } : {}),
           runtimeMode,
           interactionMode: sendInteractionMode,
           dispatchMode: turnDispatchMode,
@@ -10123,6 +10148,7 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        typedThreadNamesByThreadKey.delete(threadNameKey);
         setKeepFullHistory(routeThreadKey, false);
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
