@@ -1066,6 +1066,19 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
+/** Counts distinct files changed by turns a rewind to `turnCount` would undo. */
+export function countFilesChangedAfterTurnCount(
+  checkpoints: ReadonlyArray<ThreadCheckpointSummary>,
+  turnCount: number,
+): number {
+  const paths = new Set<string>();
+  for (const checkpoint of checkpoints) {
+    if (checkpoint.checkpointTurnCount <= turnCount) continue;
+    for (const file of checkpoint.files) paths.add(file.path);
+  }
+  return paths.size;
+}
+
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {
   if (runtime === null) return "disconnected";
   if (

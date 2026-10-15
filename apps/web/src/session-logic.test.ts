@@ -27,6 +27,7 @@ import {
   deriveCanInterruptRunningThread,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
+  countFilesChangedAfterTurnCount,
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
   findLatestProposedPlan,
@@ -299,6 +300,27 @@ describe("V2 session presentation", () => {
 
     expect([...targets]).toEqual([[turnStartMessageId, 0]]);
     expect(targets.has(steerMessageId)).toBe(false);
+  });
+
+  it("counts each file changed after the rewind point once", () => {
+    const checkpoint = (turnCount: number, paths: string[]) => ({
+      runId: RunId.make(`run-${turnCount}`),
+      checkpointTurnCount: turnCount,
+      checkpointRef: `checkpoint-${turnCount}` as never,
+      status: "ready" as const,
+      files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
+      assistantMessageId: null,
+      completedAt: "2026-06-20T00:00:00.000Z",
+    });
+    const checkpoints = [
+      checkpoint(1, ["a.ts"]),
+      checkpoint(2, ["b.ts", "c.ts"]),
+      checkpoint(3, ["c.ts", "d.ts"]),
+    ];
+
+    expect(countFilesChangedAfterTurnCount(checkpoints, 1)).toBe(3);
+    expect(countFilesChangedAfterTurnCount(checkpoints, 0)).toBe(4);
+    expect(countFilesChangedAfterTurnCount(checkpoints, 3)).toBe(0);
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {
