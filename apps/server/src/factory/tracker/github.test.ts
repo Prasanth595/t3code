@@ -2038,6 +2038,25 @@ it.effect("a closed blocker is resolved whatever closed it", () =>
   }),
 );
 
+it.effect(
+  "only the exact REST state `closed` resolves a blocker; any other state still blocks",
+  () =>
+    Effect.gen(function* () {
+      // The dependency listing's state is REST's lowercase `open` or `closed`. A state the
+      // factory does not know, or one in another case, is not taken as resolved: the issue
+      // waits rather than starting on a guess.
+      const t = setup(
+        reply(
+          `[${blockerRow(13, "unknown", "rawphp/softfac")},${blockerRow(12, "CLOSED", "rawphp/softfac")},${blockerRow(11, "closed", "rawphp/softfac")}]`,
+        ),
+      );
+      assert.deepStrictEqual(yield* t.ok(t.github.openBlockers(14)), [
+        openBlocker(13, "rawphp/softfac"),
+        openBlocker(12, "rawphp/softfac"),
+      ]);
+    }),
+);
+
 it.effect("open blockers keep the repo they are in", () =>
   Effect.gen(function* () {
     const t = setup(
