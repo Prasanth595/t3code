@@ -2204,8 +2204,13 @@ function PullRequestsRouteView() {
     />
   );
   // Fork: an owner change that leaves the scoped project out drops the project scope too, the
-  // same way picking another server does.
-  const updateMenuOwnerFilter = (owners: ReadonlyArray<string>, operator: FilterOperator) => {
+  // same way picking another server does. The owner menu and the owner chip both pass here.
+  const withOwnerScope = (
+    patch: PullRequestListPreferencePatch,
+  ): PullRequestListPreferencePatch => {
+    if (!("owners" in patch) && !("ownerOperator" in patch)) return patch;
+    const owners = "owners" in patch ? (patch.owners ?? NO_OWNERS) : menuOwners;
+    const operator = "ownerOperator" in patch ? (patch.ownerOperator ?? "is") : menuOwnerOperator;
     const kept = projectsOfOwners(projects, pullRequestMenuOwnerFilter(owners, operator));
     const keepsScope =
       search.projectId === undefined ||
@@ -2214,12 +2219,15 @@ function PullRequestsRouteView() {
           project.id === search.projectId &&
           (search.environmentId === undefined || project.environmentId === search.environmentId),
       );
-    updateListScope({
-      owners: owners.length === 0 ? undefined : owners,
-      ownerOperator: operator === "is_not" ? operator : undefined,
-      ...(keepsScope ? {} : { projectId: undefined }),
-    });
+    return keepsScope ? patch : { ...patch, projectId: undefined };
   };
+  const updateMenuOwnerFilter = (owners: ReadonlyArray<string>, operator: FilterOperator) =>
+    updateListScope(
+      withOwnerScope({
+        owners: owners.length === 0 ? undefined : owners,
+        ownerOperator: operator === "is_not" ? operator : undefined,
+      }),
+    );
   const filtersMenu = (
     <PullRequestFiltersMenuInSidebarOrder
       onOpenChange={setFiltersOpen}
@@ -2286,7 +2294,12 @@ function PullRequestsRouteView() {
     searchInput,
     sortMenu,
     filtersMenu,
-    filterChips: <PullRequestFilterChips chips={filterChips} onChange={updateListScope} />,
+    filterChips: (
+      <PullRequestFilterChips
+        chips={filterChips}
+        onChange={(patch) => updateListScope(withOwnerScope(patch))}
+      />
+    ),
     rightPanelControl:
       // Footprint reserve while the panel is closed: the toggle itself stays
       // mounted at the fixed titlebar inset in both states so it cannot move

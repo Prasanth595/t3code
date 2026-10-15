@@ -261,7 +261,8 @@ The client setting `appToggleShortcuts` lists global keys that show and hide the
 
 The client setting `repositoryOwnerFilters` filters lists by the owner of each repository: a GitHub account or organization. It is on by default. Turn it off in Settings > General > Repository owner filters.
 
-- The owner comes from the repository that groups the project in the sidebar. A fork checkout counts under the owner of the fork.
+- In the sidebar, the owner comes from the repository that groups the project. A fork checkout counts under the owner of the fork.
+- On the pull request page, the owner comes from the repository that the pull requests come from. A fork checkout of `pingdotgg/t3code` counts under `pingdotgg`.
 - The menus offer only owners whose projects have threads. The owner of a cloned repository without threads does not show.
 - Pull request page: open Filters > Owner. Pick "Show only selected" or "Hide selected", then pick the owners.
 - In the pull request search, type `org:` or `owner:` to show only an owner, and `-org:` or `-owner:` to hide an owner. A typed owner replaces the menu choice.
