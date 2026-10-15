@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -19,7 +20,7 @@ import {
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
 } from "./cliErrors.ts";
-import { publishPlatformsThenLauncher } from "./publishOrder.ts";
+import { publishPlatformsThenLauncher, waitUntilServed } from "./publishOrder.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -166,6 +167,11 @@ const buildExeCmd = Command.make(
 // publish subcommand
 // ---------------------------------------------------------------------------
 
+const LauncherManifest = Schema.Struct({
+  optionalDependencies: Schema.Record(Schema.String, Schema.String),
+});
+const decodeLauncherManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(LauncherManifest));
+
 /**
  * Publishes the tarballs scripts/build-npm-platform-packages.ts produced:
  * every `@t3code/t3-<platform>.tgz` first, `t3.tgz` (the launcher) last, so
@@ -208,6 +214,9 @@ const publishCmd = Command.make(
       if (!(yield* fs.exists(launcherTarball))) {
         return yield* new ServerCliBuildAssetMissingError({ assetPath: launcherTarball });
       }
+      const launcherManifest = yield* decodeLauncherManifest(
+        yield* fs.readFileString(path.join(packagesDir, "t3", "package.json")),
+      );
 
       const args = ["publish", "--access", config.access, "--tag", config.tag];
       if (config.provenance) args.push("--provenance");
@@ -227,7 +236,14 @@ const publishCmd = Command.make(
       });
 
       // Each publish takes about 17s, so the platform packages go at once.
-      yield* publishPlatformsThenLauncher({ platformTarballs, launcherTarball, publish });
+      // npm serves a new version only after scanning it for minutes (#14409).
+      const platforms = config.dryRun ? {} : launcherManifest.optionalDependencies;
+      yield* publishPlatformsThenLauncher({
+        platformTarballs,
+        launcherTarball,
+        publish,
+        waitForPlatforms: waitUntilServed(platforms),
+      });
     }),
 ).pipe(
   Command.withDescription(
