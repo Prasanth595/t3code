@@ -25,3 +25,11 @@ The same script is the factory gate (`gate` in `.dw/config.yml`) and the `factor
 vp i
 factory/scripts/check.sh
 ```
+
+Build, install and roll back the darwin-arm64 binary (LaunchAgent `io.github.rawphp.t3fac`, port 3876):
+
+```sh
+factory/scripts/build.sh                      # clean tree only: build, smoke test, then -> release/t3fac-<version>-darwin-arm64.tar.gz
+factory/scripts/install.sh <archive>          # unpack, point `current` at it, restart the job
+factory/scripts/rollback.sh                   # point `current` at the previous version, restart the job
+```
