@@ -58,16 +58,21 @@ export class FcmDeliveryError extends Schema.TaggedError<FcmDeliveryError>()("Fc
   }
 }
 
+/** One thread's notification group, shared by its alerts and their dismissal. */
+function alertGroup(row: { readonly environmentId: string; readonly threadId: string }) {
+  return JSON.stringify([row.environmentId, row.threadId]);
+}
+
 export function androidAlertForState(
   state: RelayAgentActivityState,
   preferences: RelayAgentAwarenessPreferences,
   nowMs: number,
 ) {
-  if (!shouldAlertForActivity({ ...state, preferences, nowMs })) return null;
+  if (state.visited || !shouldAlertForActivity({ ...state, preferences, nowMs })) return null;
   const notification = notificationForActivity({ ...state, status: statusForPhase(state.phase) });
   return {
     alert_id: JSON.stringify([state.environmentId, state.threadId, state.phase, state.updatedAt]),
-    alert_group: JSON.stringify([state.environmentId, state.threadId]),
+    alert_group: alertGroup(state),
     alert_title: notification.title,
     alert_body: notification.body,
     alert_path: notification.deepLink,
@@ -93,7 +98,7 @@ export function androidAlertForAggregate(input: {
     const notification = notificationForActivity(first);
     return {
       alert_id: JSON.stringify([first.environmentId, first.threadId, first.phase, first.updatedAt]),
-      alert_group: JSON.stringify([first.environmentId, first.threadId]),
+      alert_group: alertGroup(first),
       alert_title: notification.title,
       alert_body: notification.body,
       alert_path: notification.deepLink,
@@ -215,6 +220,8 @@ export const make = Effect.gen(function* () {
         ? Option.getOrNull(decodePreviousActivity(target.last_aggregate_json))
         : null;
       let alert: ReturnType<typeof androidAlertForState | typeof androidAlertForAggregate> = null;
+      // A thread read on any client clears its delivered alerts from the shade.
+      let dismissGroup: string | null = null;
       // Deletion jobs can observe another thread's newly completed state. They
       // update the card, but must leave that transition for its own alert job.
       // Registration replay deliberately establishes a silent baseline.
@@ -230,6 +237,7 @@ export const make = Effect.gen(function* () {
           (!state || state.phase !== job.state.phase || state.updatedAt !== job.state.updatedAt)
         )
           return;
+        if (state?.visited) dismissGroup = alertGroup(state);
         const link = yield* links.getForUser({
           userId: job.userId,
           environmentId: job.state.environmentId,
@@ -253,6 +261,7 @@ export const make = Effect.gen(function* () {
         ) {
           const environmentIds = [...new Set(aggregate.activities.map((row) => row.environmentId))];
           const allowedEnvironments = new Set<string>();
+          const visitedThreads = new Set(states.filter((row) => row.visited).map(alertGroup));
           for (const environmentId of environmentIds) {
             const environmentLink = yield* links.getForUser({
               userId: job.userId,
@@ -271,8 +280,10 @@ export const make = Effect.gen(function* () {
             previousAggregate,
             nextAggregate: {
               ...aggregate,
-              activities: aggregate.activities.filter((row) =>
-                allowedEnvironments.has(row.environmentId),
+              activities: aggregate.activities.filter(
+                (row) =>
+                  allowedEnvironments.has(row.environmentId) &&
+                  !visitedThreads.has(alertGroup(row)),
               ),
             },
             preferences: preferences.value,
@@ -294,7 +305,14 @@ export const make = Effect.gen(function* () {
       const active = (displayedAggregate?.activeCount ?? 0) > 0;
       // A registration replay must clear an orphan even when the relay has
       // already forgotten its baseline. Finished cards are visible, but idle.
-      if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
+      if (
+        !displayedAggregate &&
+        !alert &&
+        !dismissGroup &&
+        !previousAggregate &&
+        job.state !== null
+      )
+        return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",
         device_id: job.deviceId,
@@ -302,6 +320,7 @@ export const make = Effect.gen(function* () {
         updated_at: String(now.epochMilliseconds),
         ...androidActivityData(displayedAggregate),
         ...alert,
+        ...(dismissGroup ? { dismiss_group: dismissGroup } : {}),
       };
       if (alert) {
         // Group identities can contain five sets of IDs. Hash the full,

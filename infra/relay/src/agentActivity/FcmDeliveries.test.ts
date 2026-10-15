@@ -699,6 +699,67 @@ describe("Android delivery routing", () => {
   });
 });
 
+describe("dismissing read threads", () => {
+  const visitedGroup = JSON.stringify(["env", "thread"]);
+
+  it.effect("dismisses a delivered completion once the thread is visited", () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process(h.job);
+      h.current.state = { ...state, phase: "completed" };
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent.at(-1)?.alert).toBe(true);
+      expect(h.sent.at(-1)?.data.dismiss_group).toBeUndefined();
+
+      h.current.state = { ...state, phase: "completed", visited: true };
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent.at(-1)?.alert).toBe(false);
+      expect(h.sent.at(-1)?.data.dismiss_group).toBe(visitedGroup);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("never alerts for a completion that was already read elsewhere", () => {
+    const h = harness();
+    const secondState: RelayAgentActivityState = {
+      ...state,
+      threadId: ThreadId.make("second-thread"),
+      threadTitle: "Second thread",
+      deepLink: "/threads/env/second-thread",
+    };
+    h.current.otherStates = [secondState];
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process(h.job);
+      h.current.state = { ...state, phase: "completed", visited: true };
+      h.current.otherStates = [{ ...secondState, phase: "completed" }];
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      // Only the unread thread alerts; the read one is dismissed, not grouped in.
+      expect(h.sent.at(-1)?.data).toMatchObject({
+        alert_title: "Second thread",
+        alert_path: "/threads/env/second-thread",
+        dismiss_group: visitedGroup,
+      });
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("dismisses for devices without ongoing activity or a delivery baseline", () => {
+    const h = harness();
+    h.current.target.preferences_json = encodeJson({
+      ...preferences,
+      liveActivitiesEnabled: false,
+    });
+    h.current.state = { ...state, phase: "completed", visited: true };
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent).toHaveLength(1);
+      expect(h.sent[0]?.alert).toBe(false);
+      expect(h.sent[0]?.data.dismiss_group).toBe(visitedGroup);
+    }).pipe(Effect.provide(h.layer));
+  });
+});
+
 describe("delivery policy regressions", () => {
   it.effect("alerts a quick completion even with a previous unrelated card", () => {
     const h = harness();
