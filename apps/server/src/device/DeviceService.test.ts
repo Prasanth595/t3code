@@ -787,16 +787,11 @@ const sshHostWithAdb = (
     // Android stays available because adb is installed. The emulator binary is a
     // separate command, matching an SSH host that can see physical devices.
     const hostId = "olympus" as DeviceHostId;
-    const commands: string[] = [];
     const ready: DeviceHost.DeviceHostReady = {
       nodePath: process.execPath,
       hub: { origin: "http://olympus.test" },
       helpers: { serveSimAxSettings: null, serveSimCli: null },
-      run: (command, args) =>
-        Effect.sync(() => {
-          commands.push([command, ...args].join(" "));
-          return emulator;
-        }),
+      run: () => Effect.succeed(emulator),
     };
     const host: DeviceHost.DeviceHost["Service"] = {
       id: hostId,
@@ -854,23 +849,60 @@ const sshHostWithAdb = (
       Effect.provide(NodeCrypto.layer),
       Effect.provideService(HttpClient.HttpClient, http),
     );
-    return { service, commands, hostId };
+    return { service, hostId };
   });
 
-it.effect(
-  "keeps iOS simulators and physical Android devices when the Android emulator is not installed",
-  () =>
-    Effect.gen(function* () {
-      const { service, commands, hostId } = yield* sshHostWithAdb(
-        {
-          code: 127,
-          stdout: "",
-          stderr: "sh: emulator: not found",
-        },
-        ["simctl list failed"],
-      );
-      const state = yield* service.list;
-      expect(commands).toEqual(["emulator -list-avds"]);
+it.effect.each([
+  {
+    label: "a shell cannot resolve the emulator command",
+    stderr: "sh: emulator: not found",
+    code: 127,
+    hubErrors: ["simctl list failed"],
+    outcome: "ready",
+  },
+  {
+    label: "the remote shell reports exec could not find the emulator",
+    stderr: "sh: line 13: exec: emulator: not found\n",
+    code: 127,
+    hubErrors: [],
+    outcome: "ready",
+  },
+  {
+    label: "Windows cannot resolve the emulator command",
+    stderr:
+      "'emulator' is not recognized as an internal or external command,\r\noperable program or batch file.",
+    code: 127,
+    hubErrors: [],
+    outcome: "ready",
+  },
+  {
+    label: "spawning the emulator fails because the executable is absent",
+    stderr: "Error: spawn emulator ENOENT",
+    code: 127,
+    hubErrors: [],
+    outcome: "ready",
+  },
+  {
+    label: "an installed emulator cannot load a shared library",
+    stderr:
+      "emulator: error while loading shared libraries: libX.so: cannot open shared object file: No such file or directory",
+    code: 127,
+    hubErrors: [],
+    outcome: "failed",
+  },
+  {
+    label: "listing virtual devices fails for another reason",
+    stderr: "PANIC: Broken AVD config.",
+    code: 1,
+    hubErrors: [],
+    outcome: "failed",
+  },
+] as const)("$outcome when $label", ({ stderr, code, hubErrors, outcome }) =>
+  Effect.gen(function* () {
+    const { service, hostId } = yield* sshHostWithAdb({ code, stdout: "", stderr }, hubErrors);
+    const state = yield* service.list;
+    if (outcome === "ready") {
+      const reported = stderr.trim();
       expect(state.devices).toEqual([
         {
           hostId,
@@ -893,25 +925,17 @@ it.effect(
       ]);
       expect(state.hostStatuses[hostId]).toEqual({
         status: "ready",
-        detail:
-          "simctl list failed\nAndroid Emulator is not installed, so virtual devices cannot be listed. sh: emulator: not found",
+        detail: [
+          ...hubErrors,
+          `Android Emulator is not installed, so virtual devices cannot be listed. ${reported}`,
+        ].join("\n"),
       });
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
-);
-
-it.effect("fails discovery when listing Android virtual devices fails for another reason", () =>
-  Effect.gen(function* () {
-    const { service, commands, hostId } = yield* sshHostWithAdb({
-      code: 1,
-      stdout: "",
-      stderr: "PANIC: Broken AVD config.",
-    });
-    const state = yield* service.list;
-    expect(commands).toEqual(["emulator -list-avds"]);
+      return;
+    }
     expect(state.devices).toEqual([]);
     expect(state.hostStatuses[hostId]).toEqual({
       status: "failed",
-      detail: "Device list failed: The device command failed (exit code 1).",
+      detail: `Device list failed: The device command failed (exit code ${code}).`,
     });
   }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );

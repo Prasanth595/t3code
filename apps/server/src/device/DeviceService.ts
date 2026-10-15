@@ -169,9 +169,17 @@ const missingAndroidEmulatorCommand = (result: {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
-}) =>
-  result.code === 127 &&
-  /not found|enoent|no such file or directory/i.test(`${result.stderr}\n${result.stdout}`);
+}) => {
+  if (result.code !== 127) return false;
+  const text = `${result.stderr}\n${result.stdout}`;
+  // Only the shell or spawn failing to resolve the emulator command. A started
+  // emulator that cannot load a library also exits 127 and names that library.
+  return (
+    /\bemulator(?:\.exe)?: (?:not found|command not found)\b/i.test(text) ||
+    /'emulator(?:\.exe)?' is not recognized as an internal or external command/i.test(text) ||
+    (/\bENOENT\b/.test(text) && /\bemulator(?:\.exe)?\b/i.test(text))
+  );
+};
 
 export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
   hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
