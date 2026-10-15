@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { McpServer } from "effect/ai";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
+import * as CombinedMissionRuntime from "../orchestration-v2/CombinedMissionRuntime.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { readNofunPersonaScope } from "../nofun/persona.ts";
@@ -255,6 +256,9 @@ export const layer = Layer.unwrap(
     );
   }),
 );
+
+/** One policy publication shared by mission tools and the P2/P3 domain runtime. */
+export const layerCombined = CombinedMissionRuntime.layer.pipe(Layer.provideMerge(layer));
 
 const layerMissionToolkit = (service: MissionMcpService.MissionMcpService["Service"]) =>
   McpServer.toolkit(MissionToolkit).pipe(

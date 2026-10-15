@@ -49,6 +49,8 @@ import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as MissionMcpRuntime from "./MissionMcpRuntime.ts";
+import * as MissionMcpAuthority from "./MissionMcpAuthority.ts";
+import * as MissionMcpService from "./MissionMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 /**
@@ -439,6 +441,7 @@ const makeHarness = (prepare: Prepare) => {
   );
   return {
     layer: toolkits.pipe(
+      Layer.provideMerge(runtime),
       Layer.provideMerge(McpServer.McpServer.layer),
       Layer.provideMerge(infrastructure),
     ),
@@ -979,3 +982,24 @@ it.effect("keeps the tools in the production catalog and unavailable without a p
     }),
   ).pipe(Effect.provide(layerHttpTest)),
 );
+
+it.effect("the exported runtime policy is the instance mission services recheck", () => {
+  const h = makeHarness(activePolicy);
+  return Effect.gen(function* () {
+    yield* seed;
+    const policy = yield* MissionMcpAuthority.MissionMcpTrustedPolicy;
+    const service = yield* MissionMcpService.MissionMcpService;
+    const scope = yield* issue(deliveryThread);
+    assert.deepStrictEqual(yield* policy.read, policy.current?.());
+    yield* service.get(scope, { id: missionId });
+    const original = policy.current;
+    Object.defineProperty(policy, "current", {
+      configurable: true,
+      value: () => ({ enabled: false }),
+    });
+    const result = yield* service.get(scope, { id: missionId }).pipe(Effect.result);
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") assert.equal(result.failure.code, "scope_denied");
+    Object.defineProperty(policy, "current", { configurable: true, value: original });
+  }).pipe(Effect.provide(h.layer));
+});
