@@ -10,7 +10,6 @@ import {
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
 import { restorePlanFollowUpComposer } from "./ChatView.logic";
-import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/queuedMessageEdit";
 import {
   isPaintOnlyThreadTimeline,
@@ -87,7 +86,10 @@ import {
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import {
+  deriveThreadTitleSeed,
+  threadTitleTextFromPrompt,
+} from "@t3tools/client-runtime/operations";
 import {
   wasBootstrapThreadDeleted,
   wasBootstrapThreadNotCreated,
@@ -394,7 +396,6 @@ import {
 import {
   ensureInlineContextReferences,
   removeInlineContextReference,
-  stripInlineContextReferences,
 } from "../lib/composerContextReferences";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
@@ -9592,7 +9593,7 @@ export default function ChatView(props: ChatViewProps) {
           ),
         );
         const title = truncate(
-          assistantCitationsToPlainText(stripInlineContextReferences(trimmed)).trim() ||
+          threadTitleTextFromPrompt(trimmed) ||
             (composerImagesSnapshot.length > 0
               ? deriveThreadTitleSeed({ text: "", attachments: composerImagesSnapshot })
               : composerAttachmentsSnapshot[0]?.name) ||
@@ -9912,7 +9913,7 @@ export default function ChatView(props: ChatViewProps) {
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
-    let titleSeed = assistantCitationsToPlainText(stripInlineContextReferences(trimmed)).trim();
+    let titleSeed = threadTitleTextFromPrompt(trimmed);
     if (!titleSeed) {
       if (composerImagesSnapshot.length > 0) {
         titleSeed = deriveThreadTitleSeed({ text: "", attachments: composerImagesSnapshot });

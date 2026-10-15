@@ -43,6 +43,15 @@ describe("deriveThreadTitleSeed", () => {
     ).toBe("Fix src/app.ts using Build output");
   });
 
+  it("prefers a source reference label over the image placeholder without prose", () => {
+    expect(
+      deriveThreadTitleSeed({
+        text: `${image}\n[src/app.ts](t3-context://v1/mention/source)`,
+        attachments: [{ name: "pasted-image.png" }],
+      }),
+    ).toBe("src/app.ts");
+  });
+
   it("prefers normalized message text", () => {
     expect(
       deriveThreadTitleSeed({
