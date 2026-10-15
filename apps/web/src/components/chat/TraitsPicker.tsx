@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
-  buildProviderOptionSelectionsFromDescriptors,
+  buildProviderOptionSelectionsAfterChange,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -335,8 +335,14 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     allowPromptInjectedEffort,
     planModeEnabled,
   });
-  const updateDescriptors = (nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>) => {
-    updateModelOptions(buildProviderOptionSelectionsFromDescriptors(nextDescriptors));
+  const updateDescriptors = (descriptorId: string, value: string | boolean) => {
+    updateModelOptions(
+      buildProviderOptionSelectionsAfterChange(
+        replaceDescriptorCurrentValue(descriptors, descriptorId, value),
+        descriptorId,
+        modelOptions,
+      ),
+    );
   };
 
   const handleSelectChange = (
@@ -357,7 +363,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       const stripped = prompt.replace(/^Ultrathink:\s*/i, "");
       onPromptChange(stripped);
     }
-    updateDescriptors(replaceDescriptorCurrentValue(descriptors, descriptor.id, value));
+    updateDescriptors(descriptor.id, value);
   };
 
   if (!hasAnyControls) {
@@ -463,9 +469,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
               <MenuRadioGroup
                 value={selectedValue}
                 onValueChange={(value) => {
-                  updateDescriptors(
-                    replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
-                  );
+                  updateDescriptors(descriptor.id, value === "on");
                 }}
               >
                 {(["on", "off"] as const).map((value) => (

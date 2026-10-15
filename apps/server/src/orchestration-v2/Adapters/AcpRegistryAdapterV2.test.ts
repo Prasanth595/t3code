@@ -6,12 +6,13 @@ import {
   ThreadId,
   type ModelSelection,
   type ProviderOptionSelection,
+  type ProviderReplayEntry,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
-  buildProviderOptionSelectionsFromDescriptors,
+  buildProviderOptionSelectionsAfterChange,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -305,10 +306,12 @@ describe("AcpRegistryAdapterV2", () => {
     ];
 
     // Opens sessions on the source-shaped Cline replay. The agent stops after
-    // the entry labelled `lastLabel` and rejects any request it does not expect.
+    // the entry labelled `lastLabel`, then plays `then`, and rejects any
+    // request it does not expect.
     const makeClineSessions = Effect.fn("makeClineSessions")(function* (
       instanceId: ProviderInstanceId,
       lastLabel: string,
+      then: ReadonlyArray<ProviderReplayEntry> = [],
     ) {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -321,7 +324,7 @@ describe("AcpRegistryAdapterV2", () => {
         (entry) => entry.type === "emit_inbound" && entry.label === lastLabel,
       );
       const transcript = yield* decodeAcpReplayTranscript(
-        { ...recorded, entries: recorded.entries.slice(0, last + 1) },
+        { ...recorded, entries: [...recorded.entries.slice(0, last + 1), ...then] },
         ACP_REGISTRY_PROVIDER,
       );
       const adapter = yield* makeAcpRegistryAdapterV2({
@@ -414,14 +417,13 @@ describe("AcpRegistryAdapterV2", () => {
         descriptorsOn(provider, slug, stored),
         stored,
       );
-    // Toggling one trait stores every option's current value.
+    // Toggling Auto-approve with nothing saved, as the web traits picker and
+    // mobile settings store it.
     const toggleAutoApprove = (provider: ServerProvider, slug: string) =>
-      buildProviderOptionSelectionsFromDescriptors(
-        descriptorsOn(provider, slug, undefined).map((descriptor) =>
-          descriptor.id === "auto_approve" && descriptor.type === "boolean"
-            ? { ...descriptor, currentValue: true }
-            : descriptor,
-        ),
+      buildProviderOptionSelectionsAfterChange(
+        descriptorsOn(provider, slug, [{ id: "auto_approve", value: true }]),
+        "auto_approve",
+        undefined,
       );
     const modelChoices = (provider: ServerProvider, slug: string) =>
       descriptorsOn(provider, slug, undefined).flatMap((descriptor) =>
@@ -500,6 +502,106 @@ describe("AcpRegistryAdapterV2", () => {
       ),
     );
 
+    // Cline rotates its free and preview models. Toggling Auto-approve while
+    // ClinePass's current model was one it later dropped must not pin that
+    // model: the open applies Auto-approve on ClinePass's current model.
+    it.effect("opens on ClinePass's current model after a toggle under a dropped default", () =>
+      Effect.gen(function* () {
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const instanceId = ProviderInstanceId.make("acp-registry-toggle-rotation");
+        const discovered = yield* discoverCline(instanceId);
+        const recorded = yield* readClineTranscript;
+        const describePass = yield* makeClineSessions(instanceId, "provider.applied");
+        yield* describePass({ instanceId, model: "cline-pass" });
+        const liveConfiguration = () =>
+          coordinator
+            .getLiveConfiguration(instanceId)
+            .pipe(
+              Effect.map((configuration) =>
+                applyAcpRegistryLiveConfiguration(discovered, Option.getOrThrow(configuration), []),
+              ),
+            );
+        const live = yield* liveConfiguration();
+
+        // ClinePass as described before the rotation, when the dropped model
+        // was current.
+        const droppedModel = "cline-pass/muse-spark-1.2-contributor";
+        const beforeRotation: ServerProvider = {
+          ...live,
+          models: live.models.map((model) =>
+            model.slug === "cline-pass" && model.capabilities?.optionDescriptors
+              ? {
+                  ...model,
+                  capabilities: {
+                    optionDescriptors: model.capabilities.optionDescriptors.map((descriptor) =>
+                      descriptor.id === "model" && descriptor.type === "select"
+                        ? {
+                            ...descriptor,
+                            options: [{ id: droppedModel, label: "Muse Spark 1.2" }],
+                            currentValue: droppedModel,
+                          }
+                        : descriptor,
+                    ),
+                  },
+                }
+              : model,
+          ),
+        };
+        const stored = toggleAutoApprove(beforeRotation, "cline-pass");
+        assert.deepEqual(stored, [
+          { id: "mode", value: "act" },
+          { id: "auto_approve", value: true },
+        ]);
+        const sent = dispatched(live, "cline-pass", stored);
+        assert.deepEqual(sent, stored);
+
+        // The script expects the provider write, then Auto-approve, and no
+        // model write.
+        const providerApplied = clineConfigOptionsAnsweredAt(recorded, "provider.applied");
+        const open = yield* makeClineSessions(instanceId, "provider.applied", [
+          {
+            type: "expect_outbound",
+            label: "auto_approve.set",
+            frame: {
+              kind: "request",
+              method: "session/set_config_option",
+              params: {
+                sessionId: "cline-replay-session-1",
+                configId: "auto_approve",
+                type: "boolean",
+                value: true,
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "auto_approve.applied",
+            frame: {
+              kind: "response",
+              method: "session/set_config_option",
+              result: {
+                configOptions: providerApplied.map((option) =>
+                  option.id === "auto_approve" ? { ...option, currentValue: true } : option,
+                ),
+              },
+            },
+          },
+        ]);
+        yield* open({ instanceId, model: "cline-pass", ...(sent ? { options: sent } : {}) });
+        const opened = yield* liveConfiguration();
+        assert.strictEqual(currentModel(opened, "cline-pass"), passModels[0]);
+        assert.strictEqual(
+          descriptorsOn(opened, "cline-pass", undefined).find(
+            (descriptor) => descriptor.id === "auto_approve",
+          )?.currentValue,
+          true,
+        );
+      }).pipe(
+        Effect.provide(Layer.merge(layerTest, AcpRegistryRuntimeCoordinator.layer)),
+        Effect.scoped,
+      ),
+    );
+
     // A server restart forgets every live observation, so only the probed
     // provider is described. Clients send a saved selection's own options
     // unchanged for a model whose options are unknown; the session must apply
@@ -544,7 +646,6 @@ describe("AcpRegistryAdapterV2", () => {
 
           const storedOnCline = toggleAutoApprove(discovered, "cline");
           assert.deepEqual(storedOnCline, [
-            { id: "model", value: "cline-free/step-5-preview" },
             { id: "mode", value: "act" },
             { id: "auto_approve", value: true },
           ]);
@@ -573,19 +674,16 @@ describe("AcpRegistryAdapterV2", () => {
           ]);
           assert.strictEqual(capabilitiesOf(live, "openai-codex"), null);
 
-          // Toggling Auto-approve on ClinePass stores ClinePass's own default.
-          const storedOnPass = [
-            { id: "model", value: "cline-pass/mimo-v2.6-flash" },
-            { id: "mode", value: "act" },
+          // Each provider keeps its own explicit picks.
+          const pickedOnCline = [
+            { id: "model", value: "cline-free/mimo-v2.6-flash" },
             { id: "auto_approve", value: true },
           ];
-          assert.deepEqual(toggleAutoApprove(live, "cline-pass"), storedOnPass);
-          // Each provider keeps its own explicit picks.
           assert.deepEqual(
             dispatched(live, "cline-pass", CLINE_SECONDARY_MODEL_SELECTION.options),
             [...CLINE_SECONDARY_MODEL_SELECTION.options],
           );
-          assert.deepEqual(dispatched(live, "cline", storedOnCline), storedOnCline);
+          assert.deepEqual(dispatched(live, "cline", pickedOnCline), pickedOnCline);
         }).pipe(
           Effect.provide(Layer.merge(layerTest, AcpRegistryRuntimeCoordinator.layer)),
           Effect.scoped,

@@ -291,6 +291,29 @@ export function buildProviderOptionSelectionsFromDescriptors(
   return nextSelections.length > 0 ? nextSelections : undefined;
 }
 
+/**
+ * The selections to store after the user changes option `changedId`: every
+ * option at its current value, except a `selectsModel` option the user
+ * neither changes now nor saved in `savedSelections`. That option's current
+ * value is only the agent's default model, and storing it would pin a model
+ * the user never picked.
+ */
+export function buildProviderOptionSelectionsAfterChange(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  changedId: string,
+  savedSelections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): Array<ProviderOptionSelection> | undefined {
+  const pickedIds = new Set([changedId, ...(savedSelections ?? []).map(({ id }) => id)]);
+  return buildProviderOptionSelectionsFromDescriptors(
+    descriptors.filter(
+      (descriptor) =>
+        descriptor.type !== "select" ||
+        descriptor.selectsModel !== true ||
+        pickedIds.has(descriptor.id),
+    ),
+  );
+}
+
 export function buildExplicitProviderOptionSelectionsFromDescriptors(
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,

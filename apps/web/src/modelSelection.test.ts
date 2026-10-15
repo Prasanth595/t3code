@@ -6,7 +6,11 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
-import { createModelSelection } from "@t3tools/shared/model";
+import {
+  buildProviderOptionSelectionsAfterChange,
+  createModelSelection,
+  getProviderOptionDescriptors,
+} from "@t3tools/shared/model";
 import {
   deriveEffectiveComposerModelState,
   DraftId,
@@ -1107,6 +1111,107 @@ describe("composer dispatch for Cline's later model option", () => {
     ).toEqual(
       createModelSelection(instanceId, "cline-pass", [{ id: "auto_approve", value: true }]),
     );
+  });
+
+  it("does not pin ClinePass's current model when only another option changes", () => {
+    useComposerDraftStore.setState({
+      stickyModelSelectionByProvider: {},
+      stickyOptionsByModelByProvider: {},
+      stickyActiveProvider: null,
+    });
+    // ClinePass as described before Cline rotated its catalog: Step 5 Preview
+    // was current. `describedPass` is the catalog after the rotation.
+    const beforeRotation: ServerProvider = {
+      ...describedPass,
+      models: describedPass.models.map((model) =>
+        model.slug === "cline-pass"
+          ? {
+              ...model,
+              capabilities: {
+                optionDescriptors: model.capabilities?.optionDescriptors?.map((descriptor) =>
+                  descriptor.type === "select" && descriptor.selectsModel === true
+                    ? {
+                        ...descriptor,
+                        options: [
+                          { id: "cline-pass/step-5-preview", label: "Step 5 Preview" },
+                          ...descriptor.options,
+                        ],
+                        currentValue: "cline-pass/step-5-preview",
+                      }
+                    : descriptor,
+                ),
+              },
+            }
+          : model,
+      ),
+    };
+    const draftSent = (draftId: DraftId, snapshot: ServerProvider) => {
+      const store = useComposerDraftStore.getState();
+      return sent(
+        {
+          draft: store.draftsByThreadKey[draftId] ?? null,
+          rememberedOptionsByModel: store.stickyOptionsByModelByProvider[instanceId],
+        },
+        snapshot,
+      );
+    };
+    // A traits picker change: the picker shows the composer's options for
+    // ClinePass and stores the change with sticky memory.
+    const changeOption = (draftId: DraftId, id: string, value: string | boolean) => {
+      const store = useComposerDraftStore.getState();
+      const shown = sent(
+        {
+          draft: store.draftsByThreadKey[draftId] ?? null,
+          rememberedOptionsByModel: store.stickyOptionsByModelByProvider[instanceId],
+        },
+        beforeRotation,
+      ).options;
+      const descriptors = getProviderOptionDescriptors({
+        caps: beforeRotation.models[1]?.capabilities ?? {},
+        selections: [...(shown ?? []).filter((selection) => selection.id !== id), { id, value }],
+      });
+      store.setProviderModelOptions(
+        draftId,
+        driver,
+        buildProviderOptionSelectionsAfterChange(descriptors, id, shown),
+        { instanceId, model: "cline-pass", persistSticky: true },
+      );
+    };
+    const pickPass = (draftId: DraftId) =>
+      useComposerDraftStore
+        .getState()
+        .setModelSelection(draftId, createModelSelection(instanceId, "cline-pass"), {
+          explicit: true,
+          replaceOptions: true,
+        });
+    const toggled = createModelSelection(instanceId, "cline-pass", [
+      { id: "auto_approve", value: true },
+    ]);
+
+    const draftId = DraftId.make("cline-toggle-draft");
+    pickPass(draftId);
+    changeOption(draftId, "auto_approve", true);
+    // After the rotation the draft and a new chat seeded from sticky memory
+    // open on the agent's current model.
+    expect(draftSent(draftId, describedPass)).toEqual(toggled);
+    const freshId = DraftId.make("cline-toggle-new-chat");
+    useComposerDraftStore.getState().applyStickyState(freshId);
+    expect(draftSent(freshId, describedPass)).toEqual(toggled);
+
+    // A model the user picked survives later changes and the rotation, so the
+    // session rejects it instead of running another model.
+    const pickedId = DraftId.make("cline-picked-draft");
+    pickPass(pickedId);
+    changeOption(pickedId, "model", "cline-pass/step-5-preview");
+    changeOption(pickedId, "auto_approve", true);
+    const picked = createModelSelection(instanceId, "cline-pass", [
+      { id: "model", value: "cline-pass/step-5-preview" },
+      { id: "auto_approve", value: true },
+    ]);
+    expect(draftSent(pickedId, describedPass)).toEqual(picked);
+    const pickedFreshId = DraftId.make("cline-picked-new-chat");
+    useComposerDraftStore.getState().applyStickyState(pickedFreshId);
+    expect(draftSent(pickedFreshId, describedPass)).toEqual(picked);
   });
 
   it("does not send carried options after falling back from another explicitly picked provider", () => {
