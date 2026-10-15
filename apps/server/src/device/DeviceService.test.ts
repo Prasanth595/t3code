@@ -775,11 +775,14 @@ it.effect("failed manual installation leaves lifecycle state unchanged and can b
   }).pipe(Effect.scoped),
 );
 
-const sshHostWithAdb = (emulator: {
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-}) =>
+const sshHostWithAdb = (
+  emulator: {
+    readonly code: number;
+    readonly stdout: string;
+    readonly stderr: string;
+  },
+  hubErrors: ReadonlyArray<string> = [],
+) =>
   Effect.gen(function* () {
     // Android stays available because adb is installed. The emulator binary is a
     // separate command, matching an SSH host that can see physical devices.
@@ -842,6 +845,7 @@ const sshHostWithAdb = (emulator: {
                 physical: true,
               },
             ],
+            ...(hubErrors.length > 0 ? { errors: hubErrors.map((message) => ({ message })) } : {}),
           }),
         );
       }),
@@ -857,11 +861,14 @@ it.effect(
   "keeps iOS simulators and physical Android devices when the Android emulator is not installed",
   () =>
     Effect.gen(function* () {
-      const { service, commands, hostId } = yield* sshHostWithAdb({
-        code: 127,
-        stdout: "",
-        stderr: "sh: emulator: not found",
-      });
+      const { service, commands, hostId } = yield* sshHostWithAdb(
+        {
+          code: 127,
+          stdout: "",
+          stderr: "sh: emulator: not found",
+        },
+        ["simctl list failed"],
+      );
       const state = yield* service.list;
       expect(commands).toEqual(["emulator -list-avds"]);
       expect(state.devices).toEqual([
@@ -887,7 +894,7 @@ it.effect(
       expect(state.hostStatuses[hostId]).toEqual({
         status: "ready",
         detail:
-          "Android Emulator is not installed, so virtual devices cannot be listed. sh: emulator: not found",
+          "simctl list failed\nAndroid Emulator is not installed, so virtual devices cannot be listed. sh: emulator: not found",
       });
     }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
