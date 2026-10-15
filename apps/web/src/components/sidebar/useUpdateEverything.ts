@@ -215,6 +215,7 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
                 serverOutcome.status === "failed"
                   ? serverOutcome.message
                   : (providerFailures.get(server.environmentId) ?? null),
+                { serverUpdated: serverOutcome.status !== "failed" },
               );
               const finished = { label: server.serverLabel, outcome: serverOutcome };
               finishedServers.push(finished);

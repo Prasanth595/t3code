@@ -45,11 +45,21 @@ function updateRunMachines(update: (machine: UpdateRunMachine) => UpdateRunMachi
 }
 
 /** Records the result of every update for one machine. `failure` is null when
-    it succeeded. The run ends once every machine is done. */
-export function settleUpdateRunMachine(environmentId: EnvironmentId, failure: string | null): void {
+    it succeeded. A server that updated is no longer retried, even when the
+    machine failed for its providers. The run ends once every machine is done. */
+export function settleUpdateRunMachine(
+  environmentId: EnvironmentId,
+  failure: string | null,
+  { serverUpdated = false }: { readonly serverUpdated?: boolean } = {},
+): void {
   updateRunMachines((machine) =>
     machine.environmentId === environmentId
-      ? { ...machine, result: failure === null ? "done" : "failed", failure }
+      ? {
+          ...machine,
+          result: failure === null ? "done" : "failed",
+          failure,
+          ...(serverUpdated ? { server: null } : {}),
+        }
       : machine,
   );
 }

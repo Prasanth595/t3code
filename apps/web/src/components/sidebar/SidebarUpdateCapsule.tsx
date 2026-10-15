@@ -77,10 +77,13 @@ export function SidebarUpdateCapsule({
   run,
   local,
   icon,
+  onRestart,
 }: {
   readonly run: UpdateEverythingRun;
   readonly local: UpdateRunLocalState;
   readonly icon: ReactNode;
+  /** Installs this app's downloaded update after the user postponed it. */
+  readonly onRestart?: () => void;
 }) {
   const machines = useUpdateRunMachineViews(run);
   const hasActiveMachine = machines.some(
@@ -149,6 +152,13 @@ export function SidebarUpdateCapsule({
               <span className="text-muted-foreground tabular-nums">
                 {localStatusLabel(run, local, now)}
               </span>
+            </div>
+          ) : onRestart ? (
+            <div className="flex items-center justify-between gap-3">
+              <span>This app</span>
+              <Button size="xs" variant="outline" onClick={onRestart}>
+                Restart to update
+              </Button>
             </div>
           ) : null}
           {machines.map(({ machine, status }) => (

@@ -417,7 +417,16 @@ function SidebarUpdateControl() {
           : { status: "waiting" };
     return (
       <SidebarMenuItem className="ml-auto flex min-w-0 flex-1">
-        <SidebarUpdateCapsule run={run} local={local} icon={statusIcon} />
+        <SidebarUpdateCapsule
+          run={run}
+          local={local}
+          icon={statusIcon}
+          // After "Later", this app's downloaded update can still be installed
+          // while the run follows the other machines.
+          {...(run.localVersion === null && action === "install" && window.desktopBridge
+            ? { onRestart: () => void installLocalUpdate(window.desktopBridge!) }
+            : {})}
+        />
         {confirmDialog}
       </SidebarMenuItem>
     );
