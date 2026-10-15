@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
@@ -254,7 +255,11 @@ export class FactorySessions extends Context.Service<
     readonly archive: (threadId: string) => Effect.Effect<void, SessionsError>;
     /**
      * Removes a thread's worktree from disk with git and keeps its branch. A
-     * worktree already gone counts as removed. `path` must be absolute.
+     * worktree already gone counts as removed. `path` must be absolute. When
+     * git takes the worktree off the clone's list but cannot empty its
+     * directory, the call deletes the rest itself over about 10 s. It deletes
+     * no directory git did not just take off the list: one a stopped removal
+     * left behind (a restart mid-wait) fails, naming the path, for a person.
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
   }
@@ -290,6 +295,13 @@ const requireThreadId = (threadId: string) =>
 /** git's message when it removed what it could and left a directory it could not empty. */
 const leftNotEmpty = (stderr: string) =>
   stderr.split("\n").some((line) => line.trimEnd().endsWith(": Directory not empty"));
+
+/**
+ * After git left a directory it could not empty, the factory deletes it three
+ * times at most, 3 s apart from the first wait on: about 10 s for a process
+ * still writing into it to stop.
+ */
+const LEFTOVER_REMOVE_ATTEMPTS = { schedule: Schedule.spaced("3 seconds"), times: 2 };
 
 /** `git worktree remove` of a big `node_modules` can take a while. */
 const REMOVE_WORKTREE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -456,14 +468,16 @@ export const make = Effect.gen(function* () {
       if (!exists) return;
       if (attempt._tag === "Failure") return yield* removeWorktreeFailed(attempt.failure);
       if (!leftNotEmpty(attempt.success.stderr)) {
-        return yield* removeWorktreeFailed(attempt.success.stderr.trim());
+        return yield* removeWorktreeFailed(
+          `git did not remove ${worktreePath}, which is still on disk: ${attempt.success.stderr.trim()}`,
+        );
       }
       // git took the worktree off the clone's list and could not empty the
       // directory (a process still writing into it): wait, then finish it.
       yield* Effect.sleep("3 seconds");
       yield* fs
         .remove(worktreePath, { recursive: true })
-        .pipe(Effect.mapError(removeWorktreeFailed));
+        .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
     });
 
   return FactorySessions.of({

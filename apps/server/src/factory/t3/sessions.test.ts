@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -1192,6 +1193,124 @@ describe("FactorySessions.removeWorktree", () => {
       assert.deepStrictEqual(removed, [{ path, options: { recursive: true } }]);
       assert.strictEqual(calls.length, 1);
     }),
+  );
+
+  /**
+   * removeWorktree on a directory git leaves not empty, with a stub FileSystem
+   * whose delete fails `failures` times first. The layer is built (real IO)
+   * before the fork, so the test clock alone decides when the waits end.
+   */
+  const removeLeftNotEmpty = (failures: number) =>
+    Effect.gen(function* () {
+      const path = "/tmp/factory-sessions-test/wt";
+      const deletes: Array<string> = [];
+      const fileSystem = FileSystem.layerNoop({
+        exists: () => Effect.succeed(true),
+        remove: (removedPath) =>
+          Effect.suspend(() => {
+            deletes.push(removedPath);
+            return deletes.length <= failures
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Unknown",
+                    module: "FileSystem",
+                    method: "remove",
+                    pathOrDescriptor: removedPath,
+                    description: "Directory not empty",
+                  }),
+                )
+              : Effect.void;
+          }),
+      });
+      const sessions = yield* Sessions.FactorySessions.pipe(
+        Effect.provide(
+          layerSessions(
+            {},
+            {},
+            {},
+            recordingGit([], () =>
+              Effect.succeed(
+                gitResult(128, `error: failed to delete '${path}': Directory not empty\n`),
+              ),
+            ),
+            fileSystem,
+          ),
+        ),
+      );
+      const fiber = yield* sessions
+        .removeWorktree(path)
+        .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+      return { fiber, deletes };
+    });
+
+  it.effect("deletes again while a writer in the directory finishes", () =>
+    Effect.gen(function* () {
+      const { fiber, deletes } = yield* removeLeftNotEmpty(2);
+      yield* TestClock.adjust("3 seconds");
+      assert.strictEqual(deletes.length, 1);
+      yield* TestClock.adjust("2999 millis");
+      assert.strictEqual(deletes.length, 1);
+      yield* TestClock.adjust("1 millis");
+      assert.strictEqual(deletes.length, 2);
+      assert.isUndefined(fiber.pollUnsafe());
+      yield* TestClock.adjust("3 seconds");
+      const result = yield* Fiber.join(fiber);
+      assert.strictEqual(result._tag, "Success");
+      assert.strictEqual(deletes.length, 3);
+    }),
+  );
+
+  it.effect("fails after three deletes over about 10 s when the writer never stops", () =>
+    Effect.gen(function* () {
+      const { fiber, deletes } = yield* removeLeftNotEmpty(Number.POSITIVE_INFINITY);
+      yield* TestClock.adjust("9 seconds");
+      const result = yield* Fiber.join(fiber);
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(result.failure._tag, "FactorySessionsError");
+        if (result.failure._tag === "FactorySessionsError") {
+          assert.strictEqual(result.failure.operation, "remove-worktree");
+        }
+      }
+      assert.strictEqual(deletes.length, 3);
+      yield* TestClock.adjust("1 minute");
+      assert.strictEqual(deletes.length, 3);
+    }),
+  );
+
+  it.effect(
+    "fails naming the directory and keeps it when a stopped removal left it outside any worktree",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-sessions-remove-" });
+          yield* fs.writeFileString(`${dir}/left-behind.txt`, "a writer's file\n");
+          const error = yield* Effect.flip(removeWorktree(dir)).pipe(
+            Effect.provide(
+              layerSessions(
+                {},
+                {},
+                {},
+                recordingGit([], () =>
+                  Effect.succeed(
+                    gitResult(
+                      128,
+                      "fatal: not a git repository (or any of the parent directories): .git\n",
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          assert.strictEqual(error._tag, "FactorySessionsError");
+          if (error._tag === "FactorySessionsError") {
+            assert.strictEqual(error.operation, "remove-worktree");
+            assert.include(String(error.cause), dir);
+          }
+          assert.isTrue(yield* fs.exists(`${dir}/left-behind.txt`));
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
