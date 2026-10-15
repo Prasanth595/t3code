@@ -29,15 +29,13 @@ export { LedgerError } from "./errors.ts";
 export type { AppendIo } from "./appendFile.ts";
 
 const U32_MAX = 4294967295;
+// The largest u64 as a double; a JSON number past 2^53 is already a double here.
+const U64_MAX = 18446744073709551615;
+const I32_MIN = -2147483648;
+const I32_MAX = 2147483647;
 
-export type LedgerOptions = {
-  /** Returns the current time as Unix epoch milliseconds. Defaults to the system clock. */
-  readonly clock?: () => number;
-  /** The write and fsync an append performs. Defaults to `node:fs`; a test injects failures. */
-  readonly io?: AppendIo;
-  /** Flushes a directory to disk after `create` makes the file. Defaults to an fsync. */
-  readonly syncDir?: SyncDir;
-};
+const isIntegerIn = (value: unknown, min: number, max: number): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 
 /** An open run file that events are appended to. */
 export class Ledger {
@@ -133,14 +131,15 @@ export class Ledger {
   /** Fold a line that is now in the file into what the summary needs. */
   private observe(ms: number, event: string, data: unknown): void {
     this.firstMs ??= ms;
-    // Only a `gate_command` with a usable attempt number counts.
+    // Only a `gate_command` that softfac would read as a whole counts: it falls back to an
+    // unknown event, which is not counted, when any field is missing or the wrong type.
     if (event === "gate_command" && typeof data === "object" && data !== null) {
-      const attempt = (data as { attempt?: unknown }).attempt;
+      const { attempt, command, exit_code, duration_ms } = data as Record<string, unknown>;
       if (
-        typeof attempt === "number" &&
-        Number.isInteger(attempt) &&
-        attempt >= 0 &&
-        attempt <= U32_MAX
+        isIntegerIn(attempt, 0, U32_MAX) &&
+        typeof command === "string" &&
+        isIntegerIn(exit_code, I32_MIN, I32_MAX) &&
+        isIntegerIn(duration_ms, 0, U64_MAX)
       ) {
         this.gateAttempts.add(attempt);
       }
