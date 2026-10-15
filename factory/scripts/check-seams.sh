@@ -21,6 +21,6 @@ while IFS= read -r path; do
   fi
   echo "check-seams: not a listed seam: $path"
   bad=1
-done < <(git diff --name-only "$sha" HEAD)
+done < <(git diff --name-only --no-renames "$sha" HEAD)
 
 exit "$bad"
