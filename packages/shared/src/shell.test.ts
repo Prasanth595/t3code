@@ -879,6 +879,27 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
     }),
   );
 
+  it.effect("probes node with a single PATH key when the inherited env spells it Path", () =>
+    Effect.gen(function* () {
+      const probedEnvironments: Array<NodeJS.ProcessEnv | undefined> = [];
+
+      yield* withWindowsEnvironmentMocks(
+        resolveWindowsEnvironment({ Path: "C:\\Windows\\System32" }),
+        () => ({ PATH: "C:\\Shell\\Bin" }),
+        (_command, options) =>
+          Effect.sync(() => {
+            probedEnvironments.push(options?.env);
+            return true;
+          }),
+      );
+
+      const pathEntries = Object.entries(probedEnvironments[0] ?? {}).filter(
+        ([key]) => key.toUpperCase() === "PATH",
+      );
+      expect(pathEntries).toEqual([["PATH", "C:\\Shell\\Bin;C:\\Windows\\System32"]]);
+    }),
+  );
+
   it.effect("loads the PowerShell profile when baseline env cannot resolve node", () =>
     Effect.gen(function* () {
       const readEnvironment = vi.fn(
