@@ -5,11 +5,6 @@ import {
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
 
-export {
-  toComposerContextId,
-  toKindScopedComposerContextId,
-} from "@t3tools/shared/composerContextReferences";
-
 /**
  * Prompt-string operations on inline context references, independent of kind. Each context
  * kind's draft record supplies a `ComposerContextReference` (kind, id, label); the prompt owns
