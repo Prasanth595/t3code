@@ -318,9 +318,21 @@ export const makeCause = (step: CauseStep, reason: string, extras: CauseExtras =
   ...(extras.label !== undefined && { label: cleanCauseText(extras.label, CAUSE_FIELD_LIMIT) }),
 });
 
-/** The cause as written to a line: the keys in softfac's order, whatever order they were built in. */
-export const causeObject = (cause: Cause): Record<string, unknown> =>
-  buildData(["step", "reason", "actor", "command", "attempt", "label"], cause);
+/**
+ * The cause as written to a line: the keys in softfac's order, whatever order they were built in,
+ * with the text fields cleaned and cut here too, so a `Cause` built by hand cannot put session
+ * or comment text in the file. `reason`, `actor` and `label` are cut at 100, `command` at 1000.
+ */
+export const causeObject = (cause: Cause): Record<string, unknown> => {
+  const clean = (text: string | undefined, limit: number) =>
+    text === undefined ? undefined : cleanCauseText(text, limit);
+  return buildData(["step", "reason", "actor", "command", "attempt", "label"], cause, {
+    reason: clean(cause.reason, CAUSE_FIELD_LIMIT),
+    actor: clean(cause.actor, CAUSE_FIELD_LIMIT),
+    command: clean(cause.command, CAUSE_COMMAND_LIMIT),
+    label: clean(cause.label, CAUSE_FIELD_LIMIT),
+  });
+};
 
 /** How a retro ended. */
 export const RETRO_RESULTS = [
