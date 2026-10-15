@@ -1160,8 +1160,9 @@ it.effect.each([
           .getThreadRecords(launched.threadId, ["runs"])
           .pipe(Effect.map(({ runs }) => runs[0]?.status !== "preparing")),
       );
-      const notices = (yield* threads.getThreadRecords(launched.threadId, ["turnItems"]))
-        .turnItems.filter((item) => item.type === "system_notice");
+      const notices = (yield* threads.getThreadRecords(launched.threadId, [
+        "turnItems",
+      ])).turnItems.filter((item) => item.type === "system_notice");
       assert.equal(notices.length, Option.isSome(testCase.scratchFolder) ? 0 : 1);
     }).pipe(Effect.provide(harness.layer));
   }),
