@@ -27,7 +27,7 @@ import {
 export const DEFAULT_SIDEBAR_GROUP_ID = "default";
 export const DEFAULT_SIDEBAR_GROUP_NAME = "Threads";
 
-export type SidebarGroupThread = Pick<
+type SidebarGroupThread = Pick<
   SidebarThreadSummary,
   | "environmentId"
   | "id"
@@ -45,14 +45,14 @@ export type SidebarGroupThread = Pick<
  * on every machine, unlike a project id, a path or the sidebar's project grouping, so a project
  * rule in the shared setting matches the same repository everywhere.
  */
-export interface SidebarGroupProjectFacts {
+interface SidebarGroupProjectFacts {
   /** `repositoryGroupingKeyOf`, such as `github.com/yarden-zamir/t3code`. Null without a remote. */
   readonly repository: string | null;
   readonly repositoryLabel: string | null;
   readonly owner: string | null;
 }
 
-export type SidebarGroupProjectLookup = ReadonlyMap<string, SidebarGroupProjectFacts>;
+type SidebarGroupProjectLookup = ReadonlyMap<string, SidebarGroupProjectFacts>;
 
 export function buildSidebarGroupProjectFacts(
   projects: ReadonlyArray<{

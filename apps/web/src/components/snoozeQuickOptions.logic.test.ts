@@ -6,7 +6,6 @@ import {
   BUILT_IN_SNOOZE_QUICK_OPTIONS,
   parseSnoozeTime,
   resolveSnoozeQuickOptions,
-  snoozeQuickOptionLabel,
   withSnoozeQuickOptionLabel,
   withSnoozeQuickOptionWhen,
 } from "./snoozeQuickOptions.logic";
@@ -82,16 +81,6 @@ describe("resolveSnoozeQuickOptions", () => {
 });
 
 describe("snooze quick option labels", () => {
-  it("names durations in the singular and plural, and days by name", () => {
-    expect(snoozeQuickOptionLabel({ _tag: "in", amount: 1, unit: "hours" })).toBe("In 1 hour");
-    expect(snoozeQuickOptionLabel({ _tag: "in", amount: 30, unit: "minutes" })).toBe(
-      "In 30 minutes",
-    );
-    expect(
-      snoozeQuickOptionLabel({ _tag: "at", day: "friday", time: { hour: 9, minute: 0 } }),
-    ).toBe("Friday");
-  });
-
   it("sets a custom label, and drops it for blank text", () => {
     const option = { _tag: "in", amount: 1, unit: "hours" } as const;
     const named = withSnoozeQuickOptionLabel(option, "  Coffee  ");

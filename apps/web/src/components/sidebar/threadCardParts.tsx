@@ -49,7 +49,7 @@ export const THREAD_CARD_STATUS_LABEL_CLASS =
   "flex items-center self-center justify-self-end tabular-nums text-secondary-label transition-opacity";
 export const THREAD_CARD_PIN_CLASS = "size-3 shrink-0 text-muted-foreground/65";
 
-export type ThreadCardStatusIcon =
+type ThreadCardStatusIcon =
   | "working"
   | "waiting"
   | "input"
@@ -134,7 +134,7 @@ export function ThreadCardProjectLabel(props: {
 export type ThreadCardElementNodes = { readonly [Element in ThreadCardElement]: ReactNode };
 
 /** The elements that `threadCardInfoNodes` fills in. */
-export type ThreadCardInfoElement =
+type ThreadCardInfoElement =
   | "model"
   | "access"
   | "plan"

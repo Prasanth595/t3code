@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 
 /** Where one element sits in a layout. */
-export interface SlotLayoutPosition {
+interface SlotLayoutPosition {
   readonly row: number;
   readonly group: SlotLayoutGroup;
   readonly index: number;
@@ -86,25 +86,6 @@ export function removeSlotLayoutElement<Element extends string>(
     throw new Error(`Slot layout element "${element}" is required`);
   }
   return withoutElement(layout, element);
-}
-
-/** Swaps the element with its neighbour in the same group. A move past either end does nothing. */
-export function shiftSlotLayoutElement<Element extends string>(
-  layout: SlotLayout<Element>,
-  element: Element,
-  direction: -1 | 1,
-): SlotLayout<Element> {
-  const position = findSlotLayoutElement(layout, element);
-  if (position === null) {
-    throw new Error(`Slot layout does not place "${element}"`);
-  }
-  const target = position.index + direction;
-  return updateRow(layout, position.row, (row) => {
-    const group = [...row[position.group]];
-    if (target < 0 || target >= group.length) return row;
-    [group[position.index], group[target]] = [group[target]!, group[position.index]!];
-    return { ...row, [position.group]: group };
-  });
 }
 
 export function canAddSlotLayoutRow<Element extends string>(layout: SlotLayout<Element>): boolean {

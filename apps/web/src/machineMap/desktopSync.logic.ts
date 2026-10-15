@@ -22,7 +22,7 @@ export interface SavedEnvironment {
   readonly phase: EnvironmentConnectionPhase;
 }
 
-export interface MachineSyncPlan {
+interface MachineSyncPlan {
   /** Machine origins that keep the token headers. */
   readonly keep: ReadonlyArray<string>;
   /** Origins to pair: not saved yet, or saved and failing after a level change. */
