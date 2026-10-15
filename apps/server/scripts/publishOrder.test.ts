@@ -74,6 +74,18 @@ it.effect("waits for the platform packages before publishing the launcher", () =
     });
 
     assert.deepStrictEqual(events.slice(-2), ["wait", `start ${launcherTarball}`]);
+
+    const failed = yield* fakePublish();
+    const exit = yield* Effect.exit(
+      publishPlatformsThenLauncher({
+        platformTarballs,
+        launcherTarball,
+        publish: failed.publish,
+        waitForPlatforms: Effect.fail("not served"),
+      }),
+    );
+    assert.deepStrictEqual(exit, Exit.fail("not served"));
+    assert.notInclude(failed.events, `start ${launcherTarball}`);
   }),
 );
 
@@ -116,5 +128,8 @@ it.effect("counts a version as served only once npm serves its tarball", () =>
 
     assert.isFalse(yield* npmServesTarball("a", "1.0.0", fetchServing(404)));
     assert.isTrue(yield* npmServesTarball("a", "1.0.0", fetchServing(200)));
+
+    const offline = (() => Promise.reject(new Error("offline"))) as typeof globalThis.fetch;
+    assert.isFalse(yield* npmServesTarball("a", "1.0.0", offline));
   }),
 );
