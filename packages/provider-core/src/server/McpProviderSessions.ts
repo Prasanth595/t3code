@@ -20,12 +20,37 @@ import type { McpProviderSessionConfig } from "./mcpSession.ts";
 // pages are kept. A page is taken as soon as its call completes.
 const MAX_KEPT_HTML_RENDERS = 64;
 
+// Antigravity bounds each long string of a call's input to its last 8,000
+// characters behind this marker before the adapter sees the call, while the
+// MCP server receives the whole page. A kept page holds its length and that
+// much of its end, which identifies it in either form without holding every
+// page whole.
+const BOUNDED_TEXT_MARKER = "[Earlier output truncated]\n\n";
+const KEPT_HTML_END_LENGTH = 8_000;
+
 interface KeptHtmlRender {
   readonly threadId: ThreadId;
   readonly title: string;
   readonly height: number;
+  readonly htmlLength: number;
+  readonly htmlEnd: string;
   readonly reference: HtmlRenderReference;
 }
+
+// A slice can share the whole page's memory; the copy holds only its own text.
+const copyText = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");
+
+/** Whether a call's `html` argument is this page, whole or bounded to its end. */
+const isPageHtml = (page: KeptHtmlRender, html: string): boolean => {
+  if (html.length === page.htmlLength && html.endsWith(page.htmlEnd)) {
+    return true;
+  }
+  if (!html.startsWith(BOUNDED_TEXT_MARKER)) {
+    return false;
+  }
+  const end = html.slice(BOUNDED_TEXT_MARKER.length);
+  return end.length > 0 && end.length < page.htmlLength && page.htmlEnd.endsWith(end);
+};
 
 export class McpProviderSessions extends Context.Service<
   McpProviderSessions,
@@ -36,21 +61,50 @@ export class McpProviderSessions extends Context.Service<
     /** Keeps a page `html_render` published with these arguments until a call takes it. */
     readonly recordHtmlRender: (
       threadId: ThreadId,
-      input: { readonly title: string; readonly height: number },
+      input: { readonly html: string; readonly title: string; readonly height: number },
       reference: HtmlRenderReference,
     ) => Effect.Effect<void>;
     /**
-     * Removes and returns the oldest kept page the thread published with these
+     * Removes and returns the kept page the thread published with these
      * arguments, so each page goes to at most one call. A call that reported
-     * its page takes that very page, so it never takes another call's.
+     * its page takes that very page, so it never takes another call's. Without
+     * `html`, or when several kept pages match, the call could be any of their
+     * calls, so it takes none.
      */
     readonly takeHtmlRender: (
       threadId: ThreadId,
-      input: { readonly title?: unknown; readonly height?: unknown },
+      input: { readonly html?: unknown; readonly title?: unknown; readonly height?: unknown },
       reported?: HtmlRenderReference,
     ) => Effect.Effect<HtmlRenderReference | undefined>;
   }
 >()("@t3tools/provider-core/server/McpProviderSessions") {}
+
+/** The one kept page these arguments match, or -1 when they match none or several. */
+const matchingPageIndex = (
+  kept: ReadonlyArray<KeptHtmlRender>,
+  threadId: ThreadId,
+  input: { readonly html?: unknown; readonly title?: unknown; readonly height?: unknown },
+): number => {
+  const html = input.html;
+  if (typeof html !== "string" || html.length === 0) {
+    return -1;
+  }
+  // Agents can report a numeric argument as a string, e.g. "240".
+  const height =
+    typeof input.height === "string" && input.height.trim() !== ""
+      ? Number(input.height)
+      : input.height;
+  const matches = kept.flatMap((page, index) =>
+    page.threadId === threadId &&
+    page.title === input.title &&
+    page.height === height &&
+    isPageHtml(page, html)
+      ? [index]
+      : [],
+  );
+  // Pages the arguments cannot tell apart could belong to any of their calls.
+  return matches.length === 1 ? matches[0]! : -1;
+};
 
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
@@ -71,24 +125,28 @@ const make = Effect.gen(function* () {
       ),
     recordHtmlRender: (threadId, input, reference) =>
       Ref.update(htmlRenders, (kept) =>
-        [...kept, { threadId, title: input.title, height: input.height, reference }].slice(
-          -MAX_KEPT_HTML_RENDERS,
-        ),
+        [
+          ...kept,
+          {
+            threadId,
+            title: input.title,
+            height: input.height,
+            htmlLength: input.html.length,
+            htmlEnd: copyText(input.html.slice(-KEPT_HTML_END_LENGTH)),
+            reference,
+          },
+        ].slice(-MAX_KEPT_HTML_RENDERS),
       ),
     takeHtmlRender: (threadId, input, reported) =>
       Ref.modify(htmlRenders, (kept) => {
-        // Agents can report a numeric argument as a string, e.g. "240".
-        const height =
-          typeof input.height === "string" && input.height.trim() !== ""
-            ? Number(input.height)
-            : input.height;
-        const index = kept.findIndex(
-          (page) =>
-            page.threadId === threadId &&
-            (reported === undefined
-              ? page.title === input.title && page.height === height
-              : page.reference.attachmentId === reported.attachmentId),
-        );
+        const index =
+          reported === undefined
+            ? matchingPageIndex(kept, threadId, input)
+            : kept.findIndex(
+                (page) =>
+                  page.threadId === threadId &&
+                  page.reference.attachmentId === reported.attachmentId,
+              );
         return index === -1
           ? [undefined, kept]
           : [kept[index]!.reference, kept.filter((_, keptIndex) => keptIndex !== index)];

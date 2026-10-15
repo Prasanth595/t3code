@@ -28,6 +28,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
+import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -540,7 +541,13 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         height: 240,
       });
       const revenue = { html: "<p>Revenue</p>", title: "Revenue", height: 240 };
+      const restated = { ...revenue, html: "<p>Revenue, restated</p>" };
       const margin = { ...revenue, html: "<p>Margin</p>", title: "Margin" };
+      const byRegion = { ...revenue, html: "<p>Revenue by region</p>" };
+      const byMonth = { ...revenue, html: "<p>Revenue by month</p>" };
+      // About the size of the page in the session that showed the bug.
+      const rows = Array.from({ length: 500 }, (_, row) => `<tr><td>Row ${row}</td></tr>`);
+      const report = { ...revenue, html: `<table>${rows.join("")}</table>` };
       const renderError = {
         content: [{ type: "text", text: "html_render failed" }],
         isError: true,
@@ -568,15 +575,29 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                 }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
               prompt: () =>
                 Effect.gen(function* () {
+                  // Antigravity's runtime bounds each update before the
+                  // adapter sees it, html_render's html included.
                   const send = (update: EffectAcpSchema.SessionUpdate) =>
                     sessionUpdate === undefined
                       ? Effect.die("the adapter must handle session updates")
-                      : sessionUpdate({ sessionId: "mock-session-1", update });
+                      : sessionUpdate(
+                          normalizeAntigravitySessionUpdate({
+                            sessionId: "mock-session-1",
+                            update,
+                          }),
+                        );
                   // agy_acp_server 1.3.0 and 1.4.0 without a permission prompt:
                   // the title is "Running <tool>", rawInput holds only the
                   // tool's arguments, and the completion reports the step's
                   // own summary as rawOutput instead of the MCP result.
-                  const start = (toolCallId: string, rawInput: typeof revenue) =>
+                  const start = (
+                    toolCallId: string,
+                    rawInput: {
+                      readonly html?: string;
+                      readonly title: string;
+                      readonly height: number;
+                    },
+                  ) =>
                     send({
                       sessionUpdate: "tool_call",
                       toolCallId,
@@ -587,16 +608,23 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     });
                   yield* start("trajectory:1", revenue);
                   yield* start("trajectory:2", { ...revenue, title: "Costs" });
-                  yield* start("trajectory:3", revenue);
+                  yield* start("trajectory:3", restated);
                   yield* start("trajectory:4", revenue);
                   yield* start("trajectory:5", revenue);
                   yield* start("trajectory:6", margin);
                   yield* start("trajectory:7", margin);
+                  yield* start("trajectory:8", byRegion);
+                  yield* start("trajectory:9", byMonth);
+                  yield* start("trajectory:10", report);
+                  yield* start("trajectory:11", { title: "Revenue", height: 240 });
                   // T3's MCP server publishes while each call runs.
                   yield* mcpSessions.recordHtmlRender(threadId, revenue, page("first"));
-                  yield* mcpSessions.recordHtmlRender(threadId, revenue, page("second"));
+                  yield* mcpSessions.recordHtmlRender(threadId, restated, page("second"));
                   yield* mcpSessions.recordHtmlRender(threadId, margin, page("seventh", "Margin"));
                   yield* mcpSessions.recordHtmlRender(threadId, margin, page("sixth", "Margin"));
+                  yield* mcpSessions.recordHtmlRender(threadId, byRegion, page("eighth"));
+                  yield* mcpSessions.recordHtmlRender(threadId, byMonth, page("ninth"));
+                  yield* mcpSessions.recordHtmlRender(threadId, report, page("tenth"));
                   yield* send({
                     sessionUpdate: "tool_call_update",
                     toolCallId: "trajectory:1",
@@ -663,6 +691,34 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "trajectory:7",
                     status: "completed",
                     rawOutput: "Render margin chart",
+                  });
+                  // Calls with the same title and height that complete out of
+                  // order each take the page published with their html.
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:9",
+                    status: "completed",
+                    rawOutput: "Render revenue by month",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:8",
+                    status: "completed",
+                    rawOutput: "Render revenue by region",
+                  });
+                  // The adapter sees only the end of a long page.
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:10",
+                    status: "completed",
+                    rawOutput: "Render revenue report",
+                  });
+                  // A call without its html cannot tell which page is its own.
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:11",
+                    status: "completed",
+                    rawOutput: "Render revenue chart",
                   });
                   return { stopReason: "end_turn" as const };
                 }),
@@ -740,10 +796,15 @@ describe("AntigravityAdapterV2 html_render pages", () => {
             event.type === "turn_item.updated" &&
             event.turnItem.nativeItemRef?.nativeId === nativeId,
         );
-      const tool = (nativeId: string) => {
+      const toolItem = (nativeId: string) => {
         const event = finalItem(nativeId);
-        const item = event?.type === "turn_item.updated" ? event.turnItem : undefined;
-        return item?.type === "dynamic_tool"
+        return event?.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? event.turnItem
+          : undefined;
+      };
+      const tool = (nativeId: string) => {
+        const item = toolItem(nativeId);
+        return item !== undefined
           ? {
               status: item.status,
               toolName: item.toolName,
@@ -795,8 +856,39 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         page: page("seventh", "Margin"),
         output: { htmlRender: page("seventh", "Margin") },
       });
+      assert.deepEqual(tool("trajectory:8"), {
+        status: "completed",
+        toolName: "t3-code.html_render",
+        page: page("eighth"),
+        output: { htmlRender: page("eighth") },
+      });
+      assert.deepEqual(tool("trajectory:9"), {
+        status: "completed",
+        toolName: "t3-code.html_render",
+        page: page("ninth"),
+        output: { htmlRender: page("ninth") },
+      });
+      // The adapter saw only the end of the long page.
+      assert.isAbove(report.html.length, 8_000);
+      assert.propertyVal(
+        toolItem("trajectory:10")?.input,
+        "html",
+        `[Earlier output truncated]\n\n${report.html.slice(-8_000)}`,
+      );
+      assert.deepEqual(tool("trajectory:10"), {
+        status: "completed",
+        toolName: "t3-code.html_render",
+        page: page("tenth"),
+        output: { htmlRender: page("tenth") },
+      });
+      assert.deepEqual(tool("trajectory:11"), {
+        status: "completed",
+        toolName: "t3-code.html_render",
+        page: undefined,
+        output: "Render revenue chart",
+      });
       // Each page goes to one call; the unclaimed one stays for a later call.
-      assert.deepEqual(yield* mcpSessions.takeHtmlRender(threadId, revenue), page("second"));
+      assert.deepEqual(yield* mcpSessions.takeHtmlRender(threadId, restated), page("second"));
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, margin), undefined);
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );

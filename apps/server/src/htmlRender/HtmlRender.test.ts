@@ -203,11 +203,14 @@ describe("HtmlRender", () => {
       expect(html).toContain("<p>Quarterly revenue</p>");
       // The thread's provider session can attach the page to a call reported
       // without its result, matched by the call's own arguments, once.
-      const page = { title: "  Revenue  ", height: 9_000 };
+      const page = { html: "<p>Quarterly revenue</p>", title: "  Revenue  ", height: 9_000 };
       expect(yield* mcpSessions.takeHtmlRender(ThreadId.make("thread-other"), page)).toBe(
         undefined,
       );
       expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, height: 400 })).toBe(undefined);
+      expect(
+        yield* mcpSessions.takeHtmlRender(threadId, { ...page, html: "<p>Quarterly costs</p>" }),
+      ).toBe(undefined);
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(reference);
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
     }).pipe(Effect.provide(layerTest)),
@@ -239,6 +242,7 @@ describe("HtmlRender", () => {
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         expect(
           yield* mcpSessions.takeHtmlRender(ThreadId.make("thread-html-cancel"), {
+            html: "<p>x</p>",
             title: "X",
             height: 200,
           }),
