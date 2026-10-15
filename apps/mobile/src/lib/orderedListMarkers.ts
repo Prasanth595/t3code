@@ -1,9 +1,11 @@
 // A line that may start an ordered-list item, including one nested after quote
-// or list markers. Group 1 is everything before the number. Each repeat starts
-// with a marker or `>`, which keeps matching linear.
+// or list markers. Group 1 holds the container markers before the last number,
+// which can include outer numbers. Each repeat starts with a marker or `>`,
+// which keeps matching linear.
 const ORDERED_MARKER_LINE =
   /^([ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+(?:>[ \t>]*)?)*)(\d{1,9})[.)](?:[ \t\r]|$)/;
-const TOP_LEVEL_PREFIX = /^ {0,3}$/;
+const PREFIX_NUMBER = /(\d{1,9})[.)]/g;
+const TOP_LEVEL_ITEM = /^ {0,3}\d/;
 
 /**
  * Digit count of the widest ordered-list number in `markdown`, when that is
@@ -21,7 +23,10 @@ export function wideOrderedListMarkerDigits(markdown: string): number {
     const marker = ORDERED_MARKER_LINE.exec(line);
     if (!marker) continue;
     widest = Math.max(widest, Number(marker[2]));
-    if (TOP_LEVEL_PREFIX.test(marker[1]!)) topLevelItems += 1;
+    for (const outer of marker[1]!.matchAll(PREFIX_NUMBER)) {
+      widest = Math.max(widest, Number(outer[1]));
+    }
+    if (TOP_LEVEL_ITEM.test(line)) topLevelItems += 1;
   }
   const digits = String(Math.max(widest, topLevelItems)).length;
   return digits >= 3 ? digits : 0;

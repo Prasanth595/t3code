@@ -34,6 +34,8 @@ describe("wideOrderedListMarkerDigits", () => {
     expect(wideOrderedListMarkerDigits("- 100000. nested")).toBe(6);
     expect(wideOrderedListMarkerDigits("> > 250. quoted")).toBe(3);
     expect(wideOrderedListMarkerDigits("1. a\n\n   100. nested")).toBe(3);
+    expect(wideOrderedListMarkerDigits("100. 1. item")).toBe(3);
+    expect(wideOrderedListMarkerDigits(numberedList(120, () => "1. 1."))).toBe(3);
   });
 
   it("stays linear on long runs of bullets and spaces", () => {
