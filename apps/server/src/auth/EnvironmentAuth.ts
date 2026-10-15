@@ -541,9 +541,13 @@ export class EnvironmentAuth extends Context.Service<
     ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
     // Fork: a one-use pairing credential for a request that carries a valid
     // Cloudflare Access JWT, or undefined when the login is off or the JWT fails.
+    // It fails while the machine map pause locks every Access subject (MM-718).
     readonly issueCloudflareAccessPairingCredential: (
       request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<AuthPairingCredentialResult | undefined, ServerAuthInternalError>;
+    ) => Effect.Effect<
+      AuthPairingCredentialResult | undefined,
+      ServerAuthInternalError | ServerAuthMachinePausedError
+    >;
     readonly issueStartupPairingCredential: () => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError
@@ -1290,6 +1294,19 @@ export const make = Effect.gen(function* () {
       verifyCloudflareAccess === undefined
         ? Effect.succeed(undefined)
         : verifyCloudflareAccess(request).pipe(
+            // Fork (MM-718): an Access subject is never the local desktop app, so the pause locks
+            // it. A session made now would only be refused on its first use.
+            Effect.tap((identity) =>
+              identity === undefined || Option.isNone(machineMap)
+                ? Effect.void
+                : machineMap.value
+                    .lockedFor("one-time-token")
+                    .pipe(
+                      Effect.flatMap((locked) =>
+                        locked ? Effect.fail(new ServerAuthMachinePausedError({})) : Effect.void,
+                      ),
+                    ),
+            ),
             Effect.flatMap((identity) =>
               identity === undefined
                 ? Effect.succeed(undefined)
