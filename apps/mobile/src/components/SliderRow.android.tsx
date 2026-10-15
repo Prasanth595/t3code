@@ -13,8 +13,9 @@ import type { SliderRowProps } from "./SliderRow.types";
 export function SliderRow(props: SliderRowProps) {
   const { colors } = useControlTheme();
   const draft = useRef(props.value);
+  const dragging = useRef(false);
   useEffect(() => {
-    draft.current = props.value;
+    if (!dragging.current) draft.current = props.value;
   }, [props.value]);
   const commit = (value: number) => {
     if (props.disabled) return;
@@ -65,9 +66,13 @@ export function SliderRow(props: SliderRowProps) {
                 inactiveTrackColor: colors["--color-secondary"],
               }}
               onValueChange={(value) => {
+                dragging.current = true;
                 draft.current = value;
               }}
-              onValueChangeFinished={() => commit(draft.current)}
+              onValueChangeFinished={() => {
+                dragging.current = false;
+                commit(draft.current);
+              }}
             />
           </NativeThemeHost>
         </View>
