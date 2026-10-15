@@ -243,20 +243,23 @@ it.layer(layerTest)("project cwd in a worktree", (it) => {
     }),
   );
 
-  it.effect.each(["ios", "nested/ios", "ios\\release", " ios "])(
-    "uses the existing project directory %s",
-    (directory) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* makeTempDir().pipe(Effect.flatMap((value) => fs.realPath(value)));
-        const candidate = path.join(root, directory);
-        yield* fs.makeDirectory(candidate, { recursive: true });
-        const paths = yield* pathsWithPrefix(`${directory}/`);
-        expect(yield* paths.resolveProjectCwd({ cwd: "/repo/ios", worktreePath: root })).toBe(
-          candidate,
-        );
-      }),
+  it.effect.each([
+    "ios",
+    "nested/ios",
+    "ios\\release",
+    ...(process.platform === "win32" ? [] : [" ios "]),
+  ])("uses the existing project directory %s", (directory) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* makeTempDir().pipe(Effect.flatMap((value) => fs.realPath(value)));
+      const candidate = path.join(root, directory);
+      yield* fs.makeDirectory(candidate, { recursive: true });
+      const paths = yield* pathsWithPrefix(`${directory}/`);
+      expect(yield* paths.resolveProjectCwd({ cwd: "/repo/ios", worktreePath: root })).toBe(
+        candidate,
+      );
+    }),
   );
 
   for (const state of ["missing", "file", "file-parent", "escaping-symlink"] as const) {

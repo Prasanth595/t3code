@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type OrchestrationV2ShellSnapshot,
   ProjectId,
   type ProjectReadFileResult,
   type ScopedProjectRef,
@@ -11,7 +12,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   type EnvironmentRpcInput,
@@ -37,6 +38,8 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createFileMetadataAtoms } from "./fileMetadata.ts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import type { createVcsEnvironmentAtoms } from "./vcs.ts";
+import { vcsRefsCacheStateAtom } from "./vcsRefInvalidation.ts";
 
 export type {
   CreateProjectInput,
@@ -85,6 +88,10 @@ export function createProjectEnvironmentAtoms<R, E>(
   options: {
     /** The client store's project; openScratch waits here for the created project. */
     readonly projectAtom: (ref: ScopedProjectRef) => Atom.Atom<EnvironmentProject | null>;
+    readonly snapshotAtom: (
+      environmentId: EnvironmentId,
+    ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
+    readonly worktreeSetup: ReturnType<typeof createVcsEnvironmentAtoms>["worktreeSetup"];
   },
 ) {
   const fileMetadata = createFileMetadataAtoms(runtime);
@@ -134,6 +141,28 @@ export function createProjectEnvironmentAtoms<R, E>(
       // Directory availability can change between visits, including during setup.
       staleTimeMs: 0,
       idleTtlMs: 0,
+      refreshTrigger: ({ environmentId, input }) =>
+        Atom.make((get) => {
+          const threads = get(options.snapshotAtom(environmentId))?.threads ?? [];
+          // Setup and completed turns can create/remove the nested project directory.
+          // Keep this primitive stable during streamed output and unrelated thread updates.
+          return JSON.stringify([
+            get(vcsRefsCacheStateAtom({ environmentId })).revision,
+            threads
+              .filter((thread) => input.worktreePath && thread.worktreePath === input.worktreePath)
+              .map((thread) => {
+                const setup = get(
+                  options.worktreeSetup({ environmentId, input: { threadId: thread.id } }),
+                );
+                return [
+                  thread.id,
+                  thread.branch,
+                  thread.latestRunCompletedAt,
+                  Option.getOrNull(AsyncResult.value(setup))?.phase,
+                ];
+              }),
+          ]);
+        }),
     }),
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:search-entries",

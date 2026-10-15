@@ -11,6 +11,7 @@ import {
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
+  resolveFilePreviewLocation,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -189,6 +190,65 @@ describe("resolveFilePreviewPath", () => {
         shouldShowFileExplorer({ relativePath, explorerOpen: false, attachmentOpen: false }),
       ).toBe(true);
     }
+  });
+});
+
+describe("resolveFilePreviewLocation", () => {
+  it("keeps an absolute sibling diff file editable within the checkout", () => {
+    const location = resolveFilePreviewLocation("/wt/README.md", "/wt/ios", "/wt");
+
+    // Both reads and writes use a relative path inside the checkout authority.
+    expect(location).toEqual({ cwd: "/wt", relativePath: "README.md" });
+    expect(
+      shouldShowFileExplorer({
+        relativePath: location.relativePath,
+        explorerOpen: true,
+        attachmentOpen: false,
+      }),
+    ).toBe(true);
+  });
+
+  it.each(["README.md", "/wt/ios/README.md"])(
+    "keeps the project directory as the base for %s",
+    (path) => {
+      expect(resolveFilePreviewLocation(path, "/wt/ios", "/wt")).toEqual({
+        cwd: "/wt/ios",
+        relativePath: "README.md",
+      });
+    },
+  );
+
+  it("shows the project explorer by default and the checkout explorer for its explicit root", () => {
+    expect(resolveFilePreviewLocation(null, "/wt/ios", "/wt")).toEqual({
+      cwd: "/wt/ios",
+      relativePath: null,
+    });
+    expect(resolveFilePreviewLocation("/wt", "/wt/ios", "/wt")).toEqual({
+      cwd: "/wt",
+      relativePath: null,
+    });
+  });
+
+  it.each(["/tmp/report.md", "/wt-other/README.md"])(
+    "keeps host file %s absolute and read-only",
+    (path) => {
+      const location = resolveFilePreviewLocation(path, "/wt/ios", "/wt");
+      expect(location).toEqual({ cwd: "/wt/ios", relativePath: path });
+      expect(
+        shouldShowFileExplorer({
+          relativePath: location.relativePath,
+          explorerOpen: true,
+          attachmentOpen: false,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("resolves checkout siblings on Windows without using the client platform", () => {
+    expect(resolveFilePreviewLocation("C:\\wt\\README.md", "C:\\wt\\ios", "c:\\wt")).toEqual({
+      cwd: "c:\\wt",
+      relativePath: "README.md",
+    });
   });
 });
 

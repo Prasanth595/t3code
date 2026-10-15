@@ -71,7 +71,11 @@ export function useProjectCwd(input: {
         })
       : null,
   );
-  return input.worktreePath === null ? input.cwd : (result.data?.cwd ?? null);
+  return input.worktreePath === null
+    ? input.cwd
+    : !result.isSuccess
+      ? null
+      : (result.data?.cwd ?? null);
 }
 
 export function useDebouncedValue<A>(value: A, delayMs: number): A {

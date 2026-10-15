@@ -98,6 +98,8 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
   );
   const storedProject = Atom.make<EnvironmentProject | null>(null);
   const commands = createProjectEnvironmentAtoms(runtime, {
+    snapshotAtom: () => Atom.make(null),
+    worktreeSetup: () => Atom.make(AsyncResult.success(null)),
     projectAtom: (ref: ScopedProjectRef) =>
       ref.environmentId === ENVIRONMENT_ID && ref.projectId === PROJECT_ID
         ? storedProject

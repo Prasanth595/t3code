@@ -57,7 +57,7 @@ import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import type { ChatFileAttachment } from "~/types";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { isAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -103,7 +103,7 @@ import { projectFileCacheKey } from "./fileContentRevision";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
-  resolveFilePreviewPath,
+  resolveFilePreviewLocation,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
   workspaceAssetResource,
@@ -119,6 +119,7 @@ import {
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
+  workspaceRoot?: string;
   projectName: string;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
@@ -660,6 +661,7 @@ interface EditableFileSurfaceProps {
   environmentId: EnvironmentId;
   cwd: string;
   relativePath: string;
+  commentFilePath?: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
   contents: string;
   resolvedTheme: "light" | "dark";
@@ -678,6 +680,7 @@ function EditableFileSurface({
   environmentId,
   cwd,
   relativePath,
+  commentFilePath = relativePath,
   composerDraftTarget,
   contents,
   resolvedTheme,
@@ -754,7 +757,7 @@ function EditableFileSurface({
             composerDraftTarget,
             buildFileReviewComment({
               id: entry.id,
-              filePath: relativePath,
+              filePath: commentFilePath,
               startLine: entry.startLine,
               endLine: entry.endLine,
               text: entry.text,
@@ -764,7 +767,15 @@ function EditableFileSurface({
         }
       }
     },
-    [addReviewComment, composerDraftTarget, cwd, environmentId, relativePath, saveCoordinator],
+    [
+      addReviewComment,
+      commentFilePath,
+      composerDraftTarget,
+      cwd,
+      environmentId,
+      relativePath,
+      saveCoordinator,
+    ],
   );
 
   const removeAnnotationEntry = useCallback(
@@ -792,7 +803,7 @@ function EditableFileSurface({
           composerDraftTarget,
           buildFileReviewComment({
             id: entry.id,
-            filePath: relativePath,
+            filePath: commentFilePath,
             startLine: entry.startLine,
             endLine: entry.endLine,
             text,
@@ -815,10 +826,10 @@ function EditableFileSurface({
     },
     [
       addReviewComment,
+      commentFilePath,
       composerDraftTarget,
       contents,
       lineAnnotations,
-      relativePath,
       setSelectedRange,
     ],
   );
@@ -1027,7 +1038,8 @@ function initialExplorerOpen(): boolean {
 
 export default function FilePreviewPanel({
   environmentId,
-  cwd,
+  cwd: projectCwd,
+  workspaceRoot = projectCwd,
   projectName,
   relativePath: requestedPath,
   attachment,
@@ -1037,13 +1049,28 @@ export default function FilePreviewPanel({
   availableEditors,
   revealLine,
   revealRequestId,
-  onOpenFile,
-  onPendingChange,
+  onOpenFile: onRequestedFileOpen,
+  onPendingChange: onRequestedFilePendingChange,
   selectedFilePending,
   workspaceMutationId,
 }: FilePreviewPanelProps) {
-  const relativePath =
-    attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
+  const { cwd, relativePath } = useMemo(
+    () =>
+      attachment === undefined
+        ? resolveFilePreviewLocation(requestedPath, projectCwd, workspaceRoot)
+        : { cwd: projectCwd, relativePath: requestedPath },
+    [attachment, projectCwd, requestedPath, workspaceRoot],
+  );
+  const onOpenFile = useCallback(
+    (path: string) =>
+      onRequestedFileOpen(cwd === projectCwd ? path : resolveWorkspaceFilePath(path, cwd)),
+    [cwd, projectCwd, onRequestedFileOpen],
+  );
+  const onPendingChange = useCallback(
+    (path: string, pending: boolean) =>
+      onRequestedFilePendingChange(requestedPath ?? path, pending),
+    [onRequestedFilePendingChange, requestedPath],
+  );
   // A draft's composer target is its draft id; a thread the server knows is a ref.
   const draft = typeof composerDraftTarget === "string";
   const { resolvedTheme } = useTheme();
@@ -1127,7 +1154,7 @@ export default function FilePreviewPanel({
   // A reveal still wins over the preference: the line only exists in the source.
   const revealHandled =
     revealLine === null ||
-    (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
+    (handledReveal?.path === requestedPath && handledReveal.requestId === revealRequestId);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
@@ -1164,7 +1191,7 @@ export default function FilePreviewPanel({
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const onFilePostRender = useFileLineReveal(requestedPath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
     enabled:
       attachment === undefined &&
@@ -1184,7 +1211,7 @@ export default function FilePreviewPanel({
       "[data-current-file-crumb='true']",
     );
     currentCrumb?.scrollIntoView({ block: "nearest", inline: "end" });
-  }, [relativePath]);
+  }, [requestedPath]);
 
   const toggleExplorer = () => {
     setExplorerOpen((current) => {
@@ -1204,7 +1231,7 @@ export default function FilePreviewPanel({
       const result = await openFileInPreview({
         threadRef,
         filePath: absolutePath,
-        workspaceRoot: cwd,
+        workspaceRoot: projectCwd,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,
         openPreview,
@@ -1226,7 +1253,7 @@ export default function FilePreviewPanel({
     canReadFiles,
     canOperatePreview,
     createAssetUrl,
-    cwd,
+    projectCwd,
     environmentHttpBaseUrl,
     openPreview,
     threadRef,
@@ -1289,8 +1316,8 @@ export default function FilePreviewPanel({
                 const pressed = !rendered;
                 setRenderedPreferred(pressed);
                 setHandledReveal(
-                  pressed && relativePath !== null
-                    ? { path: relativePath, requestId: revealRequestId }
+                  pressed && requestedPath !== null
+                    ? { path: requestedPath, requestId: revealRequestId }
                     : null,
                 );
               }}
@@ -1361,7 +1388,7 @@ export default function FilePreviewPanel({
               threadRef={threadRef}
               draft={draft}
               absolutePath={absolutePath}
-              workspaceRoot={cwd}
+              workspaceRoot={projectCwd}
               name={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
@@ -1372,7 +1399,7 @@ export default function FilePreviewPanel({
               threadRef={threadRef}
               draft={draft}
               absolutePath={absolutePath}
-              workspaceRoot={cwd}
+              workspaceRoot={projectCwd}
               name={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
@@ -1383,7 +1410,7 @@ export default function FilePreviewPanel({
               threadRef={threadRef}
               draft={draft}
               absolutePath={absolutePath}
-              workspaceRoot={cwd}
+              workspaceRoot={projectCwd}
               alt={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
@@ -1394,7 +1421,7 @@ export default function FilePreviewPanel({
               threadRef={threadRef}
               draft={draft}
               absolutePath={absolutePath}
-              workspaceRoot={cwd}
+              workspaceRoot={projectCwd}
               title={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
@@ -1436,7 +1463,7 @@ export default function FilePreviewPanel({
               // switch needs a new key or the previous file's disclosure and
               // wrap state carries into the next document.
               <RenderedMarkdownSurface
-                key={relativePath}
+                key={requestedPath}
                 environmentId={environmentId}
                 cwd={cwd}
                 relativePath={relativePath}
@@ -1447,7 +1474,7 @@ export default function FilePreviewPanel({
               />
             ) : tableDelimiter && renderTable ? (
               <DelimitedTablePreview
-                key={relativePath}
+                key={requestedPath}
                 name={relativePath}
                 text={file.data.contents}
                 delimiter={tableDelimiter}
@@ -1462,10 +1489,11 @@ export default function FilePreviewPanel({
             ) : (
               <DiffWorkerPoolProvider>
                 <EditableFileSurface
-                  key={`${relativePath}:${resolvedTheme}`}
+                  key={`${requestedPath}:${resolvedTheme}`}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}
+                  commentFilePath={requestedPath ?? relativePath}
                   composerDraftTarget={composerDraftTarget}
                   contents={file.data.contents}
                   resolvedTheme={resolvedTheme}

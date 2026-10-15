@@ -4,6 +4,7 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   ProjectResolveCwdError,
+  type WorktreeSetupSnapshot,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -24,6 +25,8 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { EnvironmentRpcFailure, EnvironmentRpcInput } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createProjectEnvironmentAtoms } from "./projectCommands.ts";
+import { v2ShellSnapshot, v2ThreadShell, v2Now } from "./orchestrationV2TestFixtures.ts";
+import { invalidateVcsRefs } from "./vcsRefInvalidation.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("cwd-environment");
 const OTHER_ENVIRONMENT_ID = EnvironmentId.make("cwd-other-environment");
@@ -94,17 +97,104 @@ const makeHarness = Effect.fnUntraced(function* (
       ),
     ),
   );
+  const snapshot = Atom.make(v2ShellSnapshot);
+  const setup = Atom.make<AsyncResult.AsyncResult<WorktreeSetupSnapshot | null>>(
+    AsyncResult.success(null),
+  );
   const { resolveCwd } = createProjectEnvironmentAtoms(runtime, {
     projectAtom: () => Atom.make(null),
+    snapshotAtom: () => snapshot,
+    worktreeSetup: () => setup,
   });
   const registry = AtomRegistry.make();
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
   const read = (target: CwdTarget) =>
     AtomRegistry.getResult(registry, resolveCwd(target), { suspendOnWaiting: true });
-  return { registry, resolveCwd, read, requests };
+  return { registry, resolveCwd, read, requests, snapshot, setup };
 });
 
 describe("project cwd resolution", () => {
+  it.effect(
+    "refreshes a mounted root fallback when worktree setup creates the project directory",
+    () =>
+      Effect.gen(function* () {
+        const target = {
+          environmentId: ENVIRONMENT_ID,
+          input: { cwd: "/repo/ios", worktreePath: "/wt" },
+        };
+        let cwd = "/wt";
+        const h = yield* makeHarness(() => Effect.succeed({ cwd }));
+        h.registry.set(h.snapshot, {
+          ...v2ShellSnapshot,
+          threads: [{ ...v2ThreadShell, worktreePath: "/wt" }],
+        });
+        const running: WorktreeSetupSnapshot = {
+          threadId: v2ThreadShell.id,
+          sequence: 1,
+          phase: "running",
+          startedAt: "2026-06-20T00:00:00.000Z",
+          endedAt: null,
+          branch: "feature",
+          baseRef: "main",
+          worktreePath: "/wt",
+          setupScript: null,
+          stages: [],
+          error: null,
+        };
+        h.registry.set(h.setup, AsyncResult.success(running));
+        h.registry.mount(h.resolveCwd(target));
+        expect(yield* h.read(target)).toEqual({ cwd: "/wt" });
+
+        // Progress output must not trigger a filesystem query.
+        h.registry.set(h.setup, AsyncResult.success({ ...running, sequence: 2 }));
+        h.registry.set(h.snapshot, {
+          ...v2ShellSnapshot,
+          threads: [{ ...v2ThreadShell, worktreePath: "/wt", itemCount: 5 }],
+        });
+        expect(yield* h.read(target)).toEqual({ cwd: "/wt" });
+        expect(h.requests).toHaveLength(1);
+
+        cwd = "/wt/ios";
+        h.registry.set(h.setup, AsyncResult.success({ ...running, phase: "done", sequence: 3 }));
+        expect(yield* h.read(target)).toEqual({ cwd: "/wt/ios" });
+        expect(h.requests).toHaveLength(2);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "rechecks a mounted cwd after checkout mutations, branch changes, and completed turns",
+    () =>
+      Effect.gen(function* () {
+        const target = {
+          environmentId: ENVIRONMENT_ID,
+          input: { cwd: "/repo/ios", worktreePath: "/wt" },
+        };
+        let cwd = "/wt/ios";
+        const h = yield* makeHarness(() => Effect.succeed({ cwd }));
+        let thread = { ...v2ThreadShell, worktreePath: "/wt" };
+        h.registry.set(h.snapshot, { ...v2ShellSnapshot, threads: [thread] });
+        h.registry.mount(h.resolveCwd(target));
+        expect(yield* h.read(target)).toEqual({ cwd: "/wt/ios" });
+
+        invalidateVcsRefs(h.registry, { environmentId: OTHER_ENVIRONMENT_ID });
+        expect(yield* h.read(target)).toEqual({ cwd: "/wt/ios" });
+        expect(h.requests).toHaveLength(1);
+
+        cwd = "/wt";
+        invalidateVcsRefs(h.registry, { environmentId: ENVIRONMENT_ID });
+        expect(yield* h.read(target)).toEqual({ cwd: "/wt" });
+        cwd = "/wt/ios";
+        thread = { ...thread, branch: "restored-project" };
+        h.registry.set(h.snapshot, { ...v2ShellSnapshot, threads: [thread] });
+        expect(yield* h.read(target)).toEqual({ cwd: "/wt/ios" });
+        cwd = "/wt";
+        thread = { ...thread, latestRunCompletedAt: v2Now };
+        h.registry.set(h.snapshot, { ...v2ShellSnapshot, threads: [thread] });
+        expect(yield* h.read(target)).toEqual({ cwd: "/wt" });
+        expect(h.requests).toHaveLength(4);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect.each([
     { worktreePath: "/server/worktree", expected: "/server/worktree" },
     { worktreePath: null, expected: "/server/project/ios" },

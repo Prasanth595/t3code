@@ -18,5 +18,9 @@ export function useProjectCwd(input: {
       : null,
   );
 
-  return input.worktreePath === null ? input.projectCwd : (resolved.data?.cwd ?? null);
+  return input.worktreePath === null
+    ? input.projectCwd
+    : !resolved.isSuccess
+      ? null
+      : (resolved.data?.cwd ?? null);
 }

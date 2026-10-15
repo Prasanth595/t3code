@@ -2,6 +2,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -114,5 +115,23 @@ describe("useProjectCwd", () => {
 
     render({ ...initialInput, worktreePath: null });
     expect(container.textContent).toBe("/repo/ios");
+  });
+
+  it("retains the mounted directory during a background recheck and adopts the result", () => {
+    render(initialInput);
+    const previous = AsyncResult.success({ cwd: "/worktrees/feature/ios" });
+    settle(initialInput, previous);
+    expect(container.textContent).toBe("/worktrees/feature/ios");
+    settle(initialInput, AsyncResult.waiting(previous));
+    expect(container.textContent).toBe("/worktrees/feature/ios");
+    settle(initialInput, AsyncResult.success({ cwd: "/worktrees/feature" }));
+    expect(container.textContent).toBe("/worktrees/feature");
+    settle(
+      initialInput,
+      AsyncResult.failure(Cause.fail(new Error("Permission denied")), {
+        previousSuccess: Option.some(previous),
+      }),
+    );
+    expect(container.textContent).toBe("pending");
   });
 });

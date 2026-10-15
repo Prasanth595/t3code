@@ -7,6 +7,19 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
   return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
 }
 
+/** Relative links use the project directory; checkout siblings keep a writable root-relative target. */
+export function resolveFilePreviewLocation(path: string | null, cwd: string, workspaceRoot = cwd) {
+  if (path !== null) {
+    for (const root of [cwd, workspaceRoot]) {
+      const relativePath = workspaceRelativeFilePath(path, root);
+      if (relativePath !== null) {
+        return { cwd: root, relativePath: resolveFilePreviewPath(relativePath, root) };
+      }
+    }
+  }
+  return { cwd, relativePath: resolveFilePreviewPath(path, cwd) };
+}
+
 export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
 
 /** Describe existing failure codes without exposing the underlying platform cause. */

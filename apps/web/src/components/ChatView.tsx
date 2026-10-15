@@ -11233,6 +11233,7 @@ export default function ChatView(props: ChatViewProps) {
           }`}
           environmentId={activeThread.environmentId}
           cwd={projectCwd ?? ""}
+          workspaceRoot={gitStatusCwd ?? projectCwd ?? ""}
           projectName={activeProject?.title ?? ""}
           threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}

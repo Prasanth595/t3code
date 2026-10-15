@@ -7,6 +7,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentSnapshotAtom } from "./shell";
 import { serverEnvironment } from "./server";
+import { vcsEnvironment } from "./vcs";
 
 export const environmentProjects = createEnvironmentProjectAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
@@ -15,6 +16,8 @@ export const environmentProjects = createEnvironmentProjectAtoms({
 });
 export const projectEnvironment = createProjectEnvironmentAtoms(connectionAtomRuntime, {
   projectAtom: environmentProjects.projectAtom,
+  snapshotAtom: environmentSnapshotAtom,
+  worktreeSetup: vcsEnvironment.worktreeSetup,
 });
 /**
  * Web-only: project content search backs the ⇧⌘F dialog, which has no mobile
