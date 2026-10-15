@@ -172,11 +172,13 @@ const shortSha = (sha: string): string =>
     .join("");
 
 /**
- * The comment for a pull request whose gate passed. `headSha` is the commit the gate ran on and
- * `baseSha` the tip of the base branch it was merged with. The commands are config text, so each
- * is cleaned like the gate's own command line, then put in a code span nothing can leave.
+ * The comment for a pull request whose gate ended with `verdict`. `headSha` is the commit the gate
+ * ran on and `baseSha` the tip of the base branch it was merged with. The commands are config
+ * text, so each is cleaned like the gate's own command line, then put in a code span nothing can
+ * leave.
  */
-export const gateResultsComment = (
+const resultsComment = (
+  verdict: string,
   results: ReadonlyArray<CommandResult>,
   attempt: number,
   headSha: string,
@@ -184,13 +186,21 @@ export const gateResultsComment = (
 ): string => {
   const head = shortSha(headSha);
   const base = shortSha(baseSha) || "unknown";
-  let text = `**Factory gate: passed** (attempt ${attempt}, run by the factory in a fresh checkout of the pull request's head \`${head}\` merged with the base branch tip \`${base}\`)\n\n| Command | Exit | Time |\n|---|---|---|`;
+  let text = `**Factory gate: ${verdict}** (attempt ${attempt}, run by the factory in a fresh checkout of the pull request's head \`${head}\` merged with the base branch tip \`${base}\`)\n\n| Command | Exit | Time |\n|---|---|---|`;
   for (const result of results) {
     const tenths = Math.floor((result.durationMs + 50) / 100);
     text += `\n| ${tableCode(result.command)} | ${result.exitCode} | ${Math.floor(tenths / 10)}.${tenths % 10} s |`;
   }
   return text;
 };
+
+/** The comment for a pull request whose gate passed. */
+export const gateResultsComment = (
+  results: ReadonlyArray<CommandResult>,
+  attempt: number,
+  headSha: string,
+  baseSha: string,
+): string => resultsComment("passed", results, attempt, headSha, baseSha);
 
 // ---- types ----------------------------------------------------------------------------------
 
@@ -440,6 +450,10 @@ const unexpected = (what: string) => new WorkspaceUnexpectedError({ what });
  * fetch gets credentials, from `gh auth git-credential`. After the checkout and after a merge,
  * `git status --porcelain --ignored` must print nothing: with no sparse checkout, nothing
  * untracked and nothing ignored, that means the files are exactly the commit's.
+ *
+ * Every git call gets FactoryProcess's environment allowlist (PATH, HOME, USER, LOGNAME, SHELL,
+ * LANG, TMPDIR, TERM, LC_*), where softfac gave the calls other than the fetch only PATH and HOME.
+ * None of the extra names changes what git does.
  *
  * Not protected: a session running as the same OS user can still read the server's own files.
  */
