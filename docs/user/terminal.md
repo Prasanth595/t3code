@@ -16,3 +16,9 @@ To copy all retained output, choose Select all in the terminal's context menu,
 then copy. Cmd+A on macOS and Ctrl+Shift+A elsewhere select the same output.
 Ctrl+A still moves to the beginning of shell input on Windows and Linux.
 Jump to latest in the context menu returns to the current output.
+
+## Position
+
+On web and desktop, **Dock terminal in right panel** in General settings shows the terminal drawer
+at the bottom of the right panel instead of under the chat; it hides with the panel, and the
+terminal shortcut (`mod+j` by default) reopens both.

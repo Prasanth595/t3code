@@ -362,6 +362,12 @@ import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/term
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import {
+  isTerminalDockEligible,
+  isTerminalDrawerVisible,
+  resolveTerminalToggle,
+} from "../lib/terminalDock";
+import { openThreadTerminalDrawer, showTerminalDockPanel } from "../lib/revealThreadTerminal";
+import {
   preventRepeatedTerminalCloseShortcut,
   preventTerminalCloseShortcut,
 } from "../lib/terminalCloseShortcut";
@@ -3120,6 +3126,16 @@ export default function ChatView(props: ChatViewProps) {
   const envLocked = Boolean(activeThread && (activeMessageCount > 0 || activeRuntime !== null));
 
   const loadBalancingSettings = useClientSettings();
+  const terminalDockRightPanel = useClientSettings((settings) => settings.terminalDockRightPanel);
+  const terminalDockEligible = isTerminalDockEligible({
+    settingEnabled: terminalDockRightPanel,
+    sheetLayout: shouldUsePlanSidebarSheet,
+  });
+  const terminalVisible = isTerminalDrawerVisible({
+    dockEligible: terminalDockEligible,
+    rightPanelOpen,
+    terminalOpen: terminalUiState.terminalOpen,
+  });
   const automaticEnvironment = Boolean(
     clientSettingsHydrated &&
     draftId &&
@@ -4165,8 +4181,9 @@ export default function ChatView(props: ChatViewProps) {
     const setupThreadRef = activeThreadRef;
     return (terminalId: string) => {
       storeEnsureTerminal(setupThreadRef, terminalId, { open: true, active: true });
+      showTerminalDockPanel(setupThreadRef, terminalDockEligible);
     };
-  }, [activeThreadRef, storeEnsureTerminal, worktreeSetup]);
+  }, [activeThreadRef, storeEnsureTerminal, terminalDockEligible, worktreeSetup]);
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -4818,16 +4835,27 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef) return;
     storeSetTerminalOpen(activeThreadRef, open);
   };
-  const setTerminalOpenStable = useStableCallback(setTerminalOpen);
+  /** Opens the drawer and, when docked, the right panel that hosts it. */
+  const revealTerminalDrawer = () => {
+    if (activeThreadRef) openThreadTerminalDrawer(activeThreadRef, terminalDockEligible);
+  };
+  const revealTerminalDrawerStable = useStableCallback(revealTerminalDrawer);
   const toggleTerminalVisibility = () => {
     if (!activeThreadRef) return;
-    const nextOpen = !terminalUiState.terminalOpen;
+    const { open: nextOpen, showRightPanel } = resolveTerminalToggle({
+      dockEligible: terminalDockEligible,
+      rightPanelOpen,
+      terminalOpen: terminalUiState.terminalOpen,
+    });
     if (
       nextOpen &&
       !readEnvironmentScope(environmentId, AuthTerminalReadScope) &&
       !hasTerminalWriteAccess()
     )
       return;
+    if (showRightPanel) useRightPanelStore.getState().show(activeThreadRef);
+    // Already open but hidden with the closed panel: showing the panel reveals it.
+    if (nextOpen && terminalUiState.terminalOpen) return;
     if (nextOpen && hasTerminalWriteAccess() && terminalUiState.terminalIds.length === 0) {
       // Server-created setup terminals exist before this client's drawer mounts.
       // Reuse them before allocating a shell from the still-empty UI state.
@@ -4987,7 +5015,7 @@ export default function ChatView(props: ChatViewProps) {
       cwd: targetCwd,
       worktreePath: targetWorktreePath,
     });
-    setTerminalOpen(true);
+    revealTerminalDrawer();
     if (!activeThreadRef) {
       return;
     }
@@ -6718,14 +6746,14 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadKey]);
 
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    if (!activeThread?.id || terminalVisible) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposerStable();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposerStable, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposerStable, terminalVisible]);
 
   // Tabbing back into the app lands focus wherever it last was, often the right panel or the
   // body. Put it in the composer unless something that takes typing already holds it. The
@@ -6733,7 +6761,7 @@ export default function ChatView(props: ChatViewProps) {
   // terminal is a surface and is recognized by the predicate instead. Mobile is left alone so
   // returning to the app does not raise the keyboard.
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen || isMobileViewport) return;
+    if (!activeThread?.id || terminalVisible || isMobileViewport) return;
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -6754,7 +6782,7 @@ export default function ChatView(props: ChatViewProps) {
       window.removeEventListener("focus", onWindowFocus);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposerStable, isMobileViewport, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposerStable, isMobileViewport, terminalVisible]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -7824,10 +7852,12 @@ export default function ChatView(props: ChatViewProps) {
     );
   }, [activeThreadId, terminalUiState.terminalOpen]);
 
+  // Tracks what the user sees: a docked drawer is hidden and revealed with its
+  // right panel, so opening the panel over an open drawer focuses the terminal.
   useEffect(() => {
     if (!activeThreadKey) return;
     const previous = terminalUiOpenByThreadRef.current[activeThreadKey] ?? false;
-    const current = Boolean(terminalUiState.terminalOpen);
+    const current = terminalVisible;
 
     if (!previous && current) {
       terminalUiOpenByThreadRef.current[activeThreadKey] = current;
@@ -7835,7 +7865,17 @@ export default function ChatView(props: ChatViewProps) {
       return;
     } else if (previous && !current) {
       terminalUiOpenByThreadRef.current[activeThreadKey] = current;
+      const hiddenWithPanel = terminalUiState.terminalOpen;
       const frame = window.requestAnimationFrame(() => {
+        // Closing the panel only takes focus back from the dock, or from
+        // nowhere once the dock unmounted; elsewhere the user keeps their place.
+        if (
+          hiddenWithPanel &&
+          getTerminalFocusOwner() !== "drawer" &&
+          document.activeElement !== document.body
+        ) {
+          return;
+        }
         focusComposerStable();
       });
       return () => {
@@ -7844,11 +7884,13 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     terminalUiOpenByThreadRef.current[activeThreadKey] = current;
-  }, [activeThreadKey, focusComposerStable, terminalUiState.terminalOpen]);
+  }, [activeThreadKey, focusComposerStable, terminalUiState.terminalOpen, terminalVisible]);
 
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
     terminalFocus: getTerminalFocusOwner() !== null,
-    terminalOpen: Boolean(terminalUiState.terminalOpen),
+    // `when` clauses describe the screen: a docked drawer hidden with its
+    // closed panel is not open here, even though the store keeps it open.
+    terminalOpen: terminalVisible,
     previewFocus: isPreviewFocused(),
     previewOpen: previewPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
@@ -7964,7 +8006,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "terminal.toggle") {
-        if (!terminalUiState.terminalOpen && !canReadTerminal && !canOperateTerminal) return;
+        if (!terminalVisible && !canReadTerminal && !canOperateTerminal) return;
         event.preventDefault();
         event.stopPropagation();
         toggleTerminalVisibilityStable();
@@ -8020,9 +8062,7 @@ export default function ChatView(props: ChatViewProps) {
           splitPanelTerminalStable();
           return;
         }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpenStable(true);
-        }
+        revealTerminalDrawerStable();
         splitTerminalStable();
         return;
       }
@@ -8037,9 +8077,7 @@ export default function ChatView(props: ChatViewProps) {
           splitPanelTerminalStable("vertical");
           return;
         }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpenStable(true);
-        }
+        revealTerminalDrawerStable();
         splitTerminalStable("vertical");
         return;
       }
@@ -8054,7 +8092,7 @@ export default function ChatView(props: ChatViewProps) {
           requestClosePanelTerminalStable(activeRightPanelSurface.activeTerminalId);
           return;
         }
-        if (!terminalUiState.terminalOpen) return;
+        if (!terminalVisible) return;
         requestCloseTerminalStable(terminalUiState.activeTerminalId);
         return;
       }
@@ -8069,9 +8107,7 @@ export default function ChatView(props: ChatViewProps) {
           addTerminalSurfaceStable();
           return;
         }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpenStable(true);
-        }
+        revealTerminalDrawerStable();
         createNewTerminalStable();
         return;
       }
@@ -8201,14 +8237,14 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadPinned,
     activeThreadSettled,
     canInterruptRunningThread,
-    terminalUiState.terminalOpen,
+    terminalVisible,
     terminalUiState.activeTerminalId,
     activeThreadId,
     closeRightPanelSurfaceStable,
     requestCloseTerminalStable,
     requestClosePanelTerminalStable,
     createNewTerminalStable,
-    setTerminalOpenStable,
+    revealTerminalDrawerStable,
     runProjectScriptStable,
     splitTerminalStable,
     splitPanelTerminalStable,
@@ -11051,9 +11087,34 @@ export default function ChatView(props: ChatViewProps) {
     onUpdateProjectScript: updateProjectScriptStable,
     onDeleteProjectScript: deleteProjectScriptStable,
   };
+  // Docked drawers mount inside the inline right panel, so moving between the
+  // chat column and the panel, or closing and reopening the panel, remounts
+  // every cached drawer. The PTY and its history live on the server and replay
+  // into the new viewport; only local selection and scroll offset are lost.
+  // That is cheaper than keeping a closed panel mounted just to host them.
+  const terminalDrawers = mountedTerminalThreadRefs.map(
+    ({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
+      <PersistentThreadTerminalDrawer
+        key={mountedThreadKey}
+        threadRef={mountedThreadRef}
+        threadId={mountedThreadRef.threadId}
+        active={mountedThreadKey === activeThreadKey}
+        launchContext={
+          mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
+        }
+        focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
+        splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+        splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+        newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+        closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+        keybindings={keybindings}
+        onAddTerminalContext={addTerminalContextToDraft}
+      />
+    ),
+  );
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
-    terminalOpen: terminalUiState.terminalOpen,
+    terminalOpen: terminalVisible,
     terminalShortcutLabel: shortcutLabelForCommand(keybindings, "terminal.toggle"),
     threadPanelOpen,
     threadPanelPresentation,
@@ -11599,7 +11660,7 @@ export default function ChatView(props: ChatViewProps) {
                               resolvedTheme={resolvedTheme}
                               settings={settings}
                               keybindings={keybindings}
-                              terminalOpen={Boolean(terminalUiState.terminalOpen)}
+                              terminalOpen={terminalVisible}
                               gitCwd={gitCwd}
                               pullRequestProjectId={
                                 supportsPullRequests ? (activeProject?.id ?? null) : null
@@ -11664,7 +11725,7 @@ export default function ChatView(props: ChatViewProps) {
                       </ComposerSurface.Host>
                       <div className="min-h-0">
                         <div
-                          data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
+                          data-terminal-open={terminalVisible ? "true" : undefined}
                           className="relative z-0"
                         >
                           {mountComposerModelStrip ? (
@@ -11807,24 +11868,7 @@ export default function ChatView(props: ChatViewProps) {
         </div>
         {/* end horizontal flex container */}
 
-        {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-          <PersistentThreadTerminalDrawer
-            key={mountedThreadKey}
-            threadRef={mountedThreadRef}
-            threadId={mountedThreadRef.threadId}
-            active={mountedThreadKey === activeThreadKey}
-            launchContext={
-              mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
-            }
-            focusRequestId={mountedThreadKey === activeThreadKey ? terminalFocusRequestId : 0}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraft}
-          />
-        ))}
+        {terminalDockEligible ? null : terminalDrawers}
       </div>
 
       {rightPanelPresent && !shouldUsePlanSidebarSheet && activeThreadRef ? (
@@ -11869,6 +11913,7 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
+          footer={terminalDockEligible ? terminalDrawers : undefined}
         >
           {rightPanelContent}
         </RightPanelTabs>

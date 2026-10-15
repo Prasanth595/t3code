@@ -151,6 +151,8 @@ interface RightPanelTabsProps {
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
+  /** Pinned below the active surface; the docked terminal drawer renders here. */
+  footer?: ReactNode;
   children: ReactNode;
 }
 
@@ -1495,6 +1497,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           props.children
         )}
       </div>
+      {props.footer}
     </PreviewPanelShell>
   );
 }

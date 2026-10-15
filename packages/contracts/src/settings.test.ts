@@ -162,6 +162,18 @@ describe("ClientSettings rich text composer", () => {
   });
 });
 
+describe("ClientSettings terminal dock", () => {
+  it("keeps the terminal under the chat for settings saved before the option existed", () => {
+    expect(decodeClientSettings({}).terminalDockRightPanel).toBe(false);
+  });
+
+  it("persists an opt-in through patches and storage", () => {
+    const preference = { terminalDockRightPanel: true };
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  });
+});
+
 describe("ServerSettings default permissions", () => {
   it("keeps full access for settings saved before a default was configured", () => {
     expect(decodeServerSettings({}).defaultRuntimeMode).toBe("full-access");
