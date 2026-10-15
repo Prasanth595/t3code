@@ -1,7 +1,6 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const ACP_CLAUDE_STOP_BACKGROUND_SUBAGENT_PROMPT =
-  "Run a long command in a background subagent.";
+const ACP_CLAUDE_STOP_BACKGROUND_SUBAGENT_PROMPT = "Run a long command in a background subagent.";
 
 // Claude Agent on ACP v2. Run 1 ends while its background subagent runs a
 // long command, and the user stops that background work. Stop reaches Claude

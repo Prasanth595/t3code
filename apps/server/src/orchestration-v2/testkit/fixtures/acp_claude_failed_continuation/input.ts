@@ -1,6 +1,6 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const ACP_CLAUDE_FAILED_CONTINUATION_PROMPT = "Start a background subagent that waits.";
+const ACP_CLAUDE_FAILED_CONTINUATION_PROMPT = "Start a background subagent that waits.";
 
 // Claude Agent on ACP v2. Run 1 ends at its idle while a background subagent
 // runs. Once it finishes, Claude's own follow-up cycle fails. That cycle's

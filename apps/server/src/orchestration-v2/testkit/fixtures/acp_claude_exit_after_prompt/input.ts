@@ -1,7 +1,7 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const ACP_CLAUDE_EXIT_FIRST_PROMPT = "Start a background subagent that waits.";
-export const ACP_CLAUDE_EXIT_SECOND_PROMPT = "Summarize what it found.";
+const ACP_CLAUDE_EXIT_FIRST_PROMPT = "Start a background subagent that waits.";
+const ACP_CLAUDE_EXIT_SECOND_PROMPT = "Summarize what it found.";
 
 // Claude Agent on ACP v2. The second prompt reaches Claude while its own cycle
 // runs, so that cycle's idle already answers the prompt request. Claude then

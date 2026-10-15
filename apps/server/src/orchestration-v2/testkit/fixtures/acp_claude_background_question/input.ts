@@ -1,6 +1,6 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const ACP_CLAUDE_BACKGROUND_QUESTION_PROMPT = "Fix a file in the background.";
+const ACP_CLAUDE_BACKGROUND_QUESTION_PROMPT = "Fix a file in the background.";
 
 // Claude Agent on ACP v2. After run 1 ended, the background subagent asks the
 // user a question (AskUserQuestion, a form elicitation on its child session).

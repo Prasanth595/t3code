@@ -1,7 +1,6 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const ACP_CLAUDE_BACKGROUND_APPROVAL_PROMPT =
-  "Start a background subagent that runs a command.";
+const ACP_CLAUDE_BACKGROUND_APPROVAL_PROMPT = "Start a background subagent that runs a command.";
 
 // Claude Agent on ACP v2 with approvals on. Run 1 ends at its idle, then the
 // background subagent asks to run a command while no run is active. The ask

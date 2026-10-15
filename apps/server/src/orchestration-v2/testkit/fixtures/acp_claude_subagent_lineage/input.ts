@@ -1,6 +1,6 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const ACP_CLAUDE_SUBAGENT_LINEAGE_PROMPT = "Start two background subagents.";
+const ACP_CLAUDE_SUBAGENT_LINEAGE_PROMPT = "Start two background subagents.";
 
 // Claude Agent on ACP v2 links each child session to the Agent call that
 // delegated to it, in either order claude-agent-acp sends them. Subagent A is

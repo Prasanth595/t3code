@@ -4,7 +4,7 @@ export const ACP_CLAUDE_BACKGROUND_REPLY_PROMPT =
   "Start a background subagent that waits, then tell me when it is done.";
 
 /** The subagent's first output, after the turn already reported idle. */
-export const ACP_CLAUDE_BACKGROUND_PROGRESS_LABEL = "child.progress";
+const ACP_CLAUDE_BACKGROUND_PROGRESS_LABEL = "child.progress";
 
 // Claude Agent on ACP v2 (#17203): the turn reports idle at its result while
 // its background subagent runs on in its own child session. The subagent's

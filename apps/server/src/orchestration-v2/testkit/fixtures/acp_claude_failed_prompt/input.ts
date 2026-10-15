@@ -1,6 +1,6 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const ACP_CLAUDE_FAILED_PROMPT = "Check my account settings.";
+const ACP_CLAUDE_FAILED_PROMPT = "Check my account settings.";
 
 // Claude Agent on ACP v2. Claude takes the prompt in, starts a tool and a
 // reply, and its work fails: the idle carries the `error` stop reason and the

@@ -1,6 +1,6 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const ACP_CLAUDE_NESTED_SUBAGENT_PROMPT = "Review the change in the background.";
+const ACP_CLAUDE_NESTED_SUBAGENT_PROMPT = "Review the change in the background.";
 
 // Claude Agent on ACP v2. After run 1 ended, the background subagent starts a
 // subagent of its own, which claude-agent-acp announces on that subagent and
