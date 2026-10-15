@@ -135,6 +135,7 @@ function makeLink(
 }
 
 interface HarnessOptions {
+  readonly external?: boolean;
   readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
   /** A rejection the orchestrator reports as the dispatch error's cause. */
@@ -221,7 +222,19 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        ...invocation(capabilities),
+        ...(options.external
+          ? {
+              thread: undefined,
+              client: {
+                sessionId: "external-session",
+                label: "External client",
+                access: "full-access" as const,
+              },
+            }
+          : {}),
+      }),
       Effect.provide(layerDependencies),
     );
   return { commands, guideRequests, call };
@@ -240,6 +253,43 @@ describe("pull request toolkit handlers", () => {
         threadId: THREAD_ID,
       });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("requires an explicit thread for an external client's PR operations", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ external: true });
+      const url = "https://github.com/t3tools/t3code/pull/123";
+      for (const name of [
+        "link_pull_request",
+        "watch_pull_request",
+        "unwatch_pull_request",
+      ] as const) {
+        const error = yield* harness.call(name, { url }).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "PullRequestThreadRequiredError" });
+      }
+      const error = yield* harness.call("list_thread_pull_requests", {}).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestThreadRequiredError" });
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+    }),
+  );
+
+  it.effect("uses an external client's explicit owning thread for PR operations", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ external: true });
+      const input = { threadId: THREAD_ID, url: "https://github.com/t3tools/t3code/pull/123" };
+      yield* harness.call("link_pull_request", input);
+      expect(yield* harness.call("list_thread_pull_requests", { threadId: THREAD_ID })).toEqual({
+        pullRequests: [],
+        chains: [],
+      });
+      yield* harness.call("watch_pull_request", input);
+      yield* harness.call("unwatch_pull_request", input);
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", threadId: THREAD_ID, number: 123 },
+        { type: "thread.pull-request.watch", threadId: THREAD_ID, number: 123, watching: true },
+        { type: "thread.pull-request.watch", threadId: THREAD_ID, number: 123, watching: false },
+      ]);
     }),
   );
 
