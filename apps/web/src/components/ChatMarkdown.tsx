@@ -592,15 +592,22 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
   const wrapLabel = expanded ? "Disable cell wrap" : "Wrap long cells";
   const copyLabel = copied ? "Copied" : "Copy table";
 
-  // Streaming rows, font loads, and column width changes all resize the table.
-  useLayoutEffect(() => {
+  const measureClippedCells = useCallback(() => {
     const container = containerRef.current;
     const table = tableRef.current;
-    if (!container || !table) return;
-    const measure = () => setHasClippedCells(tableHasClippedCells(container, table));
-    measure();
-    return observeResize(table, measure);
+    if (container && table) setHasClippedCells(tableHasClippedCells(container, table));
   }, []);
+
+  // A streamed cell can grow until it clips while the table keeps its size,
+  // so remeasure after every render, not only on resize.
+  useLayoutEffect(measureClippedCells);
+
+  // Font loads and column width changes resize the table without a render.
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    return observeResize(table, measureClippedCells);
+  }, [measureClippedCells]);
 
   function toggleExpanded() {
     const table = tableRef.current;
