@@ -40,6 +40,8 @@ import { acpClaudeSubagentLineageInput } from "./acp_claude_subagent_lineage/inp
 import { assertAcpClaudeSubagentLineageOutput } from "./acp_claude_subagent_lineage/output.ts";
 import { acpClaudeSubagentResumeInput } from "./acp_claude_subagent_resume/input.ts";
 import { assertAcpClaudeSubagentResumeOutput } from "./acp_claude_subagent_resume/output.ts";
+import { acpClaudeSubagentResumeLateToolInput } from "./acp_claude_subagent_resume_late_tool/input.ts";
+import { assertAcpClaudeSubagentResumeLateToolOutput } from "./acp_claude_subagent_resume_late_tool/output.ts";
 import { claudeBackgroundSubagentAfterRootInput } from "./claude_background_subagent_after_root/input.ts";
 import { assertClaudeBackgroundSubagentAfterRootOutput } from "./claude_background_subagent_after_root/output.ts";
 import { claudeBackgroundTaskAfterRootInput } from "./claude_background_task_after_root/input.ts";
@@ -758,6 +760,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
         runContinuationWorker: true,
         assertOutput: assertAcpClaudeSubagentResumeOutput,
+      },
+    ],
+  },
+  {
+    name: "acp_claude_subagent_resume_late_tool",
+    buildInput: acpClaudeSubagentResumeLateToolInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        transcriptFile: new URL(
+          "./acp_claude_subagent_resume_late_tool/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: ACP_REGISTRY_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertAcpClaudeSubagentResumeLateToolOutput,
       },
     ],
   },

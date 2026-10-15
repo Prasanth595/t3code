@@ -4734,6 +4734,50 @@ it.effect("closes the run a resumed child leaves while the child's tool is still
   }),
 );
 
+it.effect("keeps the run a resumed child moves to until the tool it announces open ends", () =>
+  Effect.gen(function* () {
+    // The adapter announces the moved row's open tool to its new run, whose
+    // child and root then end before the tool does.
+    const resumed = (ids: BackgroundScenarioIds) => {
+      const next = nextRunIds(ids);
+      return [
+        childSubagentEvent(ids, "running", next.runId),
+        childBackgroundTurnItemEvent(ids, "running", 1),
+        childSubagentEvent(ids, "completed", next.runId),
+        rootTerminalEvent(next, "completed"),
+        childBackgroundTurnItemEvent(ids, "completed", 1),
+      ];
+    };
+    const observed = yield* runBackgroundItemScenario(
+      "handoff-announced-open-tool",
+      (ids) => [
+        childThreadCreatedEvent(ids),
+        childSubagentEvent(ids, "running"),
+        childBackgroundTurnItemEvent(ids, "running", 1),
+        childSubagentEvent(ids, "completed"),
+        rootTerminalEvent(ids, "completed"),
+        ...resumed(ids),
+      ],
+      { keepEventStreamOpen: true, nextRun: resumed },
+    );
+
+    assert.deepEqual(
+      observed.filter((entry) => !entry.startsWith("next:")),
+      ["subagent:running", "turn_item:running", "subagent:completed", "root-finalized"],
+    );
+    assert.deepEqual(
+      observed.filter((entry) => entry.startsWith("next:")),
+      [
+        "next:subagent:running",
+        "next:turn_item:running",
+        "next:subagent:completed",
+        "next:root-finalized",
+        "next:turn_item:completed",
+      ],
+    );
+  }),
+);
+
 it.effect("keeps the run a resumed child leaves until its other child's tool ends", () =>
   Effect.gen(function* () {
     const sibling = (ids: BackgroundScenarioIds): BackgroundScenarioIds => ({

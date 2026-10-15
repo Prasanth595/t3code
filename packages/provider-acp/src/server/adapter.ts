@@ -2936,6 +2936,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
+        /** The sessions whose embedded terminals can belong to a tool `openedBy` opened. */
+        const subagentToolSessionIds = (
+          subagent: ActiveAcpSubagent,
+          openedBy: string | undefined,
+          rootSessionId: string | null,
+        ) => [
+          ...new Set(
+            [openedBy, subagent.childSessionId, rootSessionId].filter(
+              (candidate) => candidate != null,
+            ),
+          ),
+        ];
+
         /**
          * Interrupts the open tools of a subagent's child session, which end
          * with it, or only those `sessionId` opened: a nested child's, which
@@ -2953,13 +2966,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (sessionId !== undefined && openedBy !== sessionId) continue;
             subagent.toolState.tools.delete(key);
             subagent.toolSessionIds.delete(key);
-            yield* emitSubagentTool(subagent, key, tool, "interrupted", [
-              ...new Set(
-                [openedBy, subagent.childSessionId, rootSessionId].filter(
-                  (candidate) => candidate != null,
-                ),
-              ),
-            ]);
+            yield* emitSubagentTool(
+              subagent,
+              key,
+              tool,
+              "interrupted",
+              subagentToolSessionIds(subagent, openedBy, rootSessionId),
+            );
+          }
+        });
+
+        /**
+         * Shows the open tools of a subagent's child session again, as they
+         * are, so the run its row moves to (`handAgentRow`) takes their ends.
+         */
+        const announceOpenSubagentTools = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+        ) {
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          for (const [key, tool] of subagent.toolState.tools) {
+            const status = toolStatus(tool.status);
+            if (status !== "pending" && status !== "running" && status !== "waiting") continue;
+            yield* emitSubagentTool(
+              subagent,
+              key,
+              tool,
+              status,
+              subagentToolSessionIds(subagent, subagent.toolSessionIds.get(key), rootSessionId),
+            );
           }
         });
 
@@ -4655,9 +4689,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
          * Hands a row no run shows (`awaitsRun`) to `context`, the turn that
          * runs, as a resumed native Claude subagent moves to the run that
          * resumes it. The row naming that run moves its child thread to it
-         * (`routeProviderEvent`), so one run takes its events. A child that
-         * works in another run than before (a resume always does) gets its
-         * own child root turn there. Then replays what `linked` held.
+         * (`routeProviderEvent`), so one run takes its events, and learns the
+         * tools the child left open. A child that works in another run than
+         * before (a resume always does) gets its own child root turn there.
+         * Then replays what `linked` held.
          */
         const handAgentRow = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
@@ -4695,6 +4730,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (!acpSubagentStatusIsTerminal(subagent.task.status)) {
             yield* projectCarryoverSubagentStatus(subagent, subagent.task.status);
           }
+          if (movesRun) yield* announceOpenSubagentTools(subagent);
           if (linked !== undefined) yield* replayAgentChild(linked.child);
         });
 
