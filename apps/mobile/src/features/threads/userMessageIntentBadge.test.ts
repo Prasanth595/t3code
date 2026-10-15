@@ -8,10 +8,10 @@ describe("user message intent badge", () => {
     expect(resolveUserMessageIntentBadge("turn_start")).toBeNull();
   });
 
-  it("labels messages waiting behind the active turn", () => {
+  it("labels queued messages as already sent", () => {
     expect(resolveUserMessageIntentBadge("queued_turn")).toEqual({
-      label: "queued",
-      accessibilityLabel: "Queued behind the active turn",
+      label: "from queue",
+      accessibilityLabel: "Queued while the agent was busy, then sent",
       tone: "queued",
     });
   });

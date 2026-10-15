@@ -12,8 +12,8 @@ export function resolveUserMessageIntentBadge(
   switch (intent) {
     case "queued_turn":
       return {
-        label: "queued",
-        accessibilityLabel: "Queued behind the active turn",
+        label: "from queue",
+        accessibilityLabel: "Queued while the agent was busy, then sent",
         tone: "queued",
       };
     case "steer":
