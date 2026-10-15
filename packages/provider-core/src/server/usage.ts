@@ -114,11 +114,15 @@ export interface TranscriptUsageFormat<State> {
    */
   readonly sharedSessionsAcrossFiles?: true;
   /**
-   * Matches records an older parser saved that this one no longer emits. The
-   * scan cache discards an entry holding any, so its file re-parses; usage
-   * saved for a deleted file goes with it.
+   * Matches cache entries an older parser saved that this one would parse
+   * differently. The scan cache discards them, so their files re-parse; usage
+   * saved for a deleted file goes with it. `state` is `null` for entries
+   * migrated from a cache that predates persisted state.
    */
-  readonly isStaleCachedRecord?: (record: UsageRecord) => boolean;
+  readonly isStaleCachedEntry?: (entry: {
+    readonly records: readonly UsageRecord[];
+    readonly state: unknown;
+  }) => boolean;
 }
 
 /** A configured instance of the driver, its config already decoded by `driver.configSchema`. */

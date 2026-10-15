@@ -19,13 +19,15 @@ import type { PiSettings } from "../settings.ts";
 const PiScanState = Schema.Struct({
   sessionId: Schema.mutableKey(Schema.String),
   /**
-   * Whether the session's current model is faux. Optional so states saved
-   * before faux was skipped still resume.
+   * Whether the session's current model is faux. Always written; optional only
+   * so states saved before faux was skipped still decode.
    */
   faux: Schema.mutableKey(Schema.optionalKey(Schema.Boolean)),
 });
 /** pi-ai's in-memory test provider. Its usage is scripted, never billed. */
 const FAUX_PROVIDER = "faux";
+/** Records Pi attributes to no model: tool calls and session summaries. */
+const UNATTRIBUTED_MODEL = "Tools/summaries";
 const Usage = Schema.Struct({
   input: Schema.optional(Schema.Unknown),
   output: Schema.optional(Schema.Unknown),
@@ -67,7 +69,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
   const entry = decoded.value;
   if (entry.type === "session") {
     state.sessionId = entry.id;
-    delete state.faux;
+    state.faux = false;
     return [];
   }
   // A selected model runs the summaries that follow, even before it answers.
@@ -96,7 +98,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
         ? (source.responseModel ?? source.model)
         : source.model
       : undefined;
-  const model = "provider" in source ? `${source.provider}/${rateModel}` : "Tools/summaries";
+  const model = "provider" in source ? `${source.provider}/${rateModel}` : UNATTRIBUTED_MODEL;
   const outputTokens = tokenCount(usage.output);
   const totals = {
     // Pi's input/cache counters are already disjoint.
@@ -151,10 +153,16 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
     return parseRecord(parsed, state);
   },
   parseProjected: parseRecord,
-  state: { initial: () => ({ sessionId: "" }), schema: PiScanState },
-  // Files cached before faux was skipped re-parse, which also drops their
-  // faux sessions' summaries.
-  isStaleCachedRecord: (record) => record.model.startsWith(`${FAUX_PROVIDER}/`),
+  state: { initial: () => ({ sessionId: "", faux: false }), schema: PiScanState },
+  // States without `faux` were saved before faux usage was skipped. Re-parse
+  // those holding records the current parser might drop: faux turns, and
+  // summaries a faux model may have written without leaving a faux turn.
+  isStaleCachedEntry: ({ records, state }) =>
+    !(typeof state === "object" && state !== null && "faux" in state) &&
+    records.some(
+      (record) =>
+        record.model.startsWith(`${FAUX_PROVIDER}/`) || record.model === UNATTRIBUTED_MODEL,
+    ),
 };
 
 export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {

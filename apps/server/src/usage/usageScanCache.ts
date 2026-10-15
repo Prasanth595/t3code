@@ -350,8 +350,14 @@ export function decodeScanCache(
     const records = decodeRecords(entry.r, provider);
     const tailRecords = decodeRecords(entry.t, provider);
     if (records === null || tailRecords === null) continue;
-    const isStale = format.isStaleCachedRecord;
-    if (isStale !== undefined && (records.some(isStale) || tailRecords.some(isStale))) continue;
+    if (
+      format.isStaleCachedEntry?.({
+        records: [...records, ...tailRecords],
+        state: legacy ? null : entry.cs,
+      }) === true
+    ) {
+      continue;
+    }
 
     cache.set(path, {
       size: legacy ? -1 : entry.s,
