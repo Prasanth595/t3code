@@ -1029,7 +1029,7 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("signs the same attachment URL within an expiry window", () =>
+  it.effect("signs the same HTML page URL within an expiry window", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;

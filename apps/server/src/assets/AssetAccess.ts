@@ -71,7 +71,7 @@ export const ASSET_ROUTE_PREFIX = "/api/assets";
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
-const ATTACHMENT_TOKEN_BUCKET_MS = 30 * 60 * 1000;
+const HTML_ATTACHMENT_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
 // Clients draw project icons from a 96px thumbnail at most.
 const PROJECT_FAVICON_ICNS_MIN_SIZE = 96;
@@ -826,10 +826,12 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       PROJECT_FAVICON_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
   }
-  if (claims.kind === "attachment") {
-    // Attachments never change, so mints in the same window sign the same URL and a reload
-    // or remount can answer it from the browser cache.
-    expiresAt = Math.ceil(expiresAt / ATTACHMENT_TOKEN_BUCKET_MS) * ATTACHMENT_TOKEN_BUCKET_MS;
+  if (claims.kind === "attachment" && claims.mimeType === "text/html") {
+    // HTML pages never change, so mints in the same window sign the same URL and a reload
+    // can answer it from the browser cache. Images keep a new URL per mint, since their
+    // load-error retries rely on one.
+    expiresAt =
+      Math.ceil(expiresAt / HTML_ATTACHMENT_TOKEN_BUCKET_MS) * HTML_ATTACHMENT_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
   }
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
