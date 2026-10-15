@@ -821,6 +821,33 @@ describe("open", () => {
     );
   });
 
+  it("a gate command line counts only when every field parses", () => {
+    const dataDir = tempDir();
+    const line = (data: string) =>
+      `{"ts":"2026-10-04T10:13:16.123Z","ms":1791108796123,"event":"gate_command","data":${data}}\n`;
+    writeRun(
+      dataDir,
+      [
+        // No exit_code.
+        line(`{"attempt":2,"command":"c","duration_ms":5}`),
+        // A string duration_ms.
+        line(`{"attempt":3,"command":"c","exit_code":0,"duration_ms":"5"}`),
+        // A non-integer exit_code.
+        line(`{"attempt":4,"command":"c","exit_code":1.5,"duration_ms":5}`),
+        // A negative duration_ms is not a u64.
+        line(`{"attempt":5,"command":"c","exit_code":0,"duration_ms":-1}`),
+        // An exit_code outside i32.
+        line(`{"attempt":6,"command":"c","exit_code":2147483648,"duration_ms":5}`),
+        // A missing command.
+        line(`{"attempt":7,"exit_code":0,"duration_ms":5}`),
+      ].join(""),
+    );
+    const ledger = reopen(dataDir, ticking(T0 + 5000, 1000));
+    ledger.append(gate(1, "cargo test"), testCause());
+    ledger.finish("stuck", null, null, testCause());
+    expect(lastLine(dataDir)).toContain(`"gate_attempts":1,`);
+  });
+
   it("read and open refuse a symlink named like a run", () => {
     const dataDir = tempDir();
     const target = NodePath.join(dataDir, "elsewhere.jsonl");
