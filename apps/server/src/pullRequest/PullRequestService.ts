@@ -721,6 +721,7 @@ export const make = Effect.gen(function* () {
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
     filter: Pick<PullRequestListInput, "projectId" | "host">,
+    options?: { readonly refineUnknown?: boolean },
   ) => {
     type RefinementCandidate = {
       readonly project: OrchestrationProjectShell;
@@ -732,6 +733,7 @@ export const make = Effect.gen(function* () {
     for (const project of projects) {
       if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
       const identity = project.repositoryIdentity;
+      if (options?.refineUnknown === false && identity?.provider === "unknown") continue;
       if (
         (identity?.provider !== "unknown" &&
           !(identity?.provider === "forgejo" && isSshRemoteUrl(identity.locator.remoteUrl))) ||
@@ -800,6 +802,7 @@ export const make = Effect.gen(function* () {
 
   const listWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
+    options?: { readonly refineUnknown?: boolean },
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
     (filter.projectId === undefined
       ? projects.listShells(
@@ -828,7 +831,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((projects) =>
-        refineUnknownProjectKinds(projects, filter).pipe(
+        refineUnknownProjectKinds(projects, filter, options).pipe(
           Effect.map((refinedProviders) => ({ refinedProviders, projects })),
         ),
       ),
@@ -910,8 +913,8 @@ export const make = Effect.gen(function* () {
    */
   const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
-      Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
-        const own = supported[0];
+      Effect.flatMap((workspace): Effect.Effect<SupportedProject, PullRequestError> => {
+        const own = workspace.supported[0];
         const repository = ref.repository.trim();
         const host = ref.host?.trim().toLowerCase();
         if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
@@ -937,6 +940,12 @@ export const make = Effect.gen(function* () {
         // the complete repository identity before narrowing those checkouts by host.
         return listWorkspaceProjects(
           repositoryKey.startsWith("dev.azure.com/") ? {} : { host },
+          // An unknown host was already probed through the selected project. The
+          // fallback may use known checkouts without probing every unknown one again.
+          {
+            refineUnknown:
+              own !== undefined || workspace.unimplemented.get(host)?.kind !== "unknown",
+          },
         ).pipe(
           Effect.flatMap(({ supported }) => {
             const onHost = supported.filter((candidate) => candidate.host === host);

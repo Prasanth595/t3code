@@ -732,6 +732,88 @@ it.effect("derives a legacy repository host after refining its provider", () =>
   }),
 );
 
+it.effect("does not repeat unknown-host refinement across every checkout for a linked PR", () =>
+  Effect.gen(function* () {
+    const asked: string[] = [];
+    const projects = Array.from({ length: 12 }, (_, index) =>
+      project({
+        id: `unknown-${index}`,
+        title: "Unknown host",
+        workspaceRoot: `/unknown-${index}`,
+        repository: `team/repo-${index}`,
+        provider: "unknown",
+        host: "git.example.internal",
+      }),
+    );
+    const service = yield* makeService({
+      projects,
+      providers: [fakeProvider(SourceControlProviderKind.make("github"))],
+      resolveHandle: ({ cwd, context }) => {
+        asked.push(cwd);
+        return Effect.succeed({ context: context ?? null, provider: undefined as never });
+      },
+    });
+    const error = yield* service
+      .detail({
+        projectId: projects[0]!.id,
+        host: "GIT.EXAMPLE.INTERNAL",
+        repository: "team/repo-0",
+        number: 1,
+      })
+      .pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "PullRequestUnavailableError");
+    assert.deepStrictEqual(asked, ["/unknown-0"]);
+  }),
+);
+
+it.effect(
+  "routes an unknown project's linked PR through an already known checkout on its host",
+  () =>
+    Effect.gen(function* () {
+      const reads: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "unknown",
+            title: "Unknown",
+            workspaceRoot: "/unknown",
+            repository: "team/web",
+            host: "git.example.internal",
+            provider: "unknown",
+          }),
+          project({
+            id: "known",
+            title: "Known",
+            workspaceRoot: "/known",
+            repository: "team/other",
+            host: "git.example.internal",
+            provider: "gitlab",
+          }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("gitlab"), {
+            getChangeRequest: (input) =>
+              Effect.sync(() => {
+                reads.push(`${input.cwd}:${input.repository}`);
+                return hostedChangeRequest("Linked pull request");
+              }),
+          }),
+        ],
+        resolveHandle: ({ context }) =>
+          Effect.succeed({ context: context ?? null, provider: undefined as never }),
+      });
+      const detail = yield* service.detail({
+        projectId: "unknown" as ProjectId,
+        host: "git.example.internal",
+        repository: "team/web",
+        number: 1,
+      });
+      assert.strictEqual(detail.number, 1);
+      assert.deepStrictEqual(reads, ["/known:team/web"]);
+    }),
+);
+
 it.effect("tries another checkout when provider refinement remains unknown", () =>
   Effect.gen(function* () {
     const asked: string[] = [];
