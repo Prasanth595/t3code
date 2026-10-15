@@ -14,19 +14,17 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
-import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
 import * as EffectWorker from "../../orchestration-v2/EffectWorker.ts";
-import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import {
   SIMPLE_PROMPT,
-  TERMINAL_RUN_STATUSES,
   createProject,
   initRepoWithCommit,
   layerGit,
   layerRuntime,
   projectId,
+  runStatusesUntilTerminal,
 } from "./contract.testkit.ts";
 import * as Events from "./events.ts";
 import * as Sessions from "./sessions.ts";
@@ -49,7 +47,6 @@ it.live(
           yield* createProject(repo);
           const sessions = yield* Sessions.FactorySessions;
           const events = yield* Events.FactoryEvents;
-          const sink = yield* EventSink.EventSinkV2;
 
           const launch = (name: string, ref = baseRef) =>
             sessions.launch({
@@ -61,19 +58,6 @@ it.live(
               message: SIMPLE_PROMPT,
               model: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
             });
-          /** The statuses a thread's run goes through, each change once, up to its terminal one. */
-          const statusesUntilTerminal = (threadId: ThreadId) =>
-            sink.stream({ threadId, eventType: "run.updated" }).pipe(
-              Stream.filterMap((stored) =>
-                stored.event.type === "run.updated"
-                  ? Result.succeed(stored.event.payload.status as Sessions.RunStatus)
-                  : Result.failVoid,
-              ),
-              Stream.changes,
-              Stream.takeUntil((status) => TERMINAL_RUN_STATUSES.has(status)),
-              Stream.runCollect,
-            );
-
           // Every id the stream emits, with when it arrived. The consumer
           // starts before anything is launched, so this half is live.
           const arrivals = yield* Queue.unbounded<{ readonly id: string; readonly at: number }>();
@@ -86,7 +70,7 @@ it.live(
           );
 
           const launchedA = yield* launch("a");
-          const statusesA = yield* statusesUntilTerminal(ThreadId.make(launchedA.threadId));
+          const statusesA = yield* runStatusesUntilTerminal(ThreadId.make(launchedA.threadId));
           assert.strictEqual(statusesA.at(-1), "completed");
           const terminalAt = yield* Clock.currentTimeMillis;
 
@@ -125,7 +109,7 @@ it.live(
           assert.strictEqual(first.value, launchedB.threadId);
 
           // Let B's run end so the harness does not tear down under it.
-          yield* statusesUntilTerminal(ThreadId.make(launchedB.threadId));
+          yield* runStatusesUntilTerminal(ThreadId.make(launchedB.threadId));
         }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir })));
       }),
     ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),

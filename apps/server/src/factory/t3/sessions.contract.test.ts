@@ -12,18 +12,16 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
 
-import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import {
   SIMPLE_PROMPT,
-  TERMINAL_RUN_STATUSES,
   createProject,
   git,
   initRepoWithCommit,
   layerGit,
   layerRuntime,
   projectId,
+  runStatusesUntilTerminal,
 } from "./contract.testkit.ts";
 import * as Sessions from "./sessions.ts";
 
@@ -62,18 +60,7 @@ it.live(
 
           // The worktree is prepared and the provider turn run after launch
           // returns; the run's own events say when it is over.
-          const sink = yield* EventSink.EventSinkV2;
-          const terminal = yield* sink.stream({ threadId, eventType: "run.updated" }).pipe(
-            Stream.filter(
-              (stored) =>
-                stored.event.type === "run.updated" &&
-                TERMINAL_RUN_STATUSES.has(stored.event.payload.status),
-            ),
-            Stream.map((stored) => stored.event.payload as { readonly status: Sessions.RunStatus }),
-            Stream.take(1),
-            Stream.runCollect,
-          );
-          assert.strictEqual(terminal[0]?.status, "completed");
+          assert.strictEqual((yield* runStatusesUntilTerminal(threadId)).at(-1), "completed");
 
           const status = yield* sessions.status(launched.threadId);
           assert.strictEqual(status.run, "completed");

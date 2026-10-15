@@ -21,7 +21,7 @@ export class EventsError extends Schema.TaggedError<EventsError>()("FactoryEvent
   }
 }
 
-/** The fields of a `run.updated` event the stream reads. */
+/** The fields of a `run.created` or `run.updated` event the stream reads. */
 export interface RunUpdate {
   readonly threadId: string;
   readonly id: string;
@@ -35,6 +35,7 @@ export interface RunUpdate {
  * The thread ids from `updates` each time that thread's latest run changes
  * status.
  *
+ * A run's first status arrives in `run.created`, later ones in `run.updated`.
  * T3 writes `run.updated` for more than status (a checkpoint id, a queue
  * position), so an update that leaves the latest run and its status as they
  * were emits nothing. The latest run is chosen as `status` does, because a
@@ -91,18 +92,20 @@ export class FactoryEvents extends Context.Service<
 export const make = Effect.gen(function* () {
   const sink = yield* EventSink.EventSinkV2;
 
+  // One unfiltered live tail, not a stream per event type: a new run's first
+  // status is in `run.created`, and two typed streams merged would not keep a
+  // run's created and updated events in sequence order.
   const runUpdates = Stream.unwrap(
-    sink
-      .latestSequence()
-      .pipe(
-        Effect.map((afterSequence) => sink.stream({ eventType: "run.updated", afterSequence })),
-      ),
+    sink.latestSequence().pipe(Effect.map((afterSequence) => sink.stream({ afterSequence }))),
   ).pipe(
-    Stream.filterMap((stored) =>
-      stored.event.type === "run.updated"
+    Stream.filterMap(({ event }) =>
+      event.type === "run.created" || event.type === "run.updated"
         ? Result.succeed<RunUpdate>({
-            ...stored.event.payload,
-            threadId: (stored.event.threadId ?? stored.event.payload.threadId) as string,
+            threadId: event.threadId,
+            id: event.payload.id,
+            ordinal: event.payload.ordinal,
+            status: event.payload.status,
+            startedAt: event.payload.startedAt,
           })
         : Result.failVoid,
     ),

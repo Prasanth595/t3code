@@ -5,7 +5,7 @@
  * standing in for the provider.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EventId, ProjectId, type Project } from "@t3tools/contracts";
+import { EventId, ProjectId, type Project, type ThreadId } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
@@ -13,11 +13,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as GitWorkflow from "../../git/GitWorkflowService.ts";
 import { ClaudeOrchestratorReplayHarness } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts";
 import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
+import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -45,7 +48,7 @@ export const SIMPLE_TRANSCRIPT = new URL(
 /** The prompt the transcript was recorded with; the reply is "fixture simple ok". */
 export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
 
-export const projectId = ProjectId.make("project:factory-sessions-contract");
+export const projectId = ProjectId.make("project:factory-contract");
 export const createdAt = "2026-10-15T00:00:00.000Z";
 
 export const TERMINAL_RUN_STATUSES: ReadonlySet<Sessions.RunStatus> = new Set([
@@ -56,11 +59,31 @@ export const TERMINAL_RUN_STATUSES: ReadonlySet<Sessions.RunStatus> = new Set([
   "rolled_back",
 ]);
 
+/**
+ * The statuses a thread's run goes through, from its `run.created` on, each
+ * change once, up to its terminal one. Waits until the run ends.
+ */
+export const runStatusesUntilTerminal = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const statuses = yield* sink.stream({ threadId }).pipe(
+      Stream.filterMap(({ event }) =>
+        event.type === "run.created" || event.type === "run.updated"
+          ? Result.succeed<Sessions.RunStatus>(event.payload.status)
+          : Result.failVoid,
+      ),
+      Stream.changes,
+      Stream.takeUntil((status) => TERMINAL_RUN_STATUSES.has(status)),
+      Stream.runCollect,
+    );
+    return Array.from(statuses);
+  });
+
 export const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.GitVcsDriver;
     const result = yield* driver.execute({
-      operation: "factory.sessions.contract.git",
+      operation: "factory.contract.git",
       cwd,
       args,
       timeoutMs: 10_000,
@@ -106,7 +129,7 @@ export const layerRuntime = (input: { readonly repo: string; readonly worktreesD
 
       const layerDatabase = SqlitePersistence.layerMemory;
       const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-        { name: "factory-sessions-contract" },
+        { name: "factory-contract" },
         ClaudeOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript),
         { databaseLayer: layerDatabase },
       );
@@ -208,6 +231,6 @@ export const createProject = (repo: string) =>
 
 export const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(VcsProcess.layer),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-sessions-config-" })),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-contract-config-" })),
   Layer.provide(NodeServices.layer),
 );
