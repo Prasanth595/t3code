@@ -10,6 +10,7 @@ Each fork behavior is a setting. A setting that only adds something starts on. A
 Fork main only moves forward. Nothing rebases or force-pushes it.
 
 - `.github/workflows/fork-sync.yml` merges `pingdotgg/t3code` main into fork main every day. It typechecks the merge, runs the fork tests and pushes it as a fast-forward. The fork tests are the test files that the fork changed since the last merged upstream commit, `git merge-base upstream/main HEAD`. A diff against a newer upstream main also lists files that only upstream changed. If main moved during the run, it merges the new main and pushes again.
+- The fork disables every upstream workflow, because they need upstream's runners and secrets. Fork workflow files start with `fork-`. After each sync, the job "Check upstream workflows" fails when another workflow is active, and prints the `gh workflow disable` command for it.
 - If the merge conflicts, the typecheck fails or a fork test fails, the sync comments on the issue "Fork sync: upstream merge failed" and stops.
 - `.github/workflows/fork-release.yml` builds the desktop apps and the server archives. It runs on each push to main and on manual dispatch. If the commit already has a release, it stops early.
 - Only one release run works at a time, and no run is cancelled, so a release is never half published. GitHub keeps one waiting run, and a newer push replaces it. Thus a burst of pushes builds only the running commit and the newest commit.
