@@ -128,6 +128,19 @@ export interface SearchOptions {
   glob?: string;
 }
 
+export interface TableRow {
+  line: number;
+  cells: string[];
+}
+
+export interface Table {
+  header: string[];
+  headerLine: number;
+  rows: TableRow[];
+  cols: number;
+  truncated: boolean;
+}
+
 export interface OutlineSymbol {
   name: string;
   kind: string;
@@ -597,6 +610,9 @@ export class Px0 {
   /** Highlighted window of a file: lines [start, start+count), count default 1000. Images return {image: true}. */
   file = (path: string, o: CallOptions & { start?: number; count?: number } = {}) =>
     this.get<FileChunk | ImageFile>("file", { path, start: o.start, count: o.count }, o);
+
+  /** Bounded CSV/TSV preview; px0 reads at most 1 MB and 1,000 data rows. */
+  table = (path: string, o?: CallOptions) => this.get<Table>("table", { path }, o);
 
   /** Release server-side caches for a file opened with file(). */
   close = (path: string, o?: CallOptions) =>

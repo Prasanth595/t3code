@@ -37,3 +37,9 @@ export const px0File = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime
   staleTimeMs: 30_000,
   idleTtlMs: 60_000,
 });
+export const px0Table = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:px0:table",
+  tag: WS_METHODS.px0Table,
+  staleTimeMs: 30_000,
+  idleTtlMs: 60_000,
+});

@@ -2732,6 +2732,7 @@ const layerWsRpc = (
         [WS_METHODS.px0Tree]: (input) => px0Engine.tree(input),
         [WS_METHODS.px0Find]: (input) => px0Engine.find(input),
         [WS_METHODS.px0File]: (input) => px0Engine.file(input),
+        [WS_METHODS.px0Table]: (input) => px0Engine.table(input),
         [WS_METHODS.px0Search]: (input) => px0Engine.search(input),
         [WS_METHODS.px0Outline]: (input) => px0Engine.outline(input),
         [WS_METHODS.px0Diff]: (input) => px0Engine.diff(input),

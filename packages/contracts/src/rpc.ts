@@ -167,6 +167,8 @@ import {
   Px0SearchResult,
   Px0TreeInput,
   Px0TreeResult,
+  Px0TableInput,
+  Px0TableResult,
 } from "./px0.ts";
 import {
   OrchestrationSearchThreadsError,
@@ -476,6 +478,7 @@ export const WS_METHODS = {
   px0Outline: "px0.outline",
   px0Diff: "px0.diff",
   px0Gutter: "px0.gutter",
+  px0Table: "px0.table",
 
   // Preview methods
   previewOpen: "preview.open",
@@ -1545,6 +1548,12 @@ const WsPx0FileRpc = Rpc.make(WS_METHODS.px0File, {
   error: Schema.Union([Px0Error, EnvironmentAuthorizationError]),
 });
 
+const WsPx0TableRpc = Rpc.make(WS_METHODS.px0Table, {
+  payload: Px0TableInput,
+  success: Px0TableResult,
+  error: Schema.Union([Px0Error, EnvironmentAuthorizationError]),
+});
+
 const WsPx0SearchRpc = Rpc.make(WS_METHODS.px0Search, {
   payload: Px0SearchInput,
   success: Px0SearchResult,
@@ -2120,6 +2129,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPx0TreeRpc,
   WsPx0FindRpc,
   WsPx0FileRpc,
+  WsPx0TableRpc,
   WsPx0SearchRpc,
   WsPx0OutlineRpc,
   WsPx0DiffRpc,

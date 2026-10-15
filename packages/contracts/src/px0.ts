@@ -127,6 +127,31 @@ export const Px0FileResult = Schema.Struct({
 export type Px0FileResult = typeof Px0FileResult.Type;
 
 // ---------------------------------------------------------------------------
+// table
+// ---------------------------------------------------------------------------
+
+export const Px0TableInput = Schema.Struct({
+  cwd: Px0Cwd,
+  path: Px0RelPath,
+});
+export type Px0TableInput = typeof Px0TableInput.Type;
+
+export const Px0TableRow = Schema.Struct({
+  line: Schema.Finite,
+  cells: Schema.Array(Schema.String),
+});
+export type Px0TableRow = typeof Px0TableRow.Type;
+
+export const Px0TableResult = Schema.Struct({
+  header: Schema.Array(Schema.String),
+  headerLine: Schema.Finite,
+  rows: Schema.Array(Px0TableRow),
+  cols: Schema.Finite,
+  truncated: Schema.Boolean,
+});
+export type Px0TableResult = typeof Px0TableResult.Type;
+
+// ---------------------------------------------------------------------------
 // search
 // ---------------------------------------------------------------------------
 

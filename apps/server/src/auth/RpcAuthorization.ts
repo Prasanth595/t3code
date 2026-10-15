@@ -202,6 +202,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.px0Tree]: AuthFilesystemReadScope,
   [WS_METHODS.px0Find]: AuthFilesystemReadScope,
   [WS_METHODS.px0File]: AuthFilesystemReadScope,
+  [WS_METHODS.px0Table]: AuthFilesystemReadScope,
   [WS_METHODS.px0Search]: AuthFilesystemReadScope,
   [WS_METHODS.px0Outline]: AuthFilesystemReadScope,
   [WS_METHODS.px0Diff]: AuthFilesystemReadScope,

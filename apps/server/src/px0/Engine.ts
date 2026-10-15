@@ -15,6 +15,8 @@ import {
   type Px0OutlineInput,
   type Px0SearchInput,
   type Px0TreeInput,
+  type Px0TableInput,
+  type Px0TableResult,
 } from "@t3tools/contracts";
 import { Platform as HostProcessPlatform } from "@t3tools/shared/HostProcess";
 import * as Net from "@t3tools/shared/Net";
@@ -34,8 +36,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
  * Runs a headless px0 code-viewer per workspace root and proxies its read API.
  *
  * px0 is a bundled Go binary that indexes one root and answers fast
- * `/api/tree`, `/api/file`, `/api/search`, `/api/outline`, `/api/diff`, and
- * `/api/gutter` requests. T3 spawns it on a reserved loopback port and talks to
+ * `/api/tree`, `/api/file`, `/api/table`, `/api/search`, `/api/outline`,
+ * `/api/diff`, and `/api/gutter` requests. T3 spawns it on a reserved loopback port and talks to
  * it through the vendored `@t3tools/px0-sdk` client, then exposes the results
  * over the typed WebSocket transport.
  */
@@ -55,6 +57,7 @@ export class Px0Engine extends Context.Service<
     readonly tree: (input: Px0TreeInput) => Effect.Effect<Px0TreeResult, Px0Error, Scope.Scope>;
     readonly find: (input: Px0FindInput) => Effect.Effect<Px0FindResults, Px0Error, Scope.Scope>;
     readonly file: (input: Px0FileInput) => Effect.Effect<Px0FileResult, Px0Error, Scope.Scope>;
+    readonly table: (input: Px0TableInput) => Effect.Effect<Px0TableResult, Px0Error, Scope.Scope>;
     readonly search: (
       input: Px0SearchInput,
     ) => Effect.Effect<Px0SearchResult, Px0Error, Scope.Scope>;
@@ -229,6 +232,7 @@ export const make = Effect.gen(function* Px0EngineMake() {
               },
         ),
       ),
+    table: (input) => call("table", input.cwd, (c) => c.table(input.path)),
     search: (input) =>
       call("search", input.cwd, (c) =>
         c.search(

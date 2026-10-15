@@ -141,6 +141,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.px0Tree]: "workspace",
   [WS_METHODS.px0Find]: "workspace",
   [WS_METHODS.px0File]: "workspace",
+  [WS_METHODS.px0Table]: "workspace",
   [WS_METHODS.px0Search]: "workspace",
   [WS_METHODS.px0Outline]: "workspace",
   [WS_METHODS.px0Diff]: "workspace",

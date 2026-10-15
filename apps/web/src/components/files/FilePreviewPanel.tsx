@@ -1313,6 +1313,9 @@ export default function FilePreviewPanel({
           name={relativePath}
           text={file.data.contents}
           delimiter={tableDelimiter}
+          environmentId={environmentId}
+          cwd={cwd}
+          path={relativePath}
         />
       ) : file.data.truncated || isHostFile || !canWriteFiles ? (
         <SourceFilePreview
