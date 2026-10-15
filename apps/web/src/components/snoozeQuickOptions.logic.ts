@@ -44,7 +44,7 @@ export function snoozeQuickOptionDefaultLabel(option: SnoozeQuickOption): string
 }
 
 /** The menu label: the custom label, or the default label. */
-export const snoozeQuickOptionLabel = (option: SnoozeQuickOption): string =>
+const snoozeQuickOptionLabel = (option: SnoozeQuickOption): string =>
   option.label ?? snoozeQuickOptionDefaultLabel(option);
 
 /** The option with a custom label, or without one for blank text. */

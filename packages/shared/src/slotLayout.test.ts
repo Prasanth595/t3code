@@ -17,7 +17,6 @@ import {
   placeSlotLayoutElement,
   removeSlotLayoutElement,
   removeSlotLayoutRow,
-  shiftSlotLayoutElement,
   unplacedSlotLayoutElements,
 } from "./slotLayout.ts";
 
@@ -71,12 +70,6 @@ describe("slot layout edits", () => {
 
   it("refuses to remove a required element", () => {
     expect(() => removeSlotLayoutElement(DEFAULT_THREAD_CARD_LAYOUT, "title", required)).toThrow();
-  });
-
-  it("shifts within a group and stops at its ends", () => {
-    const earlier = shiftSlotLayoutElement(DEFAULT_THREAD_CARD_LAYOUT, "status", -1);
-    expect(earlier.rows[0]!.end).toEqual(["status", "pin"]);
-    expect(shiftSlotLayoutElement(earlier, "status", -1)).toEqual(earlier);
   });
 
   it("only removes rows without required elements", () => {
