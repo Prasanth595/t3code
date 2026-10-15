@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -161,7 +162,9 @@ export const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances"
   },
 );
 
-const bootstrap = Effect.gen(function* () {
+const bootstrap = Effect.fn("desktop.bootstrap")(function* (
+  shellEnvironmentInstalled: Fiber.Fiber<void>,
+) {
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
@@ -188,6 +191,9 @@ const bootstrap = Effect.gen(function* () {
     yield* (yield* DesktopAppIdentity.DesktopAppIdentity).resolveUserDataPath,
   );
 
+  // snapShot setup and the tailscale status probe spawn helpers by name, so they
+  // need the hydrated PATH. Everything above this point is env-free.
+  yield* Fiber.join(shellEnvironmentInstalled);
   yield* snapShot.initialize;
 
   if (!settings.localEnvironmentEnabled) {
@@ -263,7 +269,7 @@ const bootstrap = Effect.gen(function* () {
     // slow first wsl.exe spawn.
     yield* Effect.forkScoped(wslBackend.reconcile);
   }
-}).pipe(Effect.withSpan("desktop.bootstrap"));
+});
 
 const startup = Effect.gen(function* () {
   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
@@ -280,7 +286,13 @@ const startup = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
 
-  yield* shellEnvironment.installIntoProcess;
+  // Hydrate PATH in the background so the probes overlap Electron ready and
+  // window setup instead of blocking them. Linux joins right away: the password-store
+  // switch below must be set before ready and reads XDG_*/DBUS_* from process.env.
+  const shellEnvironmentInstalled = yield* Effect.forkScoped(shellEnvironment.installIntoProcess);
+  if (environment.platform === "linux") {
+    yield* Fiber.join(shellEnvironmentInstalled);
+  }
   const hasCommandLinePasswordStore =
     preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
   const linuxElectronOptions =
@@ -339,7 +351,9 @@ const startup = Effect.gen(function* () {
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;
   yield* linuxUrlHandler.register;
-  yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
+  yield* bootstrap(shellEnvironmentInstalled).pipe(
+    Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)),
+  );
 }).pipe(Effect.withSpan("desktop.startup"));
 
 const scopedProgram = Effect.scoped(

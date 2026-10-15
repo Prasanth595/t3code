@@ -1,12 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeOS from "node:os";
@@ -33,14 +37,18 @@ function envOutput(values: Readonly<Record<string, string>>): string {
     .join("\n");
 }
 
-function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildProcessHandle {
+function makeProcess(
+  output: string,
+  exitCode = 0,
+  hang = false,
+): ChildProcessSpawner.ChildProcessHandle {
   const stdout = output.length === 0 ? Stream.empty : Stream.make(textEncoder.encode(output));
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(123),
     stdout,
     stderr: Stream.empty,
     all: stdout,
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+    exitCode: hang ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     stdin: Sink.drain,
@@ -74,7 +82,9 @@ function runShellEnvironment(input: {
   readonly userShell?: string;
   readonly handler: (
     command: ChildProcess.Command,
-  ) => string | { output: string; exitCode: number };
+  ) => string | { output: string; exitCode: number } | "hang";
+  // Runs when a "hang" probe starts, so a test can advance the clock once it is waiting.
+  readonly onHang?: (command: ChildProcess.Command) => Effect.Effect<unknown>;
   readonly failure?: PlatformError.PlatformError;
 }) {
   const layerEnvironment = Layer.succeed(
@@ -88,6 +98,9 @@ function runShellEnvironment(input: {
     ChildProcessSpawner.make((command) => {
       if (input.failure !== undefined) return Effect.fail(input.failure);
       const result = input.handler(command);
+      if (result === "hang") {
+        return (input.onHang?.(command) ?? Effect.void).pipe(Effect.as(makeProcess("", 0, true)));
+      }
       return Effect.succeed(
         typeof result === "string"
           ? makeProcess(result)
@@ -484,6 +497,61 @@ describe("DesktopShellEnvironment", () => {
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
     }),
+  );
+
+  it.effect("falls back to powershell.exe when pwsh.exe exits with a failure", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+      const commands: string[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          return command.command === "pwsh.exe"
+            ? { output: envOutput({ PATH: "C:\\Broken" }), exitCode: 1 }
+            : envOutput({ PATH: "C:\\Shell\\Bin" });
+        },
+      }).pipe(Effect.provide(Logger.layer([])));
+
+      assert.include(commands, "powershell.exe");
+      assert.include(env.PATH ?? "", "C:\\Shell\\Bin");
+      assert.notInclude(env.PATH ?? "", "C:\\Broken");
+    }),
+  );
+
+  it.effect("does not try powershell.exe after pwsh.exe times out", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+      const commands: string[] = [];
+      const bothHung = yield* Deferred.make<void>();
+      let hangs = 0;
+
+      const install = yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          return command.command === "pwsh.exe" ? "hang" : envOutput({ PATH: "C:\\Shell\\Bin" });
+        },
+        onHang: () =>
+          Effect.suspend(() => {
+            hangs += 1;
+            return hangs === 2 ? Deferred.succeed(bothHung, undefined) : Effect.void;
+          }),
+      }).pipe(Effect.provide(Logger.layer([])), Effect.forkChild);
+
+      // Both probes (profile and no-profile) must be waiting before the clock moves.
+      yield* Deferred.await(bothHung);
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* Fiber.join(install);
+
+      assert.deepEqual(commands, ["pwsh.exe", "pwsh.exe"]);
+      assert.equal(env.PATH, "C:\\Windows\\System32");
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("prefers login-shell desktop session hints over inherited values on linux", () =>

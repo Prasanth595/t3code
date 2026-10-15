@@ -245,13 +245,25 @@ const extractEnvironment = (output: string, names: ReadonlyArray<string>): Envir
   return environment;
 };
 
-const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(function* (input: {
+interface CommandInput {
   readonly probe: DesktopShellEnvironmentProbe;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly timeout: Duration.Duration;
   readonly shell?: boolean;
-}): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
+}
+
+type CommandResult =
+  | { readonly _tag: "Output"; readonly stdout: string }
+  | { readonly _tag: "Failed" }
+  | { readonly _tag: "TimedOut" };
+
+// Timeouts stay distinct from failures: a probe that timed out is usually a shell
+// that is present but slow (a heavy profile), so retrying another candidate would
+// only repeat the wait.
+const runCommandResult = Effect.fn("desktop.shellEnvironment.runCommandResult")(function* (
+  input: CommandInput,
+): Effect.fn.Return<CommandResult, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const output = yield* Effect.scoped(
     Effect.gen(function* () {
@@ -289,10 +301,10 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
           cause: { exitCode },
         }),
     ),
-    Effect.map(([stdout]) => stdout),
+    Effect.map(([stdout]): CommandResult => ({ _tag: "Output", stdout })),
     Effect.catchTags({
       DesktopShellEnvironmentCommandError: (error) =>
-        logShellEnvironmentCommandError(error).pipe(Effect.as("")),
+        logShellEnvironmentCommandError(error).pipe(Effect.as({ _tag: "Failed" } as const)),
     }),
     Effect.timeoutOption(input.timeout),
   );
@@ -307,7 +319,14 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
     timeoutMs: Duration.toMillis(input.timeout),
   });
   yield* logShellEnvironmentCommandError(error);
-  return "";
+  return { _tag: "TimedOut" };
+});
+
+const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(function* (
+  input: CommandInput,
+): Effect.fn.Return<string, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const result = yield* runCommandResult(input);
+  return result._tag === "Output" ? result.stdout : "";
 });
 
 const readLoginShellEnvironment = (
@@ -346,13 +365,14 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
     ];
 
     for (const command of WINDOWS_SHELL_CANDIDATES) {
-      const output = yield* runCommandOutput({
+      const result = yield* runCommandResult({
         probe: options.loadProfile ? "powershell-profile" : "powershell-no-profile",
         command,
         args,
         timeout: LOGIN_SHELL_TIMEOUT,
       });
-      const environment = extractEnvironment(output, names);
+      if (result._tag === "TimedOut") break;
+      const environment = extractEnvironment(result._tag === "Output" ? result.stdout : "", names);
       if (Object.keys(environment).length > 0) {
         return environment;
       }
@@ -367,10 +387,9 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     config: ShellEnvironmentConfig,
   ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
     // Concurrent, not sequential: these two probes are independent (only their
-    // results are combined below) and each spawns its own PowerShell. Run in
-    // series they sit at offset 0 of desktop.startup, before anything else, and
-    // launch traces measured them at 2718ms then 2066ms — the entire 4.8s
-    // startup span, of which desktop.bootstrap is ~30ms.
+    // results are combined below) and each spawns its own PowerShell. Launch
+    // traces measured them at 2718ms then 2066ms. DesktopApp runs this install
+    // in the background, so the probes overlap Electron ready rather than block it.
     const [noProfile, profile] = yield* Effect.all(
       [
         readWindowsEnvironment(["PATH"], { loadProfile: false }),
