@@ -31,7 +31,11 @@ const AuthFile = Schema.Struct({
   ),
 });
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
-const ApiResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
+const ApiResponse = Schema.Struct({
+  status_code: Schema.Number,
+  header: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.String))),
+  body: Schema.String,
+});
 const CodexWindow = Schema.Struct({
   used_percent: Schema.Number,
   reset_at: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -186,14 +190,14 @@ export const makeCliproxyApi = Effect.gen(function* () {
         detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
       });
     }
-    return response.body;
+    return response;
   });
 
   const credits = Effect.fn("CliproxyApi.credits")(function* (
     config: UsageLimitSourceConfig,
     account: typeof AuthFile.Type,
   ) {
-    const body = yield* apiCall(config, account, CREDIT_URL);
+    const { body } = yield* apiCall(config, account, CREDIT_URL);
     const response = yield* decodeCreditList(body);
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     return response.credits
@@ -221,7 +225,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
+        const { body, header } = yield* apiCall(
+          config,
+          account,
+          "https://api.anthropic.com/api/oauth/usage",
+        );
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -234,8 +242,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
               ]
             : [],
         );
+        // Auth files do not list the organization, but every response names
+        // the one the token draws on: the same UUID a native login reports.
+        const workspaceId = header?.["Anthropic-Organization-Id"]?.[0]?.trim();
         return {
           ...base,
+          ...(workspaceId ? { workspaceId } : {}),
           plan: "Claude Subscription",
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
@@ -250,7 +262,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
           }).limits,
         };
       }
-      const body = yield* apiCall(config, account, `${CODEX_BASE}/usage`);
+      const { body } = yield* apiCall(config, account, `${CODEX_BASE}/usage`);
       const usage = yield* decodeCodexUsage(body);
       const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
         window
@@ -335,7 +347,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
           detail: "The Codex hub account is missing or disabled.",
         });
       }
-      const body = yield* apiCall(config, account, `${CREDIT_URL}/consume`, {
+      const { body } = yield* apiCall(config, account, `${CREDIT_URL}/consume`, {
         redeem_request_id: yield* creditRedeemRequestId(
           account.id_token?.chatgpt_account_id ?? account.id,
           creditId,

@@ -48,8 +48,17 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
-    upstream?: (request: RequestBody) => { status: number; body: unknown };
+    accounts?: Array<
+      Omit<(typeof accounts)[number], "id_token"> & {
+        id_token?: (typeof accounts)[number]["id_token"];
+        disabled?: boolean;
+      }
+    >;
+    upstream?: (request: RequestBody) => {
+      status: number;
+      body: unknown;
+      header?: Record<string, string[]>;
+    };
     cooldownStatus?: number;
   } = {},
 ) {
@@ -101,7 +110,11 @@ function fixture(
       };
       return HttpClientResponse.fromWeb(
         request,
-        Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
+        Response.json({
+          status_code: upstream.status,
+          ...("header" in upstream ? { header: upstream.header } : {}),
+          body: encodeJson(upstream.body),
+        }),
       );
     }),
   );
@@ -211,6 +224,40 @@ describe("CLIProxyAPI built-in management API", () => {
         ["seven_day_fable", 80],
       ]);
     }),
+  );
+
+  it.effect(
+    "names the organization each Claude login draws on, so one email stays two accounts",
+    () =>
+      Effect.gen(function* () {
+        const claude = (id: string, auth_index: string) => ({
+          id,
+          auth_index,
+          provider: "claude",
+          email: "same@example.com",
+        });
+        const test = fixture({
+          accounts: [
+            claude("org-a.json", "a"),
+            claude("org-b.json", "b"),
+            claude("none.json", "c"),
+          ],
+          upstream: (request) => ({
+            status: 200,
+            body: { five_hour: { utilization: 10, resets_at: null } },
+            ...(request.auth_index === "c"
+              ? {}
+              : { header: { "Anthropic-Organization-Id": [`org-${request.auth_index}`] } }),
+          }),
+        });
+        const api = yield* test.api;
+        const result = yield* api.readAccounts(config);
+        expect(result.map((account) => [account.id, account.workspaceId])).toEqual([
+          ["org-a.json", "org-a"],
+          ["org-b.json", "org-b"],
+          ["none.json", undefined],
+        ]);
+      }),
   );
 
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
