@@ -244,6 +244,10 @@ it.effect("retains safe request attribution after request spans are discarded", 
     const messages: Array<unknown> = [];
     const spans: Array<Tracer.NativeSpan> = [];
     const expected: Array<{ traceId: string; spanId: string }> = [];
+    const parent = Tracer.externalSpan({
+      traceId: "0123456789abcdef0123456789abcdef",
+      spanId: "0123456789abcdef",
+    });
     const logger = Logger.make(({ message }) => {
       messages.push(message);
     });
@@ -269,6 +273,14 @@ it.effect("retains safe request attribution after request spans are discarded", 
           const span = yield* Effect.currentParentSpan;
           expected.push({ traceId: span.traceId, spanId: span.spanId });
           yield* AuthHttp.annotateEnvironmentRequest("HttpApiEndpoint");
+          expect(span.traceId).toBe(parent.traceId);
+          expect(span.spanId).not.toBe(parent.spanId);
+          const attributes = Object.fromEntries(
+            spans.find((item) => item.spanId === span.spanId)!.attributes,
+          );
+          expect(attributes["http.route"]).toBe("/api/threads/:threadId");
+          expect(attributes).not.toHaveProperty("url.path");
+          expect(JSON.stringify(attributes)).not.toContain(secret);
           // The final record must stand alone after the trace sink evicts spans.
           spans.length = 0;
           return yield* interrupted
@@ -277,6 +289,7 @@ it.effect("retains safe request attribution after request spans are discarded", 
         }),
       ).pipe(
         Effect.withSpan("request"),
+        Effect.withParentSpan(parent),
         Effect.exit,
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
         Effect.provideService(HttpRouter.RouteContext, { route, params: { threadId: secret } }),
