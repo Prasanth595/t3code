@@ -186,6 +186,12 @@ const OUTLINE_EXPRESSION = `(() => {
   };
   // Visits are capped too, so a huge generated DOM costs no more than a page.
   let full = false, visits = 0;
+  // Whether an element holds text of its own, looking at its first few children only.
+  const hasOwnText = (el) => {
+    let n = el.firstChild;
+    for (let i = 0; n && i < 64; n = n.nextSibling, i++) if (n.nodeType === 3 && n.data.trim() !== "") return true;
+    return false;
+  };
   const walk = (parent, ps) => {
     for (const el of parent.childNodes) {
       // The last slot is kept for whatever the outline has no room left for.
@@ -209,8 +215,8 @@ const OUTLINE_EXPRESSION = `(() => {
       const tag = el.localName;
       if (el.matches(media)) { add("media", r, 1); continue; }
       if (tag === "table") { add("table", r, el.rows.length); continue; }
-      const text = [...el.childNodes].some((n) => n.nodeType === 3 && n.data.trim() !== "");
-      if (boxes.length >= detail) { if (el.textContent.trim() !== "" && !el.querySelector(media)) addText(el, s, r); else add("media", r, 1); continue; }
+      const text = hasOwnText(el);
+      if (boxes.length >= detail) { if (el.querySelector(media) || (!text && !el.firstElementChild)) add("media", r, 1); else addText(el, s, r); continue; }
       if (text) { addText(el, s, r); continue; }
       if (el.children.length === 0) { if (filled(s)) add("media", r, 1); continue; }
       if (filled(s) && r.height >= 24) add("panel", r, 1);
@@ -219,7 +225,8 @@ const OUTLINE_EXPRESSION = `(() => {
   };
   walk(document.body, getComputedStyle(document.body));
   if (full) {
-    const top = Math.max(0, ...boxes.map((b) => b[2] + b[4]));
+    // Panels enclose later blocks, so their bottoms say nothing about what was left out.
+    const top = Math.max(0, ...boxes.filter((b) => b[0] !== "panel").map((b) => b[2] + b[4]));
     const root = document.documentElement;
     const rest = (root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height) - top;
     if (rest >= 8) boxes.push(["text", 0, top, document.documentElement.clientWidth, rest, Math.max(1, Math.round(rest / 28))]);
