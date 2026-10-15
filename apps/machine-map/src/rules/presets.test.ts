@@ -5,7 +5,7 @@ import { applyChanges, findArrow, findClientArrow } from "./map.ts";
 import {
   applyPresetChanges,
   cutArrows,
-  lockdownChanges,
+  pauseChanges,
   pausedAccess,
   restoreChanges,
   resumeChanges,
@@ -49,13 +49,13 @@ const busyMap = (): MachineMapDocument =>
 describe("lockdown (MM-706)", () => {
   it("sets every arrow and map role to none, and touches nothing else", () => {
     const map = busyMap();
-    const changes = lockdownChanges(map);
+    const changes = pauseChanges(map);
     expect(changes.every((c) => c._tag === "setArrow" || c._tag === "putMachine")).toBe(true);
     const locked = applyChanges(map, changes).map;
     expect(locked.arrows).toEqual([]);
     expect(locked.machines.every((m) => m.mapRole === "none")).toBe(true);
     expect(locked.settings).toEqual(map.settings);
-    expect(lockdownChanges(locked)).toEqual([]);
+    expect(pauseChanges(locked)).toEqual([]);
   });
 });
 
@@ -67,7 +67,7 @@ describe("presets (MM-705)", () => {
     const preset = saved.presets[0];
     expect(preset?.arrows.find((a) => a.from === WIN)?.level).toBe("read");
     if (!preset) throw new Error("preset missing");
-    const locked = applyChanges(saved, lockdownChanges(saved)).map;
+    const locked = applyChanges(saved, pauseChanges(saved)).map;
     const restored = applyChanges(locked, applyPresetChanges(locked, preset)).map;
     expect(findArrow(restored, MAC, VPS)).toMatchObject({ level: "admin", agentTools: true });
     expect(findArrow(restored, WIN, MAC)).toMatchObject({ level: "read", expiresAt: null });
@@ -78,7 +78,7 @@ describe("restoreChanges (MM-704)", () => {
   it("returns arrows, settings and machine fields to an older map", () => {
     const old = busyMap();
     const now = applyChanges(old, [
-      ...lockdownChanges(old),
+      ...pauseChanges(old),
       {
         _tag: "putMachine",
         machine: { ...machine(VPS), name: "Cloud", position: { x: 0.1, y: 0.1 } },
@@ -141,7 +141,7 @@ describe("emergency pause and resume (MM-710, MM-712)", () => {
   it("resume returns the arrows and map roles from before the pause", () => {
     const map = busyMap();
     const before = pausedAccess(map);
-    const paused = applyChanges(map, lockdownChanges(map)).map;
+    const paused = applyChanges(map, pauseChanges(map)).map;
     const resumed = applyChanges(paused, resumeChanges(paused, before)).map;
     expect(resumed.arrows).toEqual(map.arrows);
     expect(resumed.machines).toEqual(map.machines);
@@ -153,7 +153,7 @@ describe("emergency pause and resume (MM-710, MM-712)", () => {
     const before = pausedAccess(map);
     const NEW = MachineId.make("new");
     const paused = applyChanges(map, [
-      ...lockdownChanges(map),
+      ...pauseChanges(map),
       { _tag: "removeMachine", machineId: VPS },
       { _tag: "putMachine", machine: machine(NEW) },
     ]).map;
@@ -175,7 +175,7 @@ describe("emergency pause and resume (MM-710, MM-712)", () => {
       },
     ]).map;
     const before = pausedAccess(map);
-    const paused = applyChanges(map, lockdownChanges(map)).map;
+    const paused = applyChanges(map, pauseChanges(map)).map;
     expect(paused.clientArrows).toEqual([]);
     const resumed = applyChanges(paused, resumeChanges(paused, before)).map;
     expect(findClientArrow(resumed, PHONE, VPS).level).toBe("admin");
@@ -184,7 +184,7 @@ describe("emergency pause and resume (MM-710, MM-712)", () => {
   it("lists the arrows that the pause cut, with their old level, for the map (MM-717)", () => {
     const map = busyMap();
     const before = pausedAccess(map);
-    const paused = applyChanges(map, lockdownChanges(map)).map;
+    const paused = applyChanges(map, pauseChanges(map)).map;
     expect(cutArrows(paused, before)).toEqual([
       { from: MAC, to: VPS, level: "admin" },
       { from: WIN, to: MAC, level: "standard" },

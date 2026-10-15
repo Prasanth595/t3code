@@ -8,7 +8,7 @@ The portal is one Cloudflare Worker with one Durable Object, at `t3.yarden-zamir
 
 - `src/worker.ts`: routes, Cloudflare Access checks, request decoding.
 - `src/MachineMapObject.ts`: the Durable Object. It stores the map in SQLite, keeps the sockets, runs the alarms and calls Cloudflare.
-- `src/rules/`: pure rules with tests: changes and their inverse, desired state, map roles, self-escalation, queue, presets and lockdown.
+- `src/rules/`: pure rules with tests: changes and their inverse, desired state, map roles, self-escalation, queue, presets and the changes of the emergency pause.
 - `src/api.ts`: request and response shapes of the HTTP API, shared by the Worker and the page.
 - `src/ui/`: the React page.
 - `src/sw/sw.ts`: the service worker of the installed app (MM-1801 to MM-1808). `vite.config.ts` builds it to `dist/sw.js` and writes the file list of the build into it.
@@ -46,7 +46,7 @@ Cloudflare asks you to register the passkey at the first approval.
 Set secrets with `wrangler secret put <NAME>` in this folder.
 
 - `SECRET_KEY` (required for joins and rotations). The AES-GCM key that encrypts a token secret while it waits for its machine (MM-1201). Make it with `openssl rand -base64 32`. A new key makes waiting join codes and rotations unreadable. Make new join codes after you change it.
-- `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with "Access: Service Tokens Edit", "Access: Apps and Policies Edit", "Access: Organizations, Identity Providers, and Groups Read" and "Cloudflare Tunnel: Edit" on the account, and "DNS: Edit" on the zone of `MACHINE_ZONE_ID`. Client approvals need the organization read permission (MM-1207). With it, "Add machine" creates the machine token and its tunnel (MM-213), "Rotate token" works, "Remove machine" deletes what "Add machine" made, and the Clients view lists Access sessions. Without the tunnel and DNS permissions, "Add machine" makes no tunnel and the join dialog says why. Without the token, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
+- `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with "Access: Service Tokens Edit", "Access: Apps and Policies Edit", "Access: Organizations, Identity Providers, and Groups Read", "Access: Organizations Revoke" and "Cloudflare Tunnel: Edit" on the account, and "DNS: Edit" on the zone of `MACHINE_ZONE_ID`. Client approvals need the organization read permission (MM-1207). "Sign out everywhere" needs the revoke permission to end Access sessions (MM-903); without it, it ends only T3 sessions, and "Set up approvals" names the missing permission. With it, "Add machine" creates the machine token and its tunnel (MM-213), "Rotate token" works, "Remove machine" deletes what "Add machine" made, and the Clients view lists Access sessions. Without the tunnel and DNS permissions, "Add machine" makes no tunnel and the join dialog says why. Without the token, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
 - `MACHINE_ACCESS_SUBJECTS` (optional, MM-213). Access subjects that a joined machine allows next to the owner emails, comma separated, for example the client id of the desktop service token. A secret keeps the client id out of the repository.
 
 - `VAPID_JWK` (optional, MM-1807). The P-256 private key that signs push messages, as a JSON Web Key. Without it, push is off and the Clients view says so. Make it and set it in one step:
@@ -59,8 +59,7 @@ Set secrets with `wrangler secret put <NAME>` in this folder.
 
 ## Deploy
 
-1. Run `vp i` at the repository root.
-2. Run `vp run deploy` in this folder. It builds the page into `dist` and runs `wrangler deploy`.
+Merge to main. The workflow "Machine map deploy" (`.github/workflows/fork-machine-map-deploy.yml`) tests and deploys the portal when `apps/machine-map` or the contracts it reads change. Do not deploy by hand: a deploy from a branch rolls back main.
 
 ## Develop
 

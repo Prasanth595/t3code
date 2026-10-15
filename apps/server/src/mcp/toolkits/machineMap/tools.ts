@@ -95,7 +95,7 @@ const MachinesUndoTool = mapTool(
 
 const MachinesPresetTool = mapTool(
   "machines_preset",
-  `Save the current arrows as a named preset, apply a saved preset, or lock down. Lockdown sets every arrow and every map role to none, so afterwards no agent can use the machine map tools, this one included, until the owner raises a map role. To stop running agents as well, the owner uses the emergency pause in the portal. Needs the map role \`propose\` or \`edit\`. ${MAP_WRITE_NOTE}`,
+  `Save the current arrows as a named preset, or apply a saved preset. To cut all access and stop running agents, the owner uses the emergency pause in the portal; agents cannot press it. Needs the map role \`propose\` or \`edit\`. ${MAP_WRITE_NOTE}`,
 ).annotate(Tool.Destructive, true);
 
 const MachinesJoinTool = Tool.make("machines_join", {

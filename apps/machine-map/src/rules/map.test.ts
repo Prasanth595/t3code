@@ -19,6 +19,7 @@ import {
   MapRuleError,
   pairOffset,
   keepClientKeys,
+  sameValue,
   undoChanges,
 } from "./map.ts";
 import { client, MAC, machine, PHONE, threeMachines, VPS, WIN } from "./testMap.ts";
@@ -289,6 +290,15 @@ describe("desiredState", () => {
     const map = threeMachines();
     expect(desiredState(map, MAC, true)?.paused).toBe(true);
     expect(desiredState(map, MAC, false)?.paused).toBe(false);
+  });
+});
+
+describe("setting values (MM-405)", () => {
+  it("are equal whatever the order of object keys, so a reordered value is no override", () => {
+    expect(
+      sameValue({ a: 1, b: { c: [1, 2], d: null } }, { b: { d: null, c: [1, 2] }, a: 1 }),
+    ).toBe(true);
+    expect(sameValue([1, 2], [2, 1])).toBe(false);
   });
 });
 

@@ -16,7 +16,7 @@ import {
   type SettingValues,
 } from "@t3tools/contracts/machineMap";
 
-import { effectiveSettings, touches } from "./map.ts";
+import { effectiveSettings, sameValue, touches } from "./map.ts";
 
 /** MM-605: the default expiry of a queued command. */
 export const DEFAULT_COMMAND_MINUTES = 24 * 60;
@@ -71,8 +71,6 @@ export function pendingRevisions(
       touches(revision, machine.id),
   );
 }
-
-const sameValue = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 /**
  * MM-404: a change on a machine becomes an override of that machine when the setting has a

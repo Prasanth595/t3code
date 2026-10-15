@@ -16,7 +16,7 @@ import type {
 import { clientKeyCode } from "@t3tools/contracts/machineMap";
 
 import { usesText } from "../rules/access.ts";
-import { effectiveSettings, findArrow, MAP_ROLES, roleRank } from "../rules/map.ts";
+import { effectiveSettings, findArrow, MAP_ROLES, roleRank, sameValue } from "../rules/map.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext } from "./context.ts";
 import { buildStandings } from "./build.ts";
@@ -262,8 +262,6 @@ export function TableView() {
     </div>
   );
 }
-
-const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** MM-405, MM-406: one row per setting, one column per machine, drift marked. */
 export function SettingsView() {
@@ -1267,7 +1265,7 @@ export function ClientsView() {
     portal.open({
       _tag: "confirm",
       title: "Sign out everywhere?",
-      body: "This ends every owner sign-in in Cloudflare Access and every owner T3 session. Offline machines get it as a queued command. This page signs out too.",
+      body: "This ends every owner sign-in in Cloudflare Access and every owner T3 session, and turns off notifications on every device. Offline machines get it as a queued command. Approved clients keep their access. This page signs out too.",
       confirmLabel: "Sign out everywhere",
       action: () =>
         portal.call(async () => {
@@ -1275,7 +1273,7 @@ export function ClientsView() {
             "POST",
             "/api/devices/sign-out-everywhere",
           );
-          return `${result.revokeCommands} T3 sessions revoked. ${result.accessMessage ?? "Cloudflare Access sessions ended."}`;
+          return `${result.revokeCommands} T3 sessions revoked, ${result.pushRemoved} notification subscriptions removed. ${result.accessMessage ?? "Cloudflare Access sessions ended."}`;
         }),
     });
 
@@ -1398,18 +1396,21 @@ export function ClientsView() {
                       </span>
                     </span>
                     {client.connected && <span className="sticker ok">live</span>}
-                    <button
-                      type="button"
-                      className="btn small danger"
-                      onClick={() =>
-                        portal.command(machine.id, {
-                          _tag: "revokeClient",
-                          sessionId: client.sessionId,
-                        })
-                      }
-                    >
-                      Sign out
-                    </button>
+                    {/* MM-502: only a machine that reports the command can sign a session out. */}
+                    {presence?.status?.commands.includes("revokeClient") && (
+                      <button
+                        type="button"
+                        className="btn small danger"
+                        onClick={() =>
+                          portal.command(machine.id, {
+                            _tag: "revokeClient",
+                            sessionId: client.sessionId,
+                          })
+                        }
+                      >
+                        Sign out
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>

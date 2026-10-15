@@ -27,6 +27,7 @@ import {
   MAP_ROLES,
   pairOffset,
   roleRank,
+  sameValue,
 } from "../rules/map.ts";
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
 import { callApi, StepUpNeeded } from "./apiClient.ts";
@@ -122,8 +123,6 @@ export function Panel({ selection }: { selection: Selection }) {
     </aside>
   );
 }
-
-const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 const Missing = ({ what }: { what: string }) => (
   <div className="empty compact-empty">
@@ -347,13 +346,16 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
         {endLink(ends.to, target, true)}, {endLink(ends.from, source, false)}.
       </p>
       <div className="actions spaced">
-        <button
-          type="button"
-          className="btn small"
-          onClick={() => portal.command(source.id, { _tag: "testArrow", to: target.id })}
-        >
-          Test the connection
-        </button>
+        {/* MM-502: only a machine that reports the command can test. */}
+        {snapshot.presence[source.id]?.status?.commands.includes("testArrow") && (
+          <button
+            type="button"
+            className="btn small"
+            onClick={() => portal.command(source.id, { _tag: "testArrow", to: target.id })}
+          >
+            Test the connection
+          </button>
+        )}
         {lastTest && (
           <span className="small muted">
             Last test{" "}
@@ -1465,6 +1467,7 @@ function PendingSignIn({ pending }: { pending: PendingClient }) {
         </>
       ) : (
         <>
+          {status?._tag === "ready" && status.warning && <p className="hint">{status.warning}</p>}
           {status?._tag === "missing" && (
             <div className="row callout">
               <div className="v">{status.reason}</div>
