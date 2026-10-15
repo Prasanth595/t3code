@@ -41,9 +41,9 @@ interface FileBrowserPanelProps {
   onOpenFile: (relativePath: string) => void;
   /**
    * Set when `cwd` is a host folder outside the workspace rather than the
-   * workspace root. Entries then open and mention as host paths, and the tree
-   * offers no search or expand-all: both would walk the whole folder, and a host
-   * folder can be as large as a home directory.
+   * workspace root. Entries then open and mention as host paths. The tree offers
+   * no expand-all: it would walk the whole folder, which can be a home directory.
+   * Search stays, since its index is bounded and only builds once you type.
    */
   hostFolder?: boolean;
   onRefreshSelectedFile?: () => void;
@@ -521,15 +521,13 @@ export default function FileBrowserPanel({
         data-surface-subheader
       >
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
-        {hostFolder ? null : (
-          <FileSearchField
-            name="project-files-search"
-            ariaLabel={`Search ${projectName} files`}
-            value={search.value}
-            onValueChange={handleSearchValueChange}
-            onClose={closeSearch}
-          />
-        )}
+        <FileSearchField
+          name="project-files-search"
+          ariaLabel={`Search ${projectName} files`}
+          value={search.value}
+          onValueChange={handleSearchValueChange}
+          onClose={closeSearch}
+        />
         {directoryPaths.length > 0 && !hostFolder ? (
           <Tooltip>
             <TooltipTrigger

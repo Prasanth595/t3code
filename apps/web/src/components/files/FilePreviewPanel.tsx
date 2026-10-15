@@ -1095,21 +1095,15 @@ export default function FilePreviewPanel({
   // pane, and let the tree fill the surface with the folder revealed. Mutation
   // refresh stays on so the surface notices if the path becomes a file. A host
   // folder outside the workspace gets a tree of its own, rooted at that folder.
-  // The explorer shows the workspace root, with breadcrumbs only when they
-  // brought it there, so the way back down stays in reach.
-  const isBreadcrumbRoot =
-    attachment === undefined && relativePath === null && folderTrail !== undefined;
-  const breadcrumbPath = isBreadcrumbRoot ? "" : relativePath;
-  const breadcrumbTrail =
-    breadcrumbPath === null ? null : retainedBreadcrumbTrail(folderTrail, breadcrumbPath);
-  // The trail only continues below folders, so a path above its end is a folder
-  // even before the read settles, and walking up never flashes a file preview.
-  const isAboveTrail = breadcrumbTrail !== null && breadcrumbTrail !== breadcrumbPath;
-  const isFolder =
-    attachment === undefined &&
-    (file.isNotFile || (isAboveTrail && file.data === null && file.error === null));
+  // `folderTrail` is set only when crumbs walked the browser up: the deeper path
+  // kept for the way back down. The explorer (`""`) shows crumbs only then.
+  const breadcrumbPath =
+    attachment !== undefined ? null : (relativePath ?? (folderTrail === undefined ? null : ""));
+  const breadcrumbTrail = folderTrail ?? breadcrumbPath;
+  // The trail only continues below folders, so a surface with one is a folder
+  // before its read settles, and walking up never flashes a file preview.
+  const isFolder = attachment === undefined && (file.isNotFile || folderTrail !== undefined);
   const hostFolderPath = isFolder && isHostFile ? relativePath : null;
-  const isFolderBrowser = isFolder || isAboveTrail;
   // Everything preview-related keys off previewPath; a folder has no preview.
   const previewPath = isFolder ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
@@ -1183,16 +1177,14 @@ export default function FilePreviewPanel({
     !isVideo &&
     previewAvailable &&
     isBrowserPreviewFile(previewPath);
-  const navigateToFolder = (path: string) => {
-    if (breadcrumbPath === null || breadcrumbTrail === null) return;
-    // A file keeps its tab; walking up from it opens a folder browser beside it.
-    onNavigateFolder(path, retainedBreadcrumbTrail(breadcrumbTrail, path), !isFolderBrowser);
-  };
+  // A file keeps its tab; walking up from it opens a folder browser beside it.
+  const navigateToFolder = (path: string) =>
+    onNavigateFolder(path, retainedBreadcrumbTrail(breadcrumbTrail ?? undefined, path), !isFolder);
   const absolutePath =
-    relativePath && attachment === undefined
-      ? resolvePathLinkTarget(relativePath, cwd)
-      : isBreadcrumbRoot
-        ? cwd
+    breadcrumbPath === ""
+      ? cwd
+      : relativePath && attachment === undefined
+        ? resolvePathLinkTarget(relativePath, cwd)
         : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
@@ -1282,7 +1274,7 @@ export default function FilePreviewPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      {breadcrumbPath !== null && breadcrumbTrail !== null && attachment === undefined ? (
+      {breadcrumbPath !== null && breadcrumbTrail !== null ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           <ScrollArea
             radius="none"
@@ -1520,35 +1512,24 @@ export default function FilePreviewPanel({
                 : "min-w-0 flex-1",
             )}
           >
-            {hostFolderPath !== null ? (
-              <FileBrowserPanel
-                key={`${environmentId}:${hostFolderPath}`}
-                environmentId={environmentId}
-                cwd={hostFolderPath}
-                projectName={hostFolderPath}
-                hostFolder
-                selectedPath={
-                  breadcrumbTrail === null ? null : trailChildOf(hostFolderPath, breadcrumbTrail)
-                }
-                selectedPathRevealId={revealRequestId}
-                onOpenFile={onOpenFile}
-                workspaceMutationId={workspaceMutationId}
-              />
-            ) : (
-              <FileBrowserPanel
-                key={`${environmentId}:${cwd}`}
-                environmentId={environmentId}
-                cwd={cwd}
-                projectName={projectName}
-                selectedPath={relativePath}
-                selectedPathRevealId={revealRequestId}
-                onOpenFile={onOpenFile}
-                workspaceMutationId={workspaceMutationId}
-                {...(previewPath && !isMedia && !isPdf
-                  ? { onRefreshSelectedFile: file.refresh }
-                  : {})}
-              />
-            )}
+            <FileBrowserPanel
+              key={`${environmentId}:${hostFolderPath ?? cwd}`}
+              environmentId={environmentId}
+              cwd={hostFolderPath ?? cwd}
+              projectName={hostFolderPath ?? projectName}
+              hostFolder={hostFolderPath !== null}
+              selectedPath={
+                hostFolderPath === null
+                  ? relativePath
+                  : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
+              }
+              selectedPathRevealId={revealRequestId}
+              onOpenFile={onOpenFile}
+              workspaceMutationId={workspaceMutationId}
+              {...(previewPath && !isMedia && !isPdf
+                ? { onRefreshSelectedFile: file.refresh }
+                : {})}
+            />
           </aside>
         ) : null}
       </div>

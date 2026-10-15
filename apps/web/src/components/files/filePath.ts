@@ -50,24 +50,10 @@ export function isListableHostFolder(path: string): boolean {
   return isAbsolutePath(path) && !/^\\\\[^\\/]+$/.test(path);
 }
 
-function comparablePath(path: string): string {
-  // Host paths compare with one separator and no trailing one, except a root.
-  if (!isAbsolutePath(path)) return path;
-  const normalized = path.replaceAll("\\", "/");
-  return normalized.replace(/(?<=[^/:])\/+$/, "");
-}
-
-/**
- * Whether `path` is `folder` or inside it. `""` is the workspace root. Workspace
- * and host paths never contain each other.
- */
-function isWithinFolder(path: string, folder: string): boolean {
-  const hostPath = isAbsolutePath(path);
-  if (hostPath !== isAbsolutePath(folder)) return false;
-  if (!hostPath) return folder === "" || path === folder || path.startsWith(`${folder}/`);
-  const target = comparablePath(path);
-  const base = comparablePath(folder);
-  return target === base || target.startsWith(base.endsWith("/") ? base : `${base}/`);
+/** Index of `path`'s crumb among `trail`'s crumbs; -1 when the trail does not pass through it. */
+function trailCrumbIndex(trail: string, path: string): number {
+  const crumbPath = breadcrumbPathOf(path);
+  return fileBreadcrumbs("", trail).findIndex((crumb) => crumb.path === crumbPath);
 }
 
 /**
@@ -76,18 +62,13 @@ function isWithinFolder(path: string, folder: string): boolean {
  * moving anywhere else starts over at `path`.
  */
 export function retainedBreadcrumbTrail(trail: string | undefined, path: string): string {
-  return trail !== undefined && isWithinFolder(trail, path) ? trail : path;
+  return trail !== undefined && trailCrumbIndex(trail, path) >= 0 ? trail : path;
 }
 
-/**
- * The entry of `folder` that leads toward `trail`, relative to `folder` with `/`,
- * as the folder's listing names it; null when the trail ends at the folder.
- */
+/** The entry of `folder` that leads toward `trail`; null when the trail ends at the folder. */
 export function trailChildOf(folder: string, trail: string): string | null {
-  if (!isWithinFolder(trail, folder)) return null;
-  const base = comparablePath(folder);
-  const rest = comparablePath(trail).slice(base.length).replace(/^\/+/, "");
-  return rest.split("/")[0] || null;
+  const index = trailCrumbIndex(trail, folder);
+  return index < 0 ? null : (fileBreadcrumbs("", trail)[index + 1]?.label ?? null);
 }
 
 /**
