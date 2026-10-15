@@ -8,6 +8,7 @@ import { RESOURCE_RANGES } from "@t3tools/contracts/machineMapResources";
 
 import { approvalEmail, clientTokenId, machineClientId, ownerEmail } from "./access.ts";
 import {
+  type ApiError,
   AddMachineRequest,
   ApproveClientRequest,
   ChangesRequest,
@@ -85,7 +86,15 @@ async function grant(request: Request, env: Env, url: URL): Promise<Response> {
   const stub = mapObject(env);
   const email = await approvalEmail(request, env, await stub.approvalsAud(), APPROVALS_MAX_SECONDS);
   const owner = await ownerContext(request, email);
-  if (!owner) return fail(403, "Approvals need a fresh passkey check. Confirm with it again.");
+  if (!owner) {
+    return json(
+      {
+        error: "Approvals need a fresh passkey check. Confirm with it again.",
+        stepUp: true,
+      } satisfies ApiError,
+      403,
+    );
+  }
   if (crossOrigin(request, url)) return fail(403, "Wrong origin.");
   const route = `${request.method} ${url.pathname.slice(APPROVALS_PATH.length)}`;
   switch (route) {

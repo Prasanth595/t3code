@@ -883,6 +883,10 @@ export class MachineMapObject extends DurableObject<Env> {
         this.#saveReportedSettings(id, message.settings);
         this.#recordHostname(machine, message.status.hostname);
         this.#checkOffline(id, Date.now());
+        // MM-919: a local clientAccess goes into the map first, so the desired state keeps it.
+        if (message.localClientAccess !== undefined) {
+          this.#recordLocalClientAccess(machine, message.localClientAccess);
+        }
         // MM-603: the current desired state, not each queued revision.
         this.#sendDesired(id);
         await this.#sendRotation(id);
@@ -914,38 +918,24 @@ export class MachineMapObject extends DurableObject<Env> {
           [message.scope]: { ...reported[message.scope], ...message.values },
         });
         // MM-411: a machine with the map role `edit` may set shared values, like its agents.
-        // MM-919: an owner-only setting stays an override of this machine.
+        // MM-919: an owner-only setting goes its own way below.
         const shared = message.shared === true && machine.mapRole === "edit";
-        const ownerOnly = Object.fromEntries(
-          Object.entries(message.values).filter(([key]) => isOwnerOnlySetting(message.scope, key)),
+        const values = Object.fromEntries(
+          Object.entries(message.values).filter(([key]) => !isOwnerOnlySetting(message.scope, key)),
         );
-        const desiredClientAccess =
-          effectiveSettings(this.#map, id)[message.scope].clientAccess ?? "off";
         const changes = shared
-          ? [
-              ...sharedSettingChanges(this.#map, message.scope, message.values),
-              ...localSettingChanges(this.#map, id, message.scope, ownerOnly),
-            ]
-          : localSettingChanges(this.#map, id, message.scope, message.values);
+          ? sharedSettingChanges(this.#map, message.scope, values)
+          : localSettingChanges(this.#map, id, message.scope, values);
         if (changes.length > 0) {
           this.#commit(
             { _tag: "agent", machineId: id, threadId: null, threadTitle: null },
             shared ? `shared from ${machine.name}` : `changed on ${machine.name}`,
             changes,
-            "change",
-            "allow",
           );
         }
-        // MM-919: only the local desktop app changes clientAccess on a machine, as the way back
-        // in. A report of the value that the map wants is no change.
-        const reportedClientAccess = ownerOnly.clientAccess;
-        if (reportedClientAccess !== undefined && reportedClientAccess !== desiredClientAccess) {
-          this.#notify({
-            title: `clientAccess changed on ${machine.name}`,
-            body: `Set to ${String(reportedClientAccess)} outside the portal.`,
-            url: "/#/settings",
-            tag: `client-access:${id}`,
-          });
+        const clientAccess = message.values.clientAccess;
+        if (message.scope === "server" && clientAccess !== undefined) {
+          this.#recordLocalClientAccess(machine, clientAccess);
         }
         return;
       }
@@ -1015,6 +1005,36 @@ export class MachineMapObject extends DurableObject<Env> {
         }
         return;
       }
+    }
+  }
+
+  /**
+   * MM-919: only the local desktop app changes clientAccess on a machine, as the way back in. The
+   * owner hears of it first; then it becomes an override of the machine. While paused, a value
+   * that leaves `enforce` is refused (MM-711), but the push message still goes out.
+   */
+  #recordLocalClientAccess(machine: MachineRecord, value: unknown): void {
+    const desired = effectiveSettings(this.#map, machine.id).server.clientAccess ?? "off";
+    if (value === desired) return;
+    this.#notify({
+      title: `clientAccess changed on ${machine.name}`,
+      body: `Set to ${String(value)} outside the portal.`,
+      url: "/#/settings",
+      tag: `client-access:${machine.id}`,
+    });
+    const changes = localSettingChanges(this.#map, machine.id, "server", { clientAccess: value });
+    if (changes.length === 0) return;
+    try {
+      this.#commit(
+        { _tag: "agent", machineId: machine.id, threadId: null, threadTitle: null },
+        `changed on ${machine.name}`,
+        changes,
+        "change",
+        "allow",
+      );
+    } catch (error) {
+      if (!(error instanceof PortalError)) throw error;
+      console.error("clientAccess change refused", machine.id, error.message);
     }
   }
 

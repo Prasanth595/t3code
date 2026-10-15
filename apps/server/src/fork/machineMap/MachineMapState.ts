@@ -8,7 +8,7 @@
  */
 import {
   type AuthMcpClientAccess,
-  type ClientAccessMode,
+  ClientAccessMode,
   DEFAULT_MACHINE_MAP_PORTAL_URL,
   type MachineToPortal,
   MachineCommand,
@@ -81,6 +81,13 @@ const SavedState = Schema.Struct({
    * them, and cleared only after the revocation worked, so a failed one runs again.
    */
   pendingRevokes: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * MM-919: a `clientAccess` value set on this machine that the portal has not seen yet. It
+   * survives a restart and goes out in `hello`, so the way back in is not lost.
+   */
+  pendingClientAccess: Schema.NullOr(ClientAccessMode).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type SavedState = typeof SavedState.Type;
 const EMPTY_SAVED_STATE: SavedState = {
@@ -90,6 +97,7 @@ const EMPTY_SAVED_STATE: SavedState = {
   pausedTaskIds: [],
   desktopCommands: [],
   pendingRevokes: [],
+  pendingClientAccess: null,
 };
 const decodeSavedState = Schema.decodeUnknownEffect(fromLenientJson(SavedState));
 const encodeSavedState = Schema.encodeEffect(fromJsonStringPretty(SavedState));

@@ -4,6 +4,8 @@
  */
 import {
   type ArrowRecord,
+  AuthAccessWriteScope,
+  AuthRelayWriteScope,
   type AuthEnvironmentScope,
   clientSessionSubject,
   type DesiredBrowserClient,
@@ -107,7 +109,8 @@ export const clientsWithChangedLevel = (
 /**
  * MM-917, MM-918: the grant for a browser that proved a key that an approved client holds, or
  * undefined for an unknown key, `none` or an expired arrow. `observe` caps it at `standard`, so it
- * never gives more than the owner login; `enforce` gives the full level.
+ * never gives more than the owner login; `enforce` gives the full level without `access:write`
+ * and `relay:write`.
  */
 export const browserGrantFor = (
   desired: MachineDesiredState,
@@ -123,7 +126,11 @@ export const browserGrantFor = (
   if (level === "none") return undefined;
   return {
     subject: clientSessionSubject(client.id),
-    scopes: MACHINE_LEVEL_SCOPES[mode === "observe" && level === "admin" ? "standard" : level],
+    // A browser session is not bound to its key yet, so a stolen cookie must not mint pairing
+    // links or relay grants that outlive it. Revisit when browser sessions are key-bound.
+    scopes: MACHINE_LEVEL_SCOPES[
+      mode === "observe" && level === "admin" ? "standard" : level
+    ].filter((scope) => scope !== AuthAccessWriteScope && scope !== AuthRelayWriteScope),
     label: `client ${client.name}`,
   };
 };

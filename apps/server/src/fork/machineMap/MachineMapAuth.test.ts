@@ -38,7 +38,7 @@ import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { guardClientAccessPatch } from "./browserAccess.ts";
+import { guardOwnerOnlyPatch } from "./browserAccess.ts";
 import { isLocalDesktopSubject } from "./machineAccess.ts";
 import { PEER, PEER_TOKEN, SELF, arrow, desiredState } from "./MachineMap.testkit.ts";
 import * as MachineMapState from "./MachineMapState.ts";
@@ -299,21 +299,16 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
     }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "enforce"))),
   );
 
-  it.effect(
-    "only the local desktop app changes clientAccess through the settings RPC (MM-919)",
-    () =>
-      Effect.gen(function* () {
-        const patch = { clientAccess: "off" };
-        expect(
-          Exit.isFailure(yield* Effect.exit(guardClientAccessPatch(patch, "one-time-token"))),
-        ).toBe(true);
-        expect(
-          Exit.isSuccess(yield* Effect.exit(guardClientAccessPatch(patch, "desktop-bootstrap"))),
-        ).toBe(true);
-        expect(
-          Exit.isSuccess(yield* Effect.exit(guardClientAccessPatch({}, "one-time-token"))),
-        ).toBe(true);
-      }),
+  it.effect("only the local desktop app changes clientAccess or the map setting (MM-919)", () =>
+    Effect.gen(function* () {
+      const refused = (patch: Parameters<typeof guardOwnerOnlyPatch>[0], subject: string) =>
+        Effect.exit(guardOwnerOnlyPatch(patch, subject)).pipe(Effect.map(Exit.isFailure));
+      expect(yield* refused({ clientAccess: "off" }, "one-time-token")).toBe(true);
+      // Switching the map off would end `enforce` as well.
+      expect(yield* refused({ machineMap: { enabled: false } }, "one-time-token")).toBe(true);
+      expect(yield* refused({ clientAccess: "off" }, "desktop-bootstrap")).toBe(false);
+      expect(yield* refused({}, "one-time-token")).toBe(false);
+    }),
   );
 
   it.effect("/mcp admits a machine session only while its arrow has agent tools (MM-1307)", () =>

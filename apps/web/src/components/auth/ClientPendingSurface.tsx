@@ -1,6 +1,6 @@
 import type { AuthSessionState } from "@t3tools/contracts";
 import { ExternalLinkIcon } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { APP_DISPLAY_NAME } from "../../branding";
 import { fetchSessionState } from "../../environments/primary";
@@ -14,16 +14,19 @@ const APPROVAL_CHECK_INTERVAL_MS = 5_000;
  * this browser waits for approval in the portal.
  */
 export function ClientPendingSurface({
-  pending,
+  pending: firstPending,
 }: {
   readonly pending: NonNullable<AuthSessionState["clientPending"]>;
 }) {
+  // The first sign-in can come before the browser key exists; a later check brings its code.
+  const [pending, setPending] = useState(firstPending);
   useEffect(() => {
     // The approval needs no action here: the next check after it loads the app.
     const timer = window.setInterval(() => {
       void fetchSessionState().then(
         (session) => {
           if (session.clientPending === undefined) window.location.reload();
+          else setPending(session.clientPending);
         },
         () => undefined,
       );
@@ -38,7 +41,7 @@ export function ClientPendingSurface({
         title="Waiting for approval"
         description={
           pending.code === null
-            ? "This browser could not prove its key. Reload the page, or use a pairing link."
+            ? "This browser has not proven its key yet. If no code shows here soon, reload the page or use a pairing link."
             : `Approve this browser in the machine map portal. Its code is ${pending.code}.`
         }
       />

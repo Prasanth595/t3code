@@ -239,7 +239,7 @@ import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
-import { guardClientAccessPatch } from "./fork/machineMap/browserAccess.ts";
+import { guardOwnerOnlyPatch, requireLocalDesktop } from "./fork/machineMap/browserAccess.ts";
 import { isLocalDesktopSubject, isMachineSubject } from "./fork/machineMap/machineAccess.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -2470,7 +2470,7 @@ const layerWsRpc = (
           serverSettings.getSettings.pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
         [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
           Effect.gen(function* () {
-            yield* guardClientAccessPatch(patch, currentSession.subject);
+            yield* guardOwnerOnlyPatch(patch, currentSession.subject);
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -2504,8 +2504,10 @@ const layerWsRpc = (
         [WS_METHODS.forkChangelogSyncStatus]: (_input) => forkChangelog.syncStatus,
         [WS_METHODS.forkChangelogStartSync]: (_input) => forkChangelog.startSync,
         [WS_METHODS.machineMapSubscribe]: (_input) => machineMap.clientStates(machineMapClient),
-        [WS_METHODS.machineMapJoin]: (input) => machineMap.join(input),
-        [WS_METHODS.machineMapLeave]: (_input) => machineMap.leave,
+        [WS_METHODS.machineMapJoin]: (input) =>
+          requireLocalDesktop(machineMapClient).pipe(Effect.andThen(machineMap.join(input))),
+        [WS_METHODS.machineMapLeave]: (_input) =>
+          requireLocalDesktop(machineMapClient).pipe(Effect.andThen(machineMap.leave)),
         [WS_METHODS.machineMapReportDesktop]: (input) =>
           machineMap.reportDesktop(input, machineMapClient).pipe(Effect.as({})),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),

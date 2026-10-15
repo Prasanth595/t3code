@@ -12,6 +12,7 @@ import { useState } from "react";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { isElectron } from "../../env";
 import { joinMachineMap, leaveMachineMap, useMachineMapState } from "../../state/machineMap";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Badge } from "../ui/badge";
@@ -120,6 +121,10 @@ const CLIENT_ACCESS_LABELS: Record<ClientAccessMode, string> = {
 function ClientAccessSettingsRow() {
   const mode = useScopedSettings((settings) => settings.clientAccess);
   const updateSettings = useUpdateScopedSettings();
+  const { environment } = useSettingsScope();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // Only the desktop app of the selected machine itself may change it; a remote one refuses.
+  const local = isElectron && environment?.environmentId === primaryEnvironmentId;
   return (
     <SettingsRow
       {...searchableSetting("machine-map-client-access")}
@@ -129,7 +134,7 @@ function ClientAccessSettingsRow() {
       control={
         <Select
           value={mode}
-          disabled={!isElectron}
+          disabled={!local}
           onValueChange={(value) => {
             if (value !== "off" && value !== "observe" && value !== "enforce") return;
             updateSettings({ clientAccess: value });

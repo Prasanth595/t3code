@@ -15,6 +15,7 @@ import {
   AuthTerminalReadScope,
 } from "./auth.ts";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ClientAccessMode } from "./settings.ts";
 
 /** Wire version of the machine and page protocols. Bump on a breaking change. */
 export const MACHINE_MAP_PROTOCOL = 1 as const;
@@ -122,13 +123,12 @@ export const ClientRecord = Schema.Struct({
 export type ClientRecord = typeof ClientRecord.Type;
 
 /**
- * MM-906: the short code of a browser key, for example `K7-PQ-3M`. The waiting browser and the
- * portal both show it, so the owner can tell that they approve the right sign-in.
+ * MM-906: the short code of a browser key, for example `K7qP-3m_x`. The waiting browser and the
+ * portal both show it, so the owner can tell that they approve the right sign-in. It keeps 8
+ * base64url characters with their case, about 48 bits, so a look-alike key is not practical.
  */
-export const clientKeyCode = (thumbprint: string): string => {
-  const letters = thumbprint.slice(0, 6).toUpperCase();
-  return [letters.slice(0, 2), letters.slice(2, 4), letters.slice(4, 6)].join("-");
-};
+export const clientKeyCode = (thumbprint: string): string =>
+  `${thumbprint.slice(0, 4)}-${thumbprint.slice(4, 8)}`;
 
 /** What one client can do on one machine (MM-309). A client never gets agent tools. */
 export const ClientArrowRecord = Schema.Struct({
@@ -649,6 +649,11 @@ export const MachineToPortal = Schema.Union([
     status: MachineStatus,
     /** Current values of every setting but the machine-local ones (MM-405, MM-406). */
     settings: ScopedSettingValues,
+    /**
+     * MM-919: a `clientAccess` value that the local desktop app set and the portal has not seen
+     * yet. The portal records it before it sends the desired state.
+     */
+    localClientAccess: Schema.optionalKey(ClientAccessMode),
   }),
   Schema.TaggedStruct("status", { status: MachineStatus }),
   Schema.TaggedStruct("applied", { revision: NonNegativeInt }),
