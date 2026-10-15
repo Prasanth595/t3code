@@ -1,4 +1,5 @@
-import * as Dialog from "../../components/Dialog";
+import { Toolbar } from "../../components/ui/Toolbar";
+import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import {
@@ -41,14 +42,14 @@ import { Platform, Pressable, RefreshControl, ScrollView, TextInput, View } from
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
-import { Button } from "../../components/Button";
-import { IconButton } from "../../components/IconButton";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
+import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import {
   buildModelOptions,
@@ -60,18 +61,14 @@ import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { rememberModelOptions } from "../../state/use-model-option-memory";
-import {
-  NativeHeaderToolbar,
-  NativeStackScreenOptions,
-  nativeHeaderScrollEdgeEffects,
-} from "../../native/StackHeader";
+import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
-import { ScreenContent } from "../../components/ScreenContent";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import {
   createProviderCatalogRefreshRunner,
   providerCatalogRefreshError,
@@ -1415,23 +1412,23 @@ function ThreadSettingsModelsScreen() {
           }}
         />
       </ScreenContent>
-      <NativeHeaderToolbar placement="left">
-        <NativeHeaderToolbar.Button
+      <Toolbar placement="left">
+        <Toolbar.Button
           accessibilityLabel="Cancel thread settings"
           label="Cancel"
           onPress={presentation.onClose}
         />
-      </NativeHeaderToolbar>
-      <NativeHeaderToolbar placement="right">
-        <NativeHeaderToolbar.Button
+      </Toolbar>
+      <Toolbar placement="right">
+        <Toolbar.Button
           accessibilityLabel={session.pendingModel ? "Save thread settings" : "Done"}
           label={session.pendingModel ? "Save" : "Done"}
           onPress={commitAndClose}
         />
-      </NativeHeaderToolbar>
+      </Toolbar>
       {Platform.OS === "ios" && !usesNativeMailSearchToolbar ? (
-        <NativeHeaderToolbar placement="bottom">
-          <NativeHeaderToolbar.Menu
+        <Toolbar placement="bottom">
+          <Toolbar.Menu
             accessibilityLabel="Filter models"
             icon={
               hasCustomCatalogFilter
@@ -1441,40 +1438,40 @@ function ThreadSettingsModelsScreen() {
             separateBackground
             title="Model filters"
           >
-            <NativeHeaderToolbar.Menu title="Provider">
-              <NativeHeaderToolbar.Label>Provider</NativeHeaderToolbar.Label>
-              <NativeHeaderToolbar.MenuAction
+            <Toolbar.Menu title="Provider">
+              <Toolbar.Label>Provider</Toolbar.Label>
+              <Toolbar.MenuAction
                 isOn={session.providerFilter === null}
                 onPress={() => session.setProviderFilter(null)}
               >
                 All providers
-              </NativeHeaderToolbar.MenuAction>
-              <NativeHeaderToolbar.MenuAction
+              </Toolbar.MenuAction>
+              <Toolbar.MenuAction
                 isOn={session.providerFilter === FAVORITES_PROVIDER_FILTER}
                 onPress={() => session.setProviderFilter(FAVORITES_PROVIDER_FILTER)}
               >
                 Favorites
-              </NativeHeaderToolbar.MenuAction>
+              </Toolbar.MenuAction>
               {session.providerGroups.map((group) => (
-                <NativeHeaderToolbar.MenuAction
+                <Toolbar.MenuAction
                   key={group.providerKey}
                   isOn={session.providerFilter === group.providerKey}
                   onPress={() => session.setProviderFilter(group.providerKey)}
                 >
                   {group.providerLabel}
-                </NativeHeaderToolbar.MenuAction>
+                </Toolbar.MenuAction>
               ))}
-            </NativeHeaderToolbar.Menu>
+            </Toolbar.Menu>
             {session.hasLegacyModels ? (
-              <NativeHeaderToolbar.MenuAction
+              <Toolbar.MenuAction
                 isOn={session.showLegacy}
                 onPress={() => session.setShowLegacy(!session.showLegacy)}
               >
                 Show legacy models
-              </NativeHeaderToolbar.MenuAction>
+              </Toolbar.MenuAction>
             ) : null}
-          </NativeHeaderToolbar.Menu>
-        </NativeHeaderToolbar>
+          </Toolbar.Menu>
+        </Toolbar>
       ) : null}
     </>
   );
