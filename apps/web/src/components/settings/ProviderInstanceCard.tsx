@@ -229,6 +229,23 @@ export function providerEnvironmentWithoutNames(
   return (environment ?? []).filter((variable) => !names.has(variable.name));
 }
 
+/**
+ * Saves the generic editor's rows alongside the dedicated fields it hides. A
+ * row that names a dedicated variable replaces that field's value rather than
+ * duplicating it.
+ */
+export function nextProviderEnvironmentWithGenericRows(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  genericRows: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+  dedicatedNames: ReadonlySet<string>,
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  const rowNames = new Set(genericRows.map((variable) => variable.name));
+  const dedicated = (environment ?? []).filter(
+    (variable) => dedicatedNames.has(variable.name) && !rowNames.has(variable.name),
+  );
+  return [...dedicated, ...genericRows];
+}
+
 export function nextProviderEnvironmentWithFieldValue(
   environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
   field: ProviderEnvironmentField,
@@ -264,6 +281,21 @@ export function nextProviderEnvironmentWithFieldValue(
   return next;
 }
 
+const TRUTHY_ENVIRONMENT_VALUES = new Set(["1", "true", "yes", "on"]);
+
+/**
+ * Whether a `switch` environment field reads as on. A hidden value cannot be
+ * read back, so a variable saved as sensitive counts as on, since setting one
+ * is how it was enabled before the switch existed.
+ */
+export function isProviderEnvironmentSwitchOn(
+  variable: ProviderInstanceEnvironmentVariable | undefined,
+): boolean {
+  if (variable === undefined) return false;
+  if (variable.valueRedacted) return true;
+  return TRUTHY_ENVIRONMENT_VALUES.has(variable.value.trim().toLowerCase());
+}
+
 function ProviderEnvironmentFieldRow(props: {
   readonly field: ProviderEnvironmentField;
   readonly variable: ProviderInstanceEnvironmentVariable | undefined;
@@ -273,6 +305,24 @@ function ProviderEnvironmentFieldRow(props: {
 }) {
   const inputId = `${props.idPrefix}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
+
+  if (props.field.control === "switch") {
+    return (
+      <SettingsRow
+        title={props.field.label}
+        description={props.field.description}
+        control={
+          <Switch
+            checked={isProviderEnvironmentSwitchOn(props.variable)}
+            onCheckedChange={(checked) =>
+              checked ? props.onCommit(props.field, "1") : props.onRemove(props.field)
+            }
+            aria-label={props.field.label}
+          />
+        }
+      />
+    );
+  }
 
   return (
     <SettingsRow
@@ -841,8 +891,8 @@ export function ProviderInstanceCard({
         : (rest as ProviderInstanceConfig),
     );
   };
-  // Drivers that need a named secret (Cursor's API key) get a dedicated field;
-  // the generic editor only shows the remaining variables.
+  // Drivers that need a named secret (Cursor's API key) or flag (Claude's fork
+  // subagents) get a dedicated field; the generic editor only shows the rest.
   const environmentFields = driverOption?.environmentFields ?? [];
   const environmentFieldNames = new Set(environmentFields.map((field) => field.name));
   const genericEnvironment = providerEnvironmentWithoutNames(
@@ -852,10 +902,13 @@ export function ProviderInstanceCard({
   const updateGenericEnvironment = (
     environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
   ) => {
-    const dedicatedEnvironment = (instance.environment ?? []).filter((variable) =>
-      environmentFieldNames.has(variable.name),
+    updateEnvironment(
+      nextProviderEnvironmentWithGenericRows(
+        instance.environment,
+        environment,
+        environmentFieldNames,
+      ),
     );
-    updateEnvironment([...dedicatedEnvironment, ...environment]);
   };
   const updateEnvironmentField = (field: ProviderEnvironmentField, value: string) => {
     updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));

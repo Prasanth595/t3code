@@ -10,11 +10,14 @@ import {
 
 import {
   deriveProviderModelsForDisplay,
+  isProviderEnvironmentSwitchOn,
   nextProviderEnvironmentWithFieldValue,
+  nextProviderEnvironmentWithGenericRows,
   providerEnvironmentWithoutNames,
   ProviderInstanceCard,
   readProviderEnvironmentVariable,
 } from "./ProviderInstanceCard";
+import { providerClients } from "./providerDriverMeta";
 
 describe("deriveProviderModelsForDisplay", () => {
   it("uses current config custom models instead of stale live custom rows", () => {
@@ -230,6 +233,76 @@ describe("provider environment helpers", () => {
       "cursor-key",
     );
     expect(providerEnvironmentWithoutNames(environment, new Set(["CURSOR_API_KEY"]))).toEqual([
+      { name: "EXTRA_FLAG", value: "1", sensitive: false },
+    ]);
+  });
+});
+
+describe("Claude fork subagents switch", () => {
+  const forkSubagentsField = providerClients
+    .get(ProviderDriverKind.make("claudeAgent"))
+    ?.environmentFields?.find((field) => field.name === "CLAUDE_CODE_FORK_SUBAGENT");
+
+  it("reads the instance environment variable the switch writes", () => {
+    expect(forkSubagentsField?.control).toBe("switch");
+    expect(isProviderEnvironmentSwitchOn(undefined)).toBe(false);
+    const variable = (value: string) => ({
+      name: "CLAUDE_CODE_FORK_SUBAGENT",
+      value,
+      sensitive: false,
+    });
+    for (const value of ["1", "true", " YES ", "on"]) {
+      expect(isProviderEnvironmentSwitchOn(variable(value))).toBe(true);
+    }
+    for (const value of ["0", "false", ""]) {
+      expect(isProviderEnvironmentSwitchOn(variable(value))).toBe(false);
+    }
+    // A value saved as sensitive comes back hidden; it was set to turn the feature on.
+    expect(
+      isProviderEnvironmentSwitchOn({
+        name: "CLAUDE_CODE_FORK_SUBAGENT",
+        value: "",
+        sensitive: true,
+        valueRedacted: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("a generic row naming the variable replaces the switch value instead of duplicating it", () => {
+    expect(
+      nextProviderEnvironmentWithGenericRows(
+        [
+          { name: "CLAUDE_CODE_FORK_SUBAGENT", value: "", sensitive: true },
+          { name: "EXTRA_FLAG", value: "1", sensitive: false },
+        ],
+        [{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: true }],
+        new Set(["CLAUDE_CODE_FORK_SUBAGENT"]),
+      ),
+    ).toEqual([{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: true }]);
+    expect(
+      nextProviderEnvironmentWithGenericRows(
+        [{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: false }],
+        [{ name: "EXTRA_FLAG", value: "1", sensitive: false }],
+        new Set(["CLAUDE_CODE_FORK_SUBAGENT"]),
+      ),
+    ).toEqual([
+      { name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: false },
+      { name: "EXTRA_FLAG", value: "1", sensitive: false },
+    ]);
+  });
+
+  it("turning it on replaces an existing value with a visible 1", () => {
+    expect(
+      nextProviderEnvironmentWithFieldValue(
+        [
+          { name: "CLAUDE_CODE_FORK_SUBAGENT", value: "0", sensitive: true },
+          { name: "EXTRA_FLAG", value: "1", sensitive: false },
+        ],
+        forkSubagentsField!,
+        "1",
+      ),
+    ).toEqual([
+      { name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: false },
       { name: "EXTRA_FLAG", value: "1", sensitive: false },
     ]);
   });

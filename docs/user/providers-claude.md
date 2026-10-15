@@ -57,6 +57,18 @@ history for that message. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
+## Fork subagents
+
+Turn on **Fork subagents** in the Claude provider settings to let Claude start
+forked subagents, which inherit the whole conversation instead of starting from a
+fresh prompt. The switch is the instance's `CLAUDE_CODE_FORK_SUBAGENT` environment
+variable: on sets it to `1` for that instance's threads and provider terminals, and
+off removes it. A value you already added under **Environment variables** moves to
+this switch, so the switch always shows the instance's setting.
+
+The instance setting takes precedence over the environment T3 Code starts in. With
+the switch off, a `CLAUDE_CODE_FORK_SUBAGENT` exported there still applies.
+
 ## Usage limits
 
 If your Claude subscription runs out of usage mid-turn, the thread shows which

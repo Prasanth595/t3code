@@ -29,6 +29,8 @@ export interface ProviderEnvironmentField {
   readonly description?: string;
   readonly placeholder?: string;
   readonly sensitive?: boolean;
+  /** `switch` sets the variable to `1` when on and removes it when off. Defaults to `text`. */
+  readonly control?: "text" | "switch";
 }
 
 /**

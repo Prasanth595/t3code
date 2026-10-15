@@ -23,6 +23,15 @@ export const providerClients = makeProviderClientRegistry([
     driverKind: ProviderDriverKind.make("claudeAgent"),
     label: "Claude",
     settingsSchema: ClaudeSettings,
+    environmentFields: [
+      {
+        name: "CLAUDE_CODE_FORK_SUBAGENT",
+        label: "Fork subagents",
+        description: "Let Claude fork subagents that inherit the full conversation.",
+        sensitive: false,
+        control: "switch",
+      },
+    ],
   },
   cursorClient,
   grokClient,
