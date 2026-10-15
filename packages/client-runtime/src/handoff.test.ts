@@ -108,6 +108,16 @@ describe("pending context handoff", () => {
     expect(resolvePendingHandoff(windowed, { instanceId: to, model: "next" }, [])?.from).toEqual([
       { instanceId: from, model: "source" },
     ]);
+    // Every earlier run is loaded and none produced conversation.
+    const afterFailedStart = {
+      runs: [
+        { ...run("failed", 1, from, "source"), startedAt: null, status: "failed" },
+        { ...run("current", 2, from, "source"), startedAt, status: "running" },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    expect(
+      resolvePendingHandoff(afterFailedStart, { instanceId: to, model: "next" }, []),
+    ).toBeNull();
   });
   it("hands off from the latest started run, not the latest finished one", () => {
     const withLaterRun = (status: string, laterStartedAt: string | null) =>

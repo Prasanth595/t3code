@@ -29,11 +29,15 @@ export function resolvePendingHandoff(
     (run) => run.startedAt !== null && run.status !== "rolled_back",
   );
   const latest = startedRuns?.at(-1);
-  // Mirrors the server's handoff sources: a thread whose only run is still
-  // running has no conversation to hand off yet. Bounded snapshots can omit
-  // earlier finished runs, so a later ordinal also counts as history.
+  // A thread whose only run is still running has no conversation to hand off
+  // yet. Bounded snapshots can omit earlier runs, so missing ordinals before
+  // the latest run also count as history.
+  const earlierLoadedRuns =
+    latest === undefined
+      ? 0
+      : (projection?.runs.filter((run) => run.ordinal < latest.ordinal).length ?? 0);
   const hasHistory =
-    (latest?.ordinal ?? 0) > 1 ||
+    (latest !== undefined && earlierLoadedRuns < latest.ordinal - 1) ||
     startedRuns?.some(
       (run) =>
         run.status === "completed" || run.status === "failed" || run.status === "interrupted",
