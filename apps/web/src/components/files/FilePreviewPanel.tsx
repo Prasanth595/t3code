@@ -77,7 +77,7 @@ import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
-import { retainedBreadcrumbTrail, trailChildOf } from "./filePath";
+import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
@@ -1180,8 +1180,14 @@ export default function FilePreviewPanel({
     previewAvailable &&
     isBrowserPreviewFile(previewPath);
   // A file keeps its tab; walking up from it opens a folder browser beside it.
-  const navigateToFolder = (path: string) =>
+  // The trail's end keeps its own spelling (`C:/a` or `C:\a`), so it finds its tab.
+  const navigateToFolder = (crumbPath: string) => {
+    const path =
+      breadcrumbTrail !== null && breadcrumbPathOf(breadcrumbTrail) === crumbPath
+        ? breadcrumbTrail
+        : crumbPath;
     onNavigateFolder(path, retainedBreadcrumbTrail(breadcrumbTrail ?? undefined, path), !isFolder);
+  };
   const absolutePath =
     breadcrumbPath === ""
       ? cwd

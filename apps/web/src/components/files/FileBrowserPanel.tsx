@@ -41,9 +41,9 @@ interface FileBrowserPanelProps {
   onOpenFile: (relativePath: string) => void;
   /**
    * Set when `cwd` is a host folder outside the workspace rather than the
-   * workspace root. Entries then open and mention as host paths. The tree offers
-   * no expand-all: it would walk the whole folder, which can be a home directory.
-   * Search stays, since its index is bounded and only builds once you type.
+   * workspace root. Entries then open and mention as host paths. A host folder can
+   * be a home directory, so nothing walks it whole: there is no expand-all, and
+   * search filters the folders already loaded instead of indexing on the server.
    */
   hostFolder?: boolean;
   onRefreshSelectedFile?: () => void;
@@ -130,7 +130,10 @@ export default function FileBrowserPanel({
   } = useDirectoryEntries(environmentId, cwd);
   const [query, setQuery] = useState("");
   const [expandAll, setExpandAll] = useState(false);
-  const pathSearch = useProjectPathSearch({ environmentId, cwd, query: query.slice(0, 256) }, 200);
+  const pathSearch = useProjectPathSearch(
+    { environmentId, cwd: hostFolder ? null : cwd, query: query.slice(0, 256) },
+    200,
+  );
   const entries = useMemo(() => {
     const result = new Map(directoryEntries.map((entry) => [entry.path, entry]));
     if (query.trim() && !pathSearch.isPending) {
