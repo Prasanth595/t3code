@@ -280,14 +280,14 @@ export const make = Effect.gen(function* () {
           }
           lastFrameAt = yield* Clock.currentTimeMillis;
           throttle = COMMAND_OUTPUT_FRAME_INTERVAL_MS;
-          const tail = tails.get(key);
+          // A finished tail still shows until the settled item arrives.
+          const tail = tails.get(key) ?? finished.get(key);
           if (settled !== undefined) {
-            const lastTail = tail ?? finished.get(key);
-            if (settled.output === undefined && lastTail !== undefined) {
+            if (settled.output === undefined && tail !== undefined) {
               return {
                 kind: "replace",
-                text: lastTail.text,
-                truncated: lastTail.truncated,
+                text: tail.text,
+                truncated: tail.truncated,
                 running: false,
               };
             }
