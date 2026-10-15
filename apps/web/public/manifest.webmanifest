@@ -42,15 +42,75 @@
     {
       "name": "New thread",
       "description": "Start a thread in the most recent project.",
-      "url": "/"
+      "url": "/",
+      "icons": [
+        {
+          "src": "/shortcuts/new-thread-96.png",
+          "type": "image/png",
+          "sizes": "96x96",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/new-thread-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/new-thread-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "any"
+        }
+      ]
     },
     {
       "name": "Pull requests",
-      "url": "/pull-requests"
+      "url": "/pull-requests",
+      "icons": [
+        {
+          "src": "/shortcuts/pull-requests-96.png",
+          "type": "image/png",
+          "sizes": "96x96",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/pull-requests-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/pull-requests-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "any"
+        }
+      ]
     },
     {
       "name": "Settings",
-      "url": "/settings"
+      "url": "/settings",
+      "icons": [
+        {
+          "src": "/shortcuts/settings-96.png",
+          "type": "image/png",
+          "sizes": "96x96",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/settings-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/settings-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "any"
+        }
+      ]
     }
   ]
 }

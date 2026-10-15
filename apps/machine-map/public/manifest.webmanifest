@@ -6,13 +6,33 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "launch_handler": { "client_mode": ["navigate-existing", "auto"] },
+  "launch_handler": {
+    "client_mode": [
+      "navigate-existing",
+      "auto"
+    ]
+  },
   "background_color": "#e4e7ff",
   "theme_color": "#e4e7ff",
   "icons": [
-    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
-    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },
-    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any" },
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
     {
       "src": "/icon-maskable-512.png",
       "type": "image/png",
@@ -26,15 +46,126 @@
       "short_name": "Pause",
       "description": "Open the big red button.",
       "url": "/?open=emergency#/map",
-      "icons": [{ "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/shortcuts/emergency-pause-96.png",
+          "type": "image/png",
+          "sizes": "96x96",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/emergency-pause-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/emergency-pause-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "any"
+        }
+      ]
     },
-    { "name": "Inbox", "description": "Proposals that wait for you.", "url": "/#/inbox" },
+    {
+      "name": "Inbox",
+      "description": "Proposals that wait for you.",
+      "url": "/#/inbox",
+      "icons": [
+        {
+          "src": "/shortcuts/inbox-96.png",
+          "type": "image/png",
+          "sizes": "96x96",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/inbox-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/inbox-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "any"
+        }
+      ]
+    },
     {
       "name": "Health",
       "description": "Alerts and resources of every machine.",
-      "url": "/#/health"
+      "url": "/#/health",
+      "icons": [
+        {
+          "src": "/shortcuts/health-96.png",
+          "type": "image/png",
+          "sizes": "96x96",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/health-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/health-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "any"
+        }
+      ]
     },
-    { "name": "Queue", "description": "Work that waits for offline machines.", "url": "/#/queue" },
-    { "name": "Tasks", "description": "Scheduled tasks of every machine.", "url": "/#/tasks" }
+    {
+      "name": "Queue",
+      "description": "Work that waits for offline machines.",
+      "url": "/#/queue",
+      "icons": [
+        {
+          "src": "/shortcuts/queue-96.png",
+          "type": "image/png",
+          "sizes": "96x96",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/queue-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/queue-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "any"
+        }
+      ]
+    },
+    {
+      "name": "Tasks",
+      "description": "Scheduled tasks of every machine.",
+      "url": "/#/tasks",
+      "icons": [
+        {
+          "src": "/shortcuts/tasks-96.png",
+          "type": "image/png",
+          "sizes": "96x96",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/tasks-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "maskable"
+        },
+        {
+          "src": "/shortcuts/tasks-192.png",
+          "type": "image/png",
+          "sizes": "192x192",
+          "purpose": "any"
+        }
+      ]
+    }
   ]
 }
