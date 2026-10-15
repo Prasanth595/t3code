@@ -5,13 +5,15 @@
  *   login in `<stateDir>/machine-map-tunnel.json`.
  * - At start, `cli/config.ts` reads that file for the tunnel and Access settings, unless the
  *   environment or the desktop settings give their own tunnel. Then the explicit values win.
- * - When the server uses the joined tunnel, this service runs `cloudflared` as a child process
- *   from `<stateDir>/bin`. It starts it again after each exit and stops it with the server.
+ * - The joined tunnel applies only while the `machineMap` setting is on (MM-1301).
+ * - When the server uses the joined tunnel, this service runs the pinned `cloudflared` of the
+ *   upstream relay client as a child process. It starts it again after each exit, and stops it
+ *   when the map turns off, on "Leave" too, or with the server.
  */
 import { MachineMapRequestError, MachineTunnelGrant } from "@t3tools/contracts";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -20,19 +22,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
-import * as ProcessRunner from "../../processRunner.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 
 const JOINED_TUNNEL_FILE = "machine-map-tunnel.json";
 const TOKEN_SECRET_NAME = "machine-map-tunnel-token";
 /** A pause after each exit, so a broken token or download does not spin. */
 const RESTART_DELAY = Duration.seconds(10);
-const RELEASES = "https://github.com/cloudflare/cloudflared/releases/latest/download";
 
 /** The grant without its token: the part that the config reads at start. */
 export const JoinedTunnel = Schema.Struct({
@@ -68,38 +68,24 @@ export const readJoinedTunnel = (stateDir: string) =>
     );
   });
 
-/** The official `cloudflared` release asset of this platform. Null where Cloudflare has none. */
-function cloudflaredAsset(
-  platform: NodeJS.Platform,
-  arch: NodeJS.Architecture,
-): { readonly name: string; readonly archive: boolean } | null {
-  const plain = (name: string) => ({ name, archive: false });
-  if (platform === "linux") {
-    if (arch === "x64") return plain("cloudflared-linux-amd64");
-    if (arch === "arm64") return plain("cloudflared-linux-arm64");
-    if (arch === "arm") return plain("cloudflared-linux-arm");
-    if (arch === "ia32") return plain("cloudflared-linux-386");
-  }
-  if (platform === "darwin") {
-    if (arch === "x64") return { name: "cloudflared-darwin-amd64.tgz", archive: true };
-    if (arch === "arm64") return { name: "cloudflared-darwin-arm64.tgz", archive: true };
-  }
-  if (platform === "win32") {
-    // Windows on Arm runs the amd64 build through emulation; Cloudflare ships no arm64 build.
-    if (arch === "x64" || arch === "arm64") return plain("cloudflared-windows-amd64.exe");
-    if (arch === "ia32") return plain("cloudflared-windows-386.exe");
-  }
-  return null;
-}
+const MachineMapEnabled = Schema.Struct({
+  machineMap: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+});
+const decodeMachineMapEnabled = Schema.decodeUnknownEffect(fromLenientJson(MachineMapEnabled));
 
-/** `cloudflared` could not download, unpack or start. The supervisor tries again. */
-export class CloudflaredError extends Schema.TaggedError<CloudflaredError>()("CloudflaredError", {
-  detail: Schema.String,
-}) {
-  override get message(): string {
-    return this.detail;
-  }
-}
+/**
+ * MM-1301: whether `settings.json` turns the machine map on. The config reads it at start, before
+ * the settings service runs. A missing or unreadable file counts as off, like the default.
+ */
+export const machineMapEnabledInSettings = (settingsPath: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem.readFileString(settingsPath).pipe(
+      Effect.flatMap(decodeMachineMapEnabled),
+      Effect.map((settings) => settings.machineMap?.enabled === true),
+      Effect.orElseSucceed(() => false),
+    );
+  });
 
 /** What `adopt` did with the tunnel of a join. */
 export type AdoptResult =
@@ -134,13 +120,10 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const processRunner = yield* ProcessRunner.ProcessRunner;
-  const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const relayClient = yield* RelayClient.RelayClient;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
-  const platform = yield* HostProcess.Platform;
-  const arch = yield* HostProcess.Architecture;
   const filePath = path.join(config.stateDir, JOINED_TUNNEL_FILE);
-  const binDir = path.join(config.stateDir, "bin");
   const provide = <A, E>(
     effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
   ): Effect.Effect<A, E> =>
@@ -156,47 +139,11 @@ const make = Effect.gen(function* () {
       Effect.map(Option.getOrNull),
     );
 
-  /** Downloads the official binary once. A later start uses it, and `cloudflared` updates itself. */
-  const ensureBinary = Effect.gen(function* () {
-    const asset = cloudflaredAsset(platform, arch);
-    if (asset === null) {
-      return yield* new CloudflaredError({
-        detail: `Cloudflare has no cloudflared build for ${platform} ${arch}.`,
-      });
-    }
-    const binary = path.join(binDir, platform === "win32" ? "cloudflared.exe" : "cloudflared");
-    if (yield* fileSystem.exists(binary)) return binary;
-    yield* fileSystem.makeDirectory(binDir, { recursive: true });
-    // Limit: HTTPS from GitHub is the only check. Cloudflare publishes the checksums only in the
-    // release text. Revisit when the release adds a machine-readable checksum file.
-    const download = path.join(binDir, `${asset.name}.download`);
-    const bytes = yield* httpClient
-      .execute(HttpClientRequest.get(`${RELEASES}/${asset.name}`))
-      .pipe(Effect.flatMap((response) => response.arrayBuffer));
-    yield* fileSystem.writeFile(download, new Uint8Array(bytes));
-    if (asset.archive) {
-      // The macOS archive holds one file, `cloudflared`.
-      const untar = yield* processRunner.run({
-        command: "tar",
-        args: ["-xzf", download, "-C", binDir],
-        timeout: Duration.minutes(1),
-      });
-      yield* fileSystem.remove(download);
-      if (untar.code !== 0) {
-        return yield* new CloudflaredError({ detail: "Could not unpack cloudflared." });
-      }
-    } else {
-      yield* fileSystem.rename(download, binary);
-    }
-    yield* fileSystem.chmod(binary, 0o755);
-    yield* Effect.logInfo("Downloaded cloudflared.", { path: binary });
-    return binary;
-  });
-
   const runOnce = (token: string) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const binary = yield* ensureBinary;
+        // The pinned release of the upstream relay client, with its sha256 checked.
+        const binary = (yield* relayClient.install).executablePath;
         // The token goes in the environment, so it does not show in the process list.
         const child = yield* spawner.spawn(
           ChildProcess.make(
@@ -236,12 +183,23 @@ const make = Effect.gen(function* () {
     token !== null &&
     config.tunnelPairingUrl === joinedTunnelOrigin(joined)
   ) {
-    yield* runOnce(token).pipe(
+    const runForever = runOnce(token).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("cloudflared could not run. It tries again.", { cause: String(cause) }),
       ),
       Effect.andThen(Effect.sleep(RESTART_DELAY)),
       Effect.forever,
+    );
+    // MM-1301: the tunnel follows the `machineMap` setting. Turning the map off, also by "Leave",
+    // stops `cloudflared`, and turning it on starts it again.
+    yield* Stream.concat(Stream.fromEffect(settings.getSettings), settings.streamChanges).pipe(
+      Stream.map((current) => current.machineMap.enabled),
+      Stream.changes,
+      Stream.switchMap((enabled) => (enabled ? Stream.fromEffect(runForever) : Stream.empty)),
+      Stream.runDrain,
+      Effect.catchCause((cause) =>
+        Effect.logWarning("The machine map tunnel stopped.", { cause: String(cause) }),
+      ),
       Effect.forkScoped,
     );
   }
