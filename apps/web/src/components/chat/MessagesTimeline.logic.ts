@@ -927,7 +927,10 @@ function isPendingQueuedPrompt(
   return (
     queuedRunId === null ||
     !timelineEntries.some(
-      (later, laterIndex) => laterIndex > index && timelineEntryRunId(later) === queuedRunId,
+      (later, laterIndex) =>
+        laterIndex > index &&
+        (later.kind === "event" ? later.projectedItem.item.runId : timelineEntryRunId(later)) ===
+          queuedRunId,
     )
   );
 }
@@ -1437,7 +1440,7 @@ export function deriveMessagesTimelineRows(input: {
     (entry.runId == null ? runlessWorkActive : entry.runId === unsettledRunId);
 
   const activeTurnHeaderIndex = input.isWorking
-    ? lastResponseBoundaryIndex(timelineEntries, input.runningRunId ?? null) + 1
+    ? lastResponseBoundaryIndex(timelineEntries, unsettledRunId) + 1
     : timelineEntries.length;
 
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
@@ -1445,7 +1448,7 @@ export function deriveMessagesTimelineRows(input: {
     let tailAttemptId: string | null | undefined;
     for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
       const entry = timelineEntries[index]!;
-      if (isPendingQueuedPrompt(timelineEntries, index, input.runningRunId ?? null)) continue;
+      if (isPendingQueuedPrompt(timelineEntries, index, unsettledRunId)) continue;
       if (
         entry.kind !== "work" ||
         entry.entry.tone === "error" ||
