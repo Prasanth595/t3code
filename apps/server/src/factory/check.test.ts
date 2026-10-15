@@ -35,10 +35,10 @@ const write = (file: string, content: string) => {
 
 let runs = 0;
 
-const run = (fail?: string) => {
+const run = (fail?: string, cwd = root) => {
   const log = NodePath.join(root, `log-${runs++}`);
   const result = NodeChildProcess.spawnSync("bash", [script], {
-    cwd: root,
+    cwd,
     encoding: "utf8",
     env: {
       ...process.env,
@@ -77,12 +77,7 @@ exit 0
   it("runs every step in order and exits 0", () => {
     const { status, stdout, calls } = run();
     expect(status).toBe(0);
-    expect(calls).toEqual([
-      SEAMS,
-      `vp ${TEST.slice(3)}`,
-      `vp ${SERVER_TYPECHECK.slice(3)}`,
-      `vp ${WEB_TYPECHECK.slice(3)}`,
-    ]);
+    expect(calls).toEqual([SEAMS, TEST, SERVER_TYPECHECK, WEB_TYPECHECK]);
     const at = ["factory/scripts/check-seams.sh", TEST, SERVER_TYPECHECK, WEB_TYPECHECK].map(
       (name) => stdout.indexOf(name),
     );
@@ -91,10 +86,16 @@ exit 0
     expect(new Set(at).size).toBe(4);
   });
 
+  it("runs from a subdirectory of the repo", () => {
+    const { status, calls } = run(undefined, NodePath.join(root, "bin"));
+    expect(status).toBe(0);
+    expect(calls).toEqual([SEAMS, TEST, SERVER_TYPECHECK, WEB_TYPECHECK]);
+  });
+
   it("stops at the first failure with that command's exit code", () => {
-    const { status, stdout, calls } = run(`vp ${SERVER_TYPECHECK.slice(3)}=3`);
+    const { status, stdout, calls } = run(`${SERVER_TYPECHECK}=3`);
     expect(status).toBe(3);
-    expect(calls).toEqual([SEAMS, `vp ${TEST.slice(3)}`, `vp ${SERVER_TYPECHECK.slice(3)}`]);
+    expect(calls).toEqual([SEAMS, TEST, SERVER_TYPECHECK]);
     expect(stdout).toContain(SERVER_TYPECHECK);
     expect(stdout).not.toContain(WEB_TYPECHECK);
   });
