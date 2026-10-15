@@ -277,6 +277,8 @@ const layerSessions = (
   launches: Partial<ThreadLaunch.ThreadLaunchService["Service"]> = {},
   management: Partial<ThreadManagement.ThreadManagementService["Service"]> = {},
   git: Partial<GitVcsDriver.GitVcsDriver["Service"]> = {},
+  // Listed after NodeServices so a stub FileSystem wins over the real one.
+  fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
 ) =>
   Layer.mergeAll(
     Sessions.layer.pipe(
@@ -288,6 +290,7 @@ const layerSessions = (
           Layer.mock(ThreadManagement.ThreadManagementService)(management),
           Layer.mock(GitVcsDriver.GitVcsDriver)(git),
           NodeServices.layer,
+          fileSystem,
         ),
       ),
     ),
@@ -1112,40 +1115,52 @@ describe("FactorySessions.removeWorktree", () => {
   );
 
   it.effect("removes the directory itself after a wait when git leaves it not empty", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const dir = yield* fs.makeTempDirectory({ prefix: "factory-sessions-remove-" });
-        yield* fs.writeFileString(`${dir}/leftover.txt`, "x");
-        const calls: Array<GitCall> = [];
-        const fiber = yield* removeWorktree(dir).pipe(
-          Effect.provide(
-            layerSessions(
-              {},
-              {},
-              {},
-              recordingGit(calls, () =>
-                Effect.succeed(
-                  gitResult(128, `error: failed to delete '${dir}': Directory not empty\n`),
-                ),
+    Effect.gen(function* () {
+      const path = "/tmp/factory-sessions-test/wt";
+      const removed: Array<{
+        path: string;
+        options:
+          | { readonly recursive?: boolean | undefined; readonly force?: boolean | undefined }
+          | undefined;
+      }> = [];
+      const calls: Array<GitCall> = [];
+      // A stub FileSystem answers at once, so the fiber reaches the 3 s wait
+      // on the fork itself and the test clock alone decides when it ends.
+      const fileSystem = FileSystem.layerNoop({
+        exists: () => Effect.succeed(true),
+        remove: (removedPath, options) =>
+          Effect.sync(() => {
+            removed.push({ path: removedPath, options });
+          }),
+      });
+      // Build the layer (real IO) before the fork, so the fork only runs what
+      // the test clock controls.
+      const sessions = yield* Sessions.FactorySessions.pipe(
+        Effect.provide(
+          layerSessions(
+            {},
+            {},
+            {},
+            recordingGit(calls, () =>
+              Effect.succeed(
+                gitResult(128, `error: failed to delete '${path}': Directory not empty\n`),
               ),
             ),
+            fileSystem,
           ),
-          Effect.forkChild({ startImmediately: true }),
-        );
-        // Git and the disk check run first, then the fiber parks on the 3 s
-        // wait: one tick short of it the directory must still be there.
-        // The disk check is real IO, so give it real time to finish.
-        yield* TestClock.withLive(Effect.sleep("200 millis"));
-        yield* TestClock.adjust("2999 millis");
-        assert.isUndefined(fiber.pollUnsafe());
-        assert.isTrue(yield* fs.exists(dir));
-        yield* TestClock.adjust("1 millis");
-        yield* Fiber.join(fiber);
-        assert.isFalse(yield* fs.exists(dir));
-        assert.strictEqual(calls.length, 1);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+        ),
+      );
+      const fiber = yield* sessions
+        .removeWorktree(path)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("2999 millis");
+      assert.isUndefined(fiber.pollUnsafe());
+      assert.deepStrictEqual(removed, []);
+      yield* TestClock.adjust("1 millis");
+      yield* Fiber.join(fiber);
+      assert.deepStrictEqual(removed, [{ path, options: { recursive: true } }]);
+      assert.strictEqual(calls.length, 1);
+    }),
   );
 
   it.effect(
