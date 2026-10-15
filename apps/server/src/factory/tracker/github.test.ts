@@ -2293,7 +2293,7 @@ const editsJson = (newestFirst: ReadonlyArray<Edit>, total: number) => ({
 });
 
 /** A history written oldest first, as the tests think of it, in GitHub's order. */
-const newestFirst = (oldestFirst: ReadonlyArray<Edit>): Array<Edit> => [...oldestFirst].reverse();
+const newestFirst = (oldestFirst: ReadonlyArray<Edit>): Array<Edit> => oldestFirst.toReversed();
 
 /** The approval answer with exactly these history nodes (newest first) and this total. */
 const approvalReplyRaw = (
@@ -3131,7 +3131,7 @@ it.effect("a cut page still needs its newest entry to be the last edit", () =>
     const nodes: Array<Edit> = [
       [LATER, "tom"],
       ...editTimes(9, 99)
-        .reverse()
+        .toReversed()
         .map((t): Edit => [t, "tom"]),
     ];
     assert.strictEqual(nodes.length, 100);
