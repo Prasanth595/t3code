@@ -370,7 +370,7 @@ function ConnectionStep({
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {/* Same rule as Settings: a switched-off computer reads Off, not Not connected. */}
-                    {!environment.entry.enabled && environment.connection.phase !== "unsupported"
+                    {!environment.entry.enabled
                       ? "Off"
                       : presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
                   </span>
