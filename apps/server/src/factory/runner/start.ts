@@ -443,7 +443,7 @@ const finishOlderRuns = (
     for (let attempt = 1; attempt < below; attempt += 1) {
       const id = newRunId(ctx.repo, String(issue), attempt);
       const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
-        Effect.catchTag("LedgerNotFoundError", () => Effect.succeed(null)),
+        Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
       );
       if (record === null) continue;
       const seen = readProgress(record.entries);
