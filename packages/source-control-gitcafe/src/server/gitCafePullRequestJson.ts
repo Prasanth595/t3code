@@ -1,9 +1,3 @@
-/**
- * GitCafe's REST bodies, and their conversion into the neutral `Provider*` shapes. Every
- * conversion takes the repository's host, so a staging repository's links stay on staging.
- *
- * @module source-control-gitcafe/server/gitCafePullRequestJson
- */
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -262,7 +256,6 @@ function toActor(actor: Actor, host: string): PullRequestActor | null {
   };
 }
 
-/** The reviewers GitCafe has asked, as the detail's reviewer list shows them. */
 export function toReviewers(
   pull: Pick<GitCafePull, "reviewers">,
   host: string,
@@ -307,14 +300,12 @@ export function toChangeRequest(
   };
 }
 
-/** What GitCafe's own capabilities let this viewer do with the pull request. */
 export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewerPermissions {
   const { comment, edit, review, merge, moderate } = detail.capabilities;
   // A locked conversation keeps its composer for moderators only.
   const open = comment && (detail.lockedAt == null || moderate);
   return {
     actions: [
-      // A merged pull request is settled; a closed one can only be reopened.
       ...(edit && detail.state === "open"
         ? ([detail.draft ? "ready" : "draft", "close"] as const)
         : edit && detail.state === "closed"
@@ -345,7 +336,6 @@ const REACTIONS: Readonly<Record<string, PullRequestReactionContent>> = {
   "👀": "eyes",
 };
 
-/** The emoji GitCafe takes for one of the shared reactions. */
 export const REACTION_EMOJI: Readonly<Record<PullRequestReactionContent, string>> = {
   "thumbs-up": "👍",
   "thumbs-down": "👎",
@@ -357,7 +347,6 @@ export const REACTION_EMOJI: Readonly<Record<PullRequestReactionContent, string>
   eyes: "👀",
 };
 
-/** The shared reaction an emoji stands for; custom and unlisted ones stand for none. */
 export function reactionContent(emoji: string): PullRequestReactionContent | undefined {
   return REACTIONS[emoji.replaceAll("\uFE0F", "")];
 }
@@ -492,7 +481,6 @@ export function toStack(stack: GitCafeStack, target: RepositoryOnHost): Provider
   };
 }
 
-/** Converts GitCafe's structured hunks into a unified patch, keeping omitted files' counts. */
 export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
   const chunks: Array<string> = [];
   const omittedFileStats: Array<{ path: string; additions: number; deletions: number }> = [];

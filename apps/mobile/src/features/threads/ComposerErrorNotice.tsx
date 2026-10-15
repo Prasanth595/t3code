@@ -4,7 +4,6 @@ import { AccessibilityInfo, Platform, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 
-/** Why the thread's last message did not send, above the composer until dismissed. */
 export function ComposerErrorNotice({
   message,
   onDismiss,

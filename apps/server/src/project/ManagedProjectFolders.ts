@@ -1,14 +1,3 @@
-/**
- * ManagedProjectFolders - the project folders T3 Code makes for the user under
- * its data dir, rather than ones the user picks:
- *
- * - `<baseDir>/scratch`: the Scratch project ("No project"), with a folder of
- *   its own for each thread;
- * - `<baseDir>/projects/<slug>`: projects started from just a name, each a new
- *   Git repository with a README, an icon, and a first commit.
- *
- * @module ManagedProjectFolders
- */
 import {
   CommandId,
   type GitManagerServiceError,
@@ -100,9 +89,7 @@ export type NamedProjectError = NamedProjectFolderError | NamedProjectCreateErro
 export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
   {
-    /** The Scratch folder, or None when this environment does not offer one. */
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
-    /** Finds or creates the Scratch project and (re)creates its folder. */
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
     /**
      * Claims a fresh folder for a new thread in the Scratch project, named from
@@ -113,15 +100,12 @@ export class ManagedProjectFolders extends Context.Service<
       readonly threadId: ThreadId;
       readonly text: string;
     }) => Effect.Effect<Option.Option<string>, ScratchFolderError>;
-    /** The folder that holds projects started from just a name. */
     readonly namedProjectsRoot: string;
     /**
-     * Starts a project from just a name: claims `<namedProjectsRoot>/<slug>`
-     * (adding `-2`, `-3`, ... when taken), makes it a Git repository with a
-     * README, an icon, and a first commit, then creates the project. A failed
-     * commit (no Git identity, a signing prompt) keeps the project and returns
-     * why in `commitError`. The folder is removed when the create fails or is
-     * cancelled before the project exists, never once another project owns it.
+     * A failed commit (no Git identity, a signing prompt) keeps the project and
+     * returns why in `commitError`. The folder is removed when the create fails
+     * or is cancelled before the project exists, never once another project
+     * owns it.
      */
     readonly createNamedProject: (input: { readonly name: string }) => Effect.Effect<
       {
@@ -146,7 +130,6 @@ const folderWords = (text: string) =>
     .slice(0, 48)
     .replace(/-+$/, "");
 
-// Tailwind 600 shades: dark enough for white initials on every hue.
 const ICON_BACKGROUNDS = [
   "#dc2626",
   "#ea580c",
@@ -176,7 +159,6 @@ function escapeXml(value: string): string {
 }
 
 /**
- * A rounded square with the name's initials, colored by a hash of the name.
  * It lives at `assets/icon.svg`, a path ProjectFaviconResolver already checks,
  * so every machine that clones the project shows the same icon.
  */
@@ -245,12 +227,8 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
 
   /**
-   * Claims the first free folder among `folderFor(1)`, `folderFor(2)`, ...,
-   * stopping with None when `folderFor` runs out of names. Each folder is
-   * created without `recursive`, so creating it is the claim: of two racers
-   * for one name, one gets AlreadyExists and moves on to the next. Scratch
-   * thread folders and named projects both claim through this, so no two
-   * threads or projects ever share a folder.
+   * Each folder is created without `recursive`, so creating it is the claim: of
+   * two racers for one name, one gets AlreadyExists and moves on to the next.
    */
   const claimFreeFolder = Effect.fnUntraced(function* <E>(
     folderFor: (attempt: number) => Effect.Effect<Option.Option<string>, E>,
@@ -274,9 +252,7 @@ const make = Effect.gen(function* () {
   // Inside a checkout (a dev worktree's .t3, a dotfiles home) the folder would
   // inherit the repo's git status and checkpoints, so Scratch is offered only
   // when the data dir is outside any work tree. With no Git installed nothing
-  // can see a checkout, so Scratch is offered. Probed once; other detection
-  // failures hide Scratch rather than failing callers. An interrupted probe
-  // invalidates the cache so the next caller probes again.
+  // can see a checkout, so Scratch is offered.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     gitWorkflow.isRepository(config.baseDir).pipe(
       Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
@@ -331,8 +307,7 @@ const make = Effect.gen(function* () {
           Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })),
         );
       if (bootstrapped.created) {
-        // A dashed chat bubble in neutral gray marks Scratch. Set once at
-        // create, so a user's own icon choice is never overwritten.
+        // Set once at create, so a user's own icon choice is never overwritten.
         yield* projects
           .update({
             commandId: CommandId.make(`scratch-project-icon:${id}`),
@@ -387,9 +362,8 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Projects started from just a name live beside Scratch and worktrees, away
-  // from folders the user organizes by hand. A nested repository is fine here
-  // (unlike Scratch) because each project gets its own `git init`.
+  // A nested repository is fine here (unlike Scratch) because each project gets
+  // its own `git init`.
   const namedProjectsRoot = path.resolve(config.baseDir, "projects");
 
   const claimNamedFolder = Effect.fn("ManagedProjectFolders.claimNamedFolder")(function* (
@@ -424,8 +398,6 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // git init, the starter files, and the first commit. Only the commit may
-  // fail softly; everything before it fails the create.
   const scaffoldRepository = Effect.fn("ManagedProjectFolders.scaffoldRepository")(function* (
     cwd: string,
     name: string,

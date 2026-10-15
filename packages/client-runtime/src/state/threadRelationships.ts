@@ -187,7 +187,6 @@ export function immediateThreadRelationships(
   return rows;
 }
 
-/** True when `edge` reaches `currentThreadId` from its parent or owning agent. */
 export function isParentThreadRelationship(
   edge: ThreadRelationshipEdge,
   currentThreadId: ThreadId,
@@ -217,8 +216,6 @@ function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number
 }
 
 /**
- * Orders the web thread-details Lineage rows for display.
- *
  * Web-specific by design: the panel pins the parent row first and a distinct
  * merge-back target second so their actions stay where the user expects, and
  * only then falls back to newest-created-first. Mobile does not share that
@@ -227,8 +224,6 @@ function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number
  *
  * Ordering below the pins is `createdAt` descending, which is immutable, so
  * rows never move when messages or status changes arrive on a related thread.
- * Threads whose shell is missing (or whose `createdAt` did not decode) sink to
- * the bottom. Ties break by thread id ascending so the order is total.
  */
 export function orderWebThreadLineageRows(input: {
   readonly graph: ThreadRelationshipGraph;

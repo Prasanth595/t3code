@@ -11,10 +11,6 @@ import { cn } from "../lib/cn";
 
 export type AppTextProps = RNTextProps & { readonly className?: string };
 
-/**
- * Thin wrapper around RN Text with default font-family and foreground color.
- * Uses Uniwind className — no manual style parsing.
- */
 export function AppText({ className, ...props }: AppTextProps) {
   return (
     <RNText
@@ -30,10 +26,6 @@ export type AppTextInputProps = Omit<RNTextInputProps, "placeholderTextColor"> &
   readonly ref?: React.Ref<TextInputInstance>;
 };
 
-/**
- * Thin wrapper around RN TextInput with default input styling.
- * Uses Uniwind className — no manual style parsing.
- */
 export function AppTextInput({ className, ref, ...props }: AppTextInputProps) {
   return (
     <RNTextInput

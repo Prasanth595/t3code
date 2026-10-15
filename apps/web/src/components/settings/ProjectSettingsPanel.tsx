@@ -102,8 +102,6 @@ export function ProjectSettingsPanel({
     };
   }, [selected, members, environmentId, checkoutKey]);
 
-  // A grouping-rule change replaces the group key mid-visit; follow the
-  // project to its new key instead of parking on the not-found state.
   useEffect(() => {
     if (members.length > 0) return;
     const last = lastSelectionRef.current;
@@ -307,7 +305,6 @@ function ProjectDetail({
     [group.memberProjects, updateAllMembers],
   );
 
-  // ----- project icon -----
   const [faviconPickerOpen, setFaviconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);

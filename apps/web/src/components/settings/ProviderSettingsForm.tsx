@@ -22,7 +22,6 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 
-/** What the form reads from a definition: an agent provider's, or a source control host's. */
 export type SettingsFormDefinition = Pick<ProviderClientDefinition, "settingsSchema"> & {
   readonly driverKind?: ProviderClientDefinition["driverKind"];
 };
@@ -294,10 +293,6 @@ interface ProviderSettingsFormProps {
   readonly definition: SettingsFormDefinition;
   readonly value: unknown;
   readonly idPrefix: string;
-  /**
-   * `card` stacks label over control, `dialog` is the compact wizard layout,
-   * and `settings` renders the shared settings row treatment.
-   */
   readonly variant: "card" | "dialog" | "settings";
   readonly onChange: (nextConfig: Record<string, unknown> | undefined) => void;
 }

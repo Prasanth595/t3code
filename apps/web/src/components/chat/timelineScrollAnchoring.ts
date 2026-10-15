@@ -158,7 +158,6 @@ export interface RememberedTimelinePosition {
   };
 }
 
-// Scoped thread keys keep separate environments independent. Bound the session cache.
 const rememberedTimelinePositions = new Map<string, RememberedTimelinePosition>();
 
 export function readTimelinePosition(threadKey: string) {

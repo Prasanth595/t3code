@@ -9,9 +9,8 @@ import { Button } from "../ui/button";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 
 /**
- * One host's settings, drawn from its definition's settings schema and saved under
- * `sourceControlHosts[kind]`. Secret fields are write-only: the server keeps them in its secret
- * store and only reports whether each one is set.
+ * Secret fields are write-only: the server keeps them in its secret store and
+ * only reports whether each one is set.
  */
 export function SourceControlHostSettings({
   environmentId,

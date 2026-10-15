@@ -25,7 +25,6 @@ export interface GitCafeCredential {
   readonly source: "settings" | "env" | "cafe";
 }
 
-/** No `CAFE_TOKEN` for the host, and no `cafe` on PATH to ask. */
 export class GitCafeCliMissingError extends Schema.TaggedError<GitCafeCliMissingError>()(
   "GitCafeCliMissingError",
   { host: Schema.String },
@@ -35,7 +34,6 @@ export class GitCafeCliMissingError extends Schema.TaggedError<GitCafeCliMissing
   }
 }
 
-/** `cafe` is installed but holds no login for the host. */
 export class GitCafeNotSignedInError extends Schema.TaggedError<GitCafeNotSignedInError>()(
   "GitCafeNotSignedInError",
   { host: Schema.String },
@@ -45,7 +43,6 @@ export class GitCafeNotSignedInError extends Schema.TaggedError<GitCafeNotSigned
   }
 }
 
-/** `cafe` timed out or failed for a reason other than having no login. */
 export class GitCafeCliFailedError extends Schema.TaggedError<GitCafeCliFailedError>()(
   "GitCafeCliFailedError",
   { host: Schema.String, cause: Schema.Defect() },
@@ -60,14 +57,12 @@ export type GitCafeCredentialUnavailableError =
   | GitCafeNotSignedInError
   | GitCafeCliFailedError;
 
-/** Where GitCafe tokens come from. Callers ask per host and never see how the token was found. */
 export class GitCafeCredentials extends Context.Service<
   GitCafeCredentials,
   {
     readonly get: (
       host: string,
     ) => Effect.Effect<GitCafeCredential, GitCafeCredentialUnavailableError>;
-    /** Drops the held token after GitCafe refused it, so the next read asks its source again. */
     readonly invalidate: (host: string) => Effect.Effect<void>;
     /**
      * Environment for a `cafe` run against the host: the token saved in Settings as `CAFE_TOKEN`,
@@ -78,7 +73,6 @@ export class GitCafeCredentials extends Context.Service<
 >()("@t3tools/source-control-gitcafe/server/GitCafeCredentials") {}
 
 const normalizeHost = (host: string) => host.trim().toLowerCase();
-/** The host `cafe` and a token saved in Settings target unless told otherwise. */
 const DEFAULT_HOST = "git.cafe";
 
 /**

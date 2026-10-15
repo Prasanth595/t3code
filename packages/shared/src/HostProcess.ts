@@ -80,8 +80,6 @@ export const IsExecutable = Context.Reference<boolean>("@t3tools/shared/HostProc
  * Debian-style hosts put `127.0.1.1` in `/etc/hosts` — and a program that
  * records "its" address by resolving its hostname (Firefox's profile lock
  * does) will write that one. "Is this address ours" has to accept both.
- *
- * Best effort: a failed lookup just leaves the interface set.
  */
 export const Addresses = Context.Reference<Effect.Effect<ReadonlySet<string>>>(
   "@t3tools/shared/HostProcess/Addresses",

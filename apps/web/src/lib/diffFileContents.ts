@@ -75,7 +75,6 @@ function createDiffFileContentsLoader(
   };
 }
 
-/** Turns the host's Git file-content RPC into the full-file loader Pierre uses for hunk expansion. */
 export function createGitDiffFileContentsLoader<E>(
   getDiffFileContents: GetDiffFileContents<E>,
   source: GitDiffFileContentsSource,

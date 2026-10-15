@@ -1,8 +1,3 @@
-/**
- * Bitbucket's client definition. Browser- and React Native-safe.
- *
- * @module source-control-bitbucket/client/definition
- */
 import {
   makeProviderSettingsSchema,
   SourceControlProviderKind,
@@ -87,7 +82,6 @@ export const definition = defineSourceControlClient({
   authorProfileUrl: () => null,
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
-  // No checkout CLI, and the reference field never accepted Bitbucket URLs.
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
   changeRequestUrlHost: (url) => url.hostname,

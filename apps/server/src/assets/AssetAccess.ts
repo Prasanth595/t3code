@@ -73,11 +73,10 @@ const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const HTML_ATTACHMENT_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
-// Clients draw project icons from a 96px thumbnail at most.
 const PROJECT_FAVICON_ICNS_MIN_SIZE = 96;
 const INLINE_VIDEO_MIME_TYPE_PATTERN = /^video\/[\w!#$&^.+-]+$/i;
-// Extensions a document viewer or audio player may request inline. The extension comes from
-// the attachment id the server assigned, never from the client's mime type.
+// The extension comes from the attachment id the server assigned, never from
+// the client's mime type.
 const INLINE_PREVIEW_MIME_TYPES: Record<string, string> = {
   pdf: "application/pdf",
   html: "text/html",
@@ -127,8 +126,6 @@ const AssetClaimsSchema = Schema.Union([
     /** Decided at mint time. Absent tokens (from before this field) serve
         inline, which is only ever the image case. */
     download: Schema.optionalKey(Schema.Boolean),
-    /** Display name and mime the caller supplied at mint time; drive the
-        download filename and Content-Type. */
     fileName: Schema.optionalKey(Schema.String),
     mimeType: Schema.optionalKey(Schema.String),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
@@ -336,12 +333,6 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
-/**
- * Reads pixel dimensions from an image's header so clients can reserve the
- * exact box before the bytes arrive. Best effort: an unreadable or unsupported
- * file just leaves the field out, and the client measures after decode. Only
- * formats the parser understands are opened; SVG and the rest are skipped.
- */
 const HEADER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
 /** From the identity-checked, non-blocking handle the caller already holds. */
@@ -505,7 +496,6 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
-  /** The project's clone has not landed, so its icon is reported missing without a lookup. */
   readonly projectCheckoutPending?: boolean;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -571,11 +561,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       break;
     }
     case "draft-workspace-file": {
-      // The draft names its workspace root in the resource itself; an explicit
-      // root only overrides it.
       const draftWorkspaceRoot = input.workspaceRoot ?? input.resource.cwd;
       if (path.isAbsolute(input.resource.path)) {
-        // An absolute draft path serves exactly like an absolute media path.
         const finalized = yield* finalizeAbsoluteMediaFileAsset({
           requestedPath: input.resource.path,
           resource: input.resource,
@@ -777,7 +764,6 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         index: input.resource.index,
         expiresAt,
       };
-      // The allowed types are all `image/<extension>`.
       fileName = `image-${input.resource.index + 1}.${image.mimeType.slice("image/".length)}`;
       imageDimensions = readImageDimensions(image.bytes);
       break;

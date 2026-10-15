@@ -97,15 +97,13 @@ export interface ThreadLaunchInput {
   readonly creationSource: OrchestrationV2CreationSource;
 }
 
-/** What workspace preparation reads from a launch; a retry rebuilds it from the run. */
 type PreparationInput = Pick<
   ThreadLaunchInput,
   "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
 > & {
   /**
-   * Set when a retry reuses the worktree its failed attempt created and
-   * recorded. Its setup is tracked like a new one, but the thread already
-   * records the workspace, and a branch rename may still be running.
+   * Its setup is tracked like a new one, but the thread already records the
+   * workspace, and a branch rename may still be running.
    */
   readonly reusedWorktree?: { readonly baseRef: string };
 };
@@ -148,7 +146,6 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   }
 }
 
-/** A new worktree was asked to start from a ref that gives it no commit. */
 export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBaseRefError>()(
   "ThreadLaunchBaseRefError",
   {
@@ -173,14 +170,12 @@ export class ThreadLaunchService extends Context.Service<
       ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
     /**
-     * Fails when a new worktree's base ref cannot give provisioning a commit.
      * `launch` accepts such a launch and reports the failure inside the
      * thread; a caller that needs it before a thread exists checks first.
      */
     readonly checkWorktreeBase: (
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
     ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
-    /** Dispatches prepared-run.retry and prepares the run's workspace again. */
     readonly retryPreparation: (input: ThreadLaunchPreparationInput) => Effect.Effect<
       Orchestrator.OrchestratorV2DispatchResult,
       // Dispatches prepared-run.retry, a command the enablement chokepoint
@@ -268,8 +263,6 @@ const make = Effect.gen(function* () {
     // `:/text` is a commit search, which cannot be asked for a commit type.
     if (strategy.type !== "worktree" || strategy.baseRef.startsWith(":")) return;
     const { baseRef } = strategy;
-    // Anything this cannot establish is left for the launch to report: a
-    // missing project, a folder that is not a repository, a failing Git.
     const unresolved = yield* Effect.gen(function* () {
       const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
       if (project === undefined) return undefined;
@@ -402,8 +395,6 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
         }
         let startRef = input.workspaceStrategy.baseRef;
-        // "Start from origin" is a stored default; repos without the requested
-        // remote branch fall back to the local base branch.
         const startFromOrigin =
           input.workspaceStrategy.startFromOrigin === true &&
           (yield* git
@@ -495,10 +486,6 @@ const make = Effect.gen(function* () {
       }
       workspaceRecorded = true;
 
-      // Rename temporary branches (server-invented above, or sent by clients
-      // that name worktrees themselves) in the background so generation latency
-      // never delays provisioning or the provider turn. The temporary name
-      // simply sticks if generation or the rename fails.
       if (
         reused === undefined &&
         worktreePath !== null &&
@@ -1055,7 +1042,6 @@ const make = Effect.gen(function* () {
     workspacePreparation: ThreadLaunchWorkspaceStrategy,
   ) => {
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-    // A worktree the failed attempt already created is reused, not created again.
     const reuse =
       workspacePreparation.type === "worktree" &&
       projection.thread.worktreePath !== null &&

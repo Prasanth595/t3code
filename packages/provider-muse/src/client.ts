@@ -1,9 +1,3 @@
-/**
- * Muse Code's client definition: settings form, label, badge, and glyph.
- * Browser- and React Native-safe.
- *
- * @module provider-muse/client
- */
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { defineProviderClient } from "@t3tools/provider-core/client";
 

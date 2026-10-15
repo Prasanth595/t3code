@@ -29,13 +29,10 @@ function meaningfulHastChildren(node: MarkdownImageHastNode): MarkdownImageHastN
 }
 
 /**
- * An image that is the only content of its block (optionally wrapped in a
- * link) is almost always a screenshot or figure, so it gets a reserved slot
- * while it loads. Images mixed with text or other images — badge rows, icons
- * in a sentence — stay inline at their natural size, since a placeholder taller
- * than the image would move the page more than the image itself does.
+ * Images mixed with text or other images — badge rows, icons in a sentence —
+ * stay inline at their natural size, since a placeholder taller than the image
+ * would move the page more than the image itself does.
  */
-/** Containers whose sole child image reads as a figure rather than part of a sentence. */
 const STANDALONE_IMAGE_BLOCKS = new Set([
   "p",
   "div",
@@ -53,8 +50,6 @@ function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode
   const only = children[0];
   if (only?.type !== "element") return undefined;
   if (only.tagName === "img") return only;
-  // A link, emphasis, or similar inline wrapper around the image still counts
-  // as long as nothing else shares the block.
   return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em"
     ? soleImageDescendant(only)
     : undefined;

@@ -1,12 +1,3 @@
-/**
- * Model rate lookup and cost arithmetic.
- *
- * Rates come from LiteLLM's `model_prices_and_context_window.json`, the same
- * table `ccusage` prices against. Everything here is pure: fetching and caching
- * the table lives in `UsageService`.
- *
- * @module usagePricing
- */
 import type {
   UsageCategoryCost,
   UsageCostSource,
@@ -25,12 +16,8 @@ export interface TokenRates {
 }
 
 /**
- * The subset of a LiteLLM entry we price against: standard rates, plus rates
- * for each faster speed the model publishes. A request at a speed with no
- * published rates bills at the standard rates.
- *
- * LiteLLM also publishes `*_above_272k_tokens`, `*_flex`, and `*_batches`
- * variants. Transcripts don't record those, so we don't price them.
+ * LiteLLM also publishes `*_above_272k_tokens`, `*_flex`, and `*_batches` variants. Transcripts
+ * don't record those, so we don't price them.
  */
 export interface ModelRate extends TokenRates {
   /**
@@ -38,7 +25,6 @@ export interface ModelRate extends TokenRates {
    * or else its `*_priority` rates (Codex `priority`).
    */
   readonly fast: TokenRates | null;
-  /** From LiteLLM's `*_ultrafast` rates (Codex `ultrafast`). */
   readonly ultrafast: TokenRates | null;
 }
 
@@ -68,7 +54,6 @@ export function createOverrideRateTable(
   );
 }
 
-/** One raw LiteLLM entry. Field names carry a tier suffix, e.g. `_priority`. */
 type LiteLlmEntry = Readonly<Record<string, unknown>>;
 
 function finiteNumber(value: unknown): number | null {
@@ -76,13 +61,9 @@ function finiteNumber(value: unknown): number | null {
 }
 
 /**
- * Reads one rate set, `suffix` selecting a tier such as `_priority`. Returns
- * `null` without both an input and an output rate.
- *
- * Anthropic bills cache reads at a discount and cache writes at a premium.
- * When the standard tier omits them, cached input is priced as plain input
- * rather than as free. A faster tier that omits them keeps the standard tier's
- * cache-to-input ratio.
+ * Anthropic bills cache reads at a discount and cache writes at a premium. When the standard
+ * tier omits them, cached input is priced as plain input rather than as free. A faster tier
+ * that omits them keeps the standard tier's cache-to-input ratio.
  */
 function readTokenRates(
   entry: LiteLlmEntry,
@@ -117,7 +98,6 @@ function scaleTokenRates(rates: TokenRates, multiple: number): TokenRates {
   };
 }
 
-/** Reads `provider_specific_entry.fast`, e.g. `2` for Claude Opus 5.5. */
 function fastMultiplier(entry: LiteLlmEntry): number | null {
   const specific = entry["provider_specific_entry"];
   if (typeof specific !== "object" || specific === null) return null;
@@ -126,14 +106,10 @@ function fastMultiplier(entry: LiteLlmEntry): number | null {
 }
 
 /**
- * Projects the LiteLLM document into a rate table.
- *
- * Entries without both an input and an output rate are dropped: a half-priced
- * model would silently under-report cost, which is worse than reporting the
- * model as unpriced.
- *
- * Entries keep their full normalized key; a bare name is aliased only when no
- * canonical entry exists and every qualified entry has the same rate.
+ * Entries without both an input and an output rate are dropped: a half-priced model would
+ * silently under-report cost, which is worse than reporting the model as unpriced. Entries keep
+ * their full normalized key; a bare name is aliased only when no canonical entry exists and
+ * every qualified entry has the same rate.
  */
 export function parseRateTable(document: unknown): RateTable {
   const table = new Map<string, ModelRate>();
@@ -195,7 +171,6 @@ function sameRate(a: ModelRate, b: ModelRate): boolean {
   );
 }
 
-/** The rates a request at `speed` bills at. */
 function ratesAt(rate: ModelRate, speed: UsageSpeed): TokenRates {
   return (speed === "standard" ? null : rate[speed]) ?? rate;
 }
@@ -220,11 +195,9 @@ function stripVariantSuffix(key: string): string {
 }
 
 /**
- * Models we never price, regardless of the table.
- *
- * `<synthetic>` marks locally generated messages that were never billed. Bare
- * family names ("opus", "sonnet") are genuinely ambiguous across generations,
- * so we report them as unpriced instead of guessing a generation.
+ * `<synthetic>` marks locally generated messages that were never billed. Bare family names
+ * ("opus", "sonnet") are genuinely ambiguous across generations, so we report them as unpriced
+ * instead of guessing a generation.
  */
 const UNPRICEABLE_MODELS = new Set([
   "<synthetic>",
@@ -262,7 +235,6 @@ function resolveRate(table: RateTable, model: string): ModelRate | null {
   return table.get(key) ?? null;
 }
 
-/** The parts of a transcript record that decide its price. */
 export type PricedRecord = Pick<
   UsageRecord,
   "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
@@ -291,13 +263,9 @@ function sumCategories(cost: UsageCategoryCost): number {
 }
 
 /**
- * Prices one record's tokens.
- *
- * A provider-reported cost is kept as is, and split by category and speed in
- * proportion to the model's list rates when those are known.
- *
- * `reasoningTokens` is intentionally not charged separately: it is already
- * counted inside `outputTokens`.
+ * A provider-reported cost is kept as is, and split by category and speed in proportion to the
+ * model's list rates when those are known. `reasoningTokens` is intentionally not charged
+ * separately: it is already counted inside `outputTokens`.
  */
 export function priceUsage(
   table: RateTable,
@@ -340,10 +308,6 @@ export function priceUsage(
   };
 }
 
-/**
- * What the cached input would have cost at full input rates, minus what it
- * actually cost. Drives the "cache savings" figure.
- */
 export function cacheSavingsUsd(
   table: RateTable,
   record: PricedRecord,

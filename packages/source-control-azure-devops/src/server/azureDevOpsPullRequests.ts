@@ -116,12 +116,6 @@ function azureDevOpsOrganizationBaseFromRestApiUrl(
   }
 }
 
-/**
- * Where a pull request lives in a browser. Azure answers with a web link when asked for one and
- * otherwise leaves it to be assembled, so all three routes are tried in the order they can be
- * trusted. Takes plain fields so both the source control provider and the pull requests page
- * can share it.
- */
 export function azureDevOpsPullRequestWebUrl(input: {
   readonly pullRequestId: number;
   readonly webLink?: string | null | undefined;

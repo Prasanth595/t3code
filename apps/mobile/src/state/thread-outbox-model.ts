@@ -59,8 +59,6 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
-  // Present when the queued item creates a brand-new thread (pending task)
-  // instead of appending a turn to an existing one.
   creation: Schema.optional(QueuedThreadCreationSchema),
   createdAt: IsoDateTime,
 });
@@ -91,10 +89,9 @@ export interface QueuedThreadMessage {
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
   /**
-   * How this message should be delivered if a turn is still running when the
-   * outbox drains. Captured at enqueue time because the drain can fire long
-   * after the tap. Absent on rows written before follow-up behavior existed,
-   * which keep the previous always-queue delivery.
+   * Captured at enqueue time because the drain can fire long after the tap.
+   * Absent on rows written before follow-up behavior existed, which keep the
+   * previous always-queue delivery.
    */
   readonly dispatchMode?: ComposerDispatchMode;
   readonly creation?: QueuedThreadCreation;
@@ -209,9 +206,8 @@ export type ThreadOutboxDispatchStep =
   | { readonly step: "send" };
 
 /**
- * Wait for provider and file capabilities before sending. Cleanup does not
- * need config: a creation whose thread exists, or a message whose thread is
- * gone, can still be removed while config loads.
+ * Cleanup does not need config: a creation whose thread exists, or a message
+ * whose thread is gone, can still be removed while config loads.
  */
 export function resolveThreadOutboxDispatchStep(input: {
   readonly deliveryAction: ThreadOutboxDeliveryAction;
@@ -241,10 +237,6 @@ export function resolveThreadOutboxDispatchStep(input: {
     : { step: "send" };
 }
 
-/**
- * A queued creation can only be dispatched once its payload would pass server
- * validation; incomplete payloads stay pending until the user edits them.
- */
 export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): boolean {
   if (!message.creation) {
     return false;

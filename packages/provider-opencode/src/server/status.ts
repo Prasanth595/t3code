@@ -202,9 +202,7 @@ function openCodeCapabilitiesForModel(input: {
   const rawVariantValues = Object.keys(input.model.variants ?? {});
   // When a model advertises no variants, synthesize the standard reasoning
   // levels so the composer still offers a Reasoning selector (mirrors the
-  // Codex/Grok experience where reasoning is always configurable). The set
-  // covers the common OpenCode variant spectrum; `inferDefaultVariant`
-  // picks the provider-appropriate default (e.g. medium for openai/opencode).
+  // Codex/Grok experience where reasoning is always configurable).
   const variantValues =
     rawVariantValues.length > 0 ? rawVariantValues : ["low", "medium", "high", "xhigh"];
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
@@ -378,27 +376,18 @@ export const makePendingOpenCodeProvider = (
     });
   });
 
-/** One model an OpenCode 2 server lists, as the status check reads it. */
 export interface OpenCode2Model {
   readonly providerID: string;
   readonly id: string;
   readonly name: string;
-  /**
-   * Name of the provider the model belongs to, when the server names it. One
-   * OpenCode instance fronts several: OpenCode Zen, OpenCode Go, and whatever
-   * the user added themselves.
-   */
   readonly providerName?: string;
   readonly variants: ReadonlyArray<{ readonly id: string }>;
 }
 
 /**
- * One OpenCode instance fronts several providers, and their catalogues
- * overlap: OpenCode Zen and OpenCode Go both list Step 5 Preview Free. Naming
- * the sub-provider is what tells two such rows apart. The label only earns its
- * place when it adds to the instance name the row already shows, which is why a
- * provider called plain "OpenCode" keeps none, and the id stands in while the
- * server has not named its providers yet.
+ * One OpenCode instance fronts several providers, and their catalogues overlap:
+ * OpenCode Zen and OpenCode Go both list Step 5 Preview Free. Naming the
+ * sub-provider is what tells two such rows apart.
  */
 function subProviderLabelFor(input: {
   readonly providerID: string;
@@ -434,7 +423,6 @@ export const makeOpenCode2ModelLoader = <E>(
     );
   });
 
-/** A workspace's skills and commands, as an OpenCode 2 server lists them for its directory. */
 export interface OpenCode2Workspace {
   readonly skills: ReadonlyArray<{
     readonly id: string;
@@ -584,7 +572,6 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
     enabled: true,
     checkedAt,
     models,
-    // Every session can compact; a workspace snapshot adds that directory's commands.
     slashCommands: [COMPACT_SLASH_COMMAND],
     probe:
       result.value.length > 0

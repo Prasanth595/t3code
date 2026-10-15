@@ -1,9 +1,8 @@
 import type { DesktopUpdateRemoteOutcome, DesktopUpdateState } from "@t3tools/contracts";
 
 /**
- * What a server-triggered update run should do next, given the updater's
- * current state. "wait" means an action (possibly started locally) is in
- * flight and the run should ride along until the next state change.
+ * "wait" means an action (possibly started locally) is in flight and the run should ride along
+ * until the next state change.
  */
 export type RemoteDesktopUpdateStep =
   | { readonly action: "check" }
@@ -105,7 +104,6 @@ export function nextRemoteDesktopUpdateStep(
       reason: state.message ?? "The desktop app update failed.",
     };
   }
-  // status === "idle"
   if (attempts.checks >= MAX_REMOTE_UPDATE_CHECKS) {
     return {
       action: "done",

@@ -20,7 +20,6 @@ function compactLabel(value: unknown): string | undefined {
   return text.length > MAX_LABEL_LENGTH ? `${text.slice(0, MAX_LABEL_LENGTH - 1)}…` : text;
 }
 
-/** Describes a background-capable turn item that restart recovery cancels. */
 export function cancelledTurnItemWork(item: OrchestrationV2TurnItem): Work | undefined {
   switch (item.type) {
     case "subagent":
@@ -67,7 +66,6 @@ function restartWorkKind(task: OrchestrationV2PendingBackgroundTask): Work["kind
   }
 }
 
-/** Describes a provider-reported background task (the provider-thread roster). */
 export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTask): Work {
   const kind = restartWorkKind(task);
   const description = compactLabel(task.description);
@@ -148,10 +146,6 @@ export function runOutcome(
     : run.status;
 }
 
-/**
- * Whether a restart continuation may prompt from `source`: a turn the restart
- * cut mid-way, or a settled turn that lost awaited work in the restart.
- */
 export function isRestartContinuationSource(
   source: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartCancelledBackgroundWork">,
   providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
@@ -162,11 +156,9 @@ export function isRestartContinuationSource(
 }
 
 /**
- * The note a restart continuation of `source` carries, and whether the turn it
- * continues had settled (the note is then the whole prompt). A continuation cut
- * before its provider turn completed may not have delivered its own note:
- * adapters can announce a running turn before accepting the prompt. Carry the
- * note forward until a completed turn proves delivery.
+ * A continuation cut before its provider turn completed may not have delivered
+ * its own note: adapters can announce a running turn before accepting the
+ * prompt. Carry the note forward until a completed turn proves delivery.
  */
 export function restartContinuationNote(
   source: OrchestrationV2Run,
@@ -219,13 +211,12 @@ export function isRestartNoteContinuation(
 }
 
 /**
- * Work cancelled by a restart that the run's provider thread has not been told
- * about yet. The note belongs to the provider thread that lost the work: turns
- * on another provider (after a switch) neither owe it nor deliver it. A later
- * completed turn on the same provider thread proves delivery, so the pending
- * set is derived rather than cleared. Compactions and
- * resumed turns carry no note, and a rolled-back run left native history, so
- * none of them counts as delivery. A note continuation's own prompt is the note.
+ * The note belongs to the provider thread that lost the work: turns on another
+ * provider (after a switch) neither owe it nor deliver it. A later completed
+ * turn on the same provider thread proves delivery, so the pending set is
+ * derived rather than cleared. Compactions and resumed turns carry no note, and
+ * a rolled-back run left native history, so none of them counts as delivery. A
+ * note continuation's own prompt is the note.
  */
 export function pendingRestartCancelledBackgroundWork(input: {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
@@ -245,8 +236,6 @@ export function pendingRestartCancelledBackgroundWork(input: {
   readonly attempts: ReadonlyArray<Attempt>;
 }): ReadonlyArray<Work> {
   const isCompaction = (run: typeof input.run) => input.compactionMessageIds.has(run.userMessageId);
-  // The current run prepends the note unless it is a compaction or a
-  // continuation (whose own prompt is the note, or which resumes natively).
   if (
     input.run.providerThreadId === null ||
     input.run.restartContinuationOfRunId !== undefined ||

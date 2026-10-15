@@ -1,7 +1,3 @@
-/**
- * Subagent status helpers shared by web and mobile, and the runtime shape the
- * web agent rows render.
- */
 import { groupBy } from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import type {
@@ -41,7 +37,6 @@ export interface SubagentWorkflowPhase {
   readonly title: string;
 }
 
-// Optional-and-undefined, matching the contract's own optionals.
 export interface SubagentRunHandles {
   readonly runId?: string | undefined;
   readonly scriptPath?: string | undefined;
@@ -72,7 +67,6 @@ export interface RuntimeSubagent {
   readonly workflowName: string | null;
   readonly phases: ReadonlyArray<SubagentWorkflowPhase>;
   readonly runHandles: SubagentRunHandles | null;
-  /** The thread this agent owns, when it has one. */
   readonly childThreadId: string | null;
   readonly recentActivity: ReadonlyArray<SubagentActivityEntry>;
   /** First retained observation, used as the roster's stable display order. */
@@ -93,8 +87,6 @@ export function isTerminalSubagentStatus(status: RuntimeSubagentStatus): boolean
   return TERMINAL_STATUSES.has(status);
 }
 
-/** Active = the user may still need to care while it runs. Idle is settled-ish
- * but resumable; waiting counts as active because it needs the user. */
 export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
   return isOrchestrationV2WorkActive(status);
 }
@@ -103,7 +95,6 @@ export function isLiveSubagentTurnItem(item: OrchestrationV2TurnItem): boolean {
   return item.type === "subagent" && isOrchestrationV2WorkActive(item.status);
 }
 
-/** A workflow coordinator with its members grouped by phase, as Lineage renders it. */
 export interface SubagentWorkflowGroup {
   readonly workflow: RuntimeSubagent;
   readonly phases: ReadonlyArray<{
@@ -114,7 +105,6 @@ export interface SubagentWorkflowGroup {
     readonly state: "pending" | "running" | "done";
     readonly settledCount: number;
   }>;
-  /** Members with no resolvable phase (orphans render under the workflow). */
   readonly unphasedMembers: ReadonlyArray<RuntimeSubagent>;
 }
 
@@ -136,18 +126,16 @@ function isoFromEpochMillis(value: number | undefined): string | null {
 }
 
 /**
- * Expands a coordinator's workflow roster into member rows. Members are
- * synthesized from the coordinator's snapshot rather than read from their own
- * subagent entities, so a parent thread's Lineage can show them without
- * loading the coordinator's child thread; their identity is the coordinator id
- * plus the spawn ordinal.
+ * Members are synthesized from the coordinator's snapshot rather than read from
+ * their own subagent entities, so a parent thread's Lineage can show them
+ * without loading the coordinator's child thread; their identity is the
+ * coordinator id plus the spawn ordinal.
  */
 function workflowMembersToRuntime(
   coordinator: RuntimeSubagent,
   workflow: OrchestrationV2SubagentWorkflow,
 ): ReadonlyArray<RuntimeSubagent> {
   return workflow.agents.map((agent) => {
-    // Every member state but queued is already a runtime status.
     const status =
       (agent.state === "queued" || agent.state === "running") &&
       isTerminalSubagentStatus(coordinator.status)
@@ -172,7 +160,6 @@ function workflowMembersToRuntime(
       title: agent.label,
       model: agent.model ?? null,
       status,
-      // A member the workflow retried counts each attempt as a run.
       activationCount: agent.attempt ?? 1,
       usage: workflowUsage(agent),
       // A member keeps its prompt on `progress` even once settled: that is the
@@ -196,9 +183,6 @@ function workflowMembersToRuntime(
   });
 }
 
-/**
- * Projects subagents and workflow members into the runtime roster.
- */
 export function projectedSubagentsToRuntime(
   subagents: ReadonlyArray<{
     readonly id: string;

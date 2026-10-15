@@ -170,8 +170,6 @@ export function NativeStackScreenOptions(props: {
       return;
     }
     const signature = optionsSignature([stableOptions, props.optionsVersion]);
-    // Avoid re-entering navigation state when semantically equal options are
-    // reapplied every layout (common when callers pass unstable object literals).
     if (lastAppliedOptionsSignatureRef.current === signature) {
       return;
     }

@@ -21,7 +21,6 @@ export type PullRequestWatchChange =
   | { readonly kind: "conflicting" };
 
 export interface PullRequestWatchReport {
-  /** What the agent has not been told yet. Empty means no wake. */
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
   /** The watch to record, whether or not anything is reported. */
   readonly next: ThreadPullRequestWatch;
@@ -34,12 +33,12 @@ const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
 
 /**
- * Compares a watched pull request with what its agent was last told. Each check is reported as
- * soon as it fails, so a check that never finishes (an advisory review bot) cannot hold the
- * news back. "Passed" is reported once the checks the base branch requires all passed, or all
- * checks where the host marks none required. Remarks count when someone other than the agent's
- * own account wrote them, so its own replies never wake it. `remarks` is null when the
- * conversation could not be read; remarks then wait for a later pass.
+ * Each check is reported as soon as it fails, so a check that never finishes (an advisory
+ * review bot) cannot hold the news back. "Passed" is reported once the checks the base branch
+ * requires all passed, or all checks where the host marks none required. Remarks count when
+ * someone other than the agent's own account wrote them, so its own replies never wake it.
+ * `remarks` is null when the conversation could not be read; remarks then wait for a later
+ * pass.
  */
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
@@ -179,7 +178,6 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   conflicting: "merge conflict",
 };
 
-/** The wake the agent reads and the timeline notification the user sees. */
 export function pullRequestWatchMessage(input: {
   readonly number: number;
   readonly url: string;

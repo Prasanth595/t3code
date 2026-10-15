@@ -28,9 +28,6 @@ type FontEnumerationState =
   | { readonly status: "granted"; readonly families: readonly string[] }
   | { readonly status: "unavailable" };
 
-// Shared across every row: once one picker learns the fonts (or learns the
-// permission is blocked), the others follow without re-querying — and the
-// rows can swap to the plain-input control together.
 let enumerationState: FontEnumerationState = supportsFontEnumeration()
   ? { status: "unknown" }
   : { status: "unavailable" };
@@ -63,12 +60,11 @@ export function discoverInstalledFonts(): void {
 let grantedProbeStarted = false;
 
 /**
- * Discover eagerly when the permission is already granted, so the picker
- * renders without waiting for a focus. Electron's default permission handler
- * approves silently (it has no prompt UI), and a browser that granted once
- * reports "granted" on later visits — in both, no user gesture is needed.
- * "prompt" and "denied" states change nothing: the focus-driven flow stays,
- * because raising the browser prompt still requires a gesture.
+ * Electron's default permission handler approves silently (it has no prompt
+ * UI), and a browser that granted once reports "granted" on later visits — in
+ * both, no user gesture is needed. "prompt" and "denied" states change nothing:
+ * the focus-driven flow stays, because raising the browser prompt still
+ * requires a gesture.
  */
 function probeAlreadyGrantedPermission(): void {
   if (grantedProbeStarted || enumerationState.status !== "unknown") return;
@@ -86,23 +82,11 @@ function probeAlreadyGrantedPermission(): void {
   );
 }
 
-/**
- * Whether the engine can list installed fonts (Local Font Access API —
- * Chromium and Electron). "unknown" until discovery resolves the permission;
- * rows render a plain family-name input until the state is known granted,
- * then upgrade to the picker. Where the permission is already granted,
- * discovery starts at mount and the picker appears without a focus.
- */
 export function useFontEnumeration(): FontEnumerationState {
   useEffect(probeAlreadyGrantedPermission, []);
   return useSyncExternalStore(subscribeToEnumeration, readEnumerationState);
 }
 
-/**
- * A searchable picker over every installed family, the way native editors
- * list system fonts. The trigger always names the font in use: the committed
- * family, or what the default stack resolves to on this machine.
- */
 export function FontFamilyPicker({
   ariaLabel,
   defaultFamily,
@@ -112,12 +96,10 @@ export function FontFamilyPicker({
   onSelect,
 }: {
   ariaLabel: string;
-  /** What an unset preference renders as, e.g. "Menlo". */
   defaultFamily: string;
   /** Committed family name; empty string means the default is in use. */
   selectedFamily: string;
   requireMonospace?: boolean;
-  /** Open the popup on mount — set when the control upgrades under focus. */
   initialOpen?: boolean;
   onSelect: (family: string) => void;
 }) {

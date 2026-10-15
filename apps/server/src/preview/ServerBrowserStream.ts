@@ -108,7 +108,6 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
         delete incoming.headers["sec-websocket-extensions"];
         const transport = incoming.socket;
         const socket = yield* request.upgrade;
-        // The reader performs the upgrade; writes wait for it.
         const reader = yield* socket.reader;
         const writer = yield* socket.writer;
         // A refused upgrade reads as an auth failure to ticket clients, so a
@@ -195,12 +194,10 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
             Effect.as(HttpServerResponse.text("Service Unavailable", { status: 503 })),
           ),
       }),
-      // A dropped socket is a normal end of viewing.
       Effect.catch(() => Effect.succeed(HttpServerResponse.empty())),
     );
   });
 
-/** Which host setup a launch failure is missing, and the command that fixes it. */
 const hostSetup = (cause: unknown): PreviewStreamHostSetup | undefined =>
   isSandboxError(cause)
     ? { need: "sandbox", command: cause.setupCommand }
@@ -211,7 +208,6 @@ const isSandboxError = Schema.is(PreviewBrowserHost.PreviewBrowserSandboxError);
 const isLibrariesError = Schema.is(PreviewBrowserHost.PreviewBrowserLibrariesError);
 const encodeHostSetup = Schema.encodeSync(Schema.fromJsonString(PreviewStreamHostSetup));
 
-/** `GET /api/preview-stream/download?threadId&tabId&id`: a file a server tab downloaded. */
 const serveDownload = (browser: ServerBrowser.ServerBrowser["Service"], params: URLSearchParams) =>
   Effect.gen(function* () {
     yield* authenticateMediaRequest(AuthOrchestrationReadScope);

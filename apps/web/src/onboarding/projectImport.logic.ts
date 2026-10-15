@@ -6,11 +6,8 @@ const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_SELECTION_MIN_THREADS = 3;
 
 /**
- * Existing projects still need their agent history imported, so every scan
- * candidate is offered. The default selection is narrower: git repositories
- * active in the last 30 days with enough threads to look like real work.
- * Servers that predate the git scan omit `git`; their candidates are treated
- * as repositories so old computers still get a useful default selection.
+ * Servers that predate the git scan omit `git`; their candidates are treated as repositories so old
+ * computers still get a useful default selection.
  */
 export function partitionOnboardingProjects<T extends AgentSessionProjectCandidate>(
   candidates: ReadonlyArray<T>,
@@ -31,9 +28,7 @@ export function partitionOnboardingProjects<T extends AgentSessionProjectCandida
 }
 
 export interface OnboardingProjectGroup<T> {
-  /** Stable identity for collapse state and React keys. */
   readonly key: string;
-  /** GitHub `owner/name`, or the checkout's folder name when the origin is elsewhere. */
   readonly label: string;
   readonly repository: string | null;
   readonly candidates: ReadonlyArray<T>;
@@ -118,7 +113,6 @@ export function resolveOnboardingProjectId(
   return null;
 }
 
-/** Prefer a selected project with imported history, then a completed empty import. */
 export function resolveOnboardingLandingProject<T>(
   selection: ReadonlyArray<string>,
   projectsWithImportedHistory: ReadonlyMap<string, T>,
@@ -136,10 +130,7 @@ export function resolveOnboardingLandingProject<T>(
 }
 
 /**
- * Splits a scan path into the folder name and the directory above it (with
- * its trailing separator), so a picker row can keep the name visible and let
- * the shared prefix truncate. Handles both separators because candidates
- * come from any environment.
+ * Handles both separators because candidates come from any environment.
  */
 export function splitOnboardingProjectPath(path: string): {
   readonly name: string;

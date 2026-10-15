@@ -52,8 +52,6 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedError<Elec
   }
 }
 
-// The scheme either proxies to a dev server (`targetOrigin`) or serves the
-// built client from disk (`assetDirectory`).
 export type DesktopProtocolRegistrationInput = {
   readonly scheme: string;
   readonly clerkFrontendApiHostname: string | undefined;
@@ -213,9 +211,6 @@ const proxyRequest = Effect.fn("desktop.protocol.proxyRequest")(function* (
   return withContentSecurityPolicy(response, contentSecurityPolicy);
 });
 
-// Serves the packaged web client without a backend: files resolve within the
-// asset directory, and any other path falls back to index.html so the SPA
-// router handles it, except for asset-shaped misses (`/missing.js`) which 404.
 const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   request: Request,
   assetDirectory: string,
@@ -276,7 +271,6 @@ export const make = Effect.gen(function* () {
                   contentSecurityPolicy,
                 );
               }
-              // Reject with net.fetch's own error, as an unproxied fetch would.
               return runPromise(
                 proxyRequest(request, input.targetOrigin, contentSecurityPolicy).pipe(
                   Effect.catchTags({

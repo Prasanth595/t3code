@@ -1,10 +1,3 @@
-/**
- * Usage history for Claude Code: the transcript format of its
- * `<home>/projects/**.jsonl` session files and where each instance keeps them.
- *
- * @module provider/Drivers/claudeUsage
- */
-
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
@@ -20,12 +13,9 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
- * Parses one line of a Claude Code transcript.
- *
- * T3 Code writes one record per assistant *content block*, and every one of
- * those records repeats the same complete `usage` object for the parent
- * message. Summing them overcounts by roughly 2.4x on a real workload, so the
- * caller must drop repeats by `dedupeKey` and keep the first.
+ * T3 Code writes one record per assistant *content block*, and every one of those records repeats
+ * the same complete `usage` object for the parent message. Summing them overcounts by roughly
+ * 2.4x on a real workload, so the caller must drop repeats by `dedupeKey` and keep the first.
  */
 export function parseClaudeLine(line: string): UsageRecord | null {
   let parsed: unknown;

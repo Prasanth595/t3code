@@ -3,7 +3,6 @@ import type { OrchestrationV2SearchThreadInput, RunId } from "@t3tools/contracts
 export type ThreadFindStart = NonNullable<OrchestrationV2SearchThreadInput["start"]>;
 export type ThreadFindPositionReader = (query: string) => ThreadFindStart | undefined;
 
-/** One occurrence of the query inside a searchable timeline entry. */
 export interface ThreadFindMatch {
   readonly entryId: string;
   /** The turn to expand when the matching entry is folded. */

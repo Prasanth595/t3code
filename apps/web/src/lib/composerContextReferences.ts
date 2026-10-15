@@ -5,12 +5,6 @@ import {
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
 
-/**
- * Prompt-string operations on inline context references, independent of kind. Each context
- * kind's draft record supplies a `ComposerContextReference` (kind, id, label); the prompt owns
- * where the reference sits.
- */
-
 export interface ComposerContextReference {
   kind: ComposerContextKind;
   contextId: string;
@@ -41,7 +35,6 @@ export function collectInlineContextIds(prompt: string): string[] {
   );
 }
 
-/** Prose without any context link, for "does this prompt say anything" checks. */
 export function stripInlineContextReferences(prompt: string): string {
   return replaceComposerContextReferences(prompt, () => "");
 }
@@ -66,7 +59,6 @@ export function inlineContextReferenceReplacement(
   };
 }
 
-/** Inserts a link at the cursor, padding with spaces only where words would otherwise join. */
 export function insertInlineContextReference(
   prompt: string,
   cursorInput: number,
@@ -81,7 +73,6 @@ export function insertInlineContextReference(
   };
 }
 
-/** Appends a link at the end of the prompt: the fallback when the caret is unknown. */
 export function appendInlineContextReference(
   prompt: string,
   reference: ComposerContextReference,

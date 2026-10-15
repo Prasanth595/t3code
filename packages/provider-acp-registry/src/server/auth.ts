@@ -194,9 +194,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         detachExit();
         try {
           process.kill();
-        } catch {
-          /* The login process may already have exited. */
-        }
+        } catch {}
       }),
     );
     let transcript = "";

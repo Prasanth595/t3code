@@ -37,7 +37,6 @@ export interface ExpandedImagePreview {
   index: number;
 }
 
-/** Wraps navigation in either direction, including offsets beyond a complete cycle. */
 export function wrapExpandedImageIndex(index: number, imageCount: number): number {
   return imageCount > 0 ? ((index % imageCount) + imageCount) % imageCount : 0;
 }
@@ -123,7 +122,6 @@ export function buildAttachmentVideoAsset(
   };
 }
 
-/** Opens a persisted video through the same signed-asset dialog used by message media. */
 export function buildAttachmentVideoPreview(
   environmentId: EnvironmentId,
   attachment: ChatFileAttachment,

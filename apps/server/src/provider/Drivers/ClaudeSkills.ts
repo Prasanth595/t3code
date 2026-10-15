@@ -1,19 +1,3 @@
-/**
- * ClaudeSkills — filesystem discovery of Claude Code skills for the `$` picker.
- *
- * Claude Code loads skills from `<config dir>/skills` (user scope) and
- * `<cwd>/.claude/skills` (project scope), one directory per skill with a
- * `SKILL.md` carrying YAML frontmatter. The user root wins on name collisions,
- * matching the CLI. `.agents/skills` is a Codex location: verified against the
- * CLI, a skill that lives only there is answered with `Unknown command`, so it
- * is not scanned here.
- * The Agent SDK init handshake surfaces skills only as slash commands without
- * their filesystem paths, so the provider snapshot scans the same locations
- * directly, mirroring how the Codex app-server reports its skills.
- *
- * @module provider/Drivers/ClaudeSkills
- */
-
 import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -115,11 +99,6 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   };
 }
 
-/**
- * Where an administrator installs the policy file whose settings outrank every
- * user and project one. Absent on almost every machine, which is why a missing
- * file is the normal case rather than an error.
- */
 function claudeManagedSettingsPath(
   path: Path.Path,
   platform: NodeJS.Platform,
@@ -138,14 +117,9 @@ function claudeManagedSettingsPath(
 /**
  * Settings files Claude Code merges for `skillOverrides`, in increasing
  * precedence: user, project, project-local, then the administrator's managed
- * policy, which wins outright. When the workspace sits inside a git
- * repository, the repository root's `settings.local.json` is read too and
- * outranks the workspace's own local file. Verified against the CLI from a
- * nested cwd: a root local file switching a skill off wins over a cwd one
- * switching it on, the root's plain `settings.json` is not consulted, and
- * without a `.git` above the cwd no root file is read. A skill the user
- * switched off is reported disabled rather than dropped, so the picker can
- * grey it out instead of silently losing it.
+ * policy, which wins outright. When the workspace sits inside a git repository,
+ * the repository root's `settings.local.json` is read too and outranks the
+ * workspace's own local file.
  */
 export function skillOverrideSettingsPaths(
   path: Path.Path,
@@ -170,11 +144,6 @@ export function skillOverrideSettingsPaths(
   ];
 }
 
-/**
- * Nearest ancestor of `cwd` (inclusive) holding a `.git` entry, which is the
- * boundary Claude Code walks up to for project settings. `undefined` outside
- * a repository.
- */
 const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
   cwd: string,
 ): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
@@ -197,10 +166,10 @@ const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
 });
 
 /**
- * The four states Claude Code accepts. The CLI validates the whole map, not
- * each entry: verified against it, one entry with an unknown value (or a
- * boolean) makes it drop every override in that file, so this schema does the
- * same rather than applying the valid siblings the CLI ignores.
+ * The CLI validates the whole map, not each entry: verified against it, one
+ * entry with an unknown value (or a boolean) makes it drop every override in
+ * that file, so this schema does the same rather than applying the valid
+ * siblings the CLI ignores.
  */
 const SkillOverrideValue = Schema.Literals(["on", "name-only", "user-invocable-only", "off"]);
 
@@ -214,9 +183,9 @@ const SkillOverrideSettings = fromLenientJson(
 const decodeSkillOverrideSettings = Schema.decodeUnknownEffect(SkillOverrideSettings);
 
 /**
- * What a `skillOverrides` entry says about one skill. `"user-invocable-only"`
- * hides it from the agent exactly as `disable-model-invocation` does, so it is
- * kept apart from a plain on/off decision rather than collapsed into one.
+ * `"user-invocable-only"` hides it from the agent exactly as
+ * `disable-model-invocation` does, so it is kept apart from a plain on/off
+ * decision rather than collapsed into one.
  */
 type SkillOverride = {
   readonly enabled: boolean;
@@ -313,14 +282,9 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
 });
 
 /**
- * Enumerate Claude Code skills from the user config dir and the workspace
- * `.claude/skills`. Discovery is best-effort: unreadable roots and malformed
- * skill entries are skipped so a broken skill never degrades the provider
- * snapshot. Roots are listed highest precedence first and the first hit for a
- * name wins, matching Claude Code: verified against the CLI with the same
- * skill name in both scopes, the user copy is the one that runs. Reporting the
- * project copy instead would attach its invocation metadata to a command
- * Claude Code resolves elsewhere.
+ * Roots are listed highest precedence first and the first hit for a name wins,
+ * matching Claude Code: verified against the CLI with the same skill name in
+ * both scopes, the user copy is the one that runs.
  */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
@@ -371,8 +335,6 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      // First root wins, so a later root never displaces a higher-precedence
-      // skill of the same name.
       if (skillsByName.has(name)) {
         continue;
       }

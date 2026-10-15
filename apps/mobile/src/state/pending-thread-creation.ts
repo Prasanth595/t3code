@@ -29,7 +29,6 @@ export type PendingThreadCreation = {
   readonly outcome: PendingThreadCreationOutcome | null;
 };
 
-/** Keep the screen's creation state until its detail can take over the pill. */
 export function resolvePendingThreadCreation(input: {
   readonly threadKey: string | null;
   readonly pending: PendingThreadCreation | null;
@@ -99,13 +98,10 @@ export function clearPendingThreadCreationOutcome(threadKey: string): void {
 }
 
 /**
- * Whether the queued prompt still has to stand in for the real message.
- *
- * The server creates the thread, then builds the worktree, and only then
- * starts the turn, so the thread shell and an empty detail arrive seconds
- * ahead of the prompt. Keying this on the shell's arrival left the thread
- * showing "No conversation yet" for that whole window. The queued message id
- * is reused as the delivered message id, so its presence is the exact signal.
+ * The server creates the thread, then builds the worktree, and only then starts
+ * the turn, so the thread shell and an empty detail arrive seconds ahead of the
+ * prompt. The queued message id is reused as the delivered message id, so its
+ * presence is the exact signal.
  */
 export function isPendingThreadCreationVisible(input: {
   readonly creationMessageId: string;
@@ -122,19 +118,15 @@ export function pendingThreadCreationMessage(message: QueuedThreadMessage): Loca
     text: message.text,
     context: message.context,
     // Deliberately no attachments. Their ids are local draft ids the server
-    // cannot resolve, so the feed's attachment rows would sit on a spinner
-    // that only ends when the real message arrives — and never, if the
-    // creation is rejected. The delivered message renders them moments later.
+    // cannot resolve, so the feed's attachment rows would sit on a spinner that
+    // only ends when the real message arrives — and never, if the creation is
+    // rejected.
     streaming: false,
     createdAt: message.createdAt,
     updatedAt: message.createdAt,
   };
 }
 
-/**
- * Thread shell shaped from a queued creation. `modelSelection` is required on
- * the shell; a creation is only sendable with one, so the fallback never sends.
- */
 export function pendingThreadCreationShell(
   message: QueuedThreadMessage,
 ): EnvironmentThreadShell | null {

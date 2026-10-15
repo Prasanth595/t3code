@@ -128,7 +128,6 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
     : "Antigravity could not authenticate with the configured credentials.";
 }
 
-/** Owns one instance's explicit sign-in and all process admission around sign-out. */
 export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   Runtime extends AntigravityAuthRuntime,
 >(

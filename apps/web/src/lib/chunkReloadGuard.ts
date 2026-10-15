@@ -29,11 +29,8 @@ export function reloadOnceForChunkLoadError(
   return true;
 }
 
-/** Clears the guard after a successful boot so a later stale deploy can reload again. */
 export function clearChunkReloadGuard(getStorage: () => Storage = () => window.sessionStorage) {
   try {
     getStorage().removeItem(CHUNK_RELOAD_GUARD_KEY);
-  } catch {
-    // Blocked storage never held the flag.
-  }
+  } catch {}
 }

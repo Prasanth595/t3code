@@ -10,7 +10,6 @@ import {
 } from "./mobileTheme";
 
 /**
- * The theme an HTML render styles against. Its background is the feed's own canvas.
  * Material You has no shared palette: it starts from the default one and takes the
  * roles its system colors replace. WebViews cannot load the app's bundled fonts, so
  * renders use system stacks.

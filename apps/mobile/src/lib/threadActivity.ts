@@ -142,7 +142,6 @@ export interface ThreadFeedMessage {
   readonly projectedItem?: OrchestrationV2ProjectedTurnItem;
 }
 
-/** A message shown before the server has it: a pending creation or local feedback. */
 export interface LocalThreadMessage {
   readonly id: MessageId;
   readonly role: string;
@@ -169,7 +168,6 @@ type RawThreadFeedEntry =
       readonly activity: ThreadFeedActivity;
     }
   | {
-      /** A page a completed `html_render` call published, shown in place of its work row. */
       readonly type: "html-render";
       readonly id: string;
       readonly createdAt: string;
@@ -177,7 +175,6 @@ type RawThreadFeedEntry =
       readonly render: HtmlRenderReference;
     }
   | {
-      /** An MCP App a completed tool call captured, hosted in place of its work row. */
       readonly type: "mcp-app";
       readonly id: string;
       readonly createdAt: string;
@@ -216,7 +213,6 @@ type ThreadFeedEntryContent =
       readonly hasFailure: boolean;
       readonly live: boolean;
       readonly shimmer: boolean;
-      /** First sentence of the latest thought, shown above the live status line. */
       readonly thought?: string;
     }
   | {
@@ -258,7 +254,6 @@ function compactWorkEntryText(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
 }
 
-/** Expanded work rows keep their detail while compact rows show a stable one-line label. */
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
@@ -786,7 +781,6 @@ function toWorkLogEntry(
   }
 }
 
-/** Expanded detail for a row, from its wire item or the full item from getTurnItem. */
 export function formatItemFullDetail(
   row: OrchestrationV2ProjectedTurnItem,
   item: OrchestrationV2TurnItem,
@@ -844,7 +838,6 @@ function toFeedActivity(
       (readPaths
         ? readPaths.length > 0 || turnItemNeedsDetailFetch(item)
         : turnItemHasDetail(item) || workEntry.questionAnswer !== undefined),
-    // Read rows show their paths, then the fetched file contents.
     fetchesDetail: turnItemNeedsDetailFetch(item),
     getFullDetail,
     getCopyText,
@@ -1084,9 +1077,8 @@ function deriveThreadFeedRunFolds(
     RunId,
     { entries: ThreadFeedEntry[]; startBoundary: string | null }
   >();
-  // Fold state is keyed by run, so each runless prompt lends its response a
-  // stable key of its own. Decide per prompt, not per thread: a V1 thread's
-  // first V2 run must not unfold every imported turn above it.
+  // Decide per prompt, not per thread: a V1 thread's first V2 run must not unfold every
+  // imported turn above it.
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
   let pendingUserBoundary: string | null = null;
@@ -1260,7 +1252,6 @@ export function deriveThreadFeedPresentation(
   expandedRunIds: ReadonlySet<RunId>,
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
-  /** The live work is a provider-native subagent's runless root turn. */
   runlessWorkActive = false,
 ): ThreadFeedEntry[] {
   const retainedFeed = feed.filter(
@@ -1353,8 +1344,6 @@ export function deriveThreadFeedPresentation(
       );
     }
   }
-  // Keep exactly one live slot while a run is working. When no tool row can
-  // carry it yet (or the latest call failed), the slot reads "Thinking".
   if (
     isWorking &&
     activeWorkStartedAt !== null &&
@@ -1748,9 +1737,8 @@ export function buildPendingUserInputAnswers(
 }
 
 /**
- * Projects the server-authored visible sequence into mobile row presentation.
- * It deliberately preserves the incoming order and never rebuilds chat from
- * separate message, plan, or work-entry collections.
+ * It deliberately preserves the incoming order and never rebuilds chat from separate message,
+ * plan, or work-entry collections.
  */
 export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
@@ -1805,7 +1793,6 @@ export function buildThreadFeed(
       continue;
     }
     const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
-    // A running or failed render stays an ordinary work row.
     const render =
       item.type === "dynamic_tool" && item.status === "completed"
         ? htmlRenderFromToolItem(item)

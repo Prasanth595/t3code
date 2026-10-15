@@ -12,9 +12,6 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 // (see scripts/build-desktop-artifact.ts). The Windows primary reads it in
 // place through the asar-aware ELECTRON_RUN_AS_NODE runtime, but the WSL
 // backend launches plain `wsl.exe -- node`, which cannot read an asar archive.
-// This fallback service materializes the archive into a real, version-keyed
-// directory only when the distro-local runtime cannot be prepared.
-//
 // Reading through Electron's patched fs also transparently returns the
 // contents of files that electron-builder/asar left in the server.asar.unpacked
 // sibling (native binaries), so a single walk of the archive yields the
@@ -46,10 +43,8 @@ export class DesktopWslServerTreeExtractError extends Schema.TaggedError<Desktop
 export class DesktopWslServerTree extends Context.Service<
   DesktopWslServerTree,
   {
-    // Resolves the directory the WSL backend should treat as the app root
-    // (the directory containing apps/server/dist and node_modules). In dev
-    // the checkout already is that directory; packaged Windows builds extract
-    // server.asar on first use.
+    // Resolves the directory the WSL backend should treat as the app root (the
+    // directory containing apps/server/dist and node_modules).
     readonly ensure: Effect.Effect<WslServerTreeResult>;
     // Removes the Windows-side extraction cache after a distro-local runtime
     // has proven healthy. Serialized with ensure so cleanup cannot race an
@@ -128,8 +123,7 @@ export const make = Effect.gen(function* () {
   const version = environment.appVersion;
   const versionDir = join(treeRoot, version);
 
-  // Remove sibling trees left behind by previous app versions (and aborted
-  // extractions). Best-effort: a locked file must not block the backend.
+  // Best-effort: a locked file must not block the backend.
   const sweepStale = Effect.gen(function* () {
     const entries = yield* fs.readDirectory(treeRoot).pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(

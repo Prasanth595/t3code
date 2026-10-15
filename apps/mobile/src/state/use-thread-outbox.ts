@@ -59,10 +59,9 @@ export function useThreadOutboxMessages() {
 }
 
 /**
- * Thread keys (`environmentId:threadId`) of existing threads with a message
- * waiting in the outbox. Creations are excluded: they have no thread row yet
- * and surface as pending tasks instead. Derived once so list builders and
- * reorder planners agree on which settled threads are pulled back to active.
+ * Creations are excluded: they have no thread row yet and surface as pending
+ * tasks instead. Derived once so list builders and reorder planners agree on
+ * which settled threads are pulled back to active.
  */
 export const queuedThreadKeysAtom = Atom.make((get): ReadonlySet<string> => {
   const keys = new Set<string>();

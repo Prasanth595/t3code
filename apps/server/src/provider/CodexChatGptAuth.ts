@@ -229,7 +229,6 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       Effect.mapError(() => failure("save", "Could not save the ChatGPT connection.")),
     );
   // Registration profiles outlive tokens, but belong only to this environment/instance.
-  // Accept the original single-registration record until it is next saved.
   const readRegistrations = registrationStore.get.pipe(
     Effect.mapError(() =>
       failure("registration", "Could not read the ChatGPT sign-in registration. Try again."),
@@ -268,7 +267,6 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     const instanceIds = new Set<string>([options.instanceId]);
     if (Option.isSome(settings)) {
       const current = yield* settings.value.getSettings;
-      // Include the legacy default instance as well as explicitly configured ones.
       instanceIds.add("codex");
       for (const [id, instance] of Object.entries(current.providerInstances)) {
         if (instance.driver === "codex") instanceIds.add(id);

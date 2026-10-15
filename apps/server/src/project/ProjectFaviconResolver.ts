@@ -1,11 +1,3 @@
-/**
- * ProjectFaviconResolver - Effect service contract for project icon discovery.
- *
- * Resolves a representative favicon or app icon file for a workspace by
- * checking common file locations and project source metadata.
- *
- * @module ProjectFaviconResolver
- */
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -46,7 +38,6 @@ function parseFaviconCacheKey(key: string): {
   return faviconPath.length === 0 ? { cwd } : { cwd, faviconPath };
 }
 
-// Well-known favicon paths checked in order.
 const FAVICON_CANDIDATES = [
   "favicon.svg",
   "favicon.ico",
@@ -73,7 +64,6 @@ const FAVICON_CANDIDATES = [
   "AppIcon.icns",
 ] as const;
 
-// Files that may contain a <link rel="icon"> or icon metadata declaration.
 const ICON_SOURCE_FILES = [
   "index.html",
   "public/index.html",
@@ -84,7 +74,6 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
-// Matches <link ...> tags or object-like icon metadata where rel/href can appear in any order.
 // The tag pattern is anchored on `<link`, so it only starts at real candidates. Object metadata
 // is matched by scanning brace-free runs instead of by one combined pattern: an unanchored
 // pattern restarts at every offset and rescans forward, which is quadratic on large sources.
@@ -115,19 +104,12 @@ export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFav
 
 const isWorkspaceRootNotExistsError = Schema.is(WorkspacePaths.WorkspaceRootNotExistsError);
 
-/** True when the workspace root itself is gone, e.g. a moved or deleted checkout. */
 export const isMissingWorkspaceRoot = (error: ProjectFaviconResolutionError): boolean =>
   error.operation === "normalize-workspace" && isWorkspaceRootNotExistsError(error.cause);
 
-/** Service tag for project favicon resolution. */
 export class ProjectFaviconResolver extends Context.Service<
   ProjectFaviconResolver,
   {
-    /**
-     * Resolve a favicon or icon file path for the provided workspace root.
-     *
-     * Returns `null` when no candidate icon file can be found.
-     */
     readonly resolvePath: (
       cwd: string,
       faviconPath?: string,
@@ -214,7 +196,6 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
-  // Reads one source file and resolves the icon it declares, if any.
   const findIconFromSource = Effect.fn("ProjectFaviconResolver.findIconFromSource")(function* (
     projectCwd: string,
     sourceFile: string,
@@ -300,7 +281,6 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    // A t3.json iconPath takes precedence over the well-known locations.
     const projectFile = yield* projectFileLoader.load(projectCwd);
     if (Option.isSome(projectFile) && projectFile.value.iconPath !== undefined) {
       const existing = yield* findExistingFile(

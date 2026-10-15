@@ -12,16 +12,6 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
 
-/**
- * Client-side implementation of the ACP `terminal` capability.
- *
- * Agents create terminals to run commands through the client
- * (`terminal/create`), poll buffered output, await exit, kill, and release
- * them. Terminals also appear as embedded tool-call content, which
- * {@link resolveEmbeddedTerminalContent} rewrites into plain text so the
- * existing tool-call projection renders live command output.
- */
-
 const MAX_LIVE_TERMINALS = 16;
 const MAX_UNRELEASED_TERMINALS = 64;
 const MAX_RETAINED_TERMINALS = 32;
@@ -102,7 +92,6 @@ interface ManagedAcpTerminal {
   readonly buffer: OutputBufferState;
   readonly exit: Deferred.Deferred<EffectAcpSchema.WaitForTerminalExitResponse>;
   readonly kill: Effect.Effect<void>;
-  /** Closes the terminal's scope, killing the process if still running. */
   readonly dispose: Effect.Effect<void>;
   exitStatus: EffectAcpSchema.TerminalExitStatus | undefined;
   released: boolean;
@@ -129,9 +118,7 @@ export interface AcpClientTerminals {
     sessionId: string,
     terminalId: string,
   ) => AcpTerminalOutputSnapshot | undefined;
-  /** Command line a terminal was created with; presentation-only lookup. */
   readonly readCommandLine: (terminalId: string) => string | undefined;
-  /** Kills every terminal that is still running. Safe to call repeatedly. */
   readonly disposeAll: Effect.Effect<void>;
 }
 
@@ -237,8 +224,6 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
             (request.env?.length ?? 0) === 0
               ? undefined
               : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
-          // Each terminal owns a scope so the spawned process is reliably reaped:
-          // closing the scope kills a still-running command and frees the handle.
           const terminalScope = yield* Scope.make();
           const child = yield* restore(
             spawner

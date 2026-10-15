@@ -41,7 +41,6 @@ export interface PendingUserInputCardProps {
   readonly maxHeight: number;
   readonly collapsed: boolean;
   readonly onToggleCollapsed: () => void;
-  /** Renders a stop control on the collapsed bar, which replaces the composer. */
   readonly onStopThread?: () => void;
   /**
    * 0 collapsed → 1 expanded. Slides the iOS overlay card down behind the
@@ -94,7 +93,6 @@ const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
-/** Renders question text as markdown so agent-provided links open on tap. */
 function QuestionText(props: { readonly markdown: string }) {
   const styles = useMarkdownPreviewStyles();
   const openLink = useOpenPullRequest();
@@ -117,8 +115,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
   const cardHeightRef = useRef(0);
-  // Measured card height, written straight from onLayout: the collapse slide
-  // distance. Not animated — it only changes on discrete relayouts.
   const cardHeight = useSharedValue(0);
   const notifyCoverage = useCallback(() => {
     if (!cardCoverage) {
@@ -161,9 +157,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const cardProgress = props.cardProgress;
   // No opacity: fading an opaque card over the live transcript reads as a
   // crossfade (card text, transcript, and bar all half-visible at once).
-  // Instead the card stays opaque and slides its full height down past the
-  // clipping window's bottom edge, so the transcript is only revealed where
-  // the card has physically left.
   const cardAnimatedStyle = useAnimatedStyle(() => {
     const progress = cardProgress === undefined ? 1 : cardProgress.value;
     return {
@@ -177,10 +170,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   // mount + layout before anything moves.
   const renderCard = EXPANDED_CARD_IS_OVERLAY || !props.collapsed;
   const showBar = props.collapsed || EXPANDED_CARD_IS_OVERLAY;
-  // The bar renders UNDER the card (earlier in JSX), always opaque: while
-  // expanded the opaque card covers it, and during the collapse slide the
-  // card's top edge wipes past and reveals it — no opacity handoff, so no
-  // crossfade frames.
   const bar = showBar ? (
     <View
       onLayout={handleBarLayout}
@@ -224,9 +213,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     </View>
   ) : null;
   const card = renderCard ? (
-    // The surface is opaque on purpose: the card floats over the thread
-    // feed with no blur behind it, so a translucent background renders
-    // the questions on top of whatever message happens to sit underneath.
     <Animated.View
       onLayout={handleCardLayout}
       pointerEvents={props.collapsed ? "none" : "auto"}
@@ -384,10 +370,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     <View className="relative">
       {bar}
       {EXPANDED_CARD_IS_OVERLAY ? (
-        // Clipping window for the collapse slide: same footprint as the
-        // expanded card, bottom edge on the bar's bottom edge. The sliding
-        // card exits through the bottom edge instead of drawing over the
-        // composer area, wiping the bar (and the transcript) into view.
         <View
           pointerEvents={props.collapsed ? "none" : "box-none"}
           className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"

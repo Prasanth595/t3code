@@ -13,7 +13,5 @@ if (HostProcess.Platform.defaultValue() === "win32") {
     const longForm = NodeFS.realpathSync.native(NodeOS.tmpdir());
     process.env.TEMP = longForm;
     process.env.TMP = longForm;
-  } catch {
-    // Leave the host's value alone if it cannot be resolved.
-  }
+  } catch {}
 }

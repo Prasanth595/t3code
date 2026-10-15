@@ -75,12 +75,6 @@ export interface IssuedBearerSession {
  * OAuth. They are accepted only by `/mcp`, where every action is capped by the
  * access the user approved; the HTTP API and WebSocket reject them so an agent
  * token cannot reach the full RPC surface around that cap.
- *
- * A read-only grant holds `orchestration:read` alone. Any other grant also
- * holds `orchestration:operate` and carries its runtime-mode ceiling. A
- * full-access client may also change environment preferences and clone
- * repositories, so it holds the scopes those need over RPC. Approving a grant
- * requires every scope it holds.
  */
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
@@ -690,7 +684,6 @@ export function selectRequestCredential(
 
 type RequestCredentialSource = NonNullable<ReturnType<typeof selectRequestCredential>>["source"];
 
-/** Whether a credential came from a browser cookie rather than an Authorization header. */
 export const isBrowserCookieCredential = (source: RequestCredentialSource | "dev-cookie") =>
   source === "cookie" || source === "legacy-cookie" || source === "dev-cookie";
 
@@ -700,7 +693,6 @@ function firstHeaderValue(value: string | undefined): string | undefined {
 }
 
 /**
- * Whether a cookie-carrying request comes from a page allowed to use it.
  * Browsers send `Origin` on WebSocket upgrades, cross-origin requests, and
  * non-GET requests, so an absent header means a same-origin read or a
  * non-browser client. Otherwise the request must be same-origin by the

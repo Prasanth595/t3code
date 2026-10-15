@@ -137,7 +137,6 @@ function mermaidRenderPromise(source: string, theme: "light" | "dark") {
 let expandedImageUrl: string | null = null;
 
 /**
- * Converts a rendered diagram into a standalone image with fixed size and background.
  * A blob URL, unlike a data URL, passes the desktop connect-src policy that media
  * save and copy actions fetch through. Only one diagram is expanded at a time, so
  * the previous URL is released.
@@ -160,7 +159,6 @@ function mermaidImageUrl(svg: string): string {
   return expandedImageUrl;
 }
 
-/** Suspends until the diagram renders; failures show the parser message above the source. */
 export function MermaidDiagram({
   source,
   theme,

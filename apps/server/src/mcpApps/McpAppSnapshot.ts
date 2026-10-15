@@ -53,10 +53,9 @@ function readMcpAppDocument(
 }
 
 /**
- * Stores an app's document as a thread attachment and returns the reference
- * clients host it from. Saving a snapshot keeps the app viewable after the
- * provider exits; interaction still goes through a live provider session.
- * Undefined when the resource is not an MCP App document or is too large.
+ * Saving a snapshot keeps the app viewable after the provider exits;
+ * interaction still goes through a live provider session. Undefined when the
+ * resource is not an MCP App document or is too large.
  */
 export const snapshotMcpApp = Effect.fn("McpAppSnapshot.snapshot")(function* (input: {
   readonly attachmentsDir: string;

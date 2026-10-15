@@ -319,7 +319,6 @@ export const make = Effect.gen(function* () {
           catch: toError,
         });
         // Use stdin so large directories cannot exceed the command-line argument limit.
-        // Ignore classification is optional in non-git workspaces or when git is unavailable.
         const ignored = new Set<string>();
         for (let offset = 0; offset < entries.length; offset += 1000) {
           const chunk = entries.slice(offset, offset + 1000);

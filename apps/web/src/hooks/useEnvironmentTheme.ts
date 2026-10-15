@@ -35,12 +35,6 @@ function publishedThemeColors(
   return { ...base, ...lenientThemeColorOverrides(colors ?? {}) };
 }
 
-/**
- * A published theme as the theme library renders it. Both published forms are
- * accepted: the seeded short form a desktop generates, and the standard
- * exported theme file the Download button produces — so any theme someone
- * shared can be dropped into the machine's themes directory as-is.
- */
 export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
   const variants: Partial<Record<ThemeAppearance, ThemeColors>> = {};
   for (const [variantAppearance, variantColors] of Object.entries(theme.variants ?? {})) {
@@ -93,17 +87,10 @@ export function publishedThemeDefinitions(
     .map(environmentThemeDefinition);
 }
 
-/** The published themes as library entries; empty while none are published. */
 export function useEnvironmentThemeDefinitions(): ReadonlyArray<ThemeDefinition> {
   return useSyncExternalStore(subscribeToCustomThemes, getEnvironmentThemes, () => []);
 }
 
-/**
- * Keeps the machine's published themes in the theme library for as long as
- * the primary environment publishes them. A client with a published theme
- * selected retints the moment the machine rewrites it; everyone else just
- * gains cards in the theme library.
- */
 export function useEnvironmentThemeSync(): void {
   const published = useAtomValue(primaryServerEnvironmentThemesAtom);
   const { refreshTheme } = useTheme();

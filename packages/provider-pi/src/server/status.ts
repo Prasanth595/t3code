@@ -1,13 +1,3 @@
-/**
- * PiProvider — snapshot/probe layer for the Pi coding agent.
- *
- * Health is probed with `pi --version`. Models, the user's default model, and
- * the user's commands (extension slash commands, prompt templates, skills)
- * are discovered through a short-lived ephemeral RPC session
- * (`pi --mode rpc --no-session`), so everything the user configured in
- * `~/.pi/agent` — custom providers, models.json entries, extensions, skills —
- * shows up in T3 without any hardcoded catalog.
- */
 import {
   type CustomModelSetting,
   type ServerProvider,
@@ -77,7 +67,6 @@ const PI_RPC_DISCOVERY_TIMEOUT_MS = 15_000;
  */
 export const MINIMUM_PI_VERSION = "0.80.5";
 
-/** Deferring to the user's own settings.json default model. */
 const PI_DEFAULT_MODEL: ServerProviderModel = {
   slug: "default",
   name: "Pi default",

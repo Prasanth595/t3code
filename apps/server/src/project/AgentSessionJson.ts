@@ -6,7 +6,6 @@ import type { ParserOptions, Token } from "stream-json/core/parser.js";
 
 type JsonPath = ReadonlyArray<string | number | null>;
 
-/** Select schema fields before assembling their values, without a second field list. */
 export function createTranscriptJsonSelector(schema: { readonly ast: SchemaAST.AST }) {
   const ast = SchemaAST.toEncoded(schema.ast);
   const includes = (node: SchemaAST.AST, path: JsonPath, index: number): boolean => {

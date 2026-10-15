@@ -12,7 +12,6 @@ interface LoadedDiff {
   readonly key: string;
   /** The page asked for next; null is the first. */
   readonly cursor: string | null;
-  /** No page left to ask for. */
   readonly done: boolean;
   readonly files: ReadonlyMap<string, FileDiffMetadata>;
 }
@@ -20,10 +19,8 @@ interface LoadedDiff {
 const NO_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
 
 /**
- * The pull request's parsed file diffs, read through the same paged query the Code tab uses, so
- * the pages are shared. Paging stops once every wanted path has arrived: a stop's excerpts are
- * usually in the first page, and a large change should not be read whole to show one of them.
- * Pages already read are kept, so going back to an earlier stop costs nothing.
+ * Paging stops once every wanted path has arrived: a stop's excerpts are usually in the first
+ * page, and a large change should not be read whole to show one of them.
  */
 export function useGuideDiffFiles({
   environmentId,
@@ -64,7 +61,6 @@ export function useGuideDiffFiles({
     setLoaded((previous) => {
       const base =
         previous.key === key ? previous : { key, cursor: null, done: false, files: NO_FILES };
-      // A page is absorbed once; the query hands the same answer back on every render.
       if (base.cursor !== cursor || base.done) return base;
       const parsed = getRenderablePatch(
         data.patch,

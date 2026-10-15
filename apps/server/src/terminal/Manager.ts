@@ -1,11 +1,3 @@
-/**
- * TerminalManager - Terminal session orchestration service interface.
- *
- * Owns terminal lifecycle operations, output fanout, and session state
- * transitions for thread-scoped terminals.
- *
- * @module TerminalManager
- */
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
@@ -146,15 +138,10 @@ class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSigna
   }
 }
 
-/**
- * TerminalManager - Service tag for terminal session orchestration.
- */
 export class TerminalManager extends Context.Service<
   TerminalManager,
   {
     /**
-     * Open or attach to a terminal session.
-     *
      * Reuses an existing session for the same thread/terminal id and restores
      * persisted history on first open.
      */
@@ -178,24 +165,13 @@ export class TerminalManager extends Context.Service<
       listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void, TerminalError>;
 
-    /**
-     * Write input bytes to a terminal session.
-     */
     readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
 
-    /**
-     * Resize the PTY backing a terminal session.
-     */
     readonly resize: (input: TerminalResizeInput) => Effect.Effect<void, TerminalError>;
 
-    /**
-     * Clear terminal output history.
-     */
     readonly clear: (input: TerminalClearInput) => Effect.Effect<void, TerminalError>;
 
     /**
-     * Restart a terminal session in place.
-     *
      * Always resets history before spawning the new process.
      */
     readonly restart: (
@@ -203,8 +179,6 @@ export class TerminalManager extends Context.Service<
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
     /**
-     * Close an active terminal session.
-     *
      * When `terminalId` is omitted, closes all sessions for the thread.
      */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
@@ -220,11 +194,6 @@ export class TerminalManager extends Context.Service<
       readonly terminalId?: string;
     }) => Effect.Effect<void>;
 
-    /**
-     * Subscribe to terminal runtime events with a direct callback.
-     *
-     * Returns an unsubscribe function.
-     */
     readonly subscribe: (
       listener: (event: TerminalEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void>;
@@ -305,7 +274,6 @@ interface TerminalSessionState {
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
   hasRunningSubprocess: boolean;
-  /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
 }
@@ -873,7 +841,6 @@ export class BoundedTerminalHistory {
     this.cachedValue = null;
     if (this.maxBytes <= 0 || this.maxLines <= 0) {
       this.clear();
-      // Preserve the existing zero-line limit's trailing newline behavior.
       if (this.maxBytes > 0 && text.endsWith("\n")) this.appendChunk("\n");
       return;
     }
@@ -984,14 +951,12 @@ export class BoundedTerminalHistory {
         continue;
       }
       if (first.byteLength === first.data.length && first.lineBreaks === 0) {
-        // ASCII without newlines needs no scan to find the byte cutoff.
         this.trimChunk(bytesToDrop, bytesToDrop, 0);
         continue;
       }
       let offset = 0;
       let bytes = 0;
       let lineBreaks = 0;
-      // Scan only the discarded prefix of one small chunk, never all history.
       while (bytes < bytesToDrop) {
         const codePoint = first.data.codePointAt(offset)!;
         bytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
@@ -1267,9 +1232,6 @@ function shouldExcludeTerminalEnvKey(key: string): boolean {
   return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
 }
 
-// Marker variables the AppImage runtime injects into the process it launches.
-// They describe the AppImage itself, not the user's session, so terminals must
-// not inherit them.
 const APPIMAGE_RUNTIME_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
 // Colon-separated search-path variables the AppImage runtime points at its
 // temporary mount (e.g. /tmp/.mount_T3-XXXX/usr/bin, the bundled glib schemas,
@@ -1369,11 +1331,6 @@ interface TerminalManagerOptions {
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
-  /**
-   * Catalog cache and tool directories for managed ACP Registry installs. Their
-   * install directories are appended to the terminal PATH so users can run
-   * managed agents by name (e.g. `kimi login`).
-   */
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
   subprocessInspector?: TerminalSubprocessInspector;
@@ -1494,7 +1451,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // Terminals must inherit the user's full environment (minus the blocklist
   // applied in createTerminalSpawnEnv) — an allowlist here silently strips
   // things like PSModulePath, DISPLAY, proxies, and toolchain variables.
-  // `options.env` is the test seam.
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -3190,7 +3146,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         );
       }),
     ).pipe(
-      // The process check failed, so every terminal stays open.
       Effect.catch((error) =>
         Effect.logWarning("failed to close idle terminals", {
           threadId: input.threadId,

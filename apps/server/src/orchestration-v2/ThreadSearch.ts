@@ -44,7 +44,6 @@ function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
-/** At most 240 characters, centred near the first match. */
 function buildSearchSnippet(text: string, query: string): string {
   const normalizedText = text.replace(/\s+/g, " ").trim();
   if (normalizedText.length <= 240) {
@@ -79,8 +78,6 @@ export class ThreadSearch extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // One best match per thread: user messages outrank assistant ones, then the
-  // newest message wins. Threads order by match kind, then recency.
   const searchRows = SqlSchema.findAll({
     Request: SearchRequest,
     Result: SearchRow,

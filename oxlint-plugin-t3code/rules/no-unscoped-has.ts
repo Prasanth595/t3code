@@ -16,7 +16,6 @@ const QUOTED_PATTERN = /(["'])(?:\\.|(?!\1).)*\1/gu;
 // A variant's closing bracket is followed by ":" or a group/peer name like "/row:".
 const VARIANT_END_PATTERN = /^(?:\/[\w-]+)?:/u;
 
-/** Tailwind arbitrary variants in a class token: top-level `[...]` groups used as variants. */
 function variantGroups(token: string): { prefix: string; group: string }[] {
   const groups: { prefix: string; group: string }[] = [];
   let depth = 0;
@@ -36,7 +35,6 @@ function variantGroups(token: string): { prefix: string; group: string }[] {
   return groups;
 }
 
-/** Index of the ")" closing the "(" at `open`, or the selector's length. */
 function closingParen(selector: string, open: number): number {
   let depth = 0;
   for (let index = open; index < selector.length; index++) {
@@ -69,7 +67,6 @@ function isWrapperSubject(selector: string, from: number): boolean {
   return true;
 }
 
-/** The compound selector each `:has(` in `selector` is attached to. */
 function hasCompounds(selector: string): string[] {
   const compounds: string[] = [];
   let index = selector.indexOf(":has(");
@@ -124,7 +121,6 @@ function withoutNegations(compound: string): string {
   return result;
 }
 
-/** Arbitrary variants in `text` whose `:has()` is unanchored or anchored to the document root. */
 function findUnscopedHasVariants(text: string): string[] {
   // Selectors are ASCII case-insensitive.
   if (!text.toLowerCase().includes(":has(")) return [];

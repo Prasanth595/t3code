@@ -18,8 +18,9 @@ type Options = {
   onDrop?: (point: { x: number; y: number }) => boolean;
 };
 
-/** A sidebar gesture ends on release, cancellation, or loss of its window.
- * Own the listeners so unmounting the list can cancel the sensor too. */
+/**
+ * Own the listeners so unmounting the list can cancel the sensor too.
+ */
 export class SidebarPointerSensor {
   static activators = [
     {
@@ -137,9 +138,9 @@ export class SidebarPointerSensor {
     this.document.removeEventListener("dragstart", this.preventDefault);
     this.document.removeEventListener("contextmenu", this.preventDefault);
     this.document.removeEventListener("selectionchange", this.clearSelection);
-    // Cancellation can precede release by an arbitrary amount of time. Consume
-    // that release click, or let a fresh pointerdown end suppression if release
-    // happened outside the document. Ordinary clicks never install this guard.
+    // Cancellation can precede release by an arbitrary amount of time. Consume that release
+    // click, or let a fresh pointerdown end suppression if release happened outside the
+    // document.
     if (!aborted || cancelled) {
       this.document.addEventListener("click", this.suppressClick, { capture: true });
       this.document.addEventListener("pointerdown", this.clearClickSuppression, { capture: true });

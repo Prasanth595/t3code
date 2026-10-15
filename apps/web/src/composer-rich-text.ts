@@ -1,15 +1,3 @@
-/**
- * Inline markdown styling for the rich text composer.
- *
- * The composer's stored prompt stays plain markdown (`**bold**`), while the
- * Tiptap surface renders styled text. These helpers translate between the two:
- * parsing markdown into marked spans for the document, serializing marked
- * spans back to markdown in the document serializer.
- *
- * Deliberately small: bold, italic, strikethrough, and inline code only.
- * Unmatched markers stay literal text so nothing the user typed is ever lost.
- */
-
 export type RichTextMark = "bold" | "italic" | "strike" | "code";
 
 interface RichTextSpan {

@@ -37,7 +37,6 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
   warning: "exclamationmark.triangle",
 };
 
-/** Setup stages collapse into the working header once the agent's turn is live. */
 export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   const { snapshot, turnStarted, turnStartedAt, working } = props;
   const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
@@ -226,7 +225,6 @@ function SetupDetailsSheet({
           paddingBottom: Math.max(20, insets.bottom),
         }}
       >
-        {/* Agent startup is the header handoff, not a fifth setup step. */}
         {snapshot.stages
           .filter((stage) => stage.id !== "agent")
           .map((stage) => (
@@ -365,7 +363,6 @@ function StageRow({
 
 const OUTPUT_TAIL_SLOTS = [0, 1, 2, 3] as const;
 
-/** Fixed four-line output window, shown only in Details. */
 function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: boolean }) {
   return (
     <View

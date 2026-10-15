@@ -32,7 +32,6 @@ const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 /** Signed asset URLs live for an hour; treat anything older than this as worth re-minting. */
 const STALE_URL_MS = 5 * 60_000;
 
-/** Highlighted read-only source, loaded on demand so message rendering never waits on the highlighter. */
 export function ReadOnlySourcePreview(props: { name: string; text: string }) {
   return (
     <Suspense fallback={<FileSurfaceLoading className="p-4" />}>
@@ -47,11 +46,6 @@ function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: bool
   return rendered ? "Show HTML source" : "Show rendered page";
 }
 
-/**
- * A captured attachment shown with the same chrome as a workspace file: one
- * header row with crumbs and icon actions, then the document. Captured bytes
- * are viewed independently of similarly named files in the workspace.
- */
 export function AttachmentFilePreview(props: {
   name: string;
   mimeType: string;
@@ -59,11 +53,8 @@ export function AttachmentFilePreview(props: {
   sizeBytes: number;
   file?: Blob | null;
   asset?: { environmentId: EnvironmentId; attachmentId: string };
-  /** An agent's HTML render, shown in the app theme. */
   htmlRender?: boolean;
-  /** The thread an HTML render's links open beside. */
   threadRef?: ScopedThreadRef;
-  /** First crumb: where the file comes from. */
   origin?: string;
   onRemove?: () => void;
   onClose?: () => void;
@@ -180,8 +171,6 @@ export function AttachmentFilePreview(props: {
   const failure = error ?? (needsText ? contentError : null);
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const updateClientSettings = useUpdateClientSettings();
-  // Only the raw-text body honours word wrap. A rendered table or Markdown lays itself out,
-  // so offering the toggle there would be a control that visibly does nothing.
   const showsRawText =
     failure === null &&
     needsText &&

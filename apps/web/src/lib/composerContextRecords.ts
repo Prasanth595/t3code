@@ -41,11 +41,6 @@ import {
 } from "./terminalContext";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
-/**
- * Builds the wire records behind a draft's inline references, and the reverse for reading a
- * message. Draft shapes stay what the producing panels emit; only the send boundary converts.
- */
-
 const PREVIEW_LABEL_MAX_CHARS = 48;
 
 /**
@@ -127,12 +122,10 @@ export function terminalContextReference(context: TerminalContextDraft): Compose
   };
 }
 
-/** Review producers mint ids in their own grammars; the context id is a folded form of them. */
 export function reviewCommentContextId(commentId: string): ComposerContextId {
   return toKindScopedComposerContextId("review-comment", commentId);
 }
 
-/** Distinct from the screenshot image, which reuses the annotation id as its attachment id. */
 export function previewAnnotationContextId(annotationId: string): ComposerContextId {
   return toKindScopedComposerContextId("preview-annotation", annotationId);
 }
@@ -157,7 +150,6 @@ export function previewAnnotationContextReference(
   };
 }
 
-/** One record per thread: attaching the same thread twice reuses the chip. */
 function threadContextId(threadId: ThreadId): ComposerContextId {
   return toKindScopedComposerContextId("thread", threadId);
 }
@@ -279,7 +271,6 @@ export function fileContextReference(file: ComposerFileAttachment): ComposerCont
   };
 }
 
-/** Binds a draft attachment to the id the receiving side will know it by. */
 export interface BoundComposerAttachment {
   attachment: ComposerImageAttachment | ComposerFileAttachment;
   attachmentId: string;
@@ -322,7 +313,6 @@ export function buildMessageContext(input: {
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
-  // An annotation's screenshot travels as the image attachment that reuses its id.
   const screenshotAttachmentIds = new Set(
     (input.attachments ?? []).flatMap(({ attachment }) =>
       attachment.type === "image" ? [attachment.id] : [],
@@ -353,7 +343,6 @@ export function asKnownContextRecord(
   return record as KnownComposerContextRecord;
 }
 
-/** Candidate keys for finding the draft record an imported wire record would reconstruct. */
 export function composerContextImportLookupIds(
   record: KnownComposerContextRecord,
 ): ReadonlyArray<ComposerContextId> {
@@ -401,7 +390,6 @@ export function selectedMessageContextFragment(input: {
   });
 }
 
-/** A message's canonical text plus records; old messages are upgraded in memory on read. */
 export function resolveUserMessageContext(message: {
   text: string;
   context?: OrchestrationMessageContext | undefined;
@@ -415,10 +403,6 @@ export function resolveUserMessageContext(message: {
     recordsById: new Map(resolved.records.map((record) => [record.contextId, record])),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Records back into draft shapes (paste)
-// ---------------------------------------------------------------------------
 
 export function terminalContextDraftFromRecord(
   record: TerminalContextRecord,
@@ -468,8 +452,6 @@ export function previewAnnotationFromRecord(
       rect: { x: 0, y: 0, width: 0, height: 0 },
       element: { ...element, stack: [], pickedAt: new Date().toISOString() },
     })),
-    // Geometry does not travel, but the counts do, so the rebuilt summary still reports
-    // what the annotation marked.
     regions: Array.from({ length: record.regionCount ?? 0 }, (_unused, index) => ({
       id: `${record.contextId}-region-${index + 1}`,
       rect: { x: 0, y: 0, width: 0, height: 0 },
@@ -512,9 +494,6 @@ export function isSameComposerContextPayload(
 ): boolean {
   if (left.kind !== right.kind) return false;
   const stableKey = (record: ComposerContextRecord) => {
-    // Labels are display text and context ids are folded producer ids: neither
-    // distinguishes excerpts, so an imported legacy id must still match the
-    // canonical id reconstructed for the same payload instead of duplicating it.
     const { label: _label, contextId: _contextId, ...rest } = record;
     const sortDeep = (value: unknown): unknown => {
       if (Array.isArray(value)) return value.map(sortDeep);

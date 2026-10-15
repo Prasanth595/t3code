@@ -11,7 +11,6 @@ export type SubagentRowTone = "working" | "completed" | "failed" | "stopped";
 
 export interface SubagentRowPresentation {
   readonly title: string;
-  /** Live agents lead with progress; settled ones lead with what came out. */
   readonly detail: string | null;
   readonly statusLabel: string;
   readonly tone: SubagentRowTone;

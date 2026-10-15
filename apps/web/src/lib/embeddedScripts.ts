@@ -9,10 +9,8 @@ import {
 } from "unbash";
 
 /**
- * Code in another language inside a shell command: a `bash -lc "…"` script, a
- * `python3 -c '…'` argument, or a heredoc fed to an interpreter or written to
- * a file. `starts[i]` and `ends[i]` are the span of the original command that
- * spells `text[i]`, so a quoted `\"` maps back to both of its characters.
+ * `starts[i]` and `ends[i]` are the span of the original command that spells
+ * `text[i]`, so a quoted `\"` maps back to both of its characters.
  */
 export interface EmbeddedScript {
   readonly language: string;
@@ -29,7 +27,6 @@ interface MappedText {
 
 interface Interpreter {
   readonly language: string;
-  /** Flags whose next argument is the script. */
   readonly inline: (flag: string) => boolean;
   /** Options that consume the next argument. */
   readonly valueOptions?: ReadonlySet<string>;
@@ -150,7 +147,6 @@ const INTERPRETERS: Record<string, Interpreter> = {
 INTERPRETERS.powershell = INTERPRETERS.pwsh!;
 INTERPRETERS.mariadb = INTERPRETERS.mysql!;
 
-// Commands that run the next word as the program, with the options that consume a value.
 const PROGRAM_WRAPPERS: Record<string, ReadonlySet<string>> = {
   env: new Set(["-u", "--unset", "-C", "--chdir"]),
   sudo: new Set(["-u", "--user", "-g", "--group", "-C", "-D", "--chdir"]),
@@ -161,7 +157,6 @@ const PROGRAM_WRAPPERS: Record<string, ReadonlySet<string>> = {
   builtin: new Set(),
 };
 
-// Heredoc delimiters that name their language, as in `<<'SQL'`.
 const DELIMITER_LANGUAGES: Record<string, string> = {
   py: "python",
   python: "python",
@@ -228,7 +223,6 @@ function isNode(value: unknown): value is { readonly type: string } {
   return typeof value === "object" && value !== null && "type" in value;
 }
 
-/** Visits every simple command, including those inside `$(…)`, loops and subshells. */
 function forEachCommand(
   node: unknown,
   visit: (command: Command) => void,
@@ -273,7 +267,6 @@ function interpreterFor(name: string): Interpreter | undefined {
   return Object.hasOwn(INTERPRETERS, name) ? INTERPRETERS[name] : undefined;
 }
 
-/** Skips `env FOO=1`, `sudo -u bob` and similar to the word naming the real program. */
 function programIndex(words: ReadonlyArray<Word>): number {
   let index = 0;
   while (index < words.length) {
@@ -341,7 +334,6 @@ function commandScripts(
   return scripts;
 }
 
-/** Whether a redirection without a descriptor, or with `fd`, targets file descriptor `fd`. */
 function isDescriptor(descriptor: HereDoc["descriptor"], fd: number): boolean {
   return (
     descriptor === undefined || (descriptor.type === "FileDescriptor" && descriptor.value === fd)
@@ -354,7 +346,6 @@ interface ScriptArgument {
   readonly inValue: boolean;
 }
 
-/** The script arguments, and whether the script comes from a file instead. */
 function interpreterArgs(
   interpreter: Interpreter,
   args: ReadonlyArray<Word>,
@@ -372,7 +363,6 @@ function interpreterArgs(
       continue;
     }
     if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
-      // `--eval=code` and `--file=path` carry their value in the same word.
       const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
       if (interpreter.scriptFileOptions?.has(name)) {
         if (!interpreter.repeatable) return { scripts, scriptFromFile: true };
@@ -419,7 +409,6 @@ function sliceMapped(mapped: MappedText, start: number): MappedText {
   };
 }
 
-/** The language of the file `cat > file` or `tee file` writes its stdin to. */
 function writtenFileLanguage(
   name: string,
   command: Command,
@@ -449,7 +438,6 @@ function delimiterLanguage(hereDoc: HereDoc): string | undefined {
   return name && Object.hasOwn(DELIMITER_LANGUAGES, name) ? DELIMITER_LANGUAGES[name] : undefined;
 }
 
-/** A heredoc body as written; the interpreter reads its characters one to one. */
 function hereDocText(hereDoc: HereDoc, source: string): MappedText {
   const { pos, end } = hereDoc.body;
   const starts = Array.from({ length: end - pos }, (_, index) => pos + index);
@@ -511,7 +499,6 @@ class MappedTextBuilder {
     return true;
   }
 
-  /** Adds a literal, resolving backslash escapes; false when the result disagrees with the parser. */
   addEscaped(literal: { pos: number; text: string; value: string }, doubleQuoted: boolean) {
     const before = this.text.length;
     const { text, pos } = literal;

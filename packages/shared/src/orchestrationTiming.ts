@@ -64,8 +64,6 @@ function isLatestRunSettled(
 }
 
 /**
- * When the working indicator should be counting, and from when.
- *
  * `requestedAt` is the floor for an unsettled turn. The projector only stamps
  * `startedAt` in the same update that moves the session to "running", so while
  * the provider spins up (session "starting") a requested turn has no

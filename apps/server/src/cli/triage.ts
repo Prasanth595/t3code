@@ -1,14 +1,3 @@
-/**
- * `t3 triage` - hand a misbehaving install to the user's own coding agent.
- *
- * The command is deliberately thin: it writes a `context.md` with machine facts
- * (versions, paths, server liveness), then launches claude or codex
- * interactively, seeded with the playbook from `triagePrompt.ts`. The agent
- * asks the user what went wrong, investigates, and files the issue; the
- * harness's own permission prompts gate anything it wants to run. With no
- * agent CLI installed, the prompt and context are written to disk for the user
- * to paste into whatever agent they do have.
- */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
@@ -77,10 +66,6 @@ export class TriageAgentSpawnError extends Schema.TaggedError<TriageAgentSpawnEr
   }
 }
 
-/**
- * One human-readable line about the local server, for `context.md`. Includes
- * the version the server recorded, which can differ from this CLI's version.
- */
 export const describeServerProcess = Effect.fn("triage.describeServerProcess")(function* (
   serverRuntimeStatePath: string,
 ) {
@@ -126,11 +111,6 @@ const pickAgent = (agents: ReadonlyArray<TriageAgent>) =>
     }
   });
 
-/**
- * Run the agent CLI as a normal interactive session: the user's terminal is
- * the UI, and the harness's own permission prompts gate every action. Resolves
- * with the child's exit code.
- */
 const runInteractiveSession = (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -174,8 +154,6 @@ export const triageCommand = Command.make("triage", {
       const path = yield* Path.Path;
 
       // Triage is a user-facing feature: always the userdata state, never dev.
-      // --base-dir wins; T3CODE_HOME is its documented env equivalent (same
-      // precedence as `t3 pair`).
       const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
       const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
       const baseDir = yield* resolveBaseDir(explicitBaseDir ?? Option.getOrUndefined(envHome));

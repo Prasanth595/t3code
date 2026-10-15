@@ -15,9 +15,7 @@ import { toastManager } from "../../ui/toast";
 import { readPullRequestListPreferences } from "../pullRequestListPreferences";
 import { useGuideRunStore, type GuideRunWatch } from "./guideRunStore";
 
-/** How often a watched run is re-read. A run takes minutes, not seconds. */
 const RUN_POLL_MS = 5_000;
-/** A run never seen running after this long was dropped before the first read. */
 const UNSEEN_RUN_MS = 60_000;
 
 /**

@@ -36,7 +36,6 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "transformSessionUpdate"
   | "transformStdout"
 > {
-  /** Device CLI environment supplied for this provider session. */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
@@ -48,7 +47,6 @@ export interface AntigravityAcpRuntimeInput extends Omit<
    * generation helpers leave it off so they never touch a workspace.
    */
   readonly clientFileSystem?: boolean;
-  /** ACP `authenticate` method id. Defaults to the personal Google account flow. */
   readonly authMethod?: AntigravityAuthMethod;
 }
 
@@ -138,7 +136,6 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       "getConfigOptions" | "setModel"
     >;
     readonly model: string | null | undefined;
-    /** Model to select for the provider default alias. See `resolveAntigravityModel`. */
     readonly defaultModel?: string | undefined;
     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
   }): Effect.fn.Return<string | undefined, E> {
@@ -150,9 +147,6 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       model: input.model,
       defaultModel: input.defaultModel,
     });
-    // The default alias never sends an internal ID. It selects the manifest
-    // default when that differs from the agent's current model, and otherwise
-    // leaves the agent's choice alone.
     const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
     if (resolved === undefined || (!explicit && resolved === current)) return current;
     const options = antigravityModelOptions(configOptions);

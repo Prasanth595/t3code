@@ -10,14 +10,9 @@ export type ModifiedTerminalInput =
   | { readonly kind: "write"; readonly data: string }
   | { readonly kind: "paste" };
 
-// C0 controls other than tab, LF, and CR, plus DEL.
 // eslint-disable-next-line no-control-regex -- Pasted text must not carry raw terminal controls.
 const UNSAFE_PASTE_BYTES = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 
-/**
- * Encodes a key pressed while the toolbar's one-shot ctrl modifier is armed
- * into the control byte a terminal expects.
- */
 export function applyCtrlModifier(input: string): string {
   const firstCharacter = input[0];
   if (!firstCharacter) {
@@ -41,12 +36,11 @@ export function applyCtrlModifier(input: string): string {
 }
 
 /**
- * Resolves what a keypress means once a toolbar modifier is armed. The host's
- * paste chord (cmd+v on a macOS host, ctrl+v elsewhere) pastes the device
- * clipboard instead of reaching the remote shell as a raw control byte, which
- * matches what the web terminal does with the same chord. Forwarding the byte
- * is never what a phone user means: PowerShell binds ctrl+v to paste from the
- * host machine's clipboard, so the shell inserts whatever the desktop last
+ * The host's paste chord (cmd+v on a macOS host, ctrl+v elsewhere) pastes the
+ * device clipboard instead of reaching the remote shell as a raw control byte,
+ * which matches what the web terminal does with the same chord. Forwarding the
+ * byte is never what a phone user means: PowerShell binds ctrl+v to paste from
+ * the host machine's clipboard, so the shell inserts whatever the desktop last
  * copied rather than the text on the phone.
  */
 export function resolveModifiedTerminalInput(input: {

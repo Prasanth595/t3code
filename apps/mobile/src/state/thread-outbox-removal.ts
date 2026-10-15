@@ -81,7 +81,6 @@ export async function removeThreadOutboxMessage(
   return true;
 }
 
-/** Removes every queued message of an environment and releases their files. */
 export async function clearThreadOutboxEnvironment(environmentId: EnvironmentId): Promise<void> {
   // clearEnvironment loads and merges persisted messages itself and reports
   // what it actually removed, so the release set cannot miss messages a

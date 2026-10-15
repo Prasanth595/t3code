@@ -1,7 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Best-effort provider event logging with one shared writer per thread.
- *
  * Native and canonical views share batching, rotation, and retention state so
  * they cannot race while appending to the same thread-scoped file.
  */

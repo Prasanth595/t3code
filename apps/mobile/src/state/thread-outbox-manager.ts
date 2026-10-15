@@ -110,10 +110,6 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     return loadPromise;
   };
 
-  // The queued atom drives the composer's immediate "queued" feedback, so it
-  // is published synchronously; the durable write happens behind it and rolls
-  // the message back out if it fails (durability only matters for crash
-  // recovery, not for the in-session queue).
   const enqueue = (message: QueuedThreadMessage): Promise<void> => {
     bumpRevision(message.messageId);
     setMessages([
@@ -135,9 +131,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
         if (!currentMessages().some((candidate) => candidate.messageId === message.messageId)) {
           try {
             await options.storage.remove(message);
-          } catch {
-            // Best effort: bootstrap reconciles the queue against storage.
-          }
+          } catch {}
         }
         throw new ThreadOutboxManagerError({
           operation: "enqueue",
@@ -150,25 +144,15 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     });
   };
 
-  // Resolves once all pending mutations (including any in-flight enqueue
-  // write) have settled, reporting whether the message is still queued. The
-  // drain awaits this before dispatching so a message whose durable write
-  // later fails can never have been delivered first.
+  // The drain awaits this before dispatching so a message whose durable write later fails can
+  // never have been delivered first.
   const confirmQueued = (message: QueuedThreadMessage): Promise<boolean> =>
     serialize(async () => currentMessages().some((candidate) => candidate === message));
 
-  // Rewrites an already-queued message. A no-op when the message has been
-  // removed in the meantime (e.g. deleted or delivered), so a trailing editor
-  // flush can never resurrect it. Returns whether the message was updated.
-  //
-  // `expectedRevision` makes the update a compare-and-set: pass the revision
-  // read before starting slow work, and the update is rejected before the
-  // stale payload is persisted when any other write was accepted since. An
-  // enqueue can still publish synchronously while the durable write below is
-  // in flight, so the revision is re-checked after the write too; the stale
-  // payload it just persisted is then overwritten with the winning payload
-  // inside this mutation, so a crash before the winner's own serialized write
-  // cannot leave stale state on disk.
+  // An enqueue can still publish synchronously while the durable write below is in flight, so the
+  // revision is re-checked after the write too; the stale payload it just persisted is then
+  // overwritten with the winning payload inside this mutation, so a crash before the winner's own
+  // serialized write cannot leave stale state on disk.
   const update = (message: QueuedThreadMessage, expectedRevision?: number): Promise<boolean> =>
     serialize(async () => {
       const staleOrMissing = (): boolean =>

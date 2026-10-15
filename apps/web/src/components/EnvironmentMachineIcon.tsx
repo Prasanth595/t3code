@@ -23,7 +23,6 @@ function LucideLike(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** A Mac mini: squat rounded slab with a front-edge LED. */
 function MacMiniIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <LucideLike {...props}>
@@ -33,7 +32,6 @@ function MacMiniIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** A Mac Studio: the same slab twice as tall, ports along the front foot. */
 function MacStudioIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <LucideLike {...props}>

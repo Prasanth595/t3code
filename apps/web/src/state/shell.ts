@@ -91,9 +91,9 @@ export const allEnvironmentProjectSnapshotsReadyAtom =
   });
 
 /**
- * Every enabled machine has sent its live projects or has settled offline. Prompt links wait for
- * it before they decide a repository is missing: one offline machine must not hold a link
- * forever. A machine that has not started connecting yet is "available", not offline.
+ * Prompt links wait for it before they decide a repository is missing: one offline machine must
+ * not hold a link forever. A machine that has not started connecting yet is "available", not
+ * offline.
  */
 export const allReachableShellsLiveAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);

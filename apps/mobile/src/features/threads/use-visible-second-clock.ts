@@ -3,11 +3,8 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import { AppState } from "react-native";
 
 /**
- * Wall clock for elapsed-time labels, advanced once a second only while
- * `enabled`, the screen is focused, and the app is active. Retained routes stay
- * mounted when hidden, so an ungated interval would keep re-rendering them.
- * The clock re-reads the time before paint when ticking resumes, so a label
- * never shows the moment it paused.
+ * Retained routes stay mounted when hidden, so an ungated interval would keep
+ * re-rendering them.
  */
 export function useVisibleSecondClock(enabled: boolean): number {
   const focused = useIsFocused();

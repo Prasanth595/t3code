@@ -22,9 +22,7 @@ export interface ThreadPrPresentation {
   /** Provider-side last activity, bounding when a terminal state landed. */
   readonly updatedAt: string | null;
   readonly url: string;
-  /** Compact pull request number or linked count, e.g. "3774" or "+2". */
   readonly label: string;
-  /** Full, provider-aware label for assistive technologies. */
   readonly accessibilityLabel: string;
   readonly textClassName: string;
 }

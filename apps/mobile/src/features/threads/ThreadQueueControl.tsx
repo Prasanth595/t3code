@@ -99,8 +99,6 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     }
   }, [order, translation]);
 
-  // Nothing left to manage: the sheet closes rather than sitting on an empty
-  // list the user has to dismiss themselves.
   const hadQueuedRuns = useRef(queuedRuns.length > 0);
   useEffect(() => {
     if (queuedRuns.length > 0) {
@@ -491,7 +489,6 @@ function QueueShiftedRow(props: {
   );
 }
 
-/** Swipe left to remove, the one destructive action that needs no menu. */
 function QueueRowSwipeable(props: {
   readonly enabled: boolean;
   readonly background: string;

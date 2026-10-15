@@ -31,24 +31,16 @@ import * as Stream from "effect/Stream";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 
 /**
- * Runs repository clones that back newly added projects and tracks their
- * progress so clients can show it anywhere, not just in the surface that
- * started the clone.
- *
- * The clone is detached from the request that started it: the palette closes
- * immediately, the project already exists (pointing at the empty destination),
- * and the composer can hold a draft for it. Snapshots are memory only. A done
- * clone is dropped after a short grace window; a failed one stays until it is
- * retried or the server restarts, since the empty project is the durable
- * record the user can act on.
+ * Snapshots are memory only. A done clone is dropped after a short grace
+ * window; a failed one stays until it is retried or the server restarts, since
+ * the empty project is the durable record the user can act on.
  */
 export class ProjectCloneTracker extends Context.Service<
   ProjectCloneTracker,
   {
     /**
-     * Resolves the remote, creates the project, and starts the clone in the
-     * background. Fails before creating anything when the destination or
-     * repository is unusable so the caller can report it inline.
+     * Fails before creating anything when the destination or repository is
+     * unusable so the caller can report it inline.
      */
     readonly start: (
       input: ProjectCloneStartInput,
@@ -59,11 +51,10 @@ export class ProjectCloneTracker extends Context.Service<
     >;
     /** Interrupts a running clone and deletes the partial checkout. */
     readonly cancel: (projectId: ProjectId) => Effect.Effect<boolean>;
-    /** Restarts a failed or cancelled clone into the same destination. */
     readonly retry: (projectId: ProjectId) => Effect.Effect<boolean, SourceControlRepositoryError>;
     /**
      * Stops tracking a project's clone, interrupting it if it still runs and
-     * removing an unfinished checkout. Called when the project is deleted.
+     * removing an unfinished checkout.
      */
     readonly discard: (projectId: ProjectId) => Effect.Effect<void>;
     readonly get: (projectId: ProjectId) => Effect.Effect<ProjectCloneSnapshot | null>;
@@ -73,9 +64,8 @@ export class ProjectCloneTracker extends Context.Service<
 >()("t3/project/ProjectCloneTracker") {}
 
 /**
- * Orchestration side effects the caller owns. The tracker never depends on the
- * engine directly: the WebSocket handler dispatches with the client's origin,
- * and the tracker only needs the outcome.
+ * The tracker never depends on the engine directly: the WebSocket handler
+ * dispatches with the client's origin, and the tracker only needs the outcome.
  */
 export interface ProjectCloneHooks {
   readonly createProject: (input: {
@@ -84,7 +74,6 @@ export interface ProjectCloneHooks {
     readonly workspaceRoot: string;
     readonly createdAt: string;
   }) => Effect.Effect<void, OrchestrationDispatchCommandError>;
-  /** Runs after a successful clone so cached repository identity and git status refresh. */
   readonly onCloned: (input: {
     readonly projectId: ProjectId;
     readonly workspaceRoot: string;
@@ -216,11 +205,11 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * The clone body. Runs in its own fiber; the tracker records the outcome
-   * through `onExit`, which still runs when the fiber is interrupted (a
-   * `matchCause` handler would be skipped). Once git has finished the clone
-   * is marked done before the post-clone hook runs, so a late Cancel cannot
-   * tear down a complete checkout.
+   * Runs in its own fiber; the tracker records the outcome through `onExit`,
+   * which still runs when the fiber is interrupted (a `matchCause` handler
+   * would be skipped). Once git has finished the clone is marked done before
+   * the post-clone hook runs, so a late Cancel cannot tear down a complete
+   * checkout.
    */
   const runClone = (projectId: ProjectId, tracked: TrackedClone) =>
     repositories
@@ -278,8 +267,6 @@ export const make = Effect.gen(function* () {
         sequence: ++sequence,
       };
       const claimed = yield* Ref.modify(clones, (current) => {
-        // A second start for the same project, or for a destination another
-        // clone already owns, must not race two gits into one directory.
         const conflict = Array.from(current.values()).some(
           (tracked) =>
             tracked.snapshot.projectId === input.projectId ||
@@ -350,7 +337,6 @@ export const make = Effect.gen(function* () {
           // Git finished in the window before the interrupt landed: keep it.
           if (after?.phase === "done") return;
           if (after?.phase === "running") yield* finish(projectId, "cancelled", null);
-          // The partial checkout goes so a retry starts from an empty destination.
           yield* repositories.discardClone(tracked.input.destinationPath).pipe(Effect.ignore);
         }),
       );

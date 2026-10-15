@@ -47,7 +47,6 @@ export function AssistantCitationChip({
     onCancel?: () => void;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
-    /** Reports each keystroke of the unsaved comment. */
     onDraftChange?: (comment: string) => void;
     /** Returns focus to the host editor when the popover closes instead of to the pencil trigger. */
     onRestoreFocus?: () => void;

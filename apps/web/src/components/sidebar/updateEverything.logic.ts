@@ -21,22 +21,15 @@ export interface UpdateEverythingMachine {
   /** Served by the desktop app this client runs in (the primary backend or a
       local WSL backend). Its server updates when the app installs. */
   readonly hostedByThisApp: boolean;
-  /** The session holds the scope a server update needs. */
   readonly canMaintain: boolean;
   readonly updateState: ServerUpdateState;
 }
 
-/** A server that restarts during a run. */
 export interface RestartingMachine {
   readonly environmentId: EnvironmentId;
-  /** The server resumes interrupted threads after it restarts. */
   readonly continuesThreads: boolean;
 }
 
-/**
- * The servers a run restarts: each server it updates, and the servers this app
- * hosts when this app installs. Provider updates restart nothing.
- */
 export function collectRestartingMachines(
   machines: ReadonlyArray<UpdateEverythingMachine>,
   servers: ReadonlyArray<Pick<ServerUpdateTarget, "environmentId">>,
@@ -63,7 +56,6 @@ export function collectRestartingMachines(
   });
 }
 
-/** A machine the run leaves alone, with a short reason such as "not connected". */
 export interface SkippedMachine {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -71,14 +63,10 @@ export interface SkippedMachine {
 }
 
 /**
- * The servers that "update everything" moves to `targetVersion`: connected,
- * permitted, able to update over RPC, behind the target, and on its release
- * channel. Every other behind server comes back in `skipped` with a reason for
- * the confirmation; a machine that never connected has an unknown version, so
- * it counts as skipped. Two kinds are in neither list: servers already on the
- * target, and servers this app hosts, which would relaunch the app mid-run
- * and update with the app's own install anyway. A desktop-managed server
- * follows its own app's update feed, so the channel rule does not apply to it.
+ * Two kinds are in neither list: servers already on the target, and servers this app hosts,
+ * which would relaunch the app mid-run and update with the app's own install anyway. A
+ * desktop-managed server follows its own app's update feed, so the channel rule does not apply
+ * to it.
  */
 export function collectServerUpdateTargets(
   machines: ReadonlyArray<UpdateEverythingMachine>,
@@ -150,11 +138,9 @@ export interface UpdateEverythingSteps<Providers, Servers> {
 }
 
 /**
- * Runs the remote half of one "update everything" pass and returns each
- * step's results. Providers finish before any server restarts, so no install
- * is cut off. The local download runs alongside the remote work. The caller
- * installs this app afterwards when `localReady`, because the relaunch ends
- * the run; a failed download skips only that install.
+ * Providers finish before any server restarts, so no install is cut off. The local download runs
+ * alongside the remote work. The caller installs this app afterwards when `localReady`, because
+ * the relaunch ends the run; a failed download skips only that install.
  */
 export async function runUpdateEverything<Providers, Servers>(
   steps: UpdateEverythingSteps<Providers, Servers>,
@@ -172,7 +158,6 @@ export async function runUpdateEverything<Providers, Servers>(
   return { localReady, ...remote };
 }
 
-/** The current state of one machine in a running pass. */
 export type UpdateRunMachineStatus =
   | "providers"
   | "waiting"
@@ -181,7 +166,6 @@ export type UpdateRunMachineStatus =
   | "done"
   | "failed";
 
-/** One machine in a running "update everything" pass. */
 export interface UpdateRunMachine {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -218,7 +202,6 @@ export interface UpdateEverythingRun {
   readonly machines: ReadonlyArray<UpdateRunMachine>;
 }
 
-/** Status of one machine, from the run and that server's own update state. */
 export function resolveUpdateRunMachineStatus(
   machine: UpdateRunMachine,
   phase: UpdateEverythingRun["phase"],
@@ -346,20 +329,16 @@ export const RUN_STATUS_LABELS: Record<UpdateRunMachineStatus, string> = {
 
 /** What one pass did. It is saved before this app installs, so it outlives the relaunch. */
 export interface UpdateEverythingResult {
-  /** The version this app installed last, or null when it did not install. */
   readonly localVersion: string | null;
   readonly updatedServers: number;
   readonly updatedProviders: number;
-  /** One line per failure, each naming its machine. */
   readonly failures: ReadonlyArray<string>;
   /** Servers still restarting into their update when this app relaunched. */
   readonly restarting: ReadonlyArray<string>;
 }
 
-/** Counts what a pass updated and lists each failure with its machine. */
 export function collectUpdateEverythingResult(input: {
   readonly localVersion: string | null;
-  /** This app's own download or install failures. */
   readonly localFailures: ReadonlyArray<string>;
   readonly servers: ReadonlyArray<{
     readonly label: string;
@@ -386,11 +365,8 @@ export function collectUpdateEverythingResult(input: {
 }
 
 /**
- * The one toast for a finished pass, such as "Updated this app, 8 servers,
- * and 3 providers" with a line per failure. `appVersion` is the version this
- * app runs now: after the relaunch it tells whether the local install
- * applied. Null when nothing finished, for example every request was
- * interrupted.
+ * `appVersion` is the version this app runs now: after the relaunch it tells whether the local
+ * install applied. Null when nothing finished, for example every request was interrupted.
  */
 export function getUpdateEverythingToastView(
   result: UpdateEverythingResult,
@@ -427,7 +403,6 @@ export function getUpdateEverythingToastView(
 }
 
 export interface UpdateEverythingPlan {
-  /** The version this desktop app installs, or null when it is not updating. */
   readonly localVersion: string | null;
   readonly servers: ReadonlyArray<
     Pick<ServerUpdateTarget, "environmentId" | "serverLabel" | "selfUpdate" | "targetVersion">
@@ -435,7 +410,6 @@ export interface UpdateEverythingPlan {
   readonly providerMachines: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly label: string;
-    /** Display names of the outdated providers on that machine. */
     readonly providers: ReadonlyArray<string>;
   }>;
 }
@@ -449,11 +423,6 @@ function joinList(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
-/**
- * Text for the sidebar tooltip and the confirmation. `summary` reads like
- * "Update this app, 2 servers, and 3 providers". `lines` has one entry per
- * machine, this app first, such as "alvin: server to 0.0.50, Codex, Claude".
- */
 export function describeUpdateEverything(plan: UpdateEverythingPlan): {
   readonly summary: string;
   readonly lines: ReadonlyArray<string>;

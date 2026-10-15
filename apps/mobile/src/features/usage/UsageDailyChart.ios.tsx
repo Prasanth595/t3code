@@ -15,9 +15,9 @@ export interface UsageDailyChartProps {
 }
 
 /**
- * Native Swift Charts daily bars. Points sharing an x value stack, so emitting
- * one point per provider per day yields per-provider bands whose stack height
- * is the day's total; changes animate natively.
+ * Points sharing an x value stack, so emitting one point per provider per day
+ * yields per-provider bands whose stack height is the day's total; changes
+ * animate natively.
  *
  * Axes are hidden: 30-90 categorical day labels cannot fit on a phone, so the
  * screen renders its own edge labels under the chart instead.

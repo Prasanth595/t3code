@@ -315,10 +315,9 @@ function withPreferredPath(
 }
 
 /**
- * Directories exposing installed ACP Registry commands. The integrated
- * terminal appends them to PATH so managed package commands and
- * managed binary agents are both available by name. Best effort: unreadable
- * directories resolve to no entries.
+ * Directories exposing installed ACP Registry commands. The integrated terminal
+ * appends them to PATH so managed package commands and managed binary agents
+ * are both available by name.
  */
 export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManagedBinaryDirectories")(
   function* (input: {
@@ -378,7 +377,6 @@ export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManaged
         Effect.orElseSucceed((): ReadonlyArray<AcpRegistryAgent> => []),
       );
     const cachedAgentByInstall = new Map(
-      // Install directories are named by the URI-encoded version.
       cachedAgents.map(
         (agent) => [`${agent.id}\0${encodeURIComponent(agent.version)}`, agent] as const,
       ),
@@ -529,10 +527,8 @@ const layer = (options: AcpRegistryCatalogOptions) =>
   Layer.effect(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
 
 /**
- * The server-lifetime catalog, with the runtime coordinator built alongside
- * it so setup, snapshots, and turn launch share one of each. Its cache lives
- * in the host's provider status cache and installed agents under the T3
- * home's `tools` directory.
+ * The server-lifetime catalog, with the runtime coordinator built alongside it
+ * so setup, snapshots, and turn launch share one of each.
  */
 export const layerFromHost = Layer.merge(
   Layer.unwrap(

@@ -38,7 +38,6 @@ NAT64.addSubnet("64:ff9b::", 96, "ipv6");
 const SIX_TO_FOUR = new NodeNet.BlockList();
 SIX_TO_FOUR.addSubnet("2002::", 16, "ipv6");
 
-/** The sixteen-bit groups of an IPv6 address, which may end in dotted IPv4. */
 const ipv6Groups = (address: string) => {
   const bare = address.split("%", 1)[0]!;
   const dotted = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(bare);
@@ -68,7 +67,6 @@ const embeddedIPv4 = (address: string) => {
   return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
 };
 
-/** The addresses this machine's interfaces hold right now. */
 const ownAddresses = () => {
   const own = new NodeNet.BlockList();
   for (const entry of Object.values(NodeOS.networkInterfaces()).flat()) {
@@ -90,9 +88,8 @@ const isLocal = (address: string, family: number): boolean => {
 };
 
 /**
- * The addresses to connect to for `host`, or undefined when any address it
- * resolves to is local. The caller connects only to addresses checked here,
- * so a name that later resolves elsewhere (DNS rebinding) changes nothing.
+ * The caller connects only to addresses checked here, so a name that later resolves elsewhere
+ * (DNS rebinding) changes nothing.
  */
 const publicAddresses = async (host: string) => {
   const addresses = NodeNet.isIP(host)
@@ -138,11 +135,8 @@ const readRequest = (data: Buffer) => {
 };
 
 /**
- * Starts a SOCKS5 proxy on loopback for the life of the scope and returns its
- * port. The preview browser sends every connection through it, and it only
- * connects to public addresses. Chrome's Local Network Access misses some
- * requests, such as speculation-rules prefetches; nothing misses this. It
- * carries bytes only, so HTTP, TLS, and WebSockets pass through unchanged.
+ * Chrome's Local Network Access misses some requests, such as speculation-rules prefetches;
+ * nothing misses this.
  */
 export const publicProxy = Effect.acquireRelease(
   Effect.callback<

@@ -49,8 +49,6 @@ function AppSettingsSection() {
   const busy =
     updateState === "checking" || updateState === "downloading" || updateState === "restarting";
 
-  // "Up to date" is a transient acknowledgement, not a state worth persisting —
-  // return the version row to its normal, deliberately quiet state.
   useEffect(() => {
     if (updateState !== "current") return;
     const timer = setTimeout(() => setUpdateState("idle"), 3000);

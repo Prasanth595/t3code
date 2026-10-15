@@ -12,10 +12,9 @@ export function isSameSidebarThreadRef(a: ScopedThreadRef, b: ScopedThreadRef): 
 }
 
 /**
- * One sidebar row drop. Drops queue up instead of replacing each other, so a
- * second drop onto the same thread before it opens keeps both files; each
- * entry carries its own id so a stale navigation can only ever clear the drop
- * that started it.
+ * Drops queue up instead of replacing each other, so a second drop onto the
+ * same thread before it opens keeps both files; each entry carries its own id
+ * so a stale navigation can only ever clear the drop that started it.
  */
 export interface SidebarPendingFileDrop {
   id: string;
@@ -25,14 +24,8 @@ export interface SidebarPendingFileDrop {
 
 interface SidebarPendingFileDropStoreState {
   pending: SidebarPendingFileDrop[];
-  /**
-   * Appends a drop to the queue and returns its id, for later
-   * identity-checked cleanup.
-   */
   queuePendingFileDrop: (entry: Omit<SidebarPendingFileDrop, "id">) => string;
-  /** Removes the single drop with this id, leaving newer drops untouched. */
   clearPendingFileDrop: (id: string) => void;
-  /** Removes every queued drop aimed at this thread (e.g. it went missing). */
   clearPendingFileDropsForThread: (threadRef: ScopedThreadRef) => void;
   /**
    * Returns every queued drop's files for `threadRef`, oldest first, and

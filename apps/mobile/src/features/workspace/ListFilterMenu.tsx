@@ -16,7 +16,6 @@ const FilterGlass = withUniwind(GlassView, {
 
 const PILL = "h-8 flex-row items-center gap-1.5 rounded-full px-3";
 
-/** A visible filter with a native menu containing only that filter's choices. */
 export function ListFilterMenu(props: {
   readonly label: string;
   readonly accessibilityLabel: string;

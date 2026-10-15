@@ -1,11 +1,3 @@
-/**
- * Multi-environment usage state.
- *
- * Every connected environment answers the same typed query; the client merges
- * the results. Raw transcripts never leave the machine that produced them.
- *
- * @module state/usage
- */
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthDiagnosticsReadScope,
@@ -40,8 +32,6 @@ export interface EnvironmentUsageStatus {
 }
 
 /**
- * Reads every environment's summary for one window.
- *
  * Keyed by the serialised window so switching ranges does not thrash the atom
  * cache, and so each environment's query is shared with any other reader of the
  * same window.
@@ -113,10 +103,7 @@ export interface UsageView {
 }
 
 /**
- * Merges every environment that has answered. `keepBucket` narrows the merge,
- * for example to one model; source ownership still applies, so the result
- * matches that slice of the full merge. Session counts are per directory and
- * are not narrowed.
+ * Session counts are per directory and are not narrowed.
  */
 export function mergeAnsweredUsage(
   environments: readonly EnvironmentUsageStatus[],
@@ -141,10 +128,6 @@ export function mergeAnsweredUsage(
 
 const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();
 
-/**
- * Drops hidden providers' buckets and sources before merging, so totals,
- * shares, and session counts all describe only the visible providers.
- */
 function withoutProviders(
   environments: readonly EnvironmentUsageStatus[],
   hiddenProviders: ReadonlySet<UsageProviderKind>,
@@ -260,12 +243,10 @@ export function useUsage(
       hidden: hiddenProviders,
     });
   }
-  // Kept usage only stands in for the same environments and provider filter.
   const kept =
     lastAnswered?.selection === selectedEnvironmentIds && lastAnswered.hidden === hiddenProviders
       ? lastAnswered
       : null;
-  // With no answers, even failed ones keep the last answered usage on screen.
   const shown =
     answeredCount > 0
       ? { window: input, merged }

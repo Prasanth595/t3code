@@ -1,22 +1,3 @@
-/**
- * UsageService - reads every driver's usage history and returns priced usage
- * buckets.
- *
- * Each built-in driver with a `usage` reader contributes its sources, including
- * work driven outside T3 Code. A `transcripts` reader names JSONL directories
- * that this service streams itself; a `scan` reader reads its own sources.
- *
- * JSONL transcripts are append-only, so parsed records are memoised per file by
- * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
- * scans only reparse files that changed, and a file that merely grew resumes
- * from its cached parse position so only the appended bytes are read.
- *
- * A scan reader with a slow source (an account API) may answer from its own
- * cache and mark itself `refreshing` while a background refresh runs;
- * `awaitRefresh` waits for that refresh instead.
- *
- * @module UsageService
- */
 import * as NodeOS from "node:os";
 
 import {
@@ -102,22 +83,18 @@ const CACHE_RETENTION_DAYS = 92;
 /** Transcripts parsed at once. More gains little once the disk stays busy. */
 const TRANSCRIPT_READ_CONCURRENCY = 4;
 
-/** The transcript readers, in driver order. */
 const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "transcripts" ? [{ driver, reader: driver.usage }] : [],
 );
 
-/** The scan readers, in driver order. */
 const scanReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "scan" ? [{ driver, reader: driver.usage }] : [],
 );
 
-/** Transcript formats by provider, for decoding the persisted scan cache. */
 const transcriptFormats = new Map(
   transcriptReaders.map(({ reader }) => [reader.provider, reader.format] as const),
 );
 
-/** One transcript directory to scan. */
 interface TranscriptSource {
   readonly provider: UsageProviderKind;
   readonly format: TranscriptUsageFormat<unknown>;
@@ -126,7 +103,6 @@ interface TranscriptSource {
   readonly fileName?: string;
 }
 
-/** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
   fetchedAtMs: Schema.Number,
   document: Schema.Unknown,
@@ -144,7 +120,6 @@ const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeUsageRecordKey = Schema.encodeSync(ScanCacheJson);
 const CachedSource = Schema.Struct({ dir: Schema.String, volumeId: Schema.String });
 
-/** Whether `a` read a later state of its file than `b`. Transcripts only grow. */
 function isLaterRead(a: CachedFile, b: CachedFile): boolean {
   return a.mtimeMs > b.mtimeMs || (a.mtimeMs === b.mtimeMs && a.size > b.size);
 }
@@ -157,11 +132,9 @@ const sharedSessionProviders: ReadonlySet<UsageProviderKind> = new Set(
 );
 
 /**
- * Sessions of `sharedSessionProviders` with records in more than one file,
- * such as a rollout that moved after it was read. Only these need cross-file
- * dedupe keys: within one file the occurrence count already keeps every key
- * unique, so keying the rest would only build and hash a string for each of
- * their records.
+ * Only these need cross-file dedupe keys: within one file the occurrence count
+ * already keeps every key unique, so keying the rest would only build and hash
+ * a string for each of their records.
  */
 function sharedSessions(
   files: readonly { readonly records: readonly UsageRecord[] }[],
@@ -189,7 +162,6 @@ export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
-    /** Refetches the rate table ahead of its TTL. See `ensureRates`. */
     readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
@@ -201,7 +173,6 @@ const EMPTY_PRICING: UsagePricing = {
   knownModels: 0,
 };
 
-/** Empty summary, for suites that only need the RPC surface to resolve. */
 const layerTest = Layer.succeed(
   UsageService,
   UsageService.of({
@@ -262,12 +233,6 @@ export const make = Effect.gen(function* () {
     knownModels: rates.size,
   });
 
-  /**
-   * Loads the LiteLLM rate table, preferring a fresh copy and falling back to
-   * the on-disk snapshot. With neither, every model reports as unpriced rather
-   * than the page failing. `force` refetches inside the TTL so a model that
-   * LiteLLM added since the last fetch gets priced now.
-   */
   const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
     const now = yield* Clock.currentTimeMillis;
     const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
@@ -296,8 +261,6 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed(null)),
     );
     if (fetched === null) {
-      // The refresh failed; whatever we are serving is now past its TTL and
-      // must not keep claiming to be fresh.
       if (rates.size > 0) ratesStatus = "cached";
       return;
     }
@@ -335,9 +298,8 @@ export const make = Effect.gen(function* () {
   );
 
   /**
-   * Every instance of `driver` with its decoded config, or none when it does
-   * not decode. Disabled accounts still have history. An unconfigured default
-   * slot runs with default config, just as it does in the provider registry.
+   * Disabled accounts still have history. An unconfigured default slot runs
+   * with default config, just as it does in the provider registry.
    */
   const usageInstances = Effect.fn("UsageService.usageInstances")(function* <Config>(
     driver: ProviderDriver<Config, unknown, unknown>,
@@ -369,7 +331,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /** Resolves every transcript directory the usage readers point at. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
     settings: ServerSettingsValue,
     retentionCutoffMs: number,
@@ -425,8 +386,6 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Loads the persisted scan cache exactly once per process.
-   *
    * `Effect.cached` makes concurrent first readers await the same load rather
    * than each seeing a "loaded" flag set before the read finished and cold
    * scanning against an empty cache.
@@ -441,7 +400,6 @@ export const make = Effect.gen(function* () {
       let document = yield* readDocument(scanCachePath);
       if (document === null) {
         document = yield* readDocument(legacyScanCachePath);
-        // Write the migrated cache to its own file on the next scan.
         cacheDirty = document !== null;
       }
       if (document === null) return;
@@ -482,14 +440,12 @@ export const make = Effect.gen(function* () {
   }).pipe(persistLock.withPermit, Effect.withSpan("UsageService.persistCaches"));
 
   const pendingPersists = new Set<Fiber.Fiber<void>>();
-  /** Writes dirty caches in the background, after the summary that dirtied them answers. */
   const schedulePersist = Effect.forkDetach(persistCaches).pipe(
     Effect.map((fiber) => {
       pendingPersists.add(fiber);
       fiber.addObserver(() => pendingPersists.delete(fiber));
     }),
   );
-  /** Waits for every write scheduled so far, as a restart would need. */
   const awaitPersisted = Effect.suspend(() => Fiber.awaitAll([...pendingPersists])).pipe(
     Effect.asVoid,
   );
@@ -498,18 +454,9 @@ export const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => awaitPersisted);
 
   /**
-   * Parses one transcript, reusing the cached result when it is unchanged.
-   *
-   * A file that only grew re-parses from the cached position, so an actively
-   * written multi-hundred-megabyte rollout costs its appended bytes per scan
-   * rather than a full re-read. The reader verifies the position's guard bytes
-   * and silently restarts from byte 0 when they no longer match.
-   *
-   * A fresh parse comes back as `update` for the caller to cache, with the
-   * entry it was built from. Reads run concurrently, and the caller stores
-   * updates in walk order rather than completion order: saved records of
-   * deleted transcripts aggregate in cache order, where the first copy of a
-   * duplicate wins.
+   * Reads run concurrently, and the caller stores updates in walk order rather
+   * than completion order: saved records of deleted transcripts aggregate in
+   * cache order, where the first copy of a duplicate wins.
    */
   const readFileRecords = (
     filePath: string,
@@ -589,7 +536,6 @@ export const make = Effect.gen(function* () {
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
       | null;
-    /** Answered from a cache while a refresh runs. */
     readonly refreshing?: true;
   }
 
@@ -605,8 +551,6 @@ export const make = Effect.gen(function* () {
     const { files, failedPaths } = yield* Effect.promise(() =>
       listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
     );
-    // A cold parse waits on disk reads, so a few files in flight read
-    // close to twice as fast. Results keep walk order.
     const read = yield* Effect.forEach(
       files,
       (file) =>
@@ -748,9 +692,6 @@ export const make = Effect.gen(function* () {
 
     const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
-    // Pricing only matters once records are aggregated, so the rate table
-    // loads while transcripts stream instead of gating them: a cold rates
-    // fetch on a slow network no longer delays the scan by its own timeout.
     const [, scannedDirs] = yield* Effect.all(
       [
         ensureRates(false),
@@ -875,10 +816,8 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * In-flight scans by window and settings, so concurrent identical requests (the usage
-   * page open on two clients at once) share one scan instead of racing over
-   * the same corpus twice. Readers read settings of their own, so a scan is
-   * shared only under the same settings snapshot.
+   * Readers read settings of their own, so a scan is shared only under the same
+   * settings snapshot.
    */
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
 
@@ -923,13 +862,9 @@ export const make = Effect.gen(function* () {
         return created;
       }),
     );
-    // Waiting stays interruptible. The detached scan continues for other
-    // callers and still warms the cache if this caller leaves.
     return yield* Deferred.await(deferred);
   });
 
-  // `awaitPersisted` is outside the service interface: tests use it to restart
-  // against what a previous instance wrote.
   return { readSummary, refreshRates, awaitPersisted } as const;
 });
 

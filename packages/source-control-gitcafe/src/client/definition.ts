@@ -1,8 +1,3 @@
-/**
- * GitCafe's client definition. Browser- and React Native-safe.
- *
- * @module source-control-gitcafe/client/definition
- */
 import {
   makeProviderSettingsSchema,
   secretSetting,
@@ -67,7 +62,6 @@ export const definition = defineSourceControlClient({
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
   // `/pulls/` is Forgejo's shape too, so only GitCafe's own hosts claim it.
-  // `cafe pr checkout` and git.cafe URLs were never accepted in reference fields.
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
   changeRequestUrlHost: (url) => url.hostname,

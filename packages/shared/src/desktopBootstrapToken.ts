@@ -25,12 +25,10 @@ function deriveToken(secret: string, window: number): string {
     .digest("hex");
 }
 
-/** The token the desktop hands out at `nowMs`. */
 export function currentDesktopBootstrapToken(secret: string, nowMs: number): string {
   return deriveToken(secret, windowIndex(nowMs));
 }
 
-/** Whether `token` is the previous, current or next window's token at `nowMs`. */
 export function isValidDesktopBootstrapToken(
   secret: string,
   token: string,

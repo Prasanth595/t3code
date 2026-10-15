@@ -125,7 +125,6 @@ function LinkRow({
           ...(link.stack === null ? {} : { stack: link.stack }),
         }
       : null;
-  // Speed mode swaps the menu for quick actions only where a row has some to offer.
   const hasQuickActions =
     actionEntry !== null && pullRequestQuickActions(actionEntry, linkHostActions).length > 0;
   return (
@@ -137,9 +136,9 @@ function LinkRow({
         setMenuPosition({ x: event.clientX, y: event.clientY });
         setMenuOpen(true);
       }}
-      // Each layer steps in under the one it targets. The step is capped: beyond a few layers
-      // the indent only says "still in the stack", which the connector line already does, and
-      // a sixteen-layer stack would otherwise stair-step off the right edge.
+      // The step is capped: beyond a few layers the indent only says "still in the stack",
+      // which the connector line already does, and a sixteen-layer stack would otherwise
+      // stair-step off the right edge.
       style={{ paddingLeft: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}
     >
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
@@ -194,9 +193,6 @@ function LinkRow({
               </>
             ) : null
           }
-          // Match the full PR list: diff counts up top, checks under the lifecycle glyph, the
-          // verdict by the author. Each is absent rather than neutral when the host said
-          // nothing, so a row without them reads as unknown, not as fine.
           status={
             <PullRequestDiffStat
               additions={snapshot?.additions ?? 0}
@@ -260,8 +256,7 @@ function LinkRow({
         />
       ) : null}
       {/* Out of the row's flow, so no row reserves a column for a button only the hovered one
-          shows. It sits over the right end of the second line on the row's own hover color,
-          fading in from the left, so it covers the time and leaves the diff counts alone. */}
+          shows. */}
       <span
         className={cn(
           "absolute right-0 bottom-0.5 flex items-center rounded-r-md bg-background pr-1 pl-5",

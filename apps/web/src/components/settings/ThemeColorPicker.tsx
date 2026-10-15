@@ -29,8 +29,7 @@ export function getThemeRoleLabel(role: ThemeColorRole): string {
 }
 
 /**
- * The picker remains an sRGB/hex adapter over the OKLCH palette engine. Alpha
- * is preserved separately and re-attached on commit so adjusting hue or
+ * Alpha is preserved separately and re-attached on commit so adjusting hue or
  * brightness cannot change transparency.
  */
 function themePickerAlphaSuffix(value: string): string {
@@ -161,8 +160,6 @@ function ThemeColorPickerPanel({
     if (!nextColor) return;
     setHsv(hexToHsv(nextColor));
     setHexDraft(nextColor);
-    // RGB cannot express alpha, so a commit keeps the incoming suffix just
-    // like the plane and hue controls do.
     onChange(nextColor + alphaSuffix);
   };
 

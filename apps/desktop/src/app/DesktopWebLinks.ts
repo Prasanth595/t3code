@@ -6,14 +6,12 @@ import * as Option from "effect/Option";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 
-/** An http(s) link the operating system handed to T3 Code as the default browser. */
 export const isWebLink = (value: string) => {
   if (!URL.canParse(value)) return false;
   const { protocol } = new URL(value);
   return protocol === "http:" || protocol === "https:";
 };
 
-/** An HTML file the operating system asked T3 Code to open, as browsers are asked to. */
 export const isWebPageFile = (path: string) => /\.x?html?$/i.test(path);
 
 /**
@@ -65,7 +63,6 @@ const make = Effect.gen(function* () {
     if (listening === webContents) return;
     stopListening();
     listening = webContents;
-    // Links that arrive while a new page loads wait for it to listen again.
     const onNavigation = (
       event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
     ) => {

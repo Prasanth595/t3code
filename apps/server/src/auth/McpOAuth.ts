@@ -39,16 +39,10 @@ import {
 } from "./utils.ts";
 
 /**
- * The OAuth authorization server MCP clients (Claude Code, Codex, any agent
- * T3 Code did not launch) use to sign in to this environment's `/mcp`.
- *
  * Every URL is derived from the request's own origin, so the same server
  * answers correctly over loopback, Tailscale Serve and a T3 Connect tunnel.
- * Client registration is stateless: a client id is its signed metadata, so
- * an unauthenticated caller cannot grow server state. Redirects go to a
- * loopback address (a CLI agent on the user's machine) or any https address
- * (a hosted agent); the approval page names where access goes, and the user
- * decides.
+ * Client registration is stateless: a client id is its signed metadata, so an
+ * unauthenticated caller cannot grow server state.
  */
 
 const SIGNING_SECRET_NAME = "mcp-oauth-signing-key";
@@ -161,7 +155,6 @@ export interface McpOAuthClient {
   readonly redirectUris: ReadonlyArray<string>;
 }
 
-/** Problems the authorize page shows the user without redirecting anywhere. */
 export class McpOAuthPageError extends Schema.TaggedError<McpOAuthPageError>()(
   "McpOAuthPageError",
   { description: Schema.String },
@@ -171,7 +164,6 @@ export class McpOAuthPageError extends Schema.TaggedError<McpOAuthPageError>()(
   }
 }
 
-/** Problems reported back to the client through its (validated) redirect URI. */
 export class McpOAuthRedirectError extends Schema.TaggedError<McpOAuthRedirectError>()(
   "McpOAuthRedirectError",
   {
@@ -226,7 +218,6 @@ export class McpOAuth extends Context.Service<
       | { readonly csrfToken: string; readonly scopes: ReadonlyArray<AuthEnvironmentScope> }
       | undefined
     >;
-    /** Approves and returns the URL to send the browser to. */
     readonly approve: (input: {
       readonly request: HttpServerRequest.HttpServerRequest;
       readonly authorization: AuthorizationRequest;
@@ -241,7 +232,6 @@ export class McpOAuth extends Context.Service<
   }
 >()("t3/auth/McpOAuth") {}
 
-/** Appends OAuth response parameters, keeping any the client put in its redirect URI. */
 const redirectWith = (redirectUri: string, params: Record<string, string | undefined>) => {
   const url = new URL(redirectUri);
   for (const [name, value] of Object.entries(params)) {

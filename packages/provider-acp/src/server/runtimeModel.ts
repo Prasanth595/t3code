@@ -52,7 +52,6 @@ export interface AcpAgentTerminalState {
   readonly cwd?: string;
   readonly output: string;
   readonly exitStatus?: EffectAcpSchema.TerminalExitStatus;
-  /** Incomplete trailing UTF-8 bytes retained until the next output update. */
   readonly pendingOutputBytes?: Uint8Array;
 }
 
@@ -75,9 +74,8 @@ function isBase64DataCode(code: number): boolean {
 }
 
 /**
- * Decodes one bounded base64 terminal frame, or `undefined` when the frame is
- * malformed or oversized. Invalid frames are dropped rather than failed so one
- * misbehaving agent frame cannot take down session-update handling.
+ * Invalid frames are dropped rather than failed so one misbehaving agent frame cannot take down
+ * session-update handling.
  */
 function decodeBase64TerminalFrame(encoded: string): Uint8Array | undefined {
   if (encoded.length > Math.ceil(MAX_ACP_TERMINAL_FRAME_BYTES / 3) * 4) {
@@ -141,7 +139,6 @@ function truncateTerminalOutput(output: string): string {
   return bytes.subarray(start).toString("utf8");
 }
 
-/** Applies an ACP v2 agent-owned terminal snapshot or chunk to display state. */
 export function applyAcpAgentTerminalUpdate(
   previous: AcpAgentTerminalState | undefined,
   update: AcpAgentTerminalUpdate,
@@ -293,7 +290,6 @@ const boundedContentMetadata = (value: string | null | undefined, maximumLength:
 
 const MAX_ACP_CONTENT_TEXT_LENGTH = 65_536;
 
-// Preserve whitespace in streamed model output while keeping one provider frame bounded.
 const boundedContentText = (value: string): string => value.slice(0, MAX_ACP_CONTENT_TEXT_LENGTH);
 
 const boundedContentUri = (value: string | null | undefined): string => {
@@ -726,10 +722,6 @@ function extractTextContentFromToolCallContent(
   };
 }
 
-// Walk the original text entries from the joined tail window so a retained slice that
-// spans entries around an image/diff stays on those entries. Non-text kinds keep their
-// relative order; blank text entries are dropped; the truncation marker is prepended to
-// the first remaining text entry.
 function distributeRetainedTailAcrossContent(
   content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
   tail: string,
@@ -786,10 +778,6 @@ function normalizeToolKind(kind: unknown): string | undefined {
   return typeof kind === "string" && kind.trim().length > 0 ? kind.trim() : undefined;
 }
 
-/**
- * Map an ACP tool kind onto the canonical runtime item type used by the
- * thread activity model. Unknown kinds fall back to a generic tool call.
- */
 export function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecycleItemType {
   switch (kind) {
     case "read":
@@ -1010,8 +998,6 @@ function toolCallContentTexts(state: AcpToolCallState): string {
     .join("\u0000");
 }
 
-// The output a user watches: detail, text content, and any `rawOutput`. A
-// streamed diff or `rawInput` is not part of it.
 export function toolCallVisibleOutputChanged(
   previous: AcpToolCallState,
   next: AcpToolCallState,
@@ -1052,7 +1038,6 @@ export interface AcpMcpToolCallIdentity {
   readonly input?: Record<string, unknown>;
 }
 
-/** Matches an invocation of T3's `acp-mcp-call` bridge fallback CLI. */
 const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)(?:\s+(.+?))?\s*$/u;
 
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
@@ -1076,13 +1061,8 @@ function acpMcpFallbackInput(value: string | undefined): Record<string, unknown>
 }
 
 /**
- * Agents flatten injected MCP tools into model-facing function names with no
- * shared convention (survey of the 2026-08 registry builds): Kilo and
- * opencode use `t3-code_<tool>`, claude-acp and qwen `mcp__t3-code__<tool>`,
- * Amp `mcp__t3_code__<tool>` (hyphens mangled), droid `t3-code___<tool>`,
- * Copilot `t3-code-<tool>`, cline appends `: <args json>`. T3 always injects
- * its server as "t3-code", and matches are additionally gated on the known
- * T3 tool inventory, so the separator match can stay loose.
+ * T3 always injects its server as "t3-code", and matches are additionally gated on the known T3
+ * tool inventory, so the separator match can stay loose.
  */
 const T3_MCP_TITLE_CALL =
   /^(?:mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
@@ -1103,19 +1083,14 @@ const T3_MCP_TITLE_SUFFIX_CALL =
 const T3_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s|$)/;
 
 /**
- * Best-effort recovery of MCP identity from a generic ACP tool call.
- *
- * ACP has no typed MCP tool-call item, so agents surface MCP calls in
- * agent-specific shapes: codex-acp tags execute calls with
- * `rawInput.server`/`rawInput.tool`, while agents on T3's terminal fallback
- * run the `acp-mcp-call <tool>` CLI through their command or an embedded
- * client terminal. Recovered identity lets the projection render the same
- * branded MCP item that native providers produce.
+ * ACP has no typed MCP tool-call item, so agents surface MCP calls in agent-specific shapes:
+ * codex-acp tags execute calls with `rawInput.server`/`rawInput.tool`, while agents on T3's
+ * terminal fallback run the `acp-mcp-call <tool>` CLI through their command or an embedded client
+ * terminal.
  */
 export function extractMcpToolCallIdentity(
   toolCall: AcpToolCallState,
   options?: {
-    /** Command lines of client terminals embedded in this tool call. */
     readonly embeddedTerminalCommands?: ReadonlyArray<string>;
   },
 ): AcpMcpToolCallIdentity | undefined {
@@ -1126,11 +1101,6 @@ export function extractMcpToolCallIdentity(
   if (meta?.is_mcp_tool_call === true && server.length > 0 && tool.length > 0) {
     return { server, tool };
   }
-  // Agents without tagged rawInput identify their MCP calls through _meta
-  // (goose, qwen, claude-acp) or only through the namespaced function name
-  // in the title. The verbatim wire title survives merges even when a later
-  // titleless or LLM-enriched update replaces the presentation title, so
-  // match those rather than the summarized state title.
   const claudeCode = isRecord(meta?.claudeCode) ? meta.claudeCode : undefined;
   const gooseToolCall = isRecord(meta?.goose)
     ? isRecord(meta.goose.toolCall)
@@ -1300,7 +1270,6 @@ export function sessionUpdateCountsAsLoadReplayActivity(
 
 export interface SessionLoadGate {
   readonly active: boolean;
-  /** Only notifications for this session refresh load-replay idle activity. */
   readonly sessionId: string;
   readonly lastActivityAtMillis: number | undefined;
   readonly idleGap: Duration.Duration;
@@ -1331,8 +1300,8 @@ export const waitForSessionLoadReplayIdle = (input: {
   });
 
 /**
- * Model state some agents (Grok) advertise in `initialize._meta.modelState`, before any
- * session exists. Undefined when the agent does not advertise it or the shape is unknown.
+ * Model state some agents (Grok) advertise in `initialize._meta.modelState`, before any session
+ * exists.
  */
 export function sessionModelStateFromInitialize(
   initializeResult: EffectAcpSchema.InitializeResponse,

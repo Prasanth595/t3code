@@ -411,7 +411,6 @@ export function useThreadActions() {
       showThreadUndoNotice({
         action: "Archived",
         claim: action,
-        // Undo also brings the reader back when archiving moved them to a draft.
         undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateToDraft }),
         failureTitle: "Failed to undo archive",
       });
@@ -443,7 +442,6 @@ export function useThreadActions() {
       if (permissionFailure) return permissionFailure;
       const resolved = resolveThreadTarget(target);
       if (!resolved) {
-        // Thread not in main store (e.g. archived thread) — dispatch delete directly.
         const result = await deleteThreadMutation({
           environmentId: target.environmentId,
           input: { threadId: target.threadId },
@@ -678,7 +676,6 @@ export function useThreadActions() {
     [unsettleThreadMutation],
   );
 
-  /** Turns automatic settlement (inactivity, merged PR) on or off for one thread. */
   const setThreadAutoSettle = useCallback(
     async (target: ScopedThreadRef, enabled: boolean) => {
       if (!readEnvironmentSupportsAutoSettleOptOut(target.environmentId)) {
@@ -701,7 +698,6 @@ export function useThreadActions() {
 
   const pinThread = useCallback(
     async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
-      // Version skew: never send the command to a server that predates it.
       if (!readEnvironmentSupportsPinning(target.environmentId)) {
         return AsyncResult.failure(
           Cause.fail(
@@ -712,12 +708,8 @@ export function useThreadActions() {
           ),
         );
       }
-      // Every pin path places the thread at the top of the arranged run:
-      // callers with a better anchor (the sidebar, which knows the displayed
-      // order) pass their own key; everyone else (chat header, context menus)
-      // gets the default so the same action never places differently.
-      // orderKey rides only to servers that decode it; pre-reorder servers
-      // get the bare pin they understand and the thread stays keyless.
+      // orderKey rides only to servers that decode it; pre-reorder servers get the bare pin they
+      // understand and the thread stays keyless.
       const orderKey = readEnvironmentSupportsPinReorder(target.environmentId)
         ? (opts.orderKey ?? topOfPinnedRunOrderKey())
         : undefined;
@@ -769,8 +761,6 @@ export function useThreadActions() {
 
   const settleThread = useCallback(
     async (target: ScopedThreadRef) => {
-      // Version skew: never send the command to a server that predates it —
-      // the raw protocol rejection would read as a random failure.
       if (!readEnvironmentSupportsSettlement(target.environmentId)) {
         return AsyncResult.failure(
           Cause.fail(
@@ -930,7 +920,6 @@ export function useThreadActions() {
 
   const snoozeThread = useCallback(
     async (target: ScopedThreadRef, snoozedUntil: string) => {
-      // Version skew: never send the command to a server that predates it.
       if (!readEnvironmentSupportsSnooze(target.environmentId)) {
         return AsyncResult.failure(
           Cause.fail(

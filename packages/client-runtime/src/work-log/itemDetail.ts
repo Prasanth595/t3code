@@ -33,7 +33,6 @@ function textFromBlocks(value: unknown, depth: number): string | null {
     if (typeof resource.uri === "string") return resource.uri;
   }
   const keys = Object.keys(value).filter((key) => key !== "isError" && key !== "is_error");
-  // MCP results and provider tool results wrap their text in `content`.
   // `structuredContent` usually repeats it as data, so it only shows when the
   // text is empty.
   if (keys.length === 1 && keys[0] === "content") return textFromBlocks(value.content, depth + 1);
@@ -64,7 +63,6 @@ function prettyJsonText(text: string): string {
   return documents.map((document) => JSON.stringify(document, null, 2)).join("\n\n");
 }
 
-/** Formats a tool input or output for display: text blocks as text, the rest as JSON. */
 function formatToolValue(value: unknown, hasImagePreview = false): string | null {
   if (value === undefined || value === null) return null;
   // Claude Read returns one structured image; lists may contain other images.
@@ -81,10 +79,6 @@ function formatToolValue(value: unknown, hasImagePreview = false): string | null
   return json;
 }
 
-/**
- * The call a tool row's body shows above its result: the full command, the
- * arguments as `key value` pairs, or formatted text when they are not flat.
- */
 export function toolCallLines(input: {
   readonly command?: string | undefined;
   readonly args?: unknown;
@@ -167,7 +161,6 @@ function commandOutputText(output: string): string {
     .join("\n");
 }
 
-/** The tool output carried by a fetched item, formatted for display. */
 export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "command_execution":
@@ -224,10 +217,6 @@ export function turnItemOutputImages(
   }));
 }
 
-/**
- * Whether expanding the item shows anything. Rows without content must not
- * offer a disclosure, otherwise they open to an empty panel.
- */
 export function turnItemHasDetail(item: OrchestrationV2TurnItem): boolean {
   switch (item.type) {
     case "reasoning":

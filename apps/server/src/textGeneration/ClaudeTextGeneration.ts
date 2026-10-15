@@ -1,12 +1,3 @@
-/**
- * ClaudeTextGeneration – Text generation layer using the Claude CLI.
- *
- * Implements the same TextGeneration service contract as CodexTextGeneration but
- * delegates to the `claude` CLI (`claude -p`) with structured JSON output
- * instead of the `codex exec` CLI.
- *
- * @module ClaudeTextGeneration
- */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -61,7 +52,6 @@ const CLAUDE_INVESTIGATION_ALLOWED = [
 const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"].join(",");
 
 /**
- * Schema for the wrapper JSON returned by `claude -p --output-format json`.
  * Verbose mode wraps the result in an array of conversation messages.
  */
 const ClaudeOutputEnvelope = Schema.Struct({
@@ -138,10 +128,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
-  /**
-   * Spawn the Claude CLI with structured JSON output and return the parsed,
-   * schema-validated result.
-   */
   const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
@@ -227,8 +213,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--settings",
           settingsJson,
           // Metadata prompts need no executable capabilities, even when they contain a skill name.
-          // An investigation gets the read-only file tools and Git's read commands, and nothing
-          // that writes: in dontAsk mode anything not allowed here is refused.
           ...(investigate
             ? [
                 "--tools",

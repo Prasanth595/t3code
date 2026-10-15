@@ -9,7 +9,6 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
-/** Wire version for orchestration snapshots, streams, commands, and RPC payloads. */
 export const ORCHESTRATION_PROTOCOL_VERSION = 2;
 export const ORCHESTRATION_PROTOCOL_VERSION_TEXT = "2";
 export const ORCHESTRATION_PROTOCOL_QUERY_PARAM = "orchestrationProtocol";
@@ -26,11 +25,6 @@ export type ExecutionEnvironmentPlatformOs = typeof ExecutionEnvironmentPlatform
 export const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64", "other"]);
 export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
 
-/**
- * The curated set of machine shapes and OS identities an environment can wear as its icon.
- * Servers detect one from the hardware they run on (`platform.machine`), and
- * the `environmentIcon` server setting lets a user pick one instead.
- */
 export const ENVIRONMENT_MACHINE_KINDS = [
   "server",
   "cloud",
@@ -54,17 +48,12 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
 });
 
 /**
- * Where a new thread runs: the project's current checkout ("local") or a
- * fresh git worktree ("worktree"). Lives here (not settings.ts) so
- * orchestration contracts can reference it without an import cycle.
+ * Lives here (not settings.ts) so orchestration contracts can reference it
+ * without an import cycle.
  */
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 
-/**
- * How a new worktree populates git submodules: every nested level, only the
- * ones this repository declares, or not at all.
- */
 export const WorktreeSubmodules = Schema.Literals(["recursive", "top-level", "none"]);
 export type WorktreeSubmodules = typeof WorktreeSubmodules.Type;
 export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
@@ -77,7 +66,6 @@ export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.T
 export const ServerSelfUpdateMethod = Schema.Literals(["boot-service", "respawn", "desktop-app"]);
 export type ServerSelfUpdateMethod = typeof ServerSelfUpdateMethod.Type;
 
-/** Proven ownership for a manual update; unknown installs omit this descriptor. */
 export const ServerInstallation = Schema.Union([
   Schema.Struct({ kind: Schema.Literals(["npx", "pnpm-dlx", "bunx"]) }),
   Schema.Struct({ kind: Schema.Literal("npm-global"), prefix: TrimmedNonEmptyString }),
@@ -100,7 +88,6 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers, which still accept inline image attachments. */
   attachmentUploads: Schema.optionalKey(Schema.Boolean),
-  /** Uploaded files may accompany question answers. */
   questionAttachments: Schema.optionalKey(Schema.Boolean),
   /** Missing on servers that only accept image attachments. */
   fileAttachments: Schema.optionalKey(
@@ -116,32 +103,27 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       Absent on servers from before inline context shipped, which drop the records and forward
       the links as literal text -- so a client must serialize context the legacy way for them. */
   inlineMessageContext: Schema.optionalKey(Schema.Boolean),
-  /** Server rejects required worktrees instead of falling back to the project checkout. */
   requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.settle / thread.unsettle commands. Absent on
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */
   threadSettlement: Schema.optionalKey(Schema.Boolean),
-  /** Server evaluates merge and inactivity settlement without a client. */
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),
   storageCleanupRun: Schema.optionalKey(Schema.Boolean),
-  /** Server checks OTLP endpoints for the telemetry export settings. */
   otlpEndpointCheck: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   settledWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
-  /** Server honors the `worktreesDirectory` setting. */
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
-  /** Server can exclude PR-linked threads from inactivity settlement. */
   threadAutoSettlementScope: Schema.optionalKey(Schema.Boolean),
-  /** Server persists the opt-in for continuing interrupted threads after restarts. */
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
-  /** Server resolves `projectSettingsOverrides`; older servers ignore the key. */
   projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
-  /** Server resolves a project's `providerInstances` override entry. Older
+  /**
+   * Older
       servers decode the key away (unknown fields are stripped, not
       rejected), so the per-project provider switch would silently do
-      nothing; clients hide it instead of sending a patch that goes nowhere. */
+      nothing; clients hide it instead of sending a patch that goes nowhere.
+   */
   projectProviderInstanceOverrides: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
@@ -154,9 +136,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server streams quota from configured usage-limit sources. Same
       version-skew contract as environmentThemes. */
   usageLimitSources: Schema.optionalKey(Schema.Boolean),
-  /** Server persists custom model rates and applies them to usage summaries. */
   usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
-  /** Server persists model mappings and folds mapped usage into the target model. */
   usageModelAliases: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pin / thread.unpin commands. Same
       version-skew contract as threadSettlement. */
@@ -164,7 +144,6 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands thread.pin.reorder (and orderKey on thread.pin).
       Same version-skew contract as threadSettlement. */
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
-  /** Server persists manual Active order through thread.active.reorder. */
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.auto-settle.set (per-thread auto-settle off).
       Same version-skew contract as threadSettlement. */
@@ -177,14 +156,13 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       threadSettlement: clients keep their local visited state against
       servers that lack this. */
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
-  /** Server persists a pull request reference on thread.meta.update. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
-  /** Server resolves message delivery and model-selection context and validates
-      identified rollback readiness. Clients retain projection-based command
-      shaping and validation when this is absent. */
+  /**
+   * Clients retain projection-based command
+      shaping and validation when this is absent.
+   */
   serverResolvedCommandContext: Schema.optionalKey(Schema.Boolean),
   threadPullRequests: Schema.optionalKey(Schema.Boolean),
-  /** Server understands thread.pull-request.watch and wakes agents on pull request changes. */
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
@@ -196,14 +174,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
-  /** Server can durably mark running provider turns before a self-update and
-      continue them after the replacement process starts. */
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
-  /** Agent-activity publishes (push notifications and Live Activities)
-      currently leave this environment: the publish opt-in is enabled and the
-      relay link credentials exist. Clients skip seeding a Live Activity when
+  /**
+   * Clients skip seeding a Live Activity when
       this is false — no update would ever repaint it. Absent on older
-      servers, which may still publish, so only an explicit false skips. */
+      servers, which may still publish, so only an explicit false skips.
+   */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
   /** Server runs repository clones for new projects in the background and
       streams their progress (`projectClone.*`, `subscribeProjectClones`).
@@ -231,7 +207,6 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,
-  /** Absent on hosts from before explicit orchestration protocol negotiation. */
   orchestrationProtocolVersion: Schema.optionalKey(Schema.Int),
   capabilities: ExecutionEnvironmentCapabilities,
 });
@@ -258,7 +233,6 @@ export type RepositoryOrigin = typeof RepositoryOrigin.Type;
 export const RepositoryIdentity = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
   locator: RepositoryIdentityLocator,
-  /** Repository browser URL resolved from the server's configured hosting account. */
   webUrl: Schema.optionalKey(TrimmedNonEmptyString),
   rootPath: Schema.optionalKey(TrimmedNonEmptyString),
   displayName: Schema.optionalKey(TrimmedNonEmptyString),
@@ -269,12 +243,10 @@ export const RepositoryIdentity = Schema.Struct({
 });
 export type RepositoryIdentity = typeof RepositoryIdentity.Type;
 
-/** Key clients group checkouts by: a fork's own remote, otherwise the canonical repository. */
 export function repositoryGroupingKeyOf(identity: RepositoryIdentity): string {
   return identity.origin?.canonicalKey ?? identity.canonicalKey;
 }
 
-/** Label clients show for a checkout's repository, matching `repositoryGroupingKeyOf`. */
 export function repositoryGroupingDisplayNameOf(identity: RepositoryIdentity): string | undefined {
   return identity.origin
     ? (identity.origin.displayName ?? identity.origin.canonicalKey)

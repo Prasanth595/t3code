@@ -16,8 +16,6 @@ function fromVector(vector: Vector3) {
     : new Quaternion().setFromAxisAngle(vector.clone().divideScalar(angle), angle);
 }
 
-// Recovered from Bitrig 0.25's rotation dynamics: point gain, drag force limit,
-// velocity limits, release prediction/blend, and the 0.5 / 0.78 release spring.
 const gain = 0.006;
 const response = 0.5;
 const damping = 0.78;

@@ -96,10 +96,8 @@ const cliDiscovery = {
   installHint: `Install the GitCafe CLI with \`bun install -g @gitcafe/cli\`, then run \`cafe auth login --host https://${AUTH_HOST}/api\`, save a token in Settings, or set CAFE_TOKEN on the server.`,
 } satisfies SourceControlCliDiscoverySpec;
 
-/** `cafe auth status`'s reading, exposed for tests. */
 export const parseAuth = cliDiscovery.parseAuth;
 
-/** Probes `cafe` as the CLI spec does, with a token saved in Settings handed to it. */
 export const makeDiscovery = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
   const credentials = yield* GitCafeCredentials.GitCafeCredentials;
@@ -230,7 +228,6 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  /** The repository a call names, falling back to the checkout's own GitCafe remote. */
   const resolveTarget = Effect.fn("GitCafeSourceControlProvider.resolveTarget")(function* (
     operation: string,
     input: {
@@ -263,7 +260,6 @@ export const make = Effect.gen(function* () {
       if (remote) return remote;
       return yield* error(operation, input.cwd, "No GitCafe repository remote was found.");
     }
-    // A bare owner/name lives on the checkout's own GitCafe host.
     const repository = GitCafeHosts.gitCafeRepositoryPath(input.repository);
     if (repository !== null)
       return { host: remote?.host ?? AUTH_HOST, repository } satisfies Target;
@@ -451,7 +447,6 @@ export const make = Effect.gen(function* () {
             Effect.timeoutOption(ADMISSION_TIMEOUT),
             Effect.map(Option.getOrElse(() => pending)),
           );
-      // Anything short of complete is not yet usable.
       if (resource.state !== "complete")
         return yield* error(
           "createRepository",
@@ -495,7 +490,6 @@ export const make = Effect.gen(function* () {
               : yield* git.ensureRemote({
                   cwd: input.cwd,
                   preferredName: "gitcafe",
-                  // SSH only when the checkout already reaches GitCafe over SSH; HTTPS otherwise.
                   url: isSshRemote(input.context?.remoteUrl)
                     ? `ssh@${pullHost}:${sourceRepository}.git`
                     : `https://${pullHost}/${sourceRepository}.git`,

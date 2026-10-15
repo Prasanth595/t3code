@@ -47,7 +47,6 @@ export class DesktopAppActivationStartError extends Schema.TaggedError<DesktopAp
 }
 
 interface RunningControlServer {
-  /** Binds the address again if its socket file is gone. Directory changes run this too. */
   readonly reclaim: () => Promise<void>;
   readonly close: () => Promise<void>;
 }
@@ -75,7 +74,6 @@ function requestIdFromUnknown(value: unknown): string {
   return "invalid-request";
 }
 
-/** Makes sure the socket directory is safe to use. Returns true when it had to create it. */
 async function prepareUnixDirectory(input: {
   readonly directory: string;
   readonly userId: number | undefined;
@@ -242,7 +240,6 @@ export async function startDesktopAppControlServer(input: {
     }
     const next = await bindUnix(input.directory, "claim-free").catch(
       (error: NodeJS.ErrnoException) => {
-        // Another app bound the address first.
         if (error.code === "EEXIST") return null;
         throw error;
       },

@@ -6,12 +6,8 @@ import * as Option from "effect/Option";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
-// A desktop install puts no `t3` on PATH, so commands the server asks a person
-// to run (`sudo t3 browser setup`) had nothing to call. The app keeps a small
-// launcher for its bundled CLI in the T3 home, which is never on PATH and so
-// never shadows another `t3`, and the server names it by absolute path in those
-// commands through T3CODE_CLI_PATH. An AppImage mounts somewhere new each run,
-// so its launcher mounts the AppImage itself instead of pointing into it.
+// An AppImage mounts somewhere new each run, so its launcher mounts the
+// AppImage itself instead of pointing into it.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
 export const MARKER = "Written by T3 Code: runs the desktop app's bundled t3 CLI.";
@@ -32,11 +28,10 @@ export type CliShimTarget =
   | { readonly kind: "windows"; readonly executable: string; readonly entry: string };
 
 /**
- * The launcher script. Electron runs the server as plain Node with
- * `ELECTRON_RUN_AS_NODE`, which reads the entry from inside the asar archive.
- * The launcher's own path and the app's T3 home are written in, so the command
- * the server shows is absolute and `sudo`, which clears the environment, still
- * runs against this install's home.
+ * Electron runs the server as plain Node with `ELECTRON_RUN_AS_NODE`, which
+ * reads the entry from inside the asar archive. The launcher's own path and the
+ * app's T3 home are written in, so the command the server shows is absolute and
+ * `sudo`, which clears the environment, still runs against this install's home.
  */
 export const renderCliShim = (input: {
   readonly target: CliShimTarget;
@@ -125,7 +120,6 @@ export const renderCliShim = (input: {
   ].join("\n");
 };
 
-/** Where the packaged app keeps its launcher: `<T3 home>/bin/t3`, `t3.cmd` on Windows. */
 export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment["Service"]) =>
   environment.path.join(
     environment.baseDir,
@@ -133,11 +127,6 @@ export const launcherPath = (environment: DesktopEnvironment.DesktopEnvironment[
     environment.platform === "win32" ? "t3.cmd" : "t3",
   );
 
-/**
- * Writes the packaged app's launcher to `<T3 home>/bin` and returns its path
- * for the backend's T3CODE_CLI_PATH. Development builds run from a checkout
- * and get none.
- */
 export const install = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   if (!environment.isPackaged) return Option.none<string>();
@@ -162,7 +151,6 @@ export const install = Effect.gen(function* () {
   return yield* Effect.gen(function* () {
     const existing = yield* fs.readFileString(shimPath).pipe(Effect.option);
     if (Option.isSome(existing) && !existing.value.includes(MARKER)) {
-      // Someone else's file; leave it, and let commands fall back to plain `t3`.
       yield* logWarning("leaving a t3 launcher the app did not write", { shimPath });
       return Option.none<string>();
     }

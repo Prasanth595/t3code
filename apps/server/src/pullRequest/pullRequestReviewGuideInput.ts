@@ -1,7 +1,6 @@
 import type { PullRequestActivity, PullRequestDetail } from "@t3tools/contracts";
 import type { ReviewGuideGenerationInput } from "@t3tools/provider-core/server/textGeneration";
 
-/** Longest a settled remark is quoted. The guide needs what was raised, not the argument. */
 const SETTLED_REMARK_CHARS = 200;
 
 function oneLine(text: string): string {
@@ -30,7 +29,6 @@ export function settledReviewSummary(activity: PullRequestActivity): string {
     .join("\n");
 }
 
-/** The prompt input for a guide, minus the checkout and model the caller provides. */
 export function reviewGuideInputFromPullRequest(
   detail: PullRequestDetail,
   activity: PullRequestActivity,

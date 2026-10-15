@@ -6,14 +6,12 @@ import { getPropertyName, unwrapExpression } from "../utils.ts";
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
 // node:test has no `.each`, so files written against it keep their loops.
 const NODE_TEST_IMPORT_PATTERN = /["']node:test["']/u;
-// Calls that declare a test or a group of tests; all of them expose `.each`.
 const TEST_FUNCTIONS = new Set(["describe", "it", "suite", "test"]);
 // Modifiers whose tester also exposes `.each` (@effect/vitest's `it.effect` and `it.live`).
 const EACH_CAPABLE_MODIFIERS = new Set(["effect", "live"]);
 const LOOPS = new Set(["ForStatement", "ForInStatement", "ForOfStatement"]);
 const FUNCTIONS = new Set(["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"]);
 
-/** Returns the reported name for `it(…)`, `describe(…)`, `it.effect(…)`, and friends. */
 const testCallName = (callee: unknown): Option.Option<string> => {
   const expression = unwrapExpression(callee);
   if (Option.isNone(expression)) return Option.none();
@@ -36,8 +34,8 @@ const testCallName = (callee: unknown): Option.Option<string> => {
 };
 
 /**
- * Reports a test declaration that runs once per loop iteration. A loop around a
- * `describe` is reported on the `describe`, so the tests inside it stay quiet.
+ * A loop around a `describe` is reported on the `describe`, so the tests inside
+ * it stay quiet.
  */
 const isInsideLoop = (node: ESTree.Node): boolean => {
   let current = node.parent;

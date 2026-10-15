@@ -229,7 +229,6 @@ export function splitMarkdownLinkSearchAndHash(value: string): {
   };
 }
 
-/** Keeps filename and destination-path labels compact without discarding prose. */
 export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const destination = parseMarkdownFileLink(href);
   if (!destination) return false;
@@ -322,7 +321,6 @@ export function extractInlineCodeSpans(text: string): string[] {
   return spans;
 }
 
-/** Reuses delimiter searches when successive candidates fall in the same run. */
 function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
   let runStart = -1;
   let runEnd = -1;

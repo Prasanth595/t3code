@@ -135,14 +135,12 @@ function pullRequestSettles(
   return pullRequestAtMs >= userAnchorMs;
 }
 
-/** Cheap checks that run before any source control lookup. */
 export function isAutoSettlementCandidate(
   thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
   if (thread.pinnedAt != null || thread.autoSettleDisabledAt != null) return false;
-  // Blocked-on-you work must never park behind a settled override.
   if (thread.pendingRuntimeRequest !== null) return false;
   // A live run, or background work that will wake the agent, is not
   // staleness. A dev server left running is: the agent is done.
@@ -151,8 +149,6 @@ export function isAutoSettlementCandidate(
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return true;
-  // A snoozed thread that woke early (error or completed work) can settle;
-  // one still parked on its wake time keeps its stronger statement.
   const snoozedAtMs = toMillis(thread.snoozedAt);
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
   const wokeOnError =
@@ -164,13 +160,10 @@ export function isAutoSettlementCandidate(
 }
 
 /**
- * Whether a thread is parked on its snooze: its wake time is in the future and
- * it has not raised its hand with a pending request, a fresh failure, or work
- * that completed after the snooze. Server twin of the client's
- * `effectiveSnoozed`, so agents and the sidebar agree on what is snoozed. One
- * difference: a failure counts as fresh when its run completed after the
- * snooze, like `isAutoSettlementCandidate`. The client compares the shell's
- * update time, so a rename can wake a failed thread there but not here.
+ * Server twin of the client's `effectiveSnoozed`, so agents and the sidebar agree on what is
+ * snoozed. One difference: a failure counts as fresh when its run completed after the snooze, like
+ * `isAutoSettlementCandidate`. The client compares the shell's update time, so a rename can wake a
+ * failed thread there but not here.
  */
 export function isSnoozed(
   thread: Pick<
@@ -271,7 +264,6 @@ function autoSettlementConfigured(settings: import("@t3tools/contracts").ServerS
   );
 }
 
-/** Identity of every settlement input, so unrelated settings edits do not trigger a sweep. */
 /** @internal Exported for tests. */
 export function autoSettlementSettingsKey(
   settings: import("@t3tools/contracts").ServerSettings,
@@ -280,9 +272,8 @@ export function autoSettlementSettingsKey(
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
     settings.sidebarAutoSettleKeepPullRequests,
-    // Only entries that touch settlement, in a stable order, so a project
-    // override on an unrelated key does not queue a sweep. JSON drops
-    // undefined, so inherit (absent) and never (null) need distinct marks.
+    // JSON drops undefined, so inherit (absent) and never (null) need distinct
+    // marks.
     Object.entries(settings.projectSettingsOverrides)
       .filter(
         ([, entry]) =>
@@ -325,7 +316,6 @@ export const make = Effect.gen(function* () {
     if (!autoSettlementConfigured(settings)) {
       return;
     }
-    // A sweep for one thread reads only that thread's candidate row.
     const threads = yield* projections.getSettlementCandidates(threadId);
     if (threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();

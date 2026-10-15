@@ -135,7 +135,6 @@ async function windowsActiveWindow(): Promise<ActiveWindow | undefined> {
   };
 }
 
-/** Resolve the OS foreground window, or `undefined` when there is none. */
 export function activeWindow(platform: NodeJS.Platform): Promise<ActiveWindow | undefined> {
   if (platform === "darwin") return macActiveWindow();
   if (platform === "win32") return windowsActiveWindow();

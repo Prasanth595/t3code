@@ -32,7 +32,6 @@ const TAB_TITLES = {
   pullRequests: "Pull requests",
 };
 
-/** Brand and connection status occupy the same leading slot in both roots. */
 function WorkspaceRootTitle(props: {
   readonly maxWidth: number;
   readonly onOpenEnvironments: () => void;

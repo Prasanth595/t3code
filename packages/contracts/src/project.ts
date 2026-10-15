@@ -101,7 +101,6 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
-/** A project's chosen icon, as clients set it. */
 export const ProjectIconOverride = Schema.Union([
   ProjectLucideIcon,
   ProjectEmojiIcon,
@@ -518,13 +517,11 @@ export const ProjectWriteFileResult = Schema.Struct({
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
-/** The environment's Scratch project, created on first request. */
 export const ProjectEnsureScratchResult = Schema.Struct({
   projectId: ProjectId,
 });
 export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
 
-/** A project started from just a name, in a new folder the server makes. */
 export const ProjectCreateNewInput = Schema.Struct({
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
 });

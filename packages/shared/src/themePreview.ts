@@ -39,7 +39,6 @@ export type ThemePreviewRenderSpec = Readonly<{
   blurAt56Px: number;
 }>;
 
-/** Shared geometry and falloff for the web and native theme preview orbs. */
 export const THEME_PREVIEW_RENDER_SPECS: Readonly<Record<ThemeAppearance, ThemePreviewRenderSpec>> =
   {
     light: {

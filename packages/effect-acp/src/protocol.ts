@@ -30,7 +30,6 @@ export interface AcpProtocolLogEvent {
   readonly payload: unknown;
 }
 
-/** Stable transport identity for an inbound ACP JSON-RPC request. */
 export interface AcpRequestContext {
   readonly requestId: string;
   readonly method: string;
@@ -68,7 +67,6 @@ export type AcpIncomingNotification =
       readonly params: unknown;
     };
 
-/** Standard I/O whose input can report provider-specific ACP failures. */
 export interface AcpStdio extends Omit<Stdio.Stdio, "stdin"> {
   readonly stdin: Stream.Stream<Uint8Array, PlatformError.PlatformError | AcpError.AcpError>;
 }
@@ -916,7 +914,6 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
 
   // JSON-RPC notifications carry no `id`. Encoding a Request without `isNotification`
   // emits an `id`, which real agents (Grok CLI) parse as a malformed request and silently drop.
-  // That made `session/cancel` a no-op against Grok while the lenient mock agent accepted it.
   const sendNotification = Effect.fn("sendNotification")(function* (
     method: string,
     payload: unknown,

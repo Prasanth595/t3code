@@ -137,7 +137,6 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
   });
 }
 
-/** Translate the existing screen options to v5's native header API. */
 export function V5StackHeader(props: {
   readonly options: Options;
   readonly canGoBack: boolean;

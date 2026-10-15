@@ -119,7 +119,6 @@ function skillPathSortKey(entry: string) {
   );
 }
 
-/** Read only regular skill files, with a byte limit that applies during the read. */
 const readSkill = Effect.fn("readAntigravitySkill")(function* (
   skillPath: string,
   budget: ScanBudget,

@@ -190,10 +190,6 @@ function providerEnvironmentDetail(environment: EnvironmentPresentation): string
 const providerCardHeightClassName =
   "@min-[48rem]/providers:h-[min(44rem,calc(100dvh-11rem))] @min-[48rem]/providers:min-h-[32rem]";
 
-/**
- * Same chrome as the provider editor (section heading, floating device tabs,
- * tall card) for states that cannot render provider settings yet.
- */
 function ProviderSettingsPlaceholder({
   deviceTabs,
   icon,
@@ -565,7 +561,6 @@ export function EnvironmentProviderSettings({
   readonly environmentLabel: string;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
-  /** The project's checkouts on this environment, if a project is in scope. */
   readonly projectIds?: readonly ProjectId[];
   /**
    * Grey out and freeze every write control when this session's credential
@@ -782,10 +777,8 @@ export function EnvironmentProviderSettings({
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    // An unconfigured default slot runs with the driver's default config.
     const effectiveInstance: ProviderInstanceConfig = explicitInstance ?? { driver };
     const isDirty = explicitInstance !== undefined;
-    // Drivers without a default instance list only their configured instances.
     const hasDefaultSlot = providerSettings.hasDefaultInstance || explicitInstance !== undefined;
     if (
       hasDefaultSlot &&

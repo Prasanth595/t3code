@@ -9,13 +9,11 @@ import type { PullRequestProviderApi } from "@t3tools/source-control-core/server
 export class PullRequestProviderRegistry extends Context.Service<
   PullRequestProviderRegistry,
   {
-    /** Null for a host with no implementation, which the service reports as unsupported. */
     readonly get: (kind: SourceControlProviderKind) => PullRequestProviderApi | null;
     readonly kinds: ReadonlyArray<SourceControlProviderKind>;
   }
 >()("t3/pullRequest/PullRequestProviderRegistry") {}
 
-/** Exported for tests, which stand a registry up from providers they supply themselves. */
 export function fromProviders(
   providers: ReadonlyArray<PullRequestProviderApi>,
 ): PullRequestProviderRegistry["Service"] {

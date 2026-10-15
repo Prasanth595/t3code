@@ -90,7 +90,6 @@ function formatDeviceAuthorizationPrompt(
   ].join("\n");
 }
 
-/** Returns the connected account identity, if the flow could determine one. */
 const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   readonly headless: boolean;
 }) {

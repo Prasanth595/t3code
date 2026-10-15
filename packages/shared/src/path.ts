@@ -57,11 +57,6 @@ export function normalizeProjectPathForComparison(value: string): string {
 // Windows refuses these as file names, with or without an extension.
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
-/**
- * Folder name for a project started from just a name ("Pinball Stats" becomes
- * "pinball-stats"). The server uses it for `projects.createNew`, and clients
- * use it to show the path before the server makes it.
- */
 export function newProjectFolderName(name: string): string {
   const slug = name
     .normalize("NFKD")
@@ -83,8 +78,6 @@ export function stripSlashPrefixedWindowsDrive(path: string): string {
 }
 
 export function fileBasename(path: string): string {
-  // A trailing separator is a valid way to write a directory. Trim it before
-  // taking the final segment so the label is never empty.
   const trimmed = path.replace(/[/\\]+$/, "");
   if (trimmed.length === 0) return path;
   const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));

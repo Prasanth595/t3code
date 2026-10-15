@@ -543,10 +543,9 @@ export const make = Effect.gen(function* () {
     connectionRoutes(entry).map((route) => route.target as PersistedConnectionTarget);
 
   /**
-   * The entry after its routes change. GitHub trust and an unsupported
-   * verdict both belong to the saved addresses: a changed set may reach a
-   * different server, so both are dropped and the next connection decides.
-   * Reordering keeps the same addresses, so both stay.
+   * GitHub trust and an unsupported verdict both belong to the saved addresses: a changed set may
+   * reach a different server, so both are dropped and the next connection decides. Reordering
+   * keeps the same addresses, so both stay.
    */
   const withRoutes = (previous: ConnectionCatalogEntry, routes: ReadonlyArray<ConnectionRoute>) => {
     const next = entryWithRoutes(previous, routes);
@@ -568,9 +567,6 @@ export const make = Effect.gen(function* () {
         if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
           return false;
         }
-        // A new route joins the environment's saved routes. Registering one it
-        // already has (the same id, or a pairing to the same address) replaces
-        // it in place. Editing keeps the disabled state.
         const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
         let entry = registered;
         if (previous !== undefined) {
@@ -598,7 +594,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /** Writes a new route list for a user-saved environment and restarts its connection. */
   const replaceRoutesLocked = Effect.fn("EnvironmentRegistry.replaceRoutesLocked")(function* (
     previous: ConnectionCatalogEntry,
     routes: ReadonlyArray<ConnectionRoute>,
@@ -709,13 +704,10 @@ export const make = Effect.gen(function* () {
 
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
 
-          // The catalog entry carries no credential, so a fresh bearer keeps
-          // the equivalent runtime. Anything not yet connected may be using the
-          // old bearer: an attempt in flight would fail with it and then wait
-          // blocked for a manual retry. Retry with the new one instead. A
-          // connected session keeps its socket, but the server revoked the old
-          // bearer, so its HTTP requests (such as the session's scopes) move to
-          // the new one.
+          // Anything not yet connected may be using the old bearer: an attempt in flight would
+          // fail with it and then wait blocked for a manual retry. Retry with the new one
+          // instead. A connected session keeps its socket, but the server revoked the old bearer,
+          // so its HTTP requests (such as the session's scopes) move to the new one.
           if (bearerReplaced && registration._tag === "BearerConnectionRegistration") {
             const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
             if (scope !== undefined) {
@@ -753,10 +745,8 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  // Tear down a platform-managed environment that the host no longer reports
-  // (e.g. the user turned the parallel WSL backend off). Platform environments
-  // bypass the user-facing `remove` guard since they are reconciled from the
-  // bootstrap rather than removed by hand.
+  // Platform environments bypass the user-facing `remove` guard since they are reconciled from
+  // the bootstrap rather than removed by hand.
   const removePlatformEnvironment = Effect.fn("EnvironmentRegistry.removePlatformEnvironment")(
     function* (environmentId: EnvironmentId) {
       yield* withLeaseLock(
@@ -822,9 +812,6 @@ export const make = Effect.gen(function* () {
     yield* installPlatformRegistration(registration);
   });
 
-  // Reconcile the full set of platform-managed environments against what the
-  // host currently reports: add/refresh the desired ones and tear down any
-  // platform environment that disappeared (WSL toggled off, distro switched).
   const reconcilePlatform = Effect.fn("EnvironmentRegistry.reconcilePlatform")(function* (
     platformRegistrations: ReadonlyArray<PlatformConnectionRegistration>,
   ) {
@@ -908,10 +895,8 @@ export const make = Effect.gen(function* () {
     typeof globalThis.location === "undefined" || globalThis.location.protocol !== "https:";
 
   /**
-   * Saves the direct addresses a connected server reports as learned routes,
-   * replacing learned routes it no longer reports. Routes the user saved are
-   * never changed. Learned routes reuse the active route's credential, so they
-   * do not revoke GitHub routing trust the way a newly paired address does.
+   * Learned routes reuse the active route's credential, so they do not revoke GitHub routing
+   * trust the way a newly paired address does.
    */
   const learnRoutes = Effect.fn("EnvironmentRegistry.learnRoutes")(function* (input: {
     readonly environmentId: EnvironmentId;
@@ -934,9 +919,6 @@ export const make = Effect.gen(function* () {
         });
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
-        // Save new learned profiles and any whose Tailscale mark changed. A
-        // learned route owns its profile; the credential stays with the route
-        // it borrows from.
         const previousProfiles = new Map(
           connectionRoutes(entry).map((route) => [
             connectionRouteId(route.target),

@@ -1,8 +1,3 @@
-/**
- * `t3 trace summary` - per-span counts, rates, and latency percentiles from
- * the local server trace file and its rotated backups. It reads the files
- * directly, so it works while the server is stalled or stopped.
- */
 import { PositiveInt } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -20,14 +15,12 @@ import { streamTraceFileLines, toRotatedTracePaths } from "../diagnostics/TraceD
 import { resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag, DurationFromString, traceFileConfig, traceMaxFilesConfig } from "./config.ts";
 
-// Only the fields the summary needs. Other record fields are ignored.
 const decodeTraceSpanLine = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       name: Schema.String,
       durationMs: Schema.Finite,
       endTimeUnixNano: Schema.FiniteFromString,
-      // Server (`effect-span`) records.
       exit: Schema.optional(Schema.Struct({ _tag: Schema.String })),
       // Browser (`otlp-span`) records. Effect's OTLP tracer writes code "2" for
       // errors. It marks interrupts with an `effect.fiber.interrupted`
@@ -47,10 +40,8 @@ const decodeTraceSpanLine = Schema.decodeUnknownOption(
 );
 
 /**
- * Groups trace NDJSON by span name. Call `addLine` once per line as the files
- * stream in, then `finish` for the summary. Spans that ended before `sinceMs`
- * are left out. Rates are per minute between the first and last span end,
- * since spans are written when they end.
+ * Spans that ended before `sinceMs` are left out. Rates are per minute between
+ * the first and last span end, since spans are written when they end.
  */
 export function makeTraceSpanSummary(sinceMs = -Infinity) {
   // Keep each span's duration (8 bytes, a few MB for the default 110 MB of
@@ -98,7 +89,6 @@ export function makeTraceSpanSummary(sinceMs = -Infinity) {
     const spans = [...byName]
       .map(([name, { durations, interrupted, failures }]) => {
         const sorted = durations.toSorted((left, right) => left - right);
-        // Nearest-rank percentile.
         const percentile = (p: number) => sorted[Math.ceil(p * sorted.length) - 1]!;
         return {
           name,

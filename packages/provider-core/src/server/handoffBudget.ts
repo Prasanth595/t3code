@@ -253,7 +253,6 @@ export function selectHistory(input: {
     selected.add(index);
     remaining -= cost;
   };
-  // Prioritize the latest request and partial answer, then original constraints.
   // Oversized items are omitted whole and remain available through thread_read.
   tryAdd(messages.findLastIndex((message) => message.role === "user"));
   tryAdd(messages.findLastIndex((message) => message.role === "assistant"));

@@ -214,10 +214,6 @@ export class PairingGrantStore extends Context.Service<
       readonly subject?: string;
       readonly label?: string;
       readonly proofKeyThumbprint?: string;
-      /**
-       * "startup" marks the credential the server mints for itself at boot,
-       * which gets the long dev TTL when a dev URL is configured.
-       */
       readonly purpose?: "startup";
     }) => Effect.Effect<IssuedBootstrapCredential, BootstrapCredentialInternalError>;
     readonly listActive: () => Effect.Effect<

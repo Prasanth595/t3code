@@ -138,10 +138,6 @@ function ServerTabFileNotShown(props: {
   );
 }
 
-/**
- * Single-tab preview surface: chrome row on top, one webview below, empty
- * state when no session exists for the thread.
- */
 export function PreviewView({
   threadRef,
   tabId: requestedTabId,
@@ -213,7 +209,6 @@ export function PreviewView({
   const [serverAspectRatioLocked, setServerAspectRatioLocked] = useState(false);
   const serverBodyRef = useRef<HTMLDivElement | null>(null);
   const [serverToolbarWidth, setServerToolbarWidth] = useState(0);
-  // The streamed tab's device toolbar spans the panel; only measured while it shows.
   const serverToolbarShown =
     snapshot?.runtime === "server" && (snapshot.viewport ?? FILL_PREVIEW_VIEWPORT)._tag !== "fill";
   useEffect(() => {
@@ -260,7 +255,6 @@ export function PreviewView({
     if (!navUrl || !navTitle || !latestHistoryUrl) return;
     // Agent-driven pages only enrich an existing requested URL.
     setTitleForThreadUrl(threadRefRef.current, navUrl, navTitle, environmentHostname);
-    // threadKey stands in for threadRef, whose identity churns on every thread update.
   }, [environmentHostname, latestHistoryUrl, navTitle, navUrl, threadKey]);
 
   const navigateToResolvedUrl = useCallback(
@@ -300,9 +294,7 @@ export function PreviewView({
         if (await navigateToResolvedUrl(resolved)) {
           recordVisitForThread(threadRef, resolved);
         }
-      } catch {
-        // Only empty input or an unsupported scheme lands here; the bar keeps the text.
-      }
+      } catch {}
     },
     [navigateToResolvedUrl, threadRef],
   );
@@ -330,7 +322,6 @@ export function PreviewView({
     else if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
   }, [isServerTab, runtimeTabId]);
 
-  /** Appearance and zoom of a server tab, through the server for every client. */
   const adjustServerTab = useCallback(
     async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
       if (!tabId) return;
@@ -500,9 +491,9 @@ export function PreviewView({
   }, [miniPlayerTabId, tabId, threadRef]);
 
   /**
-   * The menu's actions. A server tab, streamed or rendered natively here, runs
-   * them through its environment, so every client and agent sees one state.
-   * Opening DevTools and a separate window need the desktop's own page.
+   * A server tab, streamed or rendered natively here, runs them through its
+   * environment, so every client and agent sees one state. Opening DevTools and
+   * a separate window need the desktop's own page.
    */
   const desktopCall = (op: ((tabId: string) => Promise<void>) | undefined) => () => {
     if (op && runtimeTabId) void op(runtimeTabId).catch(() => undefined);
@@ -808,11 +799,9 @@ export function PreviewView({
       void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       return;
     }
-    // Snapshot whatever the user was focused on (typically the chat
-    // composer textarea or the chrome-row pick button) BEFORE main steals
-    // focus into the guest webContents. We restore it when the pick
-    // resolves so the user's typing context isn't lost — otherwise after
-    // every pick they'd have to click back into the textarea.
+    // Snapshot whatever the user was focused on (typically the chat composer
+    // textarea or the chrome-row pick button) BEFORE main steals focus into the
+    // guest webContents.
     const previouslyFocused =
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
     const pickRequest = { cancelled: false };
@@ -844,8 +833,6 @@ export function PreviewView({
         // The stored copy drops the screenshot on failure, otherwise the prompt
         // would tell the agent a crop is attached when none was sent.
         const capture = capturePreviewAnnotationScreenshot(picked);
-        // Main reports a crop that failed or timed out on its side; the local
-        // conversion can fail too. Either way the user should hear about it.
         const cropDropped = screenshotFailed || capture.status === "failed";
         const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
         addPreviewAnnotation(threadRef, annotation);
@@ -883,19 +870,12 @@ export function PreviewView({
           onSendAnnotation?.(annotation, image);
         }
       } catch {
-        // Picker failed (e.g. webview navigated). Treat as silent cancel.
       } finally {
-        // A submitted pick already released itself above; a cancelled or
-        // failed one releases here. Avoid `setState on unmounted component`
-        // if the panel/thread closed while the pick was in flight.
         const isCurrentPick = pickActiveRef.current === pickRequest;
         if (isCurrentPick) {
           pickActiveRef.current = null;
           if (isMountedRef.current) setPickActive(false);
         }
-        // Best-effort: restore focus to whatever the user had before the
-        // pick stole it into the guest webContents. Skip if the previously-
-        // focused element was unmounted or is no longer focusable.
         if (
           (isCurrentPick || submitted) &&
           previouslyFocused &&
@@ -919,9 +899,6 @@ export function PreviewView({
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
 
-  // If the active tab changes mid-pick (close, thread switch, hot restart),
-  // tell main to tear down the in-flight session AND reset our local toggle
-  // state so the button doesn't get stuck pressed against a stale tab id.
   useEffect(() => {
     return () => {
       if (!pickActiveRef.current) return;
@@ -1001,9 +978,6 @@ export function PreviewView({
           isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
         }
         leadingActions={
-          // Only when it differs from the default: labelling every tab
-          // "Default" would be noise on the common case, while a tab in
-          // another profile is exactly what needs calling out.
           activeProfileId !== browserDefaults.profileId ? (
             // Capped: profile names run to 48 characters, and an unbounded
             // badge in this row takes its width from the URL input, the only

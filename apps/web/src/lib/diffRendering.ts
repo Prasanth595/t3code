@@ -208,17 +208,16 @@ export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
 }
 
 /**
- * What the file was called before the change. Only a rename makes it differ from the current
- * path, and the hosts that resolve a diff position against both sides need both names.
+ * Only a rename makes it differ from the current path, and the hosts that resolve a
+ * diff position against both sides need both names.
  */
 export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string {
   return fileDiff.prevName ?? fileDiff.name ?? "";
 }
 
 /**
- * Stable across re-renders of the same file, distinct for every block in a
- * patch. A type change (regular file to symlink) arrives as a deletion and an
- * addition of the same path, so the change type is part of the identity.
+ * A type change (regular file to symlink) arrives as a deletion and an addition
+ * of the same path, so the change type is part of the identity.
  */
 export function buildFileDiffIdentityKey(fileDiff: FileDiffMetadata): string {
   return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}\u0000${fileDiff.type}`;
@@ -306,12 +305,6 @@ export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string
   }
 }
 
-/**
- * Maps every diff/file surface the @pierre/diffs renderer paints onto the
- * app's code tokens, so themed palettes reach the code body, gutter, and
- * row tints instead of the renderer's bundled colors. Shared by the diff
- * panel and the file preview.
- */
 export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-diffs-header],
 [data-diff],

@@ -11,7 +11,6 @@ const REPLAY_VALUES_BY_KEY: Readonly<Record<string, string>> = {
 interface CodexReplayRecordingMachine {
   readonly home: string;
   readonly hostname: string;
-  /** Root of the checkout the recorder runs from; it names the local worktree layout. */
   readonly checkout: string;
 }
 

@@ -250,7 +250,6 @@ const ReviewFileNavigatorRow = memo(function ReviewFileNavigatorRow(props: {
   readonly onSelectFile: (fileId: string | null) => void;
 }) {
   const { file, selected, onSelectFile } = props;
-  // Tapping the selected file again returns to the all-files diff.
   const handlePress = useCallback(() => {
     onSelectFile(selected ? null : file.id);
   }, [file.id, onSelectFile, selected]);
@@ -514,7 +513,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const NativeReviewDiffView = resolveNativeReviewDiffView();
   const nativeReviewDiffViewRef = useRef<NativeReviewDiffViewHandle>(null);
   const showcasedReviewDrawRef = useRef<string | null>(null);
-  // Native pull-to-refresh on the diff surface (replaces the old Refresh menu item).
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
     setIsPullRefreshing(true);
@@ -603,8 +601,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
       <ReviewFileNavigator
         ref={reviewFileNavigatorRef}
         files={nativeReviewDiffData.files}
-        // The workspace inspector column spans the full window height, so the
-        // pane clears the status bar itself.
         headerInset={insets.top}
         sectionId={selectedSection?.id ?? null}
         onSelectFile={handleSelectFile}
@@ -677,7 +673,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
     parsedDiff.kind === "files" &&
     NativeReviewDiffView !== null;
   useRegisterWorkspaceInspector(showChangedFilesPane ? renderInspector : undefined);
-  // A toggle needs registered content; loading, errors and raw patches have no navigator pane.
   const showChangedFilesToggle = panes.supportsAuxiliaryPane && showChangedFilesPane;
 
   const listHeader = useMemo(() => {
@@ -893,8 +888,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
                   </ScrollView>
                 </View>
               ) : parsedDiff.kind === "files" ? (
-                // The native diff surface could not be resolved on this binary;
-                // degrade to the raw patch instead of crashing the app.
                 <View
                   className={cn(
                     "gap-3 bg-card px-4 py-4",

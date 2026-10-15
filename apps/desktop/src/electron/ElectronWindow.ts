@@ -139,7 +139,6 @@ export const make = Effect.gen(function* () {
     );
     return windowsForegroundFocus;
   };
-  // Tracks a capture reveal in flight. Ordinary reveals keep Electron's native path.
   const captureRevealWindows = new Set<number>();
   yield* Effect.addFinalizer(() => Effect.sync(() => windowsForegroundFocus?.close()));
   const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());

@@ -50,9 +50,7 @@ function SourceLinkIcon({ url }: { url: string }) {
       return <GitHubIcon className="size-3.5" />;
     if (host === "gitlab.com" || host.endsWith(".gitlab.com"))
       return <GitLabIcon className="size-3.5" monochrome />;
-  } catch {
-    // Fall through to the generic external-link icon.
-  }
+  } catch {}
   return <ExternalLinkIcon className="size-3.5" />;
 }
 
@@ -182,17 +180,15 @@ export function ThemeSearchSection({
       return;
     }
     if (debouncedQuery !== query.trim()) {
-      // The debounced value still trails the input (dialog reopened with the
-      // box reset, or the user is mid-keystroke). Searching it would hit Open
-      // VSX for a query that is no longer visible; wait for the debounce to
-      // catch up to the current input instead.
+      // Searching it would hit Open VSX for a query that is no longer visible;
+      // wait for the debounce to catch up to the current input instead.
       return;
     }
     if (lastSearchKeyRef.current === searchKey) {
-      // The results already match this query. A request for a newer key may
-      // still be in flight (typed and then undone); abort it so it cannot
-      // overwrite the results. Only a genuine key change makes a stale search
-      // error irrelevant, so an install error on an unchanged query survives.
+      // A request for a newer key may still be in flight (typed and then
+      // undone); abort it so it cannot overwrite the results. Only a genuine
+      // key change makes a stale search error irrelevant, so an install error
+      // on an unchanged query survives.
       requestRef.current?.abort();
       requestRef.current = null;
       setIsSearching(false);

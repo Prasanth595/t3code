@@ -70,8 +70,6 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
 }
 
 /**
- * Read the natural widths of the resting composer controls from the DOM.
- *
  * Both the composer (deciding which blocks move into overflow) and the
  * context strip (deciding whether its labels may expand) read the same
  * numbers, so neither decision depends on what the other one hid last render.

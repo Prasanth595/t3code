@@ -1,11 +1,3 @@
-/**
- * ServerConfig - Runtime configuration services.
- *
- * Defines process-level server configuration and networking helpers used by
- * startup and runtime layers.
- *
- * @module ServerConfig
- */
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -29,20 +21,15 @@ export type RuntimeMode = typeof RuntimeMode.Type;
 export const StartupPresentation = Schema.Literals(["browser", "headless"]);
 export type StartupPresentation = typeof StartupPresentation.Type;
 
-/**
- * ServerDerivedPaths - Derived paths from the base directory.
- */
 export interface ServerDerivedPaths {
   readonly stateDir: string;
   readonly dbPath: string;
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
-  /** Palettes this machine publishes for clients to follow, one file per theme. */
   readonly environmentThemesDir: string;
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
-  /** Screenshots the agent asks the collaborative browser to keep for the user. */
   readonly browserArtifactsDir: string;
   readonly logsDir: string;
   readonly serverTracePath: string;
@@ -59,9 +46,6 @@ export interface DeriveServerPathsOptions {
   readonly baseDirIsExplicit?: boolean;
 }
 
-/**
- * ServerConfig - Service tag for server runtime configuration.
- */
 export class ServerConfig extends Context.Service<
   ServerConfig,
   ServerDerivedPaths & {
@@ -75,9 +59,8 @@ export class ServerConfig extends Context.Service<
     readonly otlpMetricsUrl: string | undefined;
     readonly otlpLogsUrl: string | undefined;
     /**
-     * How each signal is exported. Read instead of a process-wide setting so
-     * the wire format, credential, and schedule travel with the endpoint they
-     * were configured beside.
+     * Read instead of a process-wide setting so the wire format, credential,
+     * and schedule travel with the endpoint they were configured beside.
      */
     readonly otlpTracesExport: SignalExport;
     readonly otlpMetricsExport: SignalExport;

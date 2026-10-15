@@ -23,11 +23,6 @@ export function defaultThemeGeneration(theme: string, setAt: string): string {
   return setAt.length > 0 ? `${theme}@${setAt}` : theme;
 }
 
-/**
- * The generation to apply, or null to leave this client alone. Pure so the
- * rule -- apply once per set, never replay one already applied, wait for a
- * theme that has not arrived yet -- can be tested without a renderer.
- */
 export function defaultThemeToApply(input: {
   readonly environmentId: string | null;
   readonly defaultTheme: string;
@@ -63,20 +58,16 @@ function writeAppliedGeneration(storageKey: string, generation: string): void {
 }
 
 /**
- * Applies the environment's theme (`t3 theme set <id>`). Each set switches
- * this client once — live when connected, on the next connect otherwise —
- * and then steps aside: a theme the user picks in Settings afterwards wins
- * until the environment's theme is set again. The environment's own published
- * themes are valid targets, which is why this waits for an id that does not
- * resolve yet — the setting and the palette it names arrive independently.
+ * Applies the environment's theme (`t3 theme set <id>`). Each set switches this
+ * client once — live when connected, on the next connect otherwise — and then
+ * steps aside: a theme the user picks in Settings afterwards wins until the
+ * environment's theme is set again.
  */
 export function useDefaultThemeAdoption(): void {
   const environmentId = useAtomValue(primaryEnvironmentIdAtom);
   const settings = useAtomValue(primaryServerSettingsAtom);
   const { defaultTheme, defaultThemeSetAt } = settings;
   const { setTheme, setAppearanceMode } = useTheme();
-  // Re-runs adoption when a late-arriving published theme makes the
-  // requested id resolvable.
   const environmentThemes = useEnvironmentThemeDefinitions();
 
   useEffect(() => {

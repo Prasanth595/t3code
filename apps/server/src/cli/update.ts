@@ -54,7 +54,6 @@ const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
 // a channel genuinely has nothing published.
 const RELEASE_INDEX_MAX_PAGES = 10;
 
-/** Asks GitHub for the newest published version on a channel, page by page. */
 const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
 ) {
@@ -88,7 +87,6 @@ const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
 });
 
-/** Whether a launcher target lives inside `<baseDir>/runtime/versions`. */
 export function launcherOwnsVersionsDir(
   path: Path.Path,
   versionsDir: string,
@@ -99,16 +97,11 @@ export function launcherOwnsVersionsDir(
 }
 
 /**
- * The launcher the install scripts leave behind: a symlink at `<bin>/t3` on
- * POSIX, a `t3.cmd` shim on Windows. `t3 update` repoints it so the next `t3`
- * invocation is the new version. Only a launcher that already points into
- * this home's `runtime/versions` tree is touched; a plain copy of the
- * executable, or a launcher for some other install, is left alone.
+ * Only a launcher that already points into this home's `runtime/versions` tree is touched; a
+ * plain copy of the executable, or a launcher for some other install, is left alone.
  */
 export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function* (input: {
-  /** Path the current process was started through, if known. */
   readonly launchedAs: string | undefined;
-  /** `<baseDir>/runtime/versions` of the home being updated. */
   readonly versionsDir: string;
   readonly targetEntryPath: string;
 }) {
@@ -155,10 +148,9 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
 });
 
 /**
- * The path the executable was started through. Node keeps the shell's
- * spelling in argv0: a launcher symlink or `./t3` resolves against the
- * working directory, while a bare `t3` was found on PATH and has to be
- * looked up there again, or the launcher symlink is never seen.
+ * Node keeps the shell's spelling in argv0: a launcher symlink or `./t3` resolves against the
+ * working directory, while a bare `t3` was found on PATH and has to be looked up there again, or
+ * the launcher symlink is never seen.
  */
 export const resolveLauncherPath = Effect.gen(function* () {
   const path = yield* Path.Path;
@@ -268,14 +260,9 @@ export const updateCommand = Command.make("update", {
 );
 
 /**
- * A `t3 serve` or `t3` someone started by hand, as opposed to the one the
- * background service supervises. The server records its pid on startup; a
- * stale file from a crashed server is ignored by checking the pid is alive.
- *
- * Servers from before `serviceManaged` was recorded cannot be told apart by
- * the file alone, so the launcher-supervised case is also recognised by
- * lineage: a service server's parent is the launcher, and on Linux that
- * launcher runs inside the unit's cgroup.
+ * Servers from before `serviceManaged` was recorded cannot be told apart by the file alone, so
+ * the launcher-supervised case is also recognised by lineage: a service server's parent is the
+ * launcher, and on Linux that launcher runs inside the unit's cgroup.
  */
 const findForegroundServer = Effect.fn("cli.update.find_foreground_server")(function* (input: {
   readonly serverRuntimeStatePath: string;
@@ -300,7 +287,6 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
     return Option.isSome(cgroup) && cgroup.value.includes("/t3code.service");
   }
   if (platform === "darwin") {
-    // The service server's parent is the launcher process.
     const parent = yield* runner
       .run({
         command: "ps",
@@ -355,10 +341,8 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);
 
-  // Preview is a maintainers' dogfooding train: it is cut by hand from
-  // unmerged branches, receives no fixes, and is never offered to anyone.
-  // Reaching it from stable or nightly takes an explicit ask and an explicit
-  // acknowledgement; the flag alone is not enough from a script.
+  // Reaching it from stable or nightly takes an explicit ask and an explicit acknowledgement; the
+  // flag alone is not enough from a script.
   const currentChannel = cliReleaseChannelOf(currentVersion);
   if (targetChannel === "preview" && currentChannel !== "preview") {
     yield* Console.log(
@@ -384,8 +368,6 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     }
   }
 
-  // Work out everything that will be touched before touching anything, so the
-  // user sees one plan and one question rather than a surprise restart.
   const status = yield* service.status;
   // The unit name is per user, not per T3 home. Only touch the service when it
   // serves the home this update targets; otherwise it belongs to another
@@ -531,12 +513,10 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     targetEntryPath: runtime.entryPath,
   });
 
-  // The service switch runs in this process against the target version: the
-  // downloaded runtime has already proven it runs (the `--version` check
-  // above), and doing it here rather than through the target's own CLI means
-  // a downgrade to a version without today's commands still works. The unit
-  // is rewritten either way so a later `t3 service restart` lands on the new
-  // version; only the restart itself waits for the user's answer.
+  // The service switch runs in this process against the target version: the downloaded runtime
+  // has already proven it runs (the `--version` check above), and doing it here rather than
+  // through the target's own CLI means a downgrade to a version without today's commands still
+  // works.
   let serviceUpdated = false;
   if (serviceInstalled && !serviceCurrent) {
     yield* Console.log(

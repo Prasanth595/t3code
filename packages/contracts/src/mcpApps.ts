@@ -34,10 +34,6 @@ export const McpAppToolInfoInput = Schema.Struct({
 });
 export type McpAppToolInfoInput = typeof McpAppToolInfoInput.Type;
 
-/**
- * What a client needs to decide whether to ask before a call: whether the tool
- * exists for apps and whether its server declares it read-only.
- */
 export const McpAppToolInfo = Schema.Struct({
   callable: Schema.Boolean,
   readOnly: Schema.Boolean,
@@ -60,7 +56,6 @@ export const McpAppReadResourceResult = Schema.Struct({
 export type McpAppReadResourceResult = typeof McpAppReadResourceResult.Type;
 
 /**
- * What an app wants the agent to know on its next turn (`ui/update-model-context`).
  * Each update replaces the app's previous one; no content clears it.
  */
 export const McpAppUpdateModelContextInput = Schema.Struct({
@@ -100,8 +95,6 @@ export class McpAppRequestError extends Schema.TaggedError<McpAppRequestError>()
       case "provider-unsupported":
         return "This thread's provider cannot run MCP app requests.";
       case "session-stopped":
-        // A forked thread shows its source's apps, so this names the thread
-        // that made the app rather than the one on screen.
         return "The app's thread is not running. Send a message in the thread that created it to use the app again.";
       case "tool-not-callable":
         return "This app cannot call that tool.";

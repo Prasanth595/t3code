@@ -70,7 +70,6 @@ const make = Effect.gen(function* () {
   // one untracked on disk.
   const handoffThreadsInFlight = new Set<string>();
 
-  // Worktree tools act on the calling thread's own checkout binding.
   const requireThreadScope = (scope: McpInvocationScope) =>
     scope.thread === undefined
       ? Effect.fail(
@@ -175,9 +174,6 @@ const make = Effect.gen(function* () {
       );
     }
 
-    // The repo check runs regardless of whether baseRef was supplied, so a
-    // non-repository workspace fails with an actionable error instead of an
-    // opaque git failure further down.
     const localStatus = yield* gitWorkflow
       .localStatus({ cwd: projectCwd })
       .pipe(asOperationFailed("Unable to read git status"));
@@ -270,8 +266,6 @@ const make = Effect.gen(function* () {
         );
         const worktreePath = worktree.worktree.path;
 
-        // Shared shape for "the handoff already succeeded, so report the failure
-        // in the result instead of failing the call" (continuation, setup script).
         const reportFailed = (logMessage: string) =>
           Effect.catchCause((cause: Cause.Cause<unknown>) => {
             const detail = errorMessage(Cause.squash(cause));
@@ -343,12 +337,9 @@ const make = Effect.gen(function* () {
               ),
             );
         }).pipe(
-          // onError: the worktree was already created, so any failure between
-          // here and the committed binding (recheck read, recheck race,
-          // dispatch typed failure or defect) must remove it again so a failed
-          // handoff leaves nothing behind on disk. Interrupt-only causes skip
-          // the removal: the binding may have committed, and force-deleting a
-          // worktree the thread now points at would be worse than leaking one.
+          // Interrupt-only causes skip the removal: the binding may have
+          // committed, and force-deleting a worktree the thread now points at
+          // would be worse than leaking one.
           Effect.onError((cause) =>
             Cause.hasInterruptsOnly(cause) ? Effect.void : removeCreatedWorktree,
           ),
@@ -357,11 +348,7 @@ const make = Effect.gen(function* () {
         // Queue the continuation right after the binding commits: the detach
         // that the metadata update schedules will terminate the calling
         // session, and a durably queued message is what guarantees the thread
-        // re-launches inside the worktree. When the dying run reaches a
-        // terminal state the orchestrator promotes the queued run, which
-        // derives its cwd from the updated projection.
-        // suspend: build the send effect only when the binding has succeeded,
-        // so a failed dispatch never even constructs the continuation call.
+        // re-launches inside the worktree.
         const queueContinuation: Effect.Effect<WorktreeMcpContinuationStatus, WorktreeMcpFailure> =
           Effect.suspend(() =>
             input.continuationPrompt === undefined

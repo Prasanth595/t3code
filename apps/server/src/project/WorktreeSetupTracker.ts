@@ -21,20 +21,9 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-/**
- * Tracks the live stages of a bootstrap worktree setup per thread so clients
- * can render a progress card while the first turn is still being prepared.
- *
- * State is memory only. It exists from the first `begin` until the turn starts
- * or the setup fails, plus a short grace window so a client that subscribes
- * late still sees the final state. Nothing here is persisted or event-sourced:
- * the durable record of a setup is the thread's worktree path and the setup
- * script activities, both of which already exist.
- */
 export class WorktreeSetupTracker extends Context.Service<
   WorktreeSetupTracker,
   {
-    /** Creates a fresh running snapshot for the thread, replacing any prior one. */
     readonly begin: (input: {
       readonly threadId: ThreadId;
       readonly branch: string | null;
@@ -63,15 +52,14 @@ export class WorktreeSetupTracker extends Context.Service<
       stageId: WorktreeSetupStageId,
       line: string,
     ) => Effect.Effect<void>;
-    /** Returns the settled snapshot, or null when nothing was tracked. */
     readonly finish: (
       threadId: ThreadId,
       phase: "done" | "failed" | "cancelled",
       error?: string | null,
     ) => Effect.Effect<WorktreeSetupSnapshot | null>;
     /**
-     * Drops the cancel handle. Called right before the turn is dispatched so a
-     * late cancel cannot roll back a thread whose agent has already started.
+     * Called right before the turn is dispatched so a late cancel cannot roll
+     * back a thread whose agent has already started.
      */
     readonly markUncancellable: (threadId: ThreadId) => Effect.Effect<void>;
     /**
@@ -88,7 +76,6 @@ export class WorktreeSetupTracker extends Context.Service<
 
 const TAIL_LINE_LIMIT = 4;
 
-/** Keeps free text inside the contract limit, ending in an ellipsis when cut. */
 function clampText(text: string, maxLength: number): string {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}\u2026`;
 }

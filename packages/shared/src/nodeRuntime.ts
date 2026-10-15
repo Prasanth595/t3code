@@ -27,7 +27,6 @@ export class NodeRuntimeUnavailableError extends Schema.TaggedError<NodeRuntimeU
 }
 
 export interface SelfInvocation {
-  /** The binary to spawn: Node, Electron (with `ELECTRON_RUN_AS_NODE`), or the packaged T3. */
   readonly command: string;
   /**
    * The absolute entrypoint script to place before the subcommand, or
@@ -38,11 +37,9 @@ export interface SelfInvocation {
 }
 
 /**
- * How another process runs this T3 install's CLI, for hidden subcommands the
- * server hands to children such as `acp-mcp-bridge`. `process.execPath` plus
- * `argv[1]` only works for a script run by Node; the single-executable has no
- * entrypoint script (Node repeats the binary at argv[1]), so callers must not
- * assemble the pair themselves.
+ * `process.execPath` plus `argv[1]` only works for a script run by Node; the
+ * single-executable has no entrypoint script (Node repeats the binary at
+ * argv[1]), so callers must not assemble the pair themselves.
  */
 export const resolveSelfInvocation = Effect.fn("nodeRuntime.resolveSelfInvocation")(function* () {
   const command = yield* HostProcess.ExecutablePath;
@@ -57,7 +54,6 @@ export const resolveSelfInvocation = Effect.fn("nodeRuntime.resolveSelfInvocatio
   } satisfies SelfInvocation;
 });
 
-/** `[entrypoint?, ...args]`: the argv that runs `args` against this T3 install. */
 export const selfInvocationArgs = (
   invocation: SelfInvocation,
   args: ReadonlyArray<string>,
@@ -85,7 +81,6 @@ export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutabl
   );
   if (resolvedNodePath === null) return yield* new NodeRuntimeUnavailableError({ feature });
   const nodePath = path.resolve(resolvedNodePath);
-  // A launcher or symlink named node must not point back at the standalone app.
   const resolvedPath = yield* fs
     .realPath(nodePath)
     .pipe(Effect.mapError((cause) => new NodeRuntimeUnavailableError({ feature, cause })));

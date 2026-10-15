@@ -209,8 +209,6 @@ function itemSummary({
 
   if (auth) {
     if (auth.status === "authenticated") {
-      // The server names the account its requests use, Settings choice included, and
-      // says when an environment token overrides it.
       const authDetail = optionLabel(auth.detail);
       return (
         <>
@@ -526,7 +524,6 @@ export function SourceControlSettingsPanel() {
   const handleScan = () => {
     discovery.refresh();
   };
-  /** The host's own settings form, for a host whose definition declares settings. */
   const hostSettingsPanel = (kind: string) => {
     const definition = sourceControlClients.find(kind);
     if (!definition?.settings || environmentId === null) return undefined;

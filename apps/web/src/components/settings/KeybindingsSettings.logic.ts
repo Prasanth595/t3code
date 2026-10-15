@@ -27,11 +27,6 @@ const usageCommandOrder = new Map<KeybindingCommand, number>(
 
 const firstUsageCommand = METRIC_OPTIONS[0].command;
 
-/**
- * Orders commands by `key`, except Usage page commands, which sort as one
- * block in page order where the first of them would sort. A total order, so
- * adding a binding elsewhere cannot reshuffle the Usage rows.
- */
 function compareCommands(
   left: KeybindingCommand,
   right: KeybindingCommand,
@@ -231,7 +226,6 @@ function keybindingGroupFor(command: KeybindingCommand): { id: string; title: st
   );
 }
 
-/** Splits sorted rows into the page's sections, dropping sections with no rows. */
 export function groupKeybindingRows(
   rows: ReadonlyArray<KeybindingRow>,
 ): ReadonlyArray<KeybindingGroup> {

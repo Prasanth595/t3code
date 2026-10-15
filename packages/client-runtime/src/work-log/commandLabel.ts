@@ -784,8 +784,6 @@ function powerShellAssignmentProgramName(
   );
   if (!assignment) return { matched: false, program: null };
 
-  // Environment assignments are setup. Their right-hand side is a value, not
-  // a command, so prefer the next top-level segment when one exists.
   if (assignment[1]?.toLowerCase() === "env") {
     return {
       matched: true,
@@ -922,9 +920,6 @@ function referencedCommandAlias(token: string): string | null {
   return reference?.[1] ?? reference?.[2] ?? null;
 }
 
-// Recover only literal aliases declared by an earlier top-level shell segment.
-// This covers common `SSH=(ssh ...)` and `TOOL=/path/to/tool` forms without
-// evaluating expansions or trying to model general shell state.
 function literalCommandAliasProgramName(command: string): string | null {
   const aliases = new Map<string, string>();
   let remainingCommand: string | null = command;
@@ -1374,10 +1369,6 @@ export function commandProgramName(command: string, depth = 0): string | null {
 // oxlint-disable-next-line no-control-regex
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
 
-/**
- * The command as rows show it: a plain shell -c wrapper removed and control
- * characters made visible. Callers retain the original for details.
- */
 export function commandDisplayText(command: string): string {
   return withVisibleControlCharacters(withoutShellWrapper(command));
 }
@@ -1424,10 +1415,6 @@ function isPowerShellCmdlet(word: string): boolean {
   return cmdlet !== null && POWERSHELL_VERBS.has(cmdlet[1]!);
 }
 
-/**
- * The grammar to highlight a command with: PowerShell when pwsh or powershell
- * runs it, or when it is written in PowerShell, as Windows agents run it.
- */
 export function commandHighlightLanguage(command: string): "powershell" | "shellscript" {
   const program = /^(?:&\s*)?(?:"([^"]*)"|'([^']*)'|(\S+))/u.exec(command.trim());
   const name = (program?.[1] ?? program?.[2] ?? program?.[3] ?? "")
@@ -1439,7 +1426,6 @@ export function commandHighlightLanguage(command: string): "powershell" | "shell
   return isPowerShellScript(command) ? "powershell" : "shellscript";
 }
 
-/** Whether any statement starts like PowerShell and never like POSIX shell. */
 function isPowerShellScript(command: string): boolean {
   let rest: string | null = command.trim();
   // A leading call operator; POSIX shell cannot start a command with `&`.

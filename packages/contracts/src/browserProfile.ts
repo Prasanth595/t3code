@@ -1,17 +1,8 @@
 /**
- * Browser profiles - named identities for the in-app preview browser.
- *
- * Each profile maps to its own Electron session partition, so cookies and
- * storage are isolated between them: a tab opened under "Work" cannot see
- * "Personal"'s logins. Profiles are client-local, like the other browser
- * defaults, because the Chromium guest they configure is desktop-local.
- *
- * Two profiles are built in and cannot be edited or removed:
+ * Profiles are client-local, like the other browser defaults, because the
+ * Chromium guest they configure is desktop-local.
  * - `default` keeps the partition scope the browser used before profiles
  *   existed, so upgrading does not sign anyone out.
- * - `incognito` maps to a non-persistent partition for throwaway sessions.
- *
- * @module BrowserProfile
  */
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -65,13 +56,6 @@ export function isBuiltInBrowserProfileId(id: string): boolean {
 }
 
 /**
- * The full picker list: built-ins first, then the user's own profiles.
- *
- * Three things are normalized away, because each would present a profile the
- * partition layer does not actually deliver:
- *
- * - Entries colliding with a built-in id, so a hand-edited settings file
- *   cannot shadow "Default" or "Incognito".
  * - Repeated ids, which map to one partition and would otherwise appear as
  *   two isolated identities sharing every cookie. First entry wins.
  * - `kind: "incognito"` on anything but the built-in, since persistence is

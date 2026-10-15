@@ -5,10 +5,8 @@ import { ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { ProjectScriptIcon } from "./project.ts";
 import type { ProjectScopedServerSettingKey, ServerSettings } from "./settings.ts";
 
-/** File name of the checked-in T3 project file, resolved at the workspace root. */
 export const T3_PROJECT_FILE_NAME = "t3.json";
 
-/** Public URL of the published JSON Schema for {@link T3ProjectFile}. */
 export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
@@ -142,11 +140,6 @@ export const PROJECT_FILE_BACKED_SETTINGS = {
 };
 export type ProjectFileBackedSettingKey = keyof typeof PROJECT_FILE_BACKED_SETTINGS;
 
-/**
- * `ServerSettings` with every file-backed key resolved to a concrete value.
- * What `resolveProjectSettings(...).settings` produces once a t3.json (or
- * its absence) has been accounted for.
- */
 export type ResolvedServerSettings = Omit<ServerSettings, ProjectFileBackedSettingKey> & {
   readonly [K in ProjectFileBackedSettingKey]: Exclude<ServerSettings[K], null>;
 };

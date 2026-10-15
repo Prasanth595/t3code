@@ -165,9 +165,8 @@ function isNotFoundError(error: PlatformError.PlatformError): boolean {
 }
 
 /**
- * Adds `item` to `items`, which stays sorted by `order` and holds at most
- * `limit` entries. Same result as a stable sort and slice over every item, but
- * memory stays bounded however many items stream in.
+ * Same result as a stable sort and slice over every item, but memory stays bounded however many
+ * items stream in.
  */
 function insertBounded<A>(
   items: A[],
@@ -201,10 +200,6 @@ const latestSeenFirst = (
   right: ServerTraceDiagnosticsLogEvent,
 ) => DateTime.toEpochMillis(right.seenAt) - DateTime.toEpochMillis(left.seenAt);
 
-/**
- * Folds trace NDJSON into diagnostics. Call `addLine` once per line as the
- * rotated files stream in, then `finish` for the result.
- */
 export function makeTraceDiagnosticsAggregator(
   slowSpanThresholdMs = DEFAULT_SLOW_SPAN_THRESHOLD_MS,
 ) {
@@ -387,8 +382,7 @@ export function makeTraceDiagnosticsAggregator(
 }
 
 /**
- * Feeds each line of one trace file to `onLine`, streaming so only one chunk of
- * text is in memory at a time. Succeeds with false when the file does not exist.
+ * Succeeds with false when the file does not exist.
  */
 export function streamTraceFileLines(
   fileSystem: FileSystem.FileSystem,

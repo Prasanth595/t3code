@@ -283,17 +283,10 @@ export function detectSourceControlProviderFromRemoteUrl(
 }
 
 /**
- * The provider-native repository selector. `displayName` is the full path below the host, which
- * is what nested GitLab groups need; owner/name is the two-segment fallback for identities
- * recorded before that field existed.
- *
  * Azure DevOps is the exception: `az repos pr list --repository` takes a repository name, and
  * takes the organisation and project from the checkout it detects — so the recorded
  * `org/project/_git/repo` path is refused outright and the whole repository reads as
  * unavailable. Its name is the last segment, which is what this hands over.
- *
- * One function because everything downstream is keyed by what it answers: the rows' own
- * `repository`, the per-repository cursors, and the detail and diff reads a row leads to.
  */
 export function sourceControlRepositorySelector(
   identity:

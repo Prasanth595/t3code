@@ -97,13 +97,11 @@ function latestUpdatedAt(link: ThreadPullRequestLink): number {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
-/** The single pull request a one-slot surface (sidebar badge, tab icon, copy link) shows. */
 export type ThreadCurrentPullRequest =
   | { readonly kind: "single"; readonly link: ThreadPullRequestLink }
   | {
       readonly kind: "stack";
       readonly open: ReadonlyArray<ThreadPullRequestLink>;
-      /** Highest layer of the open set; the one "View PR" and copy-link target. */
       readonly top: ThreadPullRequestLink;
     };
 
@@ -142,7 +140,6 @@ export function resolveThreadCurrentPullRequest(
   return { kind: "single", link: terminal[0]! };
 }
 
-/** The one link a legacy `linkedPullRequest` consumer should see, or null. */
 export function resolveThreadCurrentPullRequestLink(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ThreadPullRequestLink | null {
@@ -254,7 +251,6 @@ export function resolveThreadPullRequestChains(
     const parent = byHead.get(branchKey(link, link.snapshot.baseBranch));
     if (parent != null && parent !== link) hasChild.add(threadPullRequestKeyOf(parent));
   }
-  // Walk from each top (a link nothing builds on) down its base chain.
   for (const top of remaining) {
     if (hasChild.has(threadPullRequestKeyOf(top))) continue;
     const layers: Array<ThreadPullRequestLink> = [];
@@ -288,7 +284,6 @@ export type ThreadPullRequestBadge = {
   | { readonly kind: "pull-request"; readonly others: number }
 );
 
-/** Aggregate visible links' state for both stacks and unrelated linked counts. */
 export function resolveThreadPullRequestBadge(
   pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined,
 ): ThreadPullRequestBadge | null {
@@ -309,7 +304,6 @@ export function resolveThreadPullRequestBadge(
   return { kind: "pull-request", others: visible.length - 1, state };
 }
 
-/** Search terms for visible PR links, the legacy projection, and the branch PR. */
 export function threadPullRequestSearchTerms(thread: {
   readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
@@ -356,7 +350,6 @@ export function threadPullRequestsOf(thread: {
       ];
 }
 
-/** Apply a single-link sync without copying unrelated PRs into the event history. */
 export function applyThreadPullRequestLinkUpdate(
   thread: OrchestrationV2AppThread,
   updated: ThreadPullRequestLink,

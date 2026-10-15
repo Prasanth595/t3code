@@ -125,7 +125,6 @@ interface NormalizedDesktopUpdateReleaseNotes {
 }
 
 /**
- * Turns electron-updater's release notes into the groups the popover shows.
  * With `fullChangelog` on (nightly), electron-updater collects every GitHub
  * release whose version is semver-greater than the running one, whatever
  * train it belongs to; a maintainers' `-preview.` cut sorts above every

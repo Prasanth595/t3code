@@ -5,9 +5,10 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 import { useUniwindTheme } from "./useUniwindTheme";
 
 /**
- * React Navigation requires a JS theme object. Derive it from the same palette
- * source as Uniwind instead of subscribing the app root to CSS variables. The
- * preferences provider applies the registered Uniwind theme first, then
+ * Derive it from the same palette source as Uniwind instead of subscribing the
+ * app root to CSS variables.
+ *
+ * The preferences provider applies the registered Uniwind theme first, then
  * publishes this matching navigation palette through React.
  */
 export function useMobileNavigationTheme(surface: "screen" | "sidebar" = "screen"): Theme {

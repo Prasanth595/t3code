@@ -60,7 +60,7 @@ export function validateSettingsScopeSearch(raw: Record<string, unknown>): Setti
   };
 }
 
-/** Resolves only existing targets. An unavailable selection never broadens a subsequent write. */
+/** An unavailable selection never broadens a subsequent write. */
 export function resolveSettingsScope(
   search: SettingsScopeSearch,
   groups: readonly SidebarProjectSnapshot[],

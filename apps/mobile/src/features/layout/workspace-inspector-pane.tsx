@@ -13,15 +13,11 @@ import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
 
 /**
- * The trailing inspector column: resize divider + animated reveal.
- *
- * Rendered by AdaptiveWorkspaceLayout as a SIBLING of the navigator so the
- * native stack header (and its trailing toolbar items) spans only the content
- * pane — the inspector owns its own full-height column, mirroring how each
- * column of a UISplitViewController has its own chrome.
- *
- * Receives the pane layout via props (not the workspace context hook) so this
- * module stays import-cycle-free with AdaptiveWorkspaceLayout.
+ * Rendered by AdaptiveWorkspaceLayout as a SIBLING of the navigator so the native stack header
+ * (and its trailing toolbar items) spans only the content pane — the inspector owns its own
+ * full-height column, mirroring how each column of a UISplitViewController has its own chrome.
+ * Receives the pane layout via props (not the workspace context hook) so this module stays
+ * import-cycle-free with AdaptiveWorkspaceLayout.
  */
 export function WorkspaceInspectorPane(props: {
   readonly pathname: string;
@@ -83,8 +79,6 @@ export function WorkspaceInspectorPane(props: {
   useEffect(() => {
     const targetWidth = inspectorWidth ?? 0;
     if (!inspectorVisible || resizing) {
-      // Hidden panes re-measure silently; during a divider drag the content
-      // tracks the finger directly.
       renderedContentWidth.value = targetWidth;
       return;
     }

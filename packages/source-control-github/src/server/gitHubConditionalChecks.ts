@@ -164,8 +164,6 @@ export const makeChecksRevalidator = Effect.gen(function* () {
           }
           const now = yield* Clock.currentTimeMillis;
           if (entry.value !== null && now - entry.readAt < 5 * 60_000) return entry.value;
-          // Every page of the head's runs was just confirmed current, so the read filters them
-          // rather than listing the runs a second time.
           const pages = runPages.map((endpoint) =>
             decodeWorkflowRuns(entry.validators.get(endpoint)?.body ?? ""),
           );

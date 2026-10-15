@@ -7,10 +7,6 @@ const DIRECTIVE_PATTERN =
 const TS_DIRECTIVE_PATTERN = /^\s*\*?\s*@ts-(?:expect-error|ignore|nocheck)(?![\w-])(.*)$/su;
 const EMPTY_COMMENT_PATTERN = /^[\s*]*$/u;
 
-/**
- * Reports a directive that disables a lint rule or the type checker without saying why. The reason
- * is a `-- reason` suffix (text after the directive, for `@ts-*`) or a comment on the line above.
- */
 export default defineRule({
   meta: {
     type: "suggestion",
@@ -31,8 +27,6 @@ export default defineRule({
           }
         }
 
-        // A comment directly above explains a directive, even across stacked directives and empty
-        // comment lines.
         const explainedAbove = (directive: ESTree.Comment) => {
           let above = ownLineCommentsByEndLine.get(directive.loc.start.line - 1);
           while (

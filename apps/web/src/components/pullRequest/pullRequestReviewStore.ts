@@ -1,11 +1,3 @@
-/**
- * A review being written, held until it is sent.
- *
- * Nothing here reaches the host: a review is one request carrying every line comment and the
- * verdict together, so a half-written one is invisible to everyone else — including on the
- * hosts that have no pending review of their own. That also means a draft lives only as long
- * as the tab does, which is why this is deliberately not persisted.
- */
 import type { PullRequestRef, PullRequestReviewCommentDraft } from "@t3tools/contracts";
 import { create } from "zustand";
 
@@ -85,7 +77,6 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((
     }),
 }));
 
-/** The comments a pull request's draft holds, stable across renders while it is empty. */
 export function usePendingReviewComments(
   reference: PullRequestRef,
 ): ReadonlyArray<PendingReviewComment> {

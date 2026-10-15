@@ -128,14 +128,9 @@ interface AntigravityProviderOptions {
   readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
   readonly clearUsage?: Effect.Effect<void>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
-  /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
 }
 
-/**
- * Health uses initialize only. Session callbacks supply account-specific
- * metadata, which a disabled instance never shows.
- */
 export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(function* (
   settings: AntigravitySettings,
   options: AntigravityProviderOptions,

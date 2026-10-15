@@ -1,13 +1,5 @@
-/**
- * Naming shared by the release workflow, the runtime installers, and
- * install scripts for the per-platform CLI archives attached to GitHub
- * Releases. Every consumer derives the same file names from a version and a
- * platform key, so a rename here is a release-breaking change.
- */
-
 const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
-/** Overrides the download origin for mirrors and air-gapped installs. */
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
 /**
@@ -56,7 +48,6 @@ export function cliArchiveFileName(version: string, platformKey: CliArchivePlatf
 
 const CLI_RELEASE_DEFAULT_BASE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download`;
 
-/** Directory that `releases/download/<tag>/<asset>` lives under. */
 export function cliReleaseDownloadBaseUrl(
   version: string,
   baseUrl: string | undefined = CLI_RELEASE_DEFAULT_BASE_URL,
@@ -86,15 +77,13 @@ export const CLI_RELEASE_CHANNELS: ReadonlyArray<CliReleaseChannel> = [
   "preview",
 ];
 
-/** The release train a version was published on, derived from its prerelease tag. */
 export function cliReleaseChannelOf(version: string): CliReleaseChannel {
   const channel = /^[^-+]+-(nightly|preview)\.\d{8}\.\d+$/.exec(version)?.[1];
   return channel === "nightly" || channel === "preview" ? channel : "stable";
 }
 
 /**
- * One page of GitHub's list-releases endpoint, newest first. Callers walk pages
- * until a channel match turns up; a busy nightly train can push the newest
+ * Callers walk pages until a channel match turns up; a busy nightly train can push the newest
  * preview or stable release past any single page.
  */
 export function cliReleaseIndexPageUrl(page: number): string {
@@ -102,10 +91,7 @@ export function cliReleaseIndexPageUrl(page: number): string {
 }
 
 /**
- * Picks the newest version on a channel from the release index. Tags are
- * `v<version>`; the channel is decided by the same rule the runtime uses, so
- * a preview tag never satisfies a nightly lookup and vice versa. Drafts are
- * skipped because their assets are not downloadable.
+ * Drafts are skipped because their assets are not downloadable.
  */
 export function newestCliReleaseVersion(
   releases: ReadonlyArray<{

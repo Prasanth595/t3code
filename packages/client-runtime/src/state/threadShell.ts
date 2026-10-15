@@ -88,7 +88,6 @@ export function pendingSubagentRequestsByThread(
   return requests.size === 0 ? EMPTY_SUBAGENT_REQUESTS : requests;
 }
 
-/** Banner title for the subagents `childThreadInputsAtom` lists. */
 export function childThreadInputsTitle(
   children: ReadonlyArray<Pick<EnvironmentThreadShell, "hasPendingApprovals">>,
 ): string {

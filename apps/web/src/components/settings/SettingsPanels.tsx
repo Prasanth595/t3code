@@ -286,7 +286,6 @@ function AboutVersionSection() {
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
   const selectedHostedAppChannel = hasDesktopBridge ? null : HOSTED_APP_CHANNEL;
-  // Show the beta app links as soon as someone picks Nightly, before the update installs.
   const showNightlyMobileBeta =
     IS_NIGHTLY_BUILD || (hasDesktopBridge && selectedUpdateChannel === "nightly");
 
@@ -1542,7 +1541,6 @@ function useFontDefaultFamilies() {
   return {
     sans: defaults.sans,
     code: defaults.code,
-    // The composer inherits whatever the interface preference resolves to.
     interfaceFamily: settings.fontFamilySans.trim() || defaults.sans,
   };
 }
@@ -1758,11 +1756,6 @@ function FontSettingsGroup() {
   );
 }
 
-/**
- * The two-font view: one sans, one monospace. The prompt follows the
- * interface font and the terminal follows the monospace font, so the demos
- * under each row show every surface the choice reaches.
- */
 function SimpleFontRows() {
   const settings = useScopedSettings();
   return (
@@ -1803,13 +1796,6 @@ const ADVANCED_TYPOGRAPHY_TARGET_IDS: ReadonlySet<string> = new Set([
     : []),
 ]);
 
-/**
- * The two-font view by default - one sans, one monospace, each cascading to
- * every surface it reaches - with an Advanced switch in the section header
- * that reveals the per-surface override rows. The choice persists locally,
- * and a settings-search jump to an override row flips Advanced on so the
- * target exists to scroll to.
- */
 function TypographySection() {
   const [advanced, setAdvanced] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -1924,8 +1910,6 @@ function FontFamilySettingsRow({
     commitDraft(draft);
   };
   const draftTrimmed = draft.trim();
-  // Flag an unknown name only once typing pauses, and never for an empty
-  // field - that is the starting state, not a rejected entry.
   const draftPending = draftSettled && draftTrimmed.length > 0 && draftTrimmed !== trimmed;
   const resetToDefault = () => {
     if (commitTimerRef.current !== null) {
@@ -2098,11 +2082,6 @@ const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set([
   "legacy-sidebar",
 ]);
 
-/**
- * Retired features kept only for users who still depend on them. Collapsed by
- * default so they stay out of the everyday settings path; a settings-search
- * jump to one of the rows unfolds the section.
- */
 function LegacyFeaturesSection() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -3336,13 +3315,7 @@ export function GeneralSettingsPanel() {
                 {textGenInstanceEntry ? (
                   <TraitsPicker
                     provider={textGenProvider}
-                    models={
-                      // Use the exact instance's models (rather than the
-                      // first-kind-match) so a custom text-gen instance like
-                      // `codex_personal` gets its own model list, not the
-                      // default Codex one.
-                      textGenInstanceEntry?.models ?? []
-                    }
+                    models={textGenInstanceEntry?.models ?? []}
                     model={textGenModel}
                     prompt=""
                     onPromptChange={() => {}}

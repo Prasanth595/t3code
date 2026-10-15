@@ -9,7 +9,6 @@ import {
 import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
-/** What a thread row needs to draw the provider glyph and its account badge. */
 export interface ThreadRowProviderInstance {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
@@ -70,7 +69,6 @@ export function createThreadRowProviderInstanceResolver(
   };
 }
 
-/** List-scoped wrapper: one cache per provider-list generation. */
 export function useThreadRowProviderInstanceResolver(
   providersByEnvironmentId: ReadonlyMap<EnvironmentId, ReadonlyArray<ThreadListProvider>>,
 ): (thread: EnvironmentThreadShell) => ThreadRowProviderInstance | null {

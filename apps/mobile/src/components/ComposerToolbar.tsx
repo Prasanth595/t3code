@@ -22,11 +22,6 @@ const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
 const COMPOSER_TOOLBAR_SCROLL_EPSILON = 4;
 
-/**
- * Quiet inline composer control used inside cards and their context rows.
- * Unlike ComposerToolbarButton, this does not draw another pill inside the
- * composer surface, so model and workspace controls read as part of the card.
- */
 export function ComposerInlineControl(props: {
   readonly accessibilityHint?: string;
   readonly accessibilityLabel?: string;
@@ -127,7 +122,6 @@ export function ComposerToolbarScroller(props: {
   readonly fadeOpaque?: string;
   /** Only for non-Uniwind surfaces such as the native terminal palette. */
   readonly fadeTransparent?: string;
-  /** Semantic Uniwind surface behind the toolbar. Defaults to card. */
   readonly fadeSurface?: "card" | "sheet";
   readonly contentPaddingRight?: number;
 }) {

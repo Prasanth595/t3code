@@ -23,15 +23,12 @@ import {
 // the same server for the same full snapshot, so a short deadline only throws
 // the first build away. The socket fallback is for setups where /api fails but
 // /ws works, such as a proxy that blocks /api. A dead server is caught by the
-// socket ping, which drops the session and interrupts this load. The cached
-// shell renders while this runs.
+// socket ping, which drops the session and interrupts this load.
 const DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS = 20_000;
 
 /**
- * Load the environment shell snapshot (projects + thread shells) over HTTP
- * instead of as the WebSocket subscription's first frame. The response is
- * gzip-compressible by the transport and keeps the (potentially large) list off
- * the socket.
+ * The response is gzip-compressible by the transport and keeps the (potentially
+ * large) list off the socket.
  */
 export const fetchEnvironmentShellSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentShellSnapshot",
@@ -91,8 +88,6 @@ const decodeShellSnapshotResponse = (
 /**
  * Loads the environment shell snapshot over HTTP, returning `Option.none()` when
  * it cannot be loaded (so the caller falls back to the socket-embedded snapshot).
- * Decouples the shell state machine from the underlying HTTP + DPoP details and
- * keeps them out of test contexts.
  */
 export class ShellSnapshotLoader extends Context.Service<
   ShellSnapshotLoader,

@@ -19,7 +19,6 @@ import type { RestartingMachine, SkippedMachine } from "./updateEverything.logic
 const isRunning = (status: string) =>
   status === "preparing" || status === "starting" || status === "running";
 
-/** Running threads across the environments in a newline-joined key. */
 const runningThreadCountAtom = Atom.family((environmentIds: string) =>
   Atom.make((get) =>
     environmentIds
@@ -42,17 +41,13 @@ interface UpdateEverythingDialogProps {
   readonly summary: string;
   readonly lines: ReadonlyArray<string>;
   readonly restarts: ReadonlyArray<RestartingMachine>;
-  /** Behind machines the run leaves alone. */
   readonly skipped: ReadonlyArray<SkippedMachine>;
   readonly onConfirm: () => void;
 }
 
 /**
- * Confirms an "update everything" run. It counts the running threads that the
- * restarts stop, and how many can resume afterwards because "Continue threads
- * after restarts" is on for their server. Recovery still skips some, such as a
- * thread waiting on the user, so the text says "can resume", not "will".
- * Machines the run skips are listed with the reason, so none drop silently.
+ * Recovery still skips some, such as a thread waiting on the user, so the text says "can
+ * resume", not "will".
  */
 export function UpdateEverythingDialog({
   open,

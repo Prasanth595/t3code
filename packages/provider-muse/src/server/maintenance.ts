@@ -117,7 +117,6 @@ export const latestMuseVersion = Effect.fn("latestMuseVersion")(function* (
   );
 });
 
-/** Feed Muse's release channel into the same advisory and notification flow as other drivers. */
 export const enrichMuseSnapshot = Effect.fn("enrichMuseSnapshot")(function* (input: {
   readonly snapshot: ServerProvider;
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;

@@ -24,12 +24,6 @@ import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { toastManager } from "./ui/toast";
 import { stackedThreadToast } from "./ui/toastHelpers";
 
-/**
- * One toast per clone in flight, on every environment. The palette that
- * started a clone closes right away, so this is where its progress lives:
- * the toast updates in place as git reports stages, then settles into a
- * success or failure state with the matching action.
- */
 export function ProjectCloneToastCoordinator() {
   const { environments } = useEnvironments();
   return environments.map((environment) => (
@@ -42,7 +36,6 @@ export function ProjectCloneToastCoordinator() {
 
 interface TrackedToast {
   readonly toastId: ReturnType<typeof toastManager.add>;
-  /** The last snapshot rendered, so an identical redraw does not touch the toast. */
   readonly renderedKey: string;
   readonly phase: ProjectCloneSnapshot["phase"];
 }
@@ -173,7 +166,6 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       }
 
       // Failed or cancelled: the project stays, pointing at an empty folder.
-      // Retry from here; the draft's composer banner offers the same.
       const cancelled = clone.phase === "cancelled";
       const options = stackedThreadToast({
         type: cancelled ? "info" : "error",

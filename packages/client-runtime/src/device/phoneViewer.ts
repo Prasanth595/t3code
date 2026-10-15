@@ -111,7 +111,6 @@ export function createPhoneViewer(options: {
   let foldAspect = isFoldInnerAspect(rawAspect()) ? rawAspect() : DEFAULT_FOLD_INNER_ASPECT;
   const createFoldScene = (angle: number, displayLayout = layout) =>
     createAndroidFoldScene(texture, displayLayout, angle, foldAspect);
-  /** The hinge angle currently on screen, including an unfinished turn. */
   const visibleFoldAngle = (fallback: number) => {
     if (!foldTurn) return fallback;
     const progress = Math.min(1, (performance.now() - foldTurn.startedAt) / ANDROID_FOLD_TURN_MS);
@@ -229,7 +228,6 @@ export function createPhoneViewer(options: {
       next.rawLandscape !== layout.rawLandscape ||
       next.rotation !== layout.rotation
     ) {
-      // The model and renderer survive framebuffer rotation and native resolution changes.
       if (resized) {
         const previous = texture;
         texture = makeTexture();

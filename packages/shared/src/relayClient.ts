@@ -30,9 +30,6 @@ export const CLOUDFLARED_VERSION = "2026.10.0";
 export const CLOUDFLARED_MIN_VERSION = "2025.6.1";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
-// Generous bound for a ~40MB binary download; without it a stalled
-// connection parks the install forever (same unbounded-wait family as the
-// other relay/cloud network calls).
 const CLOUDFLARED_DOWNLOAD_TIMEOUT = "10 minutes";
 
 export type RelayClientExecutableSource = "override" | "managed" | "path";
@@ -148,10 +145,8 @@ export interface CloudflaredRelayClientOptions {
 
 export interface RelayClientShape {
   /**
-   * Finds the relay client to run, without downloading anything: the override,
-   * else the pinned managed folder, else the newest older managed folder, else
-   * `cloudflared` on PATH. Every candidate must report a compatible version, and
-   * the status carries the version the binary reports.
+   * Finds the relay client to run, without downloading anything: the override, else the pinned
+   * managed folder, else the newest older managed folder, else `cloudflared` on PATH.
    */
   readonly resolve: Effect.Effect<RelayClientStatus>;
   /** Installs the pinned managed release unless it, or a valid override, is already present. */
@@ -163,7 +158,6 @@ export interface RelayClientShape {
   readonly pruneManagedVersions: Effect.Effect<void>;
 }
 
-/** True when this is the pinned managed release, which needs no update. */
 export function isPinnedManagedRelayClient(client: AvailableRelayClient): boolean {
   return client.source === "managed" && client.version === CLOUDFLARED_VERSION;
 }
@@ -197,7 +191,6 @@ export function compareCloudflaredVersions(left: string, right: string): number 
   return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
-/** Reads the version from `cloudflared version` output, e.g. `cloudflared version 2026.5.2 (built ...)`. */
 export function parseCloudflaredVersionOutput(output: string): string | null {
   const version = parseVersion(output);
   return version ? version.join(".") : null;
@@ -384,9 +377,6 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       );
       return missingStatus;
     }
-    // A managed binary reports the version it actually runs. One that replaced
-    // itself in place still serves as a fallback; the runtime sees it is not the
-    // pinned release and installs that.
     const pinned = yield* compatibleCandidate(managedPath, "managed");
     if (pinned) return pinned;
     for (const version of yield* olderManagedVersions) {
@@ -413,7 +403,6 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }
   }).pipe(Effect.withSpan("cloudflared.pruneManagedVersions"));
 
-  /** Moves the new binary toward its final path, waiting out a brief Windows lock. */
   const renameWhenUnlocked = (from: string, to: string) =>
     fileSystem.rename(from, to).pipe(
       Effect.retry({

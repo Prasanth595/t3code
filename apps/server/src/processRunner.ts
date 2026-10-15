@@ -265,7 +265,6 @@ function finalizeRunProcess<R>(
   );
 }
 
-/** The executable name without its directory, recorded as `process.command` on process spans. */
 export const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
 
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (

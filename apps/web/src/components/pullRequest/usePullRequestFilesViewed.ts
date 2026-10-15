@@ -29,31 +29,23 @@ const FLUSH_DELAY_MS = 400;
 const NO_OVERLAY: FileViewedOverlay = new Map();
 
 export interface PullRequestFilesViewedView {
-  /** Whether anything remembers this at all, which is what hides the whole control. */
   readonly enabled: boolean;
   readonly isViewed: (path: string) => boolean;
   /** This file has been pushed to since it was cleared. */
   readonly isStale: (path: string) => boolean;
   readonly setViewed: (path: string, viewed: boolean) => void;
-  /** How many of the files on screen are ticked off. */
   readonly viewedCount: number;
   /** The host had more files than the read covered, so the count above may be short. */
   readonly truncated: boolean;
-  /**
-   * Why the marks could not be read, when they could not. The boxes fall back to the last answer
-   * there was, or to empty when there has not been one, and neither of those says so on its own:
-   * a reader who sees every box unticked has no way to tell a fresh review from a failed read.
-   */
   readonly error: string | null;
   /** Re-ask the host, for the page's refresh button, which goes around the host's cache. */
   readonly refresh: () => void;
 }
 
 /**
- * Which files this reader has already cleared. The marks live on the server rather than in this
- * tab, so a review carried on from another machine picks up where it was left. Presses show
- * immediately and are held over the server's answer until a read that could have seen them comes
- * back, so the checkbox never waits on a round trip and never outlasts the record behind it.
+ * Presses show immediately and are held over the server's answer until a read that could have
+ * seen them comes back, so the checkbox never waits on a round trip and never outlasts the
+ * record behind it.
  */
 export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
@@ -124,7 +116,6 @@ export function usePullRequestFilesViewed(options: {
         .map((file) => file.path)
         .filter((path) => sentBy.current.get(path) === request);
       for (const path of mine) sentBy.current.delete(path);
-      // The reader has moved on, and what is on screen now has nothing to do with this answer.
       if (scope.current !== sentFrom) return;
       if (result._tag === "Failure") {
         // The host never heard these, so the ticks go back to whatever it last said. Only the

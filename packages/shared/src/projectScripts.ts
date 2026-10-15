@@ -74,7 +74,6 @@ export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectSc
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
 }
 
-/** Menu label naming the lifecycle roles a script runs in, e.g. "Clean (on settle)". */
 export function projectScriptMenuLabel(script: ProjectScript): string {
   const roles = [
     ...(script.runOnWorktreeCreate ? ["setup"] : []),

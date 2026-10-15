@@ -14,11 +14,9 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "./ui/popove
 import { QRCodeSvg } from "./ui/qr-code";
 import { toastManager } from "./ui/toast";
 
-// Orchestrator V2 ships to Nightly first. The App Store and Google Play apps are
-// still V1 and cannot connect to a V2 server, so Nightly users need the V2 beta
-// app. Delete this file when the store apps move to V2. See #14871.
+// The App Store and Google Play apps are still V1 and cannot connect to a V2
+// server, so Nightly users need the V2 beta app.
 
-/** True on Nightly desktop, `npx t3@nightly`, and the hosted Nightly app. */
 export const IS_NIGHTLY_BUILD =
   parseSemver(APP_VERSION)?.prerelease[0] === "nightly" || HOSTED_APP_CHANNEL === "nightly";
 
@@ -44,15 +42,9 @@ function isNoticeDismissed(): boolean {
 function dismissNotice() {
   try {
     setLocalStorageItem(NOTICE_DISMISSED_STORAGE_KEY, true, Schema.Boolean);
-  } catch {
-    // Storage is unavailable. The notice shows again on the next launch.
-  }
+  } catch {}
 }
 
-/**
- * One-time Nightly toast that points to the beta mobile app. Any close (the
- * corner button, swipe, Dismiss, or the action) hides it for good on this client.
- */
 export function NightlyMobileBetaNotice() {
   const navigate = useNavigate();
 
@@ -87,7 +79,6 @@ export function NightlyMobileBetaNotice() {
   return null;
 }
 
-/** QR code plus a copy button for one beta link. */
 function BetaLinkQr({ url, label }: { url: string; label: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard();
   return (
@@ -102,7 +93,9 @@ function BetaLinkQr({ url, label }: { url: string; label: string }) {
   );
 }
 
-/** Settings → General → About row with the beta app links. Render it only for Nightly. */
+/**
+ * Render it only for Nightly.
+ */
 export function NightlyMobileBetaRow() {
   return (
     <SettingsRow

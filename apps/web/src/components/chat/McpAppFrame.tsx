@@ -43,16 +43,12 @@ const commandFailure = (result: {
   );
 };
 
-/** Full screen shows the box in the top layer, which needs the Popover API. */
-/** A cached asset URL with less life than this is minted afresh first. */
 const MIN_URL_LIFE_MS = 5 * 60_000;
 const fullscreenSupported =
   typeof HTMLElement !== "undefined" && "popover" in HTMLElement.prototype;
 
-/** Largest file an app may hand the user through `ui/download-file`. */
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 
-/** Saves a file through the browser's own download, which asks where when it is set to. */
 function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -64,13 +60,6 @@ function saveBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-/**
- * An MCP App inline in the thread: the captured document in an opaque-origin
- * frame, speaking the MCP Apps bridge. Its tool calls and resource reads reach
- * its own MCP server through the environment; calls to tools the server does
- * not mark read-only, chat messages, and downloads ask first. Full screen keeps
- * the same frame (and the app's state) and only restyles its box.
- */
 export function McpAppFrame(props: {
   readonly environmentId: EnvironmentId;
   /** The thread that produced the app, which its requests run against. */
@@ -78,13 +67,10 @@ export function McpAppFrame(props: {
   /** The thread on screen, whose next turn the app's model context informs. */
   readonly conversationThreadId: ThreadId;
   readonly itemId: TurnItemId;
-  /** The item's revision, so its stored call is fetched once per version. */
   readonly revision: string;
   readonly app: McpAppReference;
   readonly onSendMessage: ((text: string) => Promise<void>) | undefined;
-  /** The agent waits on the user, in a panel a full-screen app would cover. */
   readonly awaitingUser?: boolean;
-  /** Told when the app enters or leaves full screen. */
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { app } = props;
@@ -95,10 +81,7 @@ export function McpAppFrame(props: {
   const [height, setHeight] = useState(MCP_APP_DEFAULT_HEIGHT);
   const [navigatedAway, setNavigatedAway] = useState(false);
   const [displayMode, setDisplayMode] = useState<McpAppDisplayMode>("inline");
-  // The app asked to be closed; the row falls back to its plain tool call.
   const [closed, setClosed] = useState(false);
-  // Counts the app documents this row has shown. Reopening a closed app loads
-  // a new one, which needs its own host and its own load tracking.
   const [documentGeneration, setDocumentGeneration] = useState(0);
   useLayoutEffect(() => {
     const box = boxRef.current;
@@ -167,7 +150,6 @@ export function McpAppFrame(props: {
   const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
     reportFailure: false,
   });
-  // The tool's definition, which the app receives as `toolInfo` at initialize.
   const [toolDefinition, setToolDefinition] = useState<unknown>(undefined);
 
   // Read by the host on every message, so it always sees current values
@@ -202,17 +184,11 @@ export function McpAppFrame(props: {
       return () => latest.current.props.onFullscreenChange?.(false);
     }
   }, [displayMode]);
-  // The approval or question the agent waits on renders in the page, so a
-  // full-screen app steps aside for it.
   const [stepAsideFor, setStepAsideFor] = useState(props.awaitingUser);
   if (stepAsideFor !== props.awaitingUser) {
     setStepAsideFor(props.awaitingUser);
     if (props.awaitingUser === true) setDisplayMode("inline");
   }
-  // Full screen sits above everything else in the page. Anything that takes
-  // focus outside it (an approval, the command palette, a dialog) returns the
-  // app inline so it can be seen; so does Escape pressed outside the app.
-  // Keys pressed inside the app stay with the app.
   useEffect(() => {
     if (displayMode !== "fullscreen") return;
     const leave = () => setDisplayMode("inline");
@@ -253,10 +229,8 @@ export function McpAppFrame(props: {
   }, [props.environmentId, props.threadId, props.itemId, app.tool]);
   // The bridge belongs to the captured document. A frame that navigates keeps
   // its window, so a second load stops the app rather than letting a page T3
-  // never served pose as it. This is not a confidentiality boundary: a frame
-  // can always navigate itself, so the app could carry anything it read out
-  // in a URL either way.
-  // Counted per document: a reopened app is a new document, not a navigation.
+  // never served pose as it. Counted per document: a reopened app is a new
+  // document, not a navigation.
   const loads = useRef({ generation: 0, count: 0 });
   const onFrameLoad = () => {
     if (loads.current.generation !== documentGeneration) {
@@ -304,8 +278,6 @@ export function McpAppFrame(props: {
     const ask = async (message: string) => {
       flushSync(() => setDisplayMode("inline"));
       const approved = await requestConfirmDialog(message);
-      // No dialog host is mounted, so nobody was asked; say so rather than
-      // reporting that the user declined.
       if (approved === undefined) {
         throw new McpAppHostRefusal("T3 could not ask for approval here.");
       }
@@ -351,7 +323,6 @@ export function McpAppFrame(props: {
         return result.value;
       },
       openLink: async (url) => {
-        // Only right after the reader used this frame, as with HTML renders.
         if (document.activeElement !== frameRef.current || !navigator.userActivation?.isActive) {
           throw new McpAppHostRefusal("Links open only from a click in the app.");
         }
@@ -377,9 +348,6 @@ export function McpAppFrame(props: {
         if (result._tag !== "Success") throw commandFailure(result);
       },
       requestDisplayMode: async (mode) => {
-        // Full screen would cover the approval or question the agent waits
-        // on, or a confirmation any app is waiting on. Another app already
-        // full screen keeps the page; two would stack.
         const otherFullscreen = document.querySelector("[data-mcp-app-fullscreen]");
         if (
           mode === "fullscreen" &&
@@ -397,7 +365,6 @@ export function McpAppFrame(props: {
         const approved = await ask(`Save ${names} from ${app.server}?`);
         if (approved !== true) throw new McpAppHostRefusal("Declined by the user.");
         for (const file of files) {
-          // A linked file is read from the app's own server, like its other reads.
           let bytes: Uint8Array | undefined;
           let mimeType = file.mimeType ?? "application/octet-stream";
           if (file._tag === "embedded") {
@@ -439,34 +406,27 @@ export function McpAppFrame(props: {
     });
     hostRef.current = host;
     const receive = (event: MessageEvent) => {
-      // Only messages from this frame's own window reach its host.
       if (event.source !== null && event.source === target()) host.receive(event.data);
     };
     window.addEventListener("message", receive);
     return () => {
       window.removeEventListener("message", receive);
-      // An unmount cannot wait: the request goes out before the frame does,
-      // which is all a list that recycles rows can offer the app.
       void host.teardown();
       hostRef.current = null;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A reopened document needs a new host.
   }, [src, app, documentGeneration]);
 
-  // The host reads the context through `latest`; these only say when to resend.
   useEffect(() => {
     hostRef.current?.updateHostContext();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Context changes trigger a resend.
   }, [theme, width, displayMode, toolDefinition]);
 
-  // A new document gets a new host, which needs the call again.
   useEffect(() => {
     if (toolCall !== undefined) hostRef.current?.setToolCall(toolCall);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new document needs the call.
   }, [toolCall, src, documentGeneration]);
 
-  // An app that asked to close keeps the box an inline row had, so the
-  // timeline does not jump, and says how to bring it back.
   if (closed) {
     return (
       <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-muted-foreground text-xs">

@@ -1,8 +1,5 @@
 import { useSyncExternalStore } from "react";
 
-/** Minute-quantized UI clock ("YYYY-MM-DDTHH:MM"). One module-level timer
-    feeds every consumer through useSyncExternalStore. */
-
 function currentMinute(): string {
   return new Date().toISOString().slice(0, 16);
 }
@@ -21,8 +18,7 @@ function tick(): void {
 }
 
 function startTimer(): void {
-  // Align to the next UTC minute boundary, then tick every 60s. Ticks re-read
-  // the clock, so a throttled or late timer self-corrects when it fires.
+  // Ticks re-read the clock, so a throttled or late timer self-corrects when it fires.
   timerIsInterval = false;
   timerId = window.setTimeout(
     () => {

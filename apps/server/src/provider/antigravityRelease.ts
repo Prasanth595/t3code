@@ -15,7 +15,7 @@ export interface AntigravityReleaseAsset {
   };
 }
 
-// URLs come from the official registry. Hashes and sizes were checked on 2026-10-05.
+// URLs come from the official registry.
 // https://github.com/agentclientprotocol/registry/blob/dc55a34900fdd60e5e97c1cbd7825c5a1df673fc/antigravity-acp/agent.json
 const releaseAssets = new Map<string, AntigravityReleaseAsset>([
   [

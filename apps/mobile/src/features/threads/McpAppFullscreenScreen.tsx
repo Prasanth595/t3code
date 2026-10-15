@@ -43,7 +43,6 @@ function useConversationThreadId(
   );
 }
 
-/** True when `threadId` is `ancestorId` or one of its forks, at any depth. */
 function descendsFrom(
   shells: ReadonlyArray<EnvironmentThreadShell>,
   environmentId: EnvironmentId,
@@ -66,10 +65,8 @@ function descendsFrom(
 }
 
 /**
- * An MCP App full screen (`ui/request-display-mode`), in a modal over the
- * thread. It is its own view of the app; closing it returns to the row. The
- * app is read from its stored tool call, never from the route, so a link can
- * only open an app that call really produced.
+ * The app is read from its stored tool call, never from the route, so a link
+ * can only open an app that call really produced.
  */
 export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
   const navigation = useNavigation();

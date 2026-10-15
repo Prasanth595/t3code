@@ -1,9 +1,3 @@
-/**
- * Port of `@effect/sql-sqlite-node` that uses the native `node:sqlite`
- * bindings instead of `better-sqlite3`.
- *
- * @module SqliteClient
- */
 import * as NodeSqlite from "node:sqlite";
 import * as NodeUtil from "node:util";
 import * as NodeWorkerThreads from "node:worker_threads";
@@ -58,26 +52,21 @@ export interface SqliteClientConfig {
   readonly checkpointWorker?: boolean | undefined;
 }
 
-/**
- * Set by `readOnly`. A top-level transaction started while it is true runs on
- * the reader worker when the client has one, and on the writer otherwise.
- */
 const ReadOnly = Context.Reference<boolean>("@t3tools/shared/nodeSqliteClient/ReadOnly", {
   defaultValue: () => false,
 });
 
 /**
- * Marks the SQL in `effect` as read-only. Wrap the whole transaction, as in
- * `sql.withTransaction(reads).pipe(readOnly)`. Inside an open write
- * transaction the reads keep using the writer, and a write attempted on the
- * reader fails with "attempt to write a readonly database".
+ * Wrap the whole transaction, as in
+ * `sql.withTransaction(reads).pipe(readOnly)`. Inside an open write transaction
+ * the reads keep using the writer, and a write attempted on the reader fails
+ * with "attempt to write a readonly database".
  */
 export const readOnly = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.provideService(effect, ReadOnly, true);
 
 /**
- * Which connection ran the SQL, and how long it waited for that connection's
- * lock. The wait is time queued behind other SQL, not time the event loop was
+ * The wait is time queued behind other SQL, not time the event loop was
  * blocked.
  */
 interface Acquired {
@@ -93,9 +82,9 @@ const annotateAcquired = (fiber: Fiber.Fiber<unknown, unknown>, acquired: Acquir
 };
 
 /**
- * Provided by the client's `withTransaction`. Effect acquires a transaction's
- * connection before it makes the `sql.transaction` span current, so the acquire
- * leaves its result here and the transaction body puts it on the span.
+ * Effect acquires a transaction's connection before it makes the
+ * `sql.transaction` span current, so the acquire leaves its result here and the
+ * transaction body puts it on the span.
  */
 const TransactionAcquire = Context.Reference<{ acquired?: Acquired } | undefined>(
   "@t3tools/shared/nodeSqliteClient/TransactionAcquire",
@@ -314,12 +303,12 @@ const failed = (cause: unknown, message: string, operation: string) =>
 const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test(sql);
 
 /**
- * Read-only connections served by one worker thread at a time. Each worker
- * gets its own `Connection`, so a transaction stays on the worker it began on:
- * once that worker exits, its statements fail rather than silently continuing
- * outside the transaction on a replacement. The next acquire starts a new one.
- * A worker that cannot open the database read-only, or finds it outside WAL
- * mode, turns the reader off for the life of the client: reads use the writer.
+ * Each worker gets its own `Connection`, so a transaction stays on the worker
+ * it began on: once that worker exits, its statements fail rather than silently
+ * continuing outside the transaction on a replacement. The next acquire starts
+ * a new one. A worker that cannot open the database read-only, or finds it
+ * outside WAL mode, turns the reader off for the life of the client: reads use
+ * the writer.
  */
 const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
   let current:
@@ -478,7 +467,6 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
       }).pipe(Effect.as(undefined));
     });
 
-  /** The live worker's connection once it is ready, or undefined to use the writer. */
   return Effect.suspend((): Effect.Effect<Connection | undefined> => {
     if (unavailable) return Effect.succeed(undefined);
     let reader: NonNullable<typeof current>;
@@ -519,15 +507,13 @@ const CHECKPOINT_FRAMES = 1000;
 // with no pause leave the worker behind, and the WAL can only restart once
 // every frame is checkpointed, so this keeps the file from growing forever.
 const WRITER_BACKSTOP_FRAMES = 10 * CHECKPOINT_FRAMES;
-// How long writes must pause before the worker checkpoints the rest of a long WAL.
 const CHECKPOINT_IDLE_MS = 100;
 
-// Each message asks the worker to checkpoint if CHECKPOINT_FRAMES frames are
-// waiting, and it replies with the same message when done. Once writes pause, it also checkpoints the
-// frames that arrived during its last checkpoint, so the writer can restart the
-// WAL. NOOP only counts frames. SQLite before 3.51 reads NOOP as PASSIVE and
-// would checkpoint on every request, so the worker refuses to start there and
-// the writer keeps checkpointing.
+// Once writes pause, it also checkpoints the frames that arrived during its
+// last checkpoint, so the writer can restart the WAL. NOOP only counts frames.
+// SQLite before 3.51 reads NOOP as PASSIVE and would checkpoint on every
+// request, so the worker refuses to start there and the writer keeps
+// checkpointing.
 const checkpointWorkerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
@@ -554,10 +540,10 @@ parentPort.on("message", (request) => {
 `;
 
 /**
- * Moves the writer's WAL checkpoints to a worker. Call the returned function
- * after each statement on the writer. While the worker runs, the writer only
- * checkpoints at WRITER_BACKSTOP_FRAMES. If the worker cannot start, fails or
- * exits, the writer goes back to SQLite's default and one warning says why.
+ * Call the returned function after each statement on the writer. While the
+ * worker runs, the writer only checkpoints at WRITER_BACKSTOP_FRAMES. If the
+ * worker cannot start, fails or exits, the writer goes back to SQLite's default
+ * and one warning says why.
  */
 const startCheckpointWorker = Effect.fnUntraced(function* (
   filename: string,
@@ -575,7 +561,6 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       workerData: { filename, frames: CHECKPOINT_FRAMES, idleMs: CHECKPOINT_IDLE_MS },
     });
   } catch (cause) {
-    // No worker threads here: the writer keeps checkpointing.
     yield* warn(String(cause));
     return undefined;
   }
@@ -590,9 +575,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     stopped = true;
     try {
       writer.exec(`PRAGMA wal_autocheckpoint = ${CHECKPOINT_FRAMES};`);
-    } catch {
-      // The writer is already closed.
-    }
+    } catch {}
     runFork(warn(reason));
   };
   // A worker that throws, such as on SQLite before 3.51, emits "error" before "exit".
@@ -743,7 +726,6 @@ const make = Effect.fn("makeWithDatabase")(function* (
               );
               if (hasRows(statement)) {
                 statement.setReturnArrays(true);
-                // Safe to cast to array after we've setReturnArrays(true)
                 const rows = statement.all(...(params as any)) as unknown as ReadonlyArray<
                   ReadonlyArray<unknown>
                 >;
@@ -816,8 +798,6 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const readerSemaphore = yield* Semaphore.make(1);
 
   const writer = { name: "writer" as const, lock: semaphore, connection };
-  // Picks the reader only for `readOnly` work, and the writer whenever the
-  // reader is turned off.
   const route = Effect.withFiber((fiber) =>
     acquireReader !== undefined && Context.get(fiber.context, ReadOnly)
       ? Effect.map(acquireReader, (readerConnection) =>

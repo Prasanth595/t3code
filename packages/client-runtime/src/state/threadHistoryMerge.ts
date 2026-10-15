@@ -27,7 +27,6 @@ export const EMPTY_THREAD_HISTORY_META: ThreadHistoryMeta = {
   latestLocalTurnOrdinal: null,
 };
 
-/** Whether a history-page response still matches the cursor that started it. */
 export function isActiveHistoryRequestCursor(
   requestCursor: string,
   history: { readonly historyCursor: string | null },
@@ -60,8 +59,7 @@ function renumberVisible(
 }
 
 /**
- * Merge an older history page into the live projection. Dedupes by
- * sourceThreadId + sourceItemId, keeps chronological order (older first), and
+ * Dedupes by sourceThreadId + sourceItemId, keeps chronological order (older first), and
  * preserves newer live rows already present in state.
  */
 export function mergeOlderHistoryIntoProjection(
@@ -143,12 +141,10 @@ export function applyHistoryPageMeta(
     loading: false,
     error: null,
     expanded: true,
-    // Preserve the partial-timeline watermark across load-earlier pages.
     latestLocalTurnOrdinal: current.latestLocalTurnOrdinal,
   };
 }
 
-/** Whether a client timeline should render its load-earlier control. */
 export function shouldShowLoadEarlierControl(history: ThreadHistoryMeta): boolean {
   return history.hasMoreHistory || history.error !== null;
 }

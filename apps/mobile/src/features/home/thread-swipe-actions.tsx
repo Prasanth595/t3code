@@ -43,7 +43,6 @@ import { AppText as Text } from "../../components/AppText";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
 import { registerThreadDismissal } from "./thread-dismissal";
 
-// Wide enough for the longest action label ("Unarchive").
 const ACTION_ITEM_WIDTH = 58;
 const ACTION_CIRCLE_SIZE = 36;
 const ACTION_ICON_SIZE = 15;
@@ -123,8 +122,7 @@ function resolveSecondaryAction(input: {
  * Delivers the scroll gate to swipeables via context so that flipping it does
  * NOT re-render whole rows: putting the flag in list extraData/renderItem deps
  * re-rendered every visible row (hooks, subscriptions and all) exactly at
- * scroll start — peak frame pressure. As a context value only the
- * ThreadSwipeable consumers re-render.
+ * scroll start — peak frame pressure.
  */
 const SwipeableScrollGateContext = createContext(true);
 
@@ -143,15 +141,11 @@ export function SwipeableScrollGateProvider(props: {
 }
 
 /**
- * Gates row swipes on list scroll activity, mirroring UIKit's own swipe
- * actions (`!isDragging && !isDecelerating`). failOffsetY on the swipe pan
- * covers the first pan of a scroll, but trackpad scroll sessions spawn fresh
- * gesture sessions (momentum catch, direction changes) whose reset
- * translation can re-activate a swipe mid-scroll — so while the list has
- * moved vertically during an active drag/momentum phase, row swipes are
- * disabled entirely.
- *
- * Spread the returned handlers onto the list and pass `swipeEnabled` to rows.
+ * failOffsetY on the swipe pan covers the first pan of a scroll, but trackpad
+ * scroll sessions spawn fresh gesture sessions (momentum catch, direction
+ * changes) whose reset translation can re-activate a swipe mid-scroll — so
+ * while the list has moved vertically during an active drag/momentum phase, row
+ * swipes are disabled entirely.
  */
 export function useSwipeableScrollGate(options?: {
   readonly onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -233,8 +227,6 @@ export function useSwipeableScrollGate(options?: {
 interface ThreadSwipeableProps {
   readonly backgroundColor: ColorValue;
   readonly children: (close: () => void) => ReactNode;
-  /** Uses action visuals that fit inside compact 44pt rows. The press target
-   * still spans the row's full height and width. */
   readonly compactActions?: boolean;
   readonly containerStyle?: StyleProp<ViewStyle>;
   /** Disables NEW swipe activations (e.g. while the list scrolls). */
@@ -264,7 +256,6 @@ interface ThreadSwipeableProps {
    * open/mid-drag state can't leak onto another row.
    */
   readonly resetKey?: string;
-  /** Paints the row without swipe machinery; see swipe-row-activation. */
   readonly dormant?: boolean;
   readonly simultaneousWith?: ComponentProps<typeof ReanimatedSwipeable>["simultaneousWith"];
   readonly threadTitle: string;
@@ -274,7 +265,6 @@ const closeDormant = () => {};
 
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
   if (props.dormant) {
-    // Mirrors ReanimatedSwipeable's container and children views.
     return (
       <View
         style={[
@@ -358,7 +348,6 @@ function ThreadSwipeableRow(props: ThreadSwipeableProps) {
         reduceMotion: ReduceMotion.System,
       };
       actionOpacity.set(withTiming(0, timing));
-      // Never reverse a swipe that already carried the row beyond its width.
       translation.set(
         withTiming(Math.min(translation.value, -rowWidth.value), timing, (finished) => {
           if (!finished) return;

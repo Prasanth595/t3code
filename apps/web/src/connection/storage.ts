@@ -152,11 +152,9 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
 
 interface DatabaseHandle {
   readonly get: Effect.Effect<IDBDatabase, ConnectionTransientError>;
-  /** Forget `database` if it is still the shared connection, so the next access reopens. */
   readonly invalidate: (database: IDBDatabase) => Effect.Effect<void>;
 }
 
-/** Share a connection until the browser closes it; the next access reopens it. */
 const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")(function* () {
   const lock = yield* Semaphore.make(1);
   let current: IDBDatabase | null = null;

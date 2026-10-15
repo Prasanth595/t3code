@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
 import * as ErrorReporter from "effect/ErrorReporter";
 
 /**
- * Logs the defects of WebSocket RPC handlers. RpcServer reports every failed
- * handler exit; typed failures are expected responses, so only dies are logged.
+ * RpcServer reports every failed handler exit; typed failures are expected responses, so only
+ * dies are logged.
  */
 const reporter: ErrorReporter.ErrorReporter = {
   [ErrorReporter.TypeId]: ErrorReporter.TypeId,

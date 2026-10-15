@@ -22,10 +22,8 @@ interface ProjectContentSearchDialogProps {
 }
 
 /**
- * Result rows are syntax highlighted, so mounting all 500 possible rows at
- * once stalls the UI. Rows render in windows that grow as the sentinel at the
- * bottom of the list scrolls into view (or keyboard navigation moves past
- * the rendered window).
+ * Result rows are syntax highlighted, so mounting all 500 possible rows at once
+ * stalls the UI.
  */
 const VISIBLE_MATCH_WINDOW = 100;
 
@@ -326,7 +324,6 @@ export function ProjectContentSearchDialog(props: ProjectContentSearchDialogProp
 
   return target ? (
     <OpenContentSearchDialog
-      // Reset the query and options whenever the workspace changes.
       key={`${target.environmentId}:${target.cwd}`}
       onOpenChange={props.onOpenChange}
       target={target}

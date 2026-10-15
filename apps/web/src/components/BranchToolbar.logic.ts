@@ -70,7 +70,6 @@ export function shouldShowComposerContextStrip(input: {
   hasActiveProject: boolean;
   isGitRepo: boolean;
   showEnvironmentIndicator: boolean;
-  /** A collapsed composer's controls currently fit in their measured strip host. */
   hostsRestingComposerControls: boolean;
 }): boolean {
   return (
@@ -123,11 +122,8 @@ export interface PreviousWorktreeSeed {
   worktreePath: string;
 }
 
-// The most recently touched worktree in the project that the composer isn't
-// already pointing at. Backs the "Previous worktree" entry in the workspace
-// selector so a follow-up thread can hop back into the worktree you just
-// worked in without hunting for its branch. Archived threads don't compete —
-// the rest of the UI hides them, so their worktrees shouldn't resurface here.
+// Archived threads don't compete — the rest of the UI hides them, so their worktrees shouldn't
+// resurface here.
 export function resolvePreviousWorktreeSeed(input: {
   threads: ReadonlyArray<{
     branch: string | null;
@@ -169,10 +165,6 @@ export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
-  /**
-   * The server is still creating this thread's worktree. The thread exists
-   * from the start of that setup but gets its worktree path only at the end.
-   */
   preparingWorktree?: boolean;
 }): EnvMode {
   const { activeWorktreePath, hasServerThread, draftThreadEnvMode, preparingWorktree } = input;

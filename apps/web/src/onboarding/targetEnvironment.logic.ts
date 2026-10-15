@@ -49,10 +49,9 @@ export function resolveOnboardingTargetEnvironment<TEnvironment extends Onboardi
 }
 
 /**
- * The computers the wizard sets up from the user's selection. Continue waits
- * only on a first connection attempt, which settles on its own. Selected
- * computers that are switched off, offline, failing, or unsupported are skipped
- * so they can never lock the user out of onboarding.
+ * Continue waits only on a first connection attempt, which settles on its own.
+ * Selected computers that are switched off, offline, failing, or unsupported
+ * are skipped so they can never lock the user out of onboarding.
  */
 export function resolveOnboardingSetup(
   environments: ReadonlyArray<Pick<OnboardingEnvironment, "environmentId" | "connection">>,

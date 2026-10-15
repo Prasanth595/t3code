@@ -1,19 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
 // flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
-/**
- * EnvironmentTheme - palettes this machine publishes for clients to follow.
- *
- * A desktop that retints its apps when the user switches system theme writes
- * `<stateDir>/themes/<id>.json`; this service watches that directory and
- * streams the published set to connected clients so a theme change lands
- * without a restart. The filename is the theme id: it stays stable while the
- * machine rewrites the colors underneath, so `defaultTheme` and a client\'s
- * selection keep pointing at the same theme across recolors. Theming is
- * cosmetic, so every failure here degrades to "not published" rather than
- * propagating.
- *
- * @module EnvironmentTheme
- */
 import * as NodeFS from "node:fs";
 
 import {
@@ -58,12 +44,10 @@ const MAX_THEME_FILES = 32;
 export const MAX_THEME_FILE_BYTES = 32 * 1024;
 /**
  * The set travels whole in a websocket event to every subscriber, so the sum
- * matters more than any single file. An exported theme runs a few KB, leaving
- * this far above any real directory while keeping a mistake off the wire.
+ * matters more than any single file.
  */
 const MAX_THEME_TOTAL_BYTES = 192 * 1024;
 
-/** The published set with the sequence number it was observed at. */
 interface PublishedThemes {
   readonly seq: number;
   readonly themes: ReadonlyArray<EnvironmentTheme>;
@@ -80,8 +64,7 @@ export class EnvironmentThemeService extends Context.Service<
     readonly current: Effect.Effect<ReadonlyArray<EnvironmentTheme>>;
 
     /**
-     * The current set followed by every change, with repeats dropped. The
-     * subscription is acquired before the current set is read, so a publish
+     * The subscription is acquired before the current set is read, so a publish
      * landing while a client connects is delivered rather than lost.
      */
     readonly streamChanges: Stream.Stream<ReadonlyArray<EnvironmentTheme>>;
@@ -135,10 +118,8 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
 };
 
 /**
- * Every theme the directory actually publishes. A file that is missing,
- * unreadable, malformed, colorless, or misnamed is simply skipped; the rest of
- * the set is unaffected. The one place that decides what "published" means, so
- * a caller validating an id cannot disagree with the watcher serving it.
+ * The one place that decides what "published" means, so a caller validating an
+ * id cannot disagree with the watcher serving it.
  */
 export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -209,13 +190,6 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   }
   return themes;
 });
-
-/**
- * Reads the directory and folds it into the sequenced state, publishing only
- * a genuine change. Every reader goes through here, so the snapshot a client
- * connects on and the events it then receives come from one ordered source
- * rather than from disk and the queue independently.
- */
 
 const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;

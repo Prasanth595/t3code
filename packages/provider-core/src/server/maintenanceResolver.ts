@@ -39,11 +39,6 @@ const HOMEBREW_INFO_MAX_BYTES = 256 * 1_024;
 const MISE_WRAPPER_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
-/**
- * Ownership is re-derived from the executable this often. Installs do not
- * move on their own, so this mostly bounds how stale a Homebrew "latest" can
- * get; the npm registry check keeps its own cache.
- */
 const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
 
 const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
@@ -71,7 +66,6 @@ export interface ProviderMaintenanceResolutionContext {
   readonly resolvedCommandPath: string;
   readonly realCommandPath: string;
   readonly env: NodeJS.ProcessEnv;
-  /** Host platform; decides how the copyable command quotes the executable. */
   readonly platform: NodeJS.Platform;
 }
 
@@ -90,13 +84,11 @@ export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
   /**
-   * The provider's own updater (`claude update`, `pi update --self`). It runs
-   * first for paths its installer owns, and otherwise only when no package
-   * manager is proven, because these updaters detect their installer too.
+   * It runs first for paths its installer owns, and otherwise only when no package manager is
+   * proven, because these updaters detect their installer too.
    */
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
-    /** Paths the provider's own installer owns; omit when it has none. */
     readonly isCommandPath?: (commandPath: string) => boolean;
     /** Environment the native updater needs to target this instance's install. */
     readonly env?: NodeJS.ProcessEnv;
@@ -111,10 +103,6 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-/**
- * The copyable command must paste into a shell as-is, so an executable path
- * with spaces or quotes is quoted for the host's default shell.
- */
 function quoteShellWord(word: string, platform: NodeJS.Platform): string {
   const safeWord = platform === "win32" ? /^[\w./:\\@=-]+$/ : /^[\w./:@=-]+$/;
   if (safeWord.test(word)) return word;
@@ -135,7 +123,6 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
-  /** Shown to the user instead of `<executable> <args>`; use for a bare tool name like `brew`. */
   readonly updateCommand?: string;
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
@@ -222,7 +209,6 @@ function isBunGlobalCommandPath(commandPath: string): boolean {
 }
 
 function isYarnGlobalCommandPath(commandPath: string): boolean {
-  // `~/.config/yarn/global/…` on POSIX, `%LOCALAPPDATA%\Yarn\Data\global\…` on Windows.
   return /\/yarn\/(?:data\/)?global\/node_modules\//.test(normalizeCommandPath(commandPath));
 }
 
@@ -244,11 +230,9 @@ function isPnpmGlobalCommandPath(commandPath: string): boolean {
 }
 
 /**
- * The npm global prefix that owns a package, derived from the real path of
- * its entry point: `<prefix>/lib/node_modules/<pkg>/…`. Windows global
- * installs have no `lib` segment and are proven by the shim instead (see
- * `resolveNpmGlobalPrefix`). A project-local `node_modules` is not a global
- * install and yields null.
+ * Windows global installs have no `lib` segment and are proven by the shim instead (see
+ * `resolveNpmGlobalPrefix`). A project-local `node_modules` is not a global install and yields
+ * null.
  */
 export function npmGlobalPrefixFromCommandPath(
   realCommandPath: string,
@@ -270,8 +254,6 @@ export function npmGlobalPrefixFromCommandPath(
   return packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
 }
 
-// `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.
-// Homebrew always nests a version directory under the keg.
 const HOMEBREW_KEG_PATTERN = /^(.*)\/(cellar|caskroom)\/([^/]+)\/[^/]+\//i;
 
 export interface HomebrewOwnership {
@@ -281,11 +263,6 @@ export interface HomebrewOwnership {
   readonly prefix: string;
 }
 
-/**
- * Homebrew looks like the owner when the real path runs through a versioned
- * keg or cask. It is only proven once the prefix matches the `brew` that will
- * run the upgrade (see `resolvePackageManagedProviderMaintenance`).
- */
 export function homebrewOwnershipFromCommandPath(
   realCommandPath: string,
 ): HomebrewOwnership | null {
@@ -329,7 +306,6 @@ export function parseHomebrewLatestVersion(
   return nonEmptyString(raw);
 }
 
-/** Run `brew <args>` and return stdout, or null on failure, timeout, or oversized output. */
 const runHomebrew = Effect.fn("runHomebrew")(function* (
   brewPath: string,
   args: ReadonlyArray<string>,
@@ -364,11 +340,10 @@ const runHomebrew = Effect.fn("runHomebrew")(function* (
 });
 
 /**
- * Derive update capabilities from where the executable actually lives. Every
- * package-manager branch has evidence that the named tool owns that path, so
- * T3 Code never runs a package manager against an install it did not create.
- * An unproven install falls back to the provider's own updater, which detects
- * its installer itself, and stays manual-only without one.
+ * Every package-manager branch has evidence that the named tool owns that path, so T3 Code never
+ * runs a package manager against an install it did not create. An unproven install falls back to
+ * the provider's own updater, which detects its installer itself, and stays manual-only without
+ * one.
  */
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
@@ -533,7 +508,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   return fallback;
 });
 
-/** A launcher script that runs the provider through mise (`exec mise x codex -- codex`). */
 const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
   context: ProviderMaintenanceResolutionContext,
 ) {
@@ -623,11 +597,6 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
-/**
- * Locate the configured provider executable, follow symlinks, and hand the
- * result to the resolver. A binary that cannot be found yields the resolver's
- * no-context answer.
- */
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
 )(function* (
@@ -643,9 +612,6 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
-  // resolveCommandPath checks explicit paths for existence too, so a missing
-  // binary always lands in the no-context branch and never gets an update
-  // command it cannot run.
   const resolvedCommandPath = yield* resolveCommandPath(binaryPath, { env });
   if (!resolvedCommandPath) {
     return yield* resolver.resolve(null);

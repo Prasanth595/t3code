@@ -202,9 +202,6 @@ const RuntimeErrorType = Schema.Literal("runtime.error");
 const ProviderRuntimeEventBase = Schema.Struct({
   eventId: EventId,
   provider: ProviderDriverKind,
-  // Optional during the driver/instance migration. See providerInstance.ts
-  // for the routing-key-vs-driver-id distinction. Once every emitter
-  // populates it (post-slice-4), routing flips to instance-id-only.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
   createdAt: IsoDateTime,
@@ -511,8 +508,6 @@ const UserInputResolvedPayload = Schema.Struct({
 export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
 
 /**
- * Typed per-task usage rollup. Field names match the orchestration-v2 subagent
- * usage vocabulary (#4779) so the eventual migration is a rename, not a remap.
  * Claude reports per-activation deltas; Codex reports cumulative totals — the
  * merge strategy is provider-specific and lives in client-runtime.
  */
@@ -543,14 +538,10 @@ export const TaskRunHandles = Schema.Struct({
 export type TaskRunHandles = typeof TaskRunHandles.Type;
 
 /**
- * Optional agent-identity linkage carried on every task lifecycle payload.
  * Repeated on progress and terminal rows (not just start) so client folds can
  * reconstruct an agent even when its start row aged out of activity retention.
- * All fields optional: old emitters and old rows decode unchanged.
  */
 const taskAgentLinkageFields = {
-  /** SDK task_type (subagent/shell/monitor/local_workflow/…), repeated on
-   * every row so folds can classify without the start row. */
   taskType: Schema.optional(TrimmedNonEmptyStringSchema),
   /**
    * Server-stamped classification, set at ingestion.
@@ -579,7 +570,6 @@ const taskAgentLinkageFields = {
   attempt: Schema.optional(NonNegativeInt),
   runHandles: Schema.optional(TaskRunHandles),
   outputFile: Schema.optional(TrimmedNonEmptyStringSchema),
-  /** Codex agent hierarchy path, e.g. "/root/marlow". */
   agentPath: Schema.optional(TrimmedNonEmptyStringSchema),
   /**
    * Set on provider-synthesized child-agent events (Codex) whose activity
@@ -617,7 +607,6 @@ const TaskProgressPayload = Schema.Struct({
   usage: Schema.optional(Schema.Unknown),
   typedUsage: Schema.optional(RuntimeTaskUsage),
   lastToolName: Schema.optional(TrimmedNonEmptyStringSchema),
-  /** Present on synthesized member/child progress rows that carry state. */
   status: Schema.optional(RuntimeTaskStatus),
   error: Schema.optional(TrimmedNonEmptyStringSchema),
   ...taskAgentLinkageFields,
@@ -625,9 +614,8 @@ const TaskProgressPayload = Schema.Struct({
 export type TaskProgressPayload = typeof TaskProgressPayload.Type;
 
 /**
- * Non-terminal status patch (from the Claude SDK's task_updated, which main
- * previously dropped). killed→cancelled and paused→idle are mapped at the
- * adapter so the wire only carries the shared vocabulary.
+ * killed→cancelled and paused→idle are mapped at the adapter so the wire only
+ * carries the shared vocabulary.
  */
 const TaskUpdatedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
@@ -680,7 +668,6 @@ const ToolProgressPayload = Schema.Struct({
   toolName: Schema.optional(TrimmedNonEmptyStringSchema),
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
   elapsedSeconds: Schema.optional(Schema.Number),
-  /** Owning task/agent when the tool ran inside a subagent. */
   taskId: Schema.optional(RuntimeTaskId),
   parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
@@ -704,10 +691,6 @@ const AccountUpdatedPayload = Schema.Struct({
 });
 export type AccountUpdatedPayload = typeof AccountUpdatedPayload.Type;
 
-/**
- * Adapters normalise their native rate-limit payload at the boundary so the
- * consumer that folds it into the provider snapshot never sees driver shapes.
- */
 const AccountRateLimitsUpdatedPayload = Schema.Struct({
   limits: ProviderUsageLimitsUpdate,
 });

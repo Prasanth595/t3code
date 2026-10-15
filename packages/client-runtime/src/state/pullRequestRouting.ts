@@ -351,7 +351,6 @@ export function createPullRequestRouter() {
           identityProbe,
         )
       : identityProbe;
-    // Old servers and unknown accounts retain the existing path.
     if (identity === null || identity.provider !== "github") return yield* finish(source);
 
     const routedInput = {

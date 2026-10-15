@@ -1,8 +1,4 @@
 /**
- * The menu shell the reviewer and label pickers share: an icon trigger, a search box, and a
- * scrolling body that says when the list is loading, could not be read, is empty, or is not all
- * of it. The rows and the words are the caller's; the frame is the same either way.
- *
  * The same combobox as the project and branch pickers, and dressed the same, rather than a menu:
  * a menu's typeahead claims every keypress to jump between rows, which a search box cannot share.
  */
@@ -44,10 +40,7 @@ export function PullRequestCandidatePicker<T>({
   children,
 }: {
   icon: ReactNode;
-  /** The trigger's accessible name; the button carries an icon alone. */
   label: string;
-  /** False where the host would refuse this account's change. Disabled with the reason rather
-   * than hidden: a control that vanishes teaches nobody why. */
   allowed: boolean;
   disabledReason: string;
   open: boolean;
@@ -61,7 +54,6 @@ export function PullRequestCandidatePicker<T>({
   candidates: ReadonlyArray<T>;
   emptyLabel: string;
   noMatchLabel: string;
-  /** Leads the host's own message, which follows it in the same sentence. */
   errorLabel: string;
   /** The host has more than the read asked for, so a name missing here may still be askable. */
   truncated: boolean;
@@ -92,7 +84,6 @@ export function PullRequestCandidatePicker<T>({
   return (
     <Combobox
       items={keys}
-      // The caller narrows the list, so the combobox does no filtering of its own.
       filteredItems={keys}
       filter={null}
       autoHighlight
@@ -103,10 +94,9 @@ export function PullRequestCandidatePicker<T>({
       }}
       open={open}
       onOpenChange={(nextOpen, details) => {
-        // Stays open on a pick: a change is confirmed by the row's own check turning over, and a
-        // second label or reviewer is usually wanted right after the first. Cancelled rather than
-        // ignored, so the combobox also skips its own close work: freezing the query and returning
-        // focus to the trigger, either of which would take the next keystroke away from the box.
+        // Cancelled rather than ignored, so the combobox also skips its own close work: freezing
+        // the query and returning focus to the trigger, either of which would take the next
+        // keystroke away from the box.
         if (!nextOpen && details.reason === "item-press") {
           details.cancel();
           return;

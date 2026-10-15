@@ -18,8 +18,8 @@ export const MAX_CODE_FONT_SIZE = 18;
 export const CODE_FONT_SIZE_STEP = 1;
 
 /**
- * User-configurable appearance preferences as stored. `null` overrides mean
- * "automatic": the value is derived from the base font size.
+ * `null` overrides mean "automatic": the value is derived from the base font
+ * size.
  */
 export interface AppearancePreferences {
   readonly baseFontSize: number;
@@ -28,7 +28,6 @@ export interface AppearancePreferences {
   readonly codeWordBreak: boolean;
 }
 
-/** Effective appearance values after applying base-size derivation. */
 export interface ResolvedAppearance {
   readonly baseFontSize: number;
   readonly terminalFontSize: number;
@@ -87,13 +86,11 @@ function normalizeCodeWordBreak(value: boolean | null | undefined): boolean {
   return value === true;
 }
 
-/** Terminal size derived from base: 10.5pt at base 16, snapped to 0.5pt steps. */
 function deriveTerminalFontSize(baseFontSize: number): number {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   return normalizeTerminalFontSize(Math.round(DEFAULT_TERMINAL_FONT_SIZE * scale * 2) / 2);
 }
 
-/** Code/diff size derived from base: 12pt at base 16. */
 function deriveCodeFontSize(baseFontSize: number): number {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   return normalizeCodeFontSize(Math.round(DEFAULT_CODE_FONT_SIZE * scale));
@@ -101,7 +98,6 @@ function deriveCodeFontSize(baseFontSize: number): number {
 
 interface StoredAppearancePreferences {
   readonly baseFontSize?: number | null | undefined;
-  /** Legacy key from before base font size existed; migrated to baseFontSize. */
   readonly markdownFontSize?: number | null | undefined;
   readonly terminalFontSize?: number | null | undefined;
   readonly codeFontSize?: number | null | undefined;
@@ -219,7 +215,6 @@ export function scaledTypographyLineHeight(
   return Math.max(10, Math.round(role.lineHeight * scale));
 }
 
-/** Text dimensions shared by React Native and Compose consumers of an appearance role. */
 export function resolveScaledTextRole(role: keyof typeof MOBILE_TYPOGRAPHY, baseFontSize: number) {
   const typography = MOBILE_TYPOGRAPHY[role];
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;

@@ -81,8 +81,8 @@ function authAccounts(accounts: ReadonlyArray<GitHubAuthStatusAccount>) {
 }
 
 /**
- * Reads `gh auth status --json hosts`. The headline account is the one GitHub requests will
- * use: Settings can pin a login per host or turn a host off, and an environment token beats both.
+ * The headline account is the one GitHub requests will use: Settings can pin a login per host or
+ * turn a host off, and an environment token beats both.
  */
 export function parseGitHubAuth(
   input: SourceControlAuthProbeInput,
@@ -92,7 +92,6 @@ export function parseGitHubAuth(
   const authStatus = parseGitHubAuthStatus(input.stdout);
   const hosts = [...new Set(authStatus.accounts.map((entry) => entry.host))];
   const fallback = findAuthenticatedGitHubAccount(authStatus.accounts);
-  // Lead with the host gh would pick, unless Settings turned it off.
   const orderedHosts = fallback
     ? [fallback.host, ...hosts.filter((host) => host !== fallback.host)]
     : hosts;
@@ -180,16 +179,13 @@ const decodeViewer = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ login: Schema.String })),
 );
 
-/** The environment variable gh would take a github.com token from, if one is set. */
 function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null {
   return ["GH_TOKEN", "GITHUB_TOKEN"].find((name) => environment[name]?.trim()) ?? null;
 }
 
 /**
- * GitHub is usable with a token saved in Settings, one from the environment, or `gh` to hand one
- * over. Reads the
- * GitHub settings on every probe, so a saved account choice shows on rescan. An environment
- * token is checked against the API, since `gh auth status` may not know it.
+ * An environment token is checked against the API, since `gh auth status` may
+ * not know it.
  */
 export const makeDiscovery = Effect.gen(function* () {
   const api = yield* GitHubApi.GitHubApi;
@@ -261,9 +257,8 @@ export const makeDiscovery = Effect.gen(function* () {
       } satisfies SourceControlProviderDiscoveryItem;
     }),
     /**
-     * Claims a custom host GitHub holds a credential for, from whichever source supplies it
-     * (Settings, the environment or gh). A host turned off in Settings is claimed too, so its
-     * error says so instead of "unsupported host".
+     * A host turned off in Settings is claimed too, so its error says so
+     * instead of "unsupported host".
      */
     refineUnknownRemote: ({ context }) => {
       // Identity resolution also probes providers before a web base URL is known.
@@ -292,8 +287,8 @@ export const makeDiscovery = Effect.gen(function* () {
 });
 
 /**
- * Why a GitHub read or write failed, in words a user can act on. The provider methods attach the
- * operation and request context; `cause` keeps the raw failure for logs, never for transport.
+ * The provider methods attach the operation and request context; `cause` keeps the raw
+ * failure for logs, never for transport.
  */
 class GitHubFailure extends Data.TaggedError("GitHubFailure")<{
   readonly detail: string;
@@ -305,7 +300,6 @@ const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail,
 const PULL_REQUEST_NOT_FOUND = "Pull request not found. Check the PR number or URL and try again.";
 const REPOSITORY_NOT_FOUND = "Repository not found. Check the owner and name and try again.";
 
-/** `notFound` names what was missing, which only the operation knows. */
 function fromGitHubApiError(
   error: GitHubApi.GitHubApiError,
   notFound = PULL_REQUEST_NOT_FOUND,
@@ -318,7 +312,6 @@ function fromGitHubApiError(
       );
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
-      // A missing or turned-off credential already says what to do about it.
       return failure(error.message, error);
     case "GitHubApiAuthenticationError":
       return failure(
@@ -336,7 +329,6 @@ function fromGitHubApiError(
     case "GitHubCliFailedError":
     case "GitHubApiResponseError":
     case "GitHubApiRequestError":
-      // GitHub's own reason ("A pull request already exists…") when it gave one.
       return failure(error.message.trim() || "GitHub request failed.", error);
   }
 }
@@ -361,7 +353,6 @@ const decodeViewerLogin = decodeJsonResult(Schema.Struct({ login: TrimmedNonEmpt
 
 type PullRequestListState = "open" | "closed" | "merged" | "all";
 
-/** The pull request fields every read selects, in GraphQL. */
 const PULL_REQUEST_NODE_SELECTION =
   "number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository { name nameWithOwner } headRepositoryOwner { login }";
 const GRAPHQL_STATES: Record<PullRequestListState, ReadonlyArray<string>> = {
@@ -376,10 +367,10 @@ const GRAPHQL_STATES: Record<PullRequestListState, ReadonlyArray<string>> = {
  */
 const HEAD_LOOKUPS_PER_DOCUMENT = 50;
 /**
- * How long a head lookup waits for company. Branch discovery reaches GitHub only after each
- * branch's own git reads, so lookups started together arrive tens of milliseconds apart.
- * A background sweep's lookups spread over up to ~300ms, and every document costs a point no
- * matter how few heads it holds, so reads without reserve wait longer.
+ * Branch discovery reaches GitHub only after each branch's own git reads, so lookups started
+ * together arrive tens of milliseconds apart. A background sweep's lookups spread over up to
+ * ~300ms, and every document costs a point no matter how few heads it holds, so reads
+ * without reserve wait longer.
  */
 const HEAD_LOOKUP_BATCH_WINDOW = "50 millis";
 const BACKGROUND_HEAD_LOOKUP_BATCH_WINDOW = "500 millis";
@@ -412,7 +403,6 @@ class PullRequestsByHeadRead extends Request.Class<
   GitHubFailure
 > {}
 
-/** One aliased `pullRequests` connection per lookup, each head and state passed as a variable. */
 function buildPullRequestsByHeadQuery(
   lookups: ReadonlyArray<Pick<PullRequestsByHeadRead, "headRefName" | "state" | "limit">>,
 ): { readonly document: string; readonly variables: Record<string, unknown> } {
@@ -479,7 +469,6 @@ export function pullRequestCheckoutBranchName(input: {
     : input.headRefName;
 }
 
-/** The checkout's GitHub API host, from the remote the caller resolved the provider from. */
 const contextHost = (context: SourceControlProvider.SourceControlProviderContext | undefined) =>
   context === undefined ? undefined : new URL(context.provider.baseUrl).host;
 
@@ -825,7 +814,6 @@ export const make = Effect.gen(function* () {
         .listLocalBranchNames(input.cwd)
         .pipe(Effect.mapError(gitFailure))).includes(localBranch);
 
-      // The commit to check out, fetched from the head branch where it still exists.
       const target = yield* Effect.gen(function* () {
         const remoteName = yield* headRemote;
         yield* git.fetchRemoteTrackingBranch({
@@ -878,7 +866,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  /** Reports a failure against the operation and request that made it, with transport-safe context. */
   const providerError =
     (
       operation: string,

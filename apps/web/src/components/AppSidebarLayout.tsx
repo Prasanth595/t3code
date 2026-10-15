@@ -135,9 +135,6 @@ function SidebarControl() {
   }, [keybindings, toggleSidebar, usagePageOpen]);
 
   return (
-    // The right-side layout controls carry mr-px (border compensation inside
-    // the panel), so the trigger mirrors it: both clusters sit one extra pixel
-    // off their edge and the titlebar reads symmetric.
     // The sheet owns its trigger until its closing transition unmounts it.
     <div
       className={cn(
@@ -169,7 +166,6 @@ function SidebarControl() {
   );
 }
 
-// Moves through the app's route history like a browser's back/forward buttons.
 function NavigationHistoryShortcuts() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const routeThreadRef = useParams({
@@ -232,9 +228,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
-  // Settings routes show the settings nav in place of whichever thread
-  // sidebar is active.
-  // Seeds server-side visited tracking from this browser's localStorage the
   useThreadVisitedMigration();
   const pathname = useLocation({ select: (location) => location.pathname });
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);

@@ -72,12 +72,9 @@ export function isConfiguredAcpRegistryAgent(
 }
 
 /**
- * Resolve navigation within the add-provider wizard.
- *
- * Moving forward past Identity requires a valid instance id, whether the user
- * advances one step at a time or skips directly to Config from a step header.
- * A blocked skip lands on Identity so its existing inline validation is
- * visible. Backward navigation is always preserved.
+ * Moving forward past Identity requires a valid instance id, whether the user advances one step
+ * at a time or skips directly to Config from a step header. A blocked skip lands on Identity so
+ * its existing inline validation is visible. Backward navigation is always preserved.
  */
 export function resolveWizardNavigation(
   currentStep: number,

@@ -10,11 +10,9 @@ import {
 const PHOTO_JPEG_QUALITY = 0.85;
 
 /**
- * Renders an image to a JPEG, or a PNG when `format` asks for one, with its long edge capped at
- * `IMAGE_ATTACHMENT_MAX_EDGE`. Decode, downscale,
- * and encode run natively; only the bounded result crosses the bridge. Camera photos are
- * 12-48 MP HEIC files, so a full-size conversion is both slow to transfer and far more than a
- * model can use.
+ * Decode, downscale, and encode run natively; only the bounded result crosses the bridge. Camera
+ * photos are 12-48 MP HEIC files, so a full-size conversion is both slow to transfer and far
+ * more than a model can use.
  */
 export async function renderPhoto(
   uri: string,
@@ -44,10 +42,9 @@ export async function renderPhoto(
 }
 
 /**
- * Scales a PNG or JPEG whose long edge is over `IMAGE_ATTACHMENT_MAX_EDGE` down to that edge
- * in its own format. Returns null when the image fits, is another format (GIF, WebP), or the
- * native renderer fails, so the caller keeps the original bytes. Images inside the limit are
- * never re-encoded: only the header is read to decide.
+ * Returns null when the image fits, is another format (GIF, WebP), or the native renderer fails,
+ * so the caller keeps the original bytes. Images inside the limit are never re-encoded: only the
+ * header is read to decide.
  */
 export async function fitComposerImage(image: {
   readonly uri: string;

@@ -31,9 +31,7 @@ const UA_PLATFORMS: Partial<Record<NodeJS.Platform, string>> = {
 };
 
 /**
- * The headless shell's identity as the Chrome it is built from: its user agent
- * without `HeadlessChrome`, and client hints whose brands agree with it. Sites
- * block a user agent that disagrees with `Sec-CH-UA`, so both change together.
+ * Sites block a user agent that disagrees with `Sec-CH-UA`, so both change together.
  */
 const chromeIdentity = (
   headlessUserAgent: string,

@@ -45,8 +45,8 @@ export function sortAndDedupeIncomingShares(
 }
 
 /**
- * Serializes every durable inbox mutation. This prevents a stale storage load
- * or a foreground refresh from restoring an item after it has been consumed.
+ * This prevents a stale storage load or a foreground refresh from restoring an
+ * item after it has been consumed.
  */
 export class IncomingShareInbox {
   private readonly operations = new SerializedAsyncQueue();
@@ -177,8 +177,6 @@ export class IncomingShareInbox {
       const persisted = await this.dependencies.loadDrafts();
       const target = persisted.find((draft) => draft.id === shareId);
       if (!target) {
-        // Conditional release is idempotent: if another operation already
-        // consumed the share, no reservation remains to clean up.
         return sortAndDedupeIncomingShares(persisted);
       }
       if (!target.destination) {

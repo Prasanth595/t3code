@@ -65,7 +65,6 @@ export function phoneDisplayLayout(
   };
 }
 
-/** An original procedural device body. It makes no claim to reproduce a particular hardware model. */
 export function createPhoneScene(
   texture: Texture,
   layout: ReturnType<typeof phoneDisplayLayout>,

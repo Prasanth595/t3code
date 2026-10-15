@@ -92,11 +92,6 @@ export const ServerProviderModel = Schema.Struct({
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
-/**
- * A model the model manifest announces that the installed provider version is
- * too old to run. It is never selectable; clients show it so users learn that
- * updating the provider unlocks it.
- */
 export const ServerProviderUpdateRequiredModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -165,18 +160,6 @@ export function isProviderWorkspaceSnapshotCurrent(
 }
 
 /**
- * Availability of a configured provider instance from the runtime's POV.
- *
- *  - `available` — the build ships this driver and an instance is wired
- *    up. Default for legacy snapshots produced from the closed
- *    `ServerSettings.providers` map.
- *  - `unavailable` — the user's `ServerSettings.providerInstances` (or a
- *    persisted thread / session binding) references a driver this build
- *    doesn't ship. Common after rolling back from a fork or PR branch
- *    that introduced a new driver. The snapshot is preserved so the UI
- *    can render "missing driver" affordances and so the data round-trips
- *    when the user moves back to the fork.
- *
  * Snapshots with `availability: "unavailable"` MUST set
  * `installed: false` and `enabled: false`; the runtime refuses turn
  * starts against them with a structured error.
@@ -294,14 +277,7 @@ export const ServerProvider = Schema.Struct({
   auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
-  // Optional for back-compat: every legacy producer omits this field and
-  // an absent value is interpreted as `"available"` by consumers (see
-  // `isProviderAvailable`). New `ProviderInstanceRegistry` outputs set it
-  // explicitly so the UI can render unavailable shadows from
-  // `ServerSettings.providerInstances`.
   availability: Schema.optional(ServerProviderAvailability),
-  // Human-readable reason populated when `availability === "unavailable"`.
-  // Surfaces in the UI alongside the missing-driver affordance.
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
   // Kept apart from `models` so clients that predate it never offer them.
@@ -311,7 +287,6 @@ export const ServerProvider = Schema.Struct({
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
-  // Absent when the driver has no notion of subscription usage.
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
@@ -326,12 +301,6 @@ export type ServerProvider = typeof ServerProvider.Type;
 export const ServerProviders = ForwardCompatibleArray(ServerProvider);
 export type ServerProviders = typeof ServerProviders.Type;
 
-/**
- * Treat the optional `availability` as "available" when absent. This is
- * the rule legacy producers (which omit the field) and new producers
- * (which set it explicitly) agree on so consumers never have to thread
- * `?? "available"` defaults through their code paths.
- */
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
 
@@ -351,8 +320,6 @@ export const ServerObservability = Schema.Struct({
   otlpMetricsUrl: Schema.optional(TrimmedNonEmptyString),
   otlpMetricsEnabled: Schema.Boolean,
   otlpLogsUrl: Schema.optional(TrimmedNonEmptyString),
-  // Absent on servers from before the log signal shipped, so a newer client
-  // reads those as having no log export rather than rejecting the whole config.
   otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ServerObservability = typeof ServerObservability.Type;
@@ -367,10 +334,6 @@ export const OtlpEndpointCheckInput = Schema.Struct({
 });
 export type OtlpEndpointCheckInput = typeof OtlpEndpointCheckInput.Type;
 
-/**
- * What the server saw when it sent an empty export to an endpoint: accepted,
- * answered with an error status, or never answered.
- */
 export const OtlpEndpointCheckResult = Schema.Union([
   Schema.TaggedStruct("Accepted", { latencyMs: Schema.Number }),
   Schema.TaggedStruct("Rejected", { status: Schema.Number }),
@@ -572,13 +535,6 @@ export const ServerSignalProcessResult = Schema.Struct({
 });
 export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
 
-/**
- * A palette the environment's machine publishes for T3 Code to follow, read
- * from a theme file next to the rest of the environment's state. Two seed
- * colors rather than a full palette: clients derive the remaining roles with
- * the same generator the guided theme editor uses, so a desktop theme carries
- * over as a coherent T3 Code palette instead of a foreign one.
- */
 export const EnvironmentThemeColor = Schema.String.check(
   Schema.isPattern(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/),
 );
@@ -614,7 +570,6 @@ const environmentThemeFields = {
    * `version: 1`; the seeded short form a desktop generates has no version.
    */
   version: Schema.optional(Schema.Literal(1)),
-  /** Shown on the theme card, e.g. the desktop theme's own name. */
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
   appearance: Schema.Literals(["light", "dark"]),
   /**
@@ -625,7 +580,6 @@ const environmentThemeFields = {
   canvas: Schema.optional(EnvironmentThemeColor),
   accent: Schema.optional(EnvironmentThemeColor),
   colors: Schema.optional(EnvironmentThemeColors),
-  /** The other appearance's palette, as exported theme files carry it. */
   variants: Schema.optional(
     Schema.Struct({
       light: Schema.optional(EnvironmentThemeColors),
@@ -640,18 +594,11 @@ export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
 export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 
 export const EnvironmentTheme = Schema.Struct({
-  /** The publishing filename without its extension, stable across recolors. */
   id: EnvironmentThemeId,
   ...environmentThemeFields,
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 
-/**
- * Whether a theme file carries anything to render. A file with neither seeds
- * nor colors would show as the stock palette wearing a name, which reads as a
- * bug rather than a theme — the CLI and the server watcher both reject it,
- * through this one predicate so they cannot drift.
- */
 export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boolean {
   return (
     (file.canvas !== undefined && file.accent !== undefined) ||
@@ -683,11 +630,6 @@ export const ServerConfig = Schema.Struct({
   // Editor ids grow over time; drop ones this build does not know rather than
   // failing the whole config decode.
   availableEditors: ForwardCompatibleArray(EditorId),
-  /**
-   * SSH hosts this environment advertises for remote open-in-editor links.
-   * Absent on servers that predate the feature; empty when the machine has no
-   * sshd or no advertisable name.
-   */
   remoteOpenTargets: Schema.optionalKey(ForwardCompatibleArray(RemoteOpenTarget)),
   /**
    * Direct addresses this server listens on right now (LAN and tailnet), so a
@@ -698,35 +640,18 @@ export const ServerConfig = Schema.Struct({
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
   settings: ServerSettings,
-  /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
-  /** Whether shell.openInEditor honors `LaunchEditorInput.reveal` for the
-      file-manager editor. */
   shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
-  /** File-manager wording clients should use for reveal actions. */
   shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),
-  /** Whether thread subscriptions can emit an opt-in catch-up completion marker. */
   threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
-   * Whether thread detail reads accept a turn window (`turnLimit`/
-   * `beforeCursor`) and return `page` metadata. Clients must not send window
-   * fields to servers that don't advertise this.
+   * Clients must not send window fields to servers that don't advertise this.
    */
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
-  /** Whether thread reads accept the reasoningMessages opt-in. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
   threadFind: Schema.optionalKey(Schema.Boolean),
   threadFindProgressive: Schema.optionalKey(Schema.Boolean),
-  /**
-   * Folder behind this environment's Scratch project, for threads that need
-   * no repository. Present only on servers that answer projects.ensureScratch
-   * and whose data dir is outside a Git checkout.
-   */
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
-  /**
-   * Folder that holds projects started from just a name. Present only on
-   * servers that answer projects.createNew.
-   */
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
    * Palettes published by this environment's machine. Never sent in a config
@@ -745,14 +670,6 @@ export const ServerConfig = Schema.Struct({
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
-/**
- * The machine an environment should be drawn as: the user's pick, else what
- * the server detected, else a generic server. Settings only exist once
- * connected; a descriptor alone (relay discovery, before any connection)
- * still yields the detected kind. A null config (nothing known yet, or an
- * older server) resolves to the same generic so rows never flicker between
- * glyphs.
- */
 export function resolveEnvironmentMachineKind(
   config: {
     readonly environment: Pick<ExecutionEnvironmentDescriptor, "platform">;
@@ -844,7 +761,6 @@ export type ServerConfigStreamSettingsUpdatedEvent =
   typeof ServerConfigStreamSettingsUpdatedEvent.Type;
 
 export const ServerConfigEnvironmentThemesUpdatedPayload = Schema.Struct({
-  /** The full published set; empty once the machine publishes none. */
   themes: Schema.Array(EnvironmentTheme),
 });
 export type ServerConfigEnvironmentThemesUpdatedPayload =
@@ -859,7 +775,6 @@ export type ServerConfigStreamEnvironmentThemesUpdatedEvent =
   typeof ServerConfigStreamEnvironmentThemesUpdatedEvent.Type;
 
 export const ServerConfigUsageLimitSourcesUpdatedPayload = Schema.Struct({
-  /** The full set; empty once no source is configured. */
   sources: UsageLimitSourceSnapshots,
 });
 export type ServerConfigUsageLimitSourcesUpdatedPayload =
@@ -883,7 +798,6 @@ export const ServerConfigStreamEvent = Schema.Union([
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 
-/** Terminal selection recorded by the service launcher for one update. */
 export const ServerSelfUpdateOutcome = Schema.Struct({
   id: TrimmedNonEmptyString,
   fromVersion: TrimmedNonEmptyString,
@@ -896,7 +810,6 @@ export type ServerSelfUpdateOutcome = typeof ServerSelfUpdateOutcome.Type;
 export const ServerLifecycleReadyPayload = Schema.Struct({
   at: IsoDateTime,
   environment: ExecutionEnvironmentDescriptor,
-  /** Present when this process resumed a launcher-managed update. */
   updateOutcome: Schema.optionalKey(ServerSelfUpdateOutcome),
 });
 export type ServerLifecycleReadyPayload = typeof ServerLifecycleReadyPayload.Type;
@@ -993,9 +906,7 @@ export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 export const ServerSelfUpdateResult = Schema.Struct({
   targetVersion: TrimmedNonEmptyString,
   method: ServerSelfUpdateMethod,
-  /** Launcher-generated correlation ID. Absent when talking to older servers. */
   updateId: Schema.optionalKey(TrimmedNonEmptyString),
-  /** Desktop preparation token. Present only for the desktop-app method. */
   desktopUpdateToken: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerSelfUpdateResult = typeof ServerSelfUpdateResult.Type;

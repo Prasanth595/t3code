@@ -39,18 +39,12 @@ const CAPABILITIES: PullRequestCapabilities = {
 };
 
 /**
- * What the configured account may do here, from the one thing Bitbucket states per viewer: the
- * repository permission. Merging needs `write` or `admin`, so that is what narrows.
- *
- * Declining stays offered whatever the permission. Bitbucket lets the author of a pull request
- * decline their own with no more than read access, and the permission response says nothing about
- * who opened this one — so withholding the control from the one person entitled to it is the
- * worse of the two mistakes. Commenting and reviewing are not narrowed either: read access is
- * enough to say something, to approve and to ask for changes.
- *
- * Asking for a review is left open for the same reason: Bitbucket takes a reviewer set from the
- * author of a pull request as well as from whoever can write, and says nothing here about which
- * of the two this account is.
+ * Bitbucket lets the author of a pull request decline their own with no more than read access,
+ * and the permission response says nothing about who opened this one — so withholding the
+ * control from the one person entitled to it is the worse of the two mistakes. Asking for a
+ * review is left open for the same reason: Bitbucket takes a reviewer set from the author of a
+ * pull request as well as from whoever can write, and says nothing here about which of the two
+ * this account is.
  */
 export function bitbucketViewerPermissions(input: {
   readonly canWrite: boolean;
@@ -64,7 +58,6 @@ export function bitbucketViewerPermissions(input: {
   };
 }
 
-/** The failures that mean the credentials are the problem, rather than one request. */
 export function bitbucketProviderFailure(
   error: BitbucketPullRequestApi.BitbucketPullRequestApiError,
 ): PullRequestProviderFailure {
@@ -112,7 +105,6 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
     createdAt: pullRequest.createdAt,
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
-    // Bitbucket has no labels on a pull request.
     labels: [],
   };
 }
@@ -126,8 +118,6 @@ export const make = Effect.gen(function* () {
         provider: SourceControlProviderKind.make("bitbucket"),
         operation,
         ...bitbucketProviderFailure(error),
-        // Every Bitbucket failure states its own fact; this names the operation around it, so
-        // the two do not stack into "failed in x: failed in y: ...".
         detail: error.detail,
         cause: error,
       });

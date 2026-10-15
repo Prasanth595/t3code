@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
 /**
  * Thread snapshots version on their own so a thread-only invalidation keeps
- * shell caches warm. 4 drops bounded windows that lost queued runs' items (#16987).
+ * shell caches warm.
  */
 export const ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION = 4 as const;
 

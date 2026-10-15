@@ -17,10 +17,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // appimagekit_<hash>-….desktop) and its filename is not under our control.
 // Electron's app.setAsDefaultProtocolClient resolves the desktop id from
 // setDesktopName, which cannot match those files — so the browser keeps
-// prompting "Choose an application" for every OAuth callback. Instead, write
-// our own handler entry pointing at the current AppImage, refresh the desktop
-// MIME cache so desktop environments recognize that entry as a handler, and
-// use xdg-mime to record it as the scheme default in mimeapps.list.
+// prompting "Choose an application" for every OAuth callback.
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 
 export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedError<DesktopLinuxUrlHandlerRegistrationError>()(

@@ -56,7 +56,6 @@ function canReadHostMedia(environmentId: EnvironmentId | null): boolean {
 }
 
 /** Explicit byte operations get fresh capabilities without replacing a player's active source. */
-/** Exported for tests that drive the byte operations without the menu. */
 export function useMediaActions(source: MediaActionSource) {
   const hostEnvironmentId =
     source.asset &&
@@ -112,7 +111,6 @@ export function useMediaActions(source: MediaActionSource) {
   return { save, copyImage, canReadMedia, assertCanReadMedia };
 }
 
-/** Adds source-aware actions and a tooltip to the existing media element without a layout wrapper. */
 export function MediaActions({
   source,
   children,

@@ -11,9 +11,8 @@ export function constantTimeEquals(a: string, b: string): boolean {
 }
 
 /**
- * Checks an HMAC-SHA256 signature over the raw body bytes, as GitHub, Linear,
- * Shopify and most other signing senders do. The header value is
- * `<prefix><digest>`, with the digest hex- or base64-encoded.
+ * The header value is `<prefix><digest>`, with the digest hex- or
+ * base64-encoded.
  */
 export function verifyWebhookSignature(input: {
   readonly signature: ScheduledTaskWebhookSignature;

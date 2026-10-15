@@ -81,7 +81,6 @@ function historyMetaFromCachedSnapshot(
     hasMoreHistory,
     loading: false,
     error: null,
-    // Cache never stores expanded progressive history (load-earlier growth).
     expanded: false,
     latestLocalTurnOrdinal: snapshot.latestLocalTurnOrdinal ?? null,
   };
@@ -357,7 +356,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
     thread: OrchestrationV2ThreadProjection,
     options?: {
-      /** Socket/full snapshots: drop progressive meta with the new timeline. */
       readonly resetHistory?: boolean;
       /**
        * Explicit progressive meta installed atomically with the projection
@@ -860,13 +858,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
-              // Definitive HTTP 404: clear any stale cache and do not open or
-              // retry a socket subscription for this attempt.
               yield* setDeleted();
               return yield* Effect.never;
             }
             case "unavailable": {
-              // Transient HTTP failure: fall through to the socket path.
               break;
             }
           }

@@ -153,7 +153,6 @@ export type ProjectionRecoveryKind =
   | "subagent-results"
   | "delegated-completions";
 
-/** Persisted state needed for limit recovery, without transcript or fork history. */
 export type ProjectionLimitRecoveryCandidate = Pick<
   OrchestrationV2ThreadShell,
   | "id"
@@ -170,16 +169,11 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "snoozedUntil"
 >;
 
-/** The thread fields pull request sync reads, for a thread with at least one link. */
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
   "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
 >;
 
-/**
- * Thread activity needed by settlement, without transcript or fork history.
- * Settlement always loads `latestUserAuthoredMessageAt`, so it is required here.
- */
 export type ProjectionSettlementCandidate = Pick<
   OrchestrationV2ThreadShell,
   | "id"
@@ -239,7 +233,6 @@ const ProjectionCheckpointContext = Schema.Struct({
 export type ProjectionCheckpointContext = typeof ProjectionCheckpointContext.Type;
 const decodeCheckpointContext = Schema.decodeUnknownEffect(ProjectionCheckpointContext);
 
-/** Durable capture targets, without transcript or checkpoint file payloads. */
 export interface ProjectionCheckpointCaptureContext {
   readonly run: OrchestrationV2Run | undefined;
   readonly rootNode: OrchestrationV2ExecutionNode | undefined;
@@ -248,7 +241,6 @@ export interface ProjectionCheckpointCaptureContext {
   readonly readyCheckpointOrdinals: ReadonlyArray<number>;
 }
 
-/** Exact durable targets used by interrupt, restart, and steering effects. */
 export interface ProjectionProviderControlContext {
   readonly providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] | undefined;
   readonly providerTurn: OrchestrationV2ProviderTurn | undefined;
@@ -396,7 +388,6 @@ export interface ProjectionStoreV2Shape {
   readonly getNextTurnItemOrdinal: (
     threadId: ThreadId,
   ) => Effect.Effect<number, ProjectionStoreV2Error>;
-  /** One persisted turn item, or null when the thread has no such item. */
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
@@ -436,7 +427,6 @@ export interface ProjectionStoreV2Shape {
     readonly autoResume: boolean;
     readonly snooze: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
-  /** Every candidate, or only `threadId` when a sweep checks one thread. */
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
@@ -502,7 +492,6 @@ export interface ProjectionStoreV2Shape {
     requestId: TurnItemId,
     resultId: TurnItemId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
-  /** True when the projection already stores this exact node, so a write would change nothing. */
   readonly isNodeStored: (
     node: OrchestrationV2ExecutionNode,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -925,8 +914,6 @@ export function applyToProjection(
 }
 
 /**
- * Replay state for entities whose persisted projection is shared across thread bindings.
- *
  * Provider sessions are process-scoped: one session row can be bound to several app
  * threads. Updating that row changes what every bound thread reads, even though the
  * application event itself belongs to one thread stream. Keeping the binding index here
@@ -1102,7 +1089,6 @@ const encodeSubagentPayload = Schema.encodeEffect(
 const encodeProviderSessionPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema),
 );
-/** Encodes a provider thread exactly as its projection row stores `payload_json`. */
 export const encodeProviderThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ProviderThreadJsonSchema),
 );
@@ -1431,10 +1417,8 @@ function buildVisibleTurnItems(input: {
 }
 
 /**
- * An agent waiting on a secret is waiting on the user just like a question,
- * so the shell reports it as pending user input. Secret requests have no
- * runtime request of their own; this stands one in for the shell summary
- * only, keyed by the card's turn item.
+ * Secret requests have no runtime request of their own; this stands one in for
+ * the shell summary only, keyed by the card's turn item.
  */
 function secretRequestAsPendingInput(
   item: OrchestrationV2TurnItem | null,
@@ -1628,7 +1612,6 @@ function providerInstanceHistoryForShell(input: {
   return history;
 }
 
-/** The native goal lives on the provider thread that currently owns the conversation. */
 function activeProviderGoalForShell(
   providerThreads: ReadonlyArray<OrchestrationV2ThreadProjection["providerThreads"][number]>,
   activeProviderThreadId: OrchestrationV2ThreadProjection["thread"]["activeProviderThreadId"],
@@ -3380,7 +3363,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeContextHandoffPayload, threadId)(contextHandoffRows),
           decodeRows(decodeContextTransferPayload, threadId)(contextTransferRows),
         ]);
-        // A metadata read must preserve message ordering without decoding tool output.
         const messageOrdinals = new Map<string, number>();
         if (fields !== undefined && fields.includes("messages") && messages.length > 1) {
           const rows = yield* sql<{ message_id: string; ordinal: number }>`
@@ -4539,8 +4521,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .withTransaction(
           Effect.gen(function* () {
             yield* requireThread(threadId);
-            // Match the full projection's ownership scope, but fetch only the target
-            // records. Transcript items and fork ancestors are never read here.
             const [threadRows, turnRows, attemptRows, messageRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads
             WHERE provider_thread_id = ${target.providerThreadId} AND (
@@ -5095,8 +5075,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           FROM orchestration_events WHERE application_event_version = 2
           AND aggregate_kind = 'thread' AND stream_id = ${threadId}`;
             const snapshotSequence = revisions[0]?.sequence ?? 0;
-            // Choose complete turns from the light index before loading any bodies.
-            // A history page does not need nodes, provider turns, or other control state.
             const page = yield* Effect.try({
               try: () =>
                 selectHistoryPageFromCursor({
@@ -5160,7 +5138,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 snapshotSequence,
                 items: items.map((row, position) => ({ ...row, position })),
               };
-            // The no-turn fallback also respects the encoded byte budget after projection.
             const bounded = selectRecentTimelineWindow({
               items,
               snapshotSequence,
@@ -6029,9 +6006,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .withTransaction(readShellSnapshotRows(options))
         .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
 
-    // Per-thread shell for the live shell streams: reads only the target thread
-    // plus its fork-source chain instead of materializing every thread. Returns
-    // null when the thread is deleted or unknown.
     const getThreadShell: ProjectionStoreV2Shape["getThreadShell"] = (threadId) =>
       sql
         .withTransaction(

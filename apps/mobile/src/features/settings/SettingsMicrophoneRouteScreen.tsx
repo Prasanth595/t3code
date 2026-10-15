@@ -55,7 +55,6 @@ function useMicrophonePermission() {
 const KINDS: Record<
   MicrophoneKind,
   {
-    /** Shown under a remembered device's name. */
     readonly label: string;
     readonly row: string;
     readonly rowDescription: string;
@@ -89,9 +88,8 @@ const KINDS: Record<
 };
 
 /**
- * Microphone kinds and remembered devices, in the order voice input prefers
- * them. iOS only. A device joins the list the first time it is connected
- * during dictation; until then its kind's row ranks it.
+ * A device joins the list the first time it is connected during dictation; until then its kind's
+ * row ranks it.
  */
 export function SettingsMicrophoneRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -132,7 +130,6 @@ export function SettingsMicrophoneRouteScreen() {
         ),
       }),
     });
-  // A lifted row takes a neighbour's slot once it has moved past half of that row.
   const dropSteps = (from: number, translation: number) =>
     rowHeight === 0
       ? 0

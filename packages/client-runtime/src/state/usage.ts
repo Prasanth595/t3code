@@ -14,7 +14,6 @@ import type { createServerEnvironmentAtoms } from "./server.ts";
 
 const isEnvironmentRpcUnavailable = Schema.is(EnvironmentRpcUnavailableError);
 
-/** Offer the Cursor Keychain prompt only where a working Cursor provider could use it. */
 export function needsCursorKeychainAccess(
   summary: UsageSummary | null,
   providers: readonly ServerProvider[] | null,
@@ -27,8 +26,6 @@ export function needsCursorKeychainAccess(
 }
 
 /**
- * Environments to offer the Cursor Keychain prompt in the usage summary.
- *
  * Any environment reading a Cursor account already reports that account's
  * history from every machine, so the prompt only adds duplicates there. A
  * different account on another machine stays reachable from provider settings.
@@ -83,7 +80,6 @@ export async function refreshUsageLimits<A>(
   return await current;
 }
 
-/** Refresh pricing, then await each selected environment's rescan while it remains connected. */
 export async function refreshUsage({
   registry,
   server,

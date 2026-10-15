@@ -91,7 +91,6 @@ export const isAntigravityTextGenerationAvailable = Effect.fn(
   return true;
 });
 
-/** Runs short-lived subscription helpers without giving them the user's workspace. */
 export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGeneration")(function* (
   options: AntigravityTextGenerationOptions,
 ) {

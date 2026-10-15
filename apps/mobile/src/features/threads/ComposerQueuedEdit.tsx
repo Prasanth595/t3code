@@ -7,10 +7,6 @@ import { SymbolView } from "../../components/AppSymbol";
 import { useAssetUrl } from "../../state/assets";
 import { assetImageSource } from "../../lib/assetImageSource";
 
-/**
- * The composer is shared, so editing a queued message needs a visible way back
- * out. This is that way out, and the only place the edit announces itself.
- */
 export function ComposerQueuedEditBanner(props: {
   readonly saving: boolean;
   readonly onCancel: () => void;

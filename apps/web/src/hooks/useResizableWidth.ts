@@ -19,16 +19,10 @@ const WidthSchema = Schema.Finite;
 export const RESIZABLE_WIDTH_PROPERTY = "--resizable-width";
 
 export interface UseResizableWidthOptions {
-  /** localStorage key the persisted width is stored under. */
   readonly storageKey: string;
   readonly defaultWidth: number;
   readonly minWidth: number;
   readonly maxWidth: number;
-  /**
-   * Which edge of the host element carries the drag handle:
-   *   - "left"  → panel grows leftward (right-anchored panels)
-   *   - "right" → panel grows rightward (left-anchored panels)
-   */
   readonly edge: "left" | "right";
 }
 
@@ -41,14 +35,8 @@ export interface ResizableWidthHandlers {
 }
 
 /**
- * Width state for a side-anchored panel resized via a drag handle on the
- * specified edge. Width is read on mount or storage-key changes and persisted on
- * drag-end (not on every rAF tick — would otherwise be ~60 writes/sec).
- *
- * During a drag the hook writes `RESIZABLE_WIDTH_PROPERTY` on the handle's
- * parent, so the panel follows the cursor in the same frame without
- * re-rendering the owner. `width` state and localStorage commit once when the
- * user lifts the pointer or the drag is interrupted.
+ * Width is read on mount or storage-key changes and persisted on drag-end (not on every rAF tick
+ * — would otherwise be ~60 writes/sec).
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
@@ -102,7 +90,6 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       },
       finish(finalWidth) {
         setWidthState({ storageKey, width: finalWidth });
-        // Commit once at drag-end to avoid 60Hz localStorage writes.
         try {
           setLocalStorageItem(latestOptions.current.storageKey, finalWidth, WidthSchema);
         } catch (error) {

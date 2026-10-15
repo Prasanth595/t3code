@@ -66,7 +66,6 @@ function eventThreadId(event: OrchestrationV2DomainEvent): ThreadId {
   return event.threadId;
 }
 
-// The filter takes loosely typed events; a turn-item payload carries both fields.
 function isTurnItemPayload(
   payload: unknown,
 ): payload is Pick<OrchestrationV2TurnItem, "type" | "status"> {
@@ -274,7 +273,6 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
   return yield* signRelayAgentActivityPublishProof({ privateKey: input.privateKey, payload });
 });
 
-// Compact, log-safe view of the fields the awareness phase ladder reads.
 function describeThreadShellForAwareness(
   thread: Option.Option<OrchestrationV2ThreadShell>,
 ): Record<string, unknown> {
@@ -416,11 +414,10 @@ export const make = Effect.gen(function* () {
   let cachedRelayClient: Effect.Success<ReturnType<typeof makeRelayClient>> | undefined;
   let publishedRelayConfig: NonNullable<Effect.Success<typeof readRelayConfig>> | undefined;
 
-  // Deadlines for publishes that need confirmation (tombstones and
-  // first-state completions). The confirming publish is re-enqueued through
-  // the same drainable worker as every other publish, so a confirmed
-  // tombstone can never race an in-flight live update; a recovered state
-  // clears the deadline. Assigned after the worker exists.
+  // Deadlines for publishes that need confirmation (tombstones and first-state
+  // completions). The confirming publish is re-enqueued through the same
+  // drainable worker as every other publish, so a confirmed tombstone can never
+  // race an in-flight live update; a recovered state clears the deadline.
   const publishConfirmDeadlines = new Map<ThreadId, number>();
   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const publishRetries = new Map<
@@ -704,8 +701,6 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // Publishes the active threads once. Returns why it did not, so the retry
-  // knows whether it is waiting on a link or on the publish setting.
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
     // One secret read settles the common never-linked case; the full link
     // config is read only once publishing is on.
@@ -751,12 +746,11 @@ export const make = Effect.gen(function* () {
     return "published" as const;
   });
 
-  // Publishes the catch-up snapshot of active threads once the environment is
-  // linked and publishing is enabled. Many environments never link, so while
-  // unlinked the retry backs off from 5 s to 60 s. Only this process writes
-  // the link, and it calls `requestCatchUp`, which ends the wait early. A
-  // linked environment keeps the 5 s retry, because `t3 connect publish` can
-  // turn publishing on from another process.
+  // Many environments never link, so while unlinked the retry backs off from 5
+  // s to 60 s. Only this process writes the link, and it calls
+  // `requestCatchUp`, which ends the wait early. A linked environment keeps the
+  // 5 s retry, because `t3 connect publish` can turn publishing on from another
+  // process.
   const publishActiveThreadsOnceWhenConfigured = (logEnabledWhenReady: boolean) =>
     Effect.gen(function* () {
       let unlinkedRetryDelayMs = 5_000;

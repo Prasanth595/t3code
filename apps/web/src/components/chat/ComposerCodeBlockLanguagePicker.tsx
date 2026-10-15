@@ -21,11 +21,6 @@ import {
 } from "../ui/combobox";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
-/**
- * The language's file icon: plain text gets the text-file icon, and a
- * language the icon set does not cover gets the default file icon, so every
- * entry has one and the labels line up.
- */
 function LanguageIcon(props: { language: string; theme: "light" | "dark" }) {
   const fileName = props.language ? syntheticFileNameForLanguageId(props.language) : "file.txt";
   return (
@@ -33,12 +28,6 @@ function LanguageIcon(props: { language: string; theme: "light" | "dark" }) {
   );
 }
 
-/**
- * The language control in a composer fence's header: shows what the fence
- * declares and switches it from a searchable list. A language typed on the
- * fence line that the list does not carry is offered as its own entry, so
- * the current choice is always visible and checked.
- */
 export function ComposerCodeBlockLanguagePicker(props: {
   language: string;
   theme: "light" | "dark";

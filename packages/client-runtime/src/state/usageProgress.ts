@@ -8,17 +8,6 @@ interface UsageProgressEnvironment {
   readonly summary: UsageSummary | null;
 }
 
-/**
- * Where one environment's answer stands for the usage on screen.
- *
- * - `inactive`: disconnected or failed, so waiting on it changes nothing.
- * - `loading`: no summary yet.
- * - `stale`: its summary on screen predates the current request.
- * - `partway`: answered this round while slow sources finish refreshing.
- * - `ready`: answered.
- *
- * While a manual `refreshing` runs, every summary counts as stale.
- */
 export function usageEnvironmentProgress(
   environment: UsageProgressEnvironment,
   refreshing = false,
@@ -49,8 +38,6 @@ export function updatingProvidersLabel(
 }
 
 /**
- * Loading state for the selected environments' merged usage.
- *
  * The page dims only while old numbers are all that is on screen. Once any
  * environment answers, the label carries what is still coming, so one slow
  * device never holds the page dimmed.
@@ -90,11 +77,7 @@ export function usageProgress(
 }
 
 /**
- * Which figures in the merged usage on screen are still coming in, so clients
- * can mute just those.
- *
- * - `partial`: totals will change because some environment is still answering.
- * - `providers`: providers whose own figures will change. An environment that
+ * An environment that
  *   has not answered yet, or whose whole summary is stale, could change any
  *   provider, so it sets `everyProvider`.
  */

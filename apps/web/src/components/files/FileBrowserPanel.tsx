@@ -161,7 +161,6 @@ export default function FileBrowserPanel({
     return () => document.removeEventListener("contextmenu", capturePointer, true);
   }, []);
 
-  /** Combines the file actions (open/reveal/open with) with the panel's own mention actions. */
   const showEntryContextMenu = async (
     item: TreeContextMenuItem,
     context: TreeContextMenuOpenContext,
@@ -240,8 +239,6 @@ export default function FileBrowserPanel({
     showEntryContextMenuRef.current = showEntryContextMenu;
   });
 
-  // The tree reads decorations at render time; a folder still loading its
-  // children shows a spinner in its row instead of a banner that shifts the tree.
   const loadingDirectoriesRef = useRef(loadingDirectories);
   const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
   const dragMention = useMemo(
@@ -300,7 +297,6 @@ export default function FileBrowserPanel({
   useEffect(() => {
     if (loadingDirectoriesRef.current === loadingDirectories) return;
     loadingDirectoriesRef.current = loadingDirectories;
-    // Re-render the rows with the current options so decorations update.
     model.setComposition(model.getComposition());
   }, [loadingDirectories, model]);
   const search = useFileTreeSearch(model);

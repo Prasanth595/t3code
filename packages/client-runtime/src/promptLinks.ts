@@ -14,17 +14,12 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
 
-/**
- * How web and mobile resolve a prompt link against what this client knows. Both read the same
- * shells, so a link lands in the same project and thread on every surface.
- */
-
 const repositoryKey = (repository: PromptLinkRepository) =>
   `github.com/${repository.owner}/${repository.name}`.toLowerCase();
 
 /**
- * The project a link's repository names. Callers pass projects most recently active first, so
- * the user lands where they last worked. A fork only matches its own owner, not its upstream.
+ * Callers pass projects most recently active first, so the user lands where they last worked.
+ * A fork only matches its own owner, not its upstream.
  */
 export function findPromptLinkProject<
   P extends { readonly repositoryIdentity?: RepositoryIdentity | null | undefined },
@@ -61,7 +56,6 @@ export function findPromptLinkPullRequestThread<
   return latest;
 }
 
-// People write the name they know. Driver kinds are what the server reports.
 const PROVIDER_ALIASES: Record<string, string> = { claude: "claudeagent" };
 
 /**

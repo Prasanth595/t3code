@@ -395,9 +395,6 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   // backend id lets desktop-only operations (notably the WSL folder picker)
   // route back to the instance that owns the environment.
   const connectionId = desktopLocalConnectionId(entry.id);
-  // Prefer the desktop's bootstrap label (it identifies the backend and distro,
-  // e.g. "WSL: Ubuntu") over the generic descriptor label, so consumers can show
-  // a meaningful name without recovering it from the bootstrap list later.
   const label = entry.label || descriptor.label;
   return {
     registration: new BearerConnectionRegistration({
@@ -449,7 +446,6 @@ interface CachedPlatformRegistration {
   readonly registration: PlatformConnectionRegistration;
   readonly expiresAtEpochMs?: number;
   readonly refreshAtEpochMs?: number;
-  /** The bootstrap token a desktop-local bearer was exchanged for. */
   readonly bootstrapToken?: string;
 }
 
@@ -506,7 +502,6 @@ export function canRetainCachedPlatformRegistrationAfterRefreshFailure(
 const REJECTED_BOOTSTRAP_RETRY_INITIAL_MS = 60_000;
 const REJECTED_BOOTSTRAP_RETRY_MAX_MS = 30 * 60_000;
 
-/** A bootstrap token a backend rejected, and when the poll may try it again. */
 export interface RejectedSecondaryBootstrap {
   readonly signature: string;
   readonly retryAtEpochMs: number;
@@ -575,10 +570,6 @@ const layerPlatformConnectionSource = Layer.effect(
     const cacheRef = yield* Ref.make(new Map<string, CachedPlatformRegistration>());
     const rejectedRef = yield* Ref.make(new Map<string, RejectedSecondaryBootstrap>());
 
-    // Resolve the full set of platform-managed environments the host currently
-    // reports: the primary (same-origin cookie auth) plus any desktop-local
-    // backends running alongside it (bearer auth). Reused registrations come
-    // from the cache; a failed entry is skipped and retried on the next poll.
     const buildPlatformRegistrations = Effect.gen(function* () {
       const previous = yield* Ref.get(cacheRef);
       const nowEpochMs = yield* Clock.currentTimeMillis;

@@ -81,11 +81,9 @@ export type AssetUrlState =
       readonly expiresAt: number;
       /** The host path the server chose to serve, when it differs from what was asked for. */
       readonly sourcePath?: string;
-      /** Pixel size from the image header, when the server could read one. */
       readonly imageDimensions?: AssetImageDimensions;
     };
 
-/** Shown in place of a host file the session lacks `filesystem:read` for. */
 export const MISSING_FILE_ACCESS_MESSAGE =
   "This connection cannot read host files. Pair again with a new link to view it.";
 
@@ -223,7 +221,6 @@ export function createProjectFaviconUrlAtomFamily(input: {
   readonly preparedConnection: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<Option.Option<{ readonly httpBaseUrl: string }>>;
-  /** The environment's tracked clones, empty when it reports none. */
   readonly projectClones?: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<ReadonlyArray<ProjectCloneSnapshot>>;

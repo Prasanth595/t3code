@@ -27,14 +27,11 @@ import {
 
 const CONTINUE_PROMPT = "Continue where you left off.";
 
-/** Consecutive automatic continuations allowed before a person has to step in. */
 const MAX_CONTINUATION_CHAIN = 3;
 
 /**
- * Whether a restart must leave this run for the user: the thread is put away,
- * the provider turn already ended, or the user owes an answer. Checked when
- * intent is recorded and again when the continuation is delivered. A
- * `settled` run is woken for the awaited work it lost, so its ended provider
+ * Checked when intent is recorded and again when the continuation is delivered.
+ * A `settled` run is woken for the awaited work it lost, so its ended provider
  * turn does not block it.
  */
 function restartContinuationBlocked(
@@ -118,10 +115,8 @@ function hasOpenAwaitedWork(
 }
 
 /**
- * The run a restart continues: an unfinished root turn, or a settled one
- * waiting on awaited work that the restart cancels. A settled run needs a
- * live session, so stale records from an older crash never wake it. Other
- * leftover work is cleaned up and reported on the next user turn.
+ * A settled run needs a live session, so stale records from an older crash
+ * never wake it.
  */
 export function restartContinuationRun(
   projection: Pick<
@@ -260,7 +255,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         turnItemTypes: ["run_interrupt_request"],
       },
     );
-    // The user asked this run to stop before the restart cut it.
     if (
       sourceRecords.turnItems.some(
         (item) => item.runId === source.id && item.type === "run_interrupt_request",
@@ -292,7 +286,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         threadId: input.threadId,
         messageId,
         text,
-        // Shown as a work log row; the prompt the agent got is its detail.
         notification: {
           source: { kind: "system" },
           outcome: "updated",

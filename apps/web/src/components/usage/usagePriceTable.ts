@@ -35,7 +35,6 @@ function modelAlias(target: UsagePriceTarget, model: string) {
   return target.aliases && Object.hasOwn(target.aliases, model) ? target.aliases[model] : undefined;
 }
 
-/** The "Map to" cell across the selected environments, read like a price cell. */
 export function usageAliasCell(targets: readonly UsagePriceTarget[], model: string) {
   if (targets.some((target) => target.aliases === null))
     return { value: "", placeholder: "Unavailable" };
@@ -122,7 +121,6 @@ export function usagePriceTableChanges(
   return { changes, errors };
 }
 
-/** Unavailable destinations report a save failure without blocking writable environments. */
 export function usagePriceTableErrors(
   targets: readonly UsagePriceTarget[],
   drafts: readonly UsagePriceDraft[],

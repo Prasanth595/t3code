@@ -296,7 +296,6 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   usePullRequestEnvironmentFallback(params);
   const connected = usePullRequestConnected(params.environmentId);
   const [section, setSection] = useState<"overview" | "activity" | "guide">("overview");
-  // Keep each tab's native list and measured rows alive when it is hidden.
   const requestedSection = useRef(section);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -895,7 +894,6 @@ export function PullRequestFileRouteScreen({
     canHighlight: true,
   });
   const [NativeDiffView] = useState(() => resolveNativeReviewDiffView());
-  // A file picked from a later page must be fetched before we can jump to its header.
   useEffect(() => {
     if (!targetFile) loadMore();
   }, [targetFile, loadMore]);

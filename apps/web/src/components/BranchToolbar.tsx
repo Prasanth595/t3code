@@ -86,7 +86,6 @@ interface BranchToolbarProps {
   showGitControls: boolean;
   draftId?: DraftId;
   onEnvModeChange: (mode: EnvMode) => void;
-  /** The thread's env mode as ChatView resolves it. */
   envMode: EnvMode;
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
@@ -407,16 +406,11 @@ const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
 const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
 
 /**
- * The width a label takes when shown, clipped parts included.
- *
  * Text keeps its full width when its box clips it, so each text run measures
  * whole. A label can hold more than one run (MiddleTruncate splits a branch
  * into a head and a tail), so the runs are added. Reading one element's
  * scrollWidth drops the tail when the label is hidden or squeezed, and the
  * strip then flips between labels and icons on every measure.
- *
- * A shown label never grows past its motion span's max width, so longer text
- * reserves only that much.
  */
 function labelTextWidth(label: HTMLElement, range: Range): number {
   const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
@@ -431,8 +425,6 @@ function labelTextWidth(label: HTMLElement, range: Range): number {
 }
 
 /**
- * Collapse the strip's labels to icons only when the text no longer fits.
- *
  * Hidden labels stay measurable because their inner text keeps its natural
  * width while the outer layout box collapses. This lets every pass recompute
  * the expanded width without remembered values that could go stale or latch
@@ -640,9 +632,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked = envLocked || (serverThread !== null && activeWorktreePath !== null);
 
-  // "Previous worktree" hops a draft into the most recently active worktree
-  // of this project — the "keep going where I just was" follow-up flow. Only
-  // drafts can hop; started server threads have their workspace pinned.
+  // Only drafts can hop; started server threads have their workspace pinned.
   const canUsePreviousWorktree =
     draftThread !== null && serverThread === null && !envModeLocked && !forceNewWorktree;
   const projectRefsForWorktreeLookup = useMemo(
@@ -665,8 +655,6 @@ export const BranchToolbar = memo(function BranchToolbar({
     : null;
   const onUsePreviousWorktree = useCallback(() => {
     if (!previousWorktreeSeed || !activeProjectRef) return;
-    // Same shape the branch selector writes when picking a branch that
-    // already lives in a worktree: point the draft at the existing tree.
     setDraftThreadContext(draftId ?? threadRef, {
       branch: previousWorktreeSeed.branch,
       worktreePath: previousWorktreeSeed.worktreePath,
@@ -831,9 +819,6 @@ export const BranchToolbar = memo(function BranchToolbar({
       ) : null}
 
       {composerControlsHostRef ? (
-        // The host takes whatever the workspace and branch controls leave
-        // over, in both strip layouts, so a collapsed composer can show its
-        // model and mode controls wherever they fit.
         <div
           ref={composerControlsHostRef}
           data-composer-context-control

@@ -122,9 +122,7 @@ export const make = Effect.gen(function* () {
 
   /**
    * A sweep for one thread reads only that thread's shell, not every thread's.
-   * Finished runs and checkpoints queue one of these each. A sweep over all
-   * threads reads only active, unsettled ones, since discovery skips the rest;
-   * backfill looks up settled threads, so its passes read every active thread.
+   * Finished runs and checkpoints queue one of these each.
    */
   const readThreadSnapshot = ({ threadId, backfill }: RefreshRequest) =>
     threadId === null

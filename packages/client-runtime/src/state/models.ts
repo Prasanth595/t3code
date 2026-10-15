@@ -27,11 +27,8 @@ export interface EnvironmentProject extends OrchestrationProjectShell {
 }
 
 /**
- * A pristine V2 thread projection paired with the environment that produced it.
- *
  * The projection stays nested so the server projection and all structurally
- * shared collections retain their identities. Rich consumers read V2 state
- * directly instead of a second presentation-shaped thread graph.
+ * shared collections retain their identities.
  */
 export interface EnvironmentThread {
   readonly environmentId: EnvironmentId;
@@ -118,7 +115,6 @@ export interface EnvironmentThreadShell {
   >;
   /** Provider instances that have owned the root conversation, oldest first. */
   readonly providerInstanceHistory: ReadonlyArray<ProviderInstanceId>;
-  /** Native `/goal` on the active provider thread. */
   readonly goal: OrchestrationV2ProviderGoal | null;
   readonly itemCount: number;
   readonly visibleItemCount: number;
@@ -133,9 +129,7 @@ export interface EnvironmentThreadShell {
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
   readonly autoSettleDisabledAt?: string | null;
-  /** Slot in the user-arranged pinned order; null for keyless (legacy) pins. */
   readonly pinOrderKey: string | null;
-  /** Slot in the user-arranged active order; null for keyless active threads. */
   readonly activeOrderKey: string | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
@@ -146,7 +140,6 @@ export interface EnvironmentThreadShell {
    * local visited state they keep.
    */
   readonly lastVisitedAt?: string | null;
-  /** Pending title regeneration marker; null when no request is in flight. */
   readonly titleRegeneration?: { readonly requestId: string; readonly startedAt: string } | null;
   readonly deletedAt: string | null;
   readonly source: OrchestrationV2ThreadShell;
@@ -170,14 +163,11 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
   );
 }
 
-// Park runtime at idle when the post-settlement background roster holds the
-// run's completion, so #4415 waiting-presentation Waiting (session.idle) can
-// consume CTM runtime. Only work that wakes the agent holds it: commands it
-// left running, such as a dev server, present the run's own status (#14872).
-// The server suppresses the roster while an interruptible activity run exists,
-// so a remaining roster is stronger than checkpoint-oriented waiting.
-// latestRun keeps the latest run's status for history presentation.
-// A failed latest run outranks the roster, so the failure stays visible.
+// Only work that wakes the agent holds it: commands it left running, such as a
+// dev server, present the run's own status (#14872). The server suppresses the
+// roster while an interruptible activity run exists, so a remaining roster is
+// stronger than checkpoint-oriented waiting. A failed latest run outranks the
+// roster, so the failure stays visible.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
   const parkAtIdle =
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&

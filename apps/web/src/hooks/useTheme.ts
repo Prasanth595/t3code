@@ -159,9 +159,7 @@ function readStoredFollowSystem(theme: Theme): boolean {
     const raw = window.localStorage.getItem(THEME_FOLLOW_SYSTEM_STORAGE_KEY);
     if (raw === "true") return true;
     if (raw === "false") return false;
-  } catch {
-    // Fall back to the legacy theme value when the separate preference is unavailable.
-  }
+  } catch {}
 
   return theme === "system";
 }
@@ -175,9 +173,7 @@ export function readAppearanceModePreference(theme: Theme): ThemePreferenceMode 
     try {
       const raw = window.localStorage.getItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
       if (isThemePreferenceMode(raw)) return raw;
-    } catch {
-      // Fall back to the legacy preference below when storage is unavailable.
-    }
+    } catch {}
   }
 
   if (readStoredFollowSystem(theme)) return "system";
@@ -487,8 +483,6 @@ function subscribe(listener: () => void): () => void {
   if (typeof window === "undefined") return () => {};
   listeners.push(listener);
 
-  // The system-preference and cross-tab listeners are shared by all
-  // subscribers; each event applies the theme once and notifies everyone.
   if (!removeWindowListeners) {
     const mq = typeof window.matchMedia === "function" ? window.matchMedia(MEDIA_QUERY) : null;
     mq?.addEventListener("change", handleSystemAppearanceChange);
@@ -530,9 +524,7 @@ export function useTheme() {
         if (previousHalvesRaw !== null) {
           try {
             window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, previousHalvesRaw);
-          } catch {
-            // Storage is failing wholesale; the outer handler reports it.
-          }
+          } catch {}
         }
         throw cause;
       }
@@ -658,7 +650,6 @@ export function useTheme() {
     emitChange();
   }, []);
 
-  // Keep DOM in sync on mount/change
   useEffect(() => {
     applyTheme(theme);
   }, [snapshot.appearanceMode, theme]);

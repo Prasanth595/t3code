@@ -451,8 +451,6 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
     /(?:authentication failed|could not read Username|could not read Password|permission denied \([a-z-]+(?:,[a-z-]+)*\)|permission denied, please try again)/i,
     "authentication_failed",
   ],
-  // Distinct from a credential failure: the remote answered and the key it
-  // presented is untrusted, so pointing the user at credentials would misdirect.
   [/host key verification failed/i, "host_key_unverified"],
   [
     /(?:could not read from remote repository|does not appear to be a git repository|repository .+ not found)/i,
@@ -910,13 +908,9 @@ const collectOutput = Effect.fnUntraced(function* (
  * Git on Windows cannot create or delete a path longer than MAX_PATH (260)
  * unless `core.longpaths` is set. The OS-level LongPathsEnabled setting does not
  * cover it, and git leaves it off by default, so deep worktrees fail to check
- * out and fail midway through removal.
- *
- * Passed through `GIT_CONFIG_*` rather than `-c` so argv stays the same on every
- * platform and nothing is written to the user's config. The entry is appended
- * after any inherited ones. Windows env names are case-insensitive, so the
- * inherited count is found regardless of casing and updated under its own name.
- * A count git would reject is left alone so git still reports it.
+ * out and fail midway through removal. Windows env names are case-insensitive,
+ * so the inherited count is found regardless of casing and updated under its own
+ * name. A count git would reject is left alone so git still reports it.
  */
 export const windowsLongPathConfigEnv = (
   platform: NodeJS.Platform,
@@ -1538,7 +1532,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const upstream = yield* resolveCurrentUpstream(cwd);
     if (!upstream) return;
     const gitCommonDir = yield* resolveGitCommonDir(cwd);
-    // The cache loader logs failed attempts; cache hits keep using the last fetched refs.
     yield* Cache.get(
       statusRemoteRefreshCache,
       new StatusRemoteRefreshCacheKey({
@@ -2699,8 +2692,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return stdout.trim();
   });
 
-  // Lists untracked files and adds them to a temporary index, so a diff against any commit
-  // shows them as new. Returns null when the list is too big to read or to index. Needs a Scope.
   const prepareUntrackedReviewIndex = Effect.fn("prepareUntrackedReviewIndex")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
@@ -2740,8 +2731,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { env };
   });
 
-  // The diff panel's Changes view compares the working tree with merge-base(base, HEAD).
-  // With no usable base it compares with HEAD, so Changes equals Uncommitted.
   const resolveReviewMergeBase = Effect.fn("resolveReviewMergeBase")(function* (
     cwd: string,
     branch: string | null,
@@ -2761,7 +2750,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
     const mergeBase = result.stdout.trim();
     if (result.exitCode !== 0 || mergeBase.length === 0) {
-      // Before the first commit there is nothing to compare with, so Changes equals Uncommitted.
       const head = yield* executeGit(
         "GitVcsDriver.resolveReviewMergeBase.head",
         cwd,
@@ -2780,7 +2768,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { baseRef, mergeBase };
   });
 
-  // Totals for the thread panel's Changes row. Same base and untracked files as the Changes view.
   const readBranchChangeTotals = Effect.fn("readBranchChangeTotals")(function* (
     cwd: string,
     branch: string | null,
@@ -2854,7 +2841,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const cwd = repository.worktreeRoot;
-    // A per-file request only reads its own source.
     const dirtyRef = input.file?.sourceKind === "branch-range" ? null : "HEAD";
     const review =
       input.file?.sourceKind === "working-tree"
@@ -2913,7 +2899,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
       const untracked = yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
-      // With no base both sources diff HEAD, so read it once.
       const [dirty, base] =
         review.mergeBase === dirtyRef
           ? yield* readTrackedDiff(dirtyRef, untracked?.env).pipe(
@@ -2927,7 +2912,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               { concurrency: 2 },
             );
       if (untracked !== null) return [dirty, base] as const;
-      // Too many untracked files to list: show tracked changes and mark totals incomplete.
       const incomplete = (ref: string | null, result: typeof dirty) =>
         ref === null ? result : { ...result, files: undefined, stdoutTruncated: true };
       return [incomplete(dirtyRef, dirty), incomplete(review.mergeBase, base)] as const;
@@ -3091,8 +3075,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return new TextDecoder("utf-8").decode(bytes);
   });
 
-  // Both views compare a commit with the working tree: HEAD for Uncommitted,
-  // merge-base(base, HEAD) for Changes. The new side always comes from disk.
   const getReviewDiffFileContents = Effect.fn("getReviewDiffFileContents")(function* (
     input: ReviewDiffFileContentsInput,
   ) {
@@ -3425,8 +3407,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const combinedBranches = input.includeMatchingRemoteRefs
         ? [...localBranches, ...snapshot.remoteBranches]
         : dedupeRemoteBranchesWithLocalMatches([...localBranches, ...snapshot.remoteBranches]);
-      // Keep current/default refs on the first page even when the default
-      // only exists as origin/<default> (remote refs sort after all locals).
       const allBranches = combinedBranches.toSorted((left, right) => {
         const leftPriority = left.current ? 0 : left.isDefault ? 1 : 2;
         const rightPriority = right.current ? 0 : right.isDefault ? 1 : 2;
@@ -3516,9 +3496,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // skills, tooling or source in one gets a worktree that is quietly missing
     // them. Best-effort: the objects are usually already in the parent's
     // `.git/modules`, but a first-ever clone needs the network, and failing to
-    // populate a submodule must not roll back the caller's thread. Repos with
-    // hundreds of nested submodules opt out or stop at the top level; the
-    // caller resolves that from settings, or the checkout's t3.json decides.
+    // populate a submodule must not roll back the caller's thread.
     const hasSubmodules = yield* fileSystem
       .exists(path.join(worktreePath, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => false));

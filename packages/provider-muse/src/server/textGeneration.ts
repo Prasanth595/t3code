@@ -199,7 +199,6 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
   options: {
     readonly environment?: NodeJS.ProcessEnv;
     readonly modelCatalog?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
-    /** Test hook. */
     readonly createHost?: typeof createMuseSdkHost;
   } = {},
 ) {

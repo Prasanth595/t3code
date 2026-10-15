@@ -128,9 +128,7 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly modelSelection?: ModelSelection;
   readonly branch?: string | null;
   readonly worktreePath?: string | null;
-  /** Kick off an async title regeneration for the thread. */
   readonly regenerateTitle?: boolean;
-  /** Link (object) or unlink (null) a pull request (#8160). */
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   /** Apply only while no message or run has landed on the thread. */
   readonly expectedEmpty?: boolean;
@@ -187,7 +185,6 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
 export interface InterruptThreadTurnInput extends ThreadCommandInput {
   readonly runId?: RunId;
   readonly subagentId?: NodeId;
-  /** Temporary caller compatibility while UI naming moves from turns to runs. */
   readonly turnId?: string;
 }
 

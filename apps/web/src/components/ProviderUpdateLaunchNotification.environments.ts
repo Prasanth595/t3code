@@ -12,12 +12,6 @@ import {
   type LocalEnvironmentUpdateGroup,
 } from "./ProviderUpdateLaunchNotification.logic";
 
-/**
- * A local environment is either the same-origin primary backend or a
- * desktop-local secondary (the parallel WSL backend), which connects over
- * loopback with a bearer token and carries a `local:<backendInstanceId>`
- * connection id. SSH, relay, and other remote targets are excluded.
- */
 function isLocalConnectionTarget(target: ConnectionCatalogEntry["target"]): boolean {
   return target._tag === "PrimaryConnectionTarget" || isDesktopLocalConnectionTarget(target);
 }
@@ -42,12 +36,6 @@ function normalizeConnectionState(phase: string | undefined): EnvironmentUpdateC
   }
 }
 
-/**
- * Reactively enumerate the enabled local environments (the primary plus any
- * desktop-local secondary such as WSL) with each one's full provider list and a
- * flag for whether any is still connecting. Drives the launch popover's gating
- * and its per-environment update triggers.
- */
 export function useLocalEnvironmentUpdateGroups(): {
   readonly groups: LocalEnvironmentUpdateGroup[];
   readonly isAnySettling: boolean;
@@ -90,7 +78,6 @@ export function useLocalEnvironmentUpdateGroups(): {
       });
     }
 
-    // Primary first, then the rest in catalog order.
     inputs.sort((left, right) => Number(right.isPrimary) - Number(left.isPrimary));
 
     return buildLocalEnvironmentUpdateGroups(inputs);

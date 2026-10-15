@@ -21,10 +21,8 @@ import { BrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview"
 const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
 
 /**
- * Opens a URL where the "Open links in" setting says, for buttons that sit
- * beside a thread but are not markdown anchors: CI check details, a pull
- * request that has no project to open in the panel. Without a thread there is
- * nowhere to put an in-app tab, so the link goes to the system browser.
+ * Without a thread there is nowhere to put an in-app tab, so the link goes to
+ * the system browser.
  *
  * An in-app open that fails falls back to the system browser rather than
  * dropping the click: the user asked for the link, and the setting only says

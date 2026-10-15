@@ -3,9 +3,7 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
- * Client-side id for the first shell opened on a thread. Ids are uniformly
- * `term-N`; there's no "default" intrinsic. Kept as a named constant so callers
- * that want "the primary shell" don't hardcode `"term-1"`.
+ * Ids are uniformly `term-N`; there's no "default" intrinsic.
  */
 export const DEFAULT_TERMINAL_ID = "term-1";
 

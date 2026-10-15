@@ -21,9 +21,8 @@ export class OtlpEndpointCheck extends Context.Service<
   {
     /**
      * Posts an empty export for the signal to `url` from this server, with the
-     * running signal's protocol. Credentials are used only for its exact
-     * running endpoint, and redirects are not followed. Receivers accept an
-     * empty export without storing anything.
+     * running signal's protocol. Receivers accept an empty export without
+     * storing anything.
      */
     readonly check: (input: OtlpEndpointCheckInput) => Effect.Effect<OtlpEndpointCheckResult>;
   }

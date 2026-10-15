@@ -102,7 +102,6 @@ export function DevicePanel(props: {
     }
   };
 
-  // Floating the device closes the panel, like the browser's floating preview.
   const floatActive = () => {
     if (!activeDevice) return;
     usePreviewMiniPlayerStore.getState().open(props.threadRef, {

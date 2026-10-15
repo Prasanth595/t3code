@@ -37,7 +37,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
-/** Shell commands that can merge or close a pull request without a merge notification. */
 const PULL_REQUEST_CLOSE_COMMAND = /\b(?:gh\s+pr|glab\s+mr)\s+(?:merge|close)\b/u;
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
@@ -118,7 +117,6 @@ function skipReason(cause: Cause.Cause<unknown>): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** When a host read failed because the host is rate limited, the time that pause ends. */
 function rateLimitRetryAt(cause: Cause.Cause<unknown>): number | undefined {
   let error: unknown = Cause.squash(cause);
   while (error instanceof Error) {
@@ -132,12 +130,6 @@ function isUnsettled(thread: ProjectionStore.ProjectionThreadPullRequests): bool
   return thread.settledOverride !== "settled" && thread.settledAt === null;
 }
 
-/**
- * Keeps every thread ↔ pull request link's host snapshot current. One sweep a minute reads
- * only the active threads that have links, groups visible links by pull request so the host
- * is asked once per PR no matter how many threads share it, and writes back only what
- * changed. Native stacks the host reports are auto-linked to the thread as `source: "stack"`.
- */
 export class PullRequestSyncReactor extends Context.Service<
   PullRequestSyncReactor,
   {
@@ -189,7 +181,6 @@ export const make = Effect.gen(function* () {
     <E>(cause: Cause.Cause<E>): Effect.Effect<void, E> =>
       Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.logWarning(message, fields);
 
-  /** `requested` reads only keys asked for through `requestSync`; `all` is the periodic pass. */
   const sweep = Effect.fn("PullRequestSyncReactor.sweep")(function* (scope: "all" | "requested") {
     const threads = yield* projections.getThreadsWithPullRequests();
     const now = yield* DateTime.now;
@@ -314,8 +305,7 @@ export const make = Effect.gen(function* () {
                 (cause) => !Cause.hasInterruptsOnly(cause),
                 (cause) =>
                   rateLimitRetryAt(cause) !== undefined
-                    ? // The sweep records the pause and holds the host's other reads until it ends.
-                      Effect.sync(() => retryStacks.add(key)).pipe(
+                    ? Effect.sync(() => retryStacks.add(key)).pipe(
                         Effect.andThen(Effect.failCause(cause)),
                       )
                     : Effect.logWarning("pull request stack lookup failed", {
@@ -350,7 +340,6 @@ export const make = Effect.gen(function* () {
       );
     });
 
-    // Failed host reads by reason: how many, and the first key that failed that way.
     const skips = new Map<string, { count: number; readonly key: string }>();
     const readGroup = (key: string, entries: ReadonlyArray<LinkEntry>, pauseKey: string) =>
       syncGroup(key, entries).pipe(
@@ -404,7 +393,6 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.catchCause(logSkipped("pull request sync sweep failed", {}))),
   );
 
-  // Threads whose current run ran a merge or close command, until that run ends.
   const closeCommandThreads = new Set<ThreadId>();
   const refreshOpenLinks = (threadId: ThreadId) =>
     projections.getThreadsWithPullRequests(threadId).pipe(
@@ -426,8 +414,6 @@ export const make = Effect.gen(function* () {
     "PullRequestSyncReactor.start",
   )(function* () {
     const events = engine.streamDomainEvents;
-    // A client reading a pull request, or its branch status, can see it merge or close before
-    // the next sweep does.
     const stateChanges = Stream.merge(
       yield* pullRequests.subscribeStateChanges,
       yield* git.subscribePullRequestStateChanges,

@@ -462,7 +462,6 @@ export function buildReviewSectionItems(input: {
   return [...turnItems, ...visibleGitItems];
 }
 
-/** Prefers Changes, then the first section (a turn when the project is not a git repo). */
 export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {

@@ -53,7 +53,6 @@ export class OpenCodeServerLedger extends Context.Service<
     readonly track: (server: {
       readonly pid: number;
       readonly port: number;
-      /** The argv after the binary, e.g. `["serve", "--hostname=127.0.0.1", "--port=4096"]`. */
       readonly args: ReadonlyArray<string>;
     }) => Effect.Effect<Effect.Effect<void>>;
   }
@@ -94,9 +93,7 @@ const parseDarwinPs = (output: string): ReadonlyArray<ObservedProcess> =>
 const signalGroup = (pgid: number, signal: NodeJS.Signals) => {
   try {
     signalProcessGroup(pgid, signal);
-  } catch {
-    // The group may already be gone.
-  }
+  } catch {}
 };
 
 const groupExists = (pgid: number) => {
@@ -108,10 +105,6 @@ const groupExists = (pgid: number) => {
   }
 };
 
-/**
- * Builds a ledger for one state directory. `ownerPid` is the T3 server that
- * owns the servers it tracks; it defaults to this process.
- */
 export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   readonly stateDir: string;
   readonly ownerPid?: number;
@@ -124,7 +117,6 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   // Windows servers are not detached and are never recorded.
   const recordable = platform === "linux" || platform === "darwin";
 
-  /** Observes `pid`, or nothing when it is not in `group` (if given). */
   const observeLinux = (pid: number, group?: number) =>
     Effect.gen(function* () {
       const stat = yield* fs.readFileString(`/proc/${pid}/stat`);
@@ -308,7 +300,6 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       ),
     );
 
-  /** Stops recorded servers whose owning T3 server is gone and drops stale entries. */
   const reapOrphans = Effect.gen(function* () {
     const names = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
@@ -321,7 +312,6 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   return { track, reapOrphans };
 });
 
-/** Tracks servers under `stateDir`, the server's own state directory. */
 export const layer = (input: { readonly stateDir: string }) =>
   Layer.effect(
     OpenCodeServerLedger,
@@ -333,7 +323,6 @@ export const layer = (input: { readonly stateDir: string }) =>
     }),
   );
 
-/** Records nothing. For tests that start OpenCode servers without a state directory. */
 export const layerTest = Layer.succeed(
   OpenCodeServerLedger,
   OpenCodeServerLedger.of({ track: () => Effect.succeed(Effect.void) }),

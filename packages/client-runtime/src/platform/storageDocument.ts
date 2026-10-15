@@ -92,11 +92,6 @@ function removeRouteMetadata(
   };
 }
 
-/**
- * An environment's saved routes in preference order. Targets of one
- * environment keep their relative order in `targets`, so a document written
- * before routes existed is one environment with one route.
- */
 export function catalogRoutes(
   document: ConnectionCatalogDocument,
   environmentId: EnvironmentId,
@@ -105,10 +100,9 @@ export function catalogRoutes(
 }
 
 /**
- * Replaces an environment's routes with `routes`, preferred first. Records
- * owned by a dropped route go with it; the environment keeps its position in
- * the catalog. An empty list leaves the environment's other records in place;
- * use `removeConnectionFromCatalog` to forget the environment.
+ * Records owned by a dropped route go with it; the environment keeps its
+ * position in the catalog. An empty list leaves the environment's other records
+ * in place; use `removeConnectionFromCatalog` to forget the environment.
  */
 export function setRoutesInCatalog(
   document: ConnectionCatalogDocument,

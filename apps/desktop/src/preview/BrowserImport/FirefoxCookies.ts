@@ -1,13 +1,7 @@
 /**
- * Firefox cookie extraction.
- *
- * Firefox stores cookies unencrypted in `cookies.sqlite`, so there is no key
- * to fetch and no consent prompt — the file is readable by anything running as
- * the user. That is Mozilla's design choice, not a control being circumvented,
- * which is why this path works identically on macOS, Windows, and Linux while
- * the Chromium one needs a per-platform credential store.
- *
- * @module FirefoxCookies
+ * Firefox stores cookies unencrypted in `cookies.sqlite`, so there is no key to
+ * fetch and no consent prompt — the file is readable by anything running as the
+ * user.
  */
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
@@ -16,25 +10,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { cookieScope, snapshotCookieDatabase, type ImportedCookie } from "./CookieDatabase.ts";
 
-/**
- * Mirrors `ChromiumCookieReadError` so both engines fail with a tagged error
- * the service can tell apart, rather than one of them widening the channel to
- * an anonymous shape.
- *
- * No `reason` field: unlike Chromium there is only one way this fails — the
- * plaintext database would not open — and the tag already says which engine it
- * was. `BrowserImport` supplies the user-facing reason when it maps the union.
- */
 export class FirefoxCookieReadError extends Schema.TaggedError<FirefoxCookieReadError>()(
   "FirefoxCookieReadError",
   {
-    /**
-     * Which database the read was for. Firefox keeps one per profile, so
-     * without it a failure cannot be traced back to the profile that caused
-     * it.
-     */
     cookieDatabasePath: Schema.String,
-    /** Always present: every construction site wraps a real failure. */
     cause: Schema.Defect(),
   },
 ) {
@@ -86,13 +65,10 @@ const CookieRow = Schema.Struct({
   name: Schema.String,
   value: Schema.String,
   path: Schema.String,
-  // UNIX-epoch based, unlike Chromium's 1601-based microseconds — but the
-  // unit depends on the schema version; see `expiryToSeconds`.
   expiry: Schema.Number,
   isSecure: Schema.Number,
   isHttpOnly: Schema.Number,
   sameSite: Schema.NullOr(Schema.Number),
-  // Present only for schemas 10–14; selected as NULL elsewhere.
   rawSameSite: Schema.NullOr(Schema.Number),
 });
 const decodeCookieRows = Schema.decodeUnknownEffect(Schema.Array(CookieRow));
@@ -125,11 +101,11 @@ export const readFirefoxCookies = Effect.fn("FirefoxCookies.readFirefoxCookies")
       const hasRawSameSite =
         schemaVersion >= FIREFOX_RAW_SAMESITE_FIRST_SCHEMA &&
         schemaVersion <= FIREFOX_RAW_SAMESITE_LAST_SCHEMA;
-      // Only the default container. Firefox isolates cookies per container and
-      // per private window via `originAttributes` (`^userContextId=2`,
-      // `^privateBrowsingId=1`); Electron has no equivalent, so importing them
-      // all would collapse several identities onto one host/name/path and hand
-      // the profile an arbitrary container's session.
+      // Firefox isolates cookies per container and per private window via
+      // `originAttributes` (`^userContextId=2`, `^privateBrowsingId=1`);
+      // Electron has no equivalent, so importing them all would collapse
+      // several identities onto one host/name/path and hand the profile an
+      // arbitrary container's session.
       const raw = hasRawSameSite
         ? yield* sql`
           select host, name, value, path, expiry, isSecure, isHttpOnly, sameSite, rawSameSite

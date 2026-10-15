@@ -1,7 +1,4 @@
 const motionTiming = { duration: 150, easing: "ease-out" };
-// Rows normally ride their displaced neighbour's travel. Absent a moving
-// neighbour, a row still travels on its own, clamped so a tall card does not
-// slide its full height.
 const rowTravel = (height: number) => Math.min(height, 40);
 // A project filter change or a bulk snooze swaps a large part of the list at
 // once. Fades are the expensive part: every removed row gets a deep clone and
@@ -29,8 +26,6 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const running = new Map<HTMLElement, { animation: Animation; offset: number }>();
   const entering = new Map<HTMLElement, { animation: Animation; travel: number }>();
   const exiting = new Map<HTMLElement, Animation>();
-  // Visual tops at drag release, relative to the list, so the release
-  // commit can glide every row from where dnd-kit left it into its slot.
   let released: Map<HTMLElement, number> | null = null;
 
   const remainingOffset = (node: HTMLElement) => {
@@ -177,10 +172,6 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       };
       if (!shouldAnimate) clearFades();
       else {
-        // A shelf that opens above its collapsed anchor shifts every retained
-        // row by the same amount. Entering rows take that same displacement so
-        // the shelf arrives as one moving block instead of rows popping into
-        // their final slots; exiting rows leave by it.
         for (const [node, position] of next) {
           const previousTop = positions!.get(node)?.top;
           if (previousTop === undefined || previousTop === position.top) continue;

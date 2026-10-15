@@ -2,7 +2,6 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
-/** Coding agent home directories the scanner knows how to read. */
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex"]);
 export type AgentSessionSource = typeof AgentSessionSource.Type;
 
@@ -20,23 +19,13 @@ export const AgentSessionImportSource = Schema.Struct({
 });
 export type AgentSessionImportSource = typeof AgentSessionImportSource.Type;
 
-/**
- * Empty for now. Kept as a struct so future scan options (source filters,
- * explicit roots) can be added without a new method.
- */
 export const AgentSessionScanInput = Schema.Struct({});
 export type AgentSessionScanInput = typeof AgentSessionScanInput.Type;
 
 /**
- * A directory that at least one agent CLI has run in, suitable for import as a
- * T3 Code project. `alreadyImported` marks candidates that already have an
- * active project rooted at the same path.
- */
-/**
- * Git identity of a candidate directory, read from `.git/config` without
- * spawning git. `remoteKey` is the normalized origin URL, shared by every
- * clone of the same repository so the client can group them. `repository`
- * is the GitHub `owner/name` when the origin is on GitHub.
+ * `remoteKey` is the normalized origin URL, shared by every clone of the same
+ * repository so the client can group them. `repository` is the GitHub
+ * `owner/name` when the origin is on GitHub.
  */
 export const AgentSessionProjectGit = Schema.Struct({
   remoteKey: Schema.NullOr(Schema.String),

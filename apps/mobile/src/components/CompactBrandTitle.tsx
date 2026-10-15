@@ -18,9 +18,6 @@ export function brandTitleOffset(): number {
   return Platform.isPad && !NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? IPAD_HOME_TITLE_OFFSET : 0;
 }
 
-/**
- * Compact brand lockup sized for native navigation bars.
- */
 export function CompactBrandTitle(
   props: {
     readonly allowFontScaling?: boolean;

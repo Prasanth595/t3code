@@ -119,9 +119,7 @@ export interface ThreadMoveAvailability {
  * Batch form of "call `createThreadMovePlanner` once per card": one pass over
  * the section answers up/down availability for every ordered row, so list
  * construction stays linear instead of one full planner probe (array copies,
- * hidden-key rescans) per row on the minute-tick rebuild path. The mirror of
- * the planner's plan rules lives in the body below; the reference-parity test
- * pins them row-by-row, including adversarial keys and hidden reservations.
+ * hidden-key rescans) per row on the minute-tick rebuild path.
  */
 export function computeThreadMoveAvailability(input: {
   readonly ordered: readonly OrderRow[];
@@ -131,10 +129,8 @@ export function computeThreadMoveAvailability(input: {
   readonly pendingOrder?: PendingThreadOrder | null;
 }): Map<string, ThreadMoveAvailability> {
   const result = new Map<string, ThreadMoveAvailability>();
-  // A reorder in flight locks the whole list until its receipt lands.
   if (input.pendingOrder != null) return result;
   const rows = input.ordered;
-  // With no neighbor there is no up/down move, so skip the allThreads indexes.
   if (rows.length < 2) {
     for (const row of rows) result.set(rowId(row), { canMoveUp: false, canMoveDown: false });
     return result;
@@ -161,20 +157,14 @@ export function computeThreadMoveAvailability(input: {
     if (key != null && !indexById.has(id)) reservedKeys.add(key);
   });
   // Mirror of `planPinnedReorder` for adjacent swaps, hoisted so every row is
-  // answered in O(1) amortized instead of one planner probe per row:
-  //
-  // Fast path (both neighbors keyed): the fresh key between the landing
-  // neighbors, walking forward while hidden reserved keys block it. The walk
-  // depends only on the neighbor key pair - each adjacency is probed by at
-  // most two rows (down of the left member, up of the right member) - so the
-  // memo keeps even a fully adversarial reserved-key layout linear per build.
-  //
-  // Rewrite path (keyless/unusable neighbor, or key space exhausted): fresh
-  // spread keys for every row; only positions whose current key differs get
-  // written. A swap permutes two rows without changing the multiset, so the
-  // assignment set differs from the unswapped baseline at at most those two
-  // positions, and mismatch/writability tallies computed once per section
-  // answer each row with a constant-size delta.
+  // answered in O(1) amortized instead of one planner probe per row: The walk
+  // depends only on the neighbor key pair - each adjacency is probed by at most
+  // two rows (down of the left member, up of the right member) - so the memo
+  // keeps even a fully adversarial reserved-key layout linear per build. A swap
+  // permutes two rows without changing the multiset, so the assignment set
+  // differs from the unswapped baseline at at most those two positions, and
+  // mismatch/writability tallies computed once per section answer each row with
+  // a constant-size delta.
   const midpoints = new Map<string, string | null>();
   const fastPathKey = (beforeKey: string | null, afterKey: string | null): string | null => {
     const memoKey = `${beforeKey ?? ""}\u0000${afterKey ?? ""}`;
@@ -197,8 +187,6 @@ export function computeThreadMoveAvailability(input: {
     baselineWrites += 1;
     if (!writableRow[position]) baselineUnwritableWrites += 1;
   }
-  // `movedId` swaps with its neighbor; ids at the two swapped positions change,
-  // so only their tally contributions are recomputed.
   const rewriteViable = (index: number): boolean => {
     let writes = baselineWrites;
     let unwritableWrites = baselineUnwritableWrites;
@@ -208,7 +196,6 @@ export function computeThreadMoveAvailability(input: {
         writes -= 1;
         if (!writableRow[position]) unwritableWrites -= 1;
       }
-      // After the swap this position holds the row that was at `other`.
       if (currentKeys[other] !== spreadKeys[position]) {
         writes += 1;
         if (!writableRow[other]) unwritableWrites += 1;
@@ -231,10 +218,6 @@ export function computeThreadMoveAvailability(input: {
     const adjacentAvailable = (towardUp: boolean): boolean => {
       const shifted = index + (towardUp ? -1 : 1);
       if (shifted < 0 || shifted >= orderedIds.length) return false;
-      // The swap exchanges the row with its neighbor; afterwards the moved row
-      // sits at `shifted` between `beforeIndex` and `afterIndex` of the OLD
-      // order: moving up it lands between old(index-2) and old(index-1),
-      // moving down between old(index+1) and old(index+2).
       const beforeIndex = towardUp ? index - 2 : index + 1;
       const afterIndex = towardUp ? index - 1 : index + 2;
       const beforeId = beforeIndex < 0 ? null : (orderedIds[beforeIndex] ?? null);
@@ -243,10 +226,8 @@ export function computeThreadMoveAvailability(input: {
       const afterKey = afterId === null ? null : (keysById.get(afterId) ?? null);
       if ((beforeId === null || beforeKey != null) && (afterId === null || afterKey != null)) {
         const key = fastPathKey(beforeKey, afterKey);
-        // A fresh key is a single-write plan for the (writable) moved row.
         if (key !== null) return true;
       }
-      // Keyless neighbor or exhausted key space: the section rewrite runs.
       return rewriteViable(Math.min(index, shifted));
     };
     result.set(movedId, {
@@ -328,7 +309,6 @@ export function threadDropLifecycle(
 
 export type ThreadDragSection = "pinned" | "active" | "snoozed" | "settled";
 
-/** The action shown during hover describes the lifecycle change made on drop. */
 export function threadDragAction(source: ThreadDragSection, destination: ThreadDragSection) {
   if (destination === "snoozed") return null;
   if (destination === "settled") return source === "settled" ? null : "Settle";

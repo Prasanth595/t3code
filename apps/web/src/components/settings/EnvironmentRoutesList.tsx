@@ -36,11 +36,6 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-/**
- * The ways this client reaches one saved machine, preferred first. Drag to
- * reorder; the first route that answers is used and the connection moves back
- * up when a better one is reachable again. Shown under the machine's row.
- */
 export function EnvironmentRoutesList({
   environment,
   onAddRoute,

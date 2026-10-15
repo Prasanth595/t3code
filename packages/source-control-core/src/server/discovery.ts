@@ -1,8 +1,3 @@
-/**
- * Discovery specs: how each provider reports its CLI or API, and the shared probe that runs them.
- *
- * @module source-control-core/server/discovery
- */
 import * as NodeUtil from "node:util";
 import {
   VcsProcessSpawnError,
@@ -82,8 +77,6 @@ type SourceControlCliRemoteRefinementSpec = SourceControlCliDiscoverySpec & {
   readonly refineUnknownRemote: NonNullable<SourceControlCliDiscoverySpec["refineUnknownRemote"]>;
 };
 
-// Most provider CLIs answer `--version` in well under a second, so a short budget keeps
-// discovery snappy. Specs whose CLI is known to be slower can raise it via probeTimeoutMs.
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 
 function probeTimeoutMs(spec: SourceControlCliDiscoverySpec): number {

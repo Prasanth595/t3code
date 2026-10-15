@@ -11,7 +11,6 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 
-/** Root actions stay in the header; UIKit owns the bottom compose button. */
 export function WorkspaceToolbar(props: {
   readonly onNewTask: () => void;
   readonly sidebar?: boolean;

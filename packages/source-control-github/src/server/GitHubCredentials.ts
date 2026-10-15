@@ -35,7 +35,6 @@ export interface GitHubCredential {
   readonly fingerprint: string;
 }
 
-/** Nothing in the environment, and no `gh` on PATH to ask. */
 export class GitHubCliMissingError extends Schema.TaggedError<GitHubCliMissingError>()(
   "GitHubCliMissingError",
   { host: Schema.String },
@@ -45,7 +44,6 @@ export class GitHubCliMissingError extends Schema.TaggedError<GitHubCliMissingEr
   }
 }
 
-/** `gh` is installed but holds no login for the host, or not the account chosen in Settings. */
 export class GitHubNotSignedInError extends Schema.TaggedError<GitHubNotSignedInError>()(
   "GitHubNotSignedInError",
   { host: Schema.String, account: Schema.optional(Schema.String) },
@@ -57,7 +55,6 @@ export class GitHubNotSignedInError extends Schema.TaggedError<GitHubNotSignedIn
   }
 }
 
-/** The user turned the host off in Settings. */
 export class GitHubHostDisabledError extends Schema.TaggedError<GitHubHostDisabledError>()(
   "GitHubHostDisabledError",
   { host: Schema.String },
@@ -67,7 +64,6 @@ export class GitHubHostDisabledError extends Schema.TaggedError<GitHubHostDisabl
   }
 }
 
-/** `gh auth token` timed out or failed for a reason other than having no login. */
 export class GitHubCliFailedError extends Schema.TaggedError<GitHubCliFailedError>()(
   "GitHubCliFailedError",
   { host: Schema.String, cause: Schema.Defect() },
@@ -77,17 +73,12 @@ export class GitHubCliFailedError extends Schema.TaggedError<GitHubCliFailedErro
   }
 }
 
-/** There is no token for the host. */
 export type GitHubCredentialUnavailableError =
   | GitHubCliMissingError
   | GitHubNotSignedInError
   | GitHubHostDisabledError
   | GitHubCliFailedError;
 
-/**
- * Where GitHub tokens come from. Callers ask per host and never see how the token was found,
- * so another source (an in-app OAuth login) slots in here without touching any of them.
- */
 export class GitHubCredentials extends Context.Service<
   GitHubCredentials,
   {
@@ -137,11 +128,9 @@ export const make = Effect.gen(function* () {
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
 
-  /** `host:sha256(token)`, safe for cache keys and rate-limit scopes. */
   const fingerprintOf = (host: string, token: string) =>
     crypto.digest("SHA-256", new TextEncoder().encode(token)).pipe(
       Effect.map((digest) => `${host}:${Hex.encode(digest)}`),
-      // Hashing a string in memory has no platform failure worth a typed error.
       Effect.orDie,
     );
 
@@ -186,14 +175,12 @@ export const make = Effect.gen(function* () {
       settings.sourceControlHosts[GitHubClient.definition.kind],
     );
 
-  /** The Settings choice for a host; unreadable settings fall back to gh's own choice. */
   const hostChoice = (host: string) =>
     sourceControlHost.settings.get.pipe(
       Effect.map((settings) => readSettings(settings).hosts[host]),
       Effect.orElseSucceed(() => undefined),
     );
 
-  /** A token saved in Settings for the host, read fresh so a saved or removed one applies at once. */
   const savedToken = (host: string) =>
     sourceControlHost.settings.get.pipe(
       Effect.map((settings) => readSettings(settings).tokens[host]?.trim() || null),

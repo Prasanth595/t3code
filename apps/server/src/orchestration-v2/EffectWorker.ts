@@ -64,8 +64,8 @@ export function isNonRetryableProviderTurnControlFailure(
 
 export interface OrchestrationEffectExecutorV2Shape {
   /**
-   * Runs one claimed effect. `willRetry` is true when the worker will retry a
-   * failure, so a step can fail and try again instead of settling the run.
+   * `willRetry` is true when the worker will retry a failure, so a step can
+   * fail and try again instead of settling the run.
    */
   readonly execute: (
     effect: EffectOutbox.OrchestrationEffectV2,
@@ -426,9 +426,6 @@ export const layerExecutor: Layer.Layer<
                   : { restoreFiles: effect.request.restoreFiles }),
               })
               .pipe(
-                // The last failed attempt tells waiting clients it failed,
-                // instead of leaving them to time out. Clients get a fixed
-                // message; the worker logs the full cause for each attempt.
                 Effect.tapCause((cause) =>
                   willRetry || Cause.hasInterruptsOnly(cause)
                     ? Effect.void

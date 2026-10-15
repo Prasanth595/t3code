@@ -141,9 +141,6 @@ export const AgentRpcs = RpcGroup.make(
   SetSessionConfigOptionRpc,
 );
 
-// Registry agents transition independently. The compatibility groups accept
-// both protocol generations on the wire while the public client normalizes
-// them into one provider-neutral surface after initialize negotiates v1 or v2.
 const CompatInitializeRpc = Rpc.make(AGENT_METHODS.initialize, {
   // The negotiation request intentionally carries both v1 and v2 capability
   // field names. A union encoder would select one branch and discard the

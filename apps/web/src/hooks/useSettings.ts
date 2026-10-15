@@ -1,14 +1,3 @@
-/**
- * Environment-scoped settings hooks.
- *
- * Abstracts the split between server-authoritative settings (persisted in
- * `settings.json` on the server, fetched via `server.getConfig`) and
- * client-only settings (persisted in localStorage).
- *
- * Live server settings always require an environment id. Primary-environment
- * access is intentionally named as such so environment-sensitive consumers
- * cannot silently read the wrong server's settings.
- */
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, use } from "react";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
@@ -246,8 +235,6 @@ export async function persistClientSettingsUpdate(
   });
 }
 
-// ── Key sets for routing patches ─────────────────────────────────────
-
 const SERVER_SETTINGS_KEYS = new Set<string>(Struct.keys(ServerSettings.fields));
 
 function splitPatch(patch: UnifiedSettingsPatch): {
@@ -269,25 +256,15 @@ function splitPatch(patch: UnifiedSettingsPatch): {
   };
 }
 
-// ── Hooks ────────────────────────────────────────────────────────────
-
-/**
- * Non-hook accessor for the current merged client settings snapshot.
- * Used by non-React code paths (e.g. runtime services) that need the latest
- * settings without subscribing.
- */
 export function getClientSettings(): ClientSettings {
   return getClientSettingsSnapshot();
 }
 
 /**
- * Resolves after settings load or storage confirms no saved settings exist.
- * Failed reads reject and remain retryable. They must not allow defaults to
- * overwrite saved preferences.
- *
- * The pre-hydration snapshot is just the schema defaults, so imperative paths
- * that open a preview must await this or they bake the built-in viewport, zoom
- * and appearance into a tab that never picks up the user's saved values.
+ * Failed reads reject and remain retryable. They must not allow defaults to overwrite saved
+ * preferences. The pre-hydration snapshot is just the schema defaults, so imperative paths that
+ * open a preview must await this or they bake the built-in viewport, zoom and appearance into a
+ * tab that never picks up the user's saved values.
  */
 export function ensureClientSettingsHydrated(): Promise<void> {
   return hydrateClientSettings();
@@ -332,7 +309,6 @@ export function mergeEnvironmentSettings(
 
 const pendingModelPreferencesMigrations = new Set<EnvironmentId>();
 
-/** Seed saved client preferences once without overwriting another client's edits. */
 export function useMigrateModelPreferences(
   environmentId: EnvironmentId | null,
   settings: ServerSettings | null,
@@ -413,13 +389,10 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
 }
 
 /**
- * Whether the legacy sidebar (Settings → General → Legacy features) replaces
- * the default one.
- *
- * Held at the default sidebar until client settings hydrate: the pre-hydration
- * snapshot is just the schema defaults, so resolving against it could mount one
- * sidebar and then swap it out once persisted settings land — remounting the
- * whole tree for everyone instead of only for legacy opt-ins.
+ * Held at the default sidebar until client settings hydrate: the pre-hydration snapshot is just
+ * the schema defaults, so resolving against it could mount one sidebar and then swap it out
+ * once persisted settings land — remounting the whole tree for everyone instead of only for
+ * legacy opt-ins.
  */
 export function useLegacySidebarEnabled(): boolean {
   const settingsHydrated = useClientSettingsHydrated();
@@ -536,7 +509,6 @@ export function useToggleEnvironmentModelFavorite(environmentId: EnvironmentId |
 
 const noEnvironmentSettingsAtom = Atom.make<ServerSettings | null>(null);
 
-/** Model pickers may render before a settings target has been selected. */
 export function useEnvironmentModelPreferences(environmentId: EnvironmentId | null) {
   const settings = useAtomValue(
     environmentId ? serverEnvironment.settingsValueAtom(environmentId) : noEnvironmentSettingsAtom,
@@ -549,7 +521,6 @@ export function useEnvironmentModelPreferences(environmentId: EnvironmentId | nu
   );
 }
 
-/** Read current settings for one environment, merged with client-local preferences. */
 export function useEnvironmentSettings<T = UnifiedSettings>(
   environmentId: EnvironmentId,
   selector?: (settings: UnifiedSettings) => T,
@@ -574,7 +545,6 @@ export function usePersistEnvironmentProviderInstanceMutation(environmentId: Env
   );
 }
 
-/** Primary-only settings access for the settings UI and other explicitly global surfaces. */
 export function usePrimarySettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
@@ -601,7 +571,6 @@ export function usePrimarySettingsAvailable(): boolean {
   return primaryEnvironment !== null || !isHostedStaticApp();
 }
 
-/** Connected sync targets, excluding grants already known to forbid settings writes. */
 function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<EnvironmentId> {
   const { environments } = useEnvironments();
   const writableTargetsAtom = useMemo(
@@ -627,16 +596,11 @@ function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<E
 }
 
 /**
- * Returns an updater that routes each key to the correct backing store.
- *
- * Server keys are optimistically patched in atom-backed server state, then
- * persisted via RPC. Shared server keys (see `SHARED_SERVER_SETTING_KEYS`)
- * are written to every eligible sync target, not only the selected target, so
- * a user preference does not silently drift between machines. Client keys go
- * through client persistence.
+ * Shared server keys (see `SHARED_SERVER_SETTING_KEYS`) are written to every eligible sync
+ * target, not only the selected target, so a user preference does not silently drift between
+ * machines.
  */
 function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
-  // Mount this session even on pages without a visible permission-gated control.
   useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const persist = useAtomCommand(serverEnvironment.updateSettings, {
     label: "server settings update",

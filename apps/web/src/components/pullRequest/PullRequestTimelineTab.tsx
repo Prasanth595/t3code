@@ -50,7 +50,6 @@ import {
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
-/** What every comment on the timeline needs to react; only the subject differs between them. */
 interface ReactionSurface {
   readonly canReact: boolean;
   readonly environmentId: EnvironmentId;
@@ -439,11 +438,6 @@ function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
   );
 }
 
-/**
- * A verdict, as its own row rather than a line inside a collapsed conversation. It wears the
- * reviewer's face on the rail and the verdict's own icon beside their name, so "approved" reads
- * at a glance from the same place a merge or a commit does.
- */
 function ReviewVerdictEvent({
   event,
   outcome,
@@ -473,10 +467,7 @@ function ReviewVerdictEvent({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
             <ActorName actor={event.actor} />
-            {/* The word alone, in the verdict's own colour — green for an approval, red for a
-                request for changes. A verdict overtaken by later commits keeps its word and
-                loses that colour: it still happened, and it no longer speaks for what is on the
-                branch. Lowercased in the styling rather than the string, so what a screen reader
+            {/* Lowercased in the styling rather than the string, so what a screen reader
                 announces stays the label every other surface uses. */}
             <Tooltip disabled={!stale}>
               <TooltipTrigger
@@ -522,8 +513,6 @@ function ReviewVerdictEvent({
         ) : null}
         <OpenOnHostButton url={event.url} onOpen={onOpen} />
       </div>
-      {/* An approval usually carries no words. When it does they are the review, so they stay
-          visible rather than being folded away with the ordinary conversation. */}
       {event.body ? (
         <TimelineBody
           body={event.body}
@@ -565,8 +554,6 @@ export function PullRequestTimelineTab({
     reference,
     onRefresh,
   };
-  // A timeline entry keeps only what it draws, so the remarks this reader may rewrite are looked
-  // up here by the id the entry carries.
   const editable = new Map(
     detail.comments
       .filter((comment) => canEditPullRequestComment(detail, comment))

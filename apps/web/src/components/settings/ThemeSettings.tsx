@@ -129,8 +129,6 @@ function ThemeLibraryCard({
     onSelectAndUse: (themeIndex: number, mode: ThemeAppearance) => void;
   };
 }) {
-  // A one-appearance theme can only take its own side of the mix, so the card
-  // tooltip promises exactly what clicking it does.
   const cardModes = theme.previews.map((preview) => preview.mode);
   const [radialModeOpen, setRadialModeOpen] = useState<ThemeAppearance | null>(null);
   const radialModeGroups = (["light", "dark"] as const).map((mode) => {
@@ -624,9 +622,6 @@ export function ThemeLibrary({
     themeRemovalTarget,
   ]);
 
-  // ----- Automatic-mode mixing -------------------------------------------
-  // The pair model: one theme owns light, one owns dark, and the global
-  // appearance mode (light / dark / auto) decides which is showing.
   const baseCardId = getThemeDefinition(theme)?.id ?? null;
   const lightOwner = themeHalves?.light ?? baseCardId;
   const darkOwner = themeHalves?.dark ?? baseCardId;
@@ -666,8 +661,6 @@ export function ThemeLibrary({
     ],
   );
 
-  // "Create theme" starts from whatever is on screen for the appearance being
-  // edited, so tuning the theme you already use never means rebuilding it.
   const activeThemeForAppearance =
     getThemeDefinition((initialAppearance === "light" ? lightOwner : darkOwner) ?? "") ?? null;
 
@@ -686,15 +679,11 @@ export function ThemeLibrary({
     if (!setAppearanceMode(mode)) notifyThemeSaveFailure();
   };
 
-  // ----- Wireframe tiles on top, two-ball cards below --------------------
   const handlePairPick = (cardId: string | null) => (mode: ThemeMode) => {
     if (mode === "system") return;
     assignHalf(mode, cardId);
   };
 
-  // Rings always show the effective owner of each appearance: an unpicked
-  // half belongs to the default card (a null owner), so a fresh install
-  // shows T3 Code selected instead of nothing.
   const pickedModesFor = (cardId: string | null): ThemeMode[] => {
     const rings: ThemeMode[] = [];
     if (lightOwner === cardId) rings.push("light");
@@ -769,9 +758,7 @@ export function ThemeLibrary({
 
   const renderPairGrid = () => (
     // One shared provider so every tooltip in the grid hands off instantly to
-    // the next hovered trigger instead of stacking on top of it. The card
-    // tooltip briefly showing while crossing between a card's two circles is
-    // accepted — scoping the group tighter makes the handoffs feel sluggish.
+    // the next hovered trigger instead of stacking on top of it.
     <TooltipProvider>
       <div
         className="grid w-full gap-2"
@@ -935,8 +922,6 @@ export function ThemeLibrary({
           );
         }}
         onImported={(importedTheme) => {
-          // Same rule as clicking the card: a one-appearance theme takes its
-          // side of the mix instead of becoming the base for both.
           const modes = getThemeModes(importedTheme);
           if (modes.length === 1) {
             assignHalf(modes[0]!, importedTheme.id);

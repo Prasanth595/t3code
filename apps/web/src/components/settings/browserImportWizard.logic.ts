@@ -37,11 +37,6 @@ export function resolveWizardTarget(
   };
 }
 
-/**
- * What the import wizard produces once it has actually tried to import. The
- * parent runs the import and classifies the result; the wizard only reacts to
- * it, which keeps the step transitions pure and testable.
- */
 export type ImportOutcome =
   | {
       readonly kind: "imported";
@@ -52,10 +47,6 @@ export type ImportOutcome =
     }
   | { readonly kind: "blocked"; readonly reason: BrowserImportFailureReason };
 
-/**
- * The wizard's screens. Every one is a place the user can act from — there are
- * no dead ends. `blocked` covers the reasons no local step recovers.
- */
 export type WizardStep =
   | { readonly step: "quit" }
   | {
@@ -80,11 +71,6 @@ export function canCloseWizard(step: WizardStep): boolean {
   return step.step !== "importing";
 }
 
-/**
- * Where the wizard opens for a source. A running browser is the one thing we
- * know up front, from the source listing; everything else is discovered by
- * trying, so the wizard starts by letting the user choose what to import.
- */
 export function initialWizardStep(source: BrowserImportSource): WizardStep {
   if (source.unavailable === "browserRunning") return { step: "quit" };
   if (source.unavailable === "needsFullDiskAccess") {
@@ -95,7 +81,6 @@ export function initialWizardStep(source: BrowserImportSource): WizardStep {
   return { step: "configure" };
 }
 
-/** Where an attempted import lands the wizard, by how it turned out. */
 export function outcomeToStep(outcome: ImportOutcome): WizardStep {
   if (outcome.kind === "imported") {
     return {
@@ -106,9 +91,6 @@ export function outcomeToStep(outcome: ImportOutcome): WizardStep {
       targetName: outcome.targetName,
     };
   }
-  // A browser that reopened mid-import routes back to the quit screen; every
-  // other failure surfaces on the blocked screen, which offers a retry when
-  // one could help.
   if (outcome.reason === "browserRunning") return { step: "quit" };
   if (outcome.reason === "needsFullDiskAccess") {
     // The failed import already checked access, so explain that it is still
@@ -118,19 +100,16 @@ export function outcomeToStep(outcome: ImportOutcome): WizardStep {
   return { step: "blocked", reason: outcome.reason };
 }
 
-/** Where a fresh availability check lands the wizard after the user quits. */
 export function refreshedSourceStep(source: BrowserImportSource | undefined): WizardStep {
   if (source === undefined) return { step: "blocked", reason: "unknownSource" };
   return initialWizardStep(source);
 }
 
-/** A denied FDA recheck returns to the permission step with visible feedback. */
 export function fullDiskAccessRecheckStep(source: BrowserImportSource | undefined): WizardStep {
   const next = refreshedSourceStep(source);
   return next.step === "fullDiskAccess" ? { ...next, checked: true } : next;
 }
 
-/** Preserve the chosen source profile when a post-quit refresh still lists it. */
 export function refreshedSourceProfileDirectory(
   currentDirectory: string,
   source: BrowserImportSource,
@@ -162,10 +141,6 @@ export function isRetryableReason(reason: BrowserImportFailureReason): boolean {
   }
 }
 
-/**
- * Names the sites whose cookies were skipped: "example.com and google.com",
- * or "a, b, c and 4 more" past a few, so the line stays short.
- */
 export function formatSkippedDomains(domains: ReadonlyArray<string>): string {
   if (domains.length === 0) return "";
   if (domains.length === 1) return domains[0]!;

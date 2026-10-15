@@ -108,9 +108,8 @@ export function shortcutModifierStateAfterKeyboardEvent(
     // Flags on non-modifier keys may only clear a bit, never set one. After a
     // dictation tool's synthetic ⌘V (Wispr Flow), the browser can keep
     // reporting metaKey=true on real key events (Enter to submit) until the
-    // user physically taps ⌘. Trusting that flag would mark ⌘ as held and
-    // stick the thread jump hints. Setting a bit requires a real modifier
-    // keydown, handled above.
+    // user physically taps ⌘. Trusting that flag would mark ⌘ as held and stick
+    // the thread jump hints.
     nextState = {
       metaKey: currentState.metaKey && event.metaKey,
       ctrlKey: currentState.ctrlKey && event.ctrlKey,

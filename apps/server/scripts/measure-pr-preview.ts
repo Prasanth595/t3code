@@ -1,7 +1,5 @@
-// Run with: node apps/server/scripts/measure-pr-preview.ts owner/repo 123 456
 // Numbers form a session with shared repository-permission caches. Browser and
-// service caches are excluded. Uses real GitHub reads, without a server or database.
-// Each GraphQL read asks for `rateLimit` here, so its cost is read off its own answer.
+// service caches are excluded.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Console from "effect/Console";
@@ -38,7 +36,6 @@ const decodeCost = Schema.decodeUnknownOption(
     }),
   ),
 );
-/** The query with GitHub's own count of what it cost, for a read rather than a mutation. */
 function withRateLimit(query: string): string {
   const end = query.lastIndexOf("}");
   return query.trimStart().startsWith("mutation") || end === -1
@@ -51,7 +48,6 @@ const sourceControlHost = ServerSourceControlHost.layer.pipe(
   Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
   Layer.provide(GitVcsDriver.layer),
   Layer.provide(ServerSettings.layerTest()),
-  // A scratch state directory, so nothing here touches a real T3 home.
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-measure-pr-preview-" })),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),

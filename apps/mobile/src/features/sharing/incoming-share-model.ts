@@ -55,7 +55,7 @@ export function decodeIncomingShareDraft(value: unknown): IncomingShareDraft {
 /**
  * `file:` path with the iOS `/private` prefix stripped, so URIs that reach the
  * same file through the `/var` symlink and through `/private/var` compare
- * equal. Null for anything that is not a `file:` URI.
+ * equal.
  */
 function normalizedFileUriPath(uri: string): string | null {
   try {
@@ -239,9 +239,7 @@ function fallbackName(uri: string, index: number, mimeType: string): string {
     if (pathName) {
       return decodeURIComponent(pathName);
     }
-  } catch {
-    // Fall through to a deterministic attachment name.
-  }
+  } catch {}
   const family = mimeType.split("/")[0]?.toLowerCase();
   const kind = family === "image" || family === "audio" || family === "video" ? family : "file";
   const extension =
@@ -339,10 +337,9 @@ export async function buildIncomingShareDraft(input: {
         }
         if (persistedFileUri === undefined && input.fileReader.persistFile) {
           persistedFileUri = await input.fileReader.persistFile(uri, name);
-          // An Android content: source can misreport its size while the
-          // stored copy is what uploads, so the copy's measured size is what
-          // the attachment must record. A measured zero means the copy holds
-          // no bytes: reject it, whatever the source claimed.
+          // An Android content: source can misreport its size while the stored
+          // copy is what uploads, so the copy's measured size is what the
+          // attachment must record.
           const storedSize = (await input.fileReader.readSize?.(persistedFileUri)) ?? null;
           if (storedSize !== null) {
             sizeBytes = storedSize;

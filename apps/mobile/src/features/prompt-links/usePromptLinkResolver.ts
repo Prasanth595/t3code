@@ -45,7 +45,6 @@ import {
   promptLinkSearchFromParams,
 } from "./prompt-link-model";
 
-/** What a `new` link asks for, in one shape for every destination. */
 type LinkedDraftRequest = {
   readonly prompt: LinkedPrompt | null;
   readonly provider: string | null;
@@ -54,9 +53,7 @@ type LinkedDraftRequest = {
 };
 
 /**
- * Opens a `t3code://new?…` link. The link lands on the New Task picker with its query as route
- * params; this resolves it to a project, a thread, or a choice, then fills a draft. Nothing is
- * ever sent: the user reads the prompt and presses Send. Used by `NewTaskRouteScreen`.
+ * Nothing is ever sent: the user reads the prompt and presses Send.
  */
 export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> | undefined) {
   const navigation = useNavigation();
@@ -158,7 +155,6 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
 
   const openScratchDraft = async (request: LinkedDraftRequest) => {
     const environmentId = promptLinkScratchEnvironmentId(
-      // Machines by their latest thread, scratch threads included.
       latestThreadEnvironmentIds(threads),
       connectedEnvironments
         .filter(

@@ -1,9 +1,3 @@
-/**
- * Browser import service - lists importable sources and writes their cookies
- * into a T3 Code browser profile's Electron partition.
- *
- * @module BrowserImport
- */
 import type {
   BrowserImportInput,
   BrowserImportResult,
@@ -44,7 +38,6 @@ export class BrowserImportFailedError extends Schema.TaggedError<BrowserImportFa
   {
     sourceId: Schema.String,
     reason: BrowserImportFailureReason,
-    /** Kept for the log; the user only ever sees the reason's copy. */
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -93,11 +86,8 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
   if (yield* isSourceRunning(definition, context)) return "browserRunning";
-  // Safari's jar is found by `stat`, which TCC permits without Full Disk
-  // Access — so a Safari that lists as ready may still refuse the read. Probe
-  // the grant here, so the wizard can open on the permission step and a
-  // post-grant recheck can tell granted from still-denied, rather than only
-  // discovering it by attempting the import.
+  // Safari's jar is found by `stat`, which TCC permits without Full Disk Access
+  // — so a Safari that lists as ready may still refuse the read.
   if (definition.engine === "safari") {
     const jar = yield* resolveCookieDatabase(definition, context, ".");
     if (jar !== undefined && (yield* safariAccessDenied(jar))) return "needsFullDiskAccess";
@@ -105,7 +95,6 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
   return undefined;
 });
 
-/** The host a constructed cookie URL points at, for naming what was skipped. */
 const cookieHost = (url: string): string => {
   try {
     return new URL(url).hostname;
@@ -185,8 +174,6 @@ export const make = Effect.gen(function* BrowserImportMake() {
       return {
         id: definition.id,
         name: definition.name,
-        // Listing profiles touches the source's own files, so skip it when the
-        // source is unusable anyway.
         profiles:
           unavailable === undefined ? yield* listSourceProfiles(definition, pathContext) : [],
         ...(unavailable === undefined ? {} : { unavailable }),
@@ -252,16 +239,9 @@ export const make = Effect.gen(function* BrowserImportMake() {
       requestedProfile.directory,
     ).pipe(Effect.provide(platformServices));
     if (databasePath === undefined) {
-      // A profile we listed moments ago can lose its database before the
-      // import runs (browser data cleanup, a profile reset). That is a read
-      // failure, not a platform problem.
       return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed" });
     }
 
-    // Both branches fail with a tagged error, so the union stays structurally
-    // identifiable and each tag is handled on its own below. The success side
-    // is normalized to one shape too, so the skipped tally survives either
-    // engine — Firefox stores plaintext, so nothing there is ever unreadable.
     const userDataDirectory = definition.userDataDirectory(pathContext);
     const read: Effect.Effect<
       CookieReadResult,
@@ -297,15 +277,10 @@ export const make = Effect.gen(function* BrowserImportMake() {
           Effect.fail(
             new BrowserImportFailedError({ sourceId: definition.id, reason: cause.reason, cause }),
           ),
-        // Firefox has one failure mode — its plaintext database would not open
-        // — so its error carries no reason of its own and the user-facing one
-        // is supplied here.
         FirefoxCookieReadError: (cause) =>
           Effect.fail(
             new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed", cause }),
           ),
-        // Safari's reasons are already user-facing: a TCC refusal is the Full
-        // Disk Access prompt, anything else is a read failure.
         SafariCookieReadError: (cause) =>
           Effect.fail(
             new BrowserImportFailedError({ sourceId: definition.id, reason: cause.reason, cause }),

@@ -79,7 +79,6 @@ function ArrangementRow(props: {
   );
 }
 
-/** Native pan recognition wins over list scrolling only inside the handle. */
 function DragHandle(props: {
   title: string;
   disabled: boolean;
@@ -198,7 +197,6 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     );
     return {
       pinned,
-      // The Working beta orders the inbox by time; show that order here too.
       active: workingShelfEnabled
         ? sortInboxThreadsByReturn(active, threadListInboxReturns.returnedAt)
         : active,

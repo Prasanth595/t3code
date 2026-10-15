@@ -19,9 +19,7 @@ const isLocalUri = (uri: string) => /^(file|content):/.test(uri);
 const STALE_URL_MS = 5 * 60_000;
 
 /**
- * Loads a captured attachment for viewing: a fresh signed URL for a sent or uploaded file,
- * a leased local file for a draft. Text kinds read a bounded prefix; documents hand their
- * URL to a native or web renderer. Captured bytes never resolve against the workspace.
+ * Captured bytes never resolve against the workspace.
  */
 export function useAttachmentDocument(input: {
   readonly name: string;

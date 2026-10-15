@@ -29,7 +29,6 @@ import {
   settingsScopeEnvironmentLabel,
 } from "./settingsScopeAxis";
 
-/** Pages whose every row is saved on this client; they have no scope to pick. */
 export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/snap-shot",
@@ -45,10 +44,8 @@ interface SettingsScopeMenuProps {
 }
 
 /**
- * "Applying settings for <project> across <environment>" at the top of a settings
- * page. The two pickers are the targets a change is written to. A project is
- * the same project on every environment, so the environment alone decides
- * where a project override is written.
+ * A project is the same project on every environment, so the environment alone decides where a
+ * project override is written.
  */
 export function SettingsScopeSentence() {
   const scope = useOptionalSettingsScope();

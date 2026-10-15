@@ -50,7 +50,6 @@ export class CloudManagedEndpointRuntime extends Context.Service<
     ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
     readonly recoveryRequests: Stream.Stream<RelayManagedEndpointRuntimeConfig>;
     readonly requestRecovery: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<void>;
-    /** Emits when the connector registers a tunnel connection, i.e. the relay can reach us again. */
     readonly tunnelConnected: Stream.Stream<void>;
     readonly withLinkStateLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
@@ -63,9 +62,7 @@ interface ActiveConnector {
   readonly configKey: string;
   readonly config: RelayManagedEndpointRuntimeConfig;
   readonly startedAtMillis: number;
-  /** Completes when the connector first registers a tunnel connection. */
   readonly registered: Deferred.Deferred<void>;
-  /** Completes with the loopback address of the connector's metrics server. */
   readonly metricsAddress: Deferred.Deferred<string>;
 }
 
@@ -94,7 +91,6 @@ const CONNECTOR_READINESS_INTERVAL = Duration.seconds(30);
 const CONNECTOR_READINESS_REQUEST_TIMEOUT = Duration.seconds(5);
 const CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART = 6;
 const CONNECTOR_NOT_READY_CHECKS_MAX = 60;
-// The connector binds its metrics server to a random loopback port and logs it.
 const RELAY_CLIENT_METRICS_LINE = /\bStarting metrics server on (127\.0\.0\.1:\d+)\/metrics\b/u;
 // A failed background install of the pinned relay client is retried no sooner
 // than this, so a crash-looping connector or an offline host does not redownload
@@ -126,12 +122,11 @@ export function classifyRelayClientOutput(line: string): "connected" | "warning"
 }
 
 /**
- * Cloudflare's edge rejects a connector whose tunnel was deleted or whose
- * token no longer matches. The edge words this differently over time
- * (`Failed to get tunnel`, `Tunnel not found`, ...), sometimes prefixed with
- * `Unauthorized:`. Treat any `Unauthorized:` registration error as a rejection,
- * plus the unprefixed messages seen so far. Transient rejections while a new
- * tunnel's token propagates are absorbed by requiring several in a row.
+ * Cloudflare's edge rejects a connector whose tunnel was deleted or whose token
+ * no longer matches. The edge words this differently over time (`Failed to get
+ * tunnel`, `Tunnel not found`, ...), sometimes prefixed with `Unauthorized:`.
+ * Treat any `Unauthorized:` registration error as a rejection, plus the
+ * unprefixed messages seen so far.
  */
 export function isRejectedRelayClientTunnelOutput(line: string): boolean {
   return (
@@ -142,7 +137,6 @@ export function isRejectedRelayClientTunnelOutput(line: string): boolean {
   );
 }
 
-/** Connector startup failures can clear after installation or a later spawn attempt. */
 export function isRetryableManagedEndpointRuntimeStatus(status: unknown): boolean {
   if (typeof status !== "object" || status === null || !("status" in status)) {
     return false;
@@ -210,10 +204,9 @@ export const make = Effect.gen(function* () {
         return;
       }
       const uptimeMillis = (yield* Clock.currentTimeMillis) - connector.startedAtMillis;
-      // The first crash restarts immediately; every further crash inside the
-      // stable-uptime window doubles the wait, up to the cap. The delay runs
-      // before the semaphore so a user config change is never blocked behind
-      // it, and reconcileConfig re-checks the desired config afterwards.
+      // The delay runs before the semaphore so a user config change is never
+      // blocked behind it, and reconcileConfig re-checks the desired config
+      // afterwards.
       const restartDelayMillis = yield* Ref.modify(restartDelayRef, (current) => {
         if (uptimeMillis >= RELAY_RESTART_STABLE_UPTIME_MS) {
           return [0, 0];
@@ -311,7 +304,6 @@ export const make = Effect.gen(function* () {
               version: installed.version,
               previousVersion: active?.executable.version,
             });
-            // Detach the old connector so the reconcile starts a new one beside it.
             const previous = yield* Ref.getAndSet(activeRef, null);
             const status = yield* reconcileConfig(desiredConfig);
             const next = yield* Ref.get(activeRef);
@@ -359,8 +351,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // Reconciles call this; a recent failure skips the attempt so a crash-looping
-  // connector or an offline host does not redownload on every restart.
   const ensurePinnedRelayClient = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const lastFailureAt = yield* Ref.get(lastInstallFailureAtRef);
@@ -393,8 +383,6 @@ export const make = Effect.gen(function* () {
     yield* Effect.forkIn(retryPinnedRelayClientInstall, runtimeScope);
   });
 
-  // Requests recovery while the connector has not registered a connection,
-  // once per timeout, until it connects or is replaced.
   const watchConnectorRegistration = (connector: ActiveConnector) =>
     Effect.gen(function* () {
       yield* Effect.sleep(CONNECTOR_REGISTRATION_TIMEOUT);
@@ -411,10 +399,8 @@ export const make = Effect.gen(function* () {
       return false;
     }).pipe(Effect.repeat({ until: (connected) => connected }));
 
-  // Kills a connector whose /ready keeps answering 503, so the supervisor
-  // restarts it like any exited connector. Only an explicit 503 counts: a failed
-  // request says nothing about the tunnel. A connector that never logs its
-  // metrics address is not polled.
+  // Only an explicit 503 counts: a failed request says nothing about the
+  // tunnel. A connector that never logs its metrics address is not polled.
   const watchConnectorReadiness = (connector: ActiveConnector) =>
     Effect.gen(function* () {
       const readyUrl = `http://${yield* Deferred.await(connector.metricsAddress)}/ready`;

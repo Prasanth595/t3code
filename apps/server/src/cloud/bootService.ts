@@ -38,7 +38,6 @@ const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
 const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
 const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
-/** File in the logs dir that receives the service's stdout and stderr. `t3 triage` points agents at it. */
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */
@@ -76,12 +75,6 @@ export function bootServiceBaseDirOf(contents: string): string | undefined {
 }
 
 export interface BootServicePlan {
-  /**
-   * What the service manager executes. npm-distributed runtimes run the
-   * standalone launcher script with the installing Node; archive-distributed
-   * runtimes run their own executable, which hosts the launcher as a hidden
-   * subcommand so the machine never needs Node.
-   */
   readonly program: ReadonlyArray<string>;
   readonly baseDir: string;
   readonly logPath: string;
@@ -131,7 +124,6 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
   ].join("\n");
 }
 
-/** Plist values are emitted as XML text nodes; only these three need escaping. */
 function escapeXmlText(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
@@ -141,8 +133,6 @@ export function renderBootServicePlist(
   plan: BootServicePlan,
   options: { readonly homeDir: string; readonly environmentPath: string },
 ): string {
-  // KeepAlive + ThrottleInterval mirror Restart=always + RestartSec=5. launchd
-  // has no StartLimitBurst analog; a hard crash loop respawns every 5s forever.
   // ExitTimeOut 90 matches systemd's default TimeoutStopSec. A plain stop
   // completes within the launcher's 5s child grace, but a stop that queues
   // behind an in-flight update transition can take much longer; launchd's
@@ -217,11 +207,6 @@ export interface BootServiceStep {
  */
 const STOP_STEP_TIMEOUT = Duration.seconds(120);
 
-/**
- * Platform service-manager integration as data: paths, a pure renderer, and
- * the command steps each flow runs. install/uninstall/status consume this and
- * never branch on platform.
- */
 export interface BootServiceManager {
   readonly kind: "systemd" | "launchd";
   readonly unitPath: string;
@@ -385,7 +370,6 @@ function launchdManager(input: {
   };
 }
 
-/** Undefined means this host cannot run the background service. */
 function selectBootServiceManager(input: {
   readonly platform: NodeJS.Platform;
   readonly homeDir: string;
@@ -455,7 +439,6 @@ const BootServiceProblem = Schema.Literals([
 ]);
 type BootServiceProblem = typeof BootServiceProblem.Type;
 
-/** These codes and recovery steps are documented in docs/user/background-service.md. */
 export function formatBootServiceProblem(problem: BootServiceProblem): string {
   switch (problem) {
     case "user-manager-unavailable":
@@ -541,7 +524,6 @@ export class BootService extends Context.Service<
       readonly start?: boolean;
     }) => Effect.Effect<BootServicePlan, BootServiceError>;
     /**
-     * Stop and start the installed service on the version its unit names.
      * Only when the unit serves this base dir: the unit name is per user, so
      * another home's service is left alone. Resolves false when nothing was
      * restarted.
@@ -628,8 +610,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         );
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-  // The executable hosts the launcher as a hidden subcommand of itself, so
-  // the unit runs the pinned runtime directly.
   const plan: BootServicePlan = {
     program: [runtimePaths.entryPath, "__service-launcher"],
     baseDir: input.baseDir,

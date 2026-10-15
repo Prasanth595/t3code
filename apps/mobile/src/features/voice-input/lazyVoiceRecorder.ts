@@ -8,7 +8,6 @@ export interface VoiceRecordingInput {
   readonly type: string;
 }
 
-// The subset of expo-audio's native `AudioRecorder` the voice input hook uses.
 export interface NativeVoiceRecorder<TStatus, TRecorderState> {
   readonly uri: string | null;
   prepareToRecordAsync(): Promise<void>;
@@ -25,24 +24,17 @@ export interface NativeVoiceRecorder<TStatus, TRecorderState> {
 }
 
 export interface LazyVoiceRecorder<TRecorderState> extends VoiceRecorder {
-  /** Status of the native recorder, or null before a recording has prepared one. */
   getStatus(): TRecorderState | null;
-  /**
-   * Releases the native recorder after its pending prepare and stop calls settle.
-   * A later recording creates a new one, so replayed effects keep working.
-   */
   release(): void;
 }
 
 /**
- * Creates expo-audio's native `AudioRecorder` when a recording first prepares,
- * instead of on composer render. Construction blocks the JS thread for tens of
- * milliseconds on a cold composer, and most composer mounts never record.
+ * Construction blocks the JS thread for tens of milliseconds on a cold
+ * composer, and most composer mounts never record.
  */
 export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
   readonly create: () => NativeVoiceRecorder<TStatus, TRecorderState>;
   readonly onStatus: (status: TStatus) => void;
-  /** Picks the input to record from once the session lists them, or null to keep the system's. */
   readonly selectInput?: (inputs: ReadonlyArray<VoiceRecordingInput>) => VoiceRecordingInput | null;
 }): LazyVoiceRecorder<TRecorderState> {
   let recorder: NativeVoiceRecorder<TStatus, TRecorderState> | null = null;

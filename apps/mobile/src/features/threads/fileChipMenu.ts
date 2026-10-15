@@ -13,9 +13,7 @@ import {
 export type FileChipAction = "copy-full-path" | "copy-relative-path" | "open-file" | "save";
 
 export interface FileChipTarget {
-  /** The host path, when the link is absolute or the workspace root is known. */
   readonly fullPath?: string;
-  /** The path inside the workspace, when the link resolves there. */
   readonly relativePath?: string;
 }
 
@@ -60,7 +58,6 @@ export function fileChipShareSource(target: FileChipTarget, threadId: ThreadId) 
     : null;
 }
 
-/** Saving is available for the media and documents the host asset endpoint can serve. */
 export function fileChipMenu(target: FileChipTarget): MarkdownFileContextMenu {
   return {
     title: target.fullPath ?? target.relativePath ?? "",

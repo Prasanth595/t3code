@@ -257,8 +257,6 @@ export const make = Effect.gen(function* () {
       projectCloneTracking: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
-      // V2 restart recovery uses the environment-owned opt-in. The old
-      // per-update request flag is not wired into the V2 update RPC path.
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? { serverSelfUpdateProgress: true }
         : {}),
@@ -284,10 +282,9 @@ export const make = Effect.gen(function* () {
 export const layerIdentity = Layer.effect(ServerEnvironmentIdentity, makeIdentity);
 
 /**
- * ServerEnvironment is acquired from persisted filesystem and host-process
- * state. It intentionally has no fallback Layer.succeed value: callers must
- * provide the external platform services, a ServerConfig, and the
- * ServerSecretStore backing the descriptor's publishing capability.
+ * It intentionally has no fallback Layer.succeed value: callers must provide the external
+ * platform services, a ServerConfig, and the ServerSecretStore backing the descriptor's
+ * publishing capability.
  */
 export const layer = Layer.effect(ServerEnvironment, make).pipe(
   Layer.provideMerge(layerIdentity),

@@ -71,7 +71,6 @@ export function composerPromptLink(input: {
   });
 }
 
-/** Copies a prompt link and says so. */
 export async function copyPromptLink(link: string): Promise<void> {
   try {
     if (!(await writeTextToClipboard(link))) return;

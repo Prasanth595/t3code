@@ -3,7 +3,6 @@ import type { FileTreeBatchOperation, FileTreeSortComparator, GitStatus } from "
 
 import { resolveFileDiffPath } from "~/lib/diffRendering";
 
-/** One changed file as the tree shows it: its current path and how it changed. */
 export interface DiffFileTreeEntry {
   readonly path: string;
   readonly status: GitStatus;
@@ -58,7 +57,6 @@ export function collectDirectoryPaths(paths: ReadonlyArray<string>): ReadonlyArr
   return [...directories];
 }
 
-/** A folder takes the position of its first file in the diff. */
 export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap<string, number> {
   const positions = new Map<string, number>();
   paths.forEach((path, index) => {

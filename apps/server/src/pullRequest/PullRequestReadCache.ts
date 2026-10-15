@@ -178,7 +178,6 @@ export const make = Effect.gen(function* () {
 });
 
 /**
- * Deletes entry files in `directory` not written within `ENTRY_FILE_MAX_AGE`.
  * The persisted cache drops an expired entry only when it is read again, so
  * files for PRs nobody reopens would otherwise stay forever.
  */
@@ -220,7 +219,6 @@ export const layer = Layer.unwrap(
     return Layer.effect(PullRequestReadCache, make).pipe(
       Layer.provide(
         KeyValueStore.layerFileSystem(directory).pipe(
-          // Prunes once the server is active, then every hour.
           Layer.tap(() =>
             forkParked(
               pruneExpiredEntryFiles(directory).pipe(

@@ -12,7 +12,6 @@ import type { Ref } from "react";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 
-/** The app's diff stylesheet, shared by single-file renderers so their separators match. */
 export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 /* A 1fr track's automatic minimum grows with the currently mounted lines. In split
    wrap mode that shifts width between columns, rewraps rows and makes the virtualizer
@@ -220,7 +219,6 @@ type StyledDiffCodeViewProps<LAnnotation> = (
   readonly unsafeCSSExtra?: string;
 };
 
-/** The shared web CodeView surface: app styling and virtualized geometry stay paired here. */
 export function StyledDiffCodeView<LAnnotation = undefined>({
   options,
   viewerRef,

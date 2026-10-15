@@ -16,7 +16,6 @@ import type {
 const COPILOT_META_KEY = "github.com/copilot";
 const COPILOT_SESSION_EVENT = "github.com/copilot/sessionEvent";
 
-/** Subscribes to the raw events subagent routing needs, and nothing else. */
 export const copilotClientCapabilitiesMeta = {
   [COPILOT_META_KEY]: {
     events: [
@@ -47,7 +46,6 @@ const childSessionId = (taskToolCallId: string) => `copilot-task:${taskToolCallI
 interface CopilotSessionAttribution {
   /** The last raw delta, consumed by the chunk that follows it. */
   delta: { readonly kind: string; readonly text: string; readonly task?: string } | undefined;
-  /** Running subagent id to the `task` tool call that spawned it. */
   readonly taskByAgentId: Map<string, string>;
 }
 
@@ -110,7 +108,6 @@ export function makeCopilotSubagentRouting() {
       }
     });
 
-  /** Moves a subagent's chunks and tool calls onto its own child session. */
   const normalizeSessionUpdate = (
     notification: AcpSchema.SessionNotification,
   ): AcpSchema.SessionNotification => {

@@ -171,8 +171,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
     if (result.value.type === "granted") {
       setNotificationStatus("enabled");
-      // Permission alone is not enough: the switch stays off until the relay
-      // registration succeeds, so tell the user the truth about which happened.
       if (getAgentAwarenessRegistrationStatus() === "registered") {
         Alert.alert("Notifications enabled", "Agent notifications are enabled for this device.");
       } else {
@@ -443,9 +441,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
               notificationStatus === "unsupported"
             }
             subtitle={agentAwarenessSubtitle}
-            // Only reads as on when this device is actually registered with the
-            // relay; otherwise notifications cannot be delivered regardless of
-            // the local iOS permission.
             value={
               agentAwarenessPushAvailable && notificationStatus === "enabled" && deviceRegistered
             }
@@ -468,8 +463,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
                 : "Live Activity Updates"
             }
             subtitle={agentAwarenessSubtitle}
-            // Same gate: a saved preference is meaningless until the device
-            // registration the relay needs to push updates has succeeded.
             value={
               agentAwarenessPushAvailable &&
               (liveActivityStatus === "enabled" || liveActivityStatus === "linking") &&

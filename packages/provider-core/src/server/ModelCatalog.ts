@@ -1,13 +1,3 @@
-/**
- * ModelCatalog — the model metadata a provider reads from T3's model manifest.
- *
- * The server owns the manifest itself (bundle, remote refresh, disk cache,
- * compatibility policies). A provider only sees its own catalog entry, so a
- * provider package never depends on the manifest file or how it is fetched.
- * Reads never wait on the network.
- *
- * @module provider-core/server/ModelCatalog
- */
 import type {
   ModelCapabilities,
   ProviderDriverKind,
@@ -18,7 +8,6 @@ import type * as Effect from "effect/Effect";
 
 import type { ServerProviderDraft } from "./snapshotProbe.ts";
 
-/** One model entry in a provider's manifest catalog. */
 export interface ProviderCatalogModel {
   readonly slug: string;
   readonly name: string;
@@ -34,7 +23,6 @@ export interface ProviderCatalogModel {
   readonly profileAdapter: unknown;
 }
 
-/** A provider's catalog entry: its models and the chat default. */
 export interface ProviderCatalog {
   readonly models: ReadonlyArray<ProviderCatalogModel>;
   readonly defaultChatModel: string | undefined;
@@ -50,17 +38,14 @@ export class ModelCatalog extends Context.Service<
     readonly current: (
       driverKind: ProviderDriverKind,
     ) => Effect.Effect<ProviderCatalog | undefined>;
-    /** The same catalog from the bundled manifest; for fallbacks when remote data is invalid. */
     readonly bundled: (driverKind: ProviderDriverKind) => ProviderCatalog | undefined;
     /**
-     * Starts a TTL-gated remote refresh in the background. Provider checks call
-     * this; it never fails and never blocks the check.
+     * Starts a TTL-gated remote refresh in the background.
      */
     readonly refreshInBackground: Effect.Effect<void>;
   }
 >()("@t3tools/provider-core/server/ModelCatalog") {}
 
-/** A catalog model as the snapshot model it presents. */
 export const catalogServerModel = (
   catalog: ProviderCatalog,
   entry: ProviderCatalogModel,
@@ -77,7 +62,6 @@ export const catalogServerModel = (
   capabilities: entry.capabilities,
 });
 
-/** How a driver matches its discovered slugs to catalog entries. */
 export interface CatalogMatching {
   /**
    * Maps a slug to the family the catalog names it by, such as a dated Codex
@@ -90,8 +74,7 @@ const familyOf = (matching: CatalogMatching | undefined, slug: string) =>
   matching?.family?.(slug) ?? slug;
 
 /**
- * Reclassifies built-in models as legacy or current from the catalog. Custom
- * models are user-defined and never reclassified.
+ * Custom models are user-defined and never reclassified.
  */
 export function classifyCatalogModels(
   models: ReadonlyArray<ServerProviderModel>,
@@ -111,11 +94,8 @@ export function classifyCatalogModels(
 }
 
 /**
- * Moves `isDefault` to the catalog's chat default when the catalog names one
- * the models include. Providers that learn their default from the runtime can
- * be overridden here without a release. Aliases that pointed at the old
- * default move with the flag so the shared "provider default" alias keeps
- * resolving.
+ * Aliases that pointed at the old default move with the flag so the shared "provider default"
+ * alias keeps resolving.
  */
 export function applyCatalogDefault(
   models: ReadonlyArray<ServerProviderModel>,
@@ -150,9 +130,8 @@ export function applyCatalogDefault(
 }
 
 /**
- * Reclassifies a snapshot draft's built-in models and moves its default from
- * the catalog. Drivers that announce models a newer CLI unlocks add
- * `updateRequiredModels` themselves; this clears a stale list.
+ * Drivers that announce models a newer CLI unlocks add `updateRequiredModels` themselves; this
+ * clears a stale list.
  */
 export function applyModelCatalog(
   draft: ServerProviderDraft,

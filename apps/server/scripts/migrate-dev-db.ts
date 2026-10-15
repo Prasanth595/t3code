@@ -1,33 +1,5 @@
 #!/usr/bin/env node
 
-/**
- * Rebuild an isolated dev database from a pruned snapshot of the real
- * ~/.t3 database, then run this checkout's migrations against it.
- *
- * `vp run migrate-dev-db` from a worktree:
- *   1. Nukes `<worktree>/.t3/userdata/statev2.sqlite`.
- *   2. Copies a slice of the real db (`~/.t3/userdata/statev2.sqlite`,
- *      attached read-only): the schema, and every row except those of
- *      deleted, archived, and settled threads, which are nearly all of a
- *      long-lived database. It then prunes that to the most recently updated
- *      projects and, per project, the most recent threads that have fully
- *      stopped, with
- *      their forks and subagents. Working, settled, and archived threads, and
- *      threads with pending recovery, are skipped, and scheduled tasks and
- *      queued effects are dropped, so the dev server never adopts live work.
- *      Auth sessions, pairing links, command receipts, and provider
- *      runtime rows are dropped — pair a fresh browser against dev.
- *   3. Runs migrations on the result. Because the clone carries the real
- *      `effect_sql_migrations` table, this proves a new migration applies
- *      on top of the real applied set, and the slot check below catches
- *      the silent failure where two branches claim the same
- *      `Migrations/NNN_` id (the second one's CREATE TABLE is skipped).
- *
- * The event log (`orchestration_events`) is pruned per stream while
- * `sqlite_sequence` and the projection cursors carry over untouched, so new events keep appending
- * after the old high-water mark and projection cursors never rewind.
- */
-
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
@@ -116,11 +88,6 @@ export class MigrateDevDbDestinationBusyError extends Schema.TaggedError<Migrate
   }
 }
 
-/**
- * Two branches claimed the same Migrations/NNN_ slot: the id was already
- * recorded under a different name, so this checkout's migration was
- * silently skipped and its schema changes never applied.
- */
 export class MigrateDevDbSlotCollisionError extends Schema.TaggedError<MigrateDevDbSlotCollisionError>()(
   "MigrateDevDbSlotCollisionError",
   {
@@ -148,9 +115,7 @@ export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhase
 }
 
 export interface RunMigrateDevDbInput {
-  /** Isolated .t3 directory. Defaults to `<worktree>/.t3` of the cwd. */
   readonly baseDir?: string | undefined;
-  /** Source database. Defaults to `~/.t3/userdata/statev2.sqlite`. */
   readonly source?: string | undefined;
   readonly projects: number;
   readonly threadsPerProject: number;
@@ -173,7 +138,6 @@ const removeDatabaseFiles = Effect.fn("removeDatabaseFiles")(function* (database
   }
 });
 
-/** The slice of server-runtime.json this script cares about. */
 const ServerRuntimeState = Schema.fromJsonString(Schema.Struct({ pid: Schema.Number }));
 const decodeServerRuntimeState = Schema.decodeEffect(ServerRuntimeState);
 
@@ -187,23 +151,22 @@ const isProcessAlive = (pid: number): boolean => {
   }
 };
 
-/** Liveness probe for a running dev server. The server writes its pid to
- * server-runtime.json next to the database, which also catches an idle
- * server holding an open-but-inactive connection. The SQL probes below back
- * that up: BEGIN IMMEDIATE fails while a writer is active, and
- * wal_checkpoint(TRUNCATE) reports busy while another connection holds the
+/**
+ * The server writes its pid to server-runtime.json next to the database, which
+ * also catches an idle server holding an open-but-inactive connection. The SQL
+ * probes below back that up: BEGIN IMMEDIATE fails while a writer is active,
+ * and wal_checkpoint(TRUNCATE) reports busy while another connection holds the
  * WAL. A leftover -shm alone is not a signal — read-only connections cannot
- * clean it up on close. */
+ * clean it up on close.
+ */
 const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
   const runtimeStatePath = path.join(path.dirname(databasePath), "server-runtime.json");
-  const runtimeState = yield* fs.readFileString(runtimeStatePath).pipe(
-    Effect.flatMap(decodeServerRuntimeState),
-    // A missing or malformed descriptor is not a liveness signal.
-    Effect.option,
-  );
+  const runtimeState = yield* fs
+    .readFileString(runtimeStatePath)
+    .pipe(Effect.flatMap(decodeServerRuntimeState), Effect.option);
   if (Option.isSome(runtimeState) && isProcessAlive(runtimeState.value.pid)) {
     return yield* new MigrateDevDbServerRunningError({
       databasePath,
@@ -246,7 +209,6 @@ const RECOVERY_KINDS: ReadonlyArray<ProjectionStore.ProjectionRecoveryKind> = [
   "delegated-completions",
 ];
 
-/** Tables the prune empties. The copy skips their rows. */
 const CLEARED_TABLES: ReadonlyArray<string> = [
   // Pending work the dev server would otherwise pick up and run.
   "scheduled_tasks",
@@ -261,7 +223,6 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
 /** Shared between threads; the prune keeps the ones a kept thread is bound to. */
 const PROVIDER_SESSIONS_TABLE = "orchestration_v2_projection_provider_sessions";
 
-/** Whether the thread aliased `root` is shown: not deleted, archived, or settled. */
 const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
   root.deleted_at IS NULL
   AND json_extract(root.payload_json, '$.deletedAt') IS NULL
@@ -270,9 +231,6 @@ const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
   AND json_extract(root.payload_json, '$.settledOverride') IS NOT 'settled'`;
 
 /**
- * Copies the source into the empty snapshot, without the rows of thread families whose root is
- * hidden. The prune drops those anyway, and they hold nearly all of a long-lived database's
- * events, so copying them is what used to make this take a full-size copy of the real db.
  * A source from before the V2 thread tables has no visibility to filter on, so it is copied
  * whole. One transaction reads the source, so the copy is consistent while the real server writes.
  */
@@ -451,9 +409,6 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
   };
 });
 
-/** Compare this checkout's migration registry against what the cloned
- * database recorded: same slot under a different name means the migration
- * was skipped, not applied. */
 const verifyMigrationSlots = Effect.fn("verifyMigrationSlots")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const applied = yield* sql<{ migration_id: number; name: string }>`
@@ -533,7 +488,6 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       );
 
   yield* removeDatabaseFiles(snapshotPath);
-  // Make sure the snapshot is removed even when a phase fails partway through.
   const { executedMigrations, pruned } = yield* Effect.gen(function* () {
     yield* Console.log(`Copying visible threads from ${sourcePath} (read-only)...`);
     yield* copySourceSlice(sourcePath).pipe(

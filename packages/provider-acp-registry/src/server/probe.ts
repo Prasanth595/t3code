@@ -95,7 +95,6 @@ function normalizeModels(
   return models;
 }
 
-/** Agent spawn recipe used to compose runnable terminal-auth command lines. */
 export interface AcpRegistryAuthSpawnContext {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -173,7 +172,6 @@ export interface AcpRegistryLiveConfiguration {
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
 }
 
-/** Normalizes volatile session configuration using the same bounds as discovery probes. */
 export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
@@ -200,7 +198,6 @@ const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({
   skills: [],
 });
 
-/** Splits the latest ACP command advertisement into T3's `/` and `$` menus. */
 export function normalizeAcpRegistryCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
 ): AcpRegistryAvailableCommands {
@@ -239,7 +236,6 @@ export function normalizeAcpRegistryCommands(
   return { slashCommands, skills };
 }
 
-/** Builds the bounded wire result from a successfully created disposable ACP session. */
 export function acpRegistryProbeResult(
   instanceId: ProviderInstanceId,
   started: AcpSessionRuntime.AcpSessionRuntimeStartResult,

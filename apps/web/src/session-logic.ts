@@ -137,7 +137,6 @@ export type TimelineEntry = (
       readonly proposedPlan: ProposedPlan;
     }
   | {
-      /** A page a completed `html_render` call published, shown where the call happened. */
       readonly id: string;
       readonly kind: "html-render";
       readonly createdAt: string;
@@ -145,7 +144,6 @@ export type TimelineEntry = (
       readonly htmlRender: HtmlRenderReference;
     }
   | {
-      /** An MCP App a completed tool call captured, hosted where the call happened. */
       readonly id: string;
       readonly kind: "mcp-app";
       readonly createdAt: string;
@@ -169,7 +167,6 @@ export type TimelineEntry = (
       readonly projectedItem: OrchestrationV2ProjectedTurnItem;
     }
 ) & {
-  /** V2 identity resolved from the item's execution node, when locally available. */
   readonly attempt?: TimelineAttempt;
 };
 
@@ -208,7 +205,6 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
   );
 }
 
-/** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
   return (
     workLogEntryIsToolLike(entry) &&
@@ -242,7 +238,6 @@ export function deriveActiveWorkStartedAt(
   sendStartedAt: string | null,
 ): string | null {
   const startedAt = resolveThreadWorkingStartedAt({ latestRun, runtime });
-  // Local dispatch has a clock only until the server supplies the owning run.
   return startedAt ?? (runtime?.activeRunId == null ? sendStartedAt : null);
 }
 
@@ -568,11 +563,8 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
 }
 
 /**
- * Builds the web timeline in the exact order committed by `visibleTurnItems`.
- * Committed rows are presented directly from their projected item. Queued
- * input is absent by construction until dispatch creates its user turn item.
- * Persistent client-owned messages are inserted by timestamp without sorting
- * the canonical sequence. True optimistic sends remain appended afterward.
+ * Builds the web timeline in the exact order committed by `visibleTurnItems`. Persistent
+ * client-owned messages are inserted by timestamp without sorting the canonical sequence.
  */
 export interface TimelineEntriesInput {
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
@@ -627,7 +619,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item)) continue;
-    // Task progress belongs in the composer, not between conversation entries.
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     const createdAt = projectedItemCreatedAt(row);
@@ -807,7 +798,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
 type AttachmentResource = Extract<AssetResource, { readonly _tag: "attachment" }>;
 const EMPTY_IMAGE_RESOURCES = Object.freeze<ReadonlyArray<AttachmentResource>>([]);
 
-/** A mounted row requests its stored images. Local previews keep their existing URLs. */
 export function selectMessageImageResources(
   attachments: ChatMessage["attachments"],
 ): ReadonlyArray<AttachmentResource> {
@@ -1079,10 +1069,10 @@ export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase 
 }
 
 /**
- * Whether web and desktop offer Stop for the active thread. The server settles
- * a preparing or starting run on `run.interrupt` (Orchestrator.dispatchRunInterrupt),
- * so Stop must not wait for the phase to reach "running". A queued thread offers
- * Stop only while an earlier run is still interruptible; Stop targets that run.
+ * The server settles a preparing or starting run on `run.interrupt`
+ * (Orchestrator.dispatchRunInterrupt), so Stop must not wait for the phase to reach "running".
+ * A queued thread offers Stop only while an earlier run is still interruptible; Stop targets
+ * that run.
  */
 export function deriveCanInterruptRunningThread(
   hasActiveThread: boolean,

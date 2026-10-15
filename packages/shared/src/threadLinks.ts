@@ -3,9 +3,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 /**
- * Agents mention another thread in Markdown as `[title](t3-thread://v1/<threadId>)`. The id is
- * the reference and resolves in the environment of the message that holds it. Titles change, so
- * clients show the thread's current title; the label only stands in for a thread they cannot see.
+ * The id is the reference and resolves in the environment of the message that holds it. Titles
+ * change, so clients show the thread's current title; the label only stands in for a thread they
+ * cannot see.
  */
 export const THREAD_LINK_PROTOCOL = "t3-thread";
 const THREAD_LINK_HREF_PREFIX = `${THREAD_LINK_PROTOCOL}://v1/`;
@@ -34,7 +34,6 @@ export function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null 
   }
 }
 
-/** A thread link whose label survives Markdown: no brackets, backslashes, or line breaks. */
 export function formatThreadLink(threadId: string, label: string): string {
   const cleaned = label
     .replace(/[[\]\\\r\n]/g, " ")
@@ -61,7 +60,6 @@ export function relabelThreadLinks(
     if (href === undefined) return source;
     const written = parseThreadLinkHref(href);
     if (written === null) return source;
-    // The decoded id only stands in when the id as written names no thread.
     const decoded = percentDecodedThreadLinkId(written);
     const threadId =
       title(written) === undefined && decoded !== null && title(decoded) !== undefined

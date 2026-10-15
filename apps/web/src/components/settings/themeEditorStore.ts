@@ -14,11 +14,8 @@ import {
  * definitions change underneath an open session (an edit, an import).
  */
 export type ThemeEditorSessionInput = {
-  /** Set when editing an installed theme; null creates a new one. */
   editingThemeId: string | null;
-  /** Theme a new theme starts from: the active one, or a duplicate target. */
   seedThemeId: string | null;
-  /** Prefilled name, used by duplicate. */
   seedName: string | null;
   initialAppearance: ThemeAppearance;
 };

@@ -25,7 +25,6 @@ export interface GitHubAuthStatusAccount {
   readonly authenticated: boolean;
   readonly active: boolean;
   readonly error: string | null;
-  /** The variable (GH_TOKEN and kin) the login came from; it overrides every stored login. */
   readonly environmentVariable: string | null;
 }
 

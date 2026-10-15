@@ -11,11 +11,6 @@ import { toastManager } from "../../ui/toast";
 import { readableFailure } from "../pullRequestDetail.logic";
 import { guideRunKey, useGuideRunStore } from "./guideRunStore";
 
-/**
- * A pull request's stored guide and the way to write a new one, shared by the Guide tab and the
- * header menu. Starting a run hands it to the run coordinator, which re-reads it until it ends
- * and says so if the reader is not looking at the guide.
- */
 export function useReviewGuideWriter({
   environmentId,
   reference,
@@ -23,7 +18,6 @@ export function useReviewGuideWriter({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  /** The pull request's title for the notice when the guide is ready. */
   title: string | null;
 }) {
   const query = useEnvironmentQuery(
@@ -61,7 +55,6 @@ export function useReviewGuideWriter({
     const result = await generate({ environmentId, input: reference });
     setStarting(false);
     if (result._tag === "Failure") {
-      // Nothing started, so there is nothing to watch for and nothing more to announce.
       useGuideRunStore.getState().settle(guideRunKey(environmentId, reference));
       toastManager.add({
         type: "error",

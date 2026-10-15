@@ -1,14 +1,3 @@
-/**
- * AntigravityUsage - Antigravity's usage history as a usage source.
- *
- * Antigravity keeps conversations in SQLite databases under its data
- * directories and each instance's profile. Parsed databases stay in memory
- * while a database and its WAL keep the same `(size, mtime, ctime)`, so a
- * warm scan decodes only what changed.
- *
- * @module provider/Drivers/AntigravityUsage
- */
-
 import { type AntigravitySettings, UsageReadError } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -47,7 +36,6 @@ const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const cache = makeAntigravityUsageCache();
 
-  /** `ANTIGRAVITY_DATA_DIR` (comma-separated) or the defaults, canonicalized. */
   const dataRoots = Effect.gen(function* () {
     const home = yield* HostProcess.HomeDirectory;
     const configured = hostEnvironment["ANTIGRAVITY_DATA_DIR"]

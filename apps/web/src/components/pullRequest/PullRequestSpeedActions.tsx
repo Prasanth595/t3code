@@ -34,7 +34,6 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
   onCloseSweepStart,
 }: {
   entry: Entry;
-  /** What the row's host can do; actions it cannot are not offered. */
   hostActions: ReadonlySet<PullRequestAction>;
   visible: boolean;
   onActed?: (result: PullRequestSpeedActionResult<Entry>) => void;

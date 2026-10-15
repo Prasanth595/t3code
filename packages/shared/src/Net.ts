@@ -23,15 +23,10 @@ const isErrnoExceptionWithCode = (
 const closeServer = (server: NodeNet.Server) => {
   try {
     server.close();
-  } catch {
-    // Ignore close failures during cleanup.
-  }
+  } catch {}
 };
 
 export interface NetServiceShape {
-  /**
-   * Returns true when a TCP server can bind to {host, port}.
-   */
   readonly canListenOnHost: (port: number, host: string) => Effect.Effect<boolean>;
 
   /**
@@ -40,7 +35,6 @@ export interface NetServiceShape {
   readonly isPortAvailableOnLoopback: (port: number) => Effect.Effect<boolean>;
 
   /**
-   * Returns true when something accepts TCP connections on {host, port}.
    * Unlike the bind-side checks this works for privileged ports (<1024).
    */
   readonly hasListenerOnHost: (port: number, host: string) => Effect.Effect<boolean>;
@@ -50,15 +44,9 @@ export interface NetServiceShape {
    */
   readonly reserveLoopbackPort: (host?: string) => Effect.Effect<number, NetError>;
 
-  /**
-   * Resolve an available listening port, preferring the provided port first.
-   */
   readonly findAvailablePort: (preferred: number) => Effect.Effect<number, NetError>;
 }
 
-/**
- * NetService - Service tag for startup networking helpers.
- */
 export class NetService extends Context.Service<NetService, NetServiceShape>()(
   "@t3tools/shared/Net/NetService",
 ) {}
@@ -66,7 +54,6 @@ export class NetService extends Context.Service<NetService, NetServiceShape>()(
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = () => {
   /**
-   * Returns true when a TCP server can bind to {host, port}.
    * `EADDRNOTAVAIL` is treated as available so IPv6-absent hosts don't fail
    * loopback availability checks.
    */
@@ -151,10 +138,6 @@ export const make = () => {
       );
     });
 
-  /**
-   * Reserve an ephemeral loopback port and release it immediately.
-   * Returns the reserved port number.
-   */
   const reserveLoopbackPort = (host = "127.0.0.1"): Effect.Effect<number, NetError> =>
     Effect.callback<number, NetError>((resume) => {
       const probe = NodeNet.createServer();

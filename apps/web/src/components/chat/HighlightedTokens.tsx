@@ -26,11 +26,9 @@ function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
 }
 
 /**
- * Colors `code` inside the caller's `<pre>` without changing its text, so
- * selection and copy match the plain version. Suspends while the grammar
- * loads; wrap it in Suspense with the plain text as the fallback.
- * `wordClassName` goes on each whitespace-separated word. `embedded`
- * scripts are colored with their own grammar inside `code`.
+ * Colors `code` inside the caller's `<pre>` without changing its text, so selection and copy match
+ * the plain version. Suspends while the grammar loads; wrap it in Suspense with the plain text as
+ * the fallback.
  */
 export function HighlightedTokens({
   code,
@@ -46,7 +44,6 @@ export function HighlightedTokens({
   wordClassName?: string;
 }) {
   const highlighter = use(getSyntaxHighlighterPromise(language));
-  // Every grammar loads into the same shared highlighter.
   for (const script of embedded) use(getSyntaxHighlighterPromise(script.language));
   const lines = useMemo(() => {
     const themeName = resolveDiffThemeName(theme);
@@ -116,7 +113,6 @@ export function withEmbeddedScripts(
   return restyledLines(code, styles);
 }
 
-/** Splits `code` into lines of tokens, one per run of characters sharing a style. */
 function restyledLines(
   code: string,
   styles: ReadonlyArray<SyntaxToken | undefined>,

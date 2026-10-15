@@ -34,18 +34,10 @@ interface CloudEnvironmentRowsProps {
   readonly onRemoveEnvironment: (environmentId: EnvironmentId) => void;
   readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
   readonly showcaseSignedIn?: boolean;
-  /**
-   * Hide the "T3 Connect" section title when the host provides its own header.
-   */
   readonly showHeader?: boolean;
 }
 
 /**
- * "T3 Connect" section: every environment published to the signed-in account,
- * with connect switches, availability status, and loading/error
- * states. Shared between the Settings environments screen and the T3 Connect
- * onboarding sheet.
- *
  * Already-connected relay environments render even without cloud config or a
  * signed-in account — they are registered on this device and must stay
  * reachable and removable. Only discovery (the available list, refresh, and
@@ -163,8 +155,6 @@ function CloudEnvironmentRowsContent(
         </View>
       )}
 
-      {/* Rendered alongside any connected rows — a failed discovery must not
-          hide behind an otherwise-healthy list. */}
       {discoveryAvailable &&
       controller.relayDiscovery.error &&
       !controller.relayDiscovery.isRefreshing ? (
@@ -192,9 +182,8 @@ function CloudEnvironmentRowsContent(
 }
 
 /**
- * A saved T3 Connect environment. The switch turns it on or off; off keeps the
- * registration and cache but drops the connection and hides its errors.
- * Long-press removes it from this device.
+ * The switch turns it on or off; off keeps the registration and cache but drops
+ * the connection and hides its errors.
  */
 function ConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
@@ -310,7 +299,6 @@ function CloudEnvironmentRowShell(props: {
       error: props.connectionError,
       traceId: props.connectionErrorTraceId,
     });
-  // Unsupported is a compatibility note, not a failure, so it stays muted.
   const statusClassName =
     props.connectionError && props.connectionState !== "unsupported"
       ? "text-danger-foreground"

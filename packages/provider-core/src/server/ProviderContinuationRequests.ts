@@ -29,16 +29,11 @@ export interface ProviderContinuationRequest {
     readonly messageId: MessageId;
   };
   /**
-   * How the continuation turn gets its content.
-   *
-   * `adapter_buffered` (default) is the provider-native wake: the adapter has
-   * already buffered the CLI's wake output, and the dispatched message only
-   * triggers ingestion. `ClaudeAdapterV2` deliberately discards the message
-   * text on that path.
-   *
-   * `message_text` is for app-owned work with no buffered provider output, such
-   * as a delegated child finishing. The text is the entire wake, so it must
-   * reach the provider as a real prompt.
+   * `adapter_buffered` (default) is the provider-native wake: the adapter has already buffered the
+   * CLI's wake output, and the dispatched message only triggers ingestion. `ClaudeAdapterV2`
+   * deliberately discards the message text on that path. `message_text` is for app-owned work with
+   * no buffered provider output, such as a delegated child finishing. The text is the entire wake,
+   * so it must reach the provider as a real prompt.
    */
   readonly delivery?: "adapter_buffered" | "message_text";
   /**
@@ -50,17 +45,12 @@ export interface ProviderContinuationRequest {
   readonly dispatchIfCurrent?: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
-  /** Clears a pending offer that the continuation worker intentionally drops. */
   readonly clearIfCurrent?: () => Effect.Effect<void>;
 }
 
 /**
- * Adapters offer a continuation request when provider-native work completes
- * outside an active turn (for example a Claude background task wake turn) so
- * the orchestrator can start a run that ingests it. The default reference
- * drops requests, keeping adapter construction dependency-free in tests; the
- * live layer must be shared with the ProviderContinuationService worker that
- * drains it.
+ * The default reference drops requests, keeping adapter construction dependency-free in tests; the
+ * live layer must be shared with the ProviderContinuationService worker that drains it.
  */
 export class ProviderContinuationRequests extends Context.Reference<{
   readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;

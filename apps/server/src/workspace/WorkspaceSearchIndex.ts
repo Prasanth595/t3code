@@ -260,13 +260,9 @@ function mapContentMatchRanges(
 }
 
 /**
- * Whole-word filtering happens after the grep rather than by wrapping the
- * pattern in boundary regex: consuming boundaries such as `(?:^|\W)` swallow
- * the separator between adjacent matches and widen the reported ranges, and
- * `\b` cannot match punctuation-edged queries at all. Matching VS Code, a
- * match edge is a word boundary when it touches the line edge, the
- * neighbouring character is not a word character, or the match's own edge
- * character is not a word character.
+ * Whole-word filtering happens after the grep rather than by wrapping the pattern in boundary
+ * regex: consuming boundaries such as `(?:^|\W)` swallow the separator between adjacent matches
+ * and widen the reported ranges, and `\b` cannot match punctuation-edged queries at all.
  */
 function isWholeWordRange(
   line: string,
@@ -549,9 +545,8 @@ export const WORKSPACE_SEARCH_INDEX_VARIANTS = ["paths", "content"] as const;
 export type WorkspaceSearchIndexVariant = (typeof WORKSPACE_SEARCH_INDEX_VARIANTS)[number];
 
 /**
- * Composite LayerMap key so the lightweight path index and the on-demand
- * content-search index of the same workspace are separate resources with
- * independent lifecycles. "\n" cannot appear in a filesystem path.
+ * Composite LayerMap key so the lightweight path index and the on-demand content-search index of
+ * the same workspace are separate resources with independent lifecycles.
  */
 export const workspaceSearchIndexKey = (cwd: string, variant: WorkspaceSearchIndexVariant) =>
   `${variant}\n${cwd}`;

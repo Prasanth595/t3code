@@ -8,11 +8,10 @@ import {
 } from "./sourceControl.ts";
 
 /**
- * Live progress of a repository clone that backs a freshly added project. The
- * server keeps this in memory only: a finished clone is dropped after a short
- * grace period, a failed one stays until it is retried or the project is
- * removed, and a server restart forgets in-flight clones (the project keeps
- * its empty workspace root and can be removed like any other project).
+ * The server keeps this in memory only: a finished clone is dropped after a
+ * short grace period, a failed one stays until it is retried or the project is
+ * removed, and a server restart forgets in-flight clones (the project keeps its
+ * empty workspace root and can be removed like any other project).
  */
 /** Producers clamp free text to these before publishing so encoding never fails. */
 export const PROJECT_CLONE_DETAIL_MAX_LENGTH = 200;
@@ -42,7 +41,6 @@ export const ProjectCloneSnapshot = Schema.Struct({
   percent: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
   /** Trailing text from the progress line, typically transfer size and rate. */
   detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PROJECT_CLONE_DETAIL_MAX_LENGTH))),
-  /** Human readable reason when phase is failed. */
   error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PROJECT_CLONE_ERROR_MAX_LENGTH))),
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
@@ -102,7 +100,6 @@ function projectCloneStageLabel(stage: ProjectCloneStage): string {
   }
 }
 
-/** Display name for a clone: the looked-up `owner/repo`, else the folder being cloned into. */
 export function projectCloneDisplayName(
   snapshot: Pick<ProjectCloneSnapshot, "repository" | "destinationPath">,
 ): string {
@@ -111,7 +108,6 @@ export function projectCloneDisplayName(
   return segments[segments.length - 1] ?? snapshot.destinationPath;
 }
 
-/** One-line progress summary: `Receiving objects · 45% · 12.3 MiB | 5.0 MiB/s`. */
 export function projectCloneProgressSummary(
   snapshot: Pick<ProjectCloneSnapshot, "stage" | "percent" | "detail">,
 ): string {

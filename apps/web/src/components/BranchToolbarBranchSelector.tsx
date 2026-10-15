@@ -132,9 +132,6 @@ export function BranchToolbarBranchSelector({
   const createRefMutation = useAtomCommand(vcsEnvironment.createRef, {
     reportFailure: false,
   });
-  // ---------------------------------------------------------------------------
-  // Thread / project state (pushed down from parent to colocate with mutation)
-  // ---------------------------------------------------------------------------
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -174,9 +171,6 @@ export function BranchToolbarBranchSelector({
       draftThreadEnvMode: draftThread?.envMode,
     });
 
-  // ---------------------------------------------------------------------------
-  // Thread branch mutation (colocated — only this component calls it)
-  // ---------------------------------------------------------------------------
   const setThreadBranch = useCallback(
     (branch: string | null, worktreePath: string | null, automatic = false) => {
       if (
@@ -239,9 +233,6 @@ export function BranchToolbarBranchSelector({
     ],
   );
 
-  // ---------------------------------------------------------------------------
-  // Git ref queries
-  // ---------------------------------------------------------------------------
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
@@ -373,9 +364,6 @@ export function BranchToolbarBranchSelector({
         ? `Showing ${refs.length} of ${totalBranchCount} refs`
         : null;
 
-  // ---------------------------------------------------------------------------
-  // Branch actions
-  // ---------------------------------------------------------------------------
   const copyBranchName = useCallback((branchName: string) => {
     void writeTextToClipboard(branchName, "branch name").then(
       (didCopy) => {
@@ -420,7 +408,6 @@ export function BranchToolbarBranchSelector({
       !readEnvironmentScope(environmentId, AuthSourceControlWriteScope) ||
       (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
     ) {
-      // The menu already closed when the item was chosen; explain the no-op.
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -535,8 +522,6 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  // Default the worktree base to the repo default branch (origin/HEAD), only
-  // falling back to the checked-out branch when no default is known.
   const defaultBranchName = useMemo(
     () => refs.find((refName) => refName.isDefault)?.name ?? null,
     [refs],
@@ -569,9 +554,6 @@ export function BranchToolbarBranchSelector({
     worktreeBaseBranchCandidate,
   ]);
 
-  // ---------------------------------------------------------------------------
-  // Combobox / list plumbing
-  // ---------------------------------------------------------------------------
   const handleOpenChange = useCallback((open: boolean) => {
     setIsBranchMenuOpen(open);
     if (!open) {
@@ -598,7 +580,6 @@ export function BranchToolbarBranchSelector({
     startFromOrigin,
   });
 
-  // Branch status is the fallback when this thread has no linked pull requests.
   const branchPrBranch = resolveBranchToolbarPrBranch({
     activeThreadBranch,
     resolvedActiveBranch,

@@ -63,8 +63,6 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         seen.add(message.itemId);
         return true;
       });
-    // Old preview handoffs remain readable. Their preformatted context is included
-    // as a whole when it fits, otherwise the coverage marker points to retrieval.
     const oldContext = pending
       .filter((handoff) => handoff.history === undefined)
       .map((handoff) => handoff.summaryText)

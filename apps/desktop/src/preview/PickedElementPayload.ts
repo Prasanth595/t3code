@@ -1,9 +1,4 @@
 /**
- * Strict structural validator for `PickedElementPayload` messages received
- * from the in-page picker preload (`apps/desktop/src/preview/PickPreload.ts`)
- * via `wc.ipc`. Lives in its own electron-free module so the validator is
- * trivially unit-testable.
- *
  * Validation must be tight: downstream `normalizeElementContextSelection`
  * calls `.trim()` on incoming strings, so a malformed payload (preload bug,
  * future schema mismatch, malicious page that intercepts the preload's IPC

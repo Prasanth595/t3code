@@ -97,7 +97,6 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
   }),
-  /** Closes a deleted thread's preview sessions, ending their server browser tabs. */
   Schema.Struct({
     type: Schema.Literal("preview.cleanup"),
   }),
@@ -150,7 +149,6 @@ export const OrchestrationEffectStatusV2 = Schema.Literals([
 export type OrchestrationEffectStatusV2 = typeof OrchestrationEffectStatusV2.Type;
 
 /**
- * How long a succeeded or cancelled effect row is kept after it completes.
  * Claiming, recovery, the orchestrator and storage cleanup only ask whether a
  * row is pending, running or failed, so a missing succeeded or cancelled row
  * reads the same as a present one. Its one other use is deduplication: `enqueue`
@@ -251,7 +249,6 @@ export interface EffectOutboxV2Shape {
     readonly workerId: string;
     readonly error: string;
   }) => Effect.Effect<boolean, EffectOutboxError>;
-  /** Deletes succeeded and cancelled rows older than `SETTLED_EFFECT_RETENTION`. Returns the count. */
   readonly pruneSettled: Effect.Effect<number, EffectOutboxError>;
 }
 
@@ -422,9 +419,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             `,
             { concurrency: 1, discard: true },
           );
-          // Do not signal here: callers enqueue inside a larger transaction,
-          // and workers must only observe availability after that transaction
-          // commits. EventSink owns the corresponding post-commit notification.
+          // EventSink owns the corresponding post-commit notification.
         }).pipe(Effect.mapError((cause) => new EffectOutboxError({ operation: "enqueue", cause }))),
       get: (effectId) =>
         sql<EffectRow>`
@@ -511,7 +506,6 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           if (Option.exists(effect, ({ status }) => status === "pending" || status === "running")) {
             return yield* Deferred.await(signal);
           }
-          // Settled already: release every waiter that shares this signal.
           yield* signalSettled([effectId]);
         }),
       reconcileAfterProcessLoss: Effect.gen(function* () {
@@ -725,7 +719,6 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
   }),
 );
 
-/** Prunes settled effect rows once the server is active, then every hour. */
 export const layerPruneWorker = Layer.effectDiscard(
   Effect.gen(function* () {
     const outbox = yield* EffectOutboxV2;

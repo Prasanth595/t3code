@@ -387,11 +387,6 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
-  /**
-   * Refuses a new turn on an instance the project has effectively disabled.
-   * A command that already has a receipt was let through before, so its
-   * retry replays instead of being refused under newer settings.
-   */
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
@@ -428,18 +423,12 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
   }) => Effect.Effect<void, ThreadManagementFailure>;
-  /**
-   * Settles a thread. When the thread's own agent asks, it is mid-turn, so
-   * the thread settles through `settleAfterRun` once that turn ends.
-   */
   readonly settleThread: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly byOwnAgent: boolean;
   }) => Effect.Effect<
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
-    // Dispatches thread.settle, a command the enablement chokepoint never
-    // gates; the type stays accurate anyway.
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly interruptThread: (
@@ -463,8 +452,6 @@ export interface ThreadManagementServiceShape {
     readonly reason?: string | undefined;
   }) => Effect.Effect<
     void,
-    // Dispatches thread.stop, a command the enablement chokepoint never
-    // gates; the type stays accurate anyway.
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
@@ -507,7 +494,6 @@ export function latestRun(
   return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
-/** The newest run in `run`'s restart continuation chain, or `run` itself. */
 function latestRestartContinuation(
   runs: ReadonlyArray<OrchestrationV2Run>,
   run: OrchestrationV2Run,
@@ -682,9 +668,6 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
     );
 
-  // Every path that can start or wake a provider turn funnels through this
-  // dispatch, so resolving and checking the target instance here (instead of
-  // at each caller) is the one place "off" is enforced.
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
       case "message.dispatch":
@@ -980,7 +963,6 @@ const make = Effect.gen(function* () {
   const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
     "orchestrationV2.threadManagement.settleAfterRun",
   )(function* (input) {
-    // A turn that outlives this wait leaves its thread active.
     const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
     if (run?.status !== "completed") return;
     yield* dispatch({

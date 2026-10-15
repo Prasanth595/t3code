@@ -3,7 +3,6 @@ import { cloneElement, isValidElement, type ReactElement } from "react";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import type { ControlPillMenuProps } from "./ControlPillMenu.types";
 
-/** Uses the same actions as iOS menus, with Android appearance and editor anchoring. */
 export function ControlPillMenu(props: ControlPillMenuProps) {
   // Long-press menus keep their child interactive: the child element gets
   // an injected onLongPress (mirroring the iOS context-menu interaction)

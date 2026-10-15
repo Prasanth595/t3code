@@ -61,7 +61,7 @@ export const setCliDesiredCloudLink = Effect.fn("cloud.cli_state.set_desired")(f
 /**
  * Drops a link the relay rejected, keeping the sign-in and preferences, so the
  * next start links this environment again. `t3 connect link` calls it: the
- * server never relinks a revoked link on its own. Returns whether it dropped one.
+ * server never relinks a revoked link on its own.
  */
 export const dropRevokedCloudLink = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;

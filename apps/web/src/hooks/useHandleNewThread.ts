@@ -50,8 +50,7 @@ interface NewThreadWorkspaceOptions {
 }
 
 // The workspace options the caller passed explicitly, shaped for the draft
-// store: absent keys stay absent so they never overwrite existing draft
-// state. Every reuse path applies exactly this set.
+// store: absent keys stay absent so they never overwrite existing draft state.
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
   return {
     ...(options?.branch !== undefined ? { branch: options.branch } : {}),
@@ -100,10 +99,9 @@ export function useNewThreadHandler() {
       const requestingRouteHref = router.state.location.href;
       const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
       const currentRouteTarget = getCurrentRouteTarget();
-      // A new thread carries the user's working mode from the thread being
-      // viewed. The target project's configured model still wins; interaction
-      // mode carries independently. Permissions, branch, worktree, and env mode
-      // come from configured defaults unless the caller passes them explicitly.
+      // The target project's configured model still wins; interaction mode
+      // carries independently. Permissions, branch, worktree, and env mode come
+      // from configured defaults unless the caller passes them explicitly.
       const carrySourceShell =
         currentRouteTarget?.kind === "server"
           ? readThreadShell(currentRouteTarget.threadRef)
@@ -139,8 +137,6 @@ export function useNewThreadHandler() {
       // after that belongs to a project that no longer exists.
       const abandonedSinceRequest = () =>
         routeChangedSinceRequest() || (project !== undefined && readProject(projectRef) === null);
-      // The resolver applies project overrides and, until the server has
-      // folded them, the aggregate's own legacy fields.
       const projectSettings = resolveProjectSettings(
         targetServerSettings,
         project?.id ?? null,
@@ -156,9 +152,8 @@ export function useNewThreadHandler() {
             currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
           destinationDraftId,
         });
-      // The shared resolver owns the priority order. The t3.json read is
-      // skipped entirely when a higher-priority source decides, and its
-      // query atom caches per project after the first call.
+      // The t3.json read is skipped entirely when a higher-priority source
+      // decides, and its query atom caches per project after the first call.
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
         const consultProjectFile =
           project !== undefined && projectSettings.settings.defaultThreadEnvMode === null;
@@ -228,15 +223,10 @@ export function useNewThreadHandler() {
             hasWorktreePathOption ||
             hasEnvModeOption ||
             hasStartFromOriginOption;
-          // Resurrecting an empty stored draft must not resurrect its stale
-          // context: explicit workspace options win outright; otherwise the
-          // env context resets to the configured defaults so drafts seeded
-          // before a defaults change (or by the old carry-over behavior) stop
-          // landing on "current checkout" branches forever. When the draft is
-          // already open and no options were passed, leave its workspace
-          // context alone entirely — the user may have just picked a branch
-          // in the composer. Model selection has its own explicit-pick rule
-          // below and does not follow this guard.
+          // When the draft is already open and no options were passed, leave
+          // its workspace context alone entirely — the user may have just
+          // picked a branch in the composer. Model selection has its own
+          // explicit-pick rule below and does not follow this guard.
           let workspaceContext: NewThreadWorkspaceOptions | null = null;
           if (hasExplicitWorkspaceOption) {
             workspaceContext = pickExplicitWorkspaceOptions(options);
@@ -245,15 +235,13 @@ export function useNewThreadHandler() {
             if (abandonedSinceRequest()) {
               return null;
             }
-            // The await yields. If the draft was opened (a concurrent
-            // invocation's navigation landed), promoted to a real thread,
-            // remapped away (a concurrent invocation registered a fresh
-            // draft — remapping back would evict the winner and let the
-            // store GC it), or gained content (no longer a reusable empty
-            // draft) in the meantime, this invocation is a stale loser:
-            // resetting context, remapping, or navigating would all clobber
-            // state written after the snapshot above. Bail out entirely —
-            // the winner already did this work.
+            // If the draft was opened (a concurrent invocation's navigation
+            // landed), promoted to a real thread, remapped away (a concurrent
+            // invocation registered a fresh draft — remapping back would evict
+            // the winner and let the store GC it), or gained content (no longer
+            // a reusable empty draft) in the meantime, this invocation is a
+            // stale loser: resetting context, remapping, or navigating would
+            // all clobber state written after the snapshot above.
             const routeTargetNow = getCurrentRouteTarget();
             const openedMeanwhile =
               routeTargetNow?.kind === "draft" &&
@@ -286,13 +274,9 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
           }
-          // Model intent: an explicit human pick always stands. Seeds and
-          // legacy entries alike re-resolve here — sticky first, mirroring
-          // the mint-fresh path, then the project default or carried
-          // selection on top. This runs even when the draft is already open:
-          // without it, a changed pin could never reach the draft the user
-          // is looking at, because explicit picks are the only thing the
-          // flag protects.
+          // This runs even when the draft is already open: without it, a
+          // changed pin could never reach the draft the user is looking at,
+          // because explicit picks are the only thing the flag protects.
           const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
           const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
           if (!storedDraftHasExplicitModelPick) {
@@ -351,8 +335,6 @@ export function useNewThreadHandler() {
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
         latestActiveDraftThread.promotedTo == null &&
-        // Same content rule as above: a new-thread request while viewing an
-        // invested draft mints a fresh one instead of repurposing it.
         !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
       ) {
         if (
@@ -398,14 +380,11 @@ export function useNewThreadHandler() {
           racedDraft.draftId !== storedDraftThread?.draftId &&
           readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
         ) {
-          // Same remap the reuse paths above perform: point the draft at the
-          // caller's project member and apply explicit workspace options if
-          // the caller passed any. Without explicit options the winner's
-          // context stands untouched — the winner's navigation is landing,
-          // which is the isDraftAlreadyOpen "leave it alone" case. Writing
-          // this invocation's defaults here instead would clobber the
-          // winner's explicit picks and could pair its worktreePath with a
-          // contradictory envMode.
+          // Without explicit options the winner's context stands untouched —
+          // the winner's navigation is landing, which is the isDraftAlreadyOpen
+          // "leave it alone" case. Writing this invocation's defaults here
+          // instead would clobber the winner's explicit picks and could pair
+          // its worktreePath with a contradictory envMode.
           setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
             threadId: racedDraft.threadId,
             createdAt: racedDraft.createdAt,
@@ -438,8 +417,6 @@ export function useNewThreadHandler() {
         applyStickyState(draftId);
         const modelSelectionOverride = resolveModelSelectionOverride(draftId);
         if (modelSelectionOverride) {
-          // Project defaults and carried selections both outrank global sticky
-          // state. The project default wins when both are present.
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
         await router.navigate({

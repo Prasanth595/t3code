@@ -204,7 +204,6 @@ export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<
   }
 }
 
-/** The command's thread runs above the modes its sender may touch (see `DispatchModeLimit`). */
 export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<OrchestratorThreadAboveModeLimitError>()(
   "OrchestratorThreadAboveModeLimitError",
   {
@@ -280,7 +279,6 @@ export interface OrchestratorV2DispatchResult {
 
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
-  /** Startup pass that settles delegated-task results and deliveries runs left behind. */
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   /** Settles a delegated child whose restart continuation of `sourceRunId` declined or failed. */
   readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
@@ -360,7 +358,6 @@ export interface OrchestratorV2Shape {
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
-  /** See `ProjectionStoreV2Shape.readShellSnapshot`. */
   readonly readShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<
@@ -526,7 +523,6 @@ function pendingThreadTitleGenerationEffect(
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 
-/** A reopened preparation item drops the output and exit code of the attempt it replaces. */
 function withoutPreparationResult(
   item: Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>,
 ) {
@@ -554,7 +550,6 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   );
 }
 
-/** The link with its watch replaced, or removed when `watch` is undefined. */
 function withPullRequestWatch(
   link: ThreadPullRequestLink,
   watch: ThreadPullRequestWatch | undefined,
@@ -563,7 +558,6 @@ function withPullRequestWatch(
   return watch === undefined ? rest : { ...rest, watch };
 }
 
-/** A legacy single-PR link as a link entry. Re-linking a pull request keeps its watch. */
 function legacyPullRequestLink(
   thread: OrchestrationV2AppThread,
   linked: ThreadLinkedPullRequest,
@@ -2664,7 +2658,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const runningRunExists = projection.runs.some((run) =>
         ["preparing", "starting", "running", "waiting"].includes(run.status),
       );
-      // Includes a queue held after a Stop, which otherwise shows no activity.
       const queuedMessageExists = projection.runs.some(
         (run) => run.status === "queued" && !automaticQueuedRuns.includes(run),
       );
@@ -2674,7 +2667,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const blockingRequestExists = pendingRequests.some(
         (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
       );
-      // The reason is shown to the user, so it names what to clear first.
       const blocker = blockingRequestExists
         ? "is waiting on an approval or question. Answer it before settling."
         : runningRunExists
@@ -2870,8 +2862,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.unarchive":
           return { ...thread, archivedAt: null, updatedAt: now };
         case "thread.settle": {
-          // Settling is "I'm done with this": it clears a pin the same way it
-          // parks the thread (mirrors the v1 decider's settle/pin exclusion).
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
             thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
@@ -2930,9 +2920,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
         }
         case "thread.pin": {
-          // Pinning is a promotion: it clears the parked states rather than
-          // silently outranking them — an explicit settle is un-settled and a
-          // snooze's return ticket is spent (the thread is on top NOW).
           const alreadyPinned = thread.pinnedAt != null;
           const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
           return {
@@ -3052,8 +3039,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       : []),
                   ],
                 }),
-            // regenerateTitle: true arms the in-flight marker; a landing title
-            // or an explicit false (generation failed/abandoned) clears it.
             ...(command.regenerateTitle === true
               ? { titleRegeneration: { requestId: command.commandId, startedAt: now } }
               : command.regenerateTitle === false || command.title !== undefined
@@ -3162,7 +3147,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const linked = threadPullRequestsOf(thread);
           const visible = (link: ThreadPullRequestLink) =>
             link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key);
-          // A watch started on an unlinked (or dismissed) pull request links it in the same step.
           const links =
             command.type === "thread.pull-request.watch" &&
             command.watching &&
@@ -3568,7 +3552,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  /** Fails when a limited sender's command would touch a thread running above its limit. */
   const refuseAboveDispatchModeLimit = Effect.fn("orchestrationV2.dispatch.refuseAboveModeLimit")(
     function* (
       command: OrchestrationV2ServerCommand,
@@ -6920,7 +6903,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.childThreadId === child.id &&
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
-    // Before first publication, follow-ups remain part of the original task.
     if (original === undefined || original.result === null) return;
     const owner =
       parent.runs.filter(isBlockingRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
@@ -7051,8 +7033,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const task = parentProjection.subagents.find(
       (candidate) => candidate.id === command.taskId && candidate.origin === "app_owned",
     );
-    // No-op commands reject with a descriptive cause, matching the thread
-    // mutation handlers ("already archived", "not archived").
     if (task === undefined) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -7074,17 +7054,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completionWake: command.completionWake,
       updatedAt: now,
     };
-    // A non-terminal task needs no offer here: finalize reads the upgraded
-    // policy when the child terminalizes. Both writers hold this parent lock,
-    // so a terminal task means finalize already committed the terminal row and
-    // already made its offer decision under the pre-upgrade policy: under
-    // settled_only it offered iff the spawning run was not live. Plan a
-    // delivery only when that run is live now, which is precisely the case
-    // where finalize skipped. The mailbox steers a capable active session or
-    // queues behind that run. When that run is not live, finalize already
-    // offered and a second offer would wake the parent twice. (If the parent settled in between,
-    // this skips a wake that finalize also skipped; a missed wake is cheaper
-    // than a duplicate one, and the result is already in the projection.)
+    // When that run is not live, finalize already offered and a second offer would wake the
+    // parent twice. (If the parent settled in between, this skips a wake that finalize also
+    // skipped; a missed wake is cheaper than a duplicate one, and the result is already in the
+    // projection.)
     const parentRun =
       task.runId === null
         ? undefined
@@ -7256,7 +7229,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   /**
-   * Records or updates the card for a secret an agent asked the user for. The
+   * The
    * item carries the request and its status only; the value goes straight to
    * the server's secret store and never through orchestration.
    */
@@ -7300,8 +7273,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const now = yield* DateTime.now;
-      // A request is answered once, and a retry finds its card as it was
-      // asked: either one records the card unchanged.
       const unchanged =
         existing !== undefined &&
         (existing.secretStatus !== "pending" || command.secretStatus === "pending");
@@ -8311,7 +8282,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   /**
-   * Returns a run whose workspace preparation failed to preparing. The failure
+   * The failure
    * item turns cancelled so clients stop offering the retry; ThreadLaunchService
    * runs the recorded preparation again once this commits.
    */
@@ -8409,12 +8380,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   /**
-   * Ends the background work a settled thread still shows that no provider
-   * process will report on: work on the provider thread whose interrupt just
-   * returned (`stoppedProviderThreadId`), and work on provider threads with no
-   * live session at all. Only the stopped run's work and older runs' is ended
-   * (`throughRunOrdinal`); a later run's work is its own. A dead process's
-   * roster goes too, as on restart.
+   * Only the stopped run's work and older runs' is ended
+   * (`throughRunOrdinal`); a later run's work is its own.
    */
   const settleBackgroundWork = (input: {
     readonly command: Extract<
@@ -8776,7 +8743,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   /**
-   * Whether Stop reached a run, as its interrupt request records. Its agent can call tools
+   * Its agent can call tools
    * until the provider stops it, and a slow call can land after that, but nothing it starts
    * may outlive the Stop. A restart continuation of that run must not start either.
    */
@@ -8795,7 +8762,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         mapDispatchError(command),
       );
 
-  /** Records Stop for a run without replacing a marker already written by its interrupt. */
   const markStoppedRun = Effect.fnUntraced(function* (input: {
     readonly command: Extract<
       OrchestrationV2ServerCommand,
@@ -9544,7 +9510,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       );
 
-      // Open interrupt edge cases are tracked in https://github.com/pingdotgg/t3code/issues/15013.
       yield* emitEvent({
         type: "turn-item.updated",
         threadId: command.threadId,
@@ -9573,12 +9538,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return undefined;
     });
 
-  /**
-   * Stop for a thread whatever it is doing, the way the Stop button stops the run it
-   * shows: the running turn (or one whose background work is still pending) is interrupted,
-   * and the rest of the thread is held. A turn that cannot be interrupted still leaves the
-   * thread held. Delegated tasks under the thread are stopped by the sender.
-   */
   const dispatchThreadStop = (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.stop" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -9596,7 +9555,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
       if (projection.thread.deletedAt !== null) return undefined;
-      // Queued messages never started and cannot own background work.
       const latestRun = projection.runs.findLast((run) => run.status !== "queued");
       const target =
         projection.runs.findLast(
@@ -9788,7 +9746,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const now = yield* DateTime.now;
-      // This rollback becomes the only one whose failure the thread records.
       yield* emit(
         events,
         command,
@@ -9874,8 +9831,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   /**
-   * Parent thread of an app-owned delegated child, or undefined when the
-   * thread is not one. Thread lineage and fork origin are immutable, so this
+   * Thread lineage and fork origin are immutable, so this
    * is safe to read without holding either thread's dispatch lock.
    */
   const appOwnedSubagentParentThreadId = (childThreadId: ThreadId) =>
@@ -10119,8 +10075,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   /**
-   * Transfers a terminal child's result into its parent and offers the parent
-   * wake. Every mutation here targets the PARENT thread, so callers must hold
+   * Every mutation here targets the PARENT thread, so callers must hold
    * the parent thread's dispatch lock rather than the child's: the
    * delegated_task.wake-policy handler rewrites the same subagent row under
    * that lock with a full-row payload, and unserialized writers clobber each
@@ -10952,7 +10907,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "run.interrupt":
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
-        // Stop also stops every delegated task under the thread once it commits.
         if (command.holdQueue === true) {
           yield* Ref.update(effects, (existing) => [
             ...existing,
@@ -11110,9 +11064,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           detail: receipt.error ?? "Previously rejected.",
         });
       }
-      // A receipt only proves this exact command was handled for its own
-      // thread. Replaying it for a command aimed at another thread would
-      // report success for work that never happened.
       const dispatchThreadId = commandThreadId(command);
       if (!canReplayCommandReceipt(receipt.threadId, dispatchThreadId)) {
         return yield* new OrchestratorCommandIdConflictError({
@@ -11384,15 +11335,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.forkDetach,
     );
 
-  // Settles child results and completion deliveries whose runs ended without
-  // the listener above: before this boot, or in runtime reconciliation, which
-  // it skips. Startup runs this after reconciliation and before the effect
-  // worker. Queue recovery instead holds unstarted runs until an explicit
-  // queue.resume command arrives.
+  // Startup runs this after reconciliation and before the effect worker. Queue
+  // recovery instead holds unstarted runs until an explicit queue.resume
+  // command arrives.
   const recoverDelegatedTasks = Effect.gen(function* () {
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
-      // Candidate counts let a startup trace show whether recovery scales
-      // with pending work or with history.
       Effect.tap((threadIds) =>
         Effect.annotateCurrentSpan("recovery.subagentResultThreads", threadIds.length),
       ),

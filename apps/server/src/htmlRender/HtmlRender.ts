@@ -85,24 +85,16 @@ export interface HtmlPreview {
   /** Base64 PNG of the top `capturedHeight` pixels. */
   readonly png: string;
   readonly width: number;
-  /** Height the page needs to show without scrolling. */
   readonly contentHeight: number;
   readonly capturedHeight: number;
   readonly consoleMessages: ReadonlyArray<HeadlessChrome.ConsoleMessage>;
-  /** Local image paths that could not be read; they show as broken images. */
   readonly missingImages?: ReadonlyArray<string>;
 }
 
 export class HtmlRender extends Context.Service<
   HtmlRender,
   {
-    /** The self-contained page that gets stored: local images inlined, theme bootstrap injected. */
     readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
-    /**
-     * Stores a prepared page as a thread attachment for clients to show inline,
-     * measuring its height at each client width when the preview browser is
-     * already installed.
-     */
     readonly publish: (input: {
       readonly threadId: ThreadId;
       readonly html: string;
@@ -184,16 +176,14 @@ const isImageBytes = (bytes: Uint8Array) => {
   return hasSvgRoot(new TextDecoder().decode(bytes.subarray(0, 4096)));
 };
 
-/** The index just past `token` at or after `from`, or -1 when it never appears. */
 const after = (text: string, token: string, from: number) => {
   const at = text.indexOf(token, from);
   return at === -1 ? -1 : at + token.length;
 };
 
 /**
- * Whether an XML document's root element is <svg>, after any processing
- * instructions, comments, and a doctype. One forward pass, so no input can
- * make it slow, and quoted text never counts as markup.
+ * One forward pass, so no input can make it slow, and quoted text never counts
+ * as markup.
  */
 const hasSvgRoot = (text: string) => {
   let at = 0;
@@ -227,7 +217,6 @@ const afterDoctype = (text: string, from: number) => {
   return -1;
 };
 
-/** Replaces every local image reference with a data URI; unreadable paths stay as written. */
 const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (html: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const references = findLocalImages(html);
@@ -323,7 +312,6 @@ const MIN_PREVIEW_WIDTH = 240;
 const MAX_PREVIEW_WIDTH = 1_600;
 // Each preview or measurement runs its own browser; more at once mostly costs memory.
 const MAX_CONCURRENT_BROWSERS = 2;
-// Publishing waits this long at most for heights before returning without them.
 const MEASURE_TIMEOUT = "6 seconds";
 
 // Measured in the dark theme with Arial-metric fonts, so text wraps close to how clients show it.
@@ -344,7 +332,6 @@ const make = Effect.gen(function* () {
   const noSandbox = PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment);
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 
-  /** Runs one browser launch; a host that cannot start it gets setup steps instead. */
   const launching = <A>(
     executable: string,
     run: (noSandbox: boolean) => Effect.Effect<A, HeadlessChrome.HtmlRenderBrowserError>,

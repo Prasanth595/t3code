@@ -115,7 +115,6 @@ export const commitVcsRefsRefresh = Effect.fn("CachedVcsRefsState.commitRefresh"
 });
 
 /**
- * Retains the last unfiltered branch-list response for the new-task picker.
  * Filtered or paginated lists intentionally stay live-only: treating a
  * partial result as a complete offline list would make branch selection
  * misleading.
@@ -316,8 +315,8 @@ export function createVcsEnvironmentAtoms<R, E>(
       onSettled: invalidateRefs,
     }),
     // Live stages of a bootstrap worktree setup. Null until the server begins
-    // tracking, then a snapshot per change, then null again after the setup
-    // is dropped. Short TTL so a closed thread releases its subscription.
+    // tracking, then a snapshot per change, then null again after the setup is
+    // dropped.
     worktreeSetup: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:worktree-setup",
       tag: WS_METHODS.subscribeWorktreeSetup,

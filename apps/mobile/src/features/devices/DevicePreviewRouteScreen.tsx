@@ -43,7 +43,6 @@ type DevicePreviewRouteScreenProps = StaticScreenProps<{
   readonly threadId: string;
 }>;
 
-/** Full-screen viewer; controls live in an overlay toggled by the handle or a shake. */
 export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = useCallback(() => navigation.goBack(), [navigation]);
@@ -92,7 +91,6 @@ function DevicePreviewScreen({
   const preview = selectedThreadDevicePreview(previews, selectedKey);
   const onInputConnected = useCallback(async (connected: boolean) => {
     setInputConnected(connected);
-    // Controls greet the user while connecting, then get out of the stream's way.
     if (connected) setControlsVisible(false);
   }, []);
   useEffect(() => {

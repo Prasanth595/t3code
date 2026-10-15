@@ -8,7 +8,6 @@ import { ControlPillMenu } from "../../../components/ControlPillMenu";
 
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 
-/** The stops are a reading sequence, with file context kept beside each idea. */
 export function GuideOutline({
   guide,
   onOpen,

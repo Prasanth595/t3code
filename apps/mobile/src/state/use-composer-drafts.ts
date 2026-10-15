@@ -79,7 +79,6 @@ export function setComposerContextImporting(draftKey: string, importing: boolean
 let lastComposerSelection: { draftKey: string; text: string; start: number; end: number } | null =
   null;
 
-/** Retain the last focused caret while a picker or review sheet is open. */
 export function rememberComposerDraftSelection(
   draftKey: string,
   text: string,
@@ -89,9 +88,9 @@ export function rememberComposerDraftSelection(
 }
 
 /**
- * The caret an insert left behind, for the text it produced. Inserting a chip moves the caret
- * past it here; without reading this back the editor would restore the pre-insert offset and
- * leave the caret sitting before the chip the user just added.
+ * Inserting a chip moves the caret past it here; without reading this back the editor would
+ * restore the pre-insert offset and leave the caret sitting before the chip the user just
+ * added.
  */
 export function readComposerDraftSelection(
   draftKey: string,
@@ -334,9 +333,9 @@ export interface ComposerDraft {
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
   /**
-   * Set on new-task drafts only. The project is stored here rather than in
-   * the key so a project can hold any number of drafts and a draft can be
-   * retargeted to another project without changing identity.
+   * The project is stored here rather than in the key so a project can hold any
+   * number of drafts and a draft can be retargeted to another project without
+   * changing identity.
    */
   readonly project?: ComposerDraftProject;
 }
@@ -471,7 +470,6 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistRetryNeeded = false;
 const persistenceQueue = new SerializedAsyncQueue();
 
-/** Resets module-level state between test runs. */
 export function resetComposerDraftsLoadState(): void {
   loadPromise = null;
   persistRetryNeeded = false;
@@ -558,8 +556,6 @@ export function isComposerDraftEmpty(draft: ComposerDraft): boolean {
   return isEmptyDraft(draft);
 }
 
-// The project stamp is identity, not content: a new-task draft with nothing
-// else in it is still empty and gets dropped like any other.
 function isEmptyDraft(draft: ComposerDraft): boolean {
   return (
     draft.text.length === 0 &&
@@ -572,9 +568,9 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
 }
 
 /**
- * Writes a draft back, dropping it once empty. A new-task draft keeps its
- * entry while the composer is bound to it (the project stamp is what the
- * composer binds to); the persist sweep still leaves empty ones off disk.
+ * A new-task draft keeps its entry while the composer is bound to it (the
+ * project stamp is what the composer binds to); the persist sweep still leaves
+ * empty ones off disk.
  */
 function withComposerDraft(
   current: Record<string, ComposerDraft>,
@@ -591,18 +587,10 @@ function withComposerDraft(
 
 export { isNewTaskDraftKey, newTaskDraftKey } from "./new-task-draft-key";
 
-// Draft ids only need to be unique within this device's draft file. Deriving
-// them from time plus randomness keeps this module free of native imports,
-// which the persistence tests rely on.
 function newDraftId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/**
- * Project-keyed new-task drafts from earlier builds are rewritten on load into
- * id-keyed drafts with the project stamped in, so existing drafts survive the
- * switch to many-per-project.
- */
 export function migrateLegacyNewTaskDraft(
   key: string,
   draft: ComposerDraft,
@@ -773,9 +761,8 @@ async function writePersistedComposerState(
 }
 
 /**
- * Lands any debounced or in-flight draft write before the JS runtime is torn
- * down (app update restart), so the freshest draft state survives it. A write
- * failure propagates so the caller can decide whether the restart may proceed.
+ * A write failure propagates so the caller can decide whether the restart may
+ * proceed.
  */
 export async function flushComposerDrafts(): Promise<void> {
   // Never land a pre-hydration snapshot: persisted state must merge into the
@@ -896,14 +883,12 @@ export async function releaseUnusedComposerAttachmentFiles(
 
   // Persisted drafts must hydrate before the reference scan. On a cold start
   // the atom is still empty, and every file a persisted draft owns would look
-  // unused. Hydrate before flushing so a pending pre-hydration write cannot
-  // land an incomplete snapshot either.
+  // unused.
   await waitForComposerDraftsLoaded();
   await flushComposerDrafts();
   if (!(await threadOutboxManager.load())) {
     // An unreadable outbox store must not look like an empty queue: deleting
-    // now would take bytes a persisted queued message still needs. Skip the
-    // sweep; the next one retries hydration.
+    // now would take bytes a persisted queued message still needs.
     return;
   }
   await flushThreadOutbox();
@@ -953,9 +938,8 @@ export async function releaseUnusedComposerAttachmentFiles(
     const { releasePendingAttachmentUploads } = await import("../lib/attachmentUpload");
     for (const [environmentId, attachmentIds] of uploadCandidates) {
       for (const attachmentId of attachmentIds) {
-        // A different draft or queued message can reuse the same pending
-        // upload with another local URI. Re-check the server-side ownership
-        // key immediately before deletion.
+        // A different draft or queued message can reuse the same pending upload
+        // with another local URI.
         if (isComposerAttachmentUploadReferenced(environmentId, attachmentId)) {
           continue;
         }
@@ -991,11 +975,6 @@ export function scheduleUnusedComposerAttachmentCleanup(
   });
 }
 
-/**
- * Owner-side cleanup hook for the shared preview-retention helper: releasing
- * the last preview/upload lease retries the unused-file sweep. Registered here
- * because this module owns the draft and outbox references the sweep reads.
- */
 registerComposerAttachmentUnusedHandler((attachment) => {
   scheduleUnusedComposerAttachmentCleanup([attachment]);
 });
@@ -1021,7 +1000,6 @@ export function schedulePersistComposerState(): void {
         // these edits after persisted ownership can be read safely.
         persistRetryNeeded = true;
         console.warn("[composer-drafts] failed to persist drafts", error);
-        // Draft persistence is best-effort; in-memory drafts still keep working.
       }
     });
   }, PERSIST_DEBOUNCE_MS);
@@ -1061,7 +1039,7 @@ export function ensureComposerDraftsLoaded(): void {
   });
   loadPromise = loading;
   // Handle fire-and-forget hook loads without swallowing failures from the
-  // write and cleanup callers that await this same promise. A later call retries.
+  // write and cleanup callers that await this same promise.
   void loading.catch((cause) => {
     if (loadPromise === loading) loadPromise = null;
     console.warn(
@@ -1078,7 +1056,6 @@ export function ensureComposerDraftsLoaded(): void {
   });
 }
 
-/** Wait until persisted drafts have been merged into the in-memory composer state. */
 export async function waitForComposerDraftsLoaded(): Promise<void> {
   ensureComposerDraftsLoaded();
   if (loadPromise !== null) {
@@ -1466,7 +1443,6 @@ export function removeComposerDraftAttachment(draftKey: string, imageId: string)
   );
 }
 
-/** Stamps a finished upload without overwriting text, removals, or newer attachments. */
 export function setComposerDraftAttachmentUpload(
   draftKey: string,
   attachment: DraftComposerAttachment,
@@ -1526,9 +1502,6 @@ export function clearComposerDraftContentState(
   if (!existing) {
     return current;
   }
-  // Clearing content is the "this draft is done" moment (sent, queued, or
-  // discarded), so the project stamp goes too and an otherwise-empty new-task
-  // draft leaves the store rather than lingering as a blank row.
   const {
     importedShareIds: _importedShareIds,
     context: _context,
@@ -1651,7 +1624,6 @@ export function mergeComposerDraftContentState(
 }
 
 /**
- * Atomically moves an incoming share into a project-scoped composer draft.
  * The durable write happens before the share inbox item can be acknowledged.
  */
 export async function mergeComposerDraftContent(
@@ -1690,7 +1662,6 @@ export async function mergeComposerDraftContent(
   return { skippedAttachmentCount };
 }
 
-/** Restores the exact content/settings captured before an interrupted import. */
 export async function restoreComposerDraftSnapshot(
   draftKey: string,
   snapshot: ComposerDraft,
@@ -1728,11 +1699,11 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
 }
 
 /**
- * Undoes an abandoned mergeComposerDraftContent. When the draft is untouched
- * since `merged` (the state captured right after the merge), the pre-merge
- * snapshot comes back exactly. When the user edited the draft during the
- * merge's awaits, only what the merge inserted (the appended text and the new
- * attachments) is taken back out, so the user's edits survive the rollback.
+ * When the draft is untouched since `merged` (the state captured right after
+ * the merge), the pre-merge snapshot comes back exactly. When the user edited
+ * the draft during the merge's awaits, only what the merge inserted (the
+ * appended text and the new attachments) is taken back out, so the user's edits
+ * survive the rollback.
  */
 export function undoComposerDraftMergeState(
   current: Record<string, ComposerDraft>,
@@ -1753,8 +1724,6 @@ export function undoComposerDraftMergeState(
       .filter((attachment) => !snapshotAttachmentIds.has(attachment.id))
       .map((attachment) => attachment.id),
   );
-  // A setting still holding the merge's value is the merge's doing: restore
-  // the snapshot's. One the user changed since the merge stays theirs.
   const undoSetting = <
     K extends "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection",
   >(
@@ -1781,7 +1750,6 @@ export function undoComposerDraftMergeState(
   return withComposerDraft(current, draftKey, draft);
 }
 
-/** Applies undoComposerDraftMergeState and lands it durably. */
 export async function undoComposerDraftMerge(
   draftKey: string,
   snapshot: ComposerDraft,
@@ -1859,10 +1827,9 @@ export function removeComposerDraftsForEnvironment(
 }
 
 /**
- * Mints a new-task draft for a project. The entry is published immediately so
- * the composer can bind to its key before the user types; it stays out of the
- * list until it has content, and the empty-draft sweep drops it on persist if
- * nothing is ever written.
+ * The entry is published immediately so the composer can bind to its key before
+ * the user types; it stays out of the list until it has content, and the
+ * empty-draft sweep drops it on persist if nothing is ever written.
  */
 export function createNewTaskDraft(project: {
   readonly environmentId: EnvironmentId;
@@ -1882,9 +1849,8 @@ export function createNewTaskDraft(project: {
 }
 
 /**
- * Points an existing new-task draft at a different project, keeping its
- * content and identity. Workspace selection is project-specific (branch,
- * worktree), so it is cleared; model and mode choices carry over.
+ * Workspace selection is project-specific (branch, worktree), so it is cleared;
+ * model and mode choices carry over.
  */
 export function retargetNewTaskDraft(
   draftKey: string,

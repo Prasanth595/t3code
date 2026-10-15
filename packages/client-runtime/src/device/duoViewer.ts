@@ -51,7 +51,7 @@ export interface DuoViewer {
   readonly dispose: () => void;
 }
 
-/** On-demand renderer for the articulated body. One inner framebuffer spans both leaves; HID belongs to the stream. */
+/** One inner framebuffer spans both leaves; HID belongs to the stream. */
 export function createDuoViewer(options: {
   canvas: HTMLCanvasElement;
   sources: Record<DuoPanelId, HTMLCanvasElement>;
@@ -431,8 +431,6 @@ export function createDuoViewer(options: {
       if (!moving()) lastTime = performance.now();
       previewAngle = next;
       if (next !== null && !pinch) {
-        // A fold button holds no leaf, so the device is presented, centered on
-        // the hinge, once the fold lands.
         hingeLeaf = null;
       } else if (next !== null && !hingeLeaf && model) {
         clearHandoff();
@@ -442,7 +440,6 @@ export function createDuoViewer(options: {
       }
       orbit.hold(interactionActive || (pinch && next !== null), performance.now());
       targetAngle = next ?? screen?.hingeAngle ?? (screen?.screenId === 1 ? 0 : 180);
-      // A pinch follows the fingers; anything else eases toward the target.
       if (next !== null && pinch) {
         angle = next;
         applyPose();

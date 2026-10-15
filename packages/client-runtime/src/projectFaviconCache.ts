@@ -82,10 +82,8 @@ async function readBounded(response: Response, maxBytes: number) {
 }
 
 /**
- * Fetches an icon and inlines its bytes when they fit the cache limit, so SVGs
- * and small bitmaps are stored exactly as served. Larger bitmaps go through the
- * platform downscaler; larger SVGs stay remote because rasterizing them without
- * intrinsic dimensions is unreliable.
+ * Larger bitmaps go through the platform downscaler; larger SVGs stay remote because rasterizing
+ * them without intrinsic dimensions is unreliable.
  */
 export function createProjectFaviconImageLoader(input: {
   readonly fetch?: typeof fetch;
@@ -132,9 +130,7 @@ export function createProjectFaviconCache(input: {
 
   const persist = (operation: () => Promise<void>) => {
     const task: Promise<void> = operation()
-      .catch(() => {
-        // Keep the in-memory image if local storage is full or unavailable.
-      })
+      .catch(() => {})
       .finally(() => pending.delete(task));
     pending.add(task);
   };
@@ -168,9 +164,7 @@ export function createProjectFaviconCache(input: {
           if (Option.isSome(entry)) entries.set(keyFor(entry.value), entry.value);
         }
         trim();
-      } catch {
-        // A missing, corrupt, or unavailable cache must not prevent startup.
-      }
+      } catch {}
     })());
 
   const peek = (target: ProjectFaviconTarget) => entries.get(keyFor(target))?.dataUrl ?? null;
@@ -219,9 +213,7 @@ export function createProjectFaviconCache(input: {
         trim();
         return dataUrl;
       }
-    } catch {
-      // An outage or failed decode leaves the last successful image visible.
-    }
+    } catch {}
     return peek(target) ?? url;
   };
 

@@ -2,9 +2,8 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 /**
- * Every accent shares a lightness so no kind reads heavier than another; only hue carries
- * identity. These are the sRGB form of the same OKLCH set web uses, so a chip looks the
- * same on every surface. See `composerInlineChip.ts`.
+ * These are the sRGB form of the same OKLCH set web uses, so a chip looks the same on every
+ * surface. See `composerInlineChip.ts`.
  */
 const CONTEXT_CHIP_PRESENTATIONS = {
   image: { accent: "#d55665", symbol: "photo" },
@@ -19,10 +18,6 @@ const CONTEXT_CHIP_PRESENTATIONS = {
   skill: { accent: "#b261be", symbol: "cube" },
 } as const;
 
-/**
- * The size an attachment chip reports beside its name, matching web. Rendered as its own
- * smaller run, so it carries no separator. Only attachment-backed records have bytes.
- */
 export function composerChipSizeSuffix(record?: {
   readonly kind?: string;
   readonly sizeBytes?: number;
@@ -31,11 +26,6 @@ export function composerChipSizeSuffix(record?: {
   return typeof record.sizeBytes === "number" ? formatAttachmentSize(record.sizeBytes) : "";
 }
 
-/**
- * A pull request chip is coloured by what the pull request *is*, the way web colours it and
- * the way the forge itself does: green open, grey draft, purple merged, red closed. The glyph
- * stays the same across all four, as it does on web — state is carried by colour alone.
- */
 const PULL_REQUEST_CHIP_PRESENTATIONS = {
   open: { accent: "#009f6e", symbol: "git-pull-request" },
   draft: { accent: "#7f8793", symbol: "git-pull-request" },

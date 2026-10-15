@@ -47,10 +47,6 @@ function cursorSandboxUnsupported(cause: unknown): boolean {
   return false;
 }
 
-/**
- * Build a Cursor text-generation closure bound to a specific `CursorSettings`
- * payload. See `makeCodexAdapter` for the overall per-instance rationale.
- */
 export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,

@@ -7,7 +7,6 @@ import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
-/** The provider client definitions this mobile build ships. */
 const providerClients = makeProviderClientRegistry([
   cursorClient,
   grokClient,

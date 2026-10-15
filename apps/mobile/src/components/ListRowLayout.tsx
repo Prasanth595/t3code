@@ -13,7 +13,6 @@ export interface ListRowContentProps {
   readonly disabled?: boolean;
 }
 
-/** Shared row geometry; controls own their behavior and accessibility. */
 export function ListRowLayout({
   icon,
   label,

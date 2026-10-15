@@ -94,8 +94,6 @@ function modelsFromDiscovery(
   customModels: ReadonlyArray<string>,
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
-  // Discovered session config options and modes ride on every model so the
-  // composer's generic option controls can drive them per thread.
   const capabilities =
     discovery === undefined || discovery.configOptions.length === 0
       ? EMPTY_CAPABILITIES
@@ -458,7 +456,6 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
 
 export type AcpRegistryDriverEnv = AcpRegistryAdapterV2DriverEnv | ProviderHost.ProviderHost;
 
-/** Canonical provider-instance wrapper for ACP Registry orchestration adapters. */
 export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {

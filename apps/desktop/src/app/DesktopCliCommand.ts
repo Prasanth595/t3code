@@ -12,19 +12,14 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
-// Settings → Install `t3` command, like VS Code's "Install 'code' command".
-// The app's launcher (see DesktopCliShim) lives in the T3 home and is off PATH
-// by default. Installing links it into a folder on the user's PATH, or on
-// Windows adds the launcher's folder to the user's PATH. Removing undoes only
-// what installing did: a link that points at one of the app's launchers, or a
-// PATH entry the app recorded adding.
+// Removing undoes only what installing did: a link that points at one of the
+// app's launchers, or a PATH entry the app recorded adding.
 
 export class DesktopCliCommandError extends Schema.TaggedError<DesktopCliCommandError>()(
   "DesktopCliCommandError",
   { message: Schema.String },
 ) {}
 
-/** User-writable folders that login shells commonly put on PATH, in preference order. */
 const unixCandidates = (home: string, platform: NodeJS.Platform) =>
   platform === "darwin"
     ? ["/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`, `${home}/bin`]
@@ -137,7 +132,6 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => fail("Could not update your PATH.")),
     );
 
-  /** The `t3` a new shell runs, by PATH order, or none. */
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
       const candidate = path.join(directory, "t3");
@@ -146,7 +140,6 @@ export const make = Effect.gen(function* () {
     return Option.none<string>();
   });
 
-  /** The `t3` a new shell runs when it is not this app's, on Unix. */
   const foreignFirstOnPath = Effect.gen(function* () {
     if (windows) return Option.none<string>();
     const first = yield* firstOnPath;
@@ -154,7 +147,6 @@ export const make = Effect.gen(function* () {
     return first;
   });
 
-  /** Where this app's command is installed now, if anywhere. */
   const installedAt = Effect.gen(function* () {
     if (windows) {
       if (!(yield* exists(ownedPathMarker))) return Option.none<string>();
@@ -216,7 +208,6 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existing)) {
       const target = yield* fs.readLink(existing.value).pipe(Effect.option);
       if (Option.getOrUndefined(target) === launcher) return yield* state;
-      // A link to a previous T3 home's launcher: point it at this one instead.
       yield* fs
         .remove(existing.value)
         .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
@@ -230,7 +221,6 @@ export const make = Effect.gen(function* () {
     }
     const onPath = pathEntries(process.env.PATH, ":");
     const candidates = unixCandidates(environment.homeDirectory, environment.platform);
-    // Prefer a folder already on PATH that the user can write to without admin rights.
     for (const directory of [
       ...candidates.filter((candidate) => onPath.includes(candidate)),
       ...candidates.filter((candidate) => !onPath.includes(candidate)),

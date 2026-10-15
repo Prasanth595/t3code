@@ -16,7 +16,6 @@ interface WorkspacePaneDividerProps {
   readonly onResizeEnd?: () => void;
 }
 
-/** A forgiving divider target for touch, pointer, and VoiceOver users. */
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   const latestProps = useRef(props);
   latestProps.current = props;

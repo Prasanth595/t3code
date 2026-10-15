@@ -149,7 +149,6 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedError<ManagedRe
     transportFailed: Schema.optionalKey(Schema.Boolean),
     cause: Schema.Defect(),
     relayError: Schema.optional(RelayProtectedError),
-    // HTTP status of a relay response that did not decode as a typed relay error.
     status: Schema.optional(Schema.Number),
     traceId: Schema.optional(Schema.String),
   },
@@ -310,8 +309,6 @@ const isRelayProtectedError = Schema.is(RelayProtectedError);
 
 const TRACEPARENT_TRACE_ID = /^[\da-f]{2}-([\da-f]{32})-[\da-f]{16}-[\da-f]{2}$/i;
 
-// Keeps the status and the relay's traceparent trace ID for a response that
-// carries no typed relay error, such as the relay's request-deadline 504.
 function untypedResponseFields(cause: RelayHttpRequestError) {
   const response = HttpClientError.isHttpClientError(cause) ? cause.response : undefined;
   if (!response) return {};

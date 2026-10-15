@@ -34,7 +34,6 @@ class MediaFileStatError extends Schema.TaggedError<MediaFileStatError>()("Media
   }
 }
 
-/** Holds the file identity and descriptor for one HTTP request, never a copy of its bytes. */
 export interface OpenMediaFile {
   readonly handle: NodeFSP.FileHandle;
   readonly info: NodeFS.BigIntStats;
@@ -98,7 +97,6 @@ export const openMediaFile = Effect.fn("openMediaFile")(function* (
   );
 });
 
-/** Reads the leading bytes of an already-validated media file, never past the end. */
 export const readMediaFileHeader = (filePath: string, file: OpenMediaFile, byteCount: number) =>
   Effect.tryPromise({
     try: async () => {

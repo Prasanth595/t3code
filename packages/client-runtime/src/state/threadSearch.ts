@@ -43,9 +43,9 @@ export function threadSearchMatchKey(
 }
 
 /**
- * Combines one search query atom per environment. Invalid search keys, failed
- * requests, and disconnected environments contribute no content matches,
- * preserving local title search as the compatibility fallback.
+ * Invalid search keys, failed requests, and disconnected environments
+ * contribute no content matches, preserving local title search as the
+ * compatibility fallback.
  */
 export function createThreadSearchResultsAtomFamily<E>(options: {
   readonly getSearchAtom: (

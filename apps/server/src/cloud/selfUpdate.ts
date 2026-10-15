@@ -178,8 +178,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
-  // Archive-distributed targets download from GitHub Releases. The client is
-  // optional so callers without one (tests, npm-only hosts) still construct.
   const httpClient = yield* HttpClient.HttpClient;
   const releaseBaseUrl = Option.getOrUndefined(
     yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),

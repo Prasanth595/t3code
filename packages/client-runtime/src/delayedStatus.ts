@@ -1,11 +1,9 @@
 // @effect-diagnostics globalTimers:off - Display timing for React hooks, outside an Effect runtime.
 
-/** How long a status must last before a client shows it. */
 export const STATUS_SHOW_DELAY_MS = 400;
 /** How long a shown status stays up, so it cannot flash at the show delay. */
 export const STATUS_MIN_VISIBLE_MS = 400;
 
-/** The status a client should show, and the key it belongs to. */
 export interface ShownStatus<A> {
   readonly key: string;
   readonly value: A;
@@ -19,12 +17,7 @@ export interface DelayedStatus<A> {
 }
 
 /**
- * Turns a real status (for example the thread sync phase) into the status a
- * client shows. A status that clears within `STATUS_SHOW_DELAY_MS` is never
- * shown. A shown status stays for at least `STATUS_MIN_VISIBLE_MS`. Values
- * compare by identity, so use strings or other stable values.
- *
- * Web and mobile wrap this in a small `useDelayedStatus` hook.
+ * Values compare by identity, so use strings or other stable values.
  */
 export function createDelayedStatus<A>(
   onChange: (shown: ShownStatus<A> | null) => void,
@@ -32,7 +25,6 @@ export function createDelayedStatus<A>(
   let key = "";
   let latest: A | null = null;
   let shown: A | null = null;
-  // While hidden, this is the show delay. While shown, the minimum visible time.
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const clearTimer = () => {

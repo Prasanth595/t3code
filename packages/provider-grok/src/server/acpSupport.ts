@@ -129,10 +129,6 @@ export const GROK_ACP_INITIALIZE_META = { clientType: "extension" } as const;
  */
 const GROK_ALLOW_EDITS_SESSION_OPTION_ID = "allow-edits-session";
 
-/**
- * The approval choices a Grok permission prompt can honor. The session choice
- * appears only where Grok's answer lasts for the session.
- */
 export function grokApprovalOptions(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): ReadonlyArray<ProviderApprovalOption> {
@@ -246,7 +242,6 @@ export function applyGrokAcpModelSelection<E>(input: {
   readonly requestedReasoningEffort?: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
-  // The product slug is never sent over the wire; it keeps the session's current model.
   const requestedModelId =
     input.requestedModelId === GROK_DEFAULT_MODEL_SLUG ? undefined : input.requestedModelId;
   const modelChanged = requestedModelId !== undefined && requestedModelId !== input.currentModelId;
@@ -262,11 +257,10 @@ export function applyGrokAcpModelSelection<E>(input: {
   }
   const reasoningMeta =
     reasoningProvided && reasoningEffort !== undefined ? { reasoningEffort } : undefined;
-  // When reasoning was explicitly provided but invalid (normalize => undefined), we deliberately
-  // send no meta so the invalid value is dropped rather than forwarded. When reasoning was not
-  // provided at all, we also send no meta, but we only reach this call when the model itself
-  // changed - an omitted reasoning preference must not be treated as an explicit clear of the
-  // CLI-advertised default (e.g. Extra High) on same-model reselections.
+  // When reasoning was not provided at all, we also send no meta, but we only reach this call
+  // when the model itself changed - an omitted reasoning preference must not be treated as an
+  // explicit clear of the CLI-advertised default (e.g. Extra High) on same-model
+  // reselections.
   return input.runtime
     .setSessionModel(targetModelId, reasoningMeta)
     .pipe(Effect.mapError(input.mapError), Effect.as(targetModelId));

@@ -15,8 +15,6 @@ const NEW_TASK_SHORTCUT_HREF = "/new";
 // (androidIcons key in app.config.ts).
 const SHORTCUT_ICON = "shortcut_icon";
 
-// Matches only the thread deep-link shape shortcuts are allowed to carry:
-// exactly two non-empty segments, no nested paths, queries, or fragments.
 const THREAD_SHORTCUT_HREF_PATTERN = /^\/threads\/[^/?#]+\/[^/?#]+$/;
 
 function threadShortcutHref(thread: RecentThreadShortcut): string {
@@ -32,11 +30,9 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 }
 
 /**
- * Thread ref of the navigation state's ACTIVE route, or null. Never throws:
- * route params can arrive malformed from external deep links or restored
- * state, the branded id constructors throw on values failing their schema,
- * and this runs during render of the root stack layout — an uncaught throw
- * here would take down the whole navigation tree.
+ * Never throws: route params can arrive malformed from external deep links or restored state, the
+ * branded id constructors throw on values failing their schema, and this runs during render of
+ * the root stack layout — an uncaught throw here would take down the whole navigation tree.
  */
 export function activeThreadRef(state: NavigationState): ScopedThreadRef | null {
   const route = state.routes[state.index];
@@ -88,11 +84,9 @@ export function shortcutHref(action: Action): string | null {
 }
 
 /**
- * Records an opened thread as the most recent shortcut entry. Returns the
- * SAME array when nothing changed so effect chains keyed on identity skip
- * redundant launcher/storage writes. An empty title never clobbers a known
- * one — shells load after navigation, so the first record of a thread often
- * predates its title.
+ * Returns the SAME array when nothing changed so effect chains keyed on identity skip redundant
+ * launcher/storage writes. An empty title never clobbers a known one — shells load after
+ * navigation, so the first record of a thread often predates its title.
  */
 export function withRecentThreadShortcut(
   current: ReadonlyArray<RecentThreadShortcut>,
@@ -113,7 +107,6 @@ export function withRecentThreadShortcut(
   ].slice(0, MAX_RECENT_THREAD_SHORTCUTS);
 }
 
-/** Full launcher shortcut list: static "New task" first, then recents. */
 export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut>): Action[] {
   return [
     {

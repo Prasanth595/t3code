@@ -27,11 +27,11 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as McpAppModelContext from "./McpAppModelContext.ts";
 
 /**
- * Requests an MCP App makes of its own MCP server. The app is resolved from the
- * tool call that produced it, so it reaches only that server, and each request
- * runs through the thread's live provider session, whose MCP client owns the
- * connection and its credentials. A stopped session is reported, never
- * started: an app view must not spend a provider turn.
+ * The app is resolved from the tool call that produced it, so it reaches only
+ * that server, and each request runs through the thread's live provider
+ * session, whose MCP client owns the connection and its credentials. A stopped
+ * session is reported, never started: an app view must not spend a provider
+ * turn.
  */
 export class McpAppRequests extends Context.Service<
   McpAppRequests,
@@ -71,7 +71,6 @@ const make = Effect.gen(function* () {
   const fail = (threadId: ThreadId, reason: McpAppRequestError["reason"], cause?: unknown) =>
     new McpAppRequestError({ threadId, reason, ...(cause === undefined ? {} : { cause }) });
 
-  /** The app a tool call produced, read from the stored item. */
   const resolveApp = Effect.fn("McpAppRequests.resolveApp")(function* (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
@@ -88,7 +87,6 @@ const make = Effect.gen(function* () {
     return { app, providerThreadId: item.providerThreadId };
   });
 
-  /** The app, its provider thread, and the live session's MCP Apps operations. */
   const resolve = Effect.fn("McpAppRequests.resolve")(function* (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
@@ -171,13 +169,10 @@ const make = Effect.gen(function* () {
   // Context is state for the agent's next turn, so it needs the app but not a
   // live session. Text blocks are kept as written and structured content as
   // JSON; other content kinds are not declared by the host.
-  /** Whether `threadId` is `ancestorId` or forked from it, however many forks deep. */
   const descendsFrom = Effect.fn("McpAppRequests.descendsFrom")(function* (
     threadId: ThreadId,
     ancestorId: ThreadId,
   ) {
-    // Walks fork links until the chain ends; a thread seen twice means a
-    // corrupt cycle, which proves nothing.
     const seen = new Set<ThreadId>();
     let current: ThreadId | null = threadId;
     while (current !== null && !seen.has(current)) {

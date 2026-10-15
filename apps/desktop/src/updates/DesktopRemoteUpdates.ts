@@ -24,7 +24,6 @@ import {
 
 const { logInfo, logError } = DesktopObservability.makeComponentLogger("desktop-remote-updates");
 
-/** Pause before retrying an action the updater refused for a held reservation. */
 const ACTION_RETRY_DELAY = Duration.millis(250);
 const PREPARED_UPDATE_TTL = Duration.minutes(5);
 
@@ -43,9 +42,9 @@ type CommitClaim =
   | { readonly _tag: "claimed"; readonly prepared: PreparedUpdate };
 
 /**
- * Server-triggered desktop updates. Mirrors updater state, prepares downloads,
- * cancels abandoned preparations, and commits installs after the remote client
- * confirms that it received the preparation token.
+ * Mirrors updater state, prepares downloads, cancels abandoned preparations,
+ * and commits installs after the remote client confirms that it received the
+ * preparation token.
  */
 export const listen: Effect.Effect<
   void,
@@ -195,7 +194,6 @@ export const listen: Effect.Effect<
             Effect.forkScoped,
           );
 
-        // Returns true when the run reached a terminal outcome.
         const step = (state: DesktopUpdateState): Effect.Effect<boolean, never, Scope.Scope> =>
           Effect.gen(function* () {
             const next = nextRemoteDesktopUpdateStep(state, attempts, disabledReason);
@@ -315,8 +313,6 @@ export const listen: Effect.Effect<
       ),
     );
 
-  // Sequential by construction: a second remote request queued mid-run is
-  // handled after the current one, when the state machine resolves it fast.
   yield* Stream.runForEach(publisher.updateRequests, handleRequest).pipe(Effect.forkScoped);
 
   yield* Stream.runForEach(publisher.updateCancellations, (cancellation) =>

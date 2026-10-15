@@ -28,7 +28,6 @@ export interface TerminalContextReferenceSource {
   lineEnd: number;
 }
 
-/** The canonical inline link that stands for this context in the prompt. */
 export function formatTerminalContextReference(context: TerminalContextReferenceSource): string {
   return formatComposerContextReference({
     kind: "terminal",

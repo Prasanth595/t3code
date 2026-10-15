@@ -23,8 +23,6 @@ import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetry
 const DESKTOP_UPDATE_TIMEOUT = Duration.minutes(20);
 const DESKTOP_INSTALL_TIMEOUT = Duration.minutes(2);
 
-/** Progress stage a desktop update state maps to, or null when the state
-    carries no progress worth streaming. */
 function desktopUpdateProgressStage(
   state: DesktopUpdateState,
 ): ServerSelfUpdateProgressStage | null {

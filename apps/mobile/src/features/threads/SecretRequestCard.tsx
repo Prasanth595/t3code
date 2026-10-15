@@ -21,9 +21,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { RequestActionButton } from "./RequestActionButton";
 
 /**
- * Feed card for a secret an agent asked the user for. The typed value lives
- * only in this component's state and the RPC payload: it is never logged,
- * alerted, or persisted, and the field clears once the answer is sent.
+ * The typed value lives only in this component's state and the RPC payload: it
+ * is never logged, alerted, or persisted, and the field clears once the answer
+ * is sent.
  */
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
 const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
@@ -92,7 +92,6 @@ function PendingSecretRequestForm(props: {
       setSubmitting(false);
     });
     if (result._tag === "Success") {
-      // The card switches to its answered row once the item updates.
       setSecret("");
       return;
     }
@@ -101,8 +100,6 @@ function PendingSecretRequestForm(props: {
     }
   };
 
-  // Same hierarchy as web: what is asked, why, the field, then the promise
-  // about where the value goes.
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="gap-1">
@@ -153,7 +150,6 @@ function PendingSecretRequestForm(props: {
             {SECRET_REQUEST_PRIVACY_NOTE}
           </Text>
         </View>
-        {/* Quiet like the web card's: the field and Save are the action. */}
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ disabled: submitting }}

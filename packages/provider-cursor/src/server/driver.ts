@@ -1,11 +1,3 @@
-/**
- * CursorDriver — `ProviderDriver` for the Cursor Agent SDK runtime.
- *
- * Provider status, model discovery, orchestration, and text generation use the
- * official Cursor SDK with an instance browser login or CURSOR_API_KEY.
- *
- * @module provider/Drivers/CursorDriver
- */
 import { ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";

@@ -394,7 +394,6 @@ export interface ProviderAdapterV2OpenSessionInput {
 
 export interface ProviderAdapterV2EnsureThreadInput {
   readonly threadId: ThreadId;
-  /** The app thread's title, for providers that name their native sessions. */
   readonly title?: string;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
@@ -418,9 +417,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   /**
-   * What the thread's MCP Apps want the agent to know (`ui/update-model-context`),
-   * latest per app, keyed stably per app. Adapters that host apps deliver it as
-   * application context; others never receive any.
+   * What the thread's MCP Apps want the agent to know (`ui/update-model-context`), latest per
+   * app, keyed stably per app.
    */
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
 }
@@ -498,7 +496,6 @@ export interface ProviderAdapterV2HistoricalContext {
   readonly context: string;
 }
 
-/** An MCP tool as the provider's MCP client lists it. */
 export interface ProviderAdapterV2McpTool {
   readonly name: string;
   readonly _meta?: unknown;
@@ -638,10 +635,6 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly readThreadSnapshot: (
     input: ProviderAdapterV2ReadThreadSnapshotInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;
-  /**
-   * Providers that accept product feedback for a thread (#7949, Codex → OpenAI)
-   * expose it here; absent means the driver has no feedback channel.
-   */
   readonly uploadFeedback?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly reason?: string;

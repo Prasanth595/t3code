@@ -32,8 +32,6 @@ import { environmentThreadShells } from "../../state/threads";
 import { Button } from "../ui/button";
 
 /**
- * Holds back authenticated and hosted app trees until the first-run decision
- * is known, so a fresh install never flashes the main screen before the wizard.
  * Nothing renders while pending — no shell, no EventRouter (whose welcome
  * payload would otherwise navigate into a thread), no dialogs.
  *
@@ -41,8 +39,6 @@ import { Button } from "../ui/button";
  * settings hydrate (the common case, no server round-trip). A `null` flag also
  * covers installs that predate the field, so it alone is not enough — the gate
  * waits for environment shells to bootstrap and inspects the workspace.
- * Hosted mode instead checks its saved environment catalog. A timeout shows
- * recovery for an unreachable primary server without mounting the app tree.
  */
 
 const FIRST_RUN_DECISION_TIMEOUT_MS = 4_000;

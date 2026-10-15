@@ -284,9 +284,8 @@ const make = Effect.gen(function* () {
     return false;
   });
 
-  // Whether cwd stopped being a checkout of this branch. Two small Git reads,
-  // since every worktree in a sweep is asked; statusDetailsLocal also diffs and
-  // counts.
+  // Two small Git reads, since every worktree in a sweep is asked; statusDetailsLocal also diffs
+  // and counts.
   const branchChanged = Effect.fn("StorageCleanup.branchChanged")(function* (
     cwd: string,
     branch: string | null,
@@ -325,7 +324,6 @@ const make = Effect.gen(function* () {
     });
     const index = yield* read(["rev-parse", "--git-path", "index"]);
     if (index === null) return true;
-    // Another Git process is writing to this checkout.
     if (yield* fs.exists(`${path.resolve(cwd, index.stdout.trim())}.lock`))
       return yield* failure(
         "Git index is locked. Status will resume when the index lock is removed.",
@@ -416,7 +414,6 @@ const make = Effect.gen(function* () {
       path,
       yield* HostProcess.HomeDirectory,
     )) {
-      // An unmounted drive only skips its own worktrees.
       const root = yield* fs.exists(directory).pipe(
         Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
         Effect.orElseSucceed(() => null),
@@ -632,7 +629,6 @@ const make = Effect.gen(function* () {
           }
           return null;
         });
-        // Most cancelled removals are caught here, before the worktree is walked.
         const blocked = yield* blockedSinceCheck();
         if (blocked !== null) return keep(blocked);
         const bytes = yield* measureWorktree(worktreePath);

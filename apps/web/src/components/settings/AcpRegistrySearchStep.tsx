@@ -63,8 +63,7 @@ export function AcpRegistrySearchStep({
   onPreparingChange,
 }: AcpRegistrySearchStepProps) {
   const [query, setQuery] = useState("");
-  // An empty registry query is the compact compatible catalog. Start there so
-  // entering this step is useful before the user knows what to search for.
+  // An empty registry query is the compact compatible catalog.
   const [submittedQuery, setSubmittedQuery] = useState("");
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const [preparingId, setPreparingId] = useState<string | null>(null);

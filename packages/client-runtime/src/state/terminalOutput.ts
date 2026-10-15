@@ -62,14 +62,6 @@ interface Utf8Chunk {
   readonly byteLength: number;
 }
 
-/**
- * Split a string into chunks of at most `maxBytes` UTF-8 bytes without cutting
- * a code point in half. The retained-output budget always supplies a positive
- * size. Only new output is encoded on live updates.
- *
- * A chunk that fits whole is returned as the original string, so the common
- * small-write path pays one encode and no decode.
- */
 function splitStringByUtf8Bytes(data: string, maxBytes: number): ReadonlyArray<Utf8Chunk> {
   if (data.length === 0) return [];
 

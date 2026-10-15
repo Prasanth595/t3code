@@ -9,7 +9,6 @@ interface ResizeSession {
   cleanup?: (committed: boolean) => void;
 }
 
-/** Shared pointer lifecycle for side panels, including interrupted and sub-frame drags. */
 export function useResizeDrag<T extends HTMLElement>(
   start: (event: PointerEvent<T>) => ResizeSession | null,
   resetKey?: string,

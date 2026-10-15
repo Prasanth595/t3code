@@ -1,19 +1,5 @@
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 
-/**
- * Prompt links open T3 Code from outside it with a prompt ready to send. They never send it:
- * a link from a stranger fills a draft, and the user reads it and presses Send. A link also
- * cannot pick a runtime mode, branch, or worktree. Those stay the user's own defaults.
- *
- * Shared links are https on the hosted app, because that is what Twitter and GitHub make
- * clickable. The `t3code://` scheme carries the same paths into desktop and mobile:
- *
- *   https://app.t3.codes/new?prompt=…&repo=owner/name&provider=codex&model=gpt-5
- *   https://app.t3.codes/new?pr=owner/name/123&prompt=…
- *   https://app.t3.codes/<environmentId>/<threadId>?prompt=…
- *   t3code://new?…   t3code://threads/<environmentId>/<threadId>?…
- */
-
 /** URLs stay well under the limits browsers and link shorteners apply. */
 export const PROMPT_LINK_MAX_PROMPT_LENGTH = 8_000;
 
@@ -26,10 +12,8 @@ export interface PromptLinkPullRequest extends PromptLinkRepository {
   readonly number: number;
 }
 
-/** A prompt as it arrived, after hidden characters were removed. */
 export interface LinkedPrompt {
   readonly text: string;
-  /** How many invisible characters were removed. Any count above zero is a warning sign. */
   readonly hiddenCharacters: number;
 }
 
@@ -55,7 +39,6 @@ export type PromptLinkResult<T> =
 // Zero-width and bidi controls, tag and variation-selector blocks, and other characters that
 // render as nothing. A model reads them; the person checking the draft cannot see them, which
 // makes them the usual way to hide instructions in a prompt. U+FE0E/U+FE0F stay: emoji use them.
-// Line and paragraph separators become plain newlines, so the draft shows the break the model reads.
 const HIDDEN_CHARACTERS =
   // oxlint-disable-next-line no-control-regex, no-misleading-character-class -- these are the characters it removes.
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0D\uFEFF\uFFA0\uFFF0-\uFFFB\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}]/gu;
@@ -67,7 +50,6 @@ const isEmojiPart = (codePoint: number | undefined) =>
     (codePoint >= 0x2190 && codePoint <= 0x2bff) ||
     codePoint === 0xfe0f);
 
-/** Removes characters a reader cannot see, and counts them. */
 export function sanitizeLinkedPrompt(raw: string): LinkedPrompt {
   let hiddenCharacters = 0;
   const visible = Array.from(
@@ -123,7 +105,6 @@ function parsePromptLinkPullRequest(value: string): PromptLinkPullRequest | null
     : null;
 }
 
-/** The pull request's page on GitHub, the reference `preparePullRequestThread` takes. */
 export function promptLinkPullRequestUrl(pullRequest: PromptLinkPullRequest): string {
   return `https://github.com/${pullRequest.owner}/${pullRequest.name}/pull/${pullRequest.number}`;
 }
@@ -150,7 +131,6 @@ function readPrompt(params: URLSearchParams): PromptLinkResult<LinkedPrompt | nu
 
 const optionalParam = (params: URLSearchParams, key: string) => params.get(key)?.trim() || null;
 
-/** Reads the query of a `/new` link. */
 export function parseNewThreadLink(search: string): PromptLinkResult<NewThreadLink> {
   const params = new URLSearchParams(search);
   const prompt = readPrompt(params);
@@ -181,7 +161,6 @@ export function parseNewThreadLink(search: string): PromptLinkResult<NewThreadLi
   };
 }
 
-/** Reads the `prompt` of a thread link. Null when the link carries none. */
 export function parseThreadLinkPrompt(search: string): PromptLinkResult<LinkedPrompt | null> {
   return readPrompt(new URLSearchParams(search));
 }
@@ -194,7 +173,6 @@ export function withoutPromptLinkParams(search: string): string {
   return rest ? `?${rest}` : "";
 }
 
-/** A shareable `/new` link on the hosted app. */
 export function buildNewThreadLink(input: {
   readonly prompt: string;
   readonly repository?: PromptLinkRepository | null;
@@ -241,7 +219,6 @@ export function promptLinkAppPath(
   return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
 }
 
-/** The `t3code://` link that hands an in-app path to an installed desktop or mobile app. */
 export function promptLinkDeepLink(appPath: string, scheme = "t3code"): string {
   const url = new URL(appPath, "https://app.invalid");
   const host = url.pathname === "/new" ? "new" : `threads${url.pathname}`;

@@ -9,9 +9,9 @@ import * as Schema from "effect/Schema";
 
 /**
  * A shell snapshot whose threads may arrive before their pull request links are decoded. Those
- * links are most of a large shell's decode cost and only feed PR badges, so the thread list
- * can paint first. `loadPullRequests` then decodes the links by thread id; until it runs,
- * those threads carry no `pullRequests`.
+ * links are most of a large shell's decode cost and only feed PR badges, so the thread list can
+ * paint first. `loadPullRequests` then decodes the links by thread id; until it runs, those
+ * threads carry no `pullRequests`.
  */
 export interface DeferredShellSnapshot extends OrchestrationV2ShellSnapshot {
   readonly loadPullRequests?: Effect.Effect<
@@ -46,7 +46,6 @@ export function detachPullRequests(snapshot: unknown): ReadonlyArray<unknown> {
 }
 
 /**
- * Attaches a `loadPullRequests` that decodes the detached links after yielding to the host.
  * A thread whose links cannot be read gets none; its row stays usable.
  */
 export function deferPullRequests<S extends OrchestrationV2ShellSnapshot>(
@@ -67,7 +66,6 @@ export function deferPullRequests<S extends OrchestrationV2ShellSnapshot>(
         batchSize = 0;
       }
       batchSize += size;
-      // An unreadable thread keeps no links; the others still fill in.
       const links = yield* decodeThreadLinks(raw).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("Discarding unreadable shell pull request links.", {
@@ -87,7 +85,6 @@ const decodeShellSnapshotJson = Schema.decodeUnknownEffect(
   Schema.toCodecJson(OrchestrationV2ShellSnapshot),
 );
 
-/** Decodes a JSON shell snapshot with its threads' pull request links deferred. */
 export const decodeShellSnapshotDeferringPullRequests = Effect.fnUntraced(function* (
   json: unknown,
 ) {

@@ -50,15 +50,13 @@ export type AndroidAnchoredMenuProps = {
 };
 
 /**
- * Adapts the app's MenuView actions to Material dropdowns on Android. Editor
- * menus render native Material rows in-window to retain keyboard focus; other
- * menus use the native popup for placement, animation and dismissal.
+ * Editor menus render native Material rows in-window to retain keyboard focus;
+ * other menus use the native popup for placement, animation and dismissal.
  */
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const { scale, menuWidth: desiredMenuWidth } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
-  // Height of the modal's root view, in the modal's own coordinate space.
   // Menus that flip above their anchor are pinned by their BOTTOM edge
   // (bottom = rootHeight - anchorTop), so drill-in height changes grow
   // upward without any re-measurement — positioning them via `top` from the
@@ -121,7 +119,6 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     (action) => !(action.attributes?.hidden ?? false),
   );
 
-  // Anchor in overlay-local coordinates (both measured in window space).
   const local =
     anchor === null || overlay === null
       ? null

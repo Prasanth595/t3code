@@ -312,7 +312,6 @@ function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null): string
   return `Enter ${addProjectRemoteSourceLabel(flow.source)} repository (${addProjectRemoteSourcePathHint(flow.source)})`;
 }
 
-/** The palette's readiness, pointing at Settings by its menu path. */
 function buildPaletteRemoteSourceReadiness(
   discovery: SourceControlDiscoveryResult | null,
 ): AddProjectRemoteSourceReadiness {
@@ -529,7 +528,6 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen(open);
         }}
       >
-        {/* Block background focus calls for the entire time the palette is open. */}
         <div className="contents" inert={state.open}>
           {children}
         </div>
@@ -782,14 +780,12 @@ function OpenCommandPaletteDialog(props: {
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
-  // The name step of New project: while set, the palette input is the name.
   const [newProjectFlow, setNewProjectFlow] = useState<{
     readonly environmentId: EnvironmentId;
     /** Machine of the Add project sources view under this step; null from the palette root. */
     readonly sourcesEnvironmentId: EnvironmentId | null;
   } | null>(null);
   const [newProjectPublishes, setNewProjectPublishes] = useState(false);
-  // The host picked beside the publish toggle; null takes the first ready host, GitHub when ready.
   const [newProjectPublishKind, setNewProjectPublishKind] =
     useState<SourceControlProviderKind | null>(null);
   const [newProjectHostPickerOpen, setNewProjectHostPickerOpen] = useState(false);
@@ -959,9 +955,6 @@ function OpenCommandPaletteDialog(props: {
   const canCreateProject = useEnvironmentScope(browseEnvironmentId, AuthOrchestrationOperateScope);
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
-  // A desktop-local secondary backend (today: the WSL backend). The picker is
-  // available against these too — the desktop dispatches pickFolder into the
-  // backend's filesystem when routed by its instance id.
   const browseEnvironmentIsDesktopLocal =
     browseEnvironment !== null && isDesktopLocalConnectionTarget(browseEnvironment.entry.target);
   // Map the browsed desktop-local env to its desktop pool instance id (e.g.
@@ -994,10 +987,6 @@ function OpenCommandPaletteDialog(props: {
   );
   const isRemoteProjectCloneFlow = addProjectCloneFlow !== null;
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
-  // The destination step pins the repository folder onto the browsed path, so
-  // the proposed clone target is "<chosen folder>/<repo>" instead of the bare
-  // folder. A lookup reports "owner/repo"; a pasted clone URL falls back to its
-  // own last segment, minus ".git".
   const pinnedCloneDirectoryName =
     addProjectCloneFlow?.step === "confirm"
       ? getCloneDirectoryName(
@@ -1058,8 +1047,6 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
-  // Where "without a project" threads start: the current environment when it
-  // offers them, otherwise the first connected one that does.
   const scratchTargetEnvironmentId = scratchEnvironmentId(
     currentProjectEnvironmentId ?? primaryEnvironmentId,
   );
@@ -1246,7 +1233,6 @@ function OpenCommandPaletteDialog(props: {
       isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
     const projectItems = enumerateCommandPaletteItems(
       buildProjectActionItems({
-        // The no-project home shows once, as the "No project" item below.
         projects: pickerProjects.filter((project) => !isScratch(project)),
         valuePrefix: "new-thread-in",
         searchTerms: (project) => {
@@ -1301,10 +1287,6 @@ function OpenCommandPaletteDialog(props: {
     );
     if (scratchTargetEnvironmentId === null) return projectItems;
 
-    // "No project" goes right after the current project: visible without
-    // scrolling past every project, while Enter still starts in the current
-    // one. When the current thread has no project, it is the current entry and
-    // goes first. It keeps its own shortcut, so the projects' mod+1..9 hold.
     const noProjectIndex = pickerProjects[0] !== undefined && isScratch(pickerProjects[0]) ? 0 : 1;
     return [
       ...projectItems.slice(0, noProjectIndex),
@@ -1509,7 +1491,6 @@ function OpenCommandPaletteDialog(props: {
     [pushPaletteView],
   );
 
-  /** Folder that holds an environment's name-only projects, or null when it has none. */
   const newProjectsRootFor = useCallback(
     (environmentId: EnvironmentId | null): string | null =>
       environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
@@ -1731,8 +1712,6 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const openAddProjectFlow = useCallback(() => {
-    // With no connected environment there is nothing to browse, so the only
-    // useful next step is connecting one.
     if (addProjectEnvironmentOptions.length === 0) {
       setOpen(false);
       void navigate({ to: "/settings/connections" });
@@ -1758,8 +1737,6 @@ function OpenCommandPaletteDialog(props: {
     startAddProjectSourceSelection,
   ]);
 
-  // New project starts on this device (options list it first); the name step
-  // lists the other machines when there is a choice.
   const openNewProjectFlow = () => {
     const firstOption = newProjectEnvironmentOptions[0];
     if (firstOption) startNewProject(firstOption.environmentId, null);
@@ -1796,7 +1773,6 @@ function OpenCommandPaletteDialog(props: {
     setNewProjectFlow(null);
     setViewStack([]);
     setQuery("");
-    // projectThreadItems already lists the current project first.
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
@@ -1975,7 +1951,6 @@ function OpenCommandPaletteDialog(props: {
       // Stopping the provider process keeps the conversation: the next message
       // spawns a fresh one that resumes it and reloads skills, plugins, and MCP
       // servers. The fresh workspace scan updates the composer's slash menu.
-      // Failures throw into executeItem's error toast.
       run: async () => {
         const { environmentId } = thread;
         if (thread.runtime !== null) {
@@ -2060,7 +2035,6 @@ function OpenCommandPaletteDialog(props: {
       "repository",
       "repo",
       "git",
-      // Every host's name, spelled as a word: "azure devops" searches as `azure` and `devops`.
       ...sourceControlClients.definitions.flatMap((definition) =>
         definition.pickerLabel
           .toLowerCase()
@@ -2244,7 +2218,6 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
-  // Target the active thread or draft's project, falling back to the first sidebar group.
   const contextualProjectGroup =
     (contextualProjectRef
       ? projectGroupByTargetKey.get(
@@ -2701,10 +2674,8 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    // The server creates the project and clones in the background; progress
-    // shows in a toast and in the draft's composer banner, so the palette
-    // closes as soon as the clone is under way. Only problems found before
-    // git runs (bad destination, unknown repository) come back here.
+    // Only problems found before git runs (bad destination, unknown repository)
+    // come back here.
     const projectId = newProjectId();
     setIsRemoteProjectCloning(true);
     const startResult = await startProjectClone({
@@ -2838,9 +2809,6 @@ function OpenCommandPaletteDialog(props: {
   const newProjectPathPreview =
     newProjectsRoot === null ? null : getNewProjectPathPreview(newProjectsRoot, newProjectName);
   const newProjectPublishToggleValue = "new-project:publish";
-  // The name step's way out to folders and clones, for the selected machine.
-  // It replaces the name step (and a sources view for another machine under
-  // it), so Back returns to wherever New project was opened from.
   const showExistingProjectSources = (environmentId: EnvironmentId) => {
     const sourcesEnvironmentId = newProjectFlow?.sourcesEnvironmentId ?? null;
     if (sourcesEnvironmentId === environmentId) {
@@ -2865,8 +2833,6 @@ function OpenCommandPaletteDialog(props: {
       : newProjectEnvironmentOptions.find(
           (option) => option.environmentId === newProjectFlow.environmentId,
         );
-  // Shown when there is a choice, or when the selected machine went away and
-  // another one can take over.
   const showNewProjectMachines =
     newProjectFlow !== null &&
     (newProjectEnvironmentOptions.length > 1 ||
@@ -2888,7 +2854,6 @@ function OpenCommandPaletteDialog(props: {
               `new-project:environment:${option.environmentId}`,
               switchNewProjectEnvironment,
             ),
-            // The create in flight keeps the machine it started on.
             ...(isCreatingNewProject ? { disabled: true } : {}),
             ...(option.environmentId === newProjectFlow.environmentId
               ? {
@@ -3003,7 +2968,6 @@ function OpenCommandPaletteDialog(props: {
                     </span>
                   </span>
                 ),
-                // The create in flight keeps the choice it started with.
                 ...(isCreatingNewProject ? { disabled: true } : {}),
                 keepOpen: true,
                 run: async () => {
@@ -3091,11 +3055,6 @@ function OpenCommandPaletteDialog(props: {
   const canOpenProjectFromFileManager =
     isBrowsing &&
     browseEnvironmentId !== null &&
-    // For a desktop-local (WSL) env, only offer the picker once we have resolved
-    // its desktop pool instance id. Without it pickFolder can't be routed to the
-    // WSL filesystem and would open the primary (Windows) picker, then add the
-    // chosen Windows path against the WSL env -- a wrong-path footgun. Stay
-    // hidden until the bootstrap mapping is available rather than mis-routing.
     (browseEnvironmentId === primaryEnvironmentId ||
       (browseEnvironmentIsDesktopLocal && browseDesktopInstanceId !== null)) &&
     typeof window !== "undefined" &&
@@ -3168,8 +3127,6 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    // Enter creates the project unless an item below the name is
-    // highlighted, in which case it runs that item. Mod+Enter always creates.
     if (
       newProjectFlow !== null &&
       event.key === "Enter" &&
@@ -3306,7 +3263,6 @@ function OpenCommandPaletteDialog(props: {
         Object.keys(pickerOptions).length > 0 ? pickerOptions : undefined,
       );
     } catch {
-      // Ignore picker failures and leave the palette open.
       setIsPickingProjectFolder(false);
       return;
     }
@@ -3516,8 +3472,6 @@ function OpenCommandPaletteDialog(props: {
       footerTrailing={footerTrailing}
       inputAccessory={inputAccessory}
       inputProps={{
-        // The submit button is absolutely positioned over the field, so the
-        // inner input must reserve enough room for the full action label.
         className: hasHighlightedNewProjectItem
           ? "*:data-[slot=autocomplete-input]:pe-38!"
           : addProjectCloneFlow?.step === "repository" || newProjectFlow !== null

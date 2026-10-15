@@ -29,12 +29,7 @@ export interface AppUpdateClient {
   readonly reloadAsync: () => Promise<void>;
 }
 
-/**
- * The pieces of the app the update flow has to coordinate with before it may
- * tear down the JavaScript runtime. Injectable so the flow stays unit-testable.
- */
 export interface AppUpdateEnvironment {
-  /** Asks the user to install the waiting update now; `false` keeps it deferred. */
   readonly confirmInstallNow: () => Promise<boolean>;
   /**
    * Lands persisted state (drafts, outbox) before the restart. Rejects when a
@@ -65,7 +60,6 @@ export interface AppUpdateEnvironment {
   readonly onForegroundStay: (apply: () => void) => void;
 }
 
-/** Tracks a downloaded update waiting for a safe moment to install. */
 export interface AppUpdateDeferral {
   pendingInstall: boolean;
   /**
@@ -127,10 +121,6 @@ export function isAppUpdateCheckAvailable(client: Pick<AppUpdateClient, "isEnabl
   return client.isEnabled && !(typeof __DEV__ !== "undefined" && __DEV__);
 }
 
-/**
- * Keeps the manual update affordance discoverable only to someone deliberately
- * tapping the version row five times.
- */
 export function registerHiddenUpdateTap(count: number): {
   readonly nextCount: number;
   readonly shouldCheck: boolean;
@@ -258,8 +248,6 @@ async function performAppUpdateCheck(
   const environment = options.environment ?? defaultAppUpdateEnvironment;
   const deferral = options.deferral ?? appUpdateDeferral;
 
-  // The user explicitly asked to install and a previous check has already
-  // downloaded the update; restart into it without another network round trip.
   if (options.applyMode === "immediate" && deferral.pendingInstall) {
     await installPendingAppUpdate(client, environment, deferral, options);
     return;
@@ -333,7 +321,6 @@ async function installAppUpdate(
   options: AppUpdateCheckOptions,
   userRequested: boolean,
 ): Promise<AppUpdateInstallOutcome> {
-  // A concurrent install sequence already owns the restart.
   if (deferral.installInProgress) return "installed";
   deferral.installInProgress = true;
   const setState = options.onStateChange ?? (() => {});
@@ -356,7 +343,6 @@ async function installAppUpdate(
   return "installed";
 }
 
-/** Restarts into an already-downloaded update at the user's request. */
 async function installPendingAppUpdate(
   client: AppUpdateClient,
   environment: AppUpdateEnvironment,
@@ -384,11 +370,6 @@ function armDeferredAppUpdateInstall(
   });
 }
 
-/**
- * A deferred install normally rides the next backgrounding, but a session that
- * never leaves the foreground would sit on the download forever. Only then is
- * the user asked, and declining simply leaves the background install armed.
- */
 async function promptDeferredAppUpdateInstall(
   client: AppUpdateClient,
   environment: AppUpdateEnvironment,
@@ -496,11 +477,6 @@ function defaultOnNextBackground(apply: () => void, includeCurrent: boolean): vo
   });
 }
 
-/**
- * How long the app may stay foregrounded with a downloaded update before the
- * install prompt appears. Long enough that most sessions background naturally
- * and install silently instead.
- */
 export const DEFERRED_INSTALL_PROMPT_AFTER_MS = 30 * 60 * 1000;
 
 /**
@@ -572,9 +548,8 @@ export function createAppUpdateLaunchCheck(
 export const checkForAppUpdateOnLaunch = createAppUpdateLaunchCheck();
 
 /**
- * The app can stay resident for days, so a launch-only check misses updates
- * published while it was in memory. Anything shorter reads as noise: brief
- * app switches should not trigger network checks or an install prompt.
+ * The app can stay resident for days, so a launch-only check misses updates published while it was
+ * in memory.
  */
 export const FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS = 15 * 60 * 1000;
 

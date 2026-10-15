@@ -26,7 +26,6 @@ async function checkedIconBlob(response: Response): Promise<Blob> {
   return new Blob([bytes], { type: contentType });
 }
 
-/** Fetches an official icon once, then serves it from persistent browser cache. */
 export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
   if (resolveOfficialAcpRegistryIconUrl(iconUrl) !== iconUrl) {
     return Promise.reject(new Error("ACP registry icon URL was not allowed."));
@@ -47,9 +46,7 @@ export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
       try {
         const cached = await cache.match(iconUrl);
         if (cached) return await checkedIconBlob(cached);
-      } catch {
-        // Ignore unreadable or invalid cache entries and repair from network.
-      }
+      } catch {}
     }
 
     const response = await fetch(iconUrl, {

@@ -121,12 +121,6 @@ function providerThreadHasPendingBackgroundTasks(
   return (providerThread.pendingBackgroundTasks?.length ?? 0) > 0;
 }
 
-/**
- * Resolve providerInstanceId for a stale background-capable turn item whose
- * run is missing/null (or not found). Prefer an existing run, then a subagent
- * item's own instance id, then the item's provider thread, then a last-resort
- * first provider thread, then the thread's selected provider.
- */
 function resolveStaleBackgroundItemProviderInstanceId(
   item: OrchestrationV2ThreadProjection["turnItems"][number],
   projection: ProjectionStore.ProjectionRuntimeRecoveryState,

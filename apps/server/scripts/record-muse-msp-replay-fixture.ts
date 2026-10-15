@@ -1,12 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off
 // The SDK's host factory is Promise-based and owns a raw child process, as production's does.
 /**
- * Records a Muse MSP replay transcript by running a registered fixture's input
- * through the real orchestrator and the real MuseAdapterV2 against a live
- * `muse serve`. The host's stdio is teed line by line.
- *
- *   node scripts/record-muse-msp-replay-fixture.ts --scenario simple
- *
  * Uses the machine's own `muse login`. `T3_MUSE_BIN` picks the binary. The
  * recording replays itself through the fixture's assertions before it is
  * written, so a run that fails them never replaces the existing transcript.
@@ -76,11 +70,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Makes a recording portable: the workspace becomes `<workspace>` and the home
- * directory `~`, in both directions. Ids, timestamps and model output are kept
- * as recorded; they are opaque to T3 and carry no secrets.
- */
 function normalizeEntries(
   entries: ReadonlyArray<ProviderReplayEntry>,
   workspaces: ReadonlyArray<string>,
@@ -124,10 +113,6 @@ const followWallClock = Effect.gen(function* () {
   }
 });
 
-/**
- * Host factory that runs a live `muse serve` and tees every stdio line into
- * `entries`, in the order the connection writes and reads them.
- */
 function makeRecordingCreateHost(
   entries: Array<ProviderReplayEntry>,
   commandIds: Array<Array<string>>,

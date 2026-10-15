@@ -1,8 +1,9 @@
 import type { ClerkProviderProps } from "@clerk/react";
 
-/** Keeps Clerk's stock component structure while binding its color system to
- * the live T3 Code palette. CSS variables make theme changes propagate to
- * portaled sign-in and profile surfaces without remounting Clerk. */
+/**
+ * CSS variables make theme changes propagate to portaled sign-in and profile
+ * surfaces without remounting Clerk.
+ */
 export const clerkAppearance = {
   variables: {
     // Clerk reuses its primary color for filled buttons and bare links. The

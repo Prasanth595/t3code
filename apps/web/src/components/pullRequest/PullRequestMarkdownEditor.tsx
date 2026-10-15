@@ -13,14 +13,6 @@ import { Textarea } from "../ui/textarea";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 
-/**
- * The box a body is rewritten in — a description, or a remark already posted. It owns the draft
- * and nothing else: the caller sends the request and says whether it is still in flight, so the
- * same box serves every mutation without knowing which one it is.
- *
- * Preview renders through the same component the saved body will be read through, which is the
- * only way to see what a host's markdown will actually become before it is sent.
- */
 export function PullRequestMarkdownEditor({
   value,
   cwd,

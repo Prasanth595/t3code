@@ -49,7 +49,6 @@ const WINDOWS_SHELL_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
  * on Windows). Node hands the command string to `cmd.exe /d /s /c "<command>"`
  * without any quoting, so every dynamic argument must be escaped to survive both
  * cmd.exe parsing and the target program's `CommandLineToArgvW` parsing.
- * Mirrors cross-spawn's argument escaping.
  */
 function escapeWindowsShellArg(arg: string): string {
   // Double up backslashes that precede a double quote, then escape the quote
@@ -57,9 +56,7 @@ function escapeWindowsShellArg(arg: string): string {
   let escaped = arg.replace(/(\\*)"/g, '$1$1\\"');
   // Double up trailing backslashes so the closing quote is not escaped away.
   escaped = escaped.replace(/(\\*)$/, "$1$1");
-  // Quote the whole argument so embedded whitespace is preserved.
   escaped = `"${escaped}"`;
-  // Escape cmd.exe metacharacters so cmd passes them through verbatim.
   return escaped.replace(WINDOWS_SHELL_META_CHARS, "^$1");
 }
 
@@ -678,14 +675,11 @@ function isFileSync(filePath: string): boolean {
 }
 
 /**
- * Swaps Git for Windows' launcher (`<Git>\cmd\git.exe`, the only git its
- * installer puts on PATH, or the portable build's `<Git>\bin\git.exe`) for the
- * git.exe it starts. The launcher costs a second process on every git command,
- * and each launch leaks a kernel token reference that slows process creation
- * machine-wide until reboot. The real binary sets HOME itself, but adds its own
- * folders to PATH for hooks, ssh and credential helpers only when MSYSTEM is
- * unset, so the launcher stays when MSYSTEM is set. Anything else is returned
- * as is.
+ * The launcher costs a second process on every git command, and each launch
+ * leaks a kernel token reference that slows process creation machine-wide until
+ * reboot. The real binary sets HOME itself, but adds its own folders to PATH
+ * for hooks, ssh and credential helpers only when MSYSTEM is unset, so the
+ * launcher stays when MSYSTEM is set.
  */
 export function preferGitForWindowsBinary(
   executable: string,

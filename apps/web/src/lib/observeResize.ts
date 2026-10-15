@@ -9,7 +9,6 @@ interface Subscription {
 
 interface Target {
   readonly subscriptions: Set<Subscription>;
-  /** Subscribers that joined after the first delivery and still await their initial entry. */
   waiting: Set<Subscription> | null;
   last: ResizeObserverEntry | null;
 }
@@ -99,7 +98,6 @@ export function observeResize(
     if (targets.size > 0) {
       for (const element of unobserved) shared.unobserve(element);
     } else {
-      // A fresh observer next time also picks up a ResizeObserver a test stubbed since.
       observer?.disconnect();
       observer = null;
     }

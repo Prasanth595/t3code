@@ -56,7 +56,6 @@ interface CodexSetupSectionProps {
   readonly onSignInCancelled?: (() => void) | undefined;
 }
 
-/** Welcome and provider settings run the same environment-owned setup flow. */
 export function CodexSetupSection(props: CodexSetupSectionProps) {
   const [requested, setRequested] = useState(false);
   const existingState = getOnboardingProviderState(props.provider);
@@ -157,7 +156,6 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
   return content;
 }
 
-/** All add-Codex entry points use the same managed account setup. */
 export function AddManagedCodexAccountDialog({
   environmentId,
   onClose,
@@ -1110,7 +1108,6 @@ function CodexSignInDescription({
   );
 }
 
-/** A single, calm setup row for the first-run welcome screen. */
 function CodexWelcomeCard({
   title,
   description,

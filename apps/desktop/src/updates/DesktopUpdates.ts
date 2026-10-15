@@ -254,7 +254,6 @@ function summarizeCause(cause: unknown, depth: number): string {
   return `${errorTag(cause)}${code}${message}${nested}`;
 }
 
-/** Log a bounded cause summary without stacks, response payloads, or request credentials. */
 export function describeUpdateErrorCause(cause: unknown): string {
   try {
     return summarizeCause(cause, 0).slice(0, 1024);
@@ -589,7 +588,6 @@ export const make = Effect.gen(function* () {
 
   // Tells the primary backend that the coming stop is an update restart, so it
   // keeps its managed tunnel for the backend the updated app starts. Best
-  // effort: without the marker the backend only re-provisions its tunnel.
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
   const updateRestartMarkerPath = environment.path.join(
     updateRestartMarkerDir,
@@ -750,13 +748,11 @@ export const make = Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
-          // Stop every backend in the pool, not just the primary. With
-          // parallel WSL + Windows backends, leaving the WSL instance up
-          // means quitAndInstall's app.quit() exits before the pool's
-          // scope cascade has a chance to run its stop finalizer, so the
-          // WSL child gets hard-killed by the OS instead of receiving
-          // SIGTERM + grace. Stops run concurrently with the same 5s
-          // budget the primary had on its own.
+          // Stop every backend in the pool, not just the primary. With parallel
+          // WSL + Windows backends, leaving the WSL instance up means
+          // quitAndInstall's app.quit() exits before the pool's scope cascade
+          // has a chance to run its stop finalizer, so the WSL child gets
+          // hard-killed by the OS instead of receiving SIGTERM + grace.
           const instances = yield* pool.list;
           yield* Effect.forEach(
             instances,

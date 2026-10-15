@@ -1,6 +1,4 @@
 /**
- * Editing a message that is already queued on the server.
- *
  * The composer is reused rather than duplicated, so the edit needs somewhere
  * to put its text that is not the user's own draft for the thread. It gets a
  * derived draft key: the thread's key plus a marker and the run id. That key
@@ -36,7 +34,6 @@ export interface QueuedRunEdit {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
-  /** Server attachments still attached; removing one drops it from this list. */
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext;
 }
@@ -70,7 +67,6 @@ function setQueuedRunEdit(threadKey: string, edit: QueuedRunEdit | null): void {
   appAtomRegistry.set(queuedRunEditsAtom, { ...current, [threadKey]: edit });
 }
 
-/** Loads the queued message into its own draft and puts the composer in edit mode. */
 export function beginQueuedRunEdit(threadKey: string, edit: QueuedRunEdit): void {
   const previous = getQueuedRunEdit(threadKey);
   if (previous !== null && previous.runId !== edit.runId) {
@@ -105,11 +101,11 @@ export function endQueuedRunEdit(
 }
 
 /**
- * The replacement payload for `queued-run.edit`. Attachments replace the
- * message's list wholesale, so kept server attachments are resent alongside
- * the newly uploaded ones, in composer order. Context records are rebound to
- * the uploaded ids and then pruned to what the final list still contains, so
- * removing an attachment cannot leave a record pointing at nothing.
+ * Attachments replace the message's list wholesale, so kept server attachments
+ * are resent alongside the newly uploaded ones, in composer order. Context
+ * records are rebound to the uploaded ids and then pruned to what the final
+ * list still contains, so removing an attachment cannot leave a record pointing
+ * at nothing.
  */
 export function resolveQueuedEditPayload(input: {
   readonly edit: QueuedRunEdit;

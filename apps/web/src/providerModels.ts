@@ -38,8 +38,7 @@ function getProviderSnapshot(
   return providers.find((candidate) => candidate.instanceId === defaultInstanceId);
 }
 
-// Resolve an instance selection to the correlated live driver. If the
-// instance is absent, fall back to a live enabled provider instead of
+// If the instance is absent, fall back to a live enabled provider instead of
 // inferring a driver from the missing instance id.
 export function resolveSelectableProvider(
   providers: ReadonlyArray<ServerProvider>,
@@ -67,11 +66,9 @@ export function getProviderModelCapabilities(
   return withoutPlanAgentOption(caps);
 }
 
-// The opencode "plan" agent is only reachable while legacy plan mode is on.
-// With it off, drop the option so it cannot be selected or dispatched, and
-// drop the descriptor entirely when nothing remains selectable. currentValue
-// is re-resolved against the surviving options so a stale or defaulted "plan"
-// value cannot leak back into dispatch.
+// The opencode "plan" agent is only reachable while legacy plan mode is on. currentValue
+// is re-resolved against the surviving options so a stale or defaulted "plan" value cannot
+// leak back into dispatch.
 function withoutPlanAgentOption(caps: ModelCapabilities): ModelCapabilities {
   return {
     ...caps,

@@ -1,25 +1,15 @@
 /**
- * Detects markdown that the renderer draws as a block requiring a definite
- * user-bubble width: fenced and indented code blocks, GFM tables, ordered
- * lists, and blockquotes when requested by the caller.
- *
- * Fenced code blocks and tables report an intrinsic width equal to their
- * widest line, which is effectively unbounded. A user bubble sizes itself
- * from its content
- * (`maxWidth` with no `width`), so Android lays the bubble's children out
- * during the unclamped intrinsic pass — where the surrounding paragraphs
+ * Fenced code blocks and tables report an intrinsic width equal to their widest
+ * line, which is effectively unbounded. A user bubble sizes itself from its
+ * content (`maxWidth` with no `width`), so Android lays the bubble's children
+ * out during the unclamped intrinsic pass — where the surrounding paragraphs
  * collapse to a single line — and never repositions them once the width is
- * clamped back to `maxWidth`. The result is siblings drawn on top of each
- * other inside an over-tall bubble. Pinning the bubble's width removes the
- * intrinsic pass entirely, which is the same reason review-comment bubbles
- * already carry an explicit width.
+ * clamped back to `maxWidth`. Pinning the bubble's width removes the intrinsic
+ * pass entirely, which is the same reason review-comment bubbles already carry
+ * an explicit width.
  *
  * Ordered lists hit the same Android layout bug because each item contains a
  * flexing content column inside a shrink-to-fit row.
- *
- * A four-space ordered marker is only treated as a list when the preceding
- * non-empty line is a less-indented list item. This keeps standalone indented
- * code out of the heuristic while covering nested lists.
  */
 
 const FENCED_CODE_BLOCK = /^ {0,3}(?:```|~~~)/m;

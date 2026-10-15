@@ -66,10 +66,6 @@ const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
 export interface RemoteT3RunnerOptions {
-  /**
-   * Dev mode: run `node <path>` on the remote instead of a release archive.
-   * The only mode that needs Node on the remote.
-   */
   readonly nodeScriptPath?: string | null;
   readonly nodeEngineRange?: string | null;
   /**
@@ -246,8 +242,6 @@ function applyScriptPlaceholders(
   return result;
 }
 
-// Re-exported from the shared HTTP readiness module so existing importers
-// (notably tunnel.test.ts) keep resolving it from here.
 export { describeReadinessCause };
 
 export const REMOTE_PICK_PORT_SCRIPT = `const fs = require("node:fs");

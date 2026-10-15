@@ -66,14 +66,12 @@ export function resolveSelectedProviderEnvironmentId(
 
 export type ProviderEnvironmentAccess =
   | { readonly kind: "editable" }
-  /** `reason` distinguishes waiting on the device from waiting on permissions. */
   | { readonly kind: "loading"; readonly reason: "config" | "permissions" }
   | { readonly kind: "read-only" }
   | { readonly kind: "unavailable" }
   | { readonly kind: "error" };
 
 /**
- * Whether the session may change provider configuration on an environment.
  * `pending` means the answer is still unknown, which must not be presented as
  * editable: rendering controls we already know might be rejected only turns a
  * permission problem into a failed write.
@@ -110,9 +108,6 @@ export function resolveRemoteOperateAccess(input: {
 }
 
 /**
- * The patch for one instance's project override, following the envelope
- * replacement rule for `projectSettingsOverrides`: the returned entry
- * replaces the project's whole override set, and `null` removes it.
  * `value: undefined` resets that single instance back to inheriting the
  * environment's enablement, leaving any other overridden keys untouched.
  *

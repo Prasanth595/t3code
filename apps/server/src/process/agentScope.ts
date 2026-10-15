@@ -26,7 +26,6 @@ import * as ProcessRunner from "../processRunner.ts";
 const AGENT_SLICE = "app-t3code-agents.slice";
 
 /**
- * The child slice for one server's agents, named after its state directory.
  * Only one server uses a state directory at a time, so an agent in this slice
  * when the server starts was left by an earlier server on the same state,
  * for example one the launcher killed during an update. Other servers on the
@@ -40,10 +39,10 @@ export function ownedAgentSlice(stateDir: string): string {
 const GiB = 1024 ** 3;
 
 /**
- * Memory limits for the agents slice. Agents together leave about 6 GB free
- * before they are throttled and 4 GB before the kernel kills one, so the
- * server, sshd, and tailscaled keep working. Small machines still give agents
- * at least half of RAM before throttling and three quarters before a kill.
+ * Agents together leave about 6 GB free before they are throttled and 4 GB
+ * before the kernel kills one, so the server, sshd, and tailscaled keep
+ * working. Small machines still give agents at least half of RAM before
+ * throttling and three quarters before a kill.
  */
 export function agentSliceMemoryLimits(totalBytes: number) {
   return {
@@ -56,14 +55,11 @@ export interface ScopeState {
   readonly loadState: string;
   readonly activeState: string;
   readonly result: string;
-  /** `oom_kill` from the scope's memory.events, while its cgroup exists. */
   readonly oomKills: number;
-  /** `populated` from the scope's cgroup.events, while its cgroup exists. */
   readonly populated: boolean | undefined;
 }
 
 /**
- * Reads one scope as the server sees it right after the agent process exits.
  * Our pipe can close before systemd handles the kill, so a scope that is
  * still stopping, is empty, or already counted an OOM kill is "stopping":
  * systemd records `Result=oom-kill` for it in a moment.
@@ -102,7 +98,6 @@ function parseCgroupCounter(text: string, key: string): number | undefined {
 const STOP_TIMEOUT_OPTION = "--property=TimeoutStopSec=10s";
 const STOPPING_POLL_INTERVAL = "100 millis";
 const STOPPING_POLL_ATTEMPTS = 20;
-// A stopping scope can wait out its TimeoutStopSec for a stuck process.
 const CLEAR_FAILED_INTERVAL = "1 second";
 const CLEAR_FAILED_ATTEMPTS = 120;
 const MAX_TRACKED_THREADS = 500;
@@ -153,7 +148,6 @@ export const make = Effect.gen(function* () {
       const events = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
       if (parseCgroupCounter(events, "populated") === 0) return;
       yield* Effect.logWarning("Stopping agents left by a previous server", { slice: ownedSlice });
-      // Agents get SIGTERM, then SIGKILL after their stop timeout.
       const stopped = yield* runner
         .run({ command: systemctl, args: ["--user", "stop", ownedSlice], timeout: "30 seconds" })
         .pipe(Effect.option);
@@ -165,9 +159,6 @@ export const make = Effect.gen(function* () {
       }
     });
 
-  // Runs once, on the first agent or terminal launch. It proves this process
-  // can reach a systemd user manager, stops agents a previous server left,
-  // creates the agents slice, and sets its limits.
   const systemd = yield* Effect.cached(
     Effect.gen(function* () {
       const runtimeDir = hostEnvironment.XDG_RUNTIME_DIR;
@@ -295,8 +286,6 @@ export const make = Effect.gen(function* () {
       yield* forget(systemctl, tracked.unit);
     });
 
-  // Records a thread's newest scope, or forgets the thread when `unit` is
-  // undefined. The replaced scope has its failed state cleared.
   const track = (systemctl: string, threadId: string, unit: string | undefined) =>
     Effect.gen(function* () {
       const previous = scopeByThread.get(threadId);

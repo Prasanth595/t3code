@@ -3,9 +3,8 @@ import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAcc
 import type { DevicePlatform } from "@t3tools/contracts";
 
 /**
- * Read-only hub endpoints the Tools drawer consumes directly: the accessibility
- * tree, the foreground app, and the event log. Everything that changes device
- * state goes through the `device.action` RPC instead, so this file never POSTs.
+ * Everything that changes device state goes through the `device.action` RPC instead, so this file
+ * never POSTs.
  */
 
 export interface DeviceAxElement {
@@ -176,9 +175,7 @@ const openEventSource = (
   source.addEventListener("message", (event) => {
     try {
       onMessage(JSON.parse(String(event.data)));
-    } catch {
-      // Keep-alive comments and malformed frames carry nothing to render.
-    }
+    } catch {}
   });
   return () => source.close();
 };

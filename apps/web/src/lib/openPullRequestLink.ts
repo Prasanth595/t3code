@@ -27,10 +27,10 @@ export {
 } from "@t3tools/shared/changeRequestUrl";
 
 /**
- * The project a link belongs to, or nothing. Matched the way the server matches: the repository
- * identity is the full path below the host where one was recorded — which is what nested GitLab
- * groups and Azure project paths need — and the host is the first segment of the canonical
- * remote, so github.com and an Enterprise install stay apart.
+ * Matched the way the server matches: the repository identity is the full path below the host
+ * where one was recorded — which is what nested GitLab groups and Azure project paths need —
+ * and the host is the first segment of the canonical remote, so github.com and an Enterprise
+ * install stay apart.
  */
 export function findProjectForChangeRequest(
   projects: ReadonlyArray<EnvironmentProject>,
@@ -91,9 +91,9 @@ export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null,
 }
 
 /**
- * Any project checked out from the link's host. Thread links are host-level, so a pull request
- * from a repository nobody has checked out is still linkable as long as one project on that
- * host can lend the server its credentials. The link's own project, when it exists, comes first.
+ * Thread links are host-level, so a pull request from a repository nobody has checked out is
+ * still linkable as long as one project on that host can lend the server its credentials. The
+ * link's own project, when it exists, comes first.
  */
 export function findProjectOnChangeRequestHost(
   projects: ReadonlyArray<EnvironmentProject>,
@@ -236,14 +236,11 @@ export function useOpenChangeRequestLink(
         to: "/pull-requests",
         search: {
           involvement: "all",
-          // Every state, so the pull request being opened is also in the list behind it whether
-          // it is open, merged or closed.
           state: "all",
           repository,
           number: parsed.number,
           selectedHost: parsed.authority ?? parsed.host,
           selectedProjectId: project.id,
-          // Named so the page opens the right one of two servers holding this project.
           selectedEnvironmentId: project.environmentId,
         },
       });
@@ -272,8 +269,6 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       event.preventDefault();
       if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
 
-      // No project to show it in, so it is an ordinary link and follows the
-      // "Open links in" setting; the modifier still forces the system browser.
       void openLink(prUrl, { event, threadRef: targetThreadRef }).catch((error: unknown) => {
         console.error(error);
         toastManager.add(

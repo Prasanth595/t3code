@@ -21,7 +21,6 @@ const SIGNALS = [
 
 type SignalKey = (typeof SIGNALS)[number]["key"];
 
-/** The latest check for a signal; it describes the field only while `url` is still its value. */
 type EndpointCheck = { readonly url: string; readonly result: OtlpEndpointCheckResult | null };
 
 const isHttpUrl = (url: string) => /^https?:\/\/./i.test(url);
@@ -67,10 +66,8 @@ function TelemetryExportForm() {
   const canEdit = useAtomValue(
     serverEnvironment.checkOtlpEndpoint.permissionAtom(environmentId ?? null),
   );
-  // Servers from before endpoint checks keep the editor without Test.
   const canCheck =
     canEdit && environment?.serverConfig?.environment.capabilities.otlpEndpointCheck === true;
-  // Saved endpoints open as pending; the effect below sends their checks.
   const [checks, setChecks] = useState<Partial<Record<SignalKey, EndpointCheck>>>(() =>
     Object.fromEntries(
       SIGNALS.filter(({ key }) => isHttpUrl(saved[key])).map(({ key }) => [
@@ -105,7 +102,6 @@ function TelemetryExportForm() {
     void sendCheck(key, signal, url);
   };
 
-  // Sends checks still pending, such as the saved endpoints' when the form opens.
   const sendPendingChecks = useEffectEvent(() => {
     for (const { key, signal } of SIGNALS) {
       const check = checks[key];
@@ -223,7 +219,6 @@ function TelemetryExportForm() {
               onClick={() => {
                 setDraft({});
                 setMessage(null);
-                // A tested draft replaced the saved endpoint's status; check the saved one again.
                 if (!canCheck) return;
                 for (const { key, signal } of SIGNALS) {
                   if (checks[key]?.url !== saved[key]) checkEndpoint(key, signal, saved[key]);

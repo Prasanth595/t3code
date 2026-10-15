@@ -29,7 +29,7 @@ export const ThreadLinkedPullRequest = Schema.Struct({
 });
 export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
 
-/** Who created a thread ↔ pull request link. `stack-dismissed` is a tombstone
+/** `stack-dismissed` is a tombstone
  * for a native-stack member the user unlinked, so the sync reactor does not
  * re-add it; clients hide it. */
 export const ThreadPullRequestLinkSource = Schema.Literals([
@@ -73,7 +73,7 @@ export const ThreadPullRequestStackLayer = Schema.Struct({
 });
 export type ThreadPullRequestStackLayer = typeof ThreadPullRequestStackLayer.Type;
 
-/** A host-native stack the pull request belongs to. Layers run bottom to top. */
+/** Layers run bottom to top. */
 export const ThreadPullRequestStack = Schema.Struct({
   kind: Schema.Literal("native"),
   id: TrimmedNonEmptyString,
@@ -94,9 +94,7 @@ export const ThreadPullRequestKey = Schema.Struct({
 export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
 /**
- * Present while the server watches the pull request for its thread. The server wakes the
- * thread's agent when checks finish on the head commit, someone else comments, or the branch
- * starts to conflict. The other fields record what the agent was last told, so each change is
+ * The other fields record what the agent was last told, so each change is
  * reported once.
  */
 export const ThreadPullRequestWatch = Schema.Struct({
@@ -109,7 +107,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
   passed: Schema.Boolean,
   /**
    * Names in the passing gate on that commit, so a required check that first shows up already
-   * passed is news. Empty on watches saved before this field existed.
+   * passed is news.
    */
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

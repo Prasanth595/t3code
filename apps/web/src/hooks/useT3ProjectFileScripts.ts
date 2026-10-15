@@ -13,22 +13,14 @@ const NO_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
 
 export interface T3ProjectFileState {
   /**
-   * - `valid`: t3.json exists and decoded.
-   * - `invalid`: t3.json exists but fails to decode (the server then ignores
-   *   the whole file, including `iconPath` and every script).
-   * - `missing`: no readable t3.json at the workspace root.
-   * - `loading`: the file query has not settled yet.
+   * - `invalid`: t3.json exists but fails to decode (the server then ignores the whole file,
+   * including `iconPath` and every script).
    */
   status: "loading" | "missing" | "invalid" | "valid";
-  /** The decoded file when status is `valid`, null otherwise. */
   file: T3ProjectFile | null;
   scripts: ReadonlyArray<T3ProjectFileScript>;
 }
 
-/**
- * Decoded state of the project's checked-in `t3.json`, including whether the
- * file exists but is broken — which the runtime otherwise swallows silently.
- */
 export function useT3ProjectFileState(
   environmentId: EnvironmentId,
   cwd: string | null,

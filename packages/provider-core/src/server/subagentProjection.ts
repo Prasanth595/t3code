@@ -261,7 +261,6 @@ export function delegatedTaskProgress(projection: {
   };
 }
 
-/** Ids that `emitted` already wrote with an event of `type`. */
 function writtenIds(
   emitted: ReadonlyArray<OrchestrationV2DomainEvent>,
   type: "subagent.updated" | "node.updated" | "turn-item.updated",
@@ -270,9 +269,8 @@ function writtenIds(
 }
 
 /**
- * Ends a provider-native subagent, its node and its turn item once the provider
- * process that ran it is gone, since no terminal event will come from it. Each
- * record is skipped if already settled or already ended by `emitted`.
+ * Ends a provider-native subagent, its node and its turn item once the provider process that ran
+ * it is gone, since no terminal event will come from it.
  */
 export const endOrphanedNativeSubagent = <E>(input: {
   readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "subagents" | "turnItems">;

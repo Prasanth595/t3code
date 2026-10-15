@@ -74,8 +74,7 @@ export function registerConfirmDialogHost(): () => void {
 }
 
 /**
- * Requests a themed confirmation when a host is mounted. An undefined result
- * means no themed host is currently available.
+ * An undefined result means no themed host is currently available.
  */
 export function requestConfirmDialog(
   message: string,

@@ -40,7 +40,6 @@ export function costPerMillionTokens(model: ModelTotals): number | null {
     : (model.costUsd / pricedTokens) * 1_000_000;
 }
 
-/** A neutral step between background and foreground, so mixes never borrow a provider's color. */
 const ink = (percent: number) =>
   `color-mix(in oklab, var(--foreground) ${percent}%, var(--background))`;
 
@@ -76,7 +75,6 @@ export function tokenTypeSegments(
   ];
 }
 
-/** Speeds are ordered by price, so they brighten from standard to ultrafast. */
 export function speedCostSegments(cost: SpeedCost): readonly ShareSegment[] {
   return [
     { label: "Standard", value: cost.standard, color: ink(34) },

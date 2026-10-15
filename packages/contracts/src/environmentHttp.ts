@@ -152,7 +152,6 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
   {
     code: Schema.Literal("auth_invalid"),
     reason: EnvironmentAuthInvalidReason,
-    // Older servers do not send a DPoP failure category.
     dpopFailureReason: Schema.optionalKey(DpopFailureReason),
     traceId: TrimmedNonEmptyString,
   },
@@ -414,18 +413,13 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   cloudUserId: Schema.NullOr(Schema.String),
   relayUrl: Schema.NullOr(Schema.String),
   relayIssuer: Schema.NullOr(Schema.String),
-  // A managed Cloudflare tunnel is provisioned for this link. False for a
-  // publish-only link (activity publishing without a relay-managed tunnel), so
-  // clients can present the two capabilities as independent settings.
-  // Optional so newer clients tolerate older environment servers.
+  // False for a publish-only link (activity publishing without a relay-managed tunnel), so clients
+  // can present the two capabilities as independent settings.
   managedTunnelActive: Schema.optional(Schema.Boolean),
   publishAgentActivity: Schema.Boolean,
-  // Opt-in: T3 Connect holds webhook requests while this environment is
-  // offline. Optional so newer clients tolerate older environment servers.
   holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
-  // The relay rejected this link's credential, usually because the environment
-  // was deregistered from T3 Connect. The link stays stored until it is linked
-  // again. Optional so newer clients tolerate older environment servers.
+  // The relay rejected this link's credential, usually because the environment was deregistered
+  // from T3 Connect. The link stays stored until it is linked again.
   linkRevoked: Schema.optional(Schema.Boolean),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;

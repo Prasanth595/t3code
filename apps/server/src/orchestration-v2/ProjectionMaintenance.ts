@@ -234,7 +234,6 @@ export const layer: Layer.Layer<
     const COMPACTION_PAGE_SIZE = 500;
 
     /**
-     * Scan newest first to retain the newest state for each entity.
      * Page every event, including non-candidates: filtering before LIMIT could
      * still scan the entire history when superseded events are sparse.
      * turn-item.updated stays intact because replay assigns positions on first write.

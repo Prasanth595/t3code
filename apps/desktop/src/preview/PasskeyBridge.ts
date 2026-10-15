@@ -2,7 +2,6 @@ import type { CreateCredentialResult, GetCredentialResult } from "electron-webau
 
 import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
 
-/** What the main process answers a guest passkey ceremony with. */
 export type PasskeyCeremonyResult =
   | Extract<CreateCredentialResult, { success: true }>
   | Extract<GetCredentialResult, { success: true }>
@@ -46,9 +45,8 @@ const ceremonyError = (name: string) =>
       );
 
 /**
- * Copies request options into plain IPC-cloneable data. Chromium ignores
- * members it does not know, so functions and other uncloneable values drop out
- * here instead of failing the whole ceremony.
+ * Chromium ignores members it does not know, so functions and other uncloneable
+ * values drop out here instead of failing the whole ceremony.
  */
 const toCloneable = (value: unknown): unknown => {
   if (value instanceof ArrayBuffer) return value.slice(0);

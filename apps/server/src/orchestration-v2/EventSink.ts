@@ -34,9 +34,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
-/**
- * ERRORS
- */
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
   {
@@ -68,9 +65,6 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
-/**
- * SERVICE DEFINITION
- */
 export interface EventSinkV2Shape {
   readonly write: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
@@ -177,7 +171,6 @@ export interface EventSinkV2Shape {
     { readonly receipt: CommandReceiptStore.ProjectCommandReceiptV2; readonly committed: boolean },
     EventSinkV2Error
   >;
-  /** Record a rejected project command, or return the receipt its command id already has. */
   readonly commitRejectedProjectCommand: (input: {
     readonly commandId: CommandId;
     readonly projectId: ProjectId;
@@ -205,9 +198,6 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
   "t3/orchestration-v2/EventSink/EventSinkV2",
 ) {}
 
-/**
- * IMPLEMENTATIONS
- */
 const layerBase: Layer.Layer<
   EventSinkV2,
   never,
@@ -938,10 +928,8 @@ const layerBase: Layer.Layer<
 );
 
 /**
- * Event sink layer for application compositions that already own the
- * persistence services. Keeping the outbox instance shared with the worker is
- * important because enqueue notifications are in-memory wakeups backed by the
- * durable SQL queue.
+ * Keeping the outbox instance shared with the worker is important because enqueue notifications
+ * are in-memory wakeups backed by the durable SQL queue.
  */
 export const layerFromStores = layerBase;
 

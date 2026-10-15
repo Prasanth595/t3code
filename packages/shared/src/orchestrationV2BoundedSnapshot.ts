@@ -47,7 +47,6 @@ export function restoreLocalVisibleTurnItems(
   return { ...projection, turnItems: [...local, ...projection.turnItems] };
 }
 
-/** The usable projection of a decoded bounded snapshot, compact or not. */
 export function boundedSnapshotProjection(snapshot: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly turnItemsOmitLocalVisible?: true | undefined;

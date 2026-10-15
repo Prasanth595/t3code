@@ -15,10 +15,6 @@ export function resolveThreadDetailsCardDensity(
   return "essential";
 }
 
-/**
- * The card pins to the top right while a readable chat lane fits beside it.
- * The chat canvas decides whether chat moves over to make room.
- */
 export function resolveThreadDetailsCardLayout({
   container,
   lane,
@@ -30,7 +26,6 @@ export function resolveThreadDetailsCardLayout({
   lane: { padding: number; minChatWidth: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
-  /** Space taken above the card, such as the open find bar. */
   topInset?: number;
 }) {
   const gap = THREAD_DETAILS_CARD_GAP;

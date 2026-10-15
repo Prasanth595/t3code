@@ -81,7 +81,6 @@ export const startup = Promise.all([
     );
   })
   .catch((error: unknown) => {
-    // Let the bootstrap entry show the error unless a reload is already scheduled.
     if (reloadScheduled) return;
     throw error;
   });

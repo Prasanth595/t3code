@@ -98,7 +98,6 @@ export const layer = Layer.effect(
   }),
 );
 
-/** No app context: for code paths and tests with no MCP Apps. */
 export const layerEmpty = Layer.succeed(
   McpAppModelContext,
   McpAppModelContext.of({ set: () => Effect.void, forThread: () => Effect.succeed([]) }),

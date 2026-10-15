@@ -76,9 +76,9 @@ export class GitHubApiNotFoundError extends Schema.TaggedError<GitHubApiNotFound
 }
 
 /**
- * GitHub answered with a failure that is none of the above. `githubErrors` carries GitHub's own
- * error messages, from a GraphQL `errors` list or a REST `message`/`errors` body: they name the
- * field and the reason ("A pull request already exists for acme:feature"), never a token.
+ * `githubErrors` carries GitHub's own error messages, from a GraphQL `errors` list or a REST
+ * `message`/`errors` body: they name the field and the reason ("A pull request already exists
+ * for acme:feature"), never a token.
  */
 export class GitHubApiResponseError extends Schema.TaggedError<GitHubApiResponseError>()(
   "GitHubApiResponseError",
@@ -147,7 +147,6 @@ export class GitHubApi extends Context.Service<
     /** The raw JSON body of a successful GraphQL answer, with `rateLimit` recorded. */
     readonly graphql: (input: GitHubGraphQlInput) => Effect.Effect<string, GitHubApiError>;
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
-    /** The credential a request to `host` would carry right now. */
     readonly credential: (
       host: string,
     ) => Effect.Effect<
@@ -179,10 +178,8 @@ export function gitHubApiUrls(host: string): { readonly rest: string; readonly g
   return { rest: `https://${normalized}/api/v3`, graphql: `https://${normalized}/api/graphql` };
 }
 
-/** GraphQL documents longer than this are cut in traces; the hash still identifies them. */
 const TRACED_QUERY_MAX_CHARS = 4_000;
 
-/** A stable short id for a GraphQL document, so traces group by query without its text. */
 function queryHash(query: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < query.length; index++) {
@@ -192,7 +189,6 @@ function queryHash(query: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-/** The numeric rate-limit headers GitHub sends, as span attributes. */
 function rateLimitAttributes(
   headers: Readonly<Record<string, string | undefined>>,
 ): Record<string, number | string> {
@@ -211,7 +207,6 @@ function rateLimitAttributes(
   return attributes;
 }
 
-/** The pause GitHub asked for, from `retry-after` or the primary limit's reset. */
 function retryAtFrom(
   headers: Readonly<Record<string, string | undefined>>,
   now: number,
@@ -235,7 +230,6 @@ const decodeGraphQlErrors = Schema.decodeUnknownOption(
   ),
 );
 
-/** A REST failure body: `{ message, errors: [{ message } | { resource, field, code }] }`. */
 const decodeRestErrors = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -275,7 +269,6 @@ function restErrorMessages(body: string): ReadonlyArray<string> | undefined {
   });
 }
 
-/** What one GitHub answer means, decided once from its status, headers and body. */
 type Answer = Data.TaggedEnum<{
   Ok: {};
   RateLimited: {};
@@ -346,7 +339,6 @@ export const make = Effect.gen(function* () {
       const normalized = normalizeHost(host);
       const pinned = yield* PinnedGitHubCredential;
       if (pinned !== null) {
-        // A pinned page only ever talks to the host it verified.
         if (pinned.host !== normalized) {
           return yield* new GitHubApiAuthenticationError({
             host: normalized,
@@ -360,10 +352,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  /**
-   * Sends one request under the host's rate-limit pause and fails a refusal with the error that
-   * says why. `onSuccess` sees the answer only once it is known to be one.
-   */
   const send = Effect.fn("GitHubApi.send")(function* (input: {
     readonly host: string;
     readonly operation: string;
@@ -372,7 +360,6 @@ export const make = Effect.gen(function* () {
     readonly timeout?: Duration.Input | undefined;
     readonly allowReserve: boolean;
     readonly acceptNotModified: boolean;
-    /** Reads the body for GraphQL `errors`, which GitHub sends with HTTP 200. */
     readonly graphql?: boolean;
   }) {
     const host = normalizeHost(input.host);

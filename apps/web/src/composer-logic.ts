@@ -314,7 +314,6 @@ export function pastedPathQueryLength(
   return /^\S*/.exec(pasted)![0].length;
 }
 
-/** Caret and trigger after replacing composer text and continuing at the end. */
 export function composerStateAtPromptEnd(
   text: string,
   literalText = false,

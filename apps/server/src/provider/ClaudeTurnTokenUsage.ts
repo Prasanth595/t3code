@@ -58,11 +58,6 @@ function withEarlierSegmentUsage(
   return total;
 }
 
-/**
- * Normalizes a Claude turn's billed usage from its final SDK result.
- * `earlierSegmentUsage` holds the usage of results a steer ended before the
- * final one, oldest first.
- */
 export function normalizeClaudeTurnTokenUsage(
   result: { readonly subtype: SDKResultMessage["subtype"]; readonly usage?: unknown } | undefined,
   hasSubagents: boolean,

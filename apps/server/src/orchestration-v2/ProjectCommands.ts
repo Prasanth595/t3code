@@ -59,7 +59,6 @@ export class ProjectCommandInvariantError extends Schema.TaggedError<ProjectComm
   }
 }
 
-/** The command targets a project that does not exist or was deleted. */
 export class ProjectCommandMissingProjectError extends Schema.TaggedError<ProjectCommandMissingProjectError>()(
   "ProjectCommandMissingProjectError",
   {
@@ -105,7 +104,6 @@ export const decodeProjectCommandRejection = Schema.decodeUnknownOption(
 export interface ProjectCommandState {
   /** The target project's row, including a soft-deleted one; only create sees deleted rows as taken. */
   readonly project: ProjectRow | undefined;
-  /** The active project that holds the command's requested workspace root, if any. */
   readonly workspaceOwner: ProjectRow | undefined;
 }
 

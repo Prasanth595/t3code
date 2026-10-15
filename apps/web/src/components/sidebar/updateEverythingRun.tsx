@@ -21,7 +21,6 @@ import {
   type UpdateRunMachine,
 } from "./updateEverything.logic";
 
-/** The running "update everything" pass, or null. Outlives the sidebar button. */
 const updateEverythingRunAtom = Atom.make<UpdateEverythingRun | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("update-everything-run"),
@@ -31,7 +30,6 @@ export function useUpdateEverythingRun(): UpdateEverythingRun | null {
   return useAtomValue(updateEverythingRunAtom);
 }
 
-/** Starts, changes, or ends (null) the running pass. */
 export function setUpdateEverythingRun(
   update: (run: UpdateEverythingRun | null) => UpdateEverythingRun | null,
 ): void {
@@ -229,17 +227,13 @@ export function saveUpdateEverythingResult(result: UpdateEverythingResult): void
         handedOff,
       } satisfies typeof SavedResult.Type),
     );
-  } catch {
-    // Without storage the summary is lost with the relaunch; the update still runs.
-  }
+  } catch {}
 }
 
 export function clearSavedUpdateEverythingResult(): void {
   try {
     window.localStorage.removeItem(SAVED_RESULT_KEY);
-  } catch {
-    // Nothing to clear.
-  }
+  } catch {}
 }
 
 function takeSavedUpdateEverythingResult(): typeof SavedResult.Type | null {
@@ -258,7 +252,6 @@ function takeSavedUpdateEverythingResult(): typeof SavedResult.Type | null {
   }
 }
 
-/** Shows the one summary toast for a finished pass. */
 export function showUpdateEverythingResult(result: UpdateEverythingResult): void {
   const view = getUpdateEverythingToastView(result, APP_VERSION);
   if (!view) return;

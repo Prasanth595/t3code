@@ -37,7 +37,6 @@ export function pastedTextDisposition(input: {
     : "inline";
 }
 
-/** Stable, human-readable names when a draft contains several folded pastes. */
 export function nextPastedTextFileName(existingNames: ReadonlyArray<string>): string {
   const names = new Set(existingNames.map((name) => name.toLowerCase()));
   if (!names.has("pasted-text.txt")) {

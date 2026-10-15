@@ -34,7 +34,6 @@ function reactionsSignature(reactions: ReadonlyArray<PullRequestReaction>): stri
     .join(" ");
 }
 
-/** Reaction counts and an always-visible picker, routed to the supplied host subject. */
 export function PullRequestReactionBar({
   reactions,
   canReact,

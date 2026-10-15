@@ -149,9 +149,6 @@ export function appendReviewCommentToDraft(input: {
 }
 
 /**
- * Which draft the composer is editing right now. While a queued message is
- * being edited the composer is pointed at that edit's own draft, so typing,
- * attaching, and pasting never touch the user's draft for the thread.
  * Resolved per call rather than captured, so a callback created before the
  * edit began still writes to the right place.
  */
@@ -230,8 +227,6 @@ export function useThreadComposerState() {
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
     : null;
-  // The creation entry is the thread itself (rendered as the first message),
-  // not a follow-up waiting behind it.
   const selectedThreadQueuedMessages = useMemo(
     () =>
       selectedThreadKey
@@ -309,8 +304,6 @@ export function useThreadComposerState() {
   const followUpBehavior = AsyncResult.isSuccess(preferencesResult)
     ? (preferencesResult.value.followUpBehavior ?? DEFAULT_FOLLOW_UP_BEHAVIOR)
     : DEFAULT_FOLLOW_UP_BEHAVIOR;
-  // Steering needs a live provider turn the adapter can interrupt; the queue
-  // workflow already derives that from the session's capabilities.
   const queueWorkflow = useAtomValue(
     selectedThreadDetailRef === null
       ? EMPTY_QUEUE_WORKFLOW_ATOM
@@ -578,8 +571,6 @@ export function useThreadComposerState() {
         return null;
       }
 
-      // Editing a queued message repurposes the composer: the send button saves
-      // the edit in place instead of enqueuing a new message.
       const editKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
       if (getQueuedRunEdit(editKey) !== null) {
         await saveQueuedRunEdit();
@@ -707,7 +698,6 @@ export function useThreadComposerState() {
 
       const metadata = makeQueuedMessageMetadata();
       const messageId = MessageId.make(metadata.messageId);
-      // A new send supersedes the reason the previous one bounced back.
       clearThreadComposerError(threadKey);
       // Enqueue publishes the queued atom synchronously (the durable write
       // happens behind it), so clearing the draft here gives send feedback on
@@ -824,7 +814,6 @@ export function useThreadComposerState() {
 
     const threadKey = activeComposerDraftKey(selectedThreadShell);
     const insertion = captureComposerDraftInsertion(threadKey);
-    // pickComposerFiles clamps the advertised limit to the contract maximum.
     const result = await pickComposerFiles({
       existingCount: countComposerDraftAttachmentsAfterSelection(threadKey, insertion),
       maxBytes,
@@ -833,8 +822,6 @@ export function useThreadComposerState() {
       appendReference: true,
       insertion,
     });
-    // The picker error and the live-cap rejection can both happen in one
-    // pick; report both in a single alert.
     const problems = [
       ...(result.error ? [result.error] : []),
       ...(rejectedCount > 0

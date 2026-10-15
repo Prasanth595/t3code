@@ -36,9 +36,8 @@ function sourceIdFromUrl(url: string): UsageLimitSourceId {
 }
 
 /**
- * Adds a CLIProxyAPI hub from provider settings on one environment. The
- * management key is sent once and kept in that server's secret store;
- * settings only ever carry a redaction marker for it afterwards.
+ * The management key is sent once and kept in that server's secret store; settings only ever
+ * carry a redaction marker for it afterwards.
  */
 export function AddUsageLimitSourceDialog({
   open,

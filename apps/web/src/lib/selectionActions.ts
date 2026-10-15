@@ -26,11 +26,8 @@ export function resolveSelectionActionPosition(options: {
 }
 
 /**
- * Opens selection actions after release, leaving multi-clicks time to finish.
- * DOM selections call selectionChanged; canvas selections can use their own
- * change notification. Each surface still owns reading and acting on its text.
- * Interactive popovers pass getActionElement to keep editing their fields from
- * replacing the captured source selection.
+ * Opens selection actions after release, leaving multi-clicks time to finish. Interactive popovers
+ * pass getActionElement to keep editing their fields from replacing the captured source selection.
  */
 export function observeSelectionActions({
   element,

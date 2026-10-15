@@ -11,10 +11,6 @@ import * as Schema from "effect/Schema";
 import { formatComposerContextReference } from "./composerContextReferences.ts";
 
 /**
- * Upgrades a message written before inline context references: trailing
- * `<terminal_context>`, `<element_context>` and `<preview_annotation>` blocks, inline or
- * trailing `<review_comment>` blocks, and U+FFFC terminal placeholders. Produces canonical
- * reference links plus records so old messages render and copy through the new path.
  * Event history is never rewritten; this runs in memory on read.
  */
 
@@ -333,7 +329,6 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
   // behind them nor lose their position. Unparseable blocks stay as text.
   let rest = replaceReviewBlocks(text, (whole, attributes, rawBody) => {
     const record = reviewRecord(attributes, rawBody, reviews.length + 1);
-    // Keep the original prose if converting it would produce a record the wire drops.
     if (!record || !isReviewCommentContextRecord(record)) return whole;
     reviews.push(record);
     return `${reviewToken}${reviews.length - 1}${reviewToken}`;

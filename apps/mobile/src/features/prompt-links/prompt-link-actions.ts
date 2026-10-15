@@ -9,15 +9,12 @@ import {
 } from "../../state/use-composer-drafts";
 import { linkedThreadDraftAction } from "./prompt-link-model";
 
-/** Shows the one notice a prompt link owes the user, built with `promptLinkNotice`. */
 export function showPromptLinkNotice(notice: string): void {
   Alert.alert("Prompt from a link", notice);
 }
 
 /**
- * Puts a linked prompt into an existing thread's composer draft. An empty composer is filled;
- * typed text is replaced only when the user says so. The notice rides in the same alert, so a
- * link never stacks two dialogs.
+ * The notice rides in the same alert, so a link never stacks two dialogs.
  */
 export async function applyLinkedPromptToThreadDraft(
   draftKey: string,
@@ -42,7 +39,6 @@ export async function applyLinkedPromptToThreadDraft(
   ]);
 }
 
-/** Copies a shareable link that opens a new task with this prompt. Used by sent user messages. */
 export async function copyPromptLink(prompt: string): Promise<void> {
   if (!(await tryCopyTextWithHaptic(buildNewThreadLink({ prompt }), { target: "prompt link" }))) {
     Alert.alert("Could not copy", "Try again.");

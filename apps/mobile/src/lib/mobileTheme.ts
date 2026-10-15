@@ -31,8 +31,6 @@ export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
   ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id as MobileThemeId, label: theme.label })),
 ];
 
-// Closed set: every key `createMobileThemeVariables` writes. Reads of a
-// misspelled variable then fail to compile instead of yielding undefined.
 export type MobileThemeVariable = keyof ReturnType<typeof createMobileThemeVariables>;
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
@@ -191,7 +189,6 @@ function contrastRatio(
   );
 }
 
-/** Keep the theme tint while adjusting lightness to contrast with every supplied surface. */
 export function themeColorWithContrast(
   accent: string,
   surface: string | ReadonlyArray<string>,
@@ -389,8 +386,6 @@ export function getMobileThemeVariables(
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
-  // Mobile groups and floating controls need a tonal fill, rather than the
-  // nearly neutral raised surface used by desktop outlined cards.
   const groupedCard =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? appearance === "light"
@@ -425,7 +420,6 @@ export function getMobileThemeVariables(
         : undefined,
   );
 
-  // The complete base record guarantees that optional overrides cannot leave a token undefined.
   return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;
 }
 

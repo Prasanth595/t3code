@@ -74,7 +74,6 @@ export function SourceControlWritingSettingsSection() {
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const serverProviders = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
-  // The writing style is one object; each control only cares about its own field.
   const styleFieldMixed = (field: keyof ServerSettings["sourceControlWritingStyle"]) => {
     const first = targets[0];
     return (

@@ -152,7 +152,6 @@ function OpeningThreadLoadingScreen() {
 type ThreadRouteScreenRouteProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
-  /** A prompt link's draft text. See useThreadPromptLink. */
   readonly prompt?: string | string[];
 }>;
 
@@ -161,7 +160,6 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
   readonly renderInspector?: (headerInset: number) => ReactNode;
 }
 
-/** Shows recovery only after the target route has reached a terminal unavailable state. */
 function ThreadUnavailableScreen(props: {
   readonly actionLabel: string;
   readonly onAction: () => void;
@@ -219,11 +217,6 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
     return <OpeningThreadLoadingScreen />;
   }
 
-  // Render the full thread chrome (header, feed, composer) as soon as the
-  // thread SHELL is known — no blocking on message detail. The feed shows a
-  // loading placeholder while messages fetch, the floating pill above the
-  // composer reports loading/syncing, and the composer's connection pill
-  // reports connecting/reconnecting status.
   if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
     return <ThreadRouteContent {...props} selectedThreadDetailState={selectedThreadDetailState} />;
   }
@@ -439,7 +432,6 @@ function ThreadRouteContent(
     [composer.interactionMode, composer.modelSelection, composer.runtimeMode, selectedThread],
   );
 
-  /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
@@ -447,7 +439,6 @@ function ThreadRouteContent(
   ]
     .filter(Boolean)
     .join(" · ");
-  /* ─── Git status for native header trigger ───────────────────────── */
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
@@ -476,7 +467,6 @@ function ThreadRouteContent(
     onReconnectEnvironment(environmentId);
   }, [environmentId, onReconnectEnvironment]);
 
-  /* ─── Git action progress (for overlay banner) ──────────────────── */
   const gitActionProgressTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,

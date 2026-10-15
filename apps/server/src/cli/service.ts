@@ -18,11 +18,7 @@ export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
     baseDir: config.baseDir,
     logsDir: config.logsDir,
     cliVersion: packageJson.version,
-  }).pipe(
-    Layer.provide(ProcessRunner.layer),
-    // Archive-distributed versions download the release archive here.
-    Layer.provide(FetchHttpClient.layer),
-  );
+  }).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(FetchHttpClient.layer));
 
 export type ServiceReconcileResult =
   | {
@@ -139,8 +135,6 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
   ),
 );
 
-// Kept one release for muscle memory and old docs. It did what `t3 service
-// install` does; the way to move to a newer release is `t3 update`.
 const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
   Command.withDescription("Deprecated. Run `t3 update` to move to a newer release."),
   Command.unlisted,

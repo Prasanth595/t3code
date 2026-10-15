@@ -128,10 +128,8 @@ export const layer: Layer.Layer<
         typeof RunExecutionService.selectInheritedBackgroundTurnItems
       >;
     }) => {
-      // Guards and background routing need live execution state, not a fresh
-      // allocation of every completed message and tool output in the thread.
-      // `false` means the run moved on or is gone. A failed read is an error,
-      // so the caller fails the start or the run instead of skipping it.
+      // Guards and background routing need live execution state, not a fresh allocation of
+      // every completed message and tool output in the thread.
       const isCurrentAttemptInStatus = (expectedStatus: OrchestrationV2Run["status"]) =>
         projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
           Effect.map((current) => {
@@ -231,7 +229,6 @@ export const layer: Layer.Layer<
         return yield* new ProviderTurnStartError({ runId, cause: `Run ${runId} was not found.` });
       }
       if (run.status !== "starting") {
-        // The effect is idempotent once the run has advanced or terminalized.
         return;
       }
       const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
@@ -284,9 +281,6 @@ export const layer: Layer.Layer<
           cause: `Run ${runId} is missing its execution projection state.`,
         });
       }
-      // Settles a run that never reached the provider: one signal turn item plus
-      // terminal run, attempt and root node, written only while the run is still
-      // the current starting attempt.
       const settleRunBeforeStart = Effect.fn("orchestrationV2.providerTurnStart.settleBeforeStart")(
         function* (input: {
           readonly signal: string;
@@ -780,7 +774,6 @@ export const layer: Layer.Layer<
         });
         return replacement;
       });
-      // The last attempt already failed the run.
       if (loadedProviderThread === undefined) return;
       if (!(yield* isCurrentAttemptInStatus("starting"))) {
         return;
@@ -1034,9 +1027,8 @@ export const layer: Layer.Layer<
           )
           .map((source) => source.id),
       );
-      // Use saved text and actual native attachments when telemetry is absent.
-      // Legacy attempts lack native identity; exclude their explicitly recovered
-      // history, whose attachments were not replayed into the replacement thread.
+      // Legacy attempts lack native identity; exclude their explicitly recovered history, whose
+      // attachments were not replayed into the replacement thread.
       const nativeContextEstimate = Effect.gen(function* () {
         return sameNativeThread
           ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
@@ -1130,7 +1122,6 @@ export const layer: Layer.Layer<
               return handoffBudget({
                 tokenCap,
                 modelContextWindow,
-                // The note is sent with the user text, so it spends the same allowance.
                 userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
                 attachments: message.attachments,
                 providerThread: budgetProviderThread,

@@ -22,11 +22,10 @@ const normalizeAvailability = (
   typeof availability === "boolean" ? { browser: availability, device: false } : availability;
 
 /**
- * Each block is omitted entirely when its tools aren't attached. Describing
- * `preview_*` or `device_*` tools that aren't in the turn's tool list would be
- * worse than saying nothing: the instructions actively steer the model away
- * from Playwright, agent-browser, and raw simctl/adb, so leaving them in would
- * talk it out of the only automation it still has.
+ * Describing `preview_*` or `device_*` tools that aren't in the turn's tool list would be worse
+ * than saying nothing: the instructions actively steer the model away from Playwright,
+ * agent-browser, and raw simctl/adb, so leaving them in would talk it out of the only automation
+ * it still has.
  */
 const toolInstructions = (availability: boolean | T3CodeToolAvailability): string => {
   const tools = normalizeAvailability(availability);
@@ -206,8 +205,7 @@ export function buildCodexDeveloperInstructions(interactionMode: ProviderInterac
 export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   /**
-   * Whether the `t3-code` MCP server is attached to this turn. Callers derive
-   * it from the session's actual MCP configuration rather than re-reading the
+   * Callers derive it from the session's actual MCP configuration rather than re-reading the
    * setting, so the prompt cannot claim tools the turn doesn't have.
    */
   toolsAvailable: boolean | T3CodeToolAvailability = true,

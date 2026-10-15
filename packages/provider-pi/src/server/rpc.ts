@@ -1,20 +1,9 @@
 /**
- * PiRpc — stdio JSONL transport for the Pi coding agent's RPC mode.
- *
- * Spawns `pi --mode rpc` and speaks Pi's line-delimited JSON protocol:
- * requests go to stdin as `{"type": "...", "id": "..."}` records, responses
- * come back as `{"type": "response", "id": ..., "success": ...}` and are
- * correlated by `id`; every other stdout record is a session event and is
- * surfaced on the `events` queue in arrival order.
- *
  * Framing follows Pi's spec: LF-delimited only, with a trailing `\r`
  * stripped. Lines are split manually (never with `readline`, which also
  * splits on U+2028/U+2029 and would corrupt frames). Records that fail to
  * parse as JSON are dropped with a debug log rather than failing the
  * transport, so a chatty extension cannot take the session down.
- *
- * Used by `PiAdapterV2` for sessions and by `PiTextGeneration` /
- * `PiProvider` for ephemeral one-shot processes.
  */
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -111,12 +100,10 @@ export interface PiRpcConnection {
    * records of their own (see PiAdapterV2's settle probe).
    */
   readonly events: Queue.Queue<PiRpcRecord, PiRpcError>;
-  /** Resolves when the process has exited, with its exit code. */
   readonly exited: Effect.Effect<number, PiRpcError>;
   /**
-   * Kill the pi process group immediately (SIGTERM, grace, SIGKILL). Used by
-   * Stop-with-restart when the process may be wedged and `abort` cannot be
-   * trusted to land. The transport fails and the session manager respawns a
+   * Used by Stop-with-restart when the process may be wedged and `abort` cannot
+   * be trusted to land. The transport fails and the session manager respawns a
    * fresh process on the next turn.
    */
   readonly terminate: Effect.Effect<void>;
@@ -171,7 +158,6 @@ const encodeJsonLine = Schema.encodeSync(UnknownFromJsonString);
 const PI_ERROR_DETAIL_MAX_CHARS = 200;
 
 /**
- * Bounded, human-readable summary of a failed response's `error` payload.
  * The untruncated value stays on the error's `cause`, so `message` never
  * carries unbounded remote text while logs keep something diagnostic.
  */
@@ -206,8 +192,6 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
 }
 
 /**
- * Kill the pi process group: SIGTERM, short grace, then SIGKILL.
- *
  * `hasExited` is consulted before each signal. Once the original child is
  * gone its pid/pgid can be recycled by the OS, so escalating blindly could
  * deliver SIGKILL to an unrelated process.
@@ -350,7 +334,6 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     Effect.forkIn(scope),
   );
 
-  // Reader: decode stdout into LF-delimited JSON records.
   yield* Effect.gen(function* () {
     const frame = makeJsonlFramer();
     yield* child.stdout.pipe(
@@ -410,7 +393,6 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     Effect.forkIn(scope),
   );
 
-  // Surface stderr as debug logs; pi reserves stdout for the protocol.
   yield* child.stderr.pipe(
     Stream.decodeText(),
     Stream.runForEach((chunk) =>

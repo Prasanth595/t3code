@@ -20,7 +20,6 @@ const orientations = [
 const z = new Vector3(0, 0, 1);
 const y = new Vector3(0, 1, 0);
 
-/** Build views from the actual hinged display planes, rather than model-specific Euler offsets. */
 export function duoViewSnaps(frames: readonly DuoRestFrame[], panel: 1 | 3) {
   const snaps: DuoViewSnap[] = [];
   for (const frame of frames) {
@@ -38,7 +37,6 @@ export function duoViewSnaps(frames: readonly DuoRestFrame[], panel: 1 | 3) {
       if (frame.face === "left" && index !== 2) continue;
       const roll = (panel === 3 ? Math.PI / 2 : 0) - (index * Math.PI) / 2;
       const rotation = faceRotation.clone().premultiply(new Quaternion().setFromAxisAngle(z, roll));
-      // A leaf-focused view looks slightly down onto its partner, as in a seated laptop.
       if (frame.face === "left" || frame.face === "right")
         rotation.premultiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 12));
       if (
@@ -82,5 +80,4 @@ export function duoViewSnaps(frames: readonly DuoRestFrame[], panel: 1 | 3) {
   return snaps;
 }
 
-/** Fold-specific candidates use the base viewer's nearest-family selection. */
 export const nearestDuoView = nearestDeviceView<DuoViewSnap>;

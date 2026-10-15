@@ -547,8 +547,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       if (isMobile) return;
       // cmd/ctrl/shift double-clicks are multi-select intent, not rename.
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      // Ignore double-clicks bubbling from nested controls (PR status, port,
-      // archive buttons) — only the row body should enter inline rename.
       if ((event.target as HTMLElement).closest("button, a")) return;
       event.preventDefault();
       startThreadRename(threadKey, thread.title);
@@ -672,7 +670,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       void commitRename(threadRef, renamingTitle, thread.title);
     }
   }, [commitRename, renamingCommittedRef, renamingTitle, thread.title, threadRef]);
-  // Keep clicks/double-clicks inside the rename input from bubbling to the row.
   // Without stopping `dblclick`, double-clicking to select a word would re-fire
   // the row's rename handler and reset the in-progress edit back to the title.
   const handleRenameInputClick = useCallback((event: React.MouseEvent<HTMLInputElement>) => {
@@ -2340,8 +2337,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       if (clicked === "new-thread-on-branch") {
-        // Explicit branch carry-over: reuse the thread's worktree when it
-        // has one, otherwise its branch on the local checkout.
         const result = await settlePromise(() =>
           handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId), {
             branch: thread.branch,
@@ -2492,9 +2487,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               the row's end (two slots on touch, where both stay visible). */}
           <span aria-hidden className="w-4 shrink-0 max-sm:w-10" />
         </SidebarMenuButton>
-        {/* Environment badge – visible by default, crossfades with the
-            "new thread" button on hover using the same pointer-events +
-            opacity pattern as the thread row archive/timestamp swap. */}
+
         {project.environmentPresence === "remote-only" && (
           <Tooltip>
             <TooltipTrigger
@@ -3301,9 +3294,6 @@ export default function LegacySidebar() {
     });
   }, [projectOrder, projects]);
 
-  // Build a mapping from physical project key → logical project key for
-  // cross-environment grouping.  Projects that share a repositoryIdentity
-  // canonicalKey are treated as one logical project in the sidebar.
   const physicalToLogicalKey = useMemo(() => {
     return buildPhysicalToLogicalProjectKeyMap({
       projects: orderedProjects,
@@ -3354,8 +3344,6 @@ export default function LegacySidebar() {
       ),
     [sidebarThreads],
   );
-  // Resolve the active route's project key to a logical key so it matches the
-  // sidebar's grouped project entries.
   const activeRouteProjectKey = useMemo(() => {
     if (!routeThreadKey) {
       return null;
@@ -3369,8 +3357,6 @@ export default function LegacySidebar() {
     return physicalToLogicalKey.get(physicalKey) ?? physicalKey;
   }, [routeThreadKey, sidebarThreadByKey, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
 
-  // Group threads by logical project key so all threads from grouped projects
-  // are displayed together.
   const threadsByProjectKey = useMemo(() => {
     const next = new Map<string, SidebarThreadSummary[]>();
     for (const thread of sidebarThreads) {

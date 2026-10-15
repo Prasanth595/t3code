@@ -42,8 +42,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
-// Picker value for the "Add project" row; real entries are keyed by logical
-// project key.
 const ADD_PROJECT_VALUE = "add-project";
 
 interface PickerItem {
@@ -108,9 +106,6 @@ export function DraftHeroHeadline({
       threads,
     ],
   );
-  // Same-named projects on two machines are only told apart by where they
-  // live, so rows on another machine carry its icon once the catalog spans
-  // more than one environment; a single-machine catalog stays as it was.
   const showProjectEnvironments = useMemo(
     () => projectGroupsSpanEnvironments(projectGroups),
     [projectGroups],
@@ -153,8 +148,6 @@ export function DraftHeroHeadline({
   const hasResolvedProject = activeProjectTitle !== null;
   const canChooseProject = projectPickerEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
-  // The project that hosts threads without a project is not a row: the line
-  // under the headline is the way into it.
   const menuEntries = useMemo(
     () =>
       projectPickerEntries.filter(
@@ -178,9 +171,6 @@ export function DraftHeroHeadline({
   const isScratchDraft =
     activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
 
-  // {value, label} items let Base UI drive the combobox selection while the
-  // popup search filters the same collection. "Add project" is an action, not
-  // a project, so it only trails the unfiltered list.
   const pickerItems = useMemo<readonly PickerItem[]>(
     () => [
       ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
@@ -208,11 +198,9 @@ export function DraftHeroHeadline({
   useEffect(() => {
     latestTargetRef.current = { draftId, activeProjectKey, scratchTargetEnvironmentId };
   }, [activeProjectKey, scratchTargetEnvironmentId, draftId]);
-  // With a prompt typed, project selection changes the target of the open
-  // draft in place, so the prompt stays in the same composer session. An empty
-  // draft instead opens the chosen project's own draft, like starting a new
-  // thread there: moving it would replace that draft and strand whatever it
-  // holds, such as the browser tabs of the no-project draft.
+  // An empty draft instead opens the chosen project's own draft, like starting a new thread there:
+  // moving it would replace that draft and strand whatever it holds, such as the browser tabs of
+  // the no-project draft.
   const selectProject = (project: (typeof projects)[number], logicalProjectKey: string) => {
     if (!draftId) {
       return;
@@ -375,8 +363,6 @@ export function DraftHeroHeadline({
         ? `${activeProjectDisplayName ?? "Choose a project"} to start`
         : "Add a project to start";
 
-  // One click out of the project, phrased as the alternative to the question
-  // above it. Focus moves to the project picker once this line has gone.
   const noProjectShortcut = shortcutLabelForCommand(keybindings, "chat.newWithoutProject");
   const orStartWithoutProject =
     scratchWorkspaceRoot !== null && !isScratchDraft && (hasResolvedProject || canChooseProject) ? (

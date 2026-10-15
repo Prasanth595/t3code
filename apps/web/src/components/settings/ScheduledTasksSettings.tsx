@@ -102,7 +102,6 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 
-/** JS day-of-week (0 = Sunday) rendered Monday-first, matching how people read a week. */
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
@@ -138,7 +137,6 @@ const EMPTY_DRAFT: DraftState = {
   maxDeliveryAgeMinutes: "",
 };
 
-/** Labelled field: a caption sitting above its control. */
 function Field({
   label,
   hint,
@@ -191,9 +189,9 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
 }
 
 /**
- * Human label for a run timestamp. `formatRelativeTime` only handles the
- * past, and `nextRunAt` is a future instant — render "in 5m" style labels
- * for upcoming runs instead of a misleading "just now".
+ * `formatRelativeTime` only handles the past, and `nextRunAt` is a future
+ * instant — render "in 5m" style labels for upcoming runs instead of a
+ * misleading "just now".
  */
 export function relativeLabel(value: string | null): string {
   if (!value) return "Not scheduled";
@@ -725,7 +723,6 @@ function WebhookEndpointField({
           size="sm"
           variant="outline"
           type="button"
-          // A bare path is not a URL a sender can call.
           disabled={!copyable}
           onClick={() => copyToClipboard(url, undefined)}
         >
@@ -749,9 +746,8 @@ function WebhookEndpointField({
 }
 
 /**
- * Whether T3 Connect forwards requests live or holds them while the
- * environment is offline. The setting is per environment and only readable
- * for this machine's own environment, so other environments show nothing.
+ * The setting is per environment and only readable for this machine's own
+ * environment, so other environments show nothing.
  */
 function WebhookDeliveryMode({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const cloudLink = usePrimaryCloudLinkState();

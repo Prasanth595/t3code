@@ -43,7 +43,6 @@ export interface ProjectEnrichmentServiceOptions {
   readonly cacheCapacity?: number;
   /** Maximum active and queued roots for each enrichment field. */
   readonly maxPending?: number;
-  /** Worker concurrency for each enrichment field. */
   readonly concurrency?: number;
   readonly successTtl?: Duration.Input;
   readonly faviconTtl?: Duration.Input;
@@ -55,11 +54,9 @@ export class ProjectEnrichmentService extends Context.Service<
   {
     /** Read resolved metadata without starting or awaiting filesystem work. */
     readonly peek: (workspaceRoot: string) => Effect.Effect<ProjectEnrichment>;
-    /** Schedule missing metadata for bounded background resolution. */
     readonly request: (workspaceRoot: string) => Effect.Effect<void>;
     /** Read immediately available metadata and schedule anything missing. */
     readonly getAvailable: (workspaceRoot: string) => Effect.Effect<ProjectEnrichment>;
-    /** Invalidate workspace-derived metadata. */
     readonly invalidate: (workspaceRoots: Iterable<string>) => Effect.Effect<void>;
     /** Subscribe to ephemeral completion notifications. */
     readonly subscribeChanges: Effect.Effect<

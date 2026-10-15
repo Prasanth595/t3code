@@ -6,11 +6,8 @@ import { isNewTaskDraftKey } from "./new-task-draft-key";
 import type { ComposerDraft } from "./use-composer-drafts";
 
 /**
- * Unsent work that will become a thread, shaped for thread-list presentation.
- * A `pending` task sits in the outbox and sends itself when its environment
- * reconnects; a `draft` is new-task composer content, which only sends when
- * the user submits it. Both share the list slot so the user can find
- * everything they have written but not yet started in one place.
+ * A `pending` task sits in the outbox and sends itself when its environment reconnects; a `draft`
+ * is new-task composer content, which only sends when the user submits it.
  */
 export type PendingNewTask = PendingQueuedTask | PendingDraftTask;
 
@@ -42,10 +39,6 @@ export interface PendingDraftTask {
   readonly draft: ComposerDraft;
 }
 
-/**
- * Settings-only drafts (a model pick with no text) are not work the user
- * would look for in the list; only text or attachments make a draft visible.
- */
 export function composerDraftHasUserContent(draft: ComposerDraft): boolean {
   return draft.text.trim().length > 0 || draft.attachments.length > 0;
 }
@@ -99,8 +92,6 @@ export function buildPendingNewTasks(input: {
       draft,
     });
   }
-  // Drafts are what the user is writing now, so they lead; within each kind,
-  // newest first.
   tasks.sort((left, right) => {
     if (left.kind !== right.kind) {
       return left.kind === "draft" ? -1 : 1;

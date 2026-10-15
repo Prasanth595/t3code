@@ -15,7 +15,6 @@ export const DEFAULT_PR_LIST_CONTROLS: PullRequestListControls = {
   sort: "updated",
 };
 
-/** A scope saved on the Scratch folder is no longer offered, so it reads as "All projects". */
 export function withoutScratchProjectScope(
   controls: PullRequestListControls,
   projects: readonly { id: string; environmentId: string; isScratch?: true }[],
@@ -43,7 +42,6 @@ export type EnvironmentPullRequestListEntry = PullRequestListEntry & {
 export const scopedPullRequestListKey = (entry: EnvironmentPullRequestListEntry) =>
   `${entry.environmentId}:${pullRequestListKey(entry)}`;
 
-/** Provider refreshes and diff-count batches recreate entries; unchanged rows can stay mounted. */
 export function pullRequestListRowsAreEqual(
   previous: EnvironmentPullRequestListEntry,
   next: EnvironmentPullRequestListEntry,

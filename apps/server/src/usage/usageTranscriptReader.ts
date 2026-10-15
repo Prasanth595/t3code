@@ -1,19 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Raw filesystem access for transcript scanning.
- *
- * Isolated here so the rest of the usage code stays on Effect's `FileSystem`.
  * The direct `node:fs` streaming is deliberate: a cold 30-day window is ~1.4 GB
  * across ~1,500 files, and buffer-level streaming is roughly an order of
  * magnitude cheaper than materialising each file. The equivalent Effect stream
  * pipeline is idiomatic but not fast enough to sit behind a page load.
- *
- * Transcripts are append-only, so a parse also reports the byte position it
- * stopped at. A later scan of the same file resumes from that position and
- * parses only the appended bytes, which is what keeps a warm scan cheap while a
- * session is actively writing a multi-hundred-megabyte rollout.
- *
- * @module usageTranscriptReader
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -36,8 +26,6 @@ export interface TranscriptFile {
 }
 
 /**
- * Where a parse stopped, with enough state to continue from there.
- *
  * The guard hash fingerprints the bytes immediately before `resumeOffset`. A
  * resume only proceeds when those bytes still match: transcripts are
  * append-only by design, but a rotated or rewritten file silently mis-parsed
@@ -70,7 +58,6 @@ export interface TranscriptParseResult {
    */
   readonly tailRecords: readonly UsageRecord[];
   readonly position: TranscriptParsePosition;
-  /** Whether the parse continued from `resumeFrom` rather than byte 0. */
   readonly resumed: boolean;
 }
 
@@ -107,20 +94,14 @@ function fnv1a(buffer: Buffer): number {
 }
 
 /**
- * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
- *
  * Unreadable directories and files are counted in `failedPaths` rather than
  * failing the page, so the source can report incomplete usage. Files that
  * vanish between `readdir` and `stat` are ordinary rotation and not counted.
- *
  * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
  * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
  * never carry usage, so the basename filter keeps a cold scan off those files.
- *
- * Directories are listed depth-first, one at a time, then the candidates are
- * stat'd by a fixed pool of workers: a warm scan stats thousands of files, and
- * one at a time each waits its own trip through the thread pool. Results keep
- * `readdir` order, which the aggregator's first-seen dedupe relies on.
+ * Results keep `readdir` order, which the aggregator's first-seen dedupe relies
+ * on.
  */
 export async function listTranscriptFiles(
   root: string,
@@ -149,7 +130,6 @@ export async function listTranscriptFiles(
   await walk(root);
 
   const found: Array<TranscriptFile | undefined> = Array.from({ length: candidates.length });
-  // Each worker pulls the next candidate from one shared iterator.
   const queue = candidates.entries();
   const statQueued = async (): Promise<void> => {
     for (const [index, path] of queue) {
@@ -207,13 +187,10 @@ async function guardMatches(
 }
 
 /**
- * Builds the byte-level test for a format's `usageMarkers`: whether a line
- * contains any of them.
- *
- * One marker is a single `Buffer` search. Several would be one pass over the
- * line each, so they are matched together as one alternation over the line's
- * latin1 view instead: latin1 maps every byte to one character without
- * validating it, so an ASCII marker matches exactly where its bytes do.
+ * Several would be one pass over the line each, so they are matched together as
+ * one alternation over the line's latin1 view instead: latin1 maps every byte
+ * to one character without validating it, so an ASCII marker matches exactly
+ * where its bytes do.
  */
 export function transcriptLineGate(markers: readonly [string, ...string[]]) {
   if (markers.length === 1) {
@@ -234,11 +211,6 @@ export function transcriptLineGate(markers: readonly [string, ...string[]]) {
  * is a stable fact worth memoising, while a transient read failure memoised
  * under the same `(size, mtime)` key would silently drop that file's usage
  * until the file next changes.
- *
- * With `resumeFrom`, parsing continues from that position when its guard bytes
- * still match, so only appended lines are read; otherwise the whole file is
- * re-parsed from the start and `resumed` reports `false`.
- *
  * A stateful format resumes with the state saved at that position; a saved
  * state its schema rejects re-parses the file whole.
  */
@@ -260,7 +232,6 @@ export async function readTranscriptRecords<State>(
     const codec = format.state;
     const decodeState = codec === undefined ? undefined : Schema.decodeUnknownOption(codec.schema);
     const encodeState = codec === undefined ? undefined : Schema.encodeSync(codec.schema);
-    // Stateless formats never read their state argument.
     let state = codec === undefined ? (undefined as State) : codec.initial();
     let resumed = false;
     let start = 0;
@@ -287,8 +258,6 @@ export async function readTranscriptRecords<State>(
       return content.toString("utf8");
     };
 
-    // Gate on the raw bytes so the lines that fail it, which is most of them,
-    // are never decoded.
     const mightCarryUsage = transcriptLineGate(format.usageMarkers);
     const parseLine = (lineBuffer: Buffer, lineState: State, out: UsageRecord[]): void => {
       if (!mightCarryUsage(lineBuffer)) return;
@@ -353,8 +322,6 @@ export async function readTranscriptRecords<State>(
           append(chunk.subarray(lineStart));
           break;
         }
-        // Most lines fit in the current chunk. Avoid buffering/streaming
-        // machinery on this hot path.
         if (!streaming && pendingBytes === 0) {
           parseLine(chunk.subarray(lineStart, newlineIndex), state, records);
         } else {

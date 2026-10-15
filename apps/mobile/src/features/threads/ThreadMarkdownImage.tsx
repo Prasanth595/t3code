@@ -36,10 +36,8 @@ export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
   readonly unavailable: boolean;
-  /** Why the image is unavailable, when the cause is known. */
   readonly unavailableDetail?: string | undefined;
   readonly alt: string | null;
-  /** Pixel size from the server, when it could read the header; the frame is final from the first render. */
   readonly knownSize?: { readonly width: number; readonly height: number } | undefined;
   readonly format?: "svg";
   readonly actionsSource?: MediaActionsSource;
@@ -242,7 +240,6 @@ function ThreadMarkdownSvg(props: {
   return <SvgAst ast={ast} override={{ width: "100%", height: "100%", accessible: false }} />;
 }
 
-/** Environment-hosted image that loads through a signed asset URL. */
 export function ThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<

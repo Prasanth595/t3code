@@ -61,10 +61,10 @@ export function latestExecutedRun(
 }
 
 /**
- * Whether started `run` ran after `other`. Ordinals follow submission, but a
- * run can start ahead of a held queue (a restart continuation, or a message
- * sent while the queue is held), so a queued run resumed later can have a
- * lower ordinal than one that already ended. An unfinished run is the latest.
+ * Ordinals follow submission, but a run can start ahead of a held queue (a
+ * restart continuation, or a message sent while the queue is held), so a queued
+ * run resumed later can have a lower ordinal than one that already ended. An
+ * unfinished run is the latest.
  */
 export function runRanAfter(
   run: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,

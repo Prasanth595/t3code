@@ -15,13 +15,11 @@ import {
 } from "./environmentHttpAuth.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
-// Same cold-open budget as the full snapshot path; bounded payloads should fit.
 const DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS = 6_000;
 
 /**
- * Load a bounded recent-window thread snapshot over HTTP. Opts into compact
- * turnItems and restores them, so callers always see the full bounded shape.
- * Older servers ignore the query and send the full shape.
+ * Opts into compact turnItems and restores them, so callers always see the full
+ * bounded shape. Older servers ignore the query and send the full shape.
  */
 export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentBoundedThreadSnapshot",
@@ -59,12 +57,11 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
 });
 
 /**
- * Shared ThreadSnapshotLoader for clients that render progressive history.
- * Seeds from the bounded HTTP snapshot when available. Older servers that lack
- * the bounded route (plain/generic 404) fall back to the existing full HTTP
- * thread snapshot. Structured EnvironmentResourceNotFoundError from either
- * endpoint still means missing. Transient failures report `unavailable` so the
- * socket path remains a last resort for connectivity issues.
+ * Older servers that lack the bounded route (plain/generic 404) fall back to
+ * the existing full HTTP thread snapshot. Structured
+ * EnvironmentResourceNotFoundError from either endpoint still means missing.
+ * Transient failures report `unavailable` so the socket path remains a last
+ * resort for connectivity issues.
  */
 export const layer: Layer.Layer<
   ThreadSnapshotLoader.ThreadSnapshotLoader,

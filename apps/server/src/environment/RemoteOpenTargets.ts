@@ -1,7 +1,4 @@
 /**
- * RemoteOpenTargets - resolves the SSH hostnames this environment advertises
- * for remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`).
- *
  * The server can only check itself: sshd listening locally, tailscaled
  * reporting a MagicDNS name and whether Tailscale SSH is on, and the machine
  * hostname for mDNS. Whether a given name resolves from the viewer's machine

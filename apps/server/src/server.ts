@@ -288,8 +288,6 @@ const layerHttpServer = Layer.unwrap(
       host: config.host ?? "127.0.0.1",
       port: config.port,
       gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-      // Negotiate permessage-deflate with clients that offer it; clients
-      // that don't still get uncompressed frames on their connection.
       // Context takeover stays enabled (ws default) so the compression
       // window is shared across frames — that also makes small frames cheap
       // to compress, so no size threshold is set (ws only honors
@@ -316,7 +314,6 @@ const layerRepositoryIdentityResolver = Layer.effect(
   Effect.gen(function* () {
     const registry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
     return yield* RepositoryIdentityResolver.make({
-      // Each host that can refine an identity gets a turn; the first one that changes it wins.
       refine: Effect.fn(function* (identity: RepositoryIdentity) {
         for (const kind of SourceControlBuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS.map(
           (driver) => driver.kind,
@@ -338,7 +335,6 @@ const layerRepositoryIdentityResolver = Layer.effect(
 
 const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),
-  // Where the viewed-file marks live for a host that keeps none of its own.
   Layer.provide(PullRequestFilesViewed.layer),
   Layer.provide(PullRequestReadCache.layer),
   Layer.provide(layerSourceControlProviderRegistry),
@@ -346,7 +342,6 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 );
 
 const layerGitManager = GitManager.layer.pipe(
-  // Per-project git settings resolve the acting thread's project.
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
   Layer.provideMerge(RuntimeLayer.layerProjectSetupScriptRunner),
   Layer.provideMerge(WorktreeSetupTracker.layer),
@@ -391,9 +386,9 @@ const layerVcs = Layer.empty.pipe(
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
       Layer.provide(layerGitWorkflow),
-      // Auto-pull reads the project row. The orchestration runtime also
-      // consumes the broadcaster (run finalization), so the policy cannot read
-      // the store from the runtime's output.
+      // The orchestration runtime also consumes the broadcaster (run
+      // finalization), so the policy cannot read the store from the runtime's
+      // output.
       Layer.provide(
         VcsStatusBroadcaster.layerAutoPullPolicy.pipe(Layer.provide(ProjectStore.layer)),
       ),
@@ -456,8 +451,6 @@ const layerCloudManagedEndpointRuntime = Layer.mergeAll(
   ),
 );
 
-// Webhook URLs go through the relay only when the managed tunnel it forwards
-// to is configured; otherwise clients show the environment-relative path.
 const layerScheduledTaskWebhookOrigin = Layer.effect(
   ScheduledTaskWebhookOrigin,
   Effect.gen(function* () {
@@ -502,9 +495,6 @@ const layerOrchestrationApplication = CheckpointDiffQuery.layer.pipe(
   Layer.provideMerge(layerOrchestrationV2Runtime),
 );
 
-// Automatic thread settlement (#8600): a server-owned sweep evaluates
-// inactivity and merged pull requests, then settles through the orchestrator
-// so every client sees the same shelf.
 const layerThreadSettlementWorker = Layer.effectDiscard(
   ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService), Layer.provide(ProjectionStoreV2.layer));
@@ -547,7 +537,6 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
-  // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
@@ -578,17 +567,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
-  // Subscribes to `account.rate-limits.updated` so usage bars track live
-  // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
-  // Catches overrides left behind by a project deleted before this cleanup
-  // existed, or by a cleanup write that failed. See ProjectService.delete
-  // for the normal (on-delete) path.
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
-  // Core Services
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
@@ -600,16 +583,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
   Layer.provideMerge(layerPersistence),
-  // Both read a user-owned file out of the state directory and stream changes
-  // to clients; neither depends on the other.
   Layer.provideMerge(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
   ),
   Layer.provideMerge(ProviderRegistry.layer),
-  // The instance registry is the new routing keystone — text generation,
-  // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
-  // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
-  // hydration adds their default instances to `providerInstances` on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -624,11 +601,6 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   // Search, prepare, status inspection, and turn launch share one registry
   // cache so every client and provider instance sees the same prepared agents.
   Layer.provideMerge(AcpRegistrySupport.layerFromHost.pipe(Layer.provide(ProviderHostLive.layer))),
-  // Provider event loggers are shared by every driver instance and the
-  // orchestration runtime, so they are provided once here.
-  // `ModelManifest.layer` is the model manifest, refreshed from the repo's
-  // `model-manifest.json` on `main`. Drivers read their entry through the
-  // `ModelCatalog` port it provides.
   Layer.provideMerge(
     Layer.mergeAll(
       layerProviderEventLoggers,
@@ -638,11 +610,6 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
       McpProviderSessions.layer,
     ),
   ),
-  // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
-  // `ProviderRegistry.layer` pulled `OpenCodeRuntimeLive` in for itself, but
-  // the rewritten registry reads snapshots off the instance registry and
-  // no longer transitively provides it. Exposing it at the runtime level
-  // keeps a single Live for all opencode consumers.
   Layer.provideMerge(
     OpenCodeRuntime.layer.pipe(
       Layer.provide(
@@ -674,9 +641,6 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 );
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
-  // Misc.
-  // Usage reads provider history through the ProviderHost, which needs the
-  // background policy below it.
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
@@ -718,17 +682,14 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
   ),
-  // The MCP session registry is provided globally (shared with V2 provider
-  // sessions) rather than inline here. The orchestrator toolkit resolves
-  // delegation targets through the same live adapter facade the V2
-  // orchestrator uses, so MCP capability reporting can never drift from
-  // what dispatch can actually serve.
+  // The orchestrator toolkit resolves delegation targets through the same live
+  // adapter facade the V2 orchestrator uses, so MCP capability reporting can
+  // never drift from what dispatch can actually serve.
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
 ).pipe(
-  // Guides read through the same pull request service as every other surface.
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
@@ -736,9 +697,7 @@ const layerMakeRoutes = Layer.mergeAll(
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP. Provided
   // after the guide service so it reaches that too.
   Layer.provide(layerPullRequestService),
-  // The stream route and the WebSocket RPCs share one browser.
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
-  // Server browser tabs and HTML render previews install and run the same headless browser.
   Layer.provide(PreviewBrowser.layer),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
@@ -786,7 +745,6 @@ const layerMakeServer = Layer.unwrap(
           port: address.port,
           serviceManaged: launcher.managed,
         });
-        // Ownership release removes this record.
         yield* ownership
           .publish(state)
           .pipe(
@@ -929,10 +887,8 @@ const layerMakeServer = Layer.unwrap(
             );
             // No settling delay before the first attempt: routes are already
             // serving by the time activation opens this gate (the startup
-            // sequence awaits routesReady), and the retry schedule below
-            // covers anything this sleep used to hedge against. Every
-            // millisecond here is dead time on the path to remote
-            // reachability after a restart.
+            // sequence awaits routesReady), and the retry schedule below covers
+            // anything this sleep used to hedge against.
             const wantsCliLink = hasCloudPublicConfig
               ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
                   Effect.catch((cause) =>
@@ -1005,9 +961,8 @@ const layerMakeServer = Layer.unwrap(
                     }).pipe(Effect.as({ status: "unavailable" as const })),
               ),
             );
-            // A host without a confirmed marker is on its first boot after the
-            // upgrade. Spread those registrations so an auto-update wave does
-            // not hit the relay all at once.
+            // Spread those registrations so an auto-update wave does not hit
+            // the relay all at once.
             if (!startedConfirmed && desiredCliLinkMode !== "publish_only") {
               const jitter = yield* Random.nextIntBetween(
                 0,
@@ -1097,7 +1052,6 @@ const layerMakeServer = Layer.unwrap(
     );
 
     return layerServerApplication.pipe(
-      // The connect routes and the startup/shutdown link work share one instance.
       Layer.provide(CloudLink.layer),
       Layer.provideMerge(layerRuntimeServices),
       Layer.provideMerge(
@@ -1112,12 +1066,10 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(FetchHttpClient.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
       Layer.provide(VcsProcess.layer),
-      // Every agent and terminal spawn reads this, so it sits below everything.
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
     );
   }),
 ).pipe(Layer.provide(ProcessRunner.layer));
 
-// The CLI supplies configuration.
 export const runServer = Layer.launch(layerMakeServer);

@@ -5,9 +5,8 @@ import { COMPOSER_CONTEXT_MAX_RECORDS, ComposerContextRecord } from "./composerC
 import { ForwardCompatibleArray } from "./baseSchemas.ts";
 
 /**
- * Structured clipboard payload for context copied between drafts and messages. Carries the
- * records behind the copied links plus where they came from, never bytes or URLs; the receiver
- * resolves binaries through its own environment.
+ * Carries the records behind the copied links plus where they came from, never bytes or URLs;
+ * the receiver resolves binaries through its own environment.
  */
 export const COMPOSER_CONTEXT_CLIPBOARD_MIME = "web application/x-t3-context-fragment+json";
 

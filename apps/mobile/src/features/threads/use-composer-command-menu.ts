@@ -65,7 +65,6 @@ export function buildComposerSlashCommandItems(input: {
   readonly atMessageStart: boolean;
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
-  /** Whether T3 itself offers /usage-limits for the selected provider. */
   readonly offersUsageLimits?: boolean;
   readonly allowInteractionMode: boolean;
   readonly selectedProviderStatus: Pick<
@@ -170,7 +169,6 @@ export function resolveComposerCommandSelection(input: {
   };
 }
 
-/** Shared autocomplete for thread composers and unsent new-task drafts. */
 export function useComposerCommandMenu({
   draftMessage,
   ownerKey,
@@ -193,19 +191,15 @@ export function useComposerCommandMenu({
   readonly draftMessage: string;
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
-  /** Candidates for `@` thread suggestions; the caller reads them from the entity store. */
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
-  /** Left out of `@` thread suggestions: a thread is never context for itself. */
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
-  /** The thread's linked pull requests, offered in `#` suggestions from any repository. */
   readonly threadPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly hasThread: boolean;
   readonly hasCompactableConversation: boolean;
-  /** Whether T3 itself offers /usage-limits for the selected provider. */
   readonly offersUsageLimits?: boolean;
   readonly enabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;

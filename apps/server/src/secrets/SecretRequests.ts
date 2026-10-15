@@ -1,12 +1,8 @@
 /**
- * SecretRequests - secrets an agent asks the user for.
- *
  * The user's answer goes straight to the server's secret store under a
  * one-use SecretRef; orchestration only records the request and its status.
  * A tool that needs the value takes the ref and consumes it, so the value
  * never reaches the transcript, projections, clients, or model context.
- *
- * @module SecretRequests
  */
 import {
   CommandId,
@@ -34,10 +30,8 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 
 const SECRET_REF_PREFIX = "secret-ref:";
-/** Store name for a ref's value; refs are fixed-length hex, so names stay short and safe. */
 const storeName = (ref: SecretRef) => `secret-request-${ref.slice(SECRET_REF_PREFIX.length)}`;
 const REF_PATTERN = /^secret-ref:[0-9a-f]{32}$/;
-/** A value nobody used within this long is dropped; the agent can ask again. */
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
 const STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
 
@@ -55,7 +49,6 @@ const refFor = (salt: string, threadId: ThreadId, turnItemId: string) =>
       .slice(0, 32)}`,
   );
 
-/** A ref's value, the project it was entered for, and when it was saved. */
 const StoredSecret = Schema.fromJsonString(
   Schema.Struct({ projectId: Schema.String, value: Schema.String, savedAt: Schema.Number }),
 );
@@ -65,12 +58,7 @@ const decodeStored = Schema.decodeUnknownOption(StoredSecret);
 export class SecretRequests extends Context.Service<
   SecretRequests,
   {
-    /**
-     * Answers a pending request in a thread. Saving stores the value under a
-     * new ref that the requesting tool reads from the request's status.
-     */
     readonly answer: (input: SecretRequestAnswerInput) => Effect.Effect<void, SecretRequestError>;
-    /** The ref minted when this request was saved, for the tool that asked. */
     readonly savedRef: (input: {
       readonly threadId: ThreadId;
       readonly turnItemId: string;
@@ -192,7 +180,6 @@ const make = Effect.gen(function* () {
       return Option.map(stored, () => ref);
     });
 
-  /** Removes a stored value; a failure is logged, since the value is still on disk. */
   const removeLogged = (name: string) =>
     store.remove(name).pipe(
       Effect.as(true),
@@ -242,10 +229,6 @@ const make = Effect.gen(function* () {
       return decoded.value.value;
     });
 
-  /**
-   * Drops values nobody used before they expired, so an agent that never
-   * consumed its ref does not leave the user's secret on disk.
-   */
   const sweepExpired = Effect.gen(function* () {
     if (store.directory === undefined) return;
     const now = yield* Clock.currentTimeMillis;
@@ -267,7 +250,6 @@ const make = Effect.gen(function* () {
     Effect.catchCause((cause) => Effect.logWarning("Could not sweep expired secret refs", cause)),
     Effect.withSpan("SecretRequests.sweepExpired"),
   );
-  // Once at startup, then hourly; a value lingers at most an hour past expiry.
   yield* sweepExpired;
   yield* sweepExpired.pipe(
     Effect.delay("1 hour"),

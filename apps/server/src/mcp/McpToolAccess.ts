@@ -27,9 +27,6 @@ import {
   unavailable,
 } from "./threadAccess.ts";
 
-// Only the classes below assign these, from their static blocks, so nothing
-// outside this module can build a declaration or a handlers layer.
-
 /**
  * Both constructors demand this. Their private constructors only stop the type
  * checker; this also stops `Reflect.construct` and friends at runtime.
@@ -42,32 +39,24 @@ const refuseOutsideConstruction = (token: symbol) => {
   }
 };
 
-/** Builds a declaration; only the declaration functions below call it. */
 let declare: <P, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => Declaration<(params: P) => Effect.Effect<A, E, R>>;
 
 type CheckedHandlerOf<D> = D extends Declaration<infer Handler> ? Handler : never;
 
-/** Turns each declaration back into the handler it checks, keeping its type. */
 interface CheckedHandler extends Struct.Lambda {
   <Handler>(declaration: Declaration<Handler>): Handler;
   readonly "~lambda.out": CheckedHandlerOf<this["~lambda.in"]>;
 }
 let checkedHandler: CheckedHandler;
 
-/** Only `toLayer` below builds one. */
 let handlersLayer: <Tools extends Record<string, Tool.Any>, EX, RX>(
   layer: Layer.Layer<Tool.HandlersFor<Tools>, EX, RX>,
 ) => HandlersLayer<Tools, EX, RX>;
 
 /**
- * Who may call a T3 MCP tool. Every handler is built by one of the
- * declarations below, which say what the tool does. `toLayer` accepts only
- * declarations, and `/mcp` registers only layers `toLayer` built, so a tool
- * without a decision here does not compile. Both are nominal classes, so a
- * handler or layer cannot pass for one by copying its fields. Effect's own
- * registration functions accept any handler, so the
+ * Effect's own registration functions accept any handler, so the
  * `t3code/no-raw-mcp-registration` lint rule keeps Effect's `McpServer` inside
  * McpHttpServer.
  *
@@ -75,17 +64,11 @@ let handlersLayer: <Tools extends Record<string, Tool.Any>, EX, RX>(
  * its own runtime and interaction modes, an outside client the ceiling it was
  * approved with. Nothing a caller starts or changes may run with broader
  * modes, and a thread caller changes things only while its own run is live.
- * A refusal is an `OrchestratorMcpFailure`, so the compiler requires it in the
- * tool's failure schema, and `ThreadManagementService` in its dependencies.
  *
- * The declaration checks the caller before the handler runs. Handlers still
- * check what only they can see, such as a queued run belonging to its thread.
+ * Handlers still check what only they can see, such as a queued run belonging
+ * to its thread.
  */
 export class Declaration<out Handler> {
-  // A private field makes the class nominal, and only this module can build
-  // one: its constructor is private and the static block hands the only way
-  // in to module-scoped functions. Copying a declaration's fields onto
-  // anything else fails to typecheck and, at runtime, to run.
   readonly #handle: Handler;
   private constructor(token: typeof builtHere, handle: Handler) {
     refuseOutsideConstruction(token);
@@ -97,7 +80,6 @@ export class Declaration<out Handler> {
   }
 }
 
-/** A client approved for read-only access changes nothing. */
 const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
   Effect.flatMap((scope) =>
     scope.client?.access === "read-only"
@@ -122,7 +104,6 @@ const writingCaller = refuseReadOnlyClient.pipe(
   Effect.tap(assertLiveCaller),
 );
 
-/** The same, for tools whose only capability is controlling threads. */
 const orchestratingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(readCaller()),
   Effect.tap(assertLiveCaller),
@@ -132,7 +113,6 @@ const requireThreadCaller = McpInvocationContext.McpInvocationContext.pipe(
   Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "This tool")),
 );
 
-/** Changes nothing, so every caller may call it. */
 export const reads = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare((params: P) => handle(params));
 
@@ -204,7 +184,6 @@ export const writesThreads = <P, A, E, R>(
     }),
   );
 
-/** How an agent hears that a thread it targets was raised above its modes mid-call. */
 const escalationDenied = (refusal: DispatchModeRefusal) =>
   new OrchestratorMcpFailure({
     code:
@@ -214,7 +193,6 @@ const escalationDenied = (refusal: DispatchModeRefusal) =>
     message: `Thread ${refusal.threadId} now runs in ${refusal.runtimeMode}/${refusal.interactionMode} mode, above this caller's. Its user changed it while this call ran.`,
   });
 
-/** The modes a started thread runs with: those requested, else the caller's own. */
 export interface StartedModes {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -263,29 +241,24 @@ export const writesEnvironment = <P, A, E, R>(
   return declare((params: P) => check.pipe(Effect.flatMap(() => handle(params, check))));
 };
 
-/** What a declaration's own check needs. */
 type CheckServices = Effect.Services<typeof orchestratingCaller>;
 
 /**
- * Each handler of `Handlers`, built by one of the declarations above. A
- * declaration is never callable, which rules out a handler function wearing a
+ * A declaration is never callable, which rules out a handler function wearing a
  * declaration's fields.
  */
 type Declarations<Handlers> = {
   readonly [Name in keyof Handlers]: Declaration<Handlers[Name]> & NotCallable;
 };
 
-/** Anything but a function. */
 type NotCallable = { readonly call?: never } & { readonly apply?: never };
 
-/** A toolkit's handlers, each built by one of the declarations above. */
 export type Handlers<Tools extends Record<string, Tool.Any>> = Declarations<
   Toolkit.HandlersFrom<Tools>
 >;
 
 /**
- * A toolkit's handler layer built by `toLayer`, the only kind `/mcp`
- * registers. Like a declaration it is nominal, so nothing else passes for one.
+ * A toolkit's handler layer built by `toLayer`, the only kind `/mcp` registers.
  */
 export class HandlersLayer<Tools extends Record<string, Tool.Any>, EX = never, RX = never> {
   readonly #layer: Layer.Layer<Tool.HandlersFor<Tools>, EX, RX>;
@@ -299,7 +272,6 @@ export class HandlersLayer<Tools extends Record<string, Tool.Any>, EX = never, R
   static {
     handlersLayer = (layer) => new HandlersLayer(builtHere, layer);
   }
-  /** The handlers, for registering this toolkit on the MCP server. */
   static layer<Tools extends Record<string, Tool.Any>, EX, RX>(
     handlers: HandlersLayer<Tools, EX, RX>,
   ) {
@@ -310,7 +282,6 @@ export class HandlersLayer<Tools extends Record<string, Tool.Any>, EX = never, R
 const checkedHandlers = <Handlers>(declarations: Declarations<Handlers>): Handlers =>
   Struct.map(declarations, checkedHandler);
 
-/** `Toolkit.toLayer` for handlers that all declare their access. */
 export const toLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX = never>(
   toolkit: Toolkit.Toolkit<Tools>,
   build: Handlers<Tools> | Effect.Effect<Handlers<Tools>, EX, RX>,

@@ -102,7 +102,6 @@ export function createSidebarSortingStrategy(input: {
   /** Suspend the reorder preview while the thread is dragged out as context. */
   enabled?: boolean;
   settledOrder: readonly string[];
-  /** Time-ordered inbox (Working beta): where the lifted row would land. */
   activeOrder?: readonly string[];
   settledExpanded: boolean;
   settledVisibleCount?: number;

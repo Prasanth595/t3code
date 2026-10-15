@@ -14,8 +14,6 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GitFilePath = Schema.String.check(Schema.isNonEmpty());
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
 
-// Domain Types
-
 export const GitStackedAction = Schema.Literals([
   "commit",
   "push",
@@ -104,8 +102,6 @@ const GitResolvedPullRequest = Schema.Struct({
   state: GitPullRequestState,
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
-
-// RPC Inputs
 
 export const VcsStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -204,8 +200,6 @@ export const VcsInitInput = Schema.Struct({
 });
 export type VcsInitInput = typeof VcsInitInput.Type;
 
-// RPC Results
-
 const VcsStatusChangeRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
@@ -213,12 +207,10 @@ const VcsStatusChangeRequest = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema,
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
-  /** Optional for compatibility with older servers and providers. */
   isDraft: Schema.optional(Schema.Boolean),
   /**
    * Last provider-side activity (ISO), including comments and metadata edits.
-   * This is not the time a change request closed or merged. Optional for old
-   * servers and providers whose lookups do not report it.
+   * This is not the time a change request closed or merged.
    */
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
@@ -361,12 +353,9 @@ export const VcsPullResult = Schema.Struct({
 });
 export type VcsPullResult = typeof VcsPullResult.Type;
 
-// RPC / domain errors
-
-// Well-known git failures, recognized from stderr at the driver and carried as
-// a closed set of diagnostic tags. Git's stderr itself stays off the error: it
-// echoes argv and remote URLs, which can hold credentials. The tag names the
-// cause for logs and callers; it does not select a message.
+// Git's stderr itself stays off the error: it echoes argv and remote URLs,
+// which can hold credentials. The tag names the cause for logs and callers; it
+// does not select a message.
 export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
   "branch_already_exists",

@@ -2,8 +2,6 @@ import type { FileBackedComposerAttachment } from "./composerImages";
 import { retainComposerAttachmentFile } from "./composerAttachmentFiles";
 
 /**
- * Preview retention for saved composer attachment copies.
- *
  * The durable owners of an attachment file (composer drafts, queued outbox
  * messages) live in state, so this module cannot reach the ownership-cleanup
  * sweep directly. Composer draft state registers the owner-side cleanup hook

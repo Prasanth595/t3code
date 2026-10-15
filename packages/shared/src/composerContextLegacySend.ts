@@ -17,8 +17,6 @@ export function serializeLegacyContextMessage(input: {
   const recordsById = new Map(input.records.map((record) => [record.contextId, record]));
   const used = new Set<string>();
 
-  // Inline references become the plain label the old composer wrote; the payload follows in a
-  // trailing block, which is where the legacy format carried it.
   let text = input.text;
   const occurrences = collectComposerContextReferences(text);
   for (const occurrence of [...occurrences].reverse()) {

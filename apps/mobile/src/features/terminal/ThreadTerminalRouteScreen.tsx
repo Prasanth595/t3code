@@ -377,7 +377,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const lastBufferReplayKeyRef = useRef<string | null>(null);
   const sentInitialInputKeyRef = useRef<string | null>(null);
   const [readyBufferReplayKey, setReadyBufferReplayKey] = useState<string | null>(null);
-  /** Default grid is always valid for attach; onResize refines cols/rows. Requiring a cached size blocked bootstrap for new terminal routes. */
+  /**
+   * Default grid is always valid for attach; onResize refines cols/rows.
+   */
   const [hasMeasuredSurface, setHasMeasuredSurface] = useState(true);
   const [pendingModifierState, setPendingModifierState] = useState<{
     readonly terminalId: string;
@@ -838,7 +840,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     });
   }, [pasteSession, terminalId, writeInput]);
 
-  /** Sends a key through the armed toolbar modifier, if any, and disarms it. */
   const writeModifiedInput = useCallback(
     (data: string) => {
       if (pendingModifier === null) {
@@ -943,8 +944,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, [navigation, params.environmentId, params.threadId]);
 
   const navigateAwayAfterExit = useCallback(() => {
-    // With other shells still live, fall through to the previous one instead
-    // of dropping the user back on the thread.
     const fallbackTerminalId = previousLiveTerminalId({
       sessions: terminalMenuSessions,
       exitedTerminalId: terminalId,

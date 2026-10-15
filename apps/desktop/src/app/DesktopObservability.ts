@@ -54,15 +54,6 @@ export interface DesktopBackendOutputLogShape {
   readonly discardSession: Effect.Effect<void>;
 }
 
-// Factory for per-instance backend output logs. `forInstance(id)` returns
-// a writer that targets a distinct rotating log file — the primary
-// instance keeps `server-child.log` so the historical path stays stable
-// for ops; other instances get `server-child-<sanitized-id>.log`.
-//
-// Writers are cached per id within a single factory instance so repeated
-// `forInstance` calls (e.g. during a backend restart that re-resolves
-// services) reuse the same rotating writer rather than racing each other
-// on the same file.
 export class DesktopBackendOutputLogFactory extends Context.Service<
   DesktopBackendOutputLogFactory,
   {
@@ -352,10 +343,8 @@ const readPersistedObservabilitySettings: Effect.Effect<
 });
 
 /**
- * Resolved as the server resolves them, with persisted Settings as the
- * fallback. Settings is read once for every signal, so the main process
- * cannot resolve traces against one revision of the file and logs against
- * another.
+ * Settings is read once for every signal, so the main process cannot resolve
+ * traces against one revision of the file and logs against another.
  */
 const resolveOtlpEndpoints = Effect.gen(function* () {
   const otel = yield* OtelEnvironment.load;
@@ -450,11 +439,11 @@ const backendLogFilePathForInstance = (
   return environment.path.join(environment.logDir, `server-child-${sanitized}.log`);
 };
 
-// Just the IO sink. Cacheable by resolved file path so two ids that
-// sanitize to the same filename share a single RotatingLogFileWriter
-// (no race on currentSize tracking). Splitting the sink off from the
-// per-call shape lets the shape annotate writes with the *caller's*
-// id rather than whatever id created the cached writer first.
+// Cacheable by resolved file path so two ids that sanitize to the same filename
+// share a single RotatingLogFileWriter (no race on currentSize tracking).
+// Splitting the sink off from the per-call shape lets the shape annotate writes
+// with the *caller's* id rather than whatever id created the cached writer
+// first.
 const makeBackendOutputSinkForInstance = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   id: string,
@@ -567,14 +556,6 @@ const layerBackendOutputLogFactory = Layer.effect(
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const factoryScope = yield* Scope.Scope;
-    // Per-file-path cache of the IO sink only. The per-call shape
-    // wraps the sink with the caller's instance id so a cache hit on
-    // a path collision (e.g. "wsl:default" and "wsl_default" both
-    // resolve to server-child-wsl_default.log) doesn't attribute the
-    // second caller's writes to the first caller's id. Each sink pins
-    // itself to the factory's scope so all log resources tear down
-    // together at app exit. Mutex serializes concurrent first-time
-    // lookups for the same file path.
     const cacheRef = yield* SynchronizedRef.make<
       ReadonlyMap<string, Option.Option<RotatingLogFileWriter>>
     >(new Map());
@@ -617,11 +598,6 @@ const layerBackendOutputLogFactory = Layer.effect(
   }),
 );
 
-/**
- * Logs and traces for the main process, assembled together because they share
- * one read of the environment and Settings, and because a process gets exactly
- * one logger set.
- */
 const layerTelemetry = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -643,7 +619,6 @@ const layerTelemetry = Layer.unwrap(
     // every logger the main process wants has to be named in this one call.
     // Splitting the OTLP logger back out into a layer of its own silently
     // drops either it or the console output.
-    //
     // Swapping `Logger.tracerLogger` out for the OTLP logger matches the
     // server: both reach a collector, but the tracer logger covers only
     // messages logged inside a recorded span and files them under traces,
@@ -708,22 +683,10 @@ const layerTelemetry = Layer.unwrap(
     ).pipe(Layer.provide(OtlpExporter.layerFlusher));
 
     // Metrics stay off until the main process records one. `OtlpMetrics`
-    // exports on every interval even when the registry is empty, so wiring
-    // it up today would post an empty payload every ten seconds to any
-    // collector configured for the backend. Restore this when a desktop
-    // metric exists, and add it to the `Layer.mergeAll` below.
-    //
-    // const metricsLayer =
-    //   endpoints.metrics === undefined
-    //     ? Layer.empty
-    //     : OtlpMetrics.layer({
-    //         url: endpoints.metrics.url,
-    //         exportInterval: `${endpoints.metrics.export.exportIntervalMs} millis`,
-    //         headers: endpoints.metrics.export.headers,
-    //         resource,
-    //       }).pipe(Layer.provide(SharedObservability.layerOtlpSerialization(endpoints.metrics.export.protocol)));
+    // exports on every interval even when the registry is empty, so wiring it
+    // up today would post an empty payload every ten seconds to any collector
+    // configured for the backend.
 
-    // Logged once the loggers above are installed, so the warnings use them.
     const layerOtelWarnings = Layer.effectDiscard(
       Effect.forEach(endpoints.warnings, (warning) => Effect.logWarning(warning)),
     );

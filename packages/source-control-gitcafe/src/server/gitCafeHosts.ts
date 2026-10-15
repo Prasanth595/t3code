@@ -1,14 +1,6 @@
-/**
- * The hosts GitCafe lives on, and how a remote URL names one of its repositories. GitCafe has no
- * self-hosted installs, so the list is fixed rather than discovered.
- *
- * @module source-control-gitcafe/server/gitCafeHosts
- */
-
 export const GITCAFE_HOSTS = ["git.cafe", "staging.git.cafe"] as const;
 export type GitCafeHost = (typeof GITCAFE_HOSTS)[number];
 
-/** The host as GitCafe spells it, or null for any host GitCafe does not live on. */
 export function gitCafeHost(host: string): GitCafeHost | null {
   const normalized = host.trim().toLowerCase();
   return GITCAFE_HOSTS.find((candidate) => candidate === normalized) ?? null;

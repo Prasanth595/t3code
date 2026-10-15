@@ -43,8 +43,7 @@ export const AssetResource = Schema.Union([
     /** Render an MCP App snapshot with the host theme bootstrap. */
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
   }),
-  // An image a tool returned inline, such as a device screenshot, by its order
-  // in the stored output. The timeline never carries these bytes.
+  // The timeline never carries these bytes.
   Schema.TaggedStruct("tool-output-image", {
     threadId: ThreadId,
     itemId: TurnItemId,
@@ -86,7 +85,6 @@ export const AssetCreateUrlResult = Schema.Struct({
   sourcePath: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   ),
-  /** Pixel size read from the image header, so a client can reserve the exact box before the bytes arrive. */
   imageDimensions: Schema.optional(AssetImageDimensions),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
@@ -196,8 +194,6 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedError<AssetPre
   },
 ) {
   override get message(): string {
-    // Draft resources serve absolute paths through the same host-media
-    // validation as media files, so they share its message.
     return this.resource._tag === "media-file" || this.resource._tag === "draft-workspace-file"
       ? "Only images, videos, audio, HTML, and PDF files can be previewed."
       : "Only browser documents and images can be previewed.";

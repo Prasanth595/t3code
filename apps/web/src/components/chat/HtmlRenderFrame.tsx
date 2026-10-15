@@ -24,12 +24,6 @@ import { observeResize } from "~/lib/observeResize";
 // A frame may load its URL a little after mounting.
 const MIN_URL_LIFE_MS = 5 * 60_000;
 
-/**
- * An agent's HTML render inline in the thread: the page itself on the thread's
- * own background, at the server's measured height for this width until the
- * page reports its own. Loading and failure hold the same box so nothing below
- * it moves.
- */
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;

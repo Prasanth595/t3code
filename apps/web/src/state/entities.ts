@@ -245,8 +245,6 @@ export function readEnvironmentSupportsTitleRegeneration(environmentId: Environm
   );
 }
 
-/** Whether the environment's server understands thread.pin/unpin.
-    Same version-skew contract as settlement. */
 export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
@@ -254,8 +252,6 @@ export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): bo
   );
 }
 
-/** Whether the environment's server understands thread.pin.reorder (and
-    orderKey on thread.pin). Same version-skew contract as settlement. */
 export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
@@ -263,8 +259,6 @@ export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId):
   );
 }
 
-/** Whether the environment's server understands thread.auto-settle.set.
-    Same version-skew contract as settlement. */
 export function readEnvironmentSupportsAutoSettleOptOut(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
@@ -289,8 +283,6 @@ export function readEnvironmentSupportsSettlement(environmentId: EnvironmentId):
   );
 }
 
-/** Whether the environment's server understands thread.snooze/unsnooze.
-    Same version-skew contract as settlement. */
 export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities

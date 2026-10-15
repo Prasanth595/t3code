@@ -9,8 +9,6 @@ import {
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 /**
- * Read and decode the project's checked-in `t3.json`.
- *
  * Imperative counterpart to `useT3ProjectFileState` for the new-thread path,
  * which resolves defaults at call time rather than render time. The file
  * query atom caches per (environment, cwd), so repeat calls don't re-fetch.

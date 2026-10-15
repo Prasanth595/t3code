@@ -17,10 +17,6 @@ import {
   type WorkspaceConnectionStatusPresentation,
 } from "./workspace-connection-status";
 
-/**
- * Delay before a connection interruption surfaces in the title slot. Sub-second
- * blips (the common reconnect case) resolve without any UI at all.
- */
 const STATUS_SHOW_DELAY_MS = 800;
 const FADE_IN_MS = 250;
 
@@ -82,27 +78,14 @@ function StatusFadeIn(props: {
   );
 }
 
-/**
- * Renders the brand/title slot of a thread-list surface, swapping the brand
- * for the workspace connection status while an environment is unavailable.
- *
- * Both states occupy the same slot, so connection changes never shift the
- * layout below. While connected the brand renders untouched — no wrapper —
- * keeping the native header item on the exact element tree that predates the
- * status swap. Replaces the old WorkspaceConnectionStatus pill, which inserted
- * a row above the thread list.
- */
 export function WorkspaceConnectionTitle(props: {
-  /** Content shown while connected (brand lockup or a screen title). */
   readonly brand: ReactNode;
   /** Opens environment settings. Status is not pressable when omitted. */
   readonly onPress?: () => void;
-  /** Fill the available row width (in-flow headers) instead of hugging content (native title slots). */
   readonly grow?: boolean;
   readonly size?: "navbar" | "pageTitle";
   /** Horizontal correction so the status aligns with the brand in native title slots. */
   readonly statusOffset?: number;
-  /** Space available beside the native header actions. */
   readonly maxWidth?: number;
 }) {
   const status = useDelayedConnectionStatus();
@@ -159,11 +142,6 @@ export function WorkspaceConnectionTitle(props: {
   );
 }
 
-/**
- * getCompactBrandHeaderOptions with the brand slot upgraded to the
- * connection-status swap. Screens with an environment-settings callback apply
- * this over the static brand options at mount.
- */
 export function getConnectionAwareBrandHeaderOptions(opts: {
   readonly headerWidth: number;
   readonly trailingItemCount?: number;

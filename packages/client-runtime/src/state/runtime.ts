@@ -111,7 +111,6 @@ export interface AtomCommand<W, A, E> {
 }
 
 export type AtomCommandConcurrency<W> =
-  /** Every invocation runs independently. */
   | { readonly mode: "parallel" }
   | {
       /**
@@ -279,7 +278,6 @@ export function createAtomCommandScheduler(): AtomCommandScheduler {
   };
 }
 
-/** Runs one effect inside an existing command scheduler lane. */
 export function scheduleAtomCommandEffect<W, A, E, R>(
   registry: AtomRegistry.AtomRegistry,
   scheduler: AtomCommandScheduler,
@@ -359,7 +357,6 @@ export interface AtomQueryOptions extends AtomCommandOptions {
    * verification flows where a cached failure must not satisfy a retry.
    */
   readonly refresh?: boolean;
-  /** Interrupt the query wait when its caller no longer wants the result. */
   readonly signal?: AbortSignal;
 }
 
@@ -480,7 +477,6 @@ function runInEnvironment<A, E, R>(
 }
 
 /**
- * Refreshes a query when `signal` changes, but only while something reads it.
  * `Atom.makeRefreshOnSignal` subscribes to the signal, so a query that outlives its view on an
  * idle TTL still re-runs on every change. Reading the signal as a dependency instead lets the
  * registry re-run a mounted query right away and only mark an idle one stale, which then
@@ -508,7 +504,6 @@ const refreshOnSignalWhileRead =
     );
   };
 
-/** `Atom.withRefresh`, except the timer stops once the value is final. */
 const refreshEveryUntilFinal =
   <V>(intervalMs: number, isFinal: (value: V) => boolean) =>
   <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> =>

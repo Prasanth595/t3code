@@ -3,7 +3,6 @@ import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { dataUrlToFile } from "./imageCompression";
 
 export type PreviewAnnotationCapture =
-  /** The crop is ready to attach. */
   | { readonly status: "captured"; readonly file: File }
   /** The pick carried no crop, which is normal for comment-only annotations. */
   | { readonly status: "none" }

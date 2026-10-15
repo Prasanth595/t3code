@@ -53,7 +53,6 @@ const PROVIDER_STATE_PRIORITY = {
   ready: 5,
 } as const;
 
-/** Select the most usable configured instance for each provider driver. */
 export function selectOnboardingProvidersByDriver(
   providers: ReadonlyArray<ServerProvider> | null | undefined,
 ) {
@@ -74,9 +73,9 @@ export function selectOnboardingProvidersByDriver(
 }
 
 /**
- * Official standalone installers. Neither needs Node or npm, and both land in
- * the paths the server's provider maintenance recognizes as native, so the
- * one-click updater in Settings keeps working after install.
+ * Neither needs Node or npm, and both land in the paths the server's provider
+ * maintenance recognizes as native, so the one-click updater in Settings keeps
+ * working after install.
  */
 const NATIVE_INSTALL_COMMANDS = {
   claudeAgent: {
@@ -103,7 +102,6 @@ export function resolveOnboardingProviderInstallCommand(
   return platform === "windows" ? commands.windows : commands.posix;
 }
 
-/** Use the selected provider instance's binary when the setup terminal opens its login flow. */
 export function resolveOnboardingProviderLoginCommand(
   provider: ServerProvider,
   settings: ServerSettings,

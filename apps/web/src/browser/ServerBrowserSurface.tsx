@@ -95,7 +95,6 @@ interface TouchProbe {
   editable: boolean | null;
   /** True only for this tap's own reply, never for a cached answer. */
   answered: boolean;
-  /** The tap ended before the answer arrived. */
   tapped: boolean;
 }
 
@@ -149,7 +148,6 @@ export function ServerBrowserSurface(props: {
   readonly visible: boolean;
   /** Sends the surface size so fill-mode tabs follow it. The floating player scales the page instead. */
   readonly followSize?: boolean;
-  /** Floating previews reserve the top edge for their existing hover controls. */
   readonly controlPosition?: "top" | "bottom";
   readonly onFirstFrame?: () => void;
   readonly onViewport?: (viewport: PreviewStreamViewport) => void;
@@ -255,7 +253,6 @@ export function ServerBrowserSurface(props: {
     if (wheel) send(wheel);
   }, [send]);
 
-  // Coalesce moves and wheel deltas to one message each per animation frame.
   const scheduleFlush = useCallback(() => {
     inputFrameRef.current ??= requestAnimationFrame(flushInput);
   }, [flushInput]);
@@ -366,10 +363,7 @@ export function ServerBrowserSurface(props: {
       capTimer = setTimeout(growCap, previous === null ? 0 : RESIZE_THROTTLE_MS * 2);
     };
     const stopObserving = observeResize(element, () => {
-      // A pending measure reads the latest size when it fires, so a drag resizes
-      // the page at most every RESIZE_THROTTLE_MS and still ends on the final size.
       if (timer !== null) return;
-      // The first size connects right away.
       timer = setTimeout(measure, sizeRef.current === null ? 0 : RESIZE_THROTTLE_MS);
     });
     return () => {
@@ -447,7 +441,6 @@ export function ServerBrowserSurface(props: {
         },
         onHostSetup: setHostSetup,
         onUnauthorized: () => {
-          // Fresh tickets re-run this effect. Repeated refusals need an explicit retry.
           const refusals = ++unauthorizedRef.current;
           if (refusals >= MAX_UNAUTHORIZED_REFUSALS) {
             inputRef.current?.blur();
@@ -487,7 +480,6 @@ export function ServerBrowserSurface(props: {
 
   useEffect(() => {
     if (!visible || accessDenied || access !== null) return;
-    // A failed ticket mint, e.g. while the server restarts, never retries on its own.
     const timer = setInterval(() => refreshPreviewStreamAccess(environmentId), ACCESS_RETRY_MS);
     return () => clearInterval(timer);
   }, [access, accessDenied, environmentId, visible]);
@@ -680,7 +672,6 @@ export function ServerBrowserSurface(props: {
     ) {
       return;
     }
-    // Keep plain Escape and Tab in the page; Shift+Escape returns to the app.
     if (event.key === "Escape" && event.shiftKey) {
       event.preventDefault();
       event.stopPropagation();
@@ -714,7 +705,6 @@ export function ServerBrowserSurface(props: {
       action === "down" &&
       !shortcut &&
       (text !== undefined || event.key === "Backspace" || event.key === "Delete");
-    // Shortcuts stay with the app (copy, paste, keybindings); other keys belong to the page.
     if (shortcut) return;
     event.preventDefault();
     event.stopPropagation();
@@ -770,7 +760,6 @@ export function ServerBrowserSurface(props: {
           onPointerMove={handlePointer}
           onPointerUp={handlePointer}
           onPointerCancel={handlePointer}
-          // Keeps focus in the page input below and stops native text selection.
           onMouseDown={(event) => event.preventDefault()}
           onContextMenu={(event) => event.preventDefault()}
         />

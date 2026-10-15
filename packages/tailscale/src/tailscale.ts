@@ -36,8 +36,6 @@ export const TailscaleStderrDiagnostic = Schema.Literals([
 ]);
 export type TailscaleStderrDiagnostic = typeof TailscaleStderrDiagnostic.Type;
 
-// Matched against stderr, most specific first. Patterns are deliberately short
-// and anchored on tailscale's own wording.
 const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
   readonly [RegExp, Exclude<TailscaleStderrDiagnostic, "unknown">]
 > = [
@@ -46,7 +44,6 @@ const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
   [/permission denied|access denied|must be root|operation not permitted/i, "permission-denied"],
 ];
 
-/** Classifies stderr into a safe label, dropping the text itself. */
 const stderrDiagnosticOf = (stderr: string): TailscaleStderrDiagnostic | undefined => {
   if (stderr.trim().length === 0) {
     return undefined;
@@ -85,11 +82,6 @@ export class TailscaleCommandExitError extends Schema.TaggedError<TailscaleComma
     exitCode: Schema.Number,
     stdoutLength: Schema.optional(Schema.Number),
     stderrLength: Schema.Number,
-    // A classified diagnostic, never raw CLI output. `tailscale` prints auth
-    // keys and node identifiers into stderr, and this field is surfaced in
-    // dev-runner logs — so it carries only a known-safe label from the closed
-    // set below. Callers that need to recognize a specific failure (e.g.
-    // `serve off` on a port with no mapping) match on the label.
     stderrDiagnostic: Schema.optional(TailscaleStderrDiagnostic),
   },
 ) {
@@ -214,7 +206,6 @@ export const parseTailscaleStatus = (
     }),
   );
 
-/** Runs a read-only tailscale command and returns its stdout. */
 const readTailscaleOutput = (subcommand: "status" | "debug", args: readonly string[]) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

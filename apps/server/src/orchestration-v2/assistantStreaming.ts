@@ -8,9 +8,8 @@ const MARKDOWN_FENCE_PATTERN = /^( *)(`{3,}|~{3,})/;
 // CommonMark blank lines hold only spaces and tabs. Other whitespace, such as
 // a no-break space, is paragraph content.
 const BLANK_LINE_PATTERN = /^[ \t]*$/;
-// A bullet or ordered marker followed by whitespace, at any indentation so
-// nested items count. The trailing space is required, so a partial `-` or
-// `1.` never matches before the model finishes the marker.
+// The trailing space is required, so a partial `-` or `1.` never matches before
+// the model finishes the marker.
 const LIST_ITEM_START_PATTERN = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
 // A section title: an ATX heading, or a line of only bold text, which models
 // often use as a heading.
@@ -20,14 +19,11 @@ const SECTION_TITLE_PATTERN = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|\*\*(?:[^*]|\*(?!\*))
 const TOP_LEVEL_HEADING_PATTERN = /^#{1,6}(?:[ \t]|$)/;
 
 /**
- * Splits buffered assistant text at the last blank line, closing code fence,
- * or list item start that is not inside an open fenced code block. `ready` is
- * safe to deliver now because the markdown before it will not change shape as
- * more text arrives. `rest` stays buffered until the next boundary or
- * completion. Only fully terminated lines count, so a trailing partial line
- * never leaks; a list item start is the one lookahead that may sit on the
- * partial line, since tight lists have no blank lines between items and would
- * otherwise land all at once.
+ * `ready` is safe to deliver now because the markdown before it will not change
+ * shape as more text arrives. Only fully terminated lines count, so a trailing
+ * partial line never leaks; a list item start is the one lookahead that may sit
+ * on the partial line, since tight lists have no blank lines between items and
+ * would otherwise land all at once.
  *
  * A section title holds the boundary until a content line follows it, so a
  * title never lands alone and waits above a block that is still streaming.
@@ -88,7 +84,6 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
   return { ready: text.slice(0, boundary), rest: text.slice(boundary) };
 }
 
-/** Buffer assistant messages and reasoning alike, keeping unfinished markdown out of the read model. */
 export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
   const delivered = new Map<string, { text: string; at: number }>();
   return (

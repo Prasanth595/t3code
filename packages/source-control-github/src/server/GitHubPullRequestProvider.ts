@@ -46,18 +46,6 @@ const CAPABILITIES: PullRequestCapabilities = {
 };
 
 /**
- * What the signed-in account may do here, from the three things GitHub says about it.
- *
- * Merging needs a role that can push, which is the one thing a stranger on an open-source
- * repository never has. The other four actions go by `viewerCanUpdate`, because the author of a
- * pull request may close it, reopen it and move it in and out of draft with no more than read
- * access on the repository it was opened against.
- *
- * Commenting and reviewing are not gated at all: read access is enough to say something and
- * enough to approve or ask for changes, which is what open-source review consists of. Resolving a
- * conversation is the exception — GitHub allows it to whoever can write, and to the author of the
- * pull request the conversation is on.
- *
  * Asking somebody else for a review needs write access, which is the one thing here an author
  * cannot do on their own pull request: GitHub shows an outside contributor the reviewer control
  * and refuses the request behind it.
@@ -96,7 +84,6 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
   };
 }
 
-/** The tags that mean GitHub is out of reach for this account, rather than one request failing. */
 export function gitHubProviderFailure(
   error: GitHubPullRequestApi.GitHubPullRequestApiError,
 ): PullRequestProviderFailure {
@@ -123,12 +110,10 @@ export function gitHubProviderFailure(
 
 /**
  * `gh pr view --json` reports no avatar for anyone, so the ones the GraphQL read collected are
- * applied here by login. An actor already carrying one keeps it.
+ * applied here by login.
  *
  * A login GitHub did not answer for falls back to the picture every GitHub install serves at
- * `/<login>.png`. The lookup is one more request per repository and can be refused — a rate
- * limit, a slow host — and a face that comes and goes between two loads of the same page reads
- * as a bug in the page rather than as a request that failed quietly.
+ * `/<login>.png`.
  */
 function withAvatar(
   actor: PullRequestActor | null,
@@ -186,7 +171,6 @@ export function loginAvatarUrl(login: string, host: string): string | null {
   return /^[a-z0-9][a-z0-9-]{0,38}$/iu.test(login) ? `https://${host}/${login}.png?size=80` : null;
 }
 
-/** True where markdown would render nothing: whitespace, or only HTML comments. */
 const rendersEmpty = (body: string): boolean =>
   body.replace(/<!--[\s\S]*?-->/g, "").trim().length === 0;
 
@@ -293,8 +277,6 @@ export const make = Effect.gen(function* () {
                 host: input.host,
                 ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
               })
-              // A listing without faces is still a listing, so a failed lookup falls back to
-              // the initials rather than taking the rows down with it.
               .pipe(
                 Effect.orElseSucceed(() => new Map<string, string>()),
                 Effect.map((avatarsByLogin) => ({
@@ -308,11 +290,6 @@ export const make = Effect.gen(function* () {
           ),
         ),
 
-    /**
-     * The same listing for a whole host in one search. The avatar lookup the per-repository read
-     * needs is not here: a search reports an author's picture itself, so a face costs no request
-     * of its own — `withAvatar` still stands behind it for the login GitHub answered nothing for.
-     */
     listChangeRequestsAcross: (input) =>
       cli
         .searchPullRequests({
@@ -520,9 +497,6 @@ export const make = Effect.gen(function* () {
       if (input.includeUpdateBranch === false) {
         return lightAccess.pipe(Effect.mapError(fail("getViewerPermissions")));
       }
-      // The core detail already carries the viewer's access, the merge settings, and the base
-      // comparison, so one read usually answers what used to take three. When that heavier read
-      // fails, the light access read still answers, withholding only update-branch.
       return cli.getPullRequestDetail(input).pipe(
         Effect.provideService(SourceControlRateLimit.Interactive, true),
         Effect.map((pullRequest) =>

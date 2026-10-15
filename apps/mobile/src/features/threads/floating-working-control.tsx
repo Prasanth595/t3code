@@ -32,8 +32,7 @@ import type { FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
-const CONTROL_HEIGHT = 38.5; // h-11 with the mobile 14px rem
-// The collapsed composer capsule starts 6 below its overlay's top edge, so
+const CONTROL_HEIGHT = 38.5; // The collapsed composer capsule starts 6 below its overlay's top edge, so
 // the pill sits at (gap - 6) above the overlay to leave the same gap to the
 // capsule as the feed's end inset leaves between it and the last row.
 const CONTROL_GAP = 8;
@@ -48,8 +47,6 @@ const CONTROL_TIMING = {
 } as const;
 const CONTROL_ROW_GAP = 14;
 const CONTROL_SEPARATION = (CONTROL_ROW_GAP + CONTROL_HEIGHT) / 2;
-// Both rows share the same centered anchor, so the outgoing one clears fast and
-// the incoming one waits for it to be mostly gone before it starts to show.
 const LABEL_ENTERING = FadeIn.duration(160).delay(80).reduceMotion(ReduceMotion.System);
 const LABEL_EXITING = FadeOut.duration(100).reduceMotion(ReduceMotion.System);
 
@@ -77,7 +74,6 @@ export function FloatingWorkingControl(props: {
   readonly onOpenAgents: () => void;
   readonly queuedCount: number;
   readonly onOpenQueue: () => void;
-  /** Extra distance to rise above the anchor, e.g. an overlay card's coverage. */
   readonly lift?: SharedValue<number>;
 }) {
   const { width: windowWidth } = useWindowDimensions();
@@ -89,8 +85,6 @@ export function FloatingWorkingControl(props: {
   const [previewWidth, setPreviewWidth] = useState(0);
   const agents = props.agents;
   const hasAgents = agents !== null;
-  // Segments keep their measured width; only the status label absorbs the
-  // remainder, so a long "Working 12m 04s" truncates before a count does.
   const labelWidth = Math.max(
     0,
     Math.min(overlayWidth, windowWidth) -
@@ -145,8 +139,6 @@ export function FloatingWorkingControl(props: {
   const capsuleStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: CONTROL_SEPARATION * (1 - separationProgress.value) }],
   }));
-  // Zero until the first measurement lands, so the capsule never paints around
-  // a label it has not sized to yet.
   const capsuleSizerStyle = useAnimatedStyle(() => ({
     width: capsuleWidth.value ?? 0,
   }));
@@ -155,18 +147,14 @@ export function FloatingWorkingControl(props: {
     return null;
   }
 
-  // Both preview buttons fit beside each other only as icons.
   const previewCompact =
     hasStatus ||
     hasAgents ||
     hasQueue ||
     (props.devicePreview !== null && props.browserPreview !== null);
-  // The queue, agents, questions, and reconnect labels have separate tap targets.
   const statusInteractive =
     props.status?.kind === "connection" || props.status?.kind === "child-input";
   const capsuleInteractive = statusInteractive || hasQueue || hasAgents || hasPreview;
-  // The host stays centered on the capsule, but its measurement constraint
-  // comes from the overlay, independent of the capsule's current width.
   const statusContent =
     props.status !== null ? (
       <View
@@ -354,8 +342,6 @@ function FloatingStatusLabel(props: {
   readonly status: FloatingWorkingStatus;
   readonly onLayout: (event: LayoutChangeEvent) => void;
 }) {
-  // Keyed by kind so a swap mounts a fresh row and the two cross-fade while
-  // the capsule animates to the new row's measured width.
   if (props.status.kind === "syncing") {
     return (
       <StatusLabelRow
@@ -483,7 +469,6 @@ function FloatingStatusLabel(props: {
   );
 }
 
-// Absolute rows cross-fade around the same center without affecting each other.
 function StatusLabelRow(props: {
   readonly accessibilityLabel?: string;
   readonly accessibilityRole?: "button";

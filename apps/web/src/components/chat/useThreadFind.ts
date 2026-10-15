@@ -36,7 +36,6 @@ const CLOSED_FIND = {
   } | null,
 };
 
-/** Owns find state for the active thread and its environment. */
 export function useThreadFind({
   thread,
   enabled,
@@ -187,7 +186,6 @@ export function useThreadFind({
     });
   };
 
-  // Refresh at most once per 300 ms, even while tokens continue arriving.
   // An identity anchor keeps newly inserted matches from shifting the selection.
   const refreshLiveResultsRef = useRef(() => {});
   useLayoutEffect(() => {

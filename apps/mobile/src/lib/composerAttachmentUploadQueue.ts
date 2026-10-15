@@ -21,12 +21,6 @@ export function composerAttachmentUploadKey(
   return `${environmentId}:${attachmentId}`;
 }
 
-/**
- * Which environment a composer draft belongs to. Thread drafts carry it in
- * the key; pending-task editor drafts borrow it from the queued message;
- * new-task drafts carry it in their project stamp (legacy project-keyed
- * new-task drafts still parse from the key until they are migrated on load).
- */
 export function composerDraftEnvironmentId(
   draftKey: string,
   queuedMessages: ReadonlyArray<{
@@ -97,7 +91,6 @@ export function composerAttachmentUploadBlockReason(input: {
   return null;
 }
 
-/** Whether any attachment the environment accepts is still being uploaded. */
 export function composerAttachmentsStillUploading(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -211,7 +204,6 @@ export function createComposerAttachmentUploadQueue(options: {
       setState(key, undefined);
       pump();
     },
-    /** Waits for the current transfers, useful for shutdown and focused verification. */
     async settled() {
       while (jobs.size > 0) await Promise.all([...jobs.values()].map((job) => job.done));
     },

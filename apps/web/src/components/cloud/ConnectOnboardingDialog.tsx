@@ -31,15 +31,6 @@ import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { WizardSteps, WizardPopup, WizardHeader, WizardPanel, WizardFooter } from "../ui/wizard";
 
-/**
- * Post-sign-in onboarding wizard for T3 Connect. Opens on every in-session
- * sign-in — sign-out removes the connected relay environments, so each new
- * session starts with no devices to reach. It first prompts to publish this
- * environment (managed tunnel + agent activity, both defaulting on) when the
- * current session is authorized to manage the relay link, then lists the
- * account's T3 Connect environments so every device can be connected right
- * away. A cold load with a restored session does not count as a sign-in.
- */
 export function ConnectOnboardingDialog() {
   if (!hasCloudPublicConfig()) return null;
 
@@ -125,8 +116,6 @@ function ConfiguredConnectOnboardingDialog() {
   // becomes available and freeze there.
   const publishStepDecided = !canManageRelay || controller.linkState.target !== null;
 
-  // Open once the session scopes resolve so the step set is stable. Accounts
-  // that chose "Don't show this again" are skipped.
   useEffect(() => {
     if (requestedAccount === null || openForAccount !== null) return;
     if (optOutAccounts.includes(requestedAccount)) {
@@ -184,8 +173,6 @@ function ConfiguredConnectOnboardingDialog() {
   }, [linkStateData, openForAccount]);
 
   const complete = () => {
-    // Keep the wizard up while a link request is in flight so its outcome
-    // (and any failure) stays visible.
     if (isApplying) return;
     const account = openForAccount;
     setOpenForAccount(null);
@@ -236,8 +223,6 @@ function ConfiguredConnectOnboardingDialog() {
     <Dialog
       open={openForAccount !== null}
       onOpenChange={(open) => {
-        // Keep the dialog up while a link request is in flight so its outcome
-        // (and any failure) stays visible.
         if (!open && !isApplying) complete();
       }}
     >

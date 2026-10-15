@@ -48,9 +48,7 @@ export function getNativeShowcasePairingUrls(): ReadonlyArray<string> {
             typeof candidate === "string" && candidate.trim().length > 0,
         );
       }
-    } catch {
-      // Older runners pass a single URL rather than a JSON array.
-    }
+    } catch {}
     return [raw];
   } catch {
     return [];
@@ -67,9 +65,8 @@ export function getNativeShowcaseScene(): ShowcaseScene | null {
 }
 
 /**
- * Returns null when the runner requested no palette, which leaves the stored
- * theme preference untouched. An unknown id also reads as null rather than
- * silently falling back, so a capture never claims to show a theme it does not.
+ * An unknown id also reads as null rather than silently falling back, so a
+ * capture never claims to show a theme it does not.
  */
 export function getNativeShowcaseTheme(): MobileThemeId | null {
   try {
@@ -83,9 +80,7 @@ export function getNativeShowcaseTheme(): MobileThemeId | null {
 export function prepareNativeShowcaseCapture(): void {
   try {
     nativeShowcaseControls()?.prepareShowcaseCapture?.();
-  } catch {
-    // The harness still works when a development build predates this helper.
-  }
+  } catch {}
 }
 
 export function getNativeShowcaseOrientation(): ShowcaseOrientation | null {

@@ -1,14 +1,3 @@
-/**
- * Records a Grok ACP replay transcript from a live `grok agent stdio` process.
- *
- * The fixture's own scenario (the same commands and steps the replay test
- * dispatches) runs through the real orchestrator and the real GrokAdapterV2;
- * only the ACP runtime's protocol logger is swapped for a tee. Outbound frames
- * are therefore exactly what T3 sends, and inbound frames exactly what Grok
- * answered. Run from apps/server with the Grok CLI on PATH (or T3_GROK_BIN):
- *
- *   node scripts/record-grok-acp-replay-fixture.ts --scenario simple
- */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { type ProviderReplayEntry } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
@@ -165,7 +154,6 @@ function frameLabel(kind: string, method: string, params: unknown): string {
   return `${kind}:${method}${updateType}${promptId === undefined ? "" : `:${promptId}`}`;
 }
 
-/** Pairs JSON-RPC ids with their methods and emits the logical frames acp-replay-agent reads. */
 function wireToEntries(wire: ReadonlyArray<WireMessage>): {
   readonly entries: Array<ProviderReplayEntry>;
   readonly droppedFrames: number;
@@ -277,7 +265,6 @@ function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructi
   }
 }
 
-/** Removes machine identity and personal skills the recording machine advertised. */
 function normalizeInboundFrame(frame: Record<string, unknown>): Record<string, unknown> {
   const params = isRecord(frame.params) ? frame.params : undefined;
   const update = isRecord(params?.update) ? params.update : undefined;
@@ -332,7 +319,6 @@ function normalizeInboundFrame(frame: Record<string, unknown>): Record<string, u
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu;
 
-/** Collects Grok session and background task ids in first-seen order. */
 function collectSessionIds(entries: ReadonlyArray<ProviderReplayEntry>): ReadonlyArray<string> {
   const ids: Array<string> = [];
   const add = (value: unknown) => {
@@ -450,7 +436,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
         hostPlatform: yield* HostProcess.Platform,
         selfInvocation: yield* resolveSelfInvocation(),
         continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
-        // Production's runtime factory, with the protocol logger teeing raw lines.
         makeRuntime: ({ runtimePolicy, ...input }) =>
           makeGrokAcpRuntime({
             ...input,
@@ -494,8 +479,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
     ),
   );
 
-  // Same deterministic runtime as replay (TestClock, seeded ids), so the
-  // scenario's clock steps order dispatches exactly as they will on replay.
   // Background scenarios keep the session open until Grok's own wake turns
   // finish, so the transcript holds everything replay will emit.
   // A wake turn is admitted shortly after the frame that triggers it, so Grok
@@ -585,8 +568,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   );
   yield* Console.log(`Wrote ${transcriptEntries.length} Grok ACP replay entries to ${outputPath}`);
 
-  // The live orchestration must already satisfy the fixture's assertions;
-  // replay then proves the recorded frames reproduce it.
   const liveFailure = yield* Effect.try(() => variant.assertOutput(result, transcript)).pipe(
     Effect.flip,
     Effect.option,

@@ -24,26 +24,18 @@ export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
 interface DiffFileTreeProps {
   readonly entries: ReadonlyArray<DiffFileTreeEntry>;
-  /** Called with the file's path when the reader picks a file row. */
   readonly onSelectFile: (path: string) => void;
   /**
-   * The file the diff is currently showing, kept selected in the tree. Bump `revealRequestId` to
-   * scroll the tree to the same path again.
+   * Bump `revealRequestId` to scroll the tree to the same path again.
    */
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
   readonly ariaLabel: string;
-  /** Right-aligned content in the header row, after the file count. */
   readonly headerAccessory?: ReactNode;
-  /** Rendered under the tree, for a host that still has files to fetch. */
   readonly footer?: ReactNode;
   readonly className?: string;
 }
 
-/**
- * A directory tree of the files in a diff. Every directory starts open: a diff is a short list
- * compared to a workspace, and the reader came for the files, not the folders.
- */
 export function DiffFileTree({
   entries,
   onSelectFile,
@@ -111,7 +103,6 @@ export function DiffFileTree({
     if (mountedPaths === null) {
       model.resetPaths(paths);
     } else if (mountedPaths.every((path, index) => paths[index] === path)) {
-      // PR slices only append files, so keep the existing tree and its open folders.
       const updates = buildDiffFileTreeUpdates(mountedPaths, paths);
       if (updates.length > 0) model.batch(updates);
     } else {
@@ -139,7 +130,6 @@ export function DiffFileTree({
     // not pull the tree back to it over whatever the reader has picked since.
     const item = model.getItem(selectedPath);
     if (item === null || item.isDirectory()) {
-      // A file that left the diff has to be revealed again when it comes back.
       handledRevealRef.current = null;
       return;
     }

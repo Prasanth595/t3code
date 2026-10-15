@@ -10,16 +10,9 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { RequestActionButton } from "./RequestActionButton";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
-/**
- * Replaces the composer on a provider-native subagent thread. The provider
- * runs that conversation, so there is nothing to send; the bar says which
- * model is working, for how long, and leads back to the parent.
- */
 export function ProviderSubagentBar(props: {
-  /** Driver and catalog icon of the provider running the subagent. */
   readonly provider: { readonly driver: string; readonly iconUrl?: string | undefined } | null;
   readonly modelLabel: string;
-  /** Reasoning effort as the composer names it, when the subagent has one. */
   readonly effortLabel: string | null;
   /** Null until the subagent's root turn arrives. */
   readonly status: ProviderSubagentStatus | null;

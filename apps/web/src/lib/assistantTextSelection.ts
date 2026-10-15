@@ -131,11 +131,8 @@ export function findAssistantCitationText(
 type TextChunk = { node: Text; start: number; end: number };
 
 /**
- * Uses DOM text order, with a line break between HTML blocks and at <br>.
- * Inline markup, including code and links, contributes its displayed text.
- * Controls and subtrees marked hidden/aria-hidden do not contribute. No layout
- * reads, CSS-generated content, or soft-wrap line breaks enter the stream, so
- * reflow cannot move it.
+ * No layout reads, CSS-generated content, or soft-wrap line breaks enter the
+ * stream, so reflow cannot move it.
  */
 function readAssistantText(root: HTMLElement) {
   const parts: string[] = [];
@@ -216,7 +213,6 @@ function selectedTextBoundary(range: Range, node: Node, last: boolean): Text | n
   return null;
 }
 
-/** Captures the ordered native range, including selections dragged backwards. */
 export function captureAssistantTextSelection(
   viewport: HTMLElement,
   selection: Selection | null,

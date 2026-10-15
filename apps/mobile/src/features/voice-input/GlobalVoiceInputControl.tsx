@@ -102,8 +102,6 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
     opacity: interpolate(progress.value, [0.3, 1], [0, 1], Extrapolation.CLAMP),
   }));
 
-  // Sit just above the bottom chrome: the toolbar or composer on iOS, the
-  // new-thread FAB on Android.
   const bottom =
     Platform.OS === "android"
       ? Math.max(insets.bottom, 16) + 16 + fabSize + 12

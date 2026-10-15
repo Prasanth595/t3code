@@ -113,13 +113,10 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
 
   return {
     hasUpdates: servers.length > 0 || providers.machines.length > 0,
-    /** Short label for the tooltip and the confirmation title. */
     summary,
-    /** One line per machine, for the confirmation. */
     lines,
     /** The servers this run restarts, which stops their running threads. */
     restarts,
-    /** Behind machines the run leaves alone, with the reason. */
     skipped,
     /** Runs the pass. `installLocal` resolves true when this app is relaunching.
         Both report failures to the pass, which lists them in its summary. */

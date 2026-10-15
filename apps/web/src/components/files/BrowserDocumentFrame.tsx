@@ -33,9 +33,8 @@ import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server"
 
 /**
  * Chromium's viewer opens with its own toolbar, a thumbnail rail and a small
- * zoom. The panel header is the only chrome we want, so ask for the page
- * alone, fitted to the panel width. Pinch and keyboard zoom, scrolling, text
- * selection and find still work inside the frame.
+ * zoom. The panel header is the only chrome we want, so ask for the page alone,
+ * fitted to the panel width.
  */
 const PDF_VIEWER_FRAGMENT = "#toolbar=0&view=FitH";
 
@@ -61,7 +60,6 @@ const HTML_RENDER_SHORTCUT_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
   "thread.previous",
   "thread.next",
   ...THREAD_JUMP_KEYBINDING_COMMANDS,
-  // Share Cmd/Ctrl+digit with thread jumps, and act only while the picker is open.
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ]);
 
@@ -69,17 +67,15 @@ export const isPdfPreviewFile = (path: string): boolean =>
   /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
 /**
- * Renders an HTML or PDF document from its URL. HTML runs in a sandboxed frame
- * with an opaque origin, so a page cannot reach the app's session or storage.
- * The built-in PDF viewer needs an unsandboxed frame; a PDF runs no scripts.
- * An agent's HTML render also wears the app theme.
+ * HTML runs in a sandboxed frame with an opaque origin, so a page cannot reach
+ * the app's session or storage. The built-in PDF viewer needs an unsandboxed
+ * frame; a PDF runs no scripts.
  */
 export function BrowserDocumentFrame(props: {
   readonly src: string;
   readonly title: string;
   readonly pdf: boolean;
   readonly htmlRender?: boolean;
-  /** The thread an HTML render's links open beside. */
   readonly threadRef?: ScopedThreadRef | undefined;
 }) {
   const className = "min-h-0 flex-1 border-0 bg-white";
@@ -111,18 +107,14 @@ export function BrowserDocumentFrame(props: {
 }
 
 /**
- * A sandboxed agent HTML render in the app theme. The page reads the theme from
- * its URL fragment before first paint, then follows changes posted to its
- * bootstrap. The first URL is kept for the frame's lifetime: signed asset URLs
- * re-mint while it stays mounted, and a new src would reload the page.
+ * The first URL is kept for the frame's lifetime: signed asset URLs re-mint
+ * while it stays mounted, and a new src would reload the page.
  */
 export function HtmlRenderDocument(props: {
   readonly src: string;
   readonly title: string;
   readonly className?: string;
-  /** The thread the page's links open beside, as a chat link would. */
   readonly threadRef?: ScopedThreadRef | undefined;
-  /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
   /** Called when the page has loaded. */
   readonly onLoad?: () => void;
@@ -194,11 +186,7 @@ export function HtmlRenderDocument(props: {
   );
   const openChangeRequestLink = useOpenChangeRequestLink(props.threadRef);
   const openLink = useOpenLink(props.threadRef);
-  // Same rules as a chat link: a pull request opens in the right panel, any
-  // other link follows "Open links in", and Cmd/Ctrl-click goes to the system
-  // browser. Without a thread there is no panel, so it goes to the browser.
   const open = useEffectEvent((url: string, modifiers: { metaKey: boolean; ctrlKey: boolean }) => {
-    // The modifier's destination needs no saved setting, so it never waits on one.
     if (modifiers.metaKey || modifiers.ctrlKey) {
       void readLocalApi()
         ?.shell.openExternal(url)

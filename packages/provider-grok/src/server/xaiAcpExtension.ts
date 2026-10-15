@@ -43,7 +43,6 @@ const XAiSessionUpdateNotification = Schema.Struct({
     stop_reason: Schema.optional(Schema.String),
     stopReason: Schema.optional(Schema.String),
     agent_result: Schema.optional(Schema.NullOr(Schema.Unknown)),
-    // subagent_finished
     child_session_id: Schema.optional(Schema.String),
     status: Schema.optional(Schema.String),
     output: Schema.optional(Schema.NullOr(Schema.String)),
@@ -64,11 +63,6 @@ const xAiSessionNotificationMethods = [
 
 const XAI_TASK_COMPLETED_PROMPT_ID_PREFIX = "task-completed-";
 
-/**
- * Map a Grok `_x.ai/session/update` payload to a prompt-complete shape when it
- * is a root `turn_completed` for a real prompt id. Returns null for hooks,
- * background task completions, and other update kinds.
- */
 export function xAiPromptCompleteFromSessionUpdate(
   notification: XAiSessionUpdateNotification,
 ): XAiPromptCompleteNotification | null {
@@ -304,7 +298,6 @@ export function extractXAiMonitorTaskId(toolCall: AcpToolCallState): string | un
   if (backgroundShellTaskId !== undefined) return backgroundShellTaskId;
   if (!isXAiMonitorTool(toolCall)) return undefined;
   const rawOutput = unknownRecord(toolCall.data.rawOutput);
-  // Live ACP start ACK: { type: "Monitor", taskId, timeoutMs, persistent }
   if (rawOutput !== undefined && nonEmptyString(rawOutput.type)?.toLowerCase() === "monitor") {
     const structured = nonEmptyString(rawOutput.taskId) ?? nonEmptyString(rawOutput.task_id);
     if (structured !== undefined) return structured;
@@ -339,10 +332,6 @@ export function isXAiPersistentMonitor(toolCall: AcpToolCallState): boolean {
   return rawInput?.persistent === true;
 }
 
-/**
- * When get_command_or_subagent_output / TaskOutput completes registered monitor
- * task(s), return hydration for each completed background tool id.
- */
 export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): ReadonlyArray<{
   readonly taskId: string;
   readonly status: "running" | "completed" | "failed";
@@ -427,7 +416,6 @@ const XAiTaskLifecycleNotification = Schema.Struct({
         command: Schema.optional(Schema.String),
         display_command: Schema.optional(Schema.NullOr(Schema.String)),
         description: Schema.optional(Schema.NullOr(Schema.String)),
-        // `TaskKind` in grok-build crates/common/xai-tool-runtime/src/notification.rs.
         kind: Schema.optional(Schema.String),
       }),
     ),
@@ -441,9 +429,7 @@ export interface XAiBackgroundTaskLifecycleMutation {
   readonly sessionId: string;
   readonly taskId: string;
   readonly status: "running" | "completed" | "failed";
-  /** Final output from `task_completed.task_snapshot`, when Grok sent one. */
   readonly output?: string;
-  /** What the task is and how to name it, when Grok said. */
   readonly report?:
     | { readonly kind: "command"; readonly label?: string; readonly exitCode?: number }
     | { readonly kind: "monitor"; readonly label?: string };
@@ -528,14 +514,10 @@ export const registerXAiBackgroundTaskTracking = (
   );
 
 /**
- * A background subagent's end, sent on its PARENT session as
- * `{ sessionUpdate: "subagent_finished", child_session_id, status, output, error }`
- * (grok-build `crates/codegen/xai-grok-shell/src/extensions/notification.rs`
- * `SessionUpdate::SubagentFinished`). `status` is exactly "completed",
- * "failed" or "cancelled" (`SubagentResult::status()` in
- * `crates/codegen/xai-grok-tools/src/implementations/grok_build/task/types.rs`);
- * `output` is the final text of a completed subagent and `error` the message
- * of a failed one. Grok follows it with its own `subagent-completed-<id>` wake
+ * A background subagent's end, sent on its PARENT session as `{ sessionUpdate:
+ * "subagent_finished", child_session_id, status, output, error }` (grok-build
+ * `crates/codegen/xai-grok-shell/src/extensions/notification.rs`
+ * `SessionUpdate::SubagentFinished`). Grok follows it with its own `subagent-completed-<id>` wake
  * turn when `will_wake` is true.
  */
 export interface XAiSubagentFinishedNotice {
@@ -545,7 +527,6 @@ export interface XAiSubagentFinishedNotice {
   readonly result: string | null;
 }
 
-/** Null for other session updates, and for a status Grok does not define. */
 export function xAiSubagentFinishedNotice(
   notification: XAiSessionUpdateNotification,
 ): XAiSubagentFinishedNotice | null {
@@ -584,9 +565,8 @@ export const registerXAiSubagentFinished = (
   );
 
 /**
- * Grok ACP often sends `title: "Tool"` even when rawInput has a useful
- * description or variant (especially Monitor). Prefer description/variant so
- * the timeline matches Claude-style tool names rather than a generic label.
+ * Grok ACP often sends `title: "Tool"` even when rawInput has a useful description or variant
+ * (especially Monitor).
  */
 export function isGenericAcpToolTitle(title: string | undefined): boolean {
   const key = (title ?? "").trim().toLowerCase();
@@ -624,15 +604,9 @@ export function resolveXAiAcpToolTitle(toolCall: AcpToolCallState): string | und
 }
 
 /**
- * Normalize Grok ACP tool presentation and monitor lifecycle:
- * - replace generic titles ("Tool") with description / variant labels
- * - structured Monitor start ACK stays running
- * - text start ACK stays running
- * - structured Bash results with exit_code are terminal, unless Grok itself
- *   still reports the tool running. Grok 1.0.41 streams every monitor tick as
- *   `status: "in_progress"` with a Bash-shaped rawOutput whose exit_code is
- *   already 0, and never sends a completed status for the monitor; its end
- *   arrives as `_x.ai/task_completed`.
+ * Grok 1.0.41 streams every monitor tick as `status: "in_progress"` with a Bash-shaped rawOutput
+ * whose exit_code is already 0, and never sends a completed status for the monitor; its end
+ * arrives as `_x.ai/task_completed`.
  */
 export function normalizeXAiAcpToolCallState(toolCall: AcpToolCallState): AcpToolCallState {
   const resolvedTitle = resolveXAiAcpToolTitle(toolCall);
@@ -660,14 +634,12 @@ export function normalizeXAiAcpToolCallState(toolCall: AcpToolCallState): AcpToo
     }
   }
   if (xAiBackgroundShellTaskId(withTitle) !== undefined) {
-    // Start acknowledgement only; the command still runs in the background.
     return { ...withTitle, status: "inProgress" };
   }
   if (!isXAiMonitorTool(withTitle)) {
     return withTitle;
   }
   if (outputType === "monitor") {
-    // Start registration only; process still running in the background.
     return { ...withTitle, status: "inProgress" };
   }
   const output = xAiToolOutputText(withTitle);
@@ -678,10 +650,8 @@ export function normalizeXAiAcpToolCallState(toolCall: AcpToolCallState): AcpToo
 }
 
 /**
- * Parse Grok synthetic monitor traffic that arrives as root text chunks
- * (`<monitor-event>` lines, batched `<monitor>` event blocks, and
- * "Monitor ... ended" reminders). Coalesced chunks may contain several events;
- * return every match so later progress / end notices are not dropped.
+ * Coalesced chunks may contain several events; return every match so later progress / end notices
+ * are not dropped.
  */
 export function extractXAiAcpBackgroundToolMutation(
   text: string,
@@ -702,9 +672,6 @@ export function extractXAiAcpBackgroundToolMutation(
     });
   }
 
-  // Batched form: "N monitor events from 1 monitor ...:\n<monitor
-  // description="..." task_id="...">\n[1] line\n</monitor>". Still a running
-  // monitor; must track and filter like single-event chatter.
   const batchedRe = new RegExp(
     `<monitor\\s[^>]*task_id=["']?(${XAI_UUID_RE})["']?[^>]*>\\s*([\\s\\S]*?)\\s*</monitor>`,
     "gi",
@@ -745,11 +712,9 @@ export function extractXAiAcpBackgroundToolMutation(
 }
 
 /**
- * Parse Grok's root-session subagent end reminder ("Background subagent
- * "<uuid>" (general-purpose: "...") completed successfully."). The agent is
- * free to skip get_command_or_subagent_output hydration, so this reminder can
- * be the only terminal signal for the subagent row; a row stuck on running
- * holds deferred finalize (and the whole run) open until harness timeout.
+ * The agent is free to skip get_command_or_subagent_output hydration, so this reminder can be the
+ * only terminal signal for the subagent row; a row stuck on running holds deferred finalize (and
+ * the whole run) open until harness timeout.
  */
 function stripLeadingBalancedParenGroup(text: string): string {
   const trimmed = text.replace(/^\s+/, "");
@@ -806,7 +771,6 @@ function taskIdsFromGetOutputTool(
   return [...new Set(ids)];
 }
 
-/** Identity of the task the get_output envelope actually reports (not the request list). */
 function resultTaskIdFromGetOutputTool(
   toolCall: AcpToolCallState,
   output: string | undefined,
@@ -840,7 +804,6 @@ function resultFromGetOutputTool(
     nonEmptyString(result?.text) ??
     decodeByteText(result?.output);
   if (structured !== undefined) {
-    // Drop trailing machine meta blocks when present.
     const cleaned = structured
       .replace(/<subagent_meta>[\s\S]*?<\/subagent_meta>/gi, "")
       .replace(/<subagent_result>[\s\S]*?<\/subagent_result>/gi, "")
@@ -886,12 +849,9 @@ function statusFromGetOutputTool(
 }
 
 /**
- * Recognizes Grok Task / spawn_subagent envelopes and get_command hydration
- * without teaching the generic ACP adapter about xAI tool names.
- *
- * Current Grok CLI returns spawn_subagent immediately with a background ACK
- * (`subagent_id: ...`). That must stay `running` until child work finishes or
- * get_command_or_subagent_output reports a terminal status.
+ * Current Grok CLI returns spawn_subagent immediately with a background ACK (`subagent_id: ...`).
+ * That must stay `running` until child work finishes or get_command_or_subagent_output reports a
+ * terminal status.
  */
 export function extractXAiAcpSubagentUpdate(
   toolCall: AcpToolCallState,
@@ -908,9 +868,6 @@ export function extractXAiAcpSubagentUpdate(
       taskIds[0] ??
       extractXAiChildSessionId(output);
     if (childSessionId === null) return undefined;
-    // Prefer the durable subagent row as the completion surface (Claude/Codex
-    // style). Suppress the noisy TaskOutput tool card; monitor hydration is
-    // handled separately via extractBackgroundTaskCompletion.
     return {
       nativeTaskId: toolCall.toolCallId,
       prompt: "",
@@ -940,7 +897,6 @@ export function extractXAiAcpSubagentUpdate(
   if (toolCall.status === "failed") {
     status = "failed";
   } else if (asyncSpawnAck) {
-    // Spawn RPC completed, but the child is still running.
     status = "running";
   } else if (toolCall.status === "completed") {
     status = "completed";
@@ -994,10 +950,6 @@ export const XAiAskUserQuestionRequest = Schema.Union([
 type XAiAskUserQuestionRequestParams = typeof XAiAskUserQuestionParams.Type;
 type XAiAskUserQuestionRequest = typeof XAiAskUserQuestionRequest.Type;
 
-// ---------------------------------------------------------------------------
-// x.ai/exit_plan_mode — plan approval gate (mirrors Grok Build TUI plan window)
-// ---------------------------------------------------------------------------
-
 const XAiExitPlanModeParams = Schema.Struct({
   sessionId: Schema.String,
   toolCallId: Schema.String,
@@ -1021,7 +973,6 @@ function unwrapExitPlanModeParams(params: XAiExitPlanModeRequest): XAiExitPlanMo
   return "params" in params ? params.params : params;
 }
 
-/** Empty-state copy when Grok exits plan mode without a plan file. */
 export const XAI_EMPTY_PLAN_MARKDOWN =
   "# No plan written yet\n\n(The agent exited plan mode without writing a plan.)";
 
@@ -1081,7 +1032,6 @@ function addGrokSessionPrefix(
   prefixes.add(nestedGrokDir ? `${root}/.grok/sessions/` : `${root}/sessions/`);
 }
 
-/** Injected host bits so these helpers stay off `process.platform` / `process.env`. */
 export interface GrokPlanPathHost {
   readonly platform: NodeJS.Platform;
   readonly environment: NodeJS.ProcessEnv;
@@ -1111,10 +1061,8 @@ const CASE_INSENSITIVE_CANONICAL_HOME_GROK_SESSION_PATH = new RegExp(
 );
 
 /**
- * True when a path is Grok's session plan file under a Grok home
- * (`~/.grok/sessions/.../plan.md`, `$HOME/.grok/sessions/...`, or `$GROK_HOME/sessions/...`).
- * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md
- * or a repo-local `.grok/sessions/.../plan.md`).
+ * Deliberately does not match workspace files named `plan.md` (e.g. docs/plan.md or a repo-local
+ * `.grok/sessions/.../plan.md`).
  */
 export function isGrokPlanMarkdownPath(
   path: string | undefined | null,
@@ -1139,7 +1087,6 @@ export function isGrokPlanMarkdownPath(
       continue;
     }
     const rest = haystack.slice(needle.length);
-    // Session layout: <home>/.grok/sessions/<encoded-cwd>/<session-id>/plan.md
     if (rest !== "plan.md" && rest.endsWith("plan.md")) {
       return true;
     }
@@ -1149,10 +1096,6 @@ export function isGrokPlanMarkdownPath(
   ).test(haystack);
 }
 
-/**
- * Extract plan markdown from a Grok write/edit tool call targeting plan.md.
- * Used so T3 can show the plan while plan mode is still active (before exit).
- */
 export function extractGrokPlanMarkdownFromToolCallData(
   data: Record<string, unknown> | undefined,
   host: GrokPlanPathHost,
@@ -1427,9 +1370,8 @@ function xAiPromptFailure(
 }
 
 /**
- * Grok's own text for a failed prompt. A plain Error rather than a schema
- * error so the unbounded provider text never becomes a structured attribute;
- * it is read back only at the presentation boundary.
+ * A plain Error rather than a schema error so the unbounded provider text never becomes a
+ * structured attribute; it is read back only at the presentation boundary.
  */
 export class XAiPromptFailureText extends Error {}
 
@@ -1557,14 +1499,8 @@ const rememberCompletedXAiPromptId = (
 };
 
 /**
- * Grok-specific ACP runtime wrapper. Races `session/prompt` against root-matched
- * terminal notifications:
- * - session notification/update + `turn_completed` + matching `prompt_id`
- * - `x.ai/session/prompt_complete` (open-source fire-and-forget signal)
- * - `_x.ai/session/prompt_complete` (released-build alias)
- *
- * Pending entries are keyed by root sessionId + T3-injected promptId, so
- * foreign/child sessions and `task-completed-*` ids do not settle the root turn.
+ * Pending entries are keyed by root sessionId + T3-injected promptId, so foreign/child sessions
+ * and `task-completed-*` ids do not settle the root turn.
  */
 export const makeXAiPromptCompletionRuntime = Effect.fn("makeXAiPromptCompletionRuntime")(
   function* (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) {

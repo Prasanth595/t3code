@@ -16,8 +16,8 @@ import { redactedPlaceholder } from "./RedactedSensitiveText";
 const ACTIVE_ACCOUNT = "active gh account";
 
 /**
- * A login, blurred like RedactedSensitiveText until the panel reveals it. Plain text, not a
- * button, so it can sit inside select options; one panel toggle reveals every login.
+ * Plain text, not a button, so it can sit inside select options; one panel toggle
+ * reveals every login.
  */
 function RedactedLogin(props: {
   readonly account: string;
@@ -37,10 +37,6 @@ function RedactedLogin(props: {
   );
 }
 
-/**
- * Per-host GitHub choices for one environment: turn a host off, or pin which of the
- * logins `gh` holds is used instead of its active one. Changes save immediately.
- */
 export function GitHubAccountSettings({
   environmentId,
   auth,

@@ -37,12 +37,6 @@ type ProviderUpdateCommandResult = AtomCommandResult<
   unknown
 >;
 
-/**
- * Map one targeted instance's update command result into the settled-outcome
- * shape the multi-backend reducers consume: a non-interrupted failure becomes a
- * rejection carrying its message; a success carries the post-update snapshot of
- * the targeted instance (null when the backend did not report it).
- */
 function toProviderUpdateOutcome(input: {
   readonly environmentId: EnvironmentId;
   readonly isPrimary: boolean;
@@ -90,12 +84,9 @@ function toProviderUpdateOutcome(input: {
   };
 }
 
-// Transport-hang safety net. The dispatch's `finally` clears the spinner and the
-// in-flight guard on completion, so this only matters if a request never resolves
-// at all (e.g. the socket drops mid-flight without surfacing an error). Keep it
-// well beyond the server's own update timeout (5 min) so a legitimately slow
-// update (npm installs routinely run tens of seconds) is never cut off and left
-// showing a dead, unresponsive Update button.
+// Keep it well beyond the server's own update timeout (5 min) so a legitimately
+// slow update (npm installs routinely run tens of seconds) is never cut off and
+// left showing a dead, unresponsive Update button.
 const PENDING_EXPIRY_MS = 6 * 60_000;
 
 function rowToneClass(kind: ProviderUpdateRowStatusKind): string {
@@ -162,11 +153,6 @@ function EnvironmentUpdateRow({
   );
 }
 
-/**
- * The launch popover's body when WSL is present: one row per local environment
- * (Windows + WSL), each with its own "update all" trigger that targets only
- * that environment's backend.
- */
 export function ProviderUpdateEnvironmentRows({
   onInteract,
 }: {
@@ -182,21 +168,20 @@ export function ProviderUpdateEnvironmentRows({
     [groups],
   );
 
-  // Only surface results that land after this popover opened.
   const visibleAfterIsoRef = useRef<string>(new Date().toISOString());
 
-  // Synchronous re-entry guard. setPendingEnvironments is an async state update,
-  // and PENDING_EXPIRY_MS can clear the spinner while a request is still in
-  // flight, so a rapid double-click (or a click after the expiry fires mid-
-  // request) would otherwise dispatch a second full round of updates. A ref
-  // updates synchronously, so we can bail before doing any work.
+  // setPendingEnvironments is an async state update, and PENDING_EXPIRY_MS can
+  // clear the spinner while a request is still in flight, so a rapid
+  // double-click (or a click after the expiry fires mid- request) would
+  // otherwise dispatch a second full round of updates. A ref updates
+  // synchronously, so we can bail before doing any work.
   const inFlightEnvironmentsRef = useRef<Set<EnvironmentId>>(new Set());
 
-  // Monotonic per-environment request version. Bumped on each dispatch and
-  // captured locally, so an attempt that was superseded -- e.g. one that already
-  // tripped the expiry safety net and was retried -- detects it is no longer
-  // current and skips every state write when it finally resolves, instead of
-  // clobbering the newer attempt's spinner/result/error or its in-flight guard.
+  // Bumped on each dispatch and captured locally, so an attempt that was
+  // superseded -- e.g. one that already tripped the expiry safety net and was
+  // retried -- detects it is no longer current and skips every state write when
+  // it finally resolves, instead of clobbering the newer attempt's
+  // spinner/result/error or its in-flight guard.
   const requestVersionRef = useRef<Map<EnvironmentId, number>>(new Map());
 
   const [pendingEnvironments, setPendingEnvironments] = useState<ReadonlySet<EnvironmentId>>(
@@ -261,15 +246,9 @@ export function ProviderUpdateEnvironmentRows({
       });
 
       const expiry = setTimeout(() => {
-        // A newer attempt may have superseded this one; if so, leave its state
-        // untouched.
         if (!isCurrentRequest()) {
           return;
         }
-        // The request is presumed dead (see PENDING_EXPIRY_MS). Clear the
-        // spinner AND the in-flight guard together so the row never strands on a
-        // dead Update button, and surface feedback so the timeout is visible
-        // rather than silently reverting to idle.
         inFlightEnvironmentsRef.current.delete(environmentId);
         clearPending(environmentId);
         setErrorByEnvironment((previous) =>
@@ -277,8 +256,6 @@ export function ProviderUpdateEnvironmentRows({
         );
       }, PENDING_EXPIRY_MS);
       try {
-        // Dispatch each candidate's update to this environment's own backend and
-        // normalize every settled outcome into the multi-backend reducer shape.
         const results = await Promise.all(
           targets.map(async (target): Promise<PromiseSettledResult<LocalProviderUpdateOutcome>> => {
             try {
@@ -301,8 +278,6 @@ export function ProviderUpdateEnvironmentRows({
           }),
         );
         if (!isCurrentRequest()) {
-          // A newer attempt superseded this one while it was in flight; leave
-          // the newer attempt's state intact.
           return;
         }
         // The request resolved (not a transport hang), so clear any stale
@@ -336,14 +311,9 @@ export function ProviderUpdateEnvironmentRows({
           providers: collectProviderUpdateOutcomeSnapshots(results),
           providerCount,
         });
-        // Only persist a terminal outcome. A non-terminal ("running"/"initial")
-        // view means this dispatch could not confirm completion — e.g. a snapshot
-        // came back without its targeted instance (collectProviderUpdateOutcome-
-        // Snapshots drops null providers), which happens when the command is
-        // interrupted as a second backend connects and supersedes the in-flight
-        // update. A stored view never re-polls, so persisting it would pin the
-        // row's spinner forever once the pending flag expires. Drop it and let
-        // the live per-environment provider state (pill) plus the pending expiry
+        // A stored view never re-polls, so persisting it would pin the row's
+        // spinner forever once the pending flag expires. Drop it and let the
+        // live per-environment provider state (pill) plus the pending expiry
         // drive the row, so it self-heals to whatever the backend actually did.
         if (isTerminalProviderUpdatePhase(view.phase)) {
           setResultByEnvironment((previous) => new Map(previous).set(environmentId, view));

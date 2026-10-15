@@ -1,8 +1,3 @@
-/**
- * Visual primitives shared by controls when they are rendered in the thread details panel.
- *
- * Panel controls keep one density at every breakpoint, independent of toolbar button sizes.
- */
 const THREAD_DETAILS_PANEL_RESTING_BUTTON_SURFACE_CLASS = "bg-transparent shadow-none";
 
 const THREAD_DETAILS_PANEL_HOVER_SURFACE_CLASS =
@@ -33,7 +28,6 @@ export const THREAD_DETAILS_PANEL_CHEVRON_CLASS = "size-4 shrink-0 text-muted-fo
 
 export const THREAD_DETAILS_PANEL_ICON_ACTION_CLASS = `size-6 justify-center rounded-md border-transparent bg-transparent p-0 sm:size-6 ${THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS}`;
 
-/** A small text control on a row's second line, such as a pull request's checks or next action. */
 export const THREAD_DETAILS_PANEL_META_ACTION_CLASS = `h-6 gap-1 rounded-md border-transparent px-1.5 text-xs font-medium text-muted-foreground ${THREAD_DETAILS_PANEL_ROW_SURFACE_CLASS}`;
 
 export const THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS = `flex w-full items-center rounded-lg ${THREAD_DETAILS_PANEL_SPLIT_GROUP_SURFACE_CLASS}`;

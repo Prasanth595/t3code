@@ -4,10 +4,6 @@ import type {
   ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
 
-/**
- * Visual treatment for each server-reported provider status. Centralized so
- * the default-driver card and per-instance cards share the same language.
- */
 export const PROVIDER_STATUS_STYLES = {
   disabled: {
     dot: "bg-muted-foreground/50",
@@ -26,12 +22,8 @@ export const PROVIDER_STATUS_STYLES = {
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
 /**
- * Derive the headline + detail copy shown under a provider's name in the
- * settings page. Prefers `provider.message` for server-supplied detail and
- * falls back to generic phrasing when the server has not yet reported any
- * state — which happens before the first probe or when an instance names a
- * driver this build does not ship. A ready provider without account metadata
- * remains available and does not imply an authentication failure.
+ * A ready provider without account metadata remains available and does not
+ * imply an authentication failure.
  */
 export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
@@ -86,11 +78,6 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   };
 }
 
-/**
- * Normalize a version string for display. Adds the `v` prefix when the
- * driver reported a bare version (e.g. `1.2.3`) so cards render
- * consistently regardless of driver.
- */
 export function getProviderVersionLabel(version: string | null | undefined) {
   if (!version) return null;
   // Antigravity reports a release tag such as `agy_acp_server_20260818_01_RC01`.
@@ -100,7 +87,6 @@ export function getProviderVersionLabel(version: string | null | undefined) {
     const [, year, month, day, candidate] = antigravity;
     return `${year}-${month}-${day}${candidate ? ` ${candidate}` : ""}`;
   }
-  // Only bare semver-like versions get a `v` prefix. Other tags are shown as-is.
   return /^\d/.test(version) ? `v${version}` : version;
 }
 
@@ -110,7 +96,6 @@ const COMPATIBILITY_TITLES = {
   broken: "Known broken version",
 } as const;
 
-/** Compatibility guidance shares the version popover, with safe install actions. */
 export function getProviderVersionAdvisoryPresentation(
   advisory: ServerProviderVersionAdvisory | undefined,
   compatibility?: ServerProviderCompatibilityAdvisory | undefined,

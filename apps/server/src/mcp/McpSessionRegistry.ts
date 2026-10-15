@@ -49,7 +49,6 @@ export class McpSessionRegistry extends Context.Service<
   McpSessionRegistryShape
 >()("t3/mcp/McpSessionRegistry") {}
 
-/** Registry credentials always belong to a provider session, so their scope has a thread. */
 interface CredentialRecord {
   readonly tokenHash: string;
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
@@ -66,15 +65,6 @@ export interface McpSessionRegistryOptions {
 }
 
 /**
- * How long a credential outlives the last sign of life from its provider
- * session.
- *
- * Liveness is refreshed both by MCP traffic and by `touch` on every provider
- * turn, so a session that is still doing work never expires no matter how long
- * it goes between browser tool calls. This window therefore only bounds
- * credentials whose session died without a clean stop — the normal paths
- * (`stopSession`, `stopAll`) revoke eagerly and do not wait for it.
- *
  * The bound matters because `/mcp` is mounted outside the environment auth
  * stack and is reachable on whatever host the server binds to, so this token is
  * the only thing guarding the `t3-code` toolkits on a remote-reachable server.
@@ -247,10 +237,6 @@ export const issueActiveMcpCredential = (
         .pipe(Effect.andThen(activeMcpSessionRegistry.issue(request)))
     : Effect.undefined;
 
-/**
- * Refreshes the liveness of a thread's MCP credential. Called on every provider
- * turn so an active session is never mistaken for an abandoned one.
- */
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
 
@@ -260,7 +246,6 @@ const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
 const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
 
-/** Exposed for tests. */
 export const __testing = {
   make: makeWithOptions,
 };

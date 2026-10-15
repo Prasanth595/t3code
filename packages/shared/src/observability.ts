@@ -21,10 +21,8 @@ export const layerOtlpSerialization = (protocol: OtlpProtocol) =>
   protocol === "http/protobuf" ? OtlpSerialization.layerProtobuf : OtlpSerialization.layerJson;
 
 /**
- * How one signal is exported, once whichever source named that signal's
- * endpoint has been resolved. Held per signal rather than per process, so a
- * wire format or a credential cannot be paired by hand with an endpoint that
- * came from somewhere else.
+ * Held per signal rather than per process, so a wire format or a credential cannot be paired by
+ * hand with an endpoint that came from somewhere else.
  */
 export interface SignalExport {
   readonly protocol: OtlpProtocol;
@@ -32,7 +30,6 @@ export interface SignalExport {
   readonly exportIntervalMs: number;
 }
 
-/** What T3 Code exports with when nothing configured a signal. */
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
   headers: undefined,
@@ -283,9 +280,6 @@ const TRACE_ATTRIBUTE_TRUNCATED_LENGTH = 200;
 const TRACE_ATTRIBUTE_TRUNCATION_SUFFIX = "…[truncated]";
 const ALWAYS_TRUNCATED_TRACE_ATTRIBUTES: ReadonlySet<string> = new Set(["db.query.text"]);
 
-// Clamps strings nested inside already-normalized attribute values (arrays and
-// plain objects from normalizeJsonValue, e.g. an Error's `stack`). Returns the
-// input reference when nothing was clamped.
 function truncateNestedValue(value: unknown): unknown {
   if (typeof value === "string") {
     return value.length <= TRACE_ATTRIBUTE_MAX_LENGTH
@@ -310,10 +304,8 @@ function truncateNestedValue(value: unknown): unknown {
 }
 
 /**
- * Clamps oversized attribute values on the serialized trace record so the file
- * sink stays small, including strings nested inside arrays and objects (e.g.
- * error stacks). Returns a new record when anything was clamped; never
- * mutates the input (the live span's attributes are shared with other tracers).
+ * Returns a new record when anything was clamped; never mutates the input (the live span's
+ * attributes are shared with other tracers).
  */
 export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
   let truncated: Record<string, unknown> | undefined;
@@ -484,7 +476,6 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
 
   yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
   yield* Effect.forkScoped(
-    // Flush when push fills a batch or the batch window passes.
     Queue.take(flushRequests).pipe(
       Effect.timeoutOption(`${options.batchWindowMs} millis`),
       Effect.andThen(flush),

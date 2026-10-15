@@ -69,7 +69,6 @@ function headerPaths(rest: string): readonly [string | null, string | null] {
   return chosen === undefined ? [null, null] : [rest.slice(2, chosen), rest.slice(chosen + 3)];
 }
 
-/** The right-hand id of `index <before>..<after> <mode>`. */
 function headRevision(rest: string): string | null {
   const gap = rest.indexOf("..");
   if (gap === -1) return null;

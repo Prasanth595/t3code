@@ -200,7 +200,6 @@ function withPlanStepDurations(
   };
 }
 
-/** Settled runs that carried conversation to the provider. */
 const CONVERSATION_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "completed",
   "interrupted",
@@ -208,10 +207,9 @@ const CONVERSATION_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
 ]);
 
 /**
- * Settled runs on a provider thread that a native rewind left off the active
- * branch. A run whose provider turn has a strong native ref is judged by that
- * ref. A run without one cannot be located, so it falls with everything after
- * the last run still on the branch.
+ * A run whose provider turn has a strong native ref is judged by that ref. A
+ * run without one cannot be located, so it falls with everything after the last
+ * run still on the branch.
  */
 function runsOffNativeBranch(input: {
   readonly projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">;
@@ -401,13 +399,10 @@ export const layer: Layer.Layer<
     );
 
     /**
-     * A native subagent's thread starts on the parent's model when the
-     * provider names the real one later (a Claude agent file's model arrives
-     * with the subagent's first reply). Clients read the thread's model and
-     * effort, so move the thread to the reported selection, or to the reported
-     * model alone when the provider reports no selection. Thread commands
-     * rewrite the whole thread row under the thread's lock, so this read and
-     * write take it too.
+     * A native subagent's thread starts on the parent's model when the provider
+     * names the real one later (a Claude agent file's model arrives with the
+     * subagent's first reply). Thread commands rewrite the whole thread row
+     * under the thread's lock, so this read and write take it too.
      */
     const syncSubagentThreadModel = Effect.fn("ProviderEventIngestor.syncSubagentThreadModel")(
       function* (input: ProviderEventIngestInput, subagent: OrchestrationV2Subagent) {
@@ -456,10 +451,10 @@ export const layer: Layer.Layer<
     );
 
     /**
-     * The provider rewound its conversation outside T3. Retire the runs that
-     * fell off its active branch with the same run, root-node, and checkpoint
-     * updates CheckpointRollbackService writes for a T3 revert. The run
-     * reporting the rewind performed it and stays, so it keeps lastRunOrdinal.
+     * Retire the runs that fell off its active branch with the same run,
+     * root-node, and checkpoint updates CheckpointRollbackService writes for a
+     * T3 revert. The run reporting the rewind performed it and stays, so it
+     * keeps lastRunOrdinal.
      */
     const rollBackRewoundRuns = Effect.fn("ProviderEventIngestor.rollBackRewoundRuns")(function* (
       input: ProviderEventIngestInput,

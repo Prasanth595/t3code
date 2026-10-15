@@ -1,24 +1,3 @@
-/**
- * In-process PortScanner implementation.
- *
- * macOS/Linux: parses `lsof -iTCP -sTCP:LISTEN -P -n -F pcn` (-F output is a
- * stable line-prefixed field format; this is the only `lsof` flag set we rely
- * on).
- *
- * Linux without lsof: reads listening sockets from `/proc/net/tcp{,6}` and
- * finds their processes through `/proc/<pid>/fd`.
- *
- * Only listeners owned by T3 terminal processes and explicitly configured
- * URLs receive probes. Without listener ownership, only configured URLs do.
- *
- * Listening ports are published only after a bounded HTTP(S) probe finds a
- * successful HTML document or a redirect to one.
- * Positive and negative results are cached briefly by candidate URL and listener identity,
- * limiting repeated requests without leaving stale classifications around.
- *
- * Polling is reference-counted via scoped `retain`. A single layer-scoped fiber
- * polls forever, but each tick is a no-op when the retain count is zero.
- */
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
@@ -72,9 +51,7 @@ export class PortDiscovery extends Context.Service<
 
 const POLL_INTERVAL = Duration.seconds(3);
 const LSOF_TIMEOUT_MS = 5_000;
-/** File descriptors one `/proc` walk may read before it stops looking for socket owners. */
 const PROC_FD_WALK_LIMIT = 50_000;
-/** Scans that retry the fd walk for a listening socket whose owner was not found. */
 const SOCKET_OWNER_ATTEMPTS = 3;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
 /** `netstat -ano` lists every connection, not just listeners; ~80 bytes per row, sized for ~200k rows. */
@@ -240,8 +217,6 @@ const parseLsofOutput = (
 };
 
 const parsePortFromLsofName = (name: string): number | null => {
-  // Examples: "*:5173", "127.0.0.1:5173", "[::1]:5173", "localhost:5173",
-  //           "192.168.1.10:5173 (LISTEN)" — we only care if the host part is local.
   const trimmed = name.split(" ", 1)[0]?.trim() ?? "";
   if (trimmed.length === 0) return null;
   const lastColon = trimmed.lastIndexOf(":");
@@ -348,11 +323,7 @@ const parseWindowsListenerOutput = (
 /** `/proc/net/tcp` state for a listening socket. */
 const PROC_TCP_LISTEN = "0A";
 
-/**
- * Whether a `/proc/net/tcp{,6}` address is one the preview can reach on
- * loopback: the wildcard or a loopback address, as `lsof` parsing accepts.
- * Each 32-bit word of the hex address is little-endian.
- */
+/** Each 32-bit word of the hex address is little-endian. */
 const procLocalAddress = (hex: string): boolean => {
   if (hex.length === 8) {
     return hex === "00000000" || hex.endsWith("7F");
@@ -363,7 +334,6 @@ const procLocalAddress = (hex: string): boolean => {
   return hex.startsWith(`${"0".repeat(16)}FFFF0000`) && procLocalAddress(hex.slice(24));
 };
 
-/** Listening loopback ports in `/proc/net/tcp{,6}` content, with their socket inodes. */
 const parseProcNetTcp = (
   raw: string,
 ): ReadonlyArray<{ readonly port: number; readonly inode: string }> => {
@@ -430,10 +400,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const socketOwnersRef = yield* Ref.make<
     ReadonlyMap<string, { readonly pid: number; readonly processName: string | null }>
   >(new Map());
-  /** Fd walks that found no owner, per socket inode; retried up to `SOCKET_OWNER_ATTEMPTS`. */
   const socketOwnerMissesRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
 
-  /** Maps socket inodes to the processes holding them, by `/proc/<pid>/fd`. */
   const findSocketOwners = Effect.fn("PortDiscovery.findSocketOwners")(function* (
     inodes: ReadonlySet<string>,
   ) {
@@ -470,10 +438,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return owners;
   });
 
-  /**
-   * Linux listeners from `/proc/net/tcp{,6}`, for hosts without `lsof`. Null
-   * when neither file is readable, so only configured URLs are probed.
-   */
   const scanProcListeners = Effect.fn("PortDiscovery.scanProcListeners")(function* (
     terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner>,
   ) {
@@ -791,7 +755,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       .pipe(
         Effect.map((result) => parseLsofOutput(result.stdout, terminalByProcessId)),
         Effect.catchTags({
-          // A missing lsof stays missing; later scans skip straight to the fallback.
           ProcessSpawnError: (error) =>
             (isCommandNotFound(error) ? Ref.set(lsofMissingRef, true) : Effect.void).pipe(
               Effect.andThen(recoverLsofProbeFailure(error)),
@@ -849,8 +812,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ),
   );
 
-  // Single layer-scoped polling fiber. Ticks skip the scan and its span when no
-  // client is currently retained, so the cost is one Ref.get every POLL_INTERVAL.
   const pollIfRetained = Ref.get(stateRef).pipe(
     Effect.flatMap((state) => (state.retainCount > 0 ? pollTick() : Effect.void)),
   );
@@ -862,8 +823,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       { ...state, retainCount: state.retainCount + 1 },
     ]);
     if (wasIdle) {
-      // Run an immediate scan + broadcast so the new retainer doesn't have
-      // to wait up to POLL_INTERVAL for the first emission.
       yield* pollTick();
     }
   });

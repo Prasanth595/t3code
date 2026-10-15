@@ -59,10 +59,9 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 // HTML previews are agent output, not the app. The sandbox gives the document an
 // opaque origin: scripts run, but same-origin cookies, storage, and API calls are
-// out of reach. Relative sibling assets still load through their signed URLs.
-// No modals: agent HTML can open without a click (inline renders, and mobile
-// loads it as the top document), and must not raise blocking dialogs. Downloads
-// stay allowed so download links and buttons in the page work.
+// out of reach. Relative sibling assets still load through their signed URLs. No
+// modals: agent HTML can open without a click (inline renders, and mobile loads
+// it as the top document), and must not raise blocking dialogs.
 const HTML_CONTENT_SECURITY_POLICY =
   "sandbox allow-scripts allow-forms allow-popups allow-downloads";
 
@@ -264,11 +263,6 @@ export const layerBrowserApiCors = Layer.unwrap(
     const devOrigin = config.devUrl?.origin;
     // Dev uses credentialed requests from Vite or the Electron custom origin, so both must be
     // explicit. Packaged desktop omits credentials and uses Effect's default wildcard origin.
-    //
-    // T3CODE_DEV_ALLOWED_ORIGINS covers dev servers reached from a second
-    // origin — a tailnet name, a LAN IP, a phone. Browser dev normally proxies
-    // through Vite and is same-origin (no preflight at all), so this is a
-    // safety net for the desktop renderer and any direct-to-backend caller.
     return HttpRouter.cors({
       ...(devOrigin
         ? {
@@ -342,8 +336,6 @@ class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecor
 
 // Renderers export up to once a second while they have spans buffered, so
 // tracing this proxy would add more server spans than it forwards.
-// withTracerEnabled(false) drops the handler's spans, including the forward.
-// untracedRequestsLayer drops the HTTP server span.
 export const layerOtlpTracesProxyRoute = HttpRouter.add(
   "POST",
   OTLP_TRACES_PROXY_PATH,
@@ -404,8 +396,7 @@ const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_P
 // before routing, so a route handler cannot skip it. TracerDisabledWhen is one
 // predicate for the whole server, and HttpRouter.serve builds its routes
 // privately, so it is provided to the served layer, never merged into the
-// routes. Add paths here instead of providing it again. The query string is
-// ignored, as in routing.
+// routes. Add paths here instead of providing it again.
 const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
   const queryIndex = request.url.indexOf("?");
   const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
@@ -545,7 +536,6 @@ const loadImmutableBuildAssets = Effect.gen(function* () {
 
 const openStaticFile = Effect.fn("openStaticFile")(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
-  // Reject directories and special files before opening. Response metadata comes from the handle.
   const pathInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
   if (pathInfo?.type !== "File") return null;
   const file = yield* fileSystem.open(filePath, { flag: "r" });
@@ -695,7 +685,6 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   }),
 );
 
-// Read the installed build's manifest once. Unknown files use revalidation.
 export const layerStaticAndDevRoute = Layer.unwrap(
   loadImmutableBuildAssets.pipe(
     Effect.map((assets) => HttpRouter.add("GET", "*", handleStaticAndDevRequest(assets))),

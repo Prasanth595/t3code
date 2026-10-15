@@ -32,12 +32,10 @@ import {
 
 const HANDOFF_DELAY_MS = 2_000;
 /**
- * How long a trial has to report prepared. Migrations and the open-time
- * `PRAGMA optimize` count toward it and scale with the database: tens of GB on
- * a cold page cache take minutes. They run synchronously on the child's main
- * thread, so it cannot report progress meanwhile. A missed window rolls back
- * the database, so the next attempt pays the same cost. Crashes are caught at
- * exit; this only bounds a trial that is alive but stuck.
+ * Migrations and the open-time `PRAGMA optimize` count toward it and scale with the database:
+ * tens of GB on a cold page cache take minutes. They run synchronously on the child's main
+ * thread, so it cannot report progress meanwhile. A missed window rolls back the database, so
+ * the next attempt pays the same cost.
  */
 export const PREPARED_TIMEOUT_MS = 30 * 60_000;
 const TERMINATE_GRACE_MS = 5_000;
@@ -124,12 +122,7 @@ function runCp(args: ReadonlyArray<string>): Promise<boolean> {
 }
 
 /**
- * Copies a database file as a copy-on-write clone where the filesystem has
- * them (APFS via `cp -c`, btrfs/XFS reflinks via `cp --reflink=auto`), which
- * takes no extra space and finishes instantly for a database of tens of GB.
- * Node's own clone flag is not used: on macOS `fs.copyFile` falls back to a
- * full copy. Anywhere cloning is unavailable, or `cp` fails, this is a
- * regular copy.
+ * Node's own clone flag is not used: on macOS `fs.copyFile` falls back to a full copy.
  */
 async function copyDatabaseFile(source: string, destination: string): Promise<void> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
@@ -156,10 +149,6 @@ const GIB = 1024 ** 3;
 const CLONED_BACKUP_MIN_HEADROOM_BYTES = GIB;
 const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
 
-/**
- * Stats of the database and its existing sidecars, following symlinks. A main
- * file that cannot be read is an error.
- */
 async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.Stats>> {
   const stats: Array<NodeFS.Stats> = [];
   for (const suffix of DB_FILE_SUFFIXES) {
@@ -231,10 +220,8 @@ const filesystemBackupSpaceProbe: BackupSpaceProbe = {
 };
 
 /**
- * Returns a client-visible reason when the pre-update database backup cannot
- * fit, or undefined when it can. Runs before the server is stopped so a full
- * disk refuses the update instead of causing an outage and a cold restart.
- * Throws when the database or the filesystem cannot be inspected.
+ * Runs before the server is stopped so a full disk refuses the update instead of causing an
+ * outage and a cold restart. Throws when the database or the filesystem cannot be inspected.
  */
 export async function databaseBackupBlocker(
   baseDir: string,
@@ -259,8 +246,7 @@ export async function databaseBackupBlocker(
 }
 
 /**
- * Snapshots the database once per update before the first trial. A completed
- * backup is never overwritten because a restarted launcher may be looking at
+ * A completed backup is never overwritten because a restarted launcher may be looking at
  * database writes from an earlier attempt by the same trial.
  */
 async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {

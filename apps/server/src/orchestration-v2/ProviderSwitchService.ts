@@ -51,8 +51,6 @@ export class ProviderSwitchServiceV2 extends Context.Service<
   ProviderSwitchServiceV2Shape
 >()("t3/orchestration-v2/ProviderSwitchService/ProviderSwitchServiceV2") {}
 
-// Stopped and errored records stay in session history but can no longer be
-// restarted or released; only live sessions participate in a transition.
 const isLiveProviderSession = (
   session: OrchestrationV2ThreadProjection["providerSessions"][number],
 ) => session.status !== "stopped" && session.status !== "error";

@@ -153,7 +153,6 @@ const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
-/** Describe approval scope even when Codex omits or blanks the optional reason. */
 export function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
   readonly grantRoot?: string | null;
@@ -476,7 +475,6 @@ function codexMcpToolOutput(
 // hold the item (and the run's ingestion) open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
 
-/** The UI resource a completed Codex MCP tool call names, under any field Codex reports it in. */
 function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined {
   if (item.type !== "mcpToolCall") return undefined;
   const uri = item.mcpAppUi?.resourceUri ?? item.mcpAppResourceUri ?? item.appContext?.resourceUri;
@@ -727,7 +725,6 @@ export function buildCodexTurnStartParams(input: {
   readonly deviceToolsAvailable?: boolean;
   /** ChatGPT token sharing does not accept service tiers. */
   readonly omitServiceTier?: boolean;
-  /** What the thread's MCP Apps want the agent to know (`ui/update-model-context`). */
   readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
 }) {
   return Effect.gen(function* () {
@@ -901,11 +898,6 @@ export type CodexGoalCommand =
   | { readonly type: "resume" }
   | { readonly type: "set"; readonly objective: string };
 
-/**
- * Parses a `/goal` message the way the Codex TUI does: `clear`, `pause` and
- * `resume` control the current goal, a bare `/goal` shows it, and any other
- * text becomes the new objective. Returns null for every other message.
- */
 export function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
   const match = /^\/goal(?:\s+([\s\S]*))?$/u.exec(text.trim());
   if (match === null) return null;
@@ -1001,11 +993,10 @@ const resolveCodexForkRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveForkR
 );
 
 /**
- * Prefer a native `thread/fork` turn boundary over the fork-then-rollback
- * fallback. `lastTurnId` is inclusive on the Codex side, so a fork requested at
- * the selected turn omits every later turn atomically. That matters for
- * paginated threads. The count fallback resolves a `thread/revert` boundary
- * only for source turns that predate native turn references.
+ * `lastTurnId` is inclusive on the Codex side, so a fork requested at the
+ * selected turn omits every later turn atomically. That matters for paginated
+ * threads. The count fallback resolves a `thread/revert` boundary only for
+ * source turns that predate native turn references.
  */
 export const resolveCodexForkBoundary = Effect.fn("CodexAdapterV2.resolveForkBoundary")(function* (
   input: ProviderAdapter.ProviderAdapterV2ForkThreadInput,
@@ -1140,9 +1131,6 @@ interface ActiveCodexTurnContext {
   readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly subagent: CodexSubagentThreadContext | null;
   readonly startedAt: DateTime.Utc;
-  // Item positions allocated in this turn. Later turns never look items up
-  // here: late background items resolve their settled turn's context, and a
-  // subagent's approvals allocate on the owning root turn.
   readonly itemPositions: Map<
     string,
     { readonly ordinal: number; readonly startedAt: DateTime.Utc }
@@ -1157,7 +1145,6 @@ interface ActiveCodexProviderRetry {
   readonly itemOrdinal: number;
 }
 
-/** Snapshot of a still-running commandExecution item for interrupt/fail terminalization. */
 interface TrackedRunningCommandItem {
   readonly id: string;
   readonly command: string;
@@ -1178,13 +1165,10 @@ type CodexRootTerminalEvent = Extract<
   { readonly type: "turn.terminal" }
 >;
 
-/** A completed root turn whose run stays open for the goal turn Codex starts next. */
 interface CodexGoalHold {
   readonly context: ActiveCodexTurnContext;
   readonly event: Extract<CodexRootTerminalEvent, { readonly failure: null }>;
-  /** Sent when the hold resolves, so until then Stop and steering still target this turn. */
   readonly completedTurn: OrchestrationV2ProviderTurn;
-  /** The turn Codex continued with, or undefined when the run settled instead. */
   readonly next: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
 }
 
@@ -1309,12 +1293,7 @@ export class CodexAppServerClientFactory extends Context.Service<
 >()("t3/orchestration-v2/Adapters/CodexAdapterV2/CodexAppServerClientFactory") {}
 
 /**
- * Config overrides sent with every `thread/start`, `thread/resume` and `thread/fork`.
- * Codex layers these above the user's and project's `config.toml`.
- *
- * - Codex 0.152 made the `update_plan` checklist tool opt-in; T3 renders it as
- *   the todo list.
- * - Codex waits this long for MCP servers before the first model request and
+ * Codex waits this long for MCP servers before the first model request and
  *   leaves out any server still starting (default 1 s, too short for cold
  *   `npx`/`uvx` servers). 10 s covers most slow starts, and a hung server
  *   delays only the first turn of a session by 10 s, not its 30 s timeout.
@@ -1886,11 +1865,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           new Map<string, PendingCodexRuntimeRequest>(),
         );
         /**
-         * Approval kinds the user chose "Always allow this session" for, by
-         * native thread. Codex's own acceptForSession only skips the exact
-         * command or patch it answered, so every new command would ask again.
-         * A turn in another runtime mode ends the allowance, and so does the
-         * thread unloading, like Codex's own session approvals.
+         * Codex's own acceptForSession only skips the exact command or patch it
+         * answered, so every new command would ask again. A turn in another
+         * runtime mode ends the allowance, and so does the thread unloading,
+         * like Codex's own session approvals.
          */
         const sessionApprovals = new Map<
           string,
@@ -1947,8 +1925,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // Native completion and the interrupt timeout share one finalization
         // path. Serialize the race so only one can publish terminal events.
         const turnTerminalizationPermit = yield* Semaphore.make(1);
-        // Native goals by Codex thread, and the root provider thread snapshot
-        // each goal change is written onto.
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
         const rootProviderThreads = new Map<string, OrchestrationV2ProviderThread>();
         // A completed root turn whose goal is still active. Its run stays open
@@ -1970,7 +1946,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
-        /** Writes the thread's current native goal onto its root provider thread. */
         const emitGoalUpdate = Effect.fnUntraced(function* (nativeThreadId: string) {
           const providerThread = rootProviderThreads.get(nativeThreadId);
           if (providerThread === undefined || !goalsByNativeThread.has(nativeThreadId)) return;
@@ -2149,7 +2124,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             return updated;
           });
 
-        /** Returns true when the turn has no running command items left. */
         const clearRunningCommandItem = (nativeTurnId: string, nativeItemId: string) =>
           Ref.modify(runningCommandItemsByTurn, (current) => {
             const items = current.get(nativeTurnId);
@@ -2468,10 +2442,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
           });
 
-        /**
-         * Allocates an item's ordinal and start time on first sight. `item/started` seeds
-         * Codex's own start time; items that stream without it start when first seen.
-         */
         const resolveItemPosition = (
           context: ActiveCodexTurnContext,
           nativeItemId: string,
@@ -3782,11 +3752,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
 
         /**
-         * Completes an MCP tool call whose tool names a UI resource: reads the
-         * resource through Codex's MCP client, stores it, and records the app
-         * in the item's output. The item stays running until then, which keeps
-         * the run's event ingestion open past turn/completed; it runs off the
-         * notification reader so a slow server cannot stall other events.
+         * The item stays running until then, which keeps the run's event
+         * ingestion open past turn/completed; it runs off the notification
+         * reader so a slow server cannot stall other events.
          */
         const captureMcpApp = (
           context: ActiveCodexTurnContext,
@@ -3884,7 +3852,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ? artifacts.turnItem
                   : {
                       ...artifacts.turnItem,
-                      // The full CallToolResult the app replays, beside the app.
                       output: { [MCP_APP_OUTPUT_KEY]: reference, result: item.result },
                     };
               yield* emitProviderEvent({
@@ -4004,8 +3971,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             return { node, plan, turnItem };
           });
 
-        // Streamed plan text, flushed at most once per interval. A turn that ends
-        // early leaves its partial plan streaming, as an unfinished plan item.
         const planDeltas = yield* makeProviderTextDeltaCoalescer({
           flushIntervalMs: CODEX_PLAN_DELTA_FLUSH_INTERVAL_MS,
           emit: (update) =>
@@ -4427,8 +4392,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const now = yield* DateTime.now;
-            // Live context usage rides on the provider turn (#8144): the turn
-            // is the natural owner and re-emitting it never disturbs items.
             yield* emitProviderEvent({
               type: "provider_turn.updated",
               driver: CODEX_PROVIDER,
@@ -4556,7 +4519,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
-        // A goal that stops being active ends any run held open for its next turn.
         yield* client.handleServerNotification("thread/goal/updated", (payload) =>
           Effect.gen(function* () {
             goalsByNativeThread.set(payload.threadId, providerGoalFromCodex(payload.goal));
@@ -4729,7 +4691,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             yield* completeProviderRetry(context, yield* DateTime.now);
-            // Reasoning streams per part, so its parts take their own first-seen times.
             if (payload.item.type !== "reasoning") {
               yield* resolveItemPosition(
                 context,
@@ -6104,10 +6065,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
         );
 
-        /**
-         * Settles a `/goal` run that started no Codex turn. Its reply is plain
-         * assistant text, as Claude's own `/goal` output is.
-         */
         const completeGoalCommandTurn = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           reply: string,
@@ -6191,7 +6148,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
         });
 
-        /** The goal hold whose run still reports this provider turn as running. */
         const heldGoalTurn = (
           providerThread: OrchestrationV2ProviderThread,
           providerTurnId: ProviderTurnId,
@@ -6204,13 +6160,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         };
 
         /**
-         * Like the Codex TUI, Stop pauses an active goal first so Codex starts
-         * no further goal turn. Codex can end or continue the turn while the
-         * pause is in flight, so the target resolves after it: a held run
-         * settles here and leaves only its retained work to stop, and a
-         * continued run moves Stop to its newest turn. `goalTurns` lists the
-         * run's root turns, seen before and after the pause, whose descendants
-         * Stop also reaches.
+         * Codex can end or continue the turn while the pause is in flight, so
+         * the target resolves after it: a held run settles here and leaves only
+         * its retained work to stop, and a continued run moves Stop to its
+         * newest turn. `goalTurns` lists the run's root turns, seen before and
+         * after the pause, whose descendants Stop also reaches.
          */
         const resolveGoalStopTarget = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2InterruptInput,
@@ -6279,7 +6233,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
-        /** Starts a native turn with this run's full turn configuration. */
         const startNativeTurn = (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>,
@@ -6330,7 +6283,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
 
         /**
-         * Runs `/goal` through Codex's native goal API, as the Codex TUI does.
          * Setting or resuming a goal starts the first goal turn with this run's
          * turn configuration (approvals, sandbox, model, plan mode), since a
          * turn Codex starts on its own reuses the last turn's settings. Codex
@@ -6427,7 +6379,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     if (goalActivations.get(threadId) === activation) {
                       goalActivations.delete(threadId);
                     }
-                    // A run held for an activation that did not happen settles now.
                     if (goalsByNativeThread.get(threadId)?.status !== "active") {
                       yield* releaseGoalHold(threadId);
                     }
@@ -6626,7 +6577,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         ) {
                           return Effect.fail(cause);
                         }
-                        // Keep the session's history without decoding the unarchive response.
                         return client.raw
                           .request("thread/unarchive", { threadId: nativeThreadId })
                           .pipe(Effect.andThen(resume));
@@ -6845,8 +6795,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               ];
               if (interruptTargetContexts.length === 0) {
-                // Stop on a settled turn this process retains nothing for
-                // (released, restarted, or every command already reported).
                 if (turnInput.requestRuntimeRestart === true) return;
                 return yield* toProtocolError(
                   `Provider turn ${turnInput.providerTurnId} is not active and cannot be interrupted.`,
@@ -7143,7 +7091,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 if (failedTermination !== undefined && !failedTermination.success) {
                   return yield* Effect.fail(failedTermination.error);
                 }
-                // Stop the retained items without rewriting the completed root turn.
                 yield* turnTerminalizationPermit.withPermits(1)(
                   Effect.gen(function* () {
                     const completedAt = yield* DateTime.now;

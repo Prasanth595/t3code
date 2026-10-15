@@ -90,11 +90,6 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
 ].map((driver) => ProviderDriverKind.make(driver));
 
 /**
- * The text generation model on the first instance `isEnabled` accepts: the
- * built-in default instances in preference order, then, when
- * `includeConfiguredInstances` is set, configured instances of those
- * drivers. `null` when none is.
- *
  * The model is the driver's cheap default, unless `defaultModelSelection`
  * (the thread default) is one of that instance's custom models. A custom
  * model usually means a backend that may refuse the built-in default, and
@@ -176,10 +171,6 @@ export function resolveSourceControlWriterModelSelection(
     : settings.textGenerationModelSelection;
 }
 
-/**
- * The model that writes review guides: its own setting when that provider can still run it,
- * otherwise whatever writes source control text.
- */
 export function resolveReviewGuideModelSelection(
   settings: ServerSettings,
   providers: ReadonlyArray<ServerProvider> | undefined,
@@ -264,7 +255,6 @@ function mergeModelSelectionOptionsById(input: {
   return [...merged.entries()].map(([id, value]) => ({ id, value }));
 }
 
-/** Upsert each patched entry; `null` removes it. Entries the patch omits are untouched. */
 function mergeSettingsEntries<Value>(
   current: Readonly<Record<string, Value>>,
   patch: Readonly<Record<string, Value | null>>,
@@ -339,10 +329,9 @@ export function deriveLegacyProjectOverrides(
 }
 
 /**
- * Rewrite a patch that still uses the legacy per-key project maps into
- * entries of `projectSettingsOverrides`, so older clients keep editing the
- * values the server actually reads. `null` in a legacy map clears that one
- * override.
+ * Rewrite a patch that still uses the legacy per-key project maps into entries
+ * of `projectSettingsOverrides`, so older clients keep editing the values the
+ * server actually reads.
  */
 function translateLegacyProjectOverridePatch(
   current: Pick<ServerSettings, "projectSettingsOverrides">,

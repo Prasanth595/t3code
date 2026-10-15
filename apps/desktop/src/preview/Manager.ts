@@ -1,10 +1,3 @@
-/**
- * Desktop side of the in-app browser preview.
- *
- * Hosts per-tab Chromium WebContents references (the actual <webview>
- * elements live in the renderer; we only attach listeners and forward state
- * here). Single layer-scoped browser session partition.
- */
 import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
@@ -105,7 +98,9 @@ export interface PreviewTabState {
   zoomFactor: number;
   pictureInPicture: boolean;
   colorScheme: DesktopPreviewColorScheme;
-  /** User intent to silence this tab. Re-applied to each guest that attaches. */
+  /**
+   * Re-applied to each guest that attaches.
+   */
   audioMuted: boolean;
   /** Observed from Chromium. Stays true while a muted tab keeps playing. */
   audible: boolean;
@@ -116,19 +111,12 @@ export interface PreviewTabState {
   updatedAt: string;
 }
 
-/** Discrete zoom levels mirroring Chrome's preset list. */
 const ZOOM_LEVELS: ReadonlyArray<number> = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0,
 ];
 
 const DEFAULT_ZOOM_FACTOR = 1.0;
 const ZOOM_EPSILON = 0.001;
-/**
- * A `[role]` container's innerText is its whole subtree, which turned one
- * snapshot's element list into 60 KB of repeated page text. Names are labels,
- * not content, so cap them where they are read.
- */
-/** How long an armed tab keeps the exclusive display-media slot before another tab may take it. */
 const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
@@ -327,10 +315,9 @@ const findZoomStep = (current: number): number => {
 };
 
 /**
- * Clamp a client-supplied zoom factor onto the discrete ladder. The setting is
- * chosen from the same ladder, but it arrives over IPC from a schema that only
- * guarantees a positive number, so an out-of-band value snaps to the nearest
- * step rather than leaving the guest at a zoom the zoom controls can't reach.
+ * The setting is chosen from the same ladder, but it arrives over IPC from a schema that only
+ * guarantees a positive number, so an out-of-band value snaps to the nearest step rather than
+ * leaving the guest at a zoom the zoom controls can't reach.
  */
 const normalizeZoomFactor = (value: number | undefined): number => {
   if (value === undefined || !Number.isFinite(value)) return DEFAULT_ZOOM_FACTOR;
@@ -380,7 +367,6 @@ interface PictureInPictureSession {
   readonly initializationScope: Scope.Closeable;
 }
 
-/** The tab whose frame the next `getDisplayMedia()` request is allowed to capture. */
 interface PendingRecording {
   readonly tabId: string;
   readonly webContents: Electron.WebContents;
@@ -418,15 +404,11 @@ type PointerEventListener = (event: DesktopPreviewPointerEvent) => Effect.Effect
 type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<void>;
 
 /**
- * Protocols a preview page may open in a real popup window.
- *
- * `about:blank` stays out: Chromium skips browser-side navigation for it, so the
- * child copies the guest's `contextIsolation: false` preferences and Electron
- * gives no way to override them. Those popups keep loading in the preview tab.
- *
+ * `about:blank` stays out: Chromium skips browser-side navigation for it, so the child copies
+ * the guest's `contextIsolation: false` preferences and Electron gives no way to override them.
  * Deliberately not `ElectronShell.parseSafeExternalUrl`: that also admits
- * `vscode://vscode-remote/...` deep links, which belong in `shell.openExternal`
- * and not in a window spawned by a third-party page in the preview.
+ * `vscode://vscode-remote/...` deep links, which belong in `shell.openExternal` and not in a
+ * window spawned by a third-party page in the preview.
  */
 const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
 
@@ -439,13 +421,10 @@ const isPopupUrl = (rawUrl: string): boolean => {
 };
 
 /**
- * Preferences for a popup a preview page opens.
- *
- * A popup is not a webview attach, so the `will-attach-webview` hardening in
- * `DesktopWindow` never sees it, and an unoverridden child would inherit the
- * guest's relaxed posture: the picker preload needs `contextIsolation: false`
- * to share `globalThis` with the previewed page, and no OAuth provider should
- * get that. The window keeps the opener and the guest session either way.
+ * A popup is not a webview attach, so the `will-attach-webview` hardening in `DesktopWindow`
+ * never sees it, and an unoverridden child would inherit the guest's relaxed posture: the
+ * picker preload needs `contextIsolation: false` to share `globalThis` with the previewed page,
+ * and no OAuth provider should get that.
  */
 const POPUP_WINDOW_OPTIONS = {
   webPreferences: {
@@ -456,22 +435,12 @@ const POPUP_WINDOW_OPTIONS = {
 } satisfies Electron.BrowserWindowConstructorOptions;
 
 /**
- * Decides what a preview page's `window.open` should do.
- *
- * `"popup"` opens a real window, which scripted popups need: denying them makes
- * `window.open()` return `null` (OAuth SDKs report that as a blocked popup), and
- * navigating the preview tab instead destroys the opener the popup has to
- * `postMessage` its result back to.
- *
- * `"new-tab"` hands a `target="_blank"` link (a tab disposition) to the web
- * app, which opens it as another preview tab so the page that held the link
- * stays put. Schemes a popup cannot be hardened for keep loading in place, and
- * so does a form POST with a body, which a new tab could only reopen as a GET.
- *
- * `"deny"` is for a blank window (`""` or `about:blank`). It cannot get a real
- * window (see `POPUP_PROTOCOLS`), and loading it into the preview tab would
- * replace the opener with an empty page. Denying makes `window.open()` return
- * `null`, which SDKs such as MSAL treat as a blocked popup and fall back from.
+ * `"popup"` opens a real window, which scripted popups need: denying them makes `window.open()`
+ * return `null` (OAuth SDKs report that as a blocked popup), and navigating the preview tab
+ * instead destroys the opener the popup has to `postMessage` its result back to. Schemes a
+ * popup cannot be hardened for keep loading in place, and so does a form POST with a body,
+ * which a new tab could only reopen as a GET. Denying makes `window.open()` return `null`,
+ * which SDKs such as MSAL treat as a blocked popup and fall back from.
  */
 export const previewWindowOpenAction = (details: {
   readonly url: string;
@@ -621,7 +590,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
     });
     const capture = Effect.gen(function* () {
-      // Check after the retry delay, and again before accepting its result.
       yield* requireCurrentGuest;
       const image = yield* Effect.tryPromise({
         // An abort-signal parameter makes a stalled promise interruptible.
@@ -910,10 +878,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   /**
-   * Pushes a tab's zoom factor onto whichever guest it currently owns, reading
-   * both at call time. Anything that applies zoom after an await goes through
-   * here: a snapshot taken before the await can be older than a zoom action that
-   * landed in between, and re-applying it would roll that action back.
+   * Anything that applies zoom after an await goes through here: a snapshot taken before the
+   * await can be older than a zoom action that landed in between, and re-applying it would roll
+   * that action back.
    */
   const assertTabZoom = Effect.fn("PreviewManager.assertTabZoom")(function* (tabId: string) {
     const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
@@ -947,11 +914,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   /**
-   * Publishes an observed audibility value for the guest that reported it.
-   * Shared by the `audio-state-changed` handler and the post-attach reconcile
-   * so both drop values from a guest the tab no longer owns, and both skip
-   * unchanged values: Chromium re-emits per media element, and republishing
-   * would cost an IPC push per element rather than per real transition.
+   * Shared by the `audio-state-changed` handler and the post-attach reconcile so both drop
+   * values from a guest the tab no longer owns, and both skip unchanged values: Chromium
+   * re-emits per media element, and republishing would cost an IPC push per element rather than
+   * per real transition.
    */
   const syncTabAudible = Effect.fn("PreviewManager.syncTabAudible")(function* (
     tabId: string,
@@ -1097,10 +1063,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const scope = yield* Scope.fork(parentScope, "sequential");
           const wcDebugger = wc.debugger;
           const consoleReleases = yield* Queue.sliding<void>(1);
-          // Console message eviction does not release the debugger's strong
-          // object handles. We keep text only, so release the whole group,
-          // including its object-id bookkeeping. Coalesce bursts behind one
-          // command rather than queueing a command for every logged object.
+          // Console message eviction does not release the debugger's strong object handles. We
+          // keep text only, so release the whole group, including its object-id bookkeeping.
           yield* Effect.forkIn(
             Effect.forever(
               Queue.take(consoleReleases).pipe(
@@ -1186,14 +1150,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               wcDebugger.on("message", onMessage);
               wcDebugger.attach("1.3");
             });
-            // Electron gives `<webview>` guests a transparent base background, and
-            // Chromium only paints a dark canvas for dark color-scheme pages over an
-            // opaque base. Without this, dark-scheme pages with no background of
-            // their own (text/plain, e.g. .md files) render white text on white.
-            // White matches the webview's existing white backing, so light pages look
-            // the same; Chromium still swaps in its dark canvas for dark-scheme pages.
-            // Sent first because a document that paints before it arrives keeps the
-            // transparent base until its next load.
+            // Electron gives `<webview>` guests a transparent base background, and Chromium
+            // only paints a dark canvas for dark color-scheme pages over an opaque base.
+            // Without this, dark-scheme pages with no background of their own (text/plain, e.g.
+            // .md files) render white text on white. Sent first because a document that paints
+            // before it arrives keeps the transparent base until its next load.
             yield* attemptPromise(
               { operation: "initializeDebugger.defaultBackground", webContentsId: wc.id },
               () =>
@@ -1833,9 +1794,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const currentAttachment = attached.get(webContentsId);
     yield* keepFrameCaptureWebContentsUnthrottled(tabId, wc);
     if (tab.webContentsId === webContentsId && currentAttachment?.webContents === wc) {
-      // The guest we already own re-announced itself, so nothing about the tab
-      // changed. Only push its zoom back down — Chromium may have just handed
-      // this guest the app window's zoom level.
+      // Only push its zoom back down — Chromium may have just handed this guest the app
+      // window's zoom level.
       yield* assertTabZoom(tabId);
       yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () => {
         wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme);
@@ -1875,9 +1835,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
       wc.setZoomFactor(currentTab.zoomFactor),
     );
-    // A replacement guest attaches unmuted, so reassert the tab's mute before it
-    // is published rather than letting it emit audio the user already silenced.
-    // Settled again after attach, below, the same way zoom is.
+    // A replacement guest attaches unmuted, so reassert the tab's mute before it is published
+    // rather than letting it emit audio the user already silenced.
     yield* attempt({ operation: "registerWebview.restoreAudioMuted", tabId, webContentsId }, () =>
       wc.setAudioMuted(currentTab.audioMuted),
     );
@@ -1977,10 +1936,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  // Called when a guest attaches to the window, before its first document
-  // paints. A tab opened straight to a URL often paints before the renderer
-  // gets to registerWebview, which would leave that page on the transparent
-  // base. registerWebview reuses the session opened here.
+  // Called when a guest attaches to the window, before its first document paints. A tab opened
+  // straight to a URL often paints before the renderer gets to registerWebview, which would
+  // leave that page on the transparent base.
   const prepareWebview = Effect.fn("PreviewManager.prepareWebview")(function* (
     wc: Electron.WebContents,
   ) {
@@ -1990,8 +1948,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc.once("destroyed", () => {
       runFork(detachControlSession(webContentsId));
     });
-    // Runs detached from the attach event, so nothing may escape. registerWebview
-    // opens the session again if this one did not.
+    // Runs detached from the attach event, so nothing may escape.
     yield* ensureControlSession(wc).pipe(
       Effect.catchCause((cause) =>
         Effect.logDebug("Preview webview control session was not opened on attach.", {
@@ -2181,8 +2138,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     return yield* Effect.callback<PreviewAnnotationSubmissionResult | null, PreviewManagerError>(
       (resume) => {
-        // Declared first so cleanup can check slot ownership by identity
-        // without a type cycle through the cancel effect it builds.
         const session: PickSession = { cancel: Effect.suspend(() => cancelPickSession()) };
         const cleanup = Effect.fn("PreviewManager.cleanupPickElement")(function* () {
           yield* attempt({ operation: "pickElement.cleanup", tabId, webContentsId: wc.id }, () => {
@@ -2200,10 +2155,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               : sessions,
           );
         });
-        // Every exit from this session runs through `claimSettle`, so the
-        // renderer's `pickElement` promise resolves exactly once. The previous
-        // identity check let a cancelled or replaced session return without
-        // resuming, which left the composer waiting forever.
+        // Every exit from this session runs through `claimSettle`, so the renderer's
+        // `pickElement` promise resolves exactly once.
         let settled = false;
         const claimSettle = (): boolean => {
           if (settled) return false;
@@ -2256,9 +2209,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             args[2] === "send" && annotationSendEnabled.get(tabId) === true ? "send" : "attach";
           const devicePixelRatio = typeof args[3] === "number" ? args[3] : 1;
           runFork(
-            // The full-page capture with retries is what the screenshot button
-            // uses. A single cropped `capturePage(rect)` with a fixed timeout
-            // dropped the crop on pages where that capture was merely slow.
+            // A single cropped `capturePage(rect)` with a fixed timeout dropped the crop on
+            // pages where that capture was merely slow.
             capturePageWithRetry(
               { operation: "captureAnnotationScreenshot", tabId, webContentsId: wc.id },
               tabId,
@@ -2396,10 +2348,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
-  // Re-establish the control session after a detach, restoring any
-  // color-scheme override the tab carries. The scheme is read after the
-  // session attaches so a concurrent setColorScheme is not overwritten with
-  // a stale snapshot.
+  // The scheme is read after the session attaches so a concurrent setColorScheme is not
+  // overwritten with a stale snapshot.
   const restoreControlSession = (tabId: string, wc: Electron.WebContents) =>
     Effect.gen(function* () {
       const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
@@ -3073,17 +3023,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return yield* Effect.failCause(initializationExit.cause);
   });
 
-  /** Only drops the armed target when it still belongs to `tabId`, so tabs cannot clobber each other. */
   const clearPendingRecording = (tabId: string) => {
     if (pendingRecording?.tabId === tabId) pendingRecording = null;
   };
 
   /**
-   * Claims the single arm slot for `tabId`. A display-media request carries no tab identity, so the
-   * slot is exclusive: a second tab arming before the first request lands would redirect the first
-   * renderer's stream. Rather than queue (which can only ever stall a start), a colliding start
-   * fails fast and the renderer can retry. An arm the renderer never redeemed goes stale after
-   * `RECORDING_ARM_GRACE_MS` so it cannot hold the slot forever.
+   * A display-media request carries no tab identity, so the slot is exclusive: a second tab
+   * arming before the first request lands would redirect the first renderer's stream. Rather
+   * than queue (which can only ever stall a start), a colliding start fails fast and the
+   * renderer can retry.
    */
   const armPendingRecording = Effect.fn("PreviewManager.armPendingRecording")(function* (
     tabId: string,
@@ -3304,10 +3252,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   let pointerSequence = 0;
-  /**
-   * The server reports where an agent action is about to land on a tab it
-   * drives here. The live cursor and desktop recordings draw it like any agent.
-   */
   const emitAgentPointer = Effect.fn("PreviewManager.emitAgentPointer")(function* (pointer: {
     readonly key: { readonly threadId: string; readonly tabId: string };
     readonly phase: "move" | "click";
@@ -3343,7 +3287,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       { discard: true },
     );
   });
-  // Listening starts with the first tab of the desktop's own server.
   let pointersStarted = false;
   const listenForAgentPointers = Effect.suspend(() => {
     if (pointersStarted) return Effect.void;
@@ -3614,8 +3557,6 @@ export class PreviewManager extends Context.Service<
     readonly zoomIn: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly zoomOut: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly resetZoom: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
-    // Re-applies every attached guest's own zoom factor, undoing the zoom level
-    // Chromium inherits from the embedder when the app UI zooms.
     readonly reapplyZoom: () => Effect.Effect<void>;
     readonly hardReload: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly setColorScheme: (
@@ -3696,7 +3637,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runForkDownload = Effect.runForkWith(yield* Effect.context<never>());
-  /** Puts a copy in Downloads under a name that never replaces a file already there. */
   const copyToDownloads = Effect.fn("PreviewManager.copyToDownloads")(function* (
     source: string,
     fileName: string,
@@ -3724,7 +3664,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       // Decided before the server's path is set: placing it consumes the guid.
       const human = browserHost.humanStartedDownload(source);
       if (!browserHost.placeDownload(source, item) || !human) return;
-      // The server keeps its copy for agents; the person who clicked gets theirs.
       item.once("done", (_doneEvent, state) => {
         if (state !== "completed") return;
         runForkDownload(

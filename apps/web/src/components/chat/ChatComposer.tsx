@@ -638,7 +638,6 @@ function useComposerRestingTransition(
           interruptedHeight !== null && !targetChanged ? remainingDuration : animationDurationMs;
         element.style.overflow = "clip";
         if (modelStrip) {
-          // The model controls cross the input's lower edge on their way to the strip.
           const controlsClearance = Math.max(
             nextModelStripHeight ?? 0,
             previousModelStripHeightRef.current ?? 0,
@@ -650,9 +649,7 @@ function useComposerRestingTransition(
 
         // Pinning the overlay at the destination height keeps the resize
         // observer quiet for the tween; bottom alignment keeps the animating
-        // surface glued to the overlay's stable bottom edge. The pin lasts
-        // only for the tween so later attachment, thread, font, and viewport
-        // changes remain natural.
+        // surface glued to the overlay's stable bottom edge.
         if (overlay && overlayHeight !== null) {
           overlay.style.height = `${String(overlayHeight)}px`;
           overlay.style.display = "flex";
@@ -694,7 +691,6 @@ function useComposerRestingTransition(
           modelStrip.style.visibility = "visible";
           modelStrip.style.minHeight = "0";
           // Padding must not impose a 24px minimum on the 16px overlap endpoint.
-          // Keep the controls bottom-aligned while the strip retracts behind the input.
           modelStrip.style.paddingTop = "0";
           modelStrip.style.alignItems = "flex-end";
           modelStrip.style.pointerEvents = "none";
@@ -801,14 +797,11 @@ function useComposerRestingTransition(
             );
           }
 
-          // The footer controls teleport between the composer footer and the
-          // context strip below it in a single commit. Fading the arriving
-          // cluster in along its direction of travel reads as one continuous
-          // move instead of a pop. Collapsing controls land in empty strip
-          // space and can appear immediately, but expanding controls return
-          // to the bottom row the prompt still occupies while the surface is
-          // short, so they stay hidden through the first half of the tween
-          // and fade in once the geometry has mostly settled.
+          // Collapsing controls land in empty strip space and can appear
+          // immediately, but expanding controls return to the bottom row the
+          // prompt still occupies while the surface is short, so they stay
+          // hidden through the first half of the tween and fade in once the
+          // geometry has mostly settled.
           const arrivingControls = nextIsCollapsed
             ? restingControlsRef.current
             : element.querySelector<HTMLElement>('[data-chat-composer-controls="left"]');
@@ -1464,10 +1457,6 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   );
 });
 
-// --------------------------------------------------------------------------
-// Handle exposed to ChatView
-// --------------------------------------------------------------------------
-
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
@@ -1491,7 +1480,6 @@ export interface ChatComposerHandle {
   toggleModelPicker: () => void;
   openControl: (command: KeybindingCommand) => void;
   isModelPickerOpen: () => boolean;
-  /** True when a collapsed caret sits before everything in the draft, including when it is empty. */
   isCaretAtStart: () => boolean;
   compactContext: () => void;
   readSnapshot: () => {
@@ -1506,9 +1494,7 @@ export interface ChatComposerHandle {
     prompt?: string;
     detectTrigger?: boolean;
   }) => void;
-  /** Insert a terminal context from the terminal drawer. */
   addTerminalContext: (selection: TerminalContextSelection) => void;
-  /** Get the current prompt/effort/model state for use in send. */
   getSendContext: () => {
     answeringPendingUserInput: boolean;
     prompt: string;
@@ -1529,14 +1515,9 @@ export interface ChatComposerHandle {
     interactionMode: ProviderInteractionMode;
     interactionModeEnabled: boolean;
   };
-  /** Validate the fully composed text immediately before a provider turn starts. */
   validateProviderInput: (providerInput: string) => boolean;
   setMultipleModelSelections: (selections: ReadonlyArray<ModelSelection>) => void;
 }
-
-// --------------------------------------------------------------------------
-// Props
-// --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -1555,7 +1536,6 @@ export interface ChatComposerProps {
     React.SetStateAction<ReadonlyArray<ModelSelection> | null>
   >;
 
-  // Thread context
   activeThreadId: ThreadId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
@@ -1568,9 +1548,7 @@ export interface ChatComposerProps {
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
 
-  // Session phase
   phase: SessionPhase;
-  /** Stop is offered: a run is preparing, starting, or running. */
   canInterrupt: boolean;
   isConnecting: boolean;
   isSendBusy: boolean;
@@ -1581,9 +1559,7 @@ export interface ChatComposerProps {
   bannerItems: readonly ComposerBannerStackItem[];
   /** Tokens a stale session would re-read; null when the thread is not offered compaction. */
   resumeCompactionTokens: number | null;
-  /** The Compact chip is off, so the next send keeps full history. */
   keepFullHistory: boolean;
-  /** Flips the Compact chip for the active thread. */
   onToggleKeepFullHistory: () => void;
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
@@ -1592,7 +1568,6 @@ export interface ChatComposerProps {
     readonly connection: EnvironmentConnectionPresentation;
   } | null;
 
-  // Pending approvals / inputs
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   pendingUserInputs: PendingUserInput[];
@@ -1614,18 +1589,15 @@ export interface ChatComposerProps {
   activePendingQuestionIndex: number;
   respondingRequestIds: RuntimeRequestId[];
 
-  // Plan
   showPlanFollowUpPrompt: boolean;
   activeProposedPlan: LatestProposedPlanState | null;
   activeTasksProgress: ComposerTasksProgress | null;
   activeTaskSteps: readonly ComposerTaskStep[] | null;
   threadSyncPhase: ThreadSyncPhase | null;
 
-  // Mode
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
 
-  // Provider / model
   lockedProvider: ProviderDriverKind | null;
   providerStatuses: ServerProvider[];
   /** False until the environment's server config has arrived at least once. */
@@ -1633,16 +1605,13 @@ export interface ChatComposerProps {
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
-  /** The active project, so the picker can fold in its provider instance overrides. */
   activeProjectId: ProjectId | null;
 
-  // Context window
   activeContextWindow: ContextWindowSnapshot | null;
   compactThreadUnavailable: boolean;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
 
-  // Misc
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
@@ -1657,16 +1626,14 @@ export interface ChatComposerProps {
   onRestingControlsVisibilityChange: (visible: boolean) => void;
   getTimelineScrollableNode: () => HTMLElement | null;
   isTimelineAtLogicalEnd: () => boolean;
-  /** Whether the timeline has more content than fits above the composer. */
   timelineOverflows: boolean;
   onComposerOverlayHeightChange: (height: number) => void;
   /**
-   * Whether the desktop resting layout is active. Reported from a layout
-   * effect, so it is current before the chat view measures the overlay.
+   * Reported from a layout effect, so it is current before the chat view
+   * measures the overlay.
    */
   onRestingChange: (resting: boolean) => void;
 
-  // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
   composerImagesRef: React.RefObject<ComposerImageAttachment[]>;
   composerFilesRef: React.RefObject<ComposerFileAttachment[]>;
@@ -1676,18 +1643,13 @@ export interface ChatComposerProps {
   onPageScrollKeyUp: (key: string) => void;
   onPageScrollRelease: () => void;
 
-  // Queued runs strip rendered above the composer (v2 queue/steer).
   queuedRunsControl?: ReactNode;
-  // Queued-message edit mode: attachments already stored on the message being
-  // edited. Rendered in the attachment strip with a remove control; removal is
-  // client state in ChatView until the edit is saved.
   editingQueuedAttachments: ReadonlyArray<{
     readonly attachment: ContractChatAttachment;
     readonly url: string | null;
   }> | null;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
 
-  // Callbacks
   onCompactContext: () => void;
   onSend: (
     e?: { preventDefault: () => void },
@@ -1730,10 +1692,6 @@ export interface ChatComposerProps {
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
 }
-
-// --------------------------------------------------------------------------
-// Component
-// --------------------------------------------------------------------------
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
@@ -1852,7 +1810,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ...pendingApprovals.map((request) => request.requestId),
     ...incomingPendingUserInputs.map((request) => request.requestId),
   ]);
-  // Hold composer takeover while the user finishes their thread draft.
   const activePendingApproval =
     incomingPendingApproval && !heldRequestIds.has(incomingPendingApproval.requestId)
       ? incomingPendingApproval
@@ -1864,19 +1821,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const activePendingProgress = holdingUserInput ? null : incomingPendingProgress;
   const activePendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
-  // Opening a running thread resyncs for a few frames. Show the sync row, and
-  // hide the tasks row for it, only when the sync lasts. Logic that depends on
-  // the real phase keeps reading `props.threadSyncPhase`.
   const shownSyncPhase = useDelayedStatus(composerDraftTargetKey, props.threadSyncPhase);
   const activeTasksProgress = shownSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = shownSyncPhase === null ? props.activeTaskSteps : null;
   const isEditingQueuedMessage = editingQueuedAttachments !== null;
-  // ------------------------------------------------------------------
-  // Store subscriptions (prompt / images / terminal contexts)
-  // ------------------------------------------------------------------
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
-  // Live target key, for async flows that must notice a thread switch that
-  // happened while they awaited.
   const composerDraftTargetKeyRef = useRef("");
   composerDraftTargetKeyRef.current = composerDraftTargetKey;
   const questionAttachmentTarget =
@@ -2103,7 +2052,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : composerFiles.filter((file) => file.sizeBytes <= maxFileAttachmentBytes);
     const uploadableAttachments = [...composerImages, ...uploadableFiles];
     for (const attachment of uploadableAttachments) {
-      // A needs-reattach file has no bytes to upload and no upload to verify.
       if (attachment.type === "file" && composerFileNeedsReattach(attachment)) {
         continue;
       }
@@ -2155,12 +2103,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     uploadsByImageId,
   ]);
 
-  // ------------------------------------------------------------------
-  // Model state
-  // ------------------------------------------------------------------
-  // Instance-aware projection of the wire provider list. One entry per
-  // configured instance (default built-in + any custom `providerInstances.*`),
-  // sorted default-first per driver kind for a stable picker order.
   const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
     () =>
       sortProviderInstanceEntries(
@@ -2205,10 +2147,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
   const noProviderAvailable =
     selectedProviderEntry === undefined && multipleModelSelections === null;
-  // Before the catalog arrives, every thread resolves to "no provider". Send
-  // stays blocked either way; only the chrome waits, keeping the picker with
-  // the thread's own selection instead of swapping in the setup button and
-  // back once the catalog lands.
   const providerCatalogPending = noProviderAvailable && !providerCatalogKnown;
   const showProviderUnavailable = noProviderAvailable && !providerCatalogPending;
   const providerSetupInstanceId = noProviderAvailable
@@ -2219,9 +2157,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : undefined;
   const resolvedCompactDisabledReason =
     compactDisabledReason ?? (noProviderAvailable ? "Compacting is unavailable right now" : null);
-  // The driver kind follows the instance that will actually run the turn,
-  // which can differ from the persisted selection when that selection is
-  // disabled.
   const selectedProvider: ProviderDriverKind =
     selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const supportedRuntimeModes = selectedProviderEntry?.snapshot.supportedRuntimeModes;
@@ -2229,9 +2164,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     supportedRuntimeModes && supportedRuntimeModes.length > 0
       ? runtimeModeOptions.filter((option) => supportedRuntimeModes.includes(option.mode))
       : runtimeModeOptions;
-  // Older threads can contain a mode their current provider no longer offers.
-  // Display the provider's first supported mode, which is also its safe legacy
-  // fallback, without mutating persisted state until the user makes a choice.
   const compatibleRuntimeMode = compatibleRuntimeModeOptions.some(
     (option) => option.mode === runtimeMode,
   )
@@ -2264,7 +2196,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedProviderEntry],
   );
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
-  // Memoized so the composer menu memo below can cache between renders.
   const selectedProviderSkills = useMemo(
     () =>
       selectedProviderStatus ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd) : [],
@@ -2412,11 +2343,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
   );
   const selectedModelForPicker = selectedModel;
-  // Instance-keyed option list so the picker can show each configured
-  // instance (built-in + custom) as a first-class sidebar entry. The
-  // options are server-reported models plus that exact instance's
-  // configured custom models. A missing OpenCode selection is included as
-  // an unavailable row until the catalog reports it again.
   const modelOptionsByInstance = useMemo<
     ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>
   >(() => {
@@ -2440,10 +2366,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
   }, [modelOptionsByInstance, selectedInstanceId, selectedModelForPicker, selectedProvider]);
 
-  // ------------------------------------------------------------------
-  // Context window
-  // ------------------------------------------------------------------
-
   const activeThreadModelDisplayName = useMemo(
     () => resolveContextWindowModelDisplayName(activeThreadModelSelection, modelOptionsByInstance),
     [activeThreadModelSelection, modelOptionsByInstance],
@@ -2457,9 +2379,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : null,
   });
 
-  // ------------------------------------------------------------------
-  // Composer-local state
-  // ------------------------------------------------------------------
   const [composerCursor, setComposerCursor] = useState(() => {
     const value = isLiteralPendingAnswer ? (activePendingProgress?.customAnswer ?? prompt) : prompt;
     return collapseExpandedComposerCursor(value, value.length, isLiteralPendingAnswer);
@@ -2476,7 +2395,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const composerSuggestionId = useId();
   const composerSuggestionListId = `${composerSuggestionId}-${encodeURIComponent(draftId ?? activeThreadId ?? "new")}-suggestions`;
-  // Active ArrowUp recall. Cleared on edit and on thread switch.
   const promptHistoryPositionRef = useRef<ComposerPromptHistoryPosition | null>(null);
   const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
     null,
@@ -2509,9 +2427,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isComposerCollapsedMobile =
     isMobileViewport && !forceExpandedOnMobile && !isComposerFocused && !hasMultilinePrompt;
 
-  // ------------------------------------------------------------------
-  // Refs
-  // ------------------------------------------------------------------
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const pastedTextFileNamesRef = useRef<{ targetKey: string; names: Set<string> }>({
@@ -2536,11 +2451,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerScrollGestureRef = useRef(createComposerScrollGestureState());
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
-  /**
-   * Snapshots currently being encoded, keyed by target+prompt+image ids.
-   * Keyed rather than boolean so a genuinely different prompt (or a different
-   * thread) can still be stashed while an earlier encode is running.
-   */
   const stashInFlightRef = useRef<Set<string>>(new Set());
   /**
    * Count of pasted images still being compressed, per thread. Reserved
@@ -2596,9 +2506,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, []);
 
-  // ------------------------------------------------------------------
-  // Derived: composer send state
-  // ------------------------------------------------------------------
   const composerSendState = useMemo(
     () =>
       deriveComposerSendState({
@@ -2616,9 +2523,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       prompt,
     ],
   );
-  // ------------------------------------------------------------------
-  // Derived: composer trigger / menu
-  // ------------------------------------------------------------------
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const pullRequestTriggerQuery =
@@ -2633,7 +2537,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
-  // Thread shells only feed `@` thread matches, so skip shell updates otherwise.
   const environmentThreadShells = useThreadShells(isPathTrigger);
   const workspaceEntries = useComposerPathSearch({
     environmentId,
@@ -2724,8 +2627,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      // Threads only surface for a typed query so `@` alone stays a file picker. A title match
-      // is far more specific than a fuzzy path hit, so the few threads lead the list.
       return [
         ...matchComposerThreadItems({
           shells: environmentThreadShells,
@@ -3230,8 +3131,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   /**
    * Bytes for a pasted image or file come back through the source environment's asset URL
    * (the client is the only party that can reach both) and re-enter this draft as a normal
-   * attachment under a fresh id. The pasted chip is rewritten to that id and reads as
-   * unresolved until the bytes land; a failed transfer says so and leaves the chip to remove.
+   * attachment under a fresh id.
    */
   const runAttachmentImport = async (
     record: Extract<ComposerContextRecord, { kind: "image" | "file" }>,
@@ -3458,9 +3358,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     importContextRecords(fragment.records, fragment.source.environmentId);
   const importContextFragmentStable = useStableCallback(importContextFragment);
 
-  // ------------------------------------------------------------------
-  // Sync refs back to parent
-  // ------------------------------------------------------------------
   useEffect(() => {
     if (isLiteralPendingAnswer) return;
     promptRef.current = prompt;
@@ -3499,9 +3396,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContextsRef.current = composerTerminalContexts;
   }, [composerTerminalContexts, composerTerminalContextsRef]);
 
-  // ------------------------------------------------------------------
-  // Composer menu highlight sync
-  // ------------------------------------------------------------------
   useEffect(() => {
     if (!composerMenuOpen) {
       setComposerHighlightedItemId(null);
@@ -3580,9 +3474,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resetComposerTrigger,
   ]);
 
-  // ------------------------------------------------------------------
-  // Reset compositor state on thread/draft change
-  // ------------------------------------------------------------------
   useEffect(() => {
     setComposerHighlightedItemId(null);
     setComposerHighlightedSearchKey(null);
@@ -3602,9 +3493,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsComposerScrollCollapsed,
   ]);
 
-  // ------------------------------------------------------------------
-  // Footer compact layout observation
-  // ------------------------------------------------------------------
   useLayoutEffect(() => {
     const composerForm = composerFormRef.current;
     if (!composerForm) return;
@@ -3647,9 +3535,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerCollapsedMobile,
   ]);
 
-  // ------------------------------------------------------------------
-  // Image persist effect
-  // ------------------------------------------------------------------
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -4317,9 +4202,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
 
-  // ------------------------------------------------------------------
-  // Prompt history (ArrowUp / ArrowDown)
-  // ------------------------------------------------------------------
   // Entries are built on the keypress, not per render: the timeline changes
   // on every streamed delta and ArrowUp is rare.
   const promptHistoryMessagesRef = useRef(promptHistoryMessages);
@@ -4383,9 +4265,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return true;
   };
 
-  // ------------------------------------------------------------------
-  // Callbacks: command key
-  // ------------------------------------------------------------------
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem = false) => {
     const submissionIntent = composerSubmissionIntentForKey({
       event,
@@ -4473,9 +4352,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return false;
   };
 
-  // ------------------------------------------------------------------
-  // Prompt stash (⌘S)
-  // ------------------------------------------------------------------
   // Files remain tied to the environment that owns their uploaded bytes.
   const stashQueue = usePromptStashStore((state) => state.entries);
   const stashEntryToQueue = usePromptStashStore((state) => state.stashEntry);
@@ -4892,11 +4768,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const stashTarget = composerDraftTarget;
     const entryId = randomUUID();
     try {
-      // Persist the text-only entry *first*, then clear. Ordering matters in
-      // both directions: writing before clearing means a crash or closed tab
-      // mid-encode still leaves the prompt recoverable, while clearing before
-      // the async image work means edits typed during encoding are not wiped.
-      // Images are appended to the stored entry as they finish encoding.
+      // Ordering matters in both directions: writing before clearing means a
+      // crash or closed tab mid-encode still leaves the prompt recoverable,
+      // while clearing before the async image work means edits typed during
+      // encoding are not wiped.
       const { evicted, written, durable } = stashEntryToQueue({
         id: entryId,
         createdAt: new Date().toISOString(),
@@ -4909,7 +4784,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ...(stashedRecords.length > 0 ? { records: stashedRecords } : {}),
       });
 
-      // Clearing the composer is only safe once the write actually landed.
       // If it was rejected (quota) the store has already rolled itself back,
       // so leave the composer untouched rather than making it the second
       // casualty of a reload.
@@ -4936,7 +4810,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
 
-      // Everything the entry carries leaves the draft with it.
       promptRef.current = "";
       clearComposerDraftPromptAndImages(stashTarget);
       clearComposerDraftTerminalContexts(stashTarget);
@@ -4973,16 +4846,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
       // Images are re-encoded for the stash rather than stored verbatim: the
       // composer allows up to 10MB per image, but localStorage gives the whole
-      // origin ~5MB. Only the stashed copy shrinks; the live attachment (and
-      // anything sent without stashing) keeps the original file.
+      // origin ~5MB.
       const candidateAttachments: PersistedComposerImageAttachment[] = [];
       const oversizedImageNames: string[] = [];
       const unreadableImageNames: string[] = [];
       for (const image of images) {
         const result = await compressImageForStash(image.file);
         if (!result.ok) {
-          // "too large" and "could not be read" are distinct outcomes; the
-          // menu and restore toast report them separately.
           (result.reason === "too-large" ? oversizedImageNames : unreadableImageNames).push(
             image.name,
           );
@@ -5023,9 +4893,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           });
         }
       } else if (kept.length > 0) {
-        // The entry was restored or deleted before its images finished
-        // encoding, so they have nowhere to land. Say so rather than letting
-        // them evaporate.
         toastManager.add({
           type: "warning",
           title: "Stashed images did not attach",
@@ -5034,8 +4901,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
     } finally {
-      // Must clear on every path: a throw that left this set would wedge this
-      // snapshot's ⌘S until the composer remounts.
       stashInFlightRef.current.delete(snapshotKey);
     }
   };
@@ -5078,13 +4943,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       supportsAttachmentUploads &&
       upload?.status === "failed" &&
       upload.environmentId === environmentId;
-    // A failed upload remains actionable in the expanded attachment tray, but
-    // its collapsed thumbnail is enough to signal that the draft has images.
     return nonPersistedComposerImageIdSet.has(image.id) && !failedInCurrentEnvironment;
   });
-  // Banners and the tasks badge dock above the surface rather than inside
-  // it, so they do not hold the composer open; only surface-internal chrome
-  // does.
   const composerHasExpandedChrome =
     showComposerTopDrawer ||
     isTasksDrawerOpen ||
@@ -5109,7 +4969,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const expandedComposerImages = isComposerResting
     ? standaloneComposerImages.filter((image) => pendingSnapShotIdSet.has(image.id))
     : standaloneComposerImages;
-  // Keep collapsed controls inside the input when workspace context is hidden.
   const composerControlsCollapsed = isComposerResting || isComposerCollapsedMobile;
   const showInlineRestingControls = composerControlsCollapsed && restingControlsHost === null;
   const composerControlsVisibleInStrip =
@@ -5584,9 +5443,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsTasksDrawerOpen(false);
   }, [activeThreadId]);
 
-  // Close the stash menu whenever the trigger-driven command menu opens so
-  // the two popovers never stack in the same layer, and when the user
-  // resumes typing (the menu is a transient picker, not a panel).
   useEffect(() => {
     if (composerMenuOpen) {
       setIsStashMenuOpen(false);
@@ -5636,9 +5492,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     terminalOpen,
   ]);
 
-  // ------------------------------------------------------------------
-  // Callbacks: attachments
-  // ------------------------------------------------------------------
   /** Resolves true when at least one chip was inserted for the accepted attachments. */
   const addComposerAttachments = async (
     files: File[],
@@ -5665,12 +5518,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // large image is being compressed, and the attachments and errors belong
     // to the thread the paste happened in.
     const threadId = activeThreadId;
-    // Images landing with no prose live on the shelf with no chip. Read before
-    // the awaits below: compression is async and the prompt may change while it
-    // runs. An explicit selection replace and states where the editor refuses
-    // input (connecting, approval, pending questions, project selection) still
-    // get chips so the image is never invisible, unless paste-as-text explicitly
-    // requests no inline image chip.
     const imageAttachmentsGetChips =
       !options?.skipImageInlineChip &&
       (options?.selection !== undefined ||
@@ -5795,8 +5642,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const nextImages: ComposerImageAttachment[] = [];
       let compressionError: string | null = null;
       for (const file of acceptedImages) {
-        // Images over the wire cap are downscaled to fit rather than
-        // refused; files already within it pass through byte-for-byte.
         const compressed = await prepareImageForAttachment(
           file,
           PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -5860,12 +5705,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return insertedAny;
   };
 
-  /**
-   * Chips for freshly attached files land at the caret; when the editor cannot take
-   * input (approval, pending questions) they are appended so the file is never invisible.
-   * Images skip this when they land with no prose and the editor takes input:
-   * the shelf thumbnail is enough.
-   */
   const insertAttachmentReferences = (
     references: ReadonlyArray<ComposerContextReference>,
     selection?: { start: number; end: number },
@@ -5908,9 +5747,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
   };
 
-  // ------------------------------------------------------------------
-  // Callbacks: paste / drag
-  // ------------------------------------------------------------------
   const foldPastedText = (
     plainText: string,
     bypassAutoAttachment: boolean,
@@ -6095,9 +5931,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return setContextInsertionHandler(composerDraftTarget, insertContextReferencesAtCaretStable);
   }, [composerDraftTarget, insertContextReferencesAtCaretStable, setContextInsertionHandler]);
 
-  // File-tree drags land as mentions. Handled in the capture phase so the
-  // editor never sees the drop; the load-bearing rules (native stop, "move"
-  // effect, no eager focus) live in makeComposerMentionDragHandlers.
   const composerMentionDragHandlers = makeComposerMentionDragHandlers({
     insertMentionAtEnd: (text) => insertComposerTextAtEnd(text, { ensureLeadingBoundary: true }),
     setDragActive: setIsDragOverComposer,
@@ -6581,8 +6414,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
-  // Render
-  // ------------------------------------------------------------------
   return (
     <form
       ref={composerFormRef}
@@ -6920,7 +6751,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onClick={(event) => {
                     event.stopPropagation();
                     if (showResumeAction) onResume();
-                    // Compacting first only sends from the expanded composer, where the chip shows it.
                     else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
                       expandMobileComposer();
                     else submitComposer();
@@ -7167,7 +6997,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 <TooltipPopup side="top">{upload.reason}</TooltipPopup>
                               </Tooltip>
                             )}
-                            {/* Snap-shot frames reveal their remove button on hover or focus. */}
                             <span
                               className={cn(
                                 "absolute right-1 top-1 flex",
@@ -7519,7 +7348,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
-            {/* Bottom toolbar */}
             {isComposerCollapsedMobile || isComposerApprovalState ? null : (
               <div
                 data-chat-composer-footer="true"
@@ -7547,7 +7375,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   {composerControlsCollapsed ? null : composerControls}
                 </div>
 
-                {/* Right side: send / stop button */}
                 <div
                   ref={setRestingActionsElement}
                   data-chat-composer-actions="right"

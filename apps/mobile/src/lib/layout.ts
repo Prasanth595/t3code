@@ -7,8 +7,6 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * Use available space, not device or orientation labels, to choose the shell.
- *
  * The height floor deliberately keeps every current iPhone in the compact shell
  * when it rotates to landscape, while still allowing iPad and foldable-sized
  * windows to adopt the persistent sidebar as they resize.
@@ -240,10 +238,6 @@ export function deriveFileInspectorPaneLayout(input: {
   };
 }
 
-/**
- * Keep an auxiliary pane within native-feeling bounds without squeezing its
- * neighboring content below a usable reading/editor width.
- */
 export function constrainAuxiliaryPaneWidth(input: {
   readonly preferredWidth: number;
   readonly availableWidth: number;

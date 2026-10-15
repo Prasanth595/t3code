@@ -30,7 +30,6 @@ export function environmentAxisValue(
   return search.machine ?? resolvedEnvironmentId ?? ALL_ENVIRONMENTS_VALUE;
 }
 
-/** The project axis: `all` or a project key. */
 export function projectAxisValue(search: SettingsScopeSearch): string {
   return search.project ?? ALL_PROJECTS_VALUE;
 }
@@ -46,7 +45,6 @@ export function selectEnvironmentAxis(
   return next;
 }
 
-/** Choosing a project keeps the environment axis. */
 export function selectProjectAxis(search: SettingsScopeSearch, value: string): SettingsScopeSearch {
   const next: SettingsScopeSearch = {};
   if (value !== ALL_PROJECTS_VALUE) next.project = value;

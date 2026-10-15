@@ -2,10 +2,9 @@ import { createDelayedStatus, type ShownStatus } from "@t3tools/client-runtime/d
 import { useEffect, useState } from "react";
 
 /**
- * Returns `value` only once it has lasted past the show delay, then holds it
- * for a minimum time, so a short status never flashes. `key` is what the
- * status belongs to (for example a thread). A new key drops it at once.
- * Web has the same hook.
+ * Returns `value` only once it has lasted past the show delay, then holds it for a minimum time,
+ * so a short status never flashes. `key` is what the status belongs to (for example a thread). A
+ * new key drops it at once.
  */
 export function useDelayedStatus<A>(key: string, value: A | null): A | null {
   const [shown, setShown] = useState<ShownStatus<A> | null>(null);

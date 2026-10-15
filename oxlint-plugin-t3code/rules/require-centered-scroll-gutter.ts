@@ -24,10 +24,6 @@ interface ClassNames {
   readonly always: Set<string>;
 }
 
-/**
- * The class names a className value can produce: string literals, template text, and the
- * branches and arguments of conditionals and cn()-style calls. Conditions themselves are skipped.
- */
 function collectClassNames(node: unknown, classNames: ClassNames, always: boolean) {
   const expression = unwrapExpression(node);
   if (Option.isNone(expression)) return;
@@ -93,9 +89,8 @@ const hasClass = (classNames: ReadonlySet<string>, pattern: RegExp) =>
   [...classNames].some((className) => pattern.test(className));
 
 /**
- * Reports a native vertical scroller that centers its content without reserving the scrollbar
- * lane. A classic scrollbar narrows the scroller when it appears, so centered content jumps by
- * half its width whenever the content grows past the fold.
+ * A classic scrollbar narrows the scroller when it appears, so centered content jumps by half its
+ * width whenever the content grows past the fold.
  */
 export default defineRule({
   meta: {

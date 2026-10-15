@@ -14,20 +14,18 @@ export function toFileViewedStates(
 }
 
 /**
- * Whether a file counts as seen. `dismissed` is the host saying it has been pushed to since the
- * reader cleared it, which reads as unseen: the point of the tick is that the code behind it has
- * been looked at, and it is not the same code any more.
+ * `dismissed` is the host saying it has been pushed to since the reader cleared it, which reads
+ * as unseen: the point of the tick is that the code behind it has been looked at, and it is not
+ * the same code any more.
  */
 function isViewedState(state: PullRequestFileViewedState | undefined): boolean {
   return state === "viewed";
 }
 
-/** Whether the file was cleared and has since moved, which the header says out loud. */
 export function isStaleViewedState(state: PullRequestFileViewedState | undefined): boolean {
   return state === "dismissed";
 }
 
-/** The press the reader made if it has not landed, and the host's answer otherwise. */
 export function isFileViewed(
   path: string,
   states: FileViewedStates | null,
@@ -49,9 +47,9 @@ export function countViewedFiles(
 }
 
 /**
- * The overlay with everything the host has caught up on removed. A press is held until a read that
- * could have seen it comes back, rather than cleared when the write succeeds: that read is a
- * separate round trip, and dropping the press in between flashes the checkbox back.
+ * A press is held until a read that could have seen it comes back, rather than cleared when the
+ * write succeeds: that read is a separate round trip, and dropping the press in between flashes
+ * the checkbox back.
  *
  * `pending` are the paths whose press the host cannot have heard yet, which an answer already on
  * its way must not overrule. `answered` are the paths a read has landed for since their write was
@@ -74,10 +72,10 @@ export function settleFileViewedOverlay(
 }
 
 /**
- * The overlay with a failed request's presses taken back. `owned` are the paths that request still
- * answers for, which keeps a failure from reaching past its own presses: a path pressed again
- * since belongs to a later request or to the next flush, and putting that box back to the host's
- * answer would take a press out from under the reader's hand.
+ * `owned` are the paths that request still answers for, which keeps a failure from reaching past
+ * its own presses: a path pressed again since belongs to a later request or to the next flush,
+ * and putting that box back to the host's answer would take a press out from under the reader's
+ * hand.
  */
 export function revertFileViewedOverlay(
   overlay: FileViewedOverlay,
@@ -92,7 +90,6 @@ export function revertFileViewedOverlay(
   return next.size === overlay.size ? overlay : next;
 }
 
-/** The presses in an overlay as the batch the host is told about. */
 export function toFileViewedBatch(
   overlay: FileViewedOverlay,
 ): ReadonlyArray<{ readonly path: string; readonly viewed: boolean }> {

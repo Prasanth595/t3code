@@ -84,7 +84,6 @@ const IDLE_SERVER_UPDATE_STATE: ServerUpdateState = { status: "idle" };
 const EMPTY_SERVER_UPDATE_STATE_ATOM = Atom.make<ServerUpdateState>(IDLE_SERVER_UPDATE_STATE).pipe(
   Atom.withLabel("environment-data:server:update-state:empty"),
 );
-/** Shared with the outdated-host update, which reports through the same state. */
 export const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make<ServerUpdateState>(IDLE_SERVER_UPDATE_STATE).pipe(
     Atom.withLabel(`environment-data:server:update-state:${environmentId}`),
@@ -176,8 +175,6 @@ export function validateServerUpdateReadyEvent(
 }
 
 /**
- * Keeps reconnect attempts ~1s apart for the whole update restart.
- *
  * A restart takes the server down for ~15 seconds, but the supervisor's normal
  * backoff assumes an unexpected failure and doubles its delay after each failed
  * attempt, so a 15-second restart can be observed as a ~30-second "Resuming".
@@ -392,8 +389,6 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ),
     );
     const state = yield* SubscriptionRef.make<Option.Option<ServerConfigProjection>>(
-      // Stripped on load as well as on save: a cache written by an earlier
-      // build can still carry published themes.
       Option.map(cachedConfig, (cached) => ({
         config: withoutEnvironmentThemes(cached),
         latestEvent: cachedConfigSnapshotEvent(withoutEnvironmentThemes(cached)),
@@ -634,7 +629,6 @@ export function createServerEnvironmentAtoms<R, E>(
      * receives the payload.
      */
     readonly environmentThemes?: boolean;
-    /** Whether this surface renders quota from configured usage-limit sources. */
     readonly usageLimitSources?: boolean;
     readonly usageLimitsCommand?: boolean;
   },
@@ -839,9 +833,6 @@ export function createServerEnvironmentAtoms<R, E>(
           }),
         );
 
-        // The update restart is intentional and the server stays unreachable
-        // for the whole restart, so hold the retry cadence flat instead of
-        // letting the supervisor climb its backoff ladder.
         yield* nudgeReconnectDuringUpdateRestart({
           stateChanges: environmentRegistry.stateChanges(target.environmentId),
           retryNow: environmentRegistry.retryNow(target.environmentId),
@@ -1106,7 +1097,6 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:webhook-delivery",
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
     }),
-    /** Live scheduled-task list: snapshot on subscribe, fresh list after every server-side change. */
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,

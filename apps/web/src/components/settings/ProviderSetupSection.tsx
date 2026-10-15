@@ -34,7 +34,6 @@ interface ProviderSetupSectionProps {
   readonly onEnable: () => void;
 }
 
-/** Read the configured method from the instance config. Unknown values fall back to personal. */
 export function readAntigravityAuthMethod(config: unknown): AntigravityAuthMethod {
   const value =
     config !== null && typeof config === "object" && "authMethod" in config

@@ -1,16 +1,9 @@
 /**
- * Device settings and one-shot actions, run by the server against the host's
- * toolchain instead of through serve-sim's shell-exec channel.
- *
- * serve-sim's preview drives its "Simulator" panel by sending shell commands
- * over a token-gated socket. Proxying that would hand any environment
- * session arbitrary command execution on the host, so T3 runs the same
- * underlying commands itself, typed per action: `xcrun simctl ui` and
- * `simctl privacy` for iOS, the `serve-sim-ax-settings` helper that serve-sim
- * bundles for the accessibility toggles, and `adb shell` for Android.
- *
- * Each platform advertises which actions it supports; the panel hides the
- * rest rather than showing controls that cannot work.
+ * serve-sim's preview drives its "Simulator" panel by sending shell commands over a token-gated
+ * socket. Proxying that would hand any environment session arbitrary command execution on the
+ * host, so T3 runs the same underlying commands itself, typed per action: `xcrun simctl ui` and
+ * `simctl privacy` for iOS, the `serve-sim-ax-settings` helper that serve-sim bundles for the
+ * accessibility toggles, and `adb shell` for Android.
  */
 import {
   type DeviceActionInput,
@@ -65,7 +58,6 @@ const ANDROID_ACTIONS: ReadonlySet<DeviceActionType> = new Set([
   "terminateApp",
 ]);
 
-/** Toggle settings each platform can actually flip. */
 const IOS_TOGGLES = new Set([
   "reduceMotion",
   "increaseContrast",
@@ -96,8 +88,7 @@ const ok = (operation: string) => (result: { code: number; stderr: string; stdou
         }),
       );
 
-// iOS text-size categories in ascending order; the four shared steps index
-// into it. `default` is what a fresh simulator reports ("large").
+// `default` is what a fresh simulator reports ("large").
 const IOS_TEXT_SIZES: Record<DeviceTextSize, string> = {
   small: "small",
   default: "large",
@@ -138,7 +129,6 @@ const IOS_TOGGLE_OPTIONS: Record<string, string> = {
   voiceOver: "voiceover",
 };
 
-// serve-sim permission names -> the TCC service or simctl privacy service.
 const IOS_TCC_SERVICES: Record<string, string> = {
   camera: "camera",
   microphone: "microphone",
@@ -383,10 +373,9 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
         reason: "unsupported",
       });
     case "setOrientation": {
-      // `user-rotation lock` only rotates window content on recent images;
-      // the display the encoder captures stays put. Tilting the emulator's
-      // accelerometer rotates it for real, so that is used whenever the
-      // target is an emulator. Physical devices get the lock.
+      // `user-rotation lock` only rotates window content on recent images; the display the
+      // encoder captures stays put. Tilting the emulator's accelerometer rotates it for real, so
+      // that is used whenever the target is an emulator.
       if (serial.startsWith("emulator-")) {
         yield* shell(["settings", "put", "system", "accelerometer_rotation", "1"], "orientation");
         yield* shell(["cmd", "window", "user-rotation", "free"], "orientation");
@@ -459,7 +448,6 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
   }
 });
 
-/** Read the current settings and foreground app. Errors degrade to unknowns. */
 export const readDeviceDetail = Effect.fn("DeviceActions.readDetail")(function* (
   ready: DeviceHostReady,
   platform: DevicePlatform,

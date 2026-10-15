@@ -293,7 +293,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           const threads = snapshot.threads.map((thread) => {
             if (!arrivedRows.has(thread) || !arrivedIds.has(thread.id)) return thread;
             const links = linksByThreadId.get(thread.id);
-            // A reused row may already hold these links from an earlier fill.
             if (sameThreadPullRequests(thread.pullRequests, links)) return thread;
             changed = true;
             if (links === undefined) {

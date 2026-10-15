@@ -133,7 +133,6 @@ function EnvironmentNotifications({
       if (rawThread.lineage.relationshipToParent === "subagent") continue;
       const prior = previous.current.get(rawThread.id);
       const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
-      // The same object cannot produce a new notification.
       if (prior?.raw === rawThread && prior.subagentRequest === subagentRequest) {
         next.set(rawThread.id, prior);
         continue;

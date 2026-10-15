@@ -8,11 +8,6 @@ type UsageProviderPresentation = {
   readonly driverKind: ProviderDriverKind;
 };
 
-/**
- * Exhaustive presentation for providers supported by the usage contract.
- * Declaration order is reused by every chart and table, so adding a provider
- * only requires its contract support and one entry here.
- */
 export const PROVIDER_PRESENTATION = {
   codex: {
     label: "Codex",
@@ -26,7 +21,6 @@ export const PROVIDER_PRESENTATION = {
   },
   grok: {
     label: "Grok Build",
-    // Contrast-aware neutral between the Codex series and muted chart chrome.
     color: "color-mix(in oklab, var(--contrast-foreground) 72%, var(--background))",
     driverKind: ProviderDriverKind.make("grok"),
   },

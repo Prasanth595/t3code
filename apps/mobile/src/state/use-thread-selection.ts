@@ -144,8 +144,6 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const creationOutcome = useAtomValue(pendingThreadCreationOutcomesAtom);
-  // A creation the outbox still holds or just delivered: the thread screen
-  // opened before the server made the thread, so present a stand-in shell.
   const pendingCreation = useMemo<PendingThreadCreation | null>(() => {
     if (selectedThreadKey === null) {
       return null;

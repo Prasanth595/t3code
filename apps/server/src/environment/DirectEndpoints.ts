@@ -1,12 +1,3 @@
-/**
- * DirectEndpoints - the LAN and tailnet addresses this server listens on now.
- *
- * Clients connected one way (often T3 Connect) save these as extra routes so
- * they can move to a faster path when one is reachable, and replace a saved
- * LAN address when DHCP or a new Wi-Fi network changes it. Only addresses the
- * server is actually bound to are listed: a loopback-only server lists none,
- * because its loopback address means a different machine to every client.
- */
 import type { ServerDirectEndpoint } from "@t3tools/contracts";
 import {
   buildTailscaleHttpsBaseUrl,
@@ -80,9 +71,8 @@ const isTailscaleInterface = (
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
 /**
- * Plain HTTP endpoints for the private addresses a server bound to `host`
- * accepts. IPv4 only: link-local and temporary IPv6 addresses change too
- * often to be worth saving.
+ * IPv4 only: link-local and temporary IPv6 addresses change too often to be
+ * worth saving.
  */
 export function resolveBoundEndpoints(input: {
   readonly host: string | undefined;

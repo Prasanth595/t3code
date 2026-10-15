@@ -108,7 +108,6 @@ function scrollAndFocusSettingsTarget(target: HTMLElement, highlight = true): vo
   });
 }
 
-/** The row id a settings-search jump is currently trying to reach, if any. */
 export function useSettingsSearchTargetId(): string | null {
   return useContext(SettingsSearchTargetContext).targetId;
 }
@@ -141,10 +140,8 @@ export function SettingsSearchTarget({
   );
 }
 
-/** Layout for the composer model/traits pickers in a settings row: drop the composer's max-width. */
 export const SETTINGS_PICKER_TRIGGER_CLASSNAME = "min-w-0 max-w-none shrink-0";
 
-/** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
     <Tooltip>
@@ -161,7 +158,6 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
   );
 }
 
-/** Re-render every `intervalMs`; return a stable timestamp snapshot for render-time relative labels. */
 export function useRelativeTimeTick(intervalMs = 1_000) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -171,7 +167,6 @@ export function useRelativeTimeTick(intervalMs = 1_000) {
   return nowMs;
 }
 
-/** Muted section headings have no descriptions; explanatory copy belongs to individual settings. */
 export function SettingsSection({
   title,
   hideTitle = false,
@@ -186,7 +181,6 @@ export function SettingsSection({
   title: string;
   hideTitle?: boolean;
   icon?: ReactNode;
-  /** Small control shown right after the title, such as an add button. */
   titleAction?: ReactNode;
   headerAction?: ReactNode;
   variant?: "grouped" | "plain";
@@ -245,21 +239,6 @@ export function SettingsUnavailableGroup({
   );
 }
 
-/**
- * One setting. `serverScoped` marks rows whose value lives in the primary
- * environment's settings.json; where there is no primary (the hosted app)
- * the control goes inert with a tooltip instead of showing an editable
- * default that would never save.
- *
- * Keep descriptions short enough for one line where possible. Allow wrapping
- * for clarity or narrow screens instead of truncating or forcing no-wrap.
- *
- * Control sizing across settings follows three tiers so rows share a baseline:
- * - `control` slot: `size="sm"` (Button, Select, Input, NumberField) or `icon-sm`.
- * - Section `headerAction`s and buttons inside list items, cards, toolbars: `xs` / `icon-xs`.
- * - Inline affordances (reset arrows, info tooltips, table-cell buttons): `icon-micro`.
- * Dialog footers keep the app-wide default button size.
- */
 export function SettingsRow({
   title,
   description,
@@ -333,8 +312,6 @@ export function SettingsRow({
       ),
     [context?.connectedEnvironments],
   );
-  // At environment scope, projects with their own value keep it when the
-  // environment default changes; the chain names them and can reset them.
   const overridingProjects = useMemo((): SettingOverridingProject[] => {
     if (context === null || isProjectScope || scopedKeys.length === 0) return [];
     return listProjectOverrides(context.connectedEnvironments, scopedKeys).flatMap((entry) => {
@@ -389,9 +366,6 @@ export function SettingsRow({
       <TooltipPopup side="top">{message}</TooltipPopup>
     </Tooltip>
   );
-  // A mixed selection keeps the real control with "Mixed" as its placeholder
-  // (the multi-selection inspector convention): the popover shows who has
-  // what, and picking a value applies it to every target.
   const renderedControl =
     unavailable && control
       ? inertControl(
@@ -411,8 +385,6 @@ export function SettingsRow({
       : environmentWide && control
         ? inertControl("Environment-wide setting. Select an environment to change it.")
         : control;
-  // Server rows get an indicator beside the title that opens the resolution
-  // chain per target at every scope; client rows keep a plain status only.
   const customized =
     context !== null &&
     settingKeys.some((key) =>

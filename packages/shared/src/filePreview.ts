@@ -31,7 +31,6 @@ export type FilePreviewKind =
   | "text"
   | "unsupported";
 
-/** Content classification is identical for captured attachments and workspace references. */
 export function filePreviewKind(file: {
   readonly name: string;
   readonly mimeType?: string;

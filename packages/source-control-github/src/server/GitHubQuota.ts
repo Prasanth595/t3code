@@ -47,9 +47,6 @@ function quotaFromHeaders(
 }
 
 /**
- * Keeps the last tenth of each GitHub quota for interactive requests. A background sweep that
- * would dip below it is refused until the quota resets, so a user's next click still has budget.
- *
  * The balance is GitHub's own count from the latest answer's headers, so it already includes
  * what anything else spent with the same token, such as an agent's `gh` commands. Requests in
  * flight together all see that one balance; the reserve absorbs what they spend before their

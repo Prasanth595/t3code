@@ -24,25 +24,17 @@ export const CONNECT_OAUTH_SCOPES = ["openid", "profile", "email", "offline_acce
 export interface ConnectAuthorizeRequest {
   readonly state: string;
   readonly challenge: string;
-  /**
-   * The hosted /connect page asks Clerk to redirect the authorization code
-   * straight to `http://127.0.0.1:<port>/callback` on the waiting CLI.
-   */
   readonly loopbackPort: number;
 }
 
 /**
- * The URL the CLI prints for the user to open in a browser. `state` and
- * `code_challenge` ride the fragment so they never reach the hosted app's
- * server or CDN logs; neither is a secret.
- *
- * The CLI routes through the hosted /connect page rather than hitting
- * Clerk's /oauth/authorize directly: a signed-out browser sent straight to
- * /oauth/authorize goes through Clerk's sign-in redirect, which does not
- * reliably preserve the authorize query parameters (state, response_type,
- * code_challenge). The hosted page waits for a Clerk session first, then
- * forwards the request with the parameters intact. Headless hosts use the
- * OAuth device authorization grant instead and never involve this page.
+ * `state` and `code_challenge` ride the fragment so they never reach the hosted
+ * app's server or CDN logs; neither is a secret. The CLI routes through the
+ * hosted /connect page rather than hitting Clerk's /oauth/authorize directly: a
+ * signed-out browser sent straight to /oauth/authorize goes through Clerk's
+ * sign-in redirect, which does not reliably preserve the authorize query
+ * parameters (state, response_type, code_challenge). The hosted page waits for
+ * a Clerk session first, then forwards the request with the parameters intact.
  */
 export function buildConnectAuthorizeRequestUrl(input: {
   readonly hostedAppUrl: string;

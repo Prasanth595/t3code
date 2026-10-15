@@ -63,10 +63,6 @@ export class AcpClient extends Context.Service<
   {
     readonly raw: AcpClientRaw;
     readonly agent: {
-      /**
-       * Initializes the ACP session and negotiates capabilities.
-       * @see https://agentclientprotocol.com/protocol/schema#initialize
-       */
       readonly initialize: (
         payload: AcpSchema.InitializeRequest,
       ) => Effect.Effect<AcpSchema.InitializeResponse, AcpError.AcpError>;
@@ -84,47 +80,25 @@ export class AcpClient extends Context.Service<
       readonly logout: (
         payload: AcpSchema.LogoutRequest,
       ) => Effect.Effect<AcpSchema.LogoutResponse, AcpError.AcpError>;
-      /**
-       * Starts a new ACP session.
-       * @see https://agentclientprotocol.com/protocol/schema#session/new
-       */
       readonly createSession: (
         payload: AcpSchema.NewSessionRequest,
       ) => Effect.Effect<AcpSchema.NewSessionResponse, AcpError.AcpError>;
       /**
-       * Resumes a saved ACP session with replay from the beginning.
-       *
        * This compatibility name maps to ACP v2's `session/resume`; v2 removed
        * `session/load` and expresses replay with `replayFrom`.
        */
       readonly loadSession: (
         payload: AcpSchema.LoadSessionRequest,
       ) => Effect.Effect<AcpSchema.LoadSessionResponse, AcpError.AcpError>;
-      /**
-       * Lists available ACP sessions.
-       * @see https://agentclientprotocol.com/protocol/schema#session/list
-       */
       readonly listSessions: (
         payload: AcpSchema.ListSessionsRequest,
       ) => Effect.Effect<AcpSchema.ListSessionsResponse, AcpError.AcpError>;
-      /**
-       * Forks an ACP session.
-       * @see https://agentclientprotocol.com/protocol/schema#session/fork
-       */
       readonly forkSession: (
         payload: AcpSchema.ForkSessionRequest,
       ) => Effect.Effect<AcpSchema.ForkSessionResponse, AcpError.AcpError>;
-      /**
-       * Resumes an ACP session.
-       * @see https://agentclientprotocol.com/protocol/schema#session/resume
-       */
       readonly resumeSession: (
         payload: AcpSchema.ResumeSessionRequest,
       ) => Effect.Effect<AcpSchema.ResumeSessionResponse, AcpError.AcpError>;
-      /**
-       * Closes an ACP session.
-       * @see https://agentclientprotocol.com/protocol/schema#session/close
-       */
       readonly closeSession: (
         payload: AcpSchema.CloseSessionRequest,
       ) => Effect.Effect<AcpSchema.CloseSessionResponse, AcpError.AcpError>;
@@ -140,10 +114,6 @@ export class AcpClient extends Context.Service<
       readonly disableProvider: (
         payload: AcpSchema.DisableProviderRequest,
       ) => Effect.Effect<AcpSchema.DisableProviderResponse, AcpError.AcpError>;
-      /**
-       * Updates a session configuration option.
-       * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
-       */
       readonly setSessionModel: (
         payload: AcpSchema.SetSessionModelRequest,
       ) => Effect.Effect<AcpSchema.SetSessionModelResponse, AcpError.AcpError>;
@@ -158,35 +128,19 @@ export class AcpClient extends Context.Service<
       readonly setSessionConfigOption: (
         payload: AcpSchema.SetSessionConfigOptionRequest,
       ) => Effect.Effect<AcpSchema.SetSessionConfigOptionResponse, AcpError.AcpError>;
-      /**
-       * Sends a prompt turn to the agent.
-       * @see https://agentclientprotocol.com/protocol/schema#session/prompt
-       */
       readonly prompt: (
         payload: AcpSchema.PromptRequest,
       ) => Effect.Effect<AcpSchema.PromptResponse, AcpError.AcpError>;
-      /**
-       * Sends a real ACP `session/cancel` notification.
-       * @see https://agentclientprotocol.com/protocol/schema#session/cancel
-       */
       readonly cancel: (
         payload: AcpSchema.CancelNotification,
       ) => Effect.Effect<void, AcpError.AcpError>;
     };
-    /**
-     * Registers a handler for `session/request_permission`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/request_permission
-     */
     readonly handleRequestPermission: (
       handler: AcpRequestHandler<
         AcpSchema.RequestPermissionRequest,
         AcpSchema.RequestPermissionResponse
       >,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a handler for `elicitation/create` requests.
-     * @see https://agentclientprotocol.com/protocol/schema#elicitation/create
-     */
     readonly handleElicitation: (
       handler: AcpRequestHandler<
         AcpSchema.CreateElicitationRequest,
@@ -241,28 +195,16 @@ export class AcpClient extends Context.Service<
         AcpSchema.ReleaseTerminalResponse | void
       >,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a handler for `session/update`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/update
-     */
     readonly handleSessionUpdate: (
       handler: (
         notification: AcpSchema.SessionNotification,
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a handler for `elicitation/complete`.
-     * @see https://agentclientprotocol.com/protocol/schema#elicitation/complete
-     */
     readonly handleElicitationComplete: (
       handler: (
         notification: AcpSchema.CompleteElicitationNotification,
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a fallback extension request handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleUnknownExtRequest: (
       handler: (
         method: string,
@@ -270,26 +212,14 @@ export class AcpClient extends Context.Service<
         context: AcpProtocol.AcpRequestContext,
       ) => Effect.Effect<unknown, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a fallback extension notification handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleUnknownExtNotification: (
       handler: (method: string, params: unknown) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a typed extension request handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleExtRequest: <A, I>(
       method: string,
       payload: Schema.Codec<A, I>,
       handler: AcpRequestHandler<A, unknown>,
     ) => Effect.Effect<void>;
-    /**
-     * Registers a typed extension notification handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleExtNotification: <A, I>(
       method: string,
       payload: Schema.Codec<A, I>,
@@ -840,7 +770,6 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     registration: BufferedNotificationHandler<A>,
     notification: A,
   ) =>
-    // One handler failing or dying does not stop the others, or the reader.
     Effect.forEach(
       registration.handlers,
       (handler) => isolateNotificationHandler(handler(notification)),

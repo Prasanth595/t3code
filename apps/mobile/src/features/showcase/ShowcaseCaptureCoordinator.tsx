@@ -192,8 +192,6 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
   }, [connectPairingUrl, pairingUrls]);
 
   const routeScene = sceneFromPathname(props.pathname);
-  // Agent activity is captured over the thread list: the runner locks the
-  // simulator or opens the notification shade on top of it.
   const scene =
     requestedScene === "agent-activity" && routeScene === "threads" ? "agent-activity" : routeScene;
   const hasServerFixture =
@@ -304,7 +302,6 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
             ? "fixture threads not loaded"
             : await stageShowcaseAgentActivity(activity, now);
         if (outcome === true) return true;
-        // Surfaces in the runner's Metro output when the scene never turns ready.
         if (outcome !== lastOutcome)
           console.warn(`[showcase] agent activity not staged: ${outcome}`);
         lastOutcome = outcome;
@@ -330,7 +327,6 @@ function EnabledShowcaseCaptureCoordinator(props: { readonly pathname: string })
       // Never report a scene ready while the capture orientation is still
       // being applied — a screenshot taken early has the wrong dimensions.
       !orientationSettled ||
-      // Likewise for the palette: an early screenshot shows the default theme.
       !themeApplied ||
       (scene === "agent-activity" && !agentActivityStaged) ||
       !isShowcaseNativeContentReady({ scene, themeId, renderSignal })

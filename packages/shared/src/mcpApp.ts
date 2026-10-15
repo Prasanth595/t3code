@@ -1,32 +1,18 @@
 import * as Predicate from "effect/Predicate";
 
-/**
- * MCP Apps (https://github.com/modelcontextprotocol/ext-apps, spec 2026-01-26):
- * an MCP tool can name a `ui://` HTML resource that hosts render as an
- * interactive view of its result. T3 snapshots the resource when the tool call
- * completes, stores it as a thread attachment, and records an `McpAppReference`
- * in the tool item's output; clients host it in an opaque-origin frame and
- * speak the spec's JSON-RPC bridge with it.
- */
-
 export const MCP_APP_PROTOCOL_VERSION = "2026-01-26";
 export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
-/** The MCP extension id a client declares to receive UI resources. */
 export const MCP_APP_EXTENSION_ID = "io.modelcontextprotocol/ui";
 export const MCP_APP_RESOURCE_SCHEME = "ui://";
-/** Where T3 records the app reference inside a tool item's output object. */
 export const MCP_APP_OUTPUT_KEY = "t3McpApp";
 
 const MCP_APP_MIN_HEIGHT = 80;
 export const MCP_APP_DEFAULT_HEIGHT = 320;
 export const MCP_APP_MAX_HEIGHT = 2000;
-/** Largest app document T3 stores. */
 export const MCP_APP_MAX_HTML_BYTES = 5 * 1024 * 1024;
 const MAX_DOMAINS = 32;
 const MAX_DOMAIN_LENGTH = 256;
 const MAX_NAME_LENGTH = 256;
-// A `ui://` URI can carry a path and query; the compact wire budget still
-// bounds the whole reference.
 const MAX_RESOURCE_URI_LENGTH = 4096;
 
 /** `_meta.ui.csp` on a UI resource: origins the app needs, by kind. */
@@ -45,7 +31,6 @@ export interface McpAppPermissions {
   readonly clipboardWrite?: Record<string, never>;
 }
 
-/** What a tool item's output carries so clients can host the app. */
 export interface McpAppReference {
   readonly attachmentId: string;
   /** The MCP server the tool belongs to, as the provider names it. */
@@ -75,7 +60,6 @@ function readDomains(value: unknown): ReadonlyArray<string> | undefined {
   return domains.length === 0 ? undefined : domains;
 }
 
-/** The well-formed part of a resource's declared `_meta.ui.csp`. */
 export function readMcpAppCsp(value: unknown): McpAppCsp | undefined {
   if (!Predicate.isObject(value)) return undefined;
   const csp: {
@@ -152,7 +136,6 @@ export function mcpAppReferencesEqual(left: McpAppReference, right: McpAppRefere
   );
 }
 
-/** The tool's `_meta.ui.resourceUri` (or the deprecated flat key), if it names a UI resource. */
 export function readMcpAppResourceUri(meta: unknown): string | undefined {
   if (!Predicate.isObject(meta)) return undefined;
   const nested = Predicate.isObject(meta.ui) ? meta.ui.resourceUri : undefined;
@@ -161,8 +144,7 @@ export function readMcpAppResourceUri(meta: unknown): string | undefined {
 }
 
 /**
- * Whether the tool's `_meta.ui.visibility` lets an app call it. The spec
- * defaults to visible to both the model and apps.
+ * The spec defaults to visible to both the model and apps.
  */
 export function mcpAppToolCallableByApp(meta: unknown): boolean {
   const visibility =
@@ -198,10 +180,9 @@ const escapeAttribute = (value: string) =>
   value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 
 /**
- * Puts the app's policy at the top of its document as a CSP meta tag, ahead of
- * any script. The asset route's `sandbox` header already makes the origin
- * opaque; browsers enforce both policies, so the document can only tighten
- * this one, never widen it.
+ * The asset route's `sandbox` header already makes the origin opaque; browsers
+ * enforce both policies, so the document can only tighten this one, never widen
+ * it.
  */
 export function injectMcpAppCsp(html: string, csp: McpAppCsp | undefined): string {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${escapeAttribute(
@@ -216,8 +197,6 @@ export function injectMcpAppCsp(html: string, csp: McpAppCsp | undefined): strin
 }
 
 /**
- * Installed before vendor scripts so apps that omit their own theme handling
- * still give their document canvas and native controls the host's appearance.
  * The bridge uses an opaque origin, so authenticate messages by parent window.
  */
 export function injectMcpAppThemeBootstrap(html: string): string {
@@ -265,7 +244,6 @@ export function injectMcpAppCookieBootstrap(html: string): string {
   return `${prefix}${bootstrap}${html.slice(prefix.length)}`;
 }
 
-/** The iframe `allow` attribute for the permissions an app declared. */
 export function mcpAppAllowAttribute(permissions: McpAppPermissions | undefined): string {
   const features: Array<string> = [];
   if (permissions?.camera) features.push("camera");

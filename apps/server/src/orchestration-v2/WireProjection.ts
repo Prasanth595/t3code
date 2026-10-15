@@ -35,10 +35,9 @@ function truncateDetail(
 }
 
 /**
- * Bounds the text a provider file change keeps in the event log and its
- * projection. Clients never receive more than this (see projectTurnItemForWire),
- * so a full diff of a large file would only grow the database and the heap that
- * reads it back. Agents reading the thread over MCP get the bounded text.
+ * Clients never receive more than this (see projectTurnItemForWire), so a full
+ * diff of a large file would only grow the database and the heap that reads it
+ * back.
  */
 export function boundFileChangeForStorage(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   if (item.type !== "file_change") return item;
@@ -101,8 +100,6 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
     }
     case "command_execution": {
       const { output, ...projected } = item;
-      // Clients used this preview to recognize provider-reported failures. Keep
-      // the outcome without retaining or serializing the output that proved it.
       const failed =
         item.outputIndicatesFailure === true ||
         (item.exitCode !== undefined && item.exitCode !== 0) ||
@@ -157,7 +154,6 @@ function boundDynamicValue(value: unknown): unknown {
   if (typeof value === "string") return truncateDetail(value, MAX_ON_DEMAND_BYTES);
   let json: string;
   try {
-    // Compact, so measuring does not inflate the value; clients indent it.
     json = JSON.stringify(value) ?? String(value);
   } catch {
     return "Unserializable tool value";
@@ -186,8 +182,6 @@ function boundToolOutput(output: unknown): unknown {
 }
 
 /**
- * Projects one item for an on-demand detail read: keeps the input and output
- * the timeline withholds, bounded so a huge result cannot stall the socket.
  * Image bytes are left out; clients load them as `tool-output-image` assets.
  */
 export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {

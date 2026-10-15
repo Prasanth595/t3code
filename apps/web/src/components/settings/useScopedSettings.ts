@@ -56,7 +56,6 @@ export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]):
   return scopedSettingsAreMixed(targets, keys);
 }
 
-/** Where the keys' effective values come from across the selected targets. */
 export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) {
   const { targets } = useSettingsScope();
   return scopedSettingsSource(targets, keys);
@@ -139,7 +138,6 @@ export function useClearScopedSettings() {
   );
 }
 
-/** Clear `keys` on specific project entries, from an environment scope's chain popover. */
 export function useClearProjectOverrides() {
   const context = useOptionalSettingsScope();
   const run = useRunScopedPlan();

@@ -102,11 +102,6 @@ function addProviderUpdateToast(input: {
   return toastId;
 }
 
-/**
- * The single-prompt provider update notification used when there is only one
- * local environment (no WSL backend). Non-WSL users see exactly this flow — the
- * per-environment split is gated behind WSL presence.
- */
 export function ProviderUpdatePrimaryNotification() {
   const navigate = useNavigate();
   const providers = useAtomValue(primaryServerProvidersAtom);

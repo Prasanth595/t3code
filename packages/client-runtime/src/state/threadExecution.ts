@@ -79,7 +79,6 @@ function presentedUsageLimitRun(
   );
 }
 
-/** The run that stands for the thread's outcome when no run is executing. */
 function presentedLatestRun(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection["runs"][number] | null {
@@ -94,9 +93,8 @@ export function deriveLatestThreadRun(
 }
 
 /**
- * Returns the run that owns live provider work, falling back to the newest run
- * once the thread is idle. A newer queued run must not make an older executing
- * run look settled in clients that render per-run activity.
+ * A newer queued run must not make an older executing run look settled in
+ * clients that render per-run activity.
  */
 export function deriveThreadActivityRun(
   projection: OrchestrationV2ThreadProjection,
@@ -109,9 +107,8 @@ export function deriveThreadActivityRun(
 
 /**
  * Provider-native subagent threads never get app runs: their work is a runless
- * root turn whose status follows the subagent. Returns when that work started
- * while it is still active, so clients can show the same working state (and
- * timer) as a run. Stop, queue, and steer stay run-only.
+ * root turn whose status follows the subagent. Stop, queue, and steer stay
+ * run-only.
  */
 export function deriveRunlessWorkStartedAt(
   projection: OrchestrationV2ThreadProjection,
@@ -158,7 +155,6 @@ export function deriveReportedModelSelection(
   return providerThread?.nativeMetadata?.modelSelection ?? null;
 }
 
-// Option ids providers use for reasoning effort (Codex, Claude, Grok/ACP, OpenCode).
 const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "variant"] as const;
 
 /**
@@ -197,10 +193,6 @@ const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], str
   rolled_back: "Cancelled",
 };
 
-/**
- * One line for the read-only subagent bar: "Working 12s", "Completed in 34s",
- * or just the status when no duration is known.
- */
 export function formatProviderSubagentStatus(
   status: ProviderSubagentStatus | null,
   nowMs: number,
@@ -289,7 +281,6 @@ export function threadRuntimeHasInterruptibleRun(
 
 type BackgroundWorkKind = OrchestrationV2PendingBackgroundTask["kind"];
 
-// `order` groups work the way a reader thinks about it: agents first, loose tasks last.
 const BACKGROUND_WORK_KINDS: Record<
   BackgroundWorkKind,
   { readonly order: number; readonly singular: string; readonly plural: string }
@@ -303,17 +294,11 @@ const BACKGROUND_WORK_KINDS: Record<
 export interface PendingBackgroundWorkItem {
   readonly taskId: string;
   readonly kind: BackgroundWorkKind;
-  /** The work's name, or its noun when the provider gave none. */
   readonly label: string;
-  /** A subagent's own thread, when it has one. */
   readonly childThreadId: ThreadId | undefined;
 }
 
 export interface PendingBackgroundWorkPresentation {
-  /**
-   * "Waiting on subagent Review src/math.ts", "Waiting on 2 subagents and 1 command",
-   * or "Running: Start the dev server" when only commands remain.
-   */
   readonly title: string;
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
   /**
@@ -328,7 +313,6 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
-/** Names what a settled thread still runs, grouped by kind, for the composer strip. */
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
@@ -379,10 +363,8 @@ export function presentPendingBackgroundWork(
 }
 
 export interface ProviderGoalPresentation {
-  /** "Pursuing goal", "Goal paused", "Goal complete"... */
   readonly title: string;
   readonly objective: string;
-  /** "12k / 50k tokens · 4m" for Codex, "2 checks" for Claude; null when nothing is reported. */
   readonly usage: string | null;
   /** Only Codex stops a goal short of done, and only a stopped goal can resume. */
   readonly canResume: boolean;
@@ -404,7 +386,6 @@ function formatGoalTokens(tokens: number): string {
 }
 
 /**
- * Status line for a native `/goal`, shared by the web composer row and mobile.
  * An active goal on an idle thread (Claude after Stop) is set, not pursued.
  */
 export function presentProviderGoal(
@@ -433,7 +414,6 @@ export function presentProviderGoal(
   };
 }
 
-/** The thread a notification row opens: that of the one subagent or delegated task it reports. */
 export function notificationChildThreadId(
   source: OrchestrationV2NotificationSource,
 ): ThreadId | undefined {

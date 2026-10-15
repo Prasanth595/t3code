@@ -1,8 +1,3 @@
-/**
- * Azure DevOps's client definition. Browser- and React Native-safe.
- *
- * @module source-control-azure-devops/client/definition
- */
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 import {
@@ -67,7 +62,6 @@ export const definition = defineSourceControlClient({
     isChangeRequestAuthorityOfProject(identity, link) &&
     canonicalRepositoryKey(identity.canonicalKey.toLowerCase()) ===
       canonicalRepositoryKey(`${link.host}/${link.repository}`.toLowerCase()),
-  // `az repos` reads use the checkout's organization and project, not host-wide credentials.
   canReadChangeRequestOnHost: () => false,
   isChangeRequestUrl: (url) => isChangeRequestPath(url, "/pullrequest/"),
 });

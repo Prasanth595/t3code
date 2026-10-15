@@ -27,7 +27,6 @@ const BEVEL = 0.008;
 // The hinge axis sits just above the inner screens so closed halves meet face to face.
 const PIVOT_Z = DEPTH / 2 + 0.005;
 const SPINE_RADIUS = PIVOT_Z + DEPTH / 2 - 0.002;
-/** Width over height of the unfolded inner display until a live frame reports its own. */
 export const DEFAULT_FOLD_INNER_ASPECT = 2076 / 2152;
 /**
  * Unfolded inner displays are near square in either orientation. Cover displays are
@@ -87,10 +86,6 @@ function coverPath(halfWidth: number) {
   return roundedRectPath(halfWidth - INSET * 2 - 0.02, HEIGHT - INSET * 2 - 0.04, 0.07);
 }
 
-/**
- * A procedural book-style foldable: one fixed half, one half rotating around a shared hinge.
- * The inner display keeps the raw framebuffer's native aspect, portrait or landscape.
- */
 export function createAndroidFoldScene(
   texture: Texture,
   layout: PhoneDisplayLayout,
@@ -157,7 +152,6 @@ export function createAndroidFoldScene(
     coverMaterial,
   ];
 
-  // Each half's meshes live in body coordinates; `left` pivots them around the hinge axis.
   left.position.z = PIVOT_Z;
   const leftBody = new Group();
   leftBody.position.z = -PIVOT_Z;
@@ -206,8 +200,6 @@ export function createAndroidFoldScene(
 
   const innerLeft = half(leftBody, "left", bezel);
   const innerRight = half(right, "right", backGlass);
-  // One indexed surface keeps adjacent pixels joined at the crease. The
-  // physical halves move separately underneath it.
   const screenWidth = 2 * (halfWidth - INSET);
   const screenGeometry = new PlaneGeometry(screenWidth, screenHeight, 40, 48);
   const screenPositions = screenGeometry.getAttribute("position");
@@ -228,8 +220,6 @@ export function createAndroidFoldScene(
   const innerSurface = new Mesh(screenGeometry, displayMaterial);
   innerSurface.name = "continuous-inner-screen";
   orientation.add(innerSurface);
-  // The outer half of the hinge housing. It tucks behind the back glass when
-  // open and becomes the rounded spine when closed.
   const spineSlack = 0.15;
   const spine = new Mesh(
     new CylinderGeometry(
@@ -254,7 +244,6 @@ export function createAndroidFoldScene(
   cover.rotation.y = Math.PI;
   leftBody.add(cover);
 
-  // Rear components use back-surface coordinates, with outward positive Z.
   const rearCamera = new Group();
   rearCamera.name = "rear-camera";
   const islandWidth = 0.46;
@@ -302,7 +291,6 @@ export function createAndroidFoldScene(
   flash.position.set(0.185, 0.045, plateFront + 0.0005);
   rearCamera.add(flash);
 
-  // Power and volume keys sit on the fixed half's outer edge.
   for (const [y, length] of [
     [0.52, 0.16],
     [0.2, 0.3],

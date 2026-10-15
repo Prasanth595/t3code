@@ -73,15 +73,10 @@ export class SessionControl {
     });
   }
 
-  /** Whether an agent may act here: its own tab, or a tab no agent opened. */
   agentMayAct(agentId: string) {
     return this.agentId === null || this.agentId === agentId;
   }
 
-  /**
-   * An agent action. It may act on its own tab or on one a human opened, but
-   * never while a human controls the tab; taking control interrupts it.
-   */
   agent<A>(agentId: string, run: () => Promise<A>) {
     if (!this.agentMayAct(agentId))
       return Promise.reject(
@@ -94,7 +89,6 @@ export class SessionControl {
     return this.action(() => this.agentMayAct(agentId) && this.owner === null, run);
   }
 
-  /** Whether this agent's action would run now rather than be refused. */
   agentCanActNow(agentId: string) {
     return this.agentMayAct(agentId) && this.owner === null;
   }

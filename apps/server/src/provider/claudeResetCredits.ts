@@ -1,12 +1,3 @@
-/**
- * Claude banked resets (the CLI's `cedar_ember` program). The CLI reads the
- * grants from the OAuth usage endpoint and claims one against the
- * organization; this module does the same with the credentials the CLI keeps
- * in its config directory. macOS keeps them in the keychain, so there the
- * feature is not offered.
- *
- * @module provider/claudeResetCredits
- */
 import type {
   ProviderConsumeResetCreditOutcome,
   ServerProviderResetCredits,
@@ -163,8 +154,8 @@ const withClaudeHeaders = (token: string, version: string) =>
   });
 
 /**
- * Reads the banked resets for the login in `configDir`. Any failure reads as
- * "no resets" so the usage bars never break on this optional extra.
+ * Any failure reads as "no resets" so the usage bars never break on this
+ * optional extra.
  */
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   function* (configDir: string, version: string) {
@@ -188,7 +179,6 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   Effect.orElseSucceed(() => undefined),
 );
 
-/** The CLI keeps the account record beside its settings, or in the home directory by default. */
 /** The organization the login is signed in to; one email can belong to several. */
 export const readClaudeOrganizationId = (accountConfigPath: string) =>
   readJson(Config, accountConfigPath).pipe(
