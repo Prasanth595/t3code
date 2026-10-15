@@ -84,9 +84,7 @@ function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null, Browse
   );
 }
 
-function writeStoredBrowserDpopKey(
-  key: BrowserDpopKey,
-): Effect.Effect<void, BrowserDpopError> {
+function writeStoredBrowserDpopKey(key: BrowserDpopKey): Effect.Effect<void, BrowserDpopError> {
   if (typeof indexedDB === "undefined") {
     return Effect.void;
   }
