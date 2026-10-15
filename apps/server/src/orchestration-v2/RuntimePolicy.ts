@@ -19,6 +19,15 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 /**
  * ERRORS
  */
+class RuntimePolicyProjectNotFoundError extends Schema.TaggedError<RuntimePolicyProjectNotFoundError>()(
+  "RuntimePolicyProjectNotFoundError",
+  { projectId: ProjectId },
+) {
+  override get message(): string {
+    return "Project not found.";
+  }
+}
+
 export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
   "RuntimePolicyResolveError",
   {
@@ -108,7 +117,9 @@ export const layerFromProjectStore: Layer.Layer<
           const project = yield* projects.get(input.thread.projectId);
           if (Option.isNone(project)) {
             if (input.thread.worktreePath !== null) return input.thread.worktreePath;
-            return yield* Effect.fail("Project not found.");
+            return yield* new RuntimePolicyProjectNotFoundError({
+              projectId: input.thread.projectId,
+            });
           }
           return yield* workspacePaths.resolveProjectCwd({
             cwd: project.value.workspaceRoot,

@@ -1144,6 +1144,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     worktreePath: effectiveWorktreePath,
   });
   const cwd = launchContext?.cwd ?? projectCwd;
+  // Saved sessions remain attachable while the cwd for new terminals is unavailable.
+  const drawerCwd = cwd ?? drawerTerminalSessions[0]?.state.summary?.cwd;
   const runtimeEnv = useMemo(
     () =>
       project
@@ -1317,7 +1319,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [onAddTerminalContext, visible],
   );
 
-  if (!project || (!terminalUiState.terminalOpen && !active) || !cwd) {
+  if (!project || (!terminalUiState.terminalOpen && !active) || !drawerCwd) {
     return null;
   }
 
@@ -1335,13 +1337,15 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         <ThreadTerminalDrawer
           threadRef={threadRef}
           threadId={threadId}
-          cwd={cwd}
+          cwd={drawerCwd}
           worktreePath={effectiveWorktreePath}
           runtimeEnv={runtimeEnv}
           visible={visible}
           height={terminalUiState.terminalHeight}
           // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
-          terminalIds={canOperateTerminal ? terminalUiState.terminalIds : serverOrderedTerminalIds}
+          terminalIds={
+            canOperateTerminal && cwd ? terminalUiState.terminalIds : serverOrderedTerminalIds
+          }
           activeTerminalId={terminalUiState.activeTerminalId}
           terminalGroups={terminalUiState.terminalGroups}
           activeTerminalGroupId={terminalUiState.activeTerminalGroupId}

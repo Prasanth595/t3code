@@ -170,6 +170,69 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
   );
 });
 
+it.layer(
+  RuntimePolicy.layerFromProjectStore.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(Option.none()) }),
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          getInstance: () => Effect.succeed(undefined),
+        }),
+        Layer.mock(WorkspacePaths.WorkspacePaths)({}),
+      ),
+    ),
+  ),
+)("RuntimePolicyV2 without a project", (it) => {
+  it.effect("reports a structured missing-project cause for a local thread", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const error = yield* policy
+        .resolve({ thread: makeThread({ now, worktreePath: null }), modelSelection })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, RuntimePolicy.RuntimePolicyResolveError);
+      assert.deepInclude(error.cause, { _tag: "RuntimePolicyProjectNotFoundError", projectId });
+    }),
+  );
+
+  it.effect("keeps an existing worktree when its project is missing", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolved = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: "/project-worktree" }),
+        modelSelection,
+      });
+      assert.equal(resolved.cwd, "/project-worktree");
+    }),
+  );
+});
+
+it.effect("keeps the immediate cwd-resolution failure as the policy error cause", () => {
+  const cause = new WorkspacePaths.WorkspaceProjectCwdError({
+    cwd: "/project-root",
+    worktreePath: "/project-worktree",
+    cause: new Error("Permission denied"),
+  });
+  return Effect.gen(function* () {
+    const policy = yield* RuntimePolicy.RuntimePolicyV2;
+    const now = yield* DateTime.now;
+    const error = yield* policy
+      .resolve({ thread: makeThread({ now, worktreePath: "/project-worktree" }), modelSelection })
+      .pipe(Effect.flip);
+    assert.instanceOf(error, RuntimePolicy.RuntimePolicyResolveError);
+    assert.strictEqual(error.cause, cause);
+  }).pipe(
+    Effect.provide(
+      layerForProject("/project-root").pipe(
+        Layer.provide(
+          Layer.mock(WorkspacePaths.WorkspacePaths)({ resolveProjectCwd: () => cause }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("starts a subdirectory worktree with its project-scoped skills", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
