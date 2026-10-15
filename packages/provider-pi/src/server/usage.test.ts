@@ -52,4 +52,20 @@ describe("piUsageFormat", () => {
       ["s2", "Tools/summaries"],
     ]);
   });
+
+  it("attributes summaries to the selected model before it answers", () => {
+    const modelChange = (provider: string) => ({ type: "model_change", provider, modelId: "m" });
+    const records = parse([
+      { type: "session", id: "s1" },
+      assistant("a1", "anthropic", "claude-fable-5"),
+      modelChange("faux"),
+      compaction("c1"),
+      modelChange("anthropic"),
+      compaction("c2"),
+    ]);
+    expect(records.map((record) => record.dedupeKey)).toEqual([
+      JSON.stringify(["pi", "a1", timestamp, "anthropic/claude-fable-5"]),
+      JSON.stringify(["pi", "c2", timestamp, "Tools/summaries"]),
+    ]);
+  });
 });

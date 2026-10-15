@@ -38,6 +38,7 @@ const Identity = { id: Schema.NonEmptyString, timestamp: Schema.String };
 const Model = { provider: Schema.NonEmptyString, model: Schema.NonEmptyString };
 const Entry = Schema.Union([
   Schema.Struct({ type: Schema.Literal("session"), id: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal("model_change"), provider: Schema.NonEmptyString }),
   Schema.Struct({
     ...Identity,
     type: Schema.Literal("message"),
@@ -67,6 +68,11 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
   if (entry.type === "session") {
     state.sessionId = entry.id;
     delete state.faux;
+    return [];
+  }
+  // A selected model runs the summaries that follow, even before it answers.
+  if (entry.type === "model_change") {
+    state.faux = entry.provider === FAUX_PROVIDER;
     return [];
   }
   const source = entry.type === "message" ? entry.message : entry;
@@ -134,7 +140,7 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
     usage: true,
     message: { role: true, provider: true, model: true, responseModel: true, usage: true },
   },
-  usageMarkers: ['"usage"', '"session"'],
+  usageMarkers: ['"usage"', '"session"', '"model_change"'],
   parseLine: (line, state) => {
     let parsed: unknown;
     try {
