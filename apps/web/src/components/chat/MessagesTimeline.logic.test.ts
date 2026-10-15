@@ -2483,6 +2483,51 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.kind)).toEqual(["message", "working", "message", "thinking"]);
   });
 
+  it("keeps the live tool row above a message queued behind the running turn", () => {
+    const user = (id: string, createdAt: string, runId: string, inputIntent: string) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt,
+      message: {
+        id: id as never,
+        role: "user" as const,
+        text: id,
+        runId: runId as never,
+        inputIntent: inputIntent as never,
+        createdAt,
+        updatedAt: createdAt,
+        streaming: false,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        user("first", "2026-01-01T00:00:00Z", "run-1", "turn_start"),
+        {
+          id: "command-entry",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:03Z",
+          entry: {
+            id: "command",
+            createdAt: "2026-01-01T00:00:03Z",
+            runId: "run-1" as never,
+            label: "Running git",
+            requestKind: "command" as const,
+            tone: "tool" as const,
+            toolLifecycleStatus: "inProgress" as const,
+          },
+        },
+        user("second", "2026-01-01T00:00:05Z", "run-2", "queued_turn"),
+      ],
+      latestRun: null,
+      runningRunId: "run-1" as never,
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.map((row) => row.kind)).toEqual(["message", "working", "work-live", "message"]);
+  });
+
   it("keeps a started queued prompt as the boundary after a promptless run replaces its run", () => {
     const user = (id: string, createdAt: string, runId: string, inputIntent: string) => ({
       id: `${id}-entry`,

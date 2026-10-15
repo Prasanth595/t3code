@@ -897,27 +897,39 @@ function lastResponseBoundaryIndex(
   timelineEntries: ReadonlyArray<TimelineEntry>,
   runningRunId: RunId | null = null,
 ): number {
-  return timelineEntries.findLastIndex((entry, index) => {
-    if (!timelineEntryStartsResponse(entry)) return false;
-    // A queued message waits behind the running turn; the active turn's
-    // header must stay above it until its own run produces output. A started
-    // queued run that a promptless run later replaced keeps its boundary.
-    if (
-      runningRunId !== null &&
-      entry.kind === "message" &&
-      entry.message.inputIntent === "queued_turn" &&
-      entry.message.runId !== runningRunId
-    ) {
-      const queuedRunId = entry.message.runId;
-      return (
-        queuedRunId !== null &&
-        timelineEntries.some(
-          (later, laterIndex) => laterIndex > index && timelineEntryRunId(later) === queuedRunId,
-        )
-      );
-    }
-    return true;
-  });
+  return timelineEntries.findLastIndex(
+    (entry, index) =>
+      timelineEntryStartsResponse(entry) &&
+      !isPendingQueuedPrompt(timelineEntries, index, runningRunId),
+  );
+}
+
+/**
+ * A queued message waits behind the running turn. The active turn's header
+ * and live tool row stay above it until its own run produces output; a started
+ * queued run that a promptless run later replaced is no longer pending.
+ */
+function isPendingQueuedPrompt(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+  index: number,
+  runningRunId: RunId | null,
+): boolean {
+  const entry = timelineEntries[index];
+  if (
+    runningRunId === null ||
+    entry?.kind !== "message" ||
+    entry.message.inputIntent !== "queued_turn" ||
+    entry.message.runId === runningRunId
+  ) {
+    return false;
+  }
+  const queuedRunId = entry.message.runId;
+  return (
+    queuedRunId === null ||
+    !timelineEntries.some(
+      (later, laterIndex) => laterIndex > index && timelineEntryRunId(later) === queuedRunId,
+    )
+  );
 }
 
 function deriveActiveVisualResponseRunIds(input: {
@@ -1433,6 +1445,7 @@ export function deriveMessagesTimelineRows(input: {
     let tailAttemptId: string | null | undefined;
     for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
       const entry = timelineEntries[index]!;
+      if (isPendingQueuedPrompt(timelineEntries, index, input.runningRunId ?? null)) continue;
       if (
         entry.kind !== "work" ||
         entry.entry.tone === "error" ||
