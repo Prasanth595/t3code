@@ -1,0 +1,655 @@
+/**
+ * One pass of the factory: the project config and tracker login of every watched repo, every
+ * unfinished run, the claims that have no run, then new issues. Ported from softfac's `tick.rs`
+ * (`run_keeping`, `load_repos`, `runs`, `untracked_claims`, `unassigned_claims` and `claim`) up
+ * to the claim; the steps that follow a run (issues #16 to #20) and the dry run are not here.
+ *
+ * Pure over `PassWorld`: every read and write goes through it, so the tests script a world and
+ * `index.ts` builds the live one. Every line goes to `out` as it is decided. Each pass writes
+ * `pass_started` first and `pass_finished` last to the machine log.
+ */
+import * as Effect from "effect/Effect";
+
+import type { HandPause } from "./claims.ts";
+import type { MachineConfig, ProjectConfig, WatchedRepo } from "./config.ts";
+import { stateLabel, type State } from "./domain/lifecycle.ts";
+import { sanitize } from "./gate.ts";
+import type { LedgerError } from "./ledger/errors.ts";
+import type { ErrorKind, MachineEvent } from "./ledger/events.ts";
+import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
+import { runIdToString } from "./ledger/runId.ts";
+import { duration, formatTs } from "./ledger/time.ts";
+import type { StartError, StartOutcome } from "./runner/start.ts";
+import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
+
+/** An error of the pass's own: what kind it is for the machine log, and what it says. */
+export interface PassError {
+  readonly kind: ErrorKind;
+  readonly message: string;
+}
+
+/** A watched repo with its project config and the login its tracker knows the factory by. */
+export interface Repo {
+  readonly watched: WatchedRepo;
+  readonly project: ProjectConfig;
+  readonly trackerUser: string;
+}
+
+/** A watched repo, with its config or without it. */
+export type Loaded =
+  | { readonly kind: "ready"; readonly repo: Repo }
+  /** The name of a repo that could not be loaded, already reported. */
+  | { readonly kind: "broken"; readonly name: string };
+
+/** Everything a pass reads and writes. */
+export interface PassWorld {
+  /** The repo's project config, from `.dw/config.yml` at the tip of its default branch. */
+  readonly project: (repo: WatchedRepo) => Effect.Effect<ProjectConfig, PassError>;
+  /** The login the repo's tracker knows the factory by. */
+  readonly trackerUser: (repo: WatchedRepo) => Effect.Effect<string, PassError>;
+  /** Every run that is not finished, oldest first. */
+  readonly unfinishedRuns: () => Effect.Effect<ReadonlyArray<RunInfo>, LedgerError>;
+  /** The open `factory:ready` issues nobody is assigned to, and whether the listing was cut. */
+  readonly readyIssues: (repo: Repo) => Effect.Effect<Listing<number>, PassError>;
+  /** The open `factory:triage` issues the factory's login is the only assignee of. */
+  readonly triageIssues: (repo: Repo) => Effect.Effect<Listing<number>, PassError>;
+  /** The claims of this factory's that were cut short: see `unassignedClaims` on the tracker. */
+  readonly unassignedClaims: (
+    repo: Repo,
+  ) => Effect.Effect<ReadonlyArray<UnassignedClaim>, PassError>;
+  /** Moves a claim that was cut short to `factory:proposed`, with the cut-short comment. */
+  readonly releaseClaim: (repo: Repo, issue: number, from: State) => Effect.Effect<void, PassError>;
+  /** The open issues the tracker marks as blocking the issue. */
+  readonly openBlockers: (
+    repo: Repo,
+    issue: number,
+  ) => Effect.Effect<ReadonlyArray<Blocker>, PassError>;
+  /** The open issues the issue's `## Depends on` text names. */
+  readonly dependsOnBlockers: (
+    repo: Repo,
+    issue: number,
+  ) => Effect.Effect<ReadonlyArray<Blocker>, PassError>;
+  /** The claim: `runner/start.ts`. */
+  readonly start: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
+  /** The claims pause a person made, when there is one. */
+  readonly handPause: () => HandPause | null;
+  readonly nowMs: () => number;
+  /** Writes one event to the machine log. */
+  readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
+}
+
+/** The counts the pass prints in its last line. */
+export interface Report {
+  runs: number;
+  claimed: number;
+  errors: number;
+  attention: number;
+}
+
+/** What the pass has to say about one issue, collected as its steps go and printed at the end. */
+interface Notes {
+  readonly label: string;
+  readonly state: string;
+  readonly parts: Array<string>;
+  readonly errors: Array<NoteError>;
+}
+
+/** An error, as printed and as recorded. */
+interface NoteError {
+  /** The error line, without its `error: ` prefix. */
+  readonly line: string;
+  readonly step: "pass" | "start";
+  readonly kind: ErrorKind;
+  /** What went wrong, before it is cleaned for the ledger. */
+  readonly message: string;
+}
+
+/** `text` with nothing in it that could drive a terminal or hide text. */
+const plain = (text: string): string => sanitize(text, false);
+
+/** An error of the pass's own, in the words `what` and `detail`. */
+const passError = (kind: ErrorKind, what: string, detail: string): NoteError => ({
+  line: `${plain(what)}${plain(detail)}`,
+  step: "pass",
+  kind,
+  message: `${what}${detail}`,
+});
+
+const errorKind = (error: StartError): ErrorKind => {
+  switch (error._tag) {
+    case "GitHubSpawnError":
+    case "GitHubInvalidArgument":
+    case "GitHubFailed":
+    case "GitHubTimedOut":
+    case "GitHubOutputTooLarge":
+    case "GitHubParse":
+    case "GitHubRateLimited":
+      return "github";
+    case "GateRunningError":
+      return "gate";
+    default:
+      // The run's own record disagrees with what the step expected.
+      return "ledger";
+  }
+};
+
+const mention = (issue: number) => `#${issue}`;
+
+const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+const GATE_RUNNING = "gate running";
+
+const FROM_TEXT = " (from Depends on, add the GitHub link)";
+
+/** `blocked by #13, acme/widgets#7`: a blocker in the repo being claimed from is written by its number alone. */
+const blockedBy = (repo: string, blockers: ReadonlyArray<Blocker>, suffix: string): string =>
+  `blocked by ${blockers
+    .map((b) =>
+      sameRepo(b.repo, repo)
+        ? `${mention(b.number)}${suffix}`
+        : `${plain(b.repo)}${mention(b.number)}${suffix}`,
+    )
+    .join(", ")}`;
+
+const plural = (n: number, one: string) => (n === 1 ? one : `${one}s`);
+
+/** The machine log's text limit, as softfac prepares session text: cleaned, trimmed, cut. */
+const SESSION_TEXT_LIMIT = 4000;
+const prepareText = (text: string): string => {
+  const trimmed = text.replaceAll("\r\n", "\n").trim();
+  const chars = Array.from(trimmed);
+  const cut =
+    chars.length > SESSION_TEXT_LIMIT
+      ? `${chars.slice(0, SESSION_TEXT_LIMIT).join("")}\n[cut]`
+      : trimmed;
+  return sanitize(cut, true);
+};
+
+/** A pass in flight: the counts, the lines, and whether the machine log has failed once. */
+class Pass {
+  readonly report: Report = { runs: 0, claimed: 0, errors: 0, attention: 0 };
+  private logFailed = false;
+  private readonly world: PassWorld;
+  private readonly out: (line: string) => void;
+
+  constructor(world: PassWorld, out: (line: string) => void) {
+    this.world = world;
+    this.out = out;
+  }
+
+  line(text: string): void {
+    this.out(text);
+  }
+
+  error(text: string): void {
+    this.report.errors += 1;
+    this.out(`error: ${text}`);
+  }
+
+  /**
+   * Writes `event` to the machine log. A log that cannot be written is an error line once per
+   * pass and nothing else: it is not an event, which could not be written either.
+   */
+  record(event: MachineEvent): Effect.Effect<void> {
+    return this.world.record(event).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          if (this.logFailed) return;
+          this.logFailed = true;
+          this.error(`machine log: ${plain(error.message)}`);
+        }),
+      ),
+    );
+  }
+
+  /** Prints `error` as an error line and records it in the machine log, with the run's id when there is one. */
+  fail(run: string | null, error: NoteError): Effect.Effect<void> {
+    this.error(error.line);
+    return this.record({
+      event: "error",
+      data: {
+        ...(run === null ? {} : { run }),
+        step: error.step,
+        kind: error.kind,
+        message: prepareText(error.message),
+      },
+    });
+  }
+
+  notes(label: string, state: State | null): Notes {
+    return { label: plain(label), state: state ?? "starting", parts: [], errors: [] };
+  }
+
+  /** The step `name` failed for this issue. */
+  failed(notes: Notes, name: string, error: StartError): void {
+    notes.errors.push({
+      line: `${notes.label} ${name}: ${plain(error.message)}`,
+      step: name === "start" ? "start" : "pass",
+      kind: errorKind(error),
+      message: error.message,
+    });
+  }
+
+  /** An error of the pass's own about this issue, in the words `what` and `detail`. */
+  trouble(notes: Notes, kind: ErrorKind, what: string, detail: string): void {
+    const error = passError(kind, what, detail);
+    notes.errors.push({ ...error, line: `${notes.label} ${error.line}` });
+  }
+
+  /** The run ended in `stuck`. The reason is not printed: it can hold text the session or GitHub wrote. */
+  stuck(notes: Notes, run: string): void {
+    notes.parts.push(`stuck, the reason is in the ledger of run ${run}`);
+  }
+
+  flush(notes: Notes, run: string | null): Effect.Effect<void> {
+    if (notes.parts.length > 0) {
+      this.line(`${notes.label} ${notes.state}: ${notes.parts.join(", ")}`);
+    }
+    return Effect.forEach(notes.errors, (error) => this.fail(run, error), { discard: true });
+  }
+
+  sayIfCut(repo: string, state: State, cut: boolean): void {
+    if (cut) {
+      this.line(
+        `${plain(repo)}: more than ${LIST_LIMIT} open ${stateLabel(state)} issues, so the oldest were not read`,
+      );
+    }
+  }
+}
+
+/** One pass. Calls `out` with each line as it is decided. */
+export const runPass = (
+  world: PassWorld,
+  machine: MachineConfig,
+  out: (line: string) => void,
+): Effect.Effect<Report> =>
+  Effect.gen(function* () {
+    const pass = new Pass(world, out);
+    yield* pass.record({ event: "pass_started", data: {} });
+    const repos = yield* loadRepos(world, machine, pass);
+    // Without the ledger there is no telling how many runs are active, so nothing is claimed.
+    const infos = yield* runs(world, repos, pass);
+    if (infos !== null) {
+      yield* untrackedClaims(world, repos, infos, pass);
+      yield* unassignedClaims(world, repos, infos, pass);
+      yield* claim(world, repos, infos, machine, pass);
+    }
+    const report = pass.report;
+    pass.line(
+      `pass done: ${report.runs} runs, ${report.claimed} claimed, ${report.errors} errors, ${report.attention} need attention`,
+    );
+    yield* pass.record({ event: "pass_finished", data: { ...report } });
+    return report;
+  });
+
+/**
+ * The project config and tracker login of every watched repo. A repo whose config cannot be
+ * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read.
+ */
+const loadRepos = (
+  world: PassWorld,
+  machine: MachineConfig,
+  pass: Pass,
+): Effect.Effect<Array<Loaded>> =>
+  Effect.gen(function* () {
+    const repos: Array<Loaded> = [];
+    for (const watched of machine.repos) {
+      const project = yield* Effect.result(world.project(watched));
+      if (project._tag === "Failure") {
+        const message = project.failure.message;
+        pass.error(
+          `${plain(watched.repo)}: project config not loaded, repo skipped: ${plain(message)}`,
+        );
+        yield* pass.record({
+          event: "repo_skipped",
+          data: { repo: watched.repo, reason: "config-not-loaded", message: prepareText(message) },
+        });
+        repos.push({ kind: "broken", name: watched.repo });
+        continue;
+      }
+      const user = yield* Effect.result(world.trackerUser(watched));
+      if (user._tag === "Failure") {
+        yield* pass.fail(
+          null,
+          passError(
+            user.failure.kind,
+            `${watched.repo}: cannot read the tracker's login: `,
+            user.failure.message,
+          ),
+        );
+        repos.push({ kind: "broken", name: watched.repo });
+        continue;
+      }
+      repos.push({
+        kind: "ready",
+        repo: { watched, project: project.success, trackerUser: user.success },
+      });
+    }
+    return repos;
+  });
+
+/** Every unfinished run, counted; a run whose file cannot be read is an error line and counts as active. */
+const runs = (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  pass: Pass,
+): Effect.Effect<ReadonlyArray<RunInfo> | null> =>
+  Effect.gen(function* () {
+    const listed = yield* Effect.result(world.unfinishedRuns());
+    if (listed._tag === "Failure") {
+      yield* pass.fail(
+        null,
+        passError("ledger", "cannot read the run ledger: ", listed.failure.message),
+      );
+      return null;
+    }
+    for (const info of listed.success) {
+      pass.report.runs += 1;
+      const id = runIdToString(info.id);
+      if (info.unreadable) {
+        // Its own ledger is what cannot be read, so the machine log takes the error.
+        yield* pass.fail(
+          id,
+          passError(
+            "ledger",
+            `run ${id}: its ledger file cannot be read, so nothing was done for it and it counts as active`,
+            "",
+          ),
+        );
+        continue;
+      }
+      // The steps that follow a run of a loaded repo (issues #16 to #20) go here.
+      void repos;
+    }
+    return listed.success;
+  });
+
+const hasRun = (infos: ReadonlyArray<RunInfo>, repo: string, issue: number) =>
+  infos.some((i) => i.id.issue === String(issue) && sameRepo(i.id.repo, repo));
+
+/**
+ * Claims `start` began that left no run in the ledger: the issue is `factory:triage` and
+ * assigned to the factory's login alone, and no unfinished run is for it. `start` finishes such
+ * an issue (the design sends it to `stuck`). They are claims already made, so the limit on new
+ * claims does not apply to them.
+ */
+const untrackedClaims = (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  infos: ReadonlyArray<RunInfo>,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    for (const loaded of repos) {
+      if (loaded.kind !== "ready") continue;
+      const repo = loaded.repo;
+      const name = repo.watched.repo;
+      const listing = yield* Effect.result(world.triageIssues(repo));
+      if (listing._tag === "Failure") {
+        yield* pass.fail(
+          null,
+          passError("tracker", `${name}: cannot list the triage issues: `, listing.failure.message),
+        );
+        continue;
+      }
+      pass.sayIfCut(name, "triage", listing.success.cut);
+      for (const issue of listing.success.items) {
+        if (hasRun(infos, name, issue)) continue;
+        const notes = pass.notes(`${name}${mention(issue)}`, "triage");
+        let run: string | null = null;
+        const outcome = yield* Effect.result(world.start(repo, issue));
+        if (outcome._tag === "Failure") {
+          if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
+          else pass.failed(notes, "start", outcome.failure);
+        } else {
+          switch (outcome.success.kind) {
+            case "claimed":
+              run = runIdToString(outcome.success.run);
+              notes.parts.push(`no run on record, claimed in run ${run}`);
+              break;
+            case "skipped":
+            case "refused":
+              notes.parts.push("no run on record, not ours to resume");
+              break;
+            case "stuck":
+              run = runIdToString(outcome.success.run);
+              notes.parts.push("no run on record");
+              pass.stuck(notes, run);
+              break;
+          }
+        }
+        yield* pass.flush(notes, run);
+      }
+    }
+  });
+
+/**
+ * Moves claims that were cut short to `factory:proposed`: the issue is `factory:triage` or
+ * `factory:building`, nobody is assigned, no unfinished run is for it, and it has not changed for
+ * the grace period the tracker applies. An issue that someone is assigned to is not looked at.
+ */
+const unassignedClaims = (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  infos: ReadonlyArray<RunInfo>,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    for (const loaded of repos) {
+      if (loaded.kind !== "ready") continue;
+      const repo = loaded.repo;
+      const name = repo.watched.repo;
+      const issues = yield* Effect.result(world.unassignedClaims(repo));
+      if (issues._tag === "Failure") {
+        yield* pass.fail(
+          null,
+          passError(
+            "tracker",
+            `${name}: cannot list the unassigned claims: `,
+            issues.failure.message,
+          ),
+        );
+        continue;
+      }
+      for (const { issue, state } of issues.success) {
+        if (hasRun(infos, name, issue)) continue;
+        const notes = pass.notes(`${name}${mention(issue)}`, state);
+        const released = yield* Effect.result(world.releaseClaim(repo, issue, state));
+        if (released._tag === "Success") {
+          notes.parts.push("no run on record and no assignee, moved to proposed");
+          yield* pass.record({
+            event: "claim_repaired",
+            data: { repo: name, issue: String(issue), outcome: "reconciled" },
+          });
+        } else {
+          pass.trouble(notes, "tracker", "cannot move it to proposed: ", released.failure.message);
+        }
+        yield* pass.flush(notes, null);
+      }
+    }
+  });
+
+/** The repo of each run that holds a slot: not finished, and not waiting on a pull request. */
+const holding = (world: PassWorld): Effect.Effect<Array<string>, LedgerError> =>
+  Effect.map(world.unfinishedRuns(), (runs) =>
+    runs.filter((run) => holdsSlot(run.unreadable, run.state)).map((run) => run.id.repo),
+  );
+
+/** A watched repo's ready issues still to try this pass, oldest first, and how many of its runs hold a slot. */
+interface Queue {
+  readonly repo: Repo;
+  readonly issues: Array<number>;
+  held: number;
+}
+
+/** Sets each queue's `held` from `holding`, and returns the machine's count. */
+const count = (holding: ReadonlyArray<string>, queues: ReadonlyArray<Queue>): number => {
+  for (const queue of queues) {
+    queue.held = holding.filter((repo) => sameRepo(repo, queue.repo.watched.repo)).length;
+  }
+  return holding.length;
+};
+
+/**
+ * Claims `factory:ready` issues with `start` while fewer than `max_concurrent_runs` runs are
+ * active on the machine. Each claim goes to the repo with the fewest runs holding a slot among
+ * the repos that still have a ready issue to try, the one listed first in the machine config on
+ * a tie, and the runs are counted again after every claim, so free slots spread across the
+ * repos. Within a repo the issues go by number, which is the order they were opened in.
+ */
+const claim = (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  infos: ReadonlyArray<RunInfo>,
+  machine: MachineConfig,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    void infos;
+    const first = yield* Effect.result(holding(world));
+    if (first._tag === "Failure") {
+      yield* pass.fail(
+        null,
+        passError("ledger", "cannot read the run ledger: ", first.failure.message),
+      );
+      return;
+    }
+    const paused = world.handPause();
+    // Ready issues that were not tried because the limit was reached. Every repo is still
+    // listed, so the count is the whole machine's.
+    let left = 0;
+    const queues: Array<Queue> = [];
+    for (const loaded of repos) {
+      if (loaded.kind !== "ready") continue;
+      const repo = loaded.repo;
+      const name = repo.watched.repo;
+      const listing = yield* Effect.result(world.readyIssues(repo));
+      if (listing._tag === "Failure") {
+        yield* pass.fail(
+          null,
+          passError("tracker", `${name}: cannot list the ready issues: `, listing.failure.message),
+        );
+        continue;
+      }
+      pass.sayIfCut(name, "ready", listing.success.cut);
+      // GitHub numbers go by number, which is the order they were opened in.
+      const issues = [...new Set(listing.success.items)].sort((a, b) => a - b);
+      queues.push({ repo, issues, held: 0 });
+    }
+    let active = count(first.success, queues);
+    // A blocked issue takes no slot, so its repo stays the one with the fewest and its next
+    // issue is tried.
+    for (;;) {
+      const queue = queues
+        .filter((q) => q.issues.length > 0)
+        .reduce<Queue | null>((best, q) => (best === null || q.held < best.held ? q : best), null);
+      if (queue === null) break;
+      const repo = queue.repo;
+      const name = repo.watched.repo;
+      const issue = queue.issues.shift()!;
+      const notes = pass.notes(`${name}${mention(issue)}`, "ready");
+      // Checked before the blockers: a person paused claims, so no claim is started. The pause is
+      // the machine's, said once after the loop.
+      if (paused !== null) continue;
+      // Before the limit, so a blocked issue takes no slot and is not counted as left over.
+      // Nothing is written for it, and a read that fails holds it back too. The `## Depends on`
+      // text is read only when no linked blocker is open.
+      const linked = yield* Effect.result(world.openBlockers(repo, issue));
+      if (linked._tag === "Failure") {
+        pass.trouble(
+          notes,
+          "tracker",
+          "cannot read the issue's dependencies: ",
+          linked.failure.message,
+        );
+        yield* pass.flush(notes, null);
+        continue;
+      }
+      let blocked: string | null = null;
+      if (linked.success.length > 0) {
+        blocked = blockedBy(name, linked.success, "");
+      } else {
+        const text = yield* Effect.result(world.dependsOnBlockers(repo, issue));
+        if (text._tag === "Failure") {
+          pass.trouble(
+            notes,
+            "tracker",
+            "cannot read the issue's Depends on: ",
+            text.failure.message,
+          );
+          yield* pass.flush(notes, null);
+          continue;
+        }
+        if (text.success.length > 0) blocked = blockedBy(name, text.success, FROM_TEXT);
+      }
+      if (blocked !== null) {
+        notes.parts.push(blocked);
+        yield* pass.flush(notes, null);
+        yield* pass.record({
+          event: "claim_skipped",
+          data: { repo: name, issue: String(issue), reason: "blocked" },
+        });
+        continue;
+      }
+      if (active >= machine.maxConcurrentRuns) {
+        left += 1;
+        yield* pass.record({
+          event: "claim_skipped",
+          data: { repo: name, issue: String(issue), reason: "limit" },
+        });
+        continue;
+      }
+      let run: string | null = null;
+      const outcome = yield* Effect.result(world.start(repo, issue));
+      if (outcome._tag === "Failure") {
+        if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
+        else pass.failed(notes, "start", outcome.failure);
+      } else {
+        switch (outcome.success.kind) {
+          case "claimed":
+            run = runIdToString(outcome.success.run);
+            notes.parts.push(`claimed in run ${run}`);
+            pass.report.claimed += 1;
+            break;
+          case "skipped":
+            notes.parts.push("not claimed");
+            break;
+          case "refused":
+            notes.parts.push("not claimed");
+            yield* pass.record({
+              event: "claim_skipped",
+              data: { repo: name, issue: String(issue), reason: "unapproved" },
+            });
+            break;
+          case "stuck":
+            run = runIdToString(outcome.success.run);
+            notes.parts.push("claimed, then");
+            pass.stuck(notes, run);
+            break;
+        }
+      }
+      yield* pass.flush(notes, run);
+      // Count again: a claim that ended in `stuck`, or in an error that left the issue in
+      // `triage`, changes how many runs are active, and which repo has the fewest.
+      const again = yield* Effect.result(holding(world));
+      if (again._tag === "Failure") {
+        yield* pass.fail(
+          null,
+          passError("ledger", "cannot read the run ledger: ", again.failure.message),
+        );
+        return;
+      }
+      active = count(again.success, queues);
+    }
+    if (paused !== null) {
+      pass.line(
+        `claims paused: by hand since ${formatTs(paused.sinceMs)}, for ${duration(Math.max(0, world.nowMs() - paused.sinceMs))}; no ready issue claimed`,
+      );
+      yield* pass.record({ event: "claim_skipped", data: { reason: "paused" } });
+    }
+    if (left > 0) {
+      pass.line(
+        `limit reached: ${left} ready ${plural(left, "issue")} ${left === 1 ? "was" : "were"} not claimed, max_concurrent_runs is ${machine.maxConcurrentRuns}`,
+      );
+    }
+  });
