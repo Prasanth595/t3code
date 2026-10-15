@@ -39,7 +39,7 @@ import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { DeviceHostEditor } from "./DeviceHostEditor";
 import { useHostConnectionChecks } from "./useHostConnectionChecks";
 import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
-import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
+import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
   const { scope, environments, connectedEnvironments } = useSettingsScope();
@@ -51,7 +51,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
   const [busy, setBusy] = useState(false);
   const targets = environments.map((environment) => ({
     environmentId: environment.environmentId,
-    label: environment.label,
+    label: settingsScopeEnvironmentLabel(environment, environments),
     connected: environment.connection.phase === "connected",
   }));
   const { checks, testConnection } = useHostConnectionChecks(targets);
