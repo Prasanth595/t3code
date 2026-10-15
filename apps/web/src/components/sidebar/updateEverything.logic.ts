@@ -199,6 +199,8 @@ export interface UpdateRunMachine {
   readonly result: "done" | "failed" | null;
   /** Why it failed, when `result` is "failed". */
   readonly failure: string | null;
+  /** This machine's provider failure, kept apart so a server retry does not clear it. */
+  readonly providerFailure: string | null;
 }
 
 /**

@@ -50,7 +50,10 @@ function updateRunMachines(update: (machine: UpdateRunMachine) => UpdateRunMachi
 export function settleUpdateRunMachine(
   environmentId: EnvironmentId,
   failure: string | null,
-  { serverUpdated = false }: { readonly serverUpdated?: boolean } = {},
+  {
+    serverUpdated = false,
+    providerFailure,
+  }: { readonly serverUpdated?: boolean; readonly providerFailure?: string | null } = {},
 ): void {
   updateRunMachines((machine) =>
     machine.environmentId === environmentId
@@ -59,6 +62,7 @@ export function settleUpdateRunMachine(
           result: failure === null ? "done" : "failed",
           failure,
           ...(serverUpdated ? { server: null } : {}),
+          ...(providerFailure === undefined ? {} : { providerFailure }),
         }
       : machine,
   );
@@ -71,9 +75,13 @@ export function retryFailedUpdateRunServers(
     options: { readonly quiet: boolean },
   ) => Promise<ServerUpdateOutcome>,
 ): void {
-  const targets = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
-    (machine) => (machine.result === "failed" && machine.server !== null ? [machine.server] : []),
+  const failed = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
+    (machine) =>
+      machine.result === "failed" && machine.server !== null
+        ? [{ target: machine.server, providerFailure: machine.providerFailure }]
+        : [],
   );
+  const targets = failed.map(({ target }) => target);
   const retried = new Set(targets.map((target) => target.environmentId));
   const startedAt = Date.now();
   updateRunMachines((machine) =>
@@ -81,16 +89,17 @@ export function retryFailedUpdateRunServers(
       ? { ...machine, result: null, failure: null, startedAt }
       : machine,
   );
-  for (const target of targets) {
+  for (const { target, providerFailure } of failed) {
     void update(target, { quiet: true }).then((outcome) =>
       settleUpdateRunMachine(
         target.environmentId,
         // A skipped retry (no permission, disconnected, interrupted) did not update.
         outcome.status === "updated"
-          ? null
+          ? providerFailure
           : outcome.status === "failed"
             ? outcome.message
             : "Could not start the update",
+        { serverUpdated: outcome.status === "updated" },
       ),
     );
   }
@@ -285,6 +294,7 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       startedAt: server.startedAt,
       result: null,
       failure: null,
+      providerFailure: null,
     })),
   }));
   let remaining = servers.length;

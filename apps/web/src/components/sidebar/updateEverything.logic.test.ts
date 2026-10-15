@@ -32,6 +32,7 @@ const runMachine = (overrides: Partial<UpdateRunMachine> = {}): UpdateRunMachine
   startedAt: 0,
   result: null,
   failure: null,
+  providerFailure: null,
   ...overrides,
 });
 
