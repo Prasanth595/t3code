@@ -17,7 +17,7 @@ import { sanitize } from "./gate.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { ErrorKind, MachineEvent } from "./ledger/events.ts";
 import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
-import { runIdToString } from "./ledger/runId.ts";
+import { runIdToString, type RunId } from "./ledger/runId.ts";
 import { duration, formatTs } from "./ledger/time.ts";
 import type { StartError, StartOutcome } from "./runner/start.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
@@ -71,6 +71,15 @@ export interface PassWorld {
   ) => Effect.Effect<ReadonlyArray<Blocker>, PassError>;
   /** The claim: `runner/start.ts`. */
   readonly start: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
+  /** Whether the run's gate is running now. */
+  readonly gateRunning: (run: RunId) => boolean;
+  /** Appends an `error` line to the run's own ledger. */
+  readonly recordError: (
+    run: RunId,
+    step: "pass" | "start",
+    kind: ErrorKind,
+    message: string,
+  ) => Effect.Effect<void, LedgerError>;
   /** The claims pause a person made, when there is one. */
   readonly handPause: () => HandPause | null;
   readonly nowMs: () => number;
@@ -115,6 +124,7 @@ const passError = (kind: ErrorKind, what: string, detail: string): NoteError => 
   message: `${what}${detail}`,
 });
 
+/** Every call `start` makes is a tracker call, whatever host the tracker runs on. */
 const errorKind = (error: StartError): ErrorKind => {
   switch (error._tag) {
     case "GitHubSpawnError":
@@ -124,7 +134,7 @@ const errorKind = (error: StartError): ErrorKind => {
     case "GitHubOutputTooLarge":
     case "GitHubParse":
     case "GitHubRateLimited":
-      return "github";
+      return "tracker";
     case "GateRunningError":
       return "gate";
     default:
@@ -202,18 +212,24 @@ class Pass {
     );
   }
 
-  /** Prints `error` as an error line and records it in the machine log, with the run's id when there is one. */
-  fail(run: string | null, error: NoteError): Effect.Effect<void> {
+  /**
+   * Prints `error` as an error line and records it: as an `error` line in the ledger of `run`
+   * when there is one that can take it, in the machine log otherwise (with the run's id when a
+   * run's ledger could not take it). `unreadable` is a run whose own ledger cannot be read.
+   */
+  fail(run: RunId | null, error: NoteError, unreadable = false): Effect.Effect<void> {
     this.error(error.line);
-    return this.record({
-      event: "error",
-      data: {
-        ...(run === null ? {} : { run }),
-        step: error.step,
-        kind: error.kind,
-        message: prepareText(error.message),
-      },
-    });
+    const message = prepareText(error.message);
+    const toMachineLog = (id: string | null) =>
+      this.record({
+        event: "error",
+        data: { ...(id === null ? {} : { run: id }), step: error.step, kind: error.kind, message },
+      });
+    if (run === null) return toMachineLog(null);
+    if (unreadable) return toMachineLog(runIdToString(run));
+    return this.world
+      .recordError(run, error.step, error.kind, message)
+      .pipe(Effect.catch(() => toMachineLog(runIdToString(run))));
   }
 
   notes(label: string, state: State | null): Notes {
@@ -241,7 +257,7 @@ class Pass {
     notes.parts.push(`stuck, the reason is in the ledger of run ${run}`);
   }
 
-  flush(notes: Notes, run: string | null): Effect.Effect<void> {
+  flush(notes: Notes, run: RunId | null): Effect.Effect<void> {
     if (notes.parts.length > 0) {
       this.line(`${notes.label} ${notes.state}: ${notes.parts.join(", ")}`);
     }
@@ -349,12 +365,13 @@ const runs = (
       if (info.unreadable) {
         // Its own ledger is what cannot be read, so the machine log takes the error.
         yield* pass.fail(
-          id,
+          info.id,
           passError(
             "ledger",
             `run ${id}: its ledger file cannot be read, so nothing was done for it and it counts as active`,
             "",
           ),
+          true,
         );
         continue;
       }
@@ -396,28 +413,11 @@ const untrackedClaims = (
       for (const issue of listing.success.items) {
         if (hasRun(infos, name, issue)) continue;
         const notes = pass.notes(`${name}${mention(issue)}`, "triage");
-        let run: string | null = null;
-        const outcome = yield* Effect.result(world.start(repo, issue));
-        if (outcome._tag === "Failure") {
-          if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
-          else pass.failed(notes, "start", outcome.failure);
-        } else {
-          switch (outcome.success.kind) {
-            case "claimed":
-              run = runIdToString(outcome.success.run);
-              notes.parts.push(`no run on record, claimed in run ${run}`);
-              break;
-            case "skipped":
-            case "refused":
-              notes.parts.push("no run on record, not ours to resume");
-              break;
-            case "stuck":
-              run = runIdToString(outcome.success.run);
-              notes.parts.push("no run on record");
-              pass.stuck(notes, run);
-              break;
-          }
-        }
+        const run = yield* noteStart(world, pass, notes, repo, issue, {
+          claimed: (run) => `no run on record, claimed in run ${run}`,
+          notTaken: "no run on record, not ours to resume",
+          stuck: "no run on record",
+        });
         yield* pass.flush(notes, run);
       }
     }
@@ -469,6 +469,96 @@ const unassignedClaims = (
     }
   });
 
+/** The newest unfinished run of the issue, or null when there is none or the ledger cannot be listed. */
+const newestRun = (world: PassWorld, repo: string, issue: number): Effect.Effect<RunId | null> =>
+  world.unfinishedRuns().pipe(
+    Effect.map((runs) =>
+      runs
+        .map((info) => info.id)
+        .filter((id) => id.issue === String(issue) && sameRepo(id.repo, repo))
+        .reduce<RunId | null>(
+          (best, id) => (best === null || id.attempt > best.attempt ? id : best),
+          null,
+        ),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+
+/**
+ * The run a `start` that failed made, for the issue: the newest unfinished one when it is a newer
+ * attempt than `before`, the newest unfinished run before the call. A failed start may have made a
+ * run or reopened the newest, so only a run that is new belongs to the failure.
+ */
+const madeSince = (
+  world: PassWorld,
+  repo: string,
+  issue: number,
+  before: RunId | null,
+): Effect.Effect<RunId | null> =>
+  Effect.map(newestRun(world, repo, issue), (after) =>
+    after !== null && (before === null || after.attempt > before.attempt) ? after : null,
+  );
+
+/** The words a start's outcome puts on the issue's line, by outcome. */
+interface StartWords {
+  readonly claimed: (run: string) => string;
+  readonly notTaken: string;
+  readonly stuck: string;
+}
+
+/**
+ * Calls `start` for the issue and puts what it did on `notes`: the run it names, when it made
+ * one, is the run the notes' errors belong to. A refused claim is a `claim_skipped`; a claim
+ * counts only when the issue was `ready`.
+ */
+const noteStart = (
+  world: PassWorld,
+  pass: Pass,
+  notes: Notes,
+  repo: Repo,
+  issue: number,
+  words: StartWords,
+): Effect.Effect<RunId | null> =>
+  Effect.gen(function* () {
+    const name = repo.watched.repo;
+    const before = yield* newestRun(world, name, issue);
+    const outcome = yield* Effect.result(world.start(repo, issue));
+    if (outcome._tag === "Failure") {
+      if (outcome.failure._tag === "GateRunningError") {
+        notes.parts.push(GATE_RUNNING);
+        return null;
+      }
+      pass.failed(notes, "start", outcome.failure);
+      return yield* madeSince(world, name, issue, before);
+    }
+    switch (outcome.success.kind) {
+      case "claimed": {
+        const run = runIdToString(outcome.success.run);
+        notes.parts.push(words.claimed(run));
+        if (notes.state === "ready") pass.report.claimed += 1;
+        return outcome.success.run;
+      }
+      case "skipped":
+        notes.parts.push(words.notTaken);
+        return null;
+      case "refused":
+        notes.parts.push(words.notTaken);
+        if (notes.state === "ready") {
+          yield* pass.record({
+            event: "claim_skipped",
+            data: { repo: name, issue: String(issue), reason: "unapproved" },
+          });
+        }
+        return null;
+      case "stuck": {
+        const run = runIdToString(outcome.success.run);
+        notes.parts.push(words.stuck);
+        pass.stuck(notes, run);
+        return outcome.success.run;
+      }
+    }
+  });
+
 /** The repo of each run that holds a slot: not finished, and not waiting on a pull request. */
 const holding = (world: PassWorld): Effect.Effect<Array<string>, LedgerError> =>
   Effect.map(world.unfinishedRuns(), (runs) =>
@@ -505,7 +595,6 @@ const claim = (
   pass: Pass,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    void infos;
     const first = yield* Effect.result(holding(world));
     if (first._tag === "Failure") {
       yield* pass.fail(
@@ -548,6 +637,19 @@ const claim = (
       const name = repo.watched.repo;
       const issue = queue.issues.shift()!;
       const notes = pass.notes(`${name}${mention(issue)}`, "ready");
+      // An issue with a run whose gate is running waits: `start` would finish that run under
+      // its gate. It takes no slot, no blocker read, and is not counted as left over.
+      const gating = infos.some(
+        (info) =>
+          info.id.issue === String(issue) &&
+          sameRepo(info.id.repo, name) &&
+          world.gateRunning(info.id),
+      );
+      if (gating) {
+        notes.parts.push(GATE_RUNNING);
+        yield* pass.flush(notes, null);
+        continue;
+      }
       // Checked before the blockers: a person paused claims, so no claim is started. The pause is
       // the machine's, said once after the loop.
       if (paused !== null) continue;
@@ -599,35 +701,11 @@ const claim = (
         });
         continue;
       }
-      let run: string | null = null;
-      const outcome = yield* Effect.result(world.start(repo, issue));
-      if (outcome._tag === "Failure") {
-        if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
-        else pass.failed(notes, "start", outcome.failure);
-      } else {
-        switch (outcome.success.kind) {
-          case "claimed":
-            run = runIdToString(outcome.success.run);
-            notes.parts.push(`claimed in run ${run}`);
-            pass.report.claimed += 1;
-            break;
-          case "skipped":
-            notes.parts.push("not claimed");
-            break;
-          case "refused":
-            notes.parts.push("not claimed");
-            yield* pass.record({
-              event: "claim_skipped",
-              data: { repo: name, issue: String(issue), reason: "unapproved" },
-            });
-            break;
-          case "stuck":
-            run = runIdToString(outcome.success.run);
-            notes.parts.push("claimed, then");
-            pass.stuck(notes, run);
-            break;
-        }
-      }
+      const run = yield* noteStart(world, pass, notes, repo, issue, {
+        claimed: (run) => `claimed in run ${run}`,
+        notTaken: "not claimed",
+        stuck: "claimed, then",
+      });
       yield* pass.flush(notes, run);
       // Count again: a claim that ended in `stuck`, or in an error that left the issue in
       // `triage`, changes how many runs are active, and which repo has the fewest.

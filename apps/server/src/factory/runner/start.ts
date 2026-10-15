@@ -27,7 +27,7 @@ import type { ProjectConfig } from "../config.ts";
 import { refusalReason, unapprovedComment, type Refusal } from "../domain/approval.ts";
 import { InvalidTransition, stateLabel, transition, type State } from "../domain/lifecycle.ts";
 import { gateLockFile } from "../gate.ts";
-import { isLedgerError, type LedgerError } from "../ledger/errors.ts";
+import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type Cause, type ClaimRepair, type Outcome } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { MachineLog } from "../ledger/machineLog.ts";
@@ -35,31 +35,27 @@ import { readRun } from "../ledger/read.ts";
 import { newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
-import type { GitHubError, makeGitHub } from "../tracker/github.ts";
+import type { BoundGitHub, GitHubError } from "../tracker/github.ts";
 import { CANNOT_CONFIRM, CUT_SHORT_COMMENT, statusBody, stuckComment } from "./messages.ts";
 import { readProgress, type Seen } from "./progress.ts";
 
-type Gh = ReturnType<typeof makeGitHub>;
-/** A `makeGitHub` method with its `FactoryProcess` already supplied. */
-type Bound<F> = F extends (...args: infer P) => Effect.Effect<infer A, infer E, infer _R>
-  ? (...args: P) => Effect.Effect<A, E>
-  : never;
-
 /**
  * What the claim asks of the tracker: the subset of `makeGitHub` it calls, with the process
- * runner already supplied, so a test can fake it with plain effects.
+ * runner already supplied (`bindProcess`), so a test can fake it with plain effects. A later
+ * step adds the names it calls here and a line to the fake.
  */
-export interface Tracker {
-  readonly issue: Bound<Gh["issue"]>;
-  readonly approval: Bound<Gh["approval"]>;
-  readonly claim: Bound<Gh["claim"]>;
-  readonly setState: Bound<Gh["setState"]>;
-  readonly assign: Bound<Gh["assign"]>;
-  readonly unassign: Bound<Gh["unassign"]>;
-  readonly postComment: Bound<Gh["postComment"]>;
-  readonly upsertStatusComment: Bound<Gh["upsertStatusComment"]>;
-  readonly newestFactoryComment: Bound<Gh["newestFactoryComment"]>;
-}
+export type Tracker = Pick<
+  BoundGitHub,
+  | "issue"
+  | "approval"
+  | "claim"
+  | "setState"
+  | "assign"
+  | "unassign"
+  | "postComment"
+  | "upsertStatusComment"
+  | "newestFactoryComment"
+>;
 
 export interface StartContext {
   /** `owner/name` as the machine config writes it. */
@@ -96,16 +92,6 @@ export class GateRunningError extends Schema.TaggedError<GateRunningError>()("Ga
 }
 
 export type StartError = GitHubError | LedgerError | InvalidTransition | GateRunningError;
-
-/** A ledger call, which throws its typed errors, as an effect that fails with them. */
-const ledger = <A>(call: () => A): Effect.Effect<A, LedgerError> =>
-  Effect.try({
-    try: call,
-    catch: (error) => {
-      if (isLedgerError(error)) return error;
-      throw error;
-    },
-  });
 
 const mention = (issue: number) => `#${issue}`;
 

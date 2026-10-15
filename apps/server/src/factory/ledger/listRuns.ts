@@ -2,7 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { STATES, type State } from "../domain/lifecycle.ts";
+import { isState, type State } from "../domain/lifecycle.ts";
 import { errnoCode, LedgerIoError } from "./errors.ts";
 import { readRun } from "./read.ts";
 import { RUNS_DIR, runIdFromFileName, type RunId } from "./runId.ts";
@@ -15,9 +15,6 @@ export interface RunInfo {
   /** The file could not be read, so the state is unknown. */
   readonly unreadable: boolean;
 }
-
-const isState = (value: unknown): value is State =>
-  typeof value === "string" && (STATES as ReadonlyArray<string>).includes(value);
 
 /**
  * Whether a run holds one of the machine's `max_concurrent_runs` slots: it is not finished, and

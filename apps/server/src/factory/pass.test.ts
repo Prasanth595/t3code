@@ -343,7 +343,8 @@ describe("claiming new issues", () => {
         lines.some((l) => l.startsWith("error: rawphp/softfac#1 start:")),
         lines.join("\n"),
       );
-      assert.deepEqual(recordedErrorKinds(fake), ["github"]);
+      // Every call `start` makes is a tracker call, whatever host the tracker runs on.
+      assert.deepEqual(recordedErrorKinds(fake), ["tracker"]);
       assert.deepEqual((errorEvents(fake)[0]!.data as { step: string }).step, "start");
     }),
   );
@@ -503,7 +504,7 @@ describe("a ready issue whose older run is gating", () => {
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
       assert.deepEqual(starts(fake), []);
       assert.equal(runLine(lines, "rawphp/softfac#14 "), "rawphp/softfac#14 ready: gate running");
-      assert.ok(!fake.calls.some((c) => c.startsWith("blockers")), fake.calls.join("\n"));
+      assert.ok(!fake.calls.includes("blockers rawphp/softfac#14"), fake.calls.join("\n"));
       assert.deepEqual(
         fake.events.filter((e) => e.event === "claim_skipped"),
         [claimSkipped(15, "limit")],

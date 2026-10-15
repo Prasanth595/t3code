@@ -3,7 +3,7 @@
  * of softfac's `runner/progress.rs` the claim needs; later steps add what they read.
  */
 
-import { STATES, type State } from "../domain/lifecycle.ts";
+import { isState, type State } from "../domain/lifecycle.ts";
 import type { Entry } from "../ledger/read.ts";
 
 export interface Seen {
@@ -18,9 +18,6 @@ export interface Seen {
   readonly stuck: string | null;
   readonly finished: boolean;
 }
-
-const isState = (value: unknown): value is State =>
-  typeof value === "string" && (STATES as ReadonlyArray<string>).includes(value);
 
 const field = (data: unknown, key: string): unknown =>
   typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;

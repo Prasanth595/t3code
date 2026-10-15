@@ -31,7 +31,11 @@ export const loadHandPause = (dataDir: string): HandPause | null => {
   const path = NodePath.join(dataDir, PAUSE_FILE);
   let fd: number;
   try {
-    fd = NodeFS.openSync(path, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW);
+    // Without following a symlink and without blocking, so a FIFO put there cannot hang the pass.
+    fd = NodeFS.openSync(
+      path,
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
+    );
   } catch {
     return null;
   }

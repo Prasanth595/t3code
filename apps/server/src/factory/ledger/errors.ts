@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 // Why a ledger operation failed, one class per case so an Effect caller can pick them apart with
@@ -84,3 +85,13 @@ export const errnoCode = (error: unknown): string | undefined =>
   typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
     ? error.code
     : undefined;
+
+/** Runs a ledger call, which throws typed `LedgerError`s, as an effect; anything else it throws is a defect. */
+export const ledgerCall = <A>(call: () => A): Effect.Effect<A, LedgerError> =>
+  Effect.suspend(() => {
+    try {
+      return Effect.succeed(call());
+    } catch (error) {
+      return isLedgerError(error) ? Effect.fail(error) : Effect.die(error);
+    }
+  });

@@ -27,6 +27,10 @@ export const STATES = [
 /** The GitHub label for a state, e.g. `factory:needs-info`. */
 export const stateLabel = (state: State): string => `factory:${state}`;
 
+/** Whether `value` is one of the seven state names. */
+export const isState = (value: unknown): value is State =>
+  typeof value === "string" && (STATES as ReadonlyArray<string>).includes(value);
+
 /** The state for a `factory:` label (exact, case-sensitive), or undefined if it is not ours. */
 export const stateFromLabel = (label: string): State | undefined =>
   STATES.find((state) => stateLabel(state) === label);

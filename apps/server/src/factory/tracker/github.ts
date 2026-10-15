@@ -1268,3 +1268,26 @@ export const makeGitHub = (options: GitHubOptions) => {
     textEditedSince,
   };
 };
+
+type GitHub = ReturnType<typeof makeGitHub>;
+
+/** A `makeGitHub` method with its `FactoryProcess` already supplied. */
+type Bound<F> = F extends (...args: infer P) => Effect.Effect<infer A, infer E, infer _R>
+  ? (...args: P) => Effect.Effect<A, E>
+  : never;
+
+/** `makeGitHub`'s methods with the process runner supplied, so a caller holds plain effects and a test fakes them. */
+export type BoundGitHub = { readonly [K in keyof GitHub]: Bound<GitHub[K]> };
+
+/** Every method of `github` with `process` supplied. */
+export const bindProcess = (github: GitHub, process: FactoryProcess["Service"]): BoundGitHub => {
+  type Method = (
+    ...args: ReadonlyArray<unknown>
+  ) => Effect.Effect<unknown, GitHubError, FactoryProcess>;
+  const bound: Record<string, unknown> = {};
+  for (const [name, method] of Object.entries(github) as ReadonlyArray<[string, Method]>) {
+    bound[name] = (...args: ReadonlyArray<unknown>) =>
+      Effect.provideService(method(...args), FactoryProcess, process);
+  }
+  return bound as BoundGitHub;
+};

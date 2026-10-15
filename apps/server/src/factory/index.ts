@@ -1,5 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off - the host name goes on every `claimed` line, as softfac writes it.
+// @effect-diagnostics nodeBuiltinImport:off - the host name goes on every `claimed` line, as softfac writes it; a gate lock is a file.
 // @effect-diagnostics globalDate:off - the ledger stamps lines with the wall clock, as softfac does.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
@@ -18,9 +19,10 @@ import {
   type ProjectConfig,
   type WatchedRepo,
 } from "./config.ts";
-import { clearGateLocks } from "./gate.ts";
-import { isLedgerError, type LedgerError } from "./ledger/errors.ts";
-import type { MachineEvent } from "./ledger/events.ts";
+import { clearGateLocks, gateLockFile } from "./gate.ts";
+import { ledgerCall as ledger } from "./ledger/errors.ts";
+import { makeCause, type MachineEvent } from "./ledger/events.ts";
+import { Ledger } from "./ledger/ledger.ts";
 import { listUnfinishedRuns } from "./ledger/listRuns.ts";
 import { MachineLog } from "./ledger/machineLog.ts";
 import { runLoop, type Loop } from "./loop.ts";
@@ -30,7 +32,7 @@ import { FactoryProcess } from "./process.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { start, utcSecond, type Tracker } from "./runner/start.ts";
 import * as Paths from "./t3/paths.ts";
-import { makeGitHub, type GitHubError, type IssueSummary } from "./tracker/github.ts";
+import { bindProcess, makeGitHub, type GitHubError, type IssueSummary } from "./tracker/github.ts";
 
 /** The running factory, for the code that wakes it (a thread's run changing, a person's request). */
 export class FactoryLoop extends Context.Service<FactoryLoop, Loop>()("t3/factory/FactoryLoop") {}
@@ -50,16 +52,6 @@ const asPassError =
   (error: { readonly message: string }): PassError => ({
     kind,
     message: `${prefix}${error.message}`,
-  });
-
-/** A ledger call, which throws its typed errors, as an effect that fails with them. */
-const ledger = <A>(call: () => A): Effect.Effect<A, LedgerError> =>
-  Effect.try({
-    try: call,
-    catch: (error) => {
-      if (isLedgerError(error)) return error;
-      throw error;
-    },
   });
 
 const byNumber = (a: number, b: number) => a - b;
@@ -123,26 +115,13 @@ export const liveWorld = (
     Effect.provideService(effect, FactoryProcess, process);
   const githubFor = (watched: WatchedRepo) =>
     makeGitHub({ repo: watched.repo, ghConfigDir: machine.ghConfigDir });
-  const trackerFor = (watched: WatchedRepo): Tracker => {
-    const gh = githubFor(watched);
-    return {
-      issue: (n) => withProcess(gh.issue(n)),
-      approval: (n, instructors) => withProcess(gh.approval(n, instructors)),
-      claim: (n, user, from, to) => withProcess(gh.claim(n, user, from, to)),
-      setState: (n, state) => withProcess(gh.setState(n, state)),
-      assign: (n, user) => withProcess(gh.assign(n, user)),
-      unassign: (n, user) => withProcess(gh.unassign(n, user)),
-      postComment: (n, body) => withProcess(gh.postComment(n, body)),
-      upsertStatusComment: (n, user, body) => withProcess(gh.upsertStatusComment(n, user, body)),
-      newestFactoryComment: (n) => withProcess(gh.newestFactoryComment(n)),
-    };
-  };
+  const trackerFor = (watched: WatchedRepo): Tracker => bindProcess(githubFor(watched), process);
   const tracker = (effect: Effect.Effect<unknown, GitHubError, FactoryProcess>) =>
     withProcess(effect).pipe(Effect.mapError(asPassError("tracker")));
   return {
     project: (watched) => withProcess(projectFromBase(githubFor(watched))),
     trackerUser: (watched) =>
-      withProcess(githubFor(watched).login()).pipe(Effect.mapError(asPassError("github"))),
+      withProcess(githubFor(watched).login()).pipe(Effect.mapError(asPassError("tracker"))),
     unfinishedRuns: () => ledger(() => listUnfinishedRuns(dataDir)),
     readyIssues: (repo: Repo) =>
       withProcess(githubFor(repo.watched).listIssues("ready")).pipe(
@@ -193,6 +172,19 @@ export const liveWorld = (
         },
         issue,
       ),
+    gateRunning: (run) => NodeFS.existsSync(gateLockFile(dataDir, run)),
+    recordError: (run, step, kind, message) =>
+      ledger(() => {
+        const out = Ledger.open(dataDir, run, { clock });
+        try {
+          out.append(
+            { event: "error", data: { step, kind, message } },
+            makeCause(step, "step-failed"),
+          );
+        } finally {
+          out.close();
+        }
+      }),
     handPause: () => loadHandPause(dataDir),
     nowMs: clock,
     record: (event: MachineEvent) =>
