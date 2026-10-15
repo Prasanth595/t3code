@@ -238,11 +238,15 @@ export function acpPerTurnPromptUsage(
   }
   // TurnTokenUsage contract: input includes cache read + write and reasoning
   // is a subset of output, so clamp counters that exceed their parent and
-  // drop the ones the agent left unset.
+  // drop the ones the agent left unset. Cache writes are capped at whatever
+  // cache reads leave of input, so the pair cannot exceed it.
   const clampSubset = (value: number | null | undefined, parent: number) =>
     value == null ? undefined : Math.min(value, parent);
   const cachedInputTokens = clampSubset(usage.cachedReadTokens, usage.inputTokens);
-  const cacheCreationTokens = clampSubset(usage.cachedWriteTokens, usage.inputTokens);
+  const cacheCreationTokens = clampSubset(
+    usage.cachedWriteTokens,
+    usage.inputTokens - (cachedInputTokens ?? 0),
+  );
   const reasoningTokens = clampSubset(usage.thoughtTokens, usage.outputTokens);
   return {
     usageScope: "main_agent",
@@ -7400,10 +7404,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             previous,
                           );
                           // Hard-Stop window: with terminateRuntimeProcessGroupOnInterrupt,
-                          // finalizeTurn can run on another fiber after runtime.prompt
-                          // resolved but before this tap. The finalized turn stays
-                          // unavailable, but the returned cumulative sample still advances
-                          // the baseline so the next turn's delta keeps counter continuity.
+                          // the interrupt path advances the generation before the local
+                          // finalize, so staleGeneration drops this late sample above.
+                          // The finalized turn stays unavailable and the next turn starts
+                          // from a cleared map — conservative, never overcounting.
                           return [
                             undefined,
                             new Map(current).set(requestedSessionId, next),

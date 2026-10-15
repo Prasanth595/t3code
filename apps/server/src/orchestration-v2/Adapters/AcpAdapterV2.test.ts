@@ -356,7 +356,7 @@ describe("acpPerTurnPromptUsage", () => {
         inputTokens: 100,
         outputTokens: 10,
         cachedInputTokens: 100,
-        cacheCreationTokens: 100,
+        cacheCreationTokens: 0,
         reasoningTokens: 10,
       },
     );
@@ -1369,11 +1369,12 @@ describe("AcpAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("acp-test-per-turn-usage");
       const threadId = ThreadId.make("thread-acp-per-turn-usage");
       let promptOrdinal = 0;
-      // Live wire fixture: glm-acp-agent 1.14.0 (Z.ai GLM) over ACP stdio,
-      // 2026-10-15 — three sequential prompts in one session, inputTokens
-      // 2432 → 2453 → 2475 (per-turn context size; session-cumulative
-      // counters would roughly double each turn), totalTokens === input +
-      // output, cachedReadTokens <= inputTokens, thoughtTokens <= outputTokens.
+      // Fixture shaped after a live wire probe: glm-acp-agent 1.14.0 (Z.ai GLM)
+      // over ACP stdio, 2026-10-15 — three sequential prompts in one session,
+      // inputTokens 2432 → 2453 → 2475 as observed (per-turn context size; a
+      // session-cumulative counter would add a full context's worth each turn).
+      // GLM never sends cachedWriteTokens; those values are added here to
+      // exercise the clamp path.
       const promptUsages = [
         {
           inputTokens: 2432,
@@ -1555,7 +1556,8 @@ describe("AcpAdapterV2", () => {
           event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
       );
       // TurnTokenUsage contract: input includes cache read + write and
-      // reasoning is a subset of output, so exceeding subsets clamp to parent.
+      // reasoning is a subset of output. Reads clamp to input, writes clamp
+      // to what reads leave of it (100 - 100 = 0 here).
       assert.deepEqual(
         completed?.type === "provider_turn.updated" ? completed.providerTurn.turnTokenUsage : null,
         {
@@ -1565,7 +1567,7 @@ describe("AcpAdapterV2", () => {
           inputTokens: 100,
           outputTokens: 10,
           cachedInputTokens: 100,
-          cacheCreationTokens: 100,
+          cacheCreationTokens: 0,
           reasoningTokens: 10,
         },
       );
