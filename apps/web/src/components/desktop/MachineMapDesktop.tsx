@@ -40,7 +40,8 @@ import {
   getDesktopUpdateDownloadedVersion,
   resolveDesktopUpdateButtonAction,
 } from "../desktopUpdate.logic";
-import { armIdleInstall, installDesktopUpdate } from "./DesktopUpdateIdleInstall";
+import { installLocalUpdate } from "../sidebar/SidebarUpdatePill";
+import { armIdleInstall } from "./DesktopUpdateIdleInstall";
 
 /**
  * Fork: the desktop app's part of the machine map (apps/machine-map/SPEC.md). It reads the state
@@ -319,7 +320,7 @@ function MachineDesktopReports({
           ok: true,
           result: { version, whenIdle: false },
           error: null,
-          after: () => void installDesktopUpdate(bridge),
+          after: () => void installLocalUpdate(bridge),
         };
       }
       default:

@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { DesktopBridge } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
@@ -7,11 +6,9 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import { environmentThreadShells } from "../../state/threads";
-import {
-  getDesktopUpdateActionError,
-  resolveDesktopUpdateButtonAction,
-} from "../desktopUpdate.logic";
+import { resolveDesktopUpdateButtonAction } from "../desktopUpdate.logic";
 import { countRunningAgentTurns } from "../desktopUpdateIdleInstall.logic";
+import { installLocalUpdate } from "../sidebar/SidebarUpdatePill";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -66,31 +63,6 @@ export function armIdleInstall(): void {
   setIdleInstallState({ armed: true });
 }
 
-export function installDesktopUpdate(bridge: Pick<DesktopBridge, "installUpdate">): Promise<void> {
-  return bridge
-    .installUpdate()
-    .then((result) => {
-      const actionError = getDesktopUpdateActionError(result);
-      if (!actionError) return;
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not install update",
-          description: actionError,
-        }),
-      );
-    })
-    .catch((error: unknown) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not install update",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
-        }),
-      );
-    });
-}
-
 /** Desktop only. Hosts the prompt and runs an armed install when the agents finish. */
 export function DesktopUpdateIdleInstall() {
   const { promptOpen, armed } = useAtomValue(idleInstallAtom);
@@ -130,7 +102,7 @@ function ArmedInstallWatcher() {
       );
       return;
     }
-    void installDesktopUpdate(bridge);
+    void installLocalUpdate(bridge);
   }, [count, state]);
 
   return null;
@@ -142,7 +114,7 @@ function IdleInstallPromptContent({ armed }: { readonly armed: boolean }) {
   const installNow = () => {
     setIdleInstallState({ promptOpen: false, armed: false });
     const bridge = window.desktopBridge;
-    if (bridge) void installDesktopUpdate(bridge);
+    if (bridge) void installLocalUpdate(bridge);
   };
 
   return (
