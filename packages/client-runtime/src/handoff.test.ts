@@ -101,6 +101,14 @@ describe("pending context handoff", () => {
       ).toBeNull();
     }
   });
+  it("treats a later run as history when earlier runs are outside the loaded window", () => {
+    const windowed = {
+      runs: [{ ...run("current", 5, from, "source"), startedAt, status: "running" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    expect(resolvePendingHandoff(windowed, { instanceId: to, model: "next" }, [])?.from).toEqual([
+      { instanceId: from, model: "source" },
+    ]);
+  });
   it("hands off from the latest started run, not the latest finished one", () => {
     const withLaterRun = (status: string, laterStartedAt: string | null) =>
       ({
