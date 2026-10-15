@@ -196,8 +196,19 @@ const CommentRows = Schema.Array(
     id: Schema.Number,
     user: Schema.optional(Schema.NullOr(Login)),
     body: OptionalText,
+    created_at: OptionalText,
   }),
 );
+
+const AssigneesView = Schema.Struct({ assignees: Schema.Array(Login) });
+const ClaimedRows = Schema.Array(
+  Schema.Struct({
+    number: Schema.Number,
+    assignees: Schema.Array(Login),
+    updatedAt: Schema.String,
+  }),
+);
+const UserView = Schema.Struct({ login: Schema.optional(Schema.NullOr(Schema.String)) });
 
 const BlockerRows = Schema.Array(
   Schema.Struct({
@@ -268,6 +279,25 @@ export interface IssueDetail {
   readonly state: State | null;
   /** GitHub has the issue closed. */
   readonly closed: boolean;
+}
+
+/** What `claim` did. */
+export type ClaimOutcome =
+  | { readonly kind: "claimed" }
+  /** The issue already had assignees, so nothing was edited. */
+  | { readonly kind: "skipped-assigned"; readonly assignees: ReadonlyArray<string> };
+
+/** A `factory:triage` or `factory:building` issue that nobody is assigned to, with its state. */
+export interface UnassignedClaim {
+  readonly issue: number;
+  readonly state: State;
+}
+
+/** A comment the factory posted: its text without the marker, and when GitHub says it was created. */
+export interface FactoryComment {
+  readonly body: string;
+  /** GitHub's UTC form, e.g. `2026-10-04T10:13:16Z`; empty when GitHub gave none. */
+  readonly createdAt: string;
 }
 
 export interface BaseConfig {
@@ -1096,9 +1126,123 @@ export const makeGitHub = (options: GitHubOptions) => {
       return editedSince(yield* readHistory(issue), since);
     });
 
+  /** The login `gh` is authenticated as, from the API. */
+  const login = (): GitHubEffect<string> =>
+    Effect.gen(function* () {
+      const args = ["api", "user"];
+      const me = yield* ghJson(args, UserView, "an object with the user's login");
+      if (me.login === undefined || me.login === null || me.login === "") {
+        return yield* parseError(args, "an object with the user's login (it was empty)");
+      }
+      return me.login;
+    });
+
+  /**
+   * Assigns the issue to `user` and swaps `from` for `to`, in one `gh issue edit`. An issue that
+   * already has any assignee is left alone. The view and the edit are two calls, so two
+   * machines claiming at the same instant can both win. An error does not mean nothing
+   * changed: GitHub has applied the labels and failed to answer.
+   */
+  const claim = (
+    number: number,
+    user: string,
+    from: State,
+    to: State,
+  ): GitHubEffect<ClaimOutcome> =>
+    Effect.gen(function* () {
+      const view = [...repoArgs(["issue", "view", String(number)]), "--json", "assignees"];
+      const current = yield* ghJson(view, AssigneesView, "an object with `assignees`");
+      if (current.assignees.length > 0) {
+        return { kind: "skipped-assigned", assignees: current.assignees.map((a) => a.login) };
+      }
+      yield* gh([
+        ...repoArgs(["issue", "edit", String(number)]),
+        "--add-assignee",
+        user,
+        "--remove-label",
+        stateLabel(from),
+        "--add-label",
+        stateLabel(to),
+      ]);
+      return { kind: "claimed" };
+    });
+
+  /**
+   * The open `factory:triage` then `factory:building` issues (at most 200 of each) that no one
+   * is assigned to, that were last updated before `before`, and whose label was last added by
+   * `user` (case-insensitive), with the state each is in, by number within each state. An issue
+   * another login labelled, or whose label history has no such event, is not one of this
+   * machine's claims and is left out. `before` and GitHub's `updatedAt` are both
+   * `YYYY-MM-DDTHH:MM:SSZ`, so they compare as text. An issue whose `updatedAt` is not in that
+   * form is left out: an issue that cannot be dated is not moved. The label history is read
+   * only for an issue that passed the other two checks, and one that cannot be read is an error.
+   */
+  const unassignedClaims = (before: string, user: string): GitHubEffect<Array<UnassignedClaim>> =>
+    Effect.gen(function* () {
+      yield* requireUtcSecond(before);
+      const found: Array<UnassignedClaim> = [];
+      for (const state of ["triage", "building"] as const) {
+        const args = [
+          ...repoArgs(["issue", "list"]),
+          "--state",
+          "open",
+          "--label",
+          stateLabel(state),
+          "--limit",
+          "200",
+          "--json",
+          "number,assignees,updatedAt",
+        ];
+        const raw = yield* ghJson(args, ClaimedRows, "a JSON array of issues");
+        const numbers = raw
+          .filter((i) => i.assignees.length === 0)
+          .filter((i) => isUtcSecond(i.updatedAt) && i.updatedAt < before)
+          .map((i) => i.number)
+          .sort((a, b) => a - b);
+        for (const number of numbers) {
+          const history = yield* readHistory(number);
+          const labelledBy = history.timelineItems.nodes
+            .toReversed()
+            .find((e) => e.__typename === "LabeledEvent" && e.label.name === stateLabel(state));
+          const actor = labelledBy?.actor ?? null;
+          if (actor !== null && actor.login.toLowerCase() === user.toLowerCase()) {
+            found.push({ issue: number, state });
+          }
+        }
+      }
+      return found;
+    });
+
+  /**
+   * The newest comment the factory posted on the issue, or null when it has posted none. A
+   * comment counts when it ends with the factory marker (the status comment has its own marker
+   * and does not count). The text is returned without the marker, with CRLF as LF and without
+   * trailing whitespace, so it compares with what was posted, along with the time GitHub says
+   * the comment was created. Anyone can paste the marker, so this says what the newest marked
+   * comment reads, not who wrote it.
+   */
+  const newestFactoryComment = (number: number): GitHubEffect<FactoryComment | null> =>
+    Effect.gen(function* () {
+      const list = ["api", `repos/${repo}/issues/${number}/comments`, "--paginate"];
+      const comments = yield* ghPages(list, CommentRows, "JSON arrays of comments");
+      for (const comment of comments.toReversed()) {
+        const body = (comment.body ?? "").replaceAll("\r\n", "\n").trimEnd();
+        if (!body.endsWith(MARKER)) continue;
+        return {
+          body: body.slice(0, -MARKER.length).trimEnd(),
+          createdAt: comment.created_at ?? "",
+        };
+      }
+      return null;
+    });
+
   return {
     listIssues,
     issue,
+    login,
+    claim,
+    unassignedClaims,
+    newestFactoryComment,
     setState,
     assign,
     unassign,
