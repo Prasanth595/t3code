@@ -471,8 +471,8 @@ const LABELED_SEGMENT_MIN_WIDTH = 224;
  * When every segment has room, each carries its own label. Otherwise the bar
  * is a bare strip and a legend below lists the accounts in the same order;
  * both open the same popover. Room depends on the account count as well as
- * the bar's width, so the bar measures itself rather than using a container
- * query.
+ * the bar's width, so the bar measures its width rather than using a
+ * container query.
  */
 function PoolBar({
   pool,
@@ -494,7 +494,9 @@ function PoolBar({
     [columns],
   );
   return (
-    <div ref={observeWidth} className="min-w-0">
+    <div className="min-w-0">
+      {/* Empty so its size never changes with the layout: measuring the bar itself would loop. */}
+      <div ref={observeWidth} aria-hidden />
       <div
         className="grid gap-x-1 gap-y-1"
         style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
