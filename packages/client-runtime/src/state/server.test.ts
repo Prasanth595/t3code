@@ -424,11 +424,12 @@ describe("server state projection", () => {
     const projected = applyServerConfigProjection(snapshot, {
       version: 1,
       type: "settingsUpdated",
-      payload: { settings },
+      payload: { settings, newProjectsRoot: "/custom/projects" },
     });
 
     const result = Option.getOrThrow(projected);
     expect(result.config.settings).toBe(settings);
+    expect(result.config.newProjectsRoot).toBe("/custom/projects");
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 

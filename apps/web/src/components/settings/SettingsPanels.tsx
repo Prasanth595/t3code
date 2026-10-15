@@ -527,6 +527,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     themeHalves,
   } = useTheme();
   const settings = useScopedSettings();
+  const mixedNewProjectBaseDirectory = useScopedSettingsMixed(["newProjectBaseDirectory"]);
   const updateSettings = useUpdateScopedSettings();
 
   const isTextGenerationModelDirty = !Equal.equals(
@@ -646,6 +647,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(mixedNewProjectBaseDirectory ||
+      settings.newProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.newProjectBaseDirectory
+        ? ["New projects directory"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -668,6 +673,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
+      mixedNewProjectBaseDirectory,
       settings.browserDefaultViewport,
       settings.browserDefaultZoomFactor,
       settings.browserDefaultAppearance,
@@ -690,6 +696,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sendShortcut,
       settings.followUpBehavior,
       settings.addProjectBaseDirectory,
+      settings.newProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffFilesCollapsed,
@@ -835,6 +842,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      newProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.newProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
@@ -2263,6 +2271,7 @@ export function GeneralSettingsPanel() {
   const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
   const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
   const mixedBackgroundActivity = useScopedSettingsMixed(["backgroundActivity"]);
+  const mixedNewProjectBaseDirectory = useScopedSettingsMixed(["newProjectBaseDirectory"]);
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
   const backgroundActivityDescription =
@@ -3105,6 +3114,37 @@ export function GeneralSettingsPanel() {
                 updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
               }
               aria-label="Start new worktrees from origin by default"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["newProjectBaseDirectory"]}
+          {...searchableSetting("new-projects-directory")}
+          description="Folder on this environment for new projects. Leave empty to use the projects folder in its T3 data directory. Existing projects stay where they are."
+          resetAction={
+            mixedNewProjectBaseDirectory ||
+            settings.newProjectBaseDirectory !==
+              DEFAULT_UNIFIED_SETTINGS.newProjectBaseDirectory ? (
+              <SettingResetButton
+                label="new projects directory"
+                onClick={() =>
+                  updateSettings({
+                    newProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.newProjectBaseDirectory,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              size="sm"
+              className="w-full sm:w-72"
+              value={mixedNewProjectBaseDirectory ? "" : settings.newProjectBaseDirectory}
+              onCommit={(next) => updateSettings({ newProjectBaseDirectory: next })}
+              placeholder={mixedNewProjectBaseDirectory ? "Mixed" : "Default"}
+              spellCheck={false}
+              aria-label="New projects directory"
             />
           }
         />

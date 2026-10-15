@@ -1,10 +1,10 @@
 /**
  * ManagedProjectFolders - the project folders T3 Code makes for the user under
- * its data dir, rather than ones the user picks:
+ * its data dir or the configured new-project directory:
  *
  * - `<baseDir>/scratch`: the Scratch project ("No project"), with a folder of
  *   its own for each thread;
- * - `<baseDir>/projects/<slug>`: projects started from just a name, each a new
+ * - `<new-project directory>/<slug>`: projects started from just a name, each a new
  *   Git repository with a README, an icon, and a first commit.
  *
  * @module ManagedProjectFolders
@@ -13,10 +13,13 @@ import {
   CommandId,
   type GitManagerServiceError,
   ProjectId,
+  type ServerSettings,
   type ThreadId,
   VcsProcessSpawnError,
 } from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -32,6 +35,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettingsModule from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -114,9 +118,11 @@ export class ManagedProjectFolders extends Context.Service<
       readonly text: string;
     }) => Effect.Effect<Option.Option<string>, ScratchFolderError>;
     /** The folder that holds projects started from just a name. */
-    readonly namedProjectsRoot: string;
+    readonly resolveNamedProjectsRoot: (
+      settings: Pick<ServerSettings, "newProjectBaseDirectory">,
+    ) => string;
     /**
-     * Starts a project from just a name: claims `<namedProjectsRoot>/<slug>`
+     * Starts a project from just a name: claims a folder under the resolved new-project directory
      * (adding `-2`, `-3`, ... when taken), makes it a Git repository with a
      * README, an icon, and a first commit, then creates the project. A failed
      * commit (no Git identity, a signing prompt) keeps the project and returns
@@ -237,6 +243,8 @@ const isGitMissing = (error: GitManagerServiceError) =>
 
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+  const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
@@ -387,13 +395,18 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Projects started from just a name live beside Scratch and worktrees, away
-  // from folders the user organizes by hand. A nested repository is fine here
-  // (unlike Scratch) because each project gets its own `git init`.
-  const namedProjectsRoot = path.resolve(config.baseDir, "projects");
+  const resolveNamedProjectsRoot: ManagedProjectFolders["Service"]["resolveNamedProjectsRoot"] = (
+    settings,
+  ) => {
+    const directory = settings.newProjectBaseDirectory.trim();
+    return directory.length > 0
+      ? path.resolve(config.cwd, expandHomePath(directory, homeDirectory))
+      : path.resolve(config.baseDir, "projects");
+  };
 
   const claimNamedFolder = Effect.fn("ManagedProjectFolders.claimNamedFolder")(function* (
     name: string,
+    namedProjectsRoot: string,
   ) {
     yield* fileSystem
       .makeDirectory(namedProjectsRoot, { recursive: true })
@@ -472,7 +485,10 @@ const make = Effect.gen(function* () {
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
   )(function* (input) {
-    const workspaceRoot = yield* claimNamedFolder(input.name);
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError((cause) => new NamedProjectFolderError({ folder: config.baseDir, cause })),
+    );
+    const workspaceRoot = yield* claimNamedFolder(input.name, resolveNamedProjectsRoot(settings));
     const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
     // Until the create is dispatched nothing else can use the folder, so any
     // exit but success removes it, an interrupt included.
@@ -519,7 +535,7 @@ const make = Effect.gen(function* () {
     scratchRoot,
     ensureScratchProject,
     folderForThread,
-    namedProjectsRoot,
+    resolveNamedProjectsRoot,
     createNamedProject,
   });
 });

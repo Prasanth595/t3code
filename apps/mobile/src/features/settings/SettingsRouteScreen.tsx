@@ -189,7 +189,7 @@ function SettingsIndexSections() {
         />
         <SettingsRow
           icon="text.bubble"
-          label="New threads"
+          label="New projects & threads"
           target="SettingsEnvironmentNewThreads"
           disabled={noServerTargets}
         />

@@ -79,7 +79,9 @@ it.effect("attributes a launched thread's first message to the calling thread", 
         },
       }),
       Layer.mock(Project.ProjectService)({}),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        resolveNamedProjectsRoot: () => "/projects",
+      }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-link-" }).pipe(
@@ -152,7 +154,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
       }),
       Layer.mock(Project.ProjectService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
+        resolveNamedProjectsRoot: () => "/projects",
         ensureScratchProject: Effect.succeed({ projectId: scratchProjectId }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -248,7 +250,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
           ),
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
+        resolveNamedProjectsRoot: () => "/projects",
         createNamedProject: (input) =>
           Effect.sync(() => {
             named.push(input.name);
@@ -361,7 +363,9 @@ const clientLaunchHarness = (input: {
             : Option.none(),
         ),
     }),
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      resolveNamedProjectsRoot: () => "/projects",
+    }),
     NodeServices.layer,
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),

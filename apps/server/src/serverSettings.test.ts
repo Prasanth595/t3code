@@ -1318,6 +1318,23 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("persists the new-project directory and clears it back to the default", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+
+      yield* settings.updateSettings({ newProjectBaseDirectory: "  ~/Projects  " });
+      const customized = JSON.parse(yield* fileSystem.readFileString(config.settingsPath));
+      assert.equal(customized.newProjectBaseDirectory, "~/Projects");
+
+      yield* settings.updateSettings({ newProjectBaseDirectory: "" });
+      const cleared = JSON.parse(yield* fileSystem.readFileString(config.settingsPath));
+      assert.isUndefined(cleared.newProjectBaseDirectory);
+      assert.equal((yield* settings.getSettings).newProjectBaseDirectory, "");
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("writes only non-default settings to disk", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

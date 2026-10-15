@@ -72,7 +72,7 @@ export function applyServerConfigProjection(
       return Option.map(current, (projection) => ({
         config: {
           ...projection.config,
-          settings: event.payload.settings,
+          ...event.payload,
         },
         latestEvent: event,
         source: "live",

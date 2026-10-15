@@ -983,6 +983,7 @@ describe("ServerSettingsPatch string normalization", () => {
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({
       addProjectBaseDirectory: "  ~/Development  ",
+      newProjectBaseDirectory: "  ~/Projects  ",
       textGenerationModelSelection: { model: "  gpt-5.4-mini  " },
       observability: {
         otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
@@ -997,6 +998,7 @@ describe("ServerSettingsPatch string normalization", () => {
     });
 
     expect(patch.addProjectBaseDirectory).toBe("~/Development");
+    expect(patch.newProjectBaseDirectory).toBe("~/Projects");
     expect(patch.textGenerationModelSelection?.model).toBe("gpt-5.4-mini");
     expect(patch.observability?.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
     expect(patch.providerInstances?.[ProviderInstanceId.make("codex_personal")]?.driver).toBe(
@@ -1015,9 +1017,11 @@ describe("ServerSettingsPatch string normalization", () => {
     const encoded = encodeServerSettings({
       ...defaultSettings,
       addProjectBaseDirectory: "  ~/Development  ",
+      newProjectBaseDirectory: "  ~/Projects  ",
     });
 
     expect(encoded.addProjectBaseDirectory).toBe("~/Development");
+    expect(encoded.newProjectBaseDirectory).toBe("~/Projects");
   });
 });
 

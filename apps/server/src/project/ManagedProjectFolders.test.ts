@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -102,6 +103,7 @@ const withScratch = <A, E>(
     E,
     | ManagedProjectFolders.ManagedProjectFolders
     | ProjectService.ProjectService
+    | ServerSettings.ServerSettingsService
     | NodeServices.NodeServices
     | Scope.Scope
   >,
@@ -123,6 +125,43 @@ const requireRoot = Effect.gen(function* () {
   const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
+
+it.effect("uses the latest new-project directory and restores the default when cleared", () =>
+  withScratch(({ baseDir }) =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const projects = yield* ProjectService.ProjectService;
+        const path = yield* Path.Path;
+        const customRoot = path.join(baseDir, "custom", "projects");
+        const defaultRoot = path.join(baseDir, "projects");
+
+        yield* settings.updateSettings({ newProjectBaseDirectory: customRoot });
+        const first = yield* folders.createNamedProject({ name: "Custom location" });
+        assert.equal(first.workspaceRoot, path.join(customRoot, "custom-location"));
+        assert.equal(folders.resolveNamedProjectsRoot(yield* settings.getSettings), customRoot);
+
+        // Resolve a tilde path into this test's temporary directory, not the real home.
+        yield* settings.updateSettings({
+          newProjectBaseDirectory: `~/${path.relative(NodeOS.homedir(), customRoot)}`,
+        });
+        const second = yield* folders.createNamedProject({ name: "Custom location" });
+        assert.equal(second.workspaceRoot, path.join(customRoot, "custom-location-2"));
+
+        yield* settings.updateSettings({ newProjectBaseDirectory: "" });
+        assert.equal(folders.resolveNamedProjectsRoot(yield* settings.getSettings), defaultRoot);
+        const third = yield* folders.createNamedProject({ name: "Custom location" });
+        assert.equal(third.workspaceRoot, path.join(defaultRoot, "custom-location"));
+        assert.equal(
+          Option.getOrThrow(yield* projects.getById(first.projectId)).workspaceRoot,
+          first.workspaceRoot,
+        );
+      }),
+    ),
+  ),
+);
 
 it.effect("offers a Scratch folder under the data dir when it is outside a checkout", () =>
   withScratch(({ baseDir }) =>
@@ -376,7 +415,8 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = path.resolve(baseDir, "projects");
-        assert.equal(folders.namedProjectsRoot, root);
+        const settings = yield* ServerSettings.ServerSettingsService;
+        assert.equal(folders.resolveNamedProjectsRoot(yield* settings.getSettings), root);
 
         const first = yield* folders.createNamedProject({ name: "Pinball Stats" });
         const second = yield* folders.createNamedProject({ name: "pinball stats" });
@@ -472,7 +512,11 @@ it.effect("keeps a folder that another project owns when the create conflicts", 
         const projects = yield* ProjectService.ProjectService;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const taken = path.join(folders.namedProjectsRoot, "taken");
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const taken = path.join(
+          folders.resolveNamedProjectsRoot(yield* settings.getSettings),
+          "taken",
+        );
         // A project registered at this path some other way (by hand, or a
         // client that predates the claim) owns the folder the create claims.
         yield* projects.create({

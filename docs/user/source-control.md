@@ -125,6 +125,11 @@ like `pinball-stats` for "Pinball Stats". Turn on **Create private repository on
 publish it. If Git has no name or email on that machine, the project is created without the
 first commit.
 
+To choose a different location, set **New projects directory** in **Settings → General →
+Projects & threads** (on mobile, **Settings → New projects & threads**). The path belongs to the
+selected environment, not the device you're connecting from; `~/Projects` uses that environment's
+home directory. Clear the setting to restore the default. Existing projects are not moved.
+
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
 provider or paste a Git URL, then choose where to save it. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files

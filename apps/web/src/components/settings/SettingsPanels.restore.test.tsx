@@ -5,6 +5,7 @@ import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 
 const state = vi.hoisted(() => ({
   settings: null as UnifiedSettings | null,
+  mixedNewProjectDirectory: false,
   update: vi.fn(),
   confirm: vi.fn(),
 }));
@@ -43,6 +44,8 @@ vi.mock("../../hooks/useTheme", async (importOriginal) => ({
 vi.mock("./useScopedSettings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./useScopedSettings")>()),
   useScopedSettings: () => state.settings,
+  useScopedSettingsMixed: (keys: readonly string[]) =>
+    keys.includes("newProjectBaseDirectory") && state.mixedNewProjectDirectory,
   useUpdateScopedSettings: () => state.update,
 }));
 
@@ -57,6 +60,7 @@ beforeEach(() => {
   hooks.reset();
   vi.clearAllMocks();
   state.settings = { ...DEFAULT_UNIFIED_SETTINGS };
+  state.mixedNewProjectDirectory = false;
   state.confirm.mockResolvedValue(true);
 });
 
@@ -87,5 +91,17 @@ describe("restoring V2 settings", () => {
 
     expect(state.confirm).toHaveBeenCalledOnce();
     expect(state.update).not.toHaveBeenCalled();
+  });
+
+  it("restores mixed project directories when the representative environment uses the default", async () => {
+    state.mixedNewProjectDirectory = true;
+    hooks.beginRender();
+    const restore = useSettingsRestore();
+
+    expect(restore.changedSettingLabels).toEqual(["New projects directory"]);
+    await restore.restoreDefaults();
+
+    expect(state.confirm.mock.calls[0]?.[0]).toContain("New projects directory");
+    expect(state.update.mock.calls[0]?.[0].newProjectBaseDirectory).toBe("");
   });
 });
