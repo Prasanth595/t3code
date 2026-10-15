@@ -80,6 +80,7 @@ const dispatchedTexts = (
     readonly instanceDisabled?: boolean;
     readonly recovered?: Array<RunId>;
     readonly messages?: Array<DispatchedMessage>;
+    readonly projectContinuationOff?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -121,7 +122,16 @@ const dispatchedTexts = (
                     return {} as never;
                   }),
           }),
-          ServerSettings.layerTest(settings),
+          ServerSettings.layerTest(
+            options.projectContinuationOff
+              ? {
+                  ...settings,
+                  projectSettingsOverrides: {
+                    [projection.thread.projectId]: { continueThreadsAfterServerUpdate: false },
+                  },
+                }
+              : settings,
+          ),
         ),
       ),
     );
@@ -144,6 +154,38 @@ it.effect("never sends a second message after a recovery turn cut before any ans
       relationshipToParent: null,
     });
     assert.deepEqual(yield* dispatchedTexts(cutAfterAnswer), ["Top message"]);
+  }),
+);
+
+it.effect("keeps the upstream limits: three recoveries in a row and a project opt-out", () =>
+  Effect.gen(function* () {
+    const cut = makeProjection({
+      userMessageId: "message:recover-interrupted:run:second",
+      answered: true,
+      relationshipToParent: null,
+    });
+    const source = cut.runs[0]!;
+    const earlier = (id: string, ordinal: number, link: Partial<typeof source>) => ({
+      ...source,
+      ...link,
+      id: RunId.make(id),
+      ordinal,
+      status: "completed" as const,
+      completedAt: DateTime.makeUnsafe("2026-10-15T00:00:00Z"),
+    });
+    const second = earlier("run:second", 1, {
+      userMessageId: MessageId.make("message:user"),
+      restartContinuationOfRunId: RunId.make("run:first"),
+    });
+    const withRuns = (runs: ReadonlyArray<typeof source>) =>
+      ({ ...cut, runs: [{ ...source, ordinal: 3 }, ...runs] }) as OrchestrationV2ThreadProjection;
+
+    assert.deepEqual(yield* dispatchedTexts(withRuns([second])), ["Top message"]);
+    const first = earlier("run:first", 1, {
+      userMessageId: MessageId.make("message:recover-interrupted:run:zero"),
+    });
+    assert.deepEqual(yield* dispatchedTexts(withRuns([{ ...second, ordinal: 2 }, first])), []);
+    assert.deepEqual(yield* dispatchedTexts(cut, { projectContinuationOff: true }), []);
   }),
 );
 

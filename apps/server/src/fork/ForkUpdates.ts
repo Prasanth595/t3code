@@ -6,9 +6,9 @@
  * `continueThreadsAfterServerUpdate` and `recoverInterruptedTurns`).
  *
  * - With `forkAutoUpdate` on, a check every 5 minutes installs a newer fork
- *   release when no agent turn runs.
+ *   release when no agent turn or background shell runs.
  * - The machine map command `installUpdate` installs now, or at the next check
- *   that finds no running turn (`whenIdle`).
+ *   that finds no running turn or shell (`whenIdle`).
  */
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -73,8 +73,17 @@ const make = Effect.gen(function* () {
     Effect.mapError((error) => new ForkUpdateError({ reason: error.message })),
   );
 
+  // A background shell is still work: the restart kills it and recovery wakes
+  // the thread. Limit: a shell that never ends, such as a dev server, blocks
+  // auto-update until it stops. Revisit if updates stall on such shells.
   const idle = threads.getShellSnapshot().pipe(
-    Effect.map((snapshot) => snapshot.threads.every((thread) => thread.activeRunId === null)),
+    Effect.map((snapshot) =>
+      snapshot.threads.every(
+        (thread) =>
+          thread.activeRunId === null &&
+          !(thread.pendingBackgroundTasks ?? []).some((task) => task.kind === "command"),
+      ),
+    ),
     Effect.orElseSucceed(() => false),
   );
 
