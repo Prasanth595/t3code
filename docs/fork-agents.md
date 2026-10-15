@@ -69,8 +69,9 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 
 ## Repair agent
 
-When Fork CI, Fork Sync or Fork Release fails, `scripts/fork-notify-agent.sh` posts the run to the webhook in the GitHub secret `T3_AGENT_WEBHOOK_URL`. The webhook is a scheduled task on a T3 server that starts a repair agent.
+When Fork CI, Fork Sync or Fork Release fails, `scripts/fork-notify-agent.sh` posts the run to the webhook in the GitHub secret `T3_AGENT_WEBHOOK_URL`. The webhook is the scheduled task "Fork repair" on the VPS, in the project "t3code fork". It starts a repair agent there.
 
 - The repair agent watches the next run of the same workflow.
 - On a retry, run the workflow with `notify_agent=false`, so that a second failure does not start another agent.
 - A failure right after a failure of the same workflow does not post, when the notify job of the first failure succeeded.
+- To stop the repair agent, disable the "Fork repair" task on the VPS (`machines_command` with `{"_tag":"setScheduledTaskEnabled","taskId":...,"enabled":false}`). To stop all calls, delete the GitHub secret `T3_AGENT_WEBHOOK_URL`.
