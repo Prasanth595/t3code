@@ -29,7 +29,7 @@ import {
 const CONTINUE_PROMPT = "Continue where you left off.";
 
 /** Consecutive automatic continuations allowed before a person has to step in. */
-const MAX_CONTINUATION_CHAIN = 3;
+export const MAX_CONTINUATION_CHAIN = 3;
 
 /**
  * Whether a restart must leave this run for the user: the thread is put away,

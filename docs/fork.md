@@ -112,9 +112,9 @@ The script creates a prerelease on the fork. Installed fork apps offer it as an 
 
 A headless server that runs as the upstream background service (`t3 service install`) updates from the fork releases. The install is the upstream self-update: it unpacks the release into `<T3 home>/runtime/versions/<version>`, and the service launcher starts it on trial. If the new version does not start, the launcher goes back to the old version.
 
-- Turn on Settings > General > About > Server auto-update, the server setting `forkAutoUpdate` (default `false`). Then the server checks the fork releases every 5 minutes. When a newer release is ready and no agent turn runs, it installs the release.
+- Turn on Settings > General > About > Server auto-update, the server setting `forkAutoUpdate` (default `false`). Then the server checks the fork releases every 5 minutes. When a newer release is ready and no agent turn or background shell runs, it installs the release.
 - A release is ready when it has `SHA256SUMS`. A version that rolled back or failed is not tried again. A newer release is tried.
-- The machine map command Install update (`installUpdate`) works on such a server too (MM-505). `whenIdle: false` installs the newest fork release now. `whenIdle: true` installs it at the first check with no running agent turn, also when `forkAutoUpdate` is off.
+- The machine map command Install update (`installUpdate`) works on such a server too (MM-505). `whenIdle: false` installs the newest fork release now. `whenIdle: true` installs it at the first check with no running agent turn or background shell, also when `forkAutoUpdate` is off.
 - A restart stops the running turns. The upstream setting "Continue threads after restarts" (`continueThreadsAfterServerUpdate`, on by default) and "Recover interrupted agents" continue them after the update.
 - "Update everything" and `t3 update` also install fork releases. A self-update request for a version that has no fork release installs the newest fork release instead. The mobile app comes from upstream and offers upstream versions, so its "Check for updates" installs the newest fork release.
 - The code is in `apps/server/src/fork/ForkUpdates.ts` and `apps/server/src/fork/forkReleases.ts`.
@@ -232,12 +232,12 @@ Every agent runs as a child process of the T3 server. An update, a crash or a qu
 
 - Turn it on in Settings > General > Recover interrupted agents. It is off by default.
 - The server settings keys are `recoverInterruptedTurns` (default `false`), `recoverInterruptedTurnsMessage` (default "Recover and continue") and `recoverInterruptedTurnsSubagentMessage` (default "Recover and continue. Your parent thread was also restarted."). They are in `settings.json` in the T3 home `userdata` folder, for example `~/.t3/userdata/settings.json`.
-- It extends the upstream setting "Continue threads after restarts" (`continueThreadsAfterServerUpdate`). When the fork setting is on, it replaces the upstream behavior on every project, with the configured messages.
+- It extends the upstream setting "Continue threads after restarts" (`continueThreadsAfterServerUpdate`). When the fork setting is on, it replaces the upstream behavior with the configured messages. A project that turns "Continue threads after restarts" off gets no message.
 - A thread gets the message when the restart stopped its turn, or when its turn was finished but background work of that turn was still open. Background work is a native subagent, a monitor or a background shell.
 - A native subagent, for example a Claude Code Task subagent, lives inside the process of its parent agent. It is not a T3 thread and gets no message. The message to its parent thread covers it, together with a note that names the stopped work.
 - A thread that another thread delegated work to gets the delegated thread message.
 - No message goes to a thread that the user stopped, snoozed or settled, to a turn that ended on its own, to a turn that waited for an answer, an approval or a secret, to a turn that did not start, to a thread without a saved provider session, or to a thread with newer work. Held queued messages stay held.
-- Each stopped turn gets one message at most. A recovery turn that a restart stops before it answers gets no second message, so a restart loop does not repeat it.
+- Each stopped turn gets one message at most. A recovery turn that a restart stops before it answers gets no second message. After three recoveries in a row, as upstream does, the thread waits for the user, so a restart loop stops.
 - The thread shows the message as a "T3 Code restarted" notice. The agent receives the message text.
 - The code is in `apps/server/src/orchestration-v2/RecoverInterruptedTurns.ts`.
 

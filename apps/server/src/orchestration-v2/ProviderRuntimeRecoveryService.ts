@@ -23,7 +23,10 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
-import { settledRunWithOpenBackgroundWork } from "./RecoverInterruptedTurns.ts";
+import {
+  projectTurnedContinuationOff,
+  settledRunWithOpenBackgroundWork,
+} from "./RecoverInterruptedTurns.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import {
   endOrphanedNativeSubagent,
@@ -715,7 +718,9 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-        const recoverInterruptedTurns = continueAfterRestart?.recoverInterruptedTurns === true;
+        const recoverInterruptedTurns =
+          continueAfterRestart?.recoverInterruptedTurns === true &&
+          !projectTurnedContinuationOff(continueAfterRestart, projection.thread.projectId);
         const enabled =
           continueAfterRestart !== null &&
           (recoverInterruptedTurns ||
@@ -756,8 +761,11 @@ export const make = Effect.gen(function* () {
     for (const threadId of threadIds) {
       yield* Effect.gen(function* () {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+        const recoverInterruptedTurns =
+          enabled.recoverInterruptedTurns &&
+          !projectTurnedContinuationOff(enabled, projection.thread.projectId);
         if (
-          !enabled.recoverInterruptedTurns &&
+          !recoverInterruptedTurns &&
           !resolveProjectSettings(enabled, projection.thread.projectId).settings
             .continueThreadsAfterServerUpdate
         )
@@ -765,9 +773,7 @@ export const make = Effect.gen(function* () {
         const now = yield* DateTime.now;
         const run =
           restartContinuationRun(projection, now) ??
-          (enabled.recoverInterruptedTurns
-            ? settledRunWithOpenBackgroundWork(projection, now)
-            : undefined);
+          (recoverInterruptedTurns ? settledRunWithOpenBackgroundWork(projection, now) : undefined);
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({
