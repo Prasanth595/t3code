@@ -1,8 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Native watcher setup provides a readiness receipt for atomic-replacement tests.
+import * as NodeFS from "node:fs";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -10,7 +14,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
@@ -101,6 +107,45 @@ const withStore = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopConnectionCatalogStore", () => {
+  it.effect("continues observing catalogs after atomic file replacement", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-catalog-watch-" });
+      const ready = yield* Deferred.make<void>();
+      // Use real native events with a readiness receipt, so writes cannot race
+      // subscription setup and the test needs no sleeps or polling.
+      const fileSystemLayer = Layer.succeed(FileSystem.FileSystem, {
+        ...fileSystem,
+        watch: (directory) =>
+          Stream.callback<FileSystem.WatchEvent>((queue) =>
+            Effect.acquireRelease(
+              Effect.sync(() => {
+                const watcher = NodeFS.watch(directory, (_event, filename) => {
+                  if (filename !== null)
+                    Queue.offerUnsafe(queue, { _tag: "Update", path: filename });
+                });
+                Deferred.doneUnsafe(ready, Effect.void);
+                return watcher;
+              }),
+              (watcher) => Effect.sync(() => watcher.close()),
+            ).pipe(Effect.asVoid),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const pull = yield* Stream.toPull(store.changes);
+        const first = yield* Effect.forkScoped(pull);
+        yield* Deferred.await(ready);
+        yield* store.set("first catalog");
+        yield* Fiber.join(first);
+        assert.deepStrictEqual(yield* store.get, Option.some("first catalog"));
+        yield* store.set("replacement catalog");
+        yield* pull;
+        assert.deepStrictEqual(yield* store.get, Option.some("replacement catalog"));
+      }).pipe(Effect.provide(layerFor(baseDir, true, null, fileSystemLayer)));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("persists, reads, and clears an encrypted connection catalog", () =>
     withStore(
       Effect.gen(function* () {

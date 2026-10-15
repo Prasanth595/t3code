@@ -7,6 +7,7 @@ import { getClientSettings, setClientSettings } from "./methods/clientSettings.t
 import {
   clearConnectionCatalog,
   getConnectionCatalog,
+  installConnectionCatalogEventForwarding,
   setConnectionCatalog,
 } from "./methods/connectionCatalog.ts";
 import {
@@ -86,6 +87,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
+  yield* installConnectionCatalogEventForwarding();
 
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);

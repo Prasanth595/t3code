@@ -15,6 +15,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
@@ -41,7 +42,7 @@ import * as Connectivity from "./connectivity.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as ConnectionDriver from "./driver.ts";
 import type { RouteCheck } from "./driver.ts";
-import { connectionRouteId, connectionRouteKind } from "./routes.ts";
+import { connectionRouteId, connectionRouteKind, connectionRoutes } from "./routes.ts";
 import {
   ConnectionTransientError,
   ConnectionBlockedError,
@@ -164,6 +165,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
       target: ConnectionTarget,
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
+    readonly catalogChanges?: Stream.Stream<void>;
     /** Direct addresses the connected server reports. */
     readonly directEndpoints?: ServerConfig["directEndpoints"];
   },
@@ -204,6 +206,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     new Set(options?.initialDisabled ?? []),
   );
   const targetStore = Persistence.ConnectionTargetStore.of({
+    ...(options?.catalogChanges === undefined ? {} : { changes: options.catalogChanges }),
     list: Ref.get(storedTargets),
     listDisabled: Ref.get(storedDisabled).pipe(Effect.map((ids) => [...ids])),
   });
@@ -522,6 +525,161 @@ function awaitConnectionState(
 }
 
 describe("EnvironmentRegistry", () => {
+  it.effect(
+    "reconciles external additions, edits, credential rotation, disable and removal without replacing the local session",
+    () =>
+      Effect.gen(function* () {
+        const notifications = yield* Queue.unbounded<Deferred.Deferred<void>>();
+        const changes = Stream.fromQueue(notifications).pipe(
+          Stream.flatMap((done) =>
+            Stream.concat(
+              Stream.succeed(undefined),
+              Stream.fromEffect(Deferred.succeed(done, undefined)).pipe(Stream.drain),
+            ),
+          ),
+        );
+        const notify = Effect.gen(function* () {
+          const done = yield* Deferred.make<void>();
+          yield* Queue.offer(notifications, done);
+          yield* Deferred.await(done);
+        });
+        let persistedRemovals = 0;
+        const harness = yield* makeHarness([], [], [], {
+          catalogChanges: changes,
+          directEndpoints: [{ kind: "lan", httpBaseUrl: "http://192.168.1.10:3773" }],
+          beforeRegistrationRemove: () =>
+            Effect.sync(() => {
+              persistedRemovals++;
+            }),
+        });
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.registerPlatform(new PrimaryConnectionRegistration({ target: TARGET }));
+          yield* registry.start;
+          yield* awaitConnectionState(
+            registry,
+            TARGET.environmentId,
+            (state) => state.phase === "connected",
+          );
+          const local = yield* registry.run(
+            TARGET.environmentId,
+            EnvironmentSupervisor.EnvironmentSupervisor,
+          );
+
+          yield* Ref.set(harness.storedTargets, [
+            BEARER_TARGET,
+            new RelayConnectionTarget({
+              environmentId: TARGET.environmentId,
+              label: "External shadow of the local environment",
+            }),
+          ]);
+          yield* Ref.set(
+            harness.storedProfiles,
+            new Map([[BEARER_TARGET.connectionId, BEARER_PROFILE]]),
+          );
+          yield* Ref.set(
+            harness.storedCredentials,
+            new Map([[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]]),
+          );
+          yield* notify;
+          yield* awaitConnectionState(
+            registry,
+            BEARER_TARGET.environmentId,
+            (state) => state.phase === "connected",
+          );
+          yield* SubscriptionRef.changes(registry.entries).pipe(
+            Stream.filter(
+              (entries) =>
+                (entries.get(BEARER_TARGET.environmentId)?.alternateRoutes?.length ?? 0) > 0,
+            ),
+            Stream.runHead,
+          );
+          const remote = yield* registry.run(
+            BEARER_TARGET.environmentId,
+            EnvironmentSupervisor.EnvironmentSupervisor,
+          );
+          yield* notify;
+          expect(
+            yield* registry.run(
+              BEARER_TARGET.environmentId,
+              EnvironmentSupervisor.EnvironmentSupervisor,
+            ),
+          ).toBe(remote);
+          expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+
+          yield* Ref.set(
+            harness.storedCredentials,
+            new Map([
+              [BEARER_TARGET.connectionId, new BearerConnectionCredential({ token: "rotated" })],
+            ]),
+          );
+          yield* notify;
+          yield* awaitConnectionState(
+            registry,
+            BEARER_TARGET.environmentId,
+            (state) => state.phase === "connected",
+          );
+          expect(
+            yield* registry.run(
+              BEARER_TARGET.environmentId,
+              EnvironmentSupervisor.EnvironmentSupervisor,
+            ),
+          ).not.toBe(remote);
+          expect(yield* Ref.get(harness.releasedSessions)).toBe(1);
+
+          const edited = new BearerConnectionProfile({
+            ...BEARER_PROFILE,
+            httpBaseUrl: "https://new.example.test",
+            wsBaseUrl: "wss://new.example.test",
+          });
+          yield* Ref.set(harness.storedProfiles, new Map([[BEARER_TARGET.connectionId, edited]]));
+          yield* notify;
+          yield* awaitConnectionState(
+            registry,
+            BEARER_TARGET.environmentId,
+            (state) => state.phase === "connected",
+          );
+          const editedEntry = (yield* SubscriptionRef.get(registry.entries)).get(
+            BEARER_TARGET.environmentId,
+          )!;
+          expect(
+            connectionRoutes(editedEntry).find(
+              (route) => connectionRouteId(route.target) === BEARER_TARGET.connectionId,
+            )?.profile,
+          ).toEqual(Option.some(edited));
+          expect(yield* Ref.get(harness.releasedSessions)).toBe(2);
+
+          yield* Ref.set(harness.storedDisabled, new Set([BEARER_TARGET.environmentId]));
+          yield* notify;
+          expect(
+            (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId)
+              ?.enabled,
+          ).toBe(false);
+          expect(yield* Ref.get(harness.releasedSessions)).toBe(3);
+          yield* Ref.set(harness.storedDisabled, new Set());
+          yield* notify;
+          yield* awaitConnectionState(
+            registry,
+            BEARER_TARGET.environmentId,
+            (state) => state.phase === "connected",
+          );
+
+          yield* Ref.set(harness.storedTargets, []);
+          yield* notify;
+          expect(
+            (yield* SubscriptionRef.get(registry.entries)).has(BEARER_TARGET.environmentId),
+          ).toBe(false);
+          expect(yield* Ref.get(harness.releasedSessions)).toBe(4);
+          expect(
+            yield* registry.run(TARGET.environmentId, EnvironmentSupervisor.EnvironmentSupervisor),
+          ).toBe(local);
+          expect((yield* registry.state(TARGET.environmentId)).phase).toBe("connected");
+          expect(yield* Ref.get(harness.cacheClears)).toEqual([BEARER_TARGET.environmentId]);
+          expect(persistedRemovals).toBe(0);
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
+  );
+
   it.effect("replays connected state when arming a desktop commit observer", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([TARGET]);

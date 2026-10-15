@@ -204,6 +204,7 @@ export class EnvironmentRegistry extends Context.Service<
 
 interface EnvironmentServiceScope {
   readonly entry: ConnectionCatalogEntry;
+  readonly credentials: ReadonlyArray<Option.Option<ConnectionCredential>>;
   readonly supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"];
   readonly scope: Scope.Closeable;
 }
@@ -239,33 +240,39 @@ export const make = Effect.gen(function* () {
     routes.push(target);
     persistedRoutesByEnvironment.set(target.environmentId, routes);
   }
+  const loadCatalogEntry = Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* (
+    targets: ReadonlyArray<ConnectionTarget>,
+    disabled: boolean,
+  ) {
+    const loaded = yield* Effect.forEach(targets, loadRoute, { concurrency: "unbounded" });
+    // A learned route without its profile has no address to reach; it is
+    // learned again on the next connection. A paired route keeps its slot
+    // so its missing profile still surfaces as a connection error.
+    const seen = new Set<string>();
+    const usable = loaded.filter((route) => {
+      const id = connectionRouteId(route.target);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return !(id.startsWith("learned:") && Option.isNone(route.profile));
+    });
+    const routes = usable.length > 0 ? usable : loaded.slice(0, 1);
+    const first = routes[0]!;
+    return entryWithRoutes(
+      {
+        target: first.target,
+        profile: first.profile,
+        enabled: !disabled,
+      },
+      routes,
+    );
+  });
   const initialEntries = new Map(
     yield* Effect.forEach(
       persistedRoutesByEnvironment,
-      Effect.fn("EnvironmentRegistry.loadCatalogEntry")(function* ([environmentId, targets]) {
-        const loaded = yield* Effect.forEach(targets, loadRoute, { concurrency: "unbounded" });
-        // A learned route without its profile has no address to reach; it is
-        // learned again on the next connection. A paired route keeps its slot
-        // so its missing profile still surfaces as a connection error.
-        const seen = new Set<string>();
-        const usable = loaded.filter((route) => {
-          const id = connectionRouteId(route.target);
-          if (seen.has(id)) return false;
-          seen.add(id);
-          return !(id.startsWith("learned:") && Option.isNone(route.profile));
-        });
-        const routes = usable.length > 0 ? usable : loaded.slice(0, 1);
-        const first = routes[0]!;
+      Effect.fn(function* ([environmentId, targets]) {
         return [
           environmentId,
-          entryWithRoutes(
-            {
-              target: first.target,
-              profile: first.profile,
-              enabled: !disabledEnvironmentIds.has(environmentId),
-            },
-            routes,
-          ),
+          yield* loadCatalogEntry(targets, disabledEnvironmentIds.has(environmentId)),
         ] as const;
       }),
       { concurrency: "unbounded" },
@@ -362,11 +369,27 @@ export const make = Effect.gen(function* () {
     yield* Scope.close(lease.scope, Exit.void);
   });
 
+  const loadCredentials = (entry: ConnectionCatalogEntry) => {
+    // Learned routes borrow a paired route's credential; adding one must not
+    // look like a credential rotation on the next catalog notification.
+    const ids = new Set(
+      connectionRoutes(entry).flatMap((route) =>
+        route.target._tag === "BearerConnectionTarget"
+          ? [credentialConnectionId(route.target.connectionId)]
+          : [],
+      ),
+    );
+    return Effect.forEach([...ids].sort(), (id) => credentials.get(id));
+  };
+
   const createServiceScope = Effect.fn("EnvironmentRegistry.createServiceScope")(
     (entry: ConnectionCatalogEntry) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
           const environmentId = entry.target.environmentId;
+          const savedCredentials = yield* loadCredentials(entry).pipe(
+            Effect.orElseSucceed(() => []),
+          );
           const scope = yield* Scope.fork(registryScope);
           const supervisor = yield* EnvironmentSupervisor.make(entry, {
             initiallyDesired: false,
@@ -383,7 +406,7 @@ export const make = Effect.gen(function* () {
           }
           yield* SubscriptionRef.update(serviceScopes, (current) => {
             const next = new Map(current);
-            next.set(environmentId, { entry, supervisor, scope });
+            next.set(environmentId, { entry, credentials: savedCredentials, supervisor, scope });
             return next;
           });
           yield* SubscriptionRef.changes(supervisor.state).pipe(
@@ -497,6 +520,16 @@ export const make = Effect.gen(function* () {
         discard: true,
       },
     );
+    if (storage.changes !== undefined) {
+      yield* storage.changes.pipe(
+        Stream.runForEach(() =>
+          reconcileSaved().pipe(
+            Effect.catch(() => Effect.logWarning("Could not reconcile saved connections.")),
+          ),
+        ),
+        Effect.forkIn(registryScope),
+      );
+    }
   }).pipe(Effect.withSpan("EnvironmentRegistry.start"));
 
   const installEntryLocked = Effect.fn("EnvironmentRegistry.installEntryLocked")(function* (
@@ -844,6 +877,7 @@ export const make = Effect.gen(function* () {
   /** Forgets a user-saved environment. Callers hold its lease lock. */
   const removeLocked = Effect.fn("EnvironmentRegistry.removeLocked")(function* (
     environmentId: EnvironmentId,
+    persist = true,
   ) {
     if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) {
       return yield* new PlatformEnvironmentRemovalError({
@@ -853,7 +887,7 @@ export const make = Effect.gen(function* () {
     const entry = yield* getEntry(environmentId);
 
     yield* githubRoutingPermissions.forget(environmentId);
-    yield* registrations.remove(environmentId);
+    if (persist) yield* registrations.remove(environmentId);
     yield* Ref.update(persistedEnvironmentIds, (current) => {
       const next = new Set(current);
       next.delete(environmentId);
@@ -902,6 +936,61 @@ export const make = Effect.gen(function* () {
       ),
       Effect.ignore,
     );
+
+  const reconcileSaved = Effect.fn("EnvironmentRegistry.reconcileSaved")(function* () {
+    const targets = yield* storage.list;
+    const ids = new Set([
+      ...(yield* Ref.get(persistedEnvironmentIds)),
+      ...targets.map((target) => target.environmentId),
+    ]);
+    for (const environmentId of ids) {
+      yield* withLeaseLock(
+        environmentId,
+        Effect.gen(function* () {
+          if ((yield* Ref.get(platformEnvironmentIds)).has(environmentId)) return;
+          // Read under the same lock as registrations so an older notification
+          // cannot undo a registration that completed while it was waiting.
+          const currentTargets = (yield* storage.list).filter(
+            (target) => target.environmentId === environmentId,
+          );
+          const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
+          if (currentTargets.length === 0) {
+            if (previous !== undefined) yield* removeLocked(environmentId, false);
+            return;
+          }
+          const disabled = (yield* storage.listDisabled).includes(environmentId);
+          let entry = yield* loadCatalogEntry(currentTargets, disabled);
+          if (
+            previous !== undefined &&
+            gitHubRoutingConnectionKey(previous) === gitHubRoutingConnectionKey(entry)
+          ) {
+            entry = {
+              ...entry,
+              ...unsupportedState(previous),
+              ...(previous.unsupportedReason === undefined ? {} : { enabled: false }),
+            };
+          } else if (previous !== undefined) {
+            yield* forgetRoutingTrust(environmentId, "register-connection");
+          }
+          const savedCredentials = yield* loadCredentials(entry);
+          const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+          const credentialsChanged =
+            lease !== undefined && !Equal.equals(lease.credentials, savedCredentials);
+          yield* Ref.update(persistedEnvironmentIds, (current) =>
+            new Set(current).add(environmentId),
+          );
+          yield* installEntryLocked(entry, { retainEquivalentRuntime: !credentialsChanged });
+          if (!entry.enabled && previous?.enabled) {
+            for (const route of connectionRoutes(previous)) {
+              const profile = Option.getOrNull(route.profile);
+              if (profile !== null && isSshConnectionProfile(profile))
+                yield* disconnectSsh(environmentId, profile);
+            }
+          }
+        }),
+      );
+    }
+  });
 
   // Plain HTTP routes are unusable from an HTTPS page, which blocks mixed content.
   const allowInsecureRoutes =

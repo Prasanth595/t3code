@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
@@ -164,6 +165,7 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       DesktopConnectionCatalogStoreWriteError | DesktopConnectionCatalogStoreProtectionError
     >;
     readonly clear: Effect.Effect<void>;
+    readonly changes: Stream.Stream<void>;
   }
 >()("@t3tools/desktop/app/DesktopConnectionCatalogStore") {}
 
@@ -472,6 +474,23 @@ export const make = Effect.gen(function* () {
   });
 
   return DesktopConnectionCatalogStore.of({
+    // Watch the directory: writes replace the catalog with an atomic rename.
+    changes: Stream.unwrap(
+      fileSystem.makeDirectory(environment.stateDir, { recursive: true }).pipe(
+        Effect.as(
+          fileSystem.watch(environment.stateDir).pipe(
+            Stream.filter((event) => path.basename(event.path) === "connection-catalog.json"),
+            Stream.map(() => undefined),
+          ),
+        ),
+      ),
+    ).pipe(
+      Stream.catch(() =>
+        Stream.fromEffect(
+          Effect.logWarning("Could not watch the desktop connection catalog."),
+        ).pipe(Stream.drain),
+      ),
+    ),
     get: Effect.gen(function* () {
       const document = yield* readDocument(fileSystem, catalogPath);
       if (Option.isNone(document)) {

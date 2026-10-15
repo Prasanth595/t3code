@@ -1,10 +1,23 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as DesktopConnectionCatalogStore from "../../app/DesktopConnectionCatalogStore.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+
+export const installConnectionCatalogEventForwarding = Effect.fn(
+  "desktop.ipc.connectionCatalog.installEventForwarding",
+)(function* () {
+  const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+  const window = yield* ElectronWindow.ElectronWindow;
+  yield* store.changes.pipe(
+    Stream.runForEach(() => window.sendAll(IpcChannels.CONNECTION_CATALOG_CHANGED_CHANNEL)),
+    Effect.forkScoped,
+  );
+});
 
 export const getConnectionCatalog = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_CONNECTION_CATALOG_CHANNEL,

@@ -1,6 +1,7 @@
 import {
   ConnectionTransientError,
   PrimaryConnectionTarget,
+  RelayConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
@@ -10,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Ref from "effect/Ref";
 import { afterEach, vi } from "vite-plus/test";
 
 import * as ConnectionStorage from "./storage";
@@ -31,6 +33,81 @@ afterEach(() => {
 });
 
 describe("ConnectionStorage.makeCatalogStore", () => {
+  it.effect(
+    "refreshes external changes and keeps the last good catalog after failed refreshes",
+    () =>
+      Effect.gen(function* () {
+        const first = { ...emptyCatalog, disabledEnvironmentIds: [EnvironmentId.make("first")] };
+        const second = { ...emptyCatalog, disabledEnvironmentIds: [EnvironmentId.make("second")] };
+        const raw = yield* Ref.make(encodeCatalog(first));
+        const observed: unknown[] = [];
+        const writes: string[] = [];
+        const store = yield* ConnectionStorage.makeCatalogStore({
+          read: Ref.get(raw).pipe(
+            Effect.flatMap((value) =>
+              value === "unreadable"
+                ? Effect.fail(
+                    new ConnectionTransientError({
+                      reason: "remote-unavailable",
+                      detail: "read failed",
+                    }),
+                  )
+                : Effect.succeed(value),
+            ),
+          ),
+          write: (value) => Effect.sync(() => writes.push(value)),
+          changes: Stream.fromIterable([
+            encodeCatalog(second),
+            "{bad-json",
+            "unreadable",
+            encodeCatalog(first),
+          ]).pipe(
+            Stream.mapEffect((value) => Ref.set(raw, value)),
+            Stream.rechunk(1),
+          ),
+        });
+        expect(yield* store.read).toEqual(first);
+        yield* store.changes!.pipe(
+          Stream.runForEach(() =>
+            store.read.pipe(Effect.tap((value) => Effect.sync(() => observed.push(value)))),
+          ),
+        );
+        expect(observed).toEqual([second, first]);
+        expect(writes).toEqual([]);
+        expect(yield* store.read).toEqual(first);
+      }),
+  );
+
+  it.effect("rereads before saving so a stale cache preserves externally added environments", () =>
+    Effect.gen(function* () {
+      const target = new RelayConnectionTarget({
+        environmentId: EnvironmentId.make("external"),
+        label: "External",
+      });
+      const raw = yield* Ref.make(encodeCatalog(emptyCatalog));
+      const store = yield* ConnectionStorage.makeCatalogStore({
+        read: Ref.get(raw),
+        write: (value) => Ref.set(raw, value),
+      });
+      yield* store.read;
+      yield* Ref.set(raw, encodeCatalog({ ...emptyCatalog, targets: [target] }));
+      yield* store.update((catalog) => ({
+        ...catalog,
+        disabledEnvironmentIds: [target.environmentId],
+      }));
+      expect(decodeCatalog(yield* Ref.get(raw))).toEqual({
+        ...emptyCatalog,
+        targets: [target],
+        disabledEnvironmentIds: [target.environmentId],
+      });
+      yield* Ref.set(raw, "{bad-json");
+      expect((yield* Effect.flip(store.update((catalog) => catalog)))._tag).toBe(
+        "ConnectionTransientError",
+      );
+      expect(yield* Ref.get(raw)).toBe("{bad-json");
+    }),
+  );
+
   it.effect("quarantines malformed catalogs and starts from an empty document", () =>
     Effect.gen(function* () {
       const writes: string[] = [];
@@ -70,6 +147,44 @@ const fixedHandle = (database: IDBDatabase) => ({
 });
 
 describe("ConnectionStorage.makeCatalogBackend", () => {
+  it.effect("subscribes before the initial refresh and releases the desktop listener", () =>
+    Effect.gen(function* () {
+      let listener = () => {};
+      let subscribed = false;
+      let unsubscribed = false;
+      let raw = encodeCatalog(emptyCatalog);
+      const updated = { ...emptyCatalog, disabledEnvironmentIds: [EnvironmentId.make("external")] };
+      vi.stubGlobal("window", {
+        desktopBridge: {
+          getConnectionCatalog: async () => {
+            expect(subscribed).toBe(true);
+            return raw;
+          },
+          setConnectionCatalog: async () => true,
+          onConnectionCatalogChanged: (callback: () => void) => {
+            listener = callback;
+            subscribed = true;
+            return () => {
+              unsubscribed = true;
+            };
+          },
+        },
+      });
+      yield* Effect.gen(function* () {
+        const backend = ConnectionStorage.makeCatalogBackend(fixedHandle({} as IDBDatabase));
+        const store = yield* ConnectionStorage.makeCatalogStore(backend);
+        const pull = yield* Stream.toPull(store.changes!);
+        yield* pull;
+        expect(yield* store.read).toEqual(emptyCatalog);
+        raw = encodeCatalog(updated);
+        listener();
+        yield* pull;
+        expect(yield* store.read).toEqual(updated);
+      }).pipe(Effect.scoped);
+      expect(unsubscribed).toBe(true);
+    }),
+  );
+
   it.effect("reports a closed IndexedDB connection as a typed read and write failure", () =>
     Effect.gen(function* () {
       vi.stubGlobal("window", {});

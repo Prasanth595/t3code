@@ -392,12 +392,30 @@ export interface CatalogBackend {
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
   readonly quarantine?: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
+  readonly changes?: Stream.Stream<void>;
 }
 
 export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
   const bridge = window.desktopBridge;
   if (bridge?.getConnectionCatalog !== undefined && bridge.setConnectionCatalog !== undefined) {
     return {
+      ...(bridge.onConnectionCatalogChanged === undefined
+        ? {}
+        : {
+            changes: Stream.callback<void>((queue) =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  const unsubscribe = bridge.onConnectionCatalogChanged!(() =>
+                    Queue.offerUnsafe(queue, undefined),
+                  );
+                  // Subscribe before reading to cover changes during client startup.
+                  Queue.offerUnsafe(queue, undefined);
+                  return unsubscribe;
+                }),
+                (unsubscribe) => Effect.sync(unsubscribe),
+              ).pipe(Effect.asVoid),
+            ),
+          }),
       read: Effect.tryPromise({
         try: () => bridge.getConnectionCatalog!(),
         catch: (cause) => catalogError("load", cause),
@@ -433,6 +451,7 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
 
 interface CatalogStore {
   readonly read: Effect.Effect<ConnectionCatalogDocumentType, ConnectionTransientError>;
+  readonly changes?: Stream.Stream<void>;
   readonly update: (
     transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
   ) => Effect.Effect<void, ConnectionTransientError>;
@@ -444,9 +463,9 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
   const lock = yield* Semaphore.make(1);
 
-  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
+  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* (refresh = false) {
     const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
+    if (!refresh && Option.isSome(cached)) {
       return cached.value;
     }
     const raw = yield* backend.read;
@@ -455,6 +474,8 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
       catalog = yield* decodeCatalog(raw).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
+            // A failed refresh must neither discard live connections nor overwrite the file.
+            if (Option.isSome(cached)) return yield* error;
             yield* Effect.logWarning("Discarding a corrupt web connection catalog.", {
               error: error.message,
             });
@@ -489,7 +510,7 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     function* (transform) {
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
+          const next = transform(yield* loadUnlocked(true));
           yield* backend.write(yield* encodeCatalog(next));
           yield* Ref.set(state, Option.some(next));
         }),
@@ -497,7 +518,21 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     },
   );
 
-  return { read, update } satisfies CatalogStore;
+  const changes = backend.changes?.pipe(
+    Stream.filterEffect(() =>
+      lock
+        .withPermits(1)(loadUnlocked(true))
+        .pipe(
+          Effect.as(true),
+          Effect.catch(() =>
+            Effect.logWarning(
+              "Could not refresh the connection catalog; keeping current connections.",
+            ).pipe(Effect.as(false)),
+          ),
+        ),
+    ),
+  );
+  return { read, update, ...(changes === undefined ? {} : { changes }) } satisfies CatalogStore;
 });
 
 const GITHUB_ROUTING_KEY_PREFIX = "t3code:github-routing:";
@@ -611,6 +646,7 @@ export const layer = Layer.effectContext(
     const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
 
     const targetStore = Persistence.ConnectionTargetStore.of({
+      ...(catalog.changes === undefined ? {} : { changes: catalog.changes }),
       list: catalog.read.pipe(
         Effect.map((document) => document.targets),
         Effect.mapError((cause) => persistenceError("list-targets", cause)),
