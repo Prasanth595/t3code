@@ -10,7 +10,11 @@ import {
 
 import { composerDraftEnvironmentId } from "../lib/composerAttachmentUploadQueue";
 import { isQueuedEditDraftKey, queuedEditDraftKey } from "./queued-edit-draft-key";
-import { resolveQueuedEditPayload, type QueuedRunEdit } from "./queued-run-edit";
+import {
+  queuedRunEditIsDirty,
+  resolveQueuedEditPayload,
+  type QueuedRunEdit,
+} from "./queued-run-edit";
 
 const image = (id: string): ChatAttachment => ({
   type: "image",
@@ -102,5 +106,16 @@ describe("resolveQueuedEditPayload", () => {
 
     expect(payload.attachments).toEqual([]);
     expect(payload.context).toBeUndefined();
+  });
+});
+
+describe("queuedRunEditIsDirty", () => {
+  it("treats an untouched edit as clean so a steered message is not restored", () => {
+    expect(queuedRunEditIsDirty(edit([]), { text: "original", attachments: [] })).toBe(false);
+  });
+
+  it("treats changed text or a new attachment as an edit worth keeping", () => {
+    expect(queuedRunEditIsDirty(edit([]), { text: "revised", attachments: [] })).toBe(true);
+    expect(queuedRunEditIsDirty(edit([]), { text: "original", attachments: [{}] })).toBe(true);
   });
 });

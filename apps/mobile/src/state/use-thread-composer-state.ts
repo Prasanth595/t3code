@@ -96,6 +96,7 @@ import { environmentThreadDetails } from "./threads";
 import {
   endQueuedRunEdit,
   getQueuedRunEdit,
+  queuedRunEditIsDirty,
   queuedEditDraftKey,
   removeQueuedRunEditAttachment,
   resolveQueuedEditPayload,
@@ -434,8 +435,15 @@ export function useThreadComposerState() {
       (run) => run.id === editedRunId && run.status === "queued",
     );
     if (stillQueued) return;
+    const edit = getQueuedRunEdit(selectedThreadKey);
     const editDraftKey = queuedEditDraftKey(selectedThreadKey, editedRunId);
     const editDraft = getComposerDraftSnapshot(editDraftKey);
+    // An untouched edit is just the message that was sent (or steered), so
+    // there is nothing to recover and nothing to tell the user.
+    if (edit === null || !queuedRunEditIsDirty(edit, editDraft)) {
+      endQueuedRunEdit(selectedThreadKey);
+      return;
+    }
     const threadDraft = getComposerDraftSnapshot(selectedThreadKey);
     const keepable =
       editDraft.text.trim().length > 0 &&

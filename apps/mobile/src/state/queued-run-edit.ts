@@ -83,6 +83,14 @@ export function removeQueuedRunEditAttachment(threadKey: string, attachmentId: s
   });
 }
 
+/** Whether the edit draft holds anything the queued message does not already have. */
+export function queuedRunEditIsDirty(
+  edit: QueuedRunEdit,
+  draft: { readonly text: string; readonly attachments: ReadonlyArray<unknown> },
+): boolean {
+  return draft.text !== edit.originalText || draft.attachments.length > 0;
+}
+
 export function endQueuedRunEdit(
   threadKey: string,
   options?: { readonly deferAttachmentCleanup?: boolean },
