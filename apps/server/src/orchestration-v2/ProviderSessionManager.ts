@@ -217,6 +217,10 @@ interface LiveSessionEntry {
     {
       readonly providerThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
       readonly nativeOwnershipChanged: boolean;
+      readonly idleUnload?: {
+        readonly generation: number;
+        readonly release: "unconfirmed" | "refused";
+      };
     }
   >;
   readonly loadedProviderThreadByThread: ReadonlyMap<
@@ -1504,6 +1508,66 @@ export const layerWithOptions = (
           });
         });
 
+      const reclaimRefusedIdleRelease = (entry: LiveSessionEntry, threadId: ThreadId) =>
+        Effect.gen(function* () {
+          const pending = entry.pendingThreadReleases.get(threadId);
+          const idle = entry.idleThreadUnloads.get(threadId);
+          const loaded = entry.loadedProviderThreadByThread.get(threadId);
+          const original = pending?.providerThreads[0];
+          if (
+            pending?.idleUnload?.release !== "refused" ||
+            pending.nativeOwnershipChanged ||
+            pending.providerThreads.length !== 1 ||
+            idle?.generation !== pending.idleUnload.generation ||
+            !entry.attachedThreadIds.has(threadId) ||
+            loaded === undefined ||
+            original?.nativeThreadRef === null ||
+            original === undefined ||
+            original.nativeThreadRef.nativeId === null ||
+            loaded.providerThread.id !== original.id ||
+            loaded.providerThread.nativeThreadRef?.nativeId !== original.nativeThreadRef.nativeId ||
+            original.providerInstanceId !== entry.runtime.instanceId ||
+            original.providerSessionId !== entry.runtime.providerSessionId
+          )
+            return false;
+          const generation = pending.idleUnload.generation;
+          const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+          const binding = projection.providerThreads.find(
+            (thread) => thread.id === projection.thread.activeProviderThreadId,
+          );
+          if (
+            projection.thread.modelSelection.instanceId !== entry.runtime.instanceId ||
+            binding?.id !== original.id ||
+            binding.providerInstanceId !== entry.runtime.instanceId ||
+            binding.providerSessionId !== entry.runtime.providerSessionId ||
+            binding.nativeThreadRef?.nativeId !== original.nativeThreadRef.nativeId
+          )
+            return false;
+          const reclaimed = yield* Ref.modify(sessions, (current) => {
+            const key = sessionKey(entry.runtime.providerSessionId);
+            const latest = current.get(key);
+            const latestIdle = latest?.idleThreadUnloads.get(threadId);
+            if (
+              latest?.runtime !== entry.runtime ||
+              !latest.attachedThreadIds.has(threadId) ||
+              latest.pendingThreadReleases.get(threadId) !== pending ||
+              latest.loadedProviderThreadByThread.get(threadId) !== loaded ||
+              latestIdle?.generation !== generation
+            )
+              return [Option.none<Fiber.Fiber<void, never> | null>(), current] as const;
+            const pendingThreadReleases = new Map(latest.pendingThreadReleases);
+            pendingThreadReleases.delete(threadId);
+            const idleThreadUnloads = new Map(latest.idleThreadUnloads);
+            idleThreadUnloads.delete(threadId);
+            const updated = new Map(current);
+            updated.set(key, { ...latest, pendingThreadReleases, idleThreadUnloads });
+            return [Option.some(latestIdle.fiber), updated] as const;
+          });
+          if (Option.isNone(reclaimed)) return false;
+          yield* cancelIdleFiber(reclaimed.value);
+          return true;
+        });
+
       const ensureThreadAttached = (
         input: {
           readonly providerSessionId: ProviderSessionId;
@@ -1797,6 +1861,11 @@ export const layerWithOptions = (
                       .hasPendingBackgroundWorkForThread(pending.providerThread)
                       .pipe(Effect.catchCause(() => Effect.succeed(true)));
               if (hasPendingWork) return "deferred" as const;
+              const pendingRelease = {
+                providerThreads: [pending.providerThread],
+                nativeOwnershipChanged: false,
+                idleUnload: { generation: input.generation, release: "unconfirmed" as const },
+              };
               const unloading = yield* Ref.modify(sessions, (current) => {
                 const latest = current.get(key);
                 if (
@@ -1806,10 +1875,7 @@ export const layerWithOptions = (
                   return [false, current] as const;
                 }
                 const pendingThreadReleases = new Map(latest.pendingThreadReleases);
-                pendingThreadReleases.set(input.threadId, {
-                  providerThreads: [pending.providerThread],
-                  nativeOwnershipChanged: false,
-                });
+                pendingThreadReleases.set(input.threadId, pendingRelease);
                 const updated = new Map(current);
                 updated.set(key, {
                   ...latest,
@@ -1821,6 +1887,30 @@ export const layerWithOptions = (
               const unloaded = yield* unloadThread({ providerThread: pending.providerThread }).pipe(
                 Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
                 Effect.as(true),
+                Effect.catchTags({
+                  ProviderAdapterThreadUnloadRefusedError: (error) =>
+                    error.driver !== entry.runtime.driver ||
+                    error.providerThreadId !== pending.providerThread.id
+                      ? Effect.fail(error)
+                      : Ref.update(sessions, (current) => {
+                          const latest = current.get(key);
+                          if (
+                            latest?.runtime !== entry.runtime ||
+                            latest.pendingThreadReleases.get(input.threadId) !== pendingRelease ||
+                            latest.idleThreadUnloads.get(input.threadId)?.generation !==
+                              input.generation
+                          )
+                            return current;
+                          const pendingThreadReleases = new Map(latest.pendingThreadReleases);
+                          pendingThreadReleases.set(input.threadId, {
+                            ...pendingRelease,
+                            idleUnload: { generation: input.generation, release: "refused" },
+                          });
+                          const updated = new Map(current);
+                          updated.set(key, { ...latest, pendingThreadReleases });
+                          return updated;
+                        }).pipe(Effect.as(false)),
+                }),
                 Effect.catchCause((cause) =>
                   Effect.logWarning("orchestration-v2.driver-session.idle-unload-failed", {
                     providerSessionId: input.providerSessionId,
@@ -1934,7 +2024,10 @@ export const layerWithOptions = (
                   detail: "Provider runtime changed before thread attachment; retry the operation.",
                 });
               }
-              yield* confirmPendingThreadRelease(entry, threadId).pipe(
+              yield* reclaimRefusedIdleRelease(entry, threadId).pipe(
+                Effect.flatMap((reclaimed) =>
+                  reclaimed ? Effect.void : confirmPendingThreadRelease(entry, threadId),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapter.ProviderAdapterProtocolError({

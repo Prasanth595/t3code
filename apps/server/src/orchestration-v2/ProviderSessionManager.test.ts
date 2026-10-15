@@ -338,7 +338,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
-    readonly beforeUnload?: Effect.Effect<void>;
+    readonly beforeUnload?: BeforeThreadUnload;
     /** Registers the process's closeCount finalizer before `beforeOpen` runs. */
     readonly spawnBeforeOpen?: boolean;
     /** Completed when a hanging scope close reaches its wedged finalizer. */
@@ -443,7 +443,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               interruptCount: current.interruptCount + 1,
             })),
           unloadThread: ({ providerThread }) =>
-            (options.beforeUnload ?? Effect.void).pipe(
+            (typeof options.beforeUnload === "function"
+              ? options.beforeUnload(providerThread)
+              : (options.beforeUnload ?? Effect.void)
+            ).pipe(
               Effect.andThen(
                 Ref.update(state, (current) => ({
                   ...current,
@@ -491,7 +494,7 @@ function layerTest(input: {
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
-  readonly beforeUnload?: Effect.Effect<void>;
+  readonly beforeUnload?: BeforeThreadUnload;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
@@ -4635,22 +4638,29 @@ it.effect(
     }),
 );
 
-function runIdleThreadUnloadScenario(
+type BeforeThreadUnload =
+  | Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error>
+  | ((
+      providerThread: OrchestrationV2ProviderThread,
+    ) => Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error>);
+
+function runIdleThreadUnloadScenario<E, R>(
   name: string,
   scenario: (input: {
     readonly state: Ref.Ref<TestProviderRuntimeState>;
     readonly manager: ProviderSessionManager.ProviderSessionManagerV2Shape;
     readonly providerSessionId: ProviderSessionId;
     readonly threadA: ThreadId;
+    readonly providerThreadOf: (threadId: ThreadId) => OrchestrationV2ProviderThread;
     /** Starts run `ordinal` on a thread and returns once the provider accepted it. */
     readonly startTurn: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
     /** Ends run `ordinal` on a thread and waits for the session to process it. */
     readonly endTurn: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
     readonly resume: (threadId: ThreadId) => Effect.Effect<void>;
-  }) => Effect.Effect<void, ProviderSessionManager.ProviderSessionManagerV2Error>,
+  }) => Effect.Effect<void, E, R>,
   options: {
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
-    readonly beforeUnload?: Effect.Effect<void>;
+    readonly beforeUnload?: BeforeThreadUnload;
   } = {},
 ) {
   return Effect.gen(function* () {
@@ -4759,6 +4769,7 @@ function runIdleThreadUnloadScenario(
         manager,
         providerSessionId,
         threadA,
+        providerThreadOf,
         startTurn,
         endTurn,
         resume,
@@ -5677,4 +5688,121 @@ it.effect("a failed cleanup generation cannot unload a returned source binding",
       ),
     );
   }),
+);
+
+it.effect.each([
+  { failure: "refused", rebound: false },
+  { failure: "refused", rebound: true },
+  { failure: "rejected", rebound: false },
+  { failure: "timeout", rebound: false },
+] as const)(
+  "idle recovery requires retained-writer proof: $failure rebound=$rebound",
+  ({ failure, rebound }) =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const secondEntered = yield* Deferred.make<void>();
+      const releaseConfirmed = yield* Ref.make(false);
+      let attempts = 0;
+      yield* runIdleThreadUnloadScenario(
+        `release-proof-${failure}-${rebound}`,
+        ({ state, threadA, providerThreadOf, startTurn, endTurn, resume }) =>
+          Effect.gen(function* () {
+            const eventSink = yield* EventSink.EventSinkV2;
+            const store = yield* ProjectionStore.ProjectionStoreV2;
+            const ids = yield* IdAllocator.IdAllocatorV2;
+            const original = providerThreadOf(threadA);
+            const bind = (nativeId: string) =>
+              Effect.gen(function* () {
+                const projection = yield* store.getThreadProjection(threadA);
+                const now = yield* DateTime.now;
+                yield* eventSink.write({
+                  events: [
+                    {
+                      id: yield* ids.allocate.event({ threadId: threadA }),
+                      type: "provider-thread.updated",
+                      threadId: threadA,
+                      driver: CODEX_DRIVER,
+                      occurredAt: now,
+                      payload: {
+                        ...original,
+                        nativeThreadRef: { ...original.nativeThreadRef!, nativeId },
+                      },
+                    },
+                    {
+                      id: yield* ids.allocate.event({ threadId: threadA }),
+                      type: "thread.model-selection-updated",
+                      threadId: threadA,
+                      occurredAt: now,
+                      payload: { ...projection.thread, activeProviderThreadId: original.id },
+                    },
+                  ],
+                });
+              });
+            yield* bind(original.nativeThreadRef!.nativeId!);
+            yield* startTurn(threadA, 1);
+            yield* endTurn(threadA, 1);
+            yield* TestClock.adjust("1 second");
+            yield* Deferred.await(entered);
+            if (rebound) yield* bind("a-newer-native-binding");
+            const before = (yield* Ref.get(state)).resumeCount;
+            const resuming = yield* resume(threadA).pipe(Effect.exit, Effect.forkScoped);
+            if (failure === "timeout") {
+              yield* Deferred.await(secondEntered);
+              yield* TestClock.adjust("10 seconds");
+            }
+            const first = yield* Fiber.join(resuming);
+            const current = yield* Ref.get(state);
+            assert.equal(current.closeCount, 0, "a running peer must keep its pooled process");
+            assert.deepEqual(current.unloadedNativeThreadIds, []);
+            assert.equal(
+              current.resumeCount,
+              before,
+              "uncertain release cannot reach native resume",
+            );
+            if (failure === "refused" && !rebound) {
+              assert.isTrue(Exit.isSuccess(first));
+              assert.equal(attempts, 1, "proven retained ownership needs no further native unload");
+              yield* startTurn(threadA, 2);
+              yield* TestClock.adjust("30 seconds");
+              assert.equal(
+                attempts,
+                1,
+                "an old idle generation cannot unload the reclaimed writer",
+              );
+            } else {
+              assert.isTrue(Exit.isFailure(first));
+              assert.isTrue(Exit.isFailure(yield* resume(threadA).pipe(Effect.exit)));
+              if (!rebound) {
+                yield* Ref.set(releaseConfirmed, true);
+                yield* resume(threadA);
+                const confirmed = yield* Ref.get(state);
+                assert.equal(confirmed.resumeCount, before + 1);
+                assert.deepEqual(confirmed.unloadedNativeThreadIds, [
+                  original.nativeThreadRef!.nativeId!,
+                ]);
+                assert.equal(confirmed.closeCount, 0);
+              }
+            }
+          }).pipe(Effect.scoped),
+        {
+          beforeUnload: (providerThread) =>
+            Effect.gen(function* () {
+              attempts++;
+              yield* Deferred.succeed(entered, undefined);
+              if (attempts === 2) yield* Deferred.succeed(secondEntered, undefined);
+              if (yield* Ref.get(releaseConfirmed)) return;
+              if (failure === "refused")
+                return yield* new ProviderAdapter.ProviderAdapterThreadUnloadRefusedError({
+                  driver: CODEX_DRIVER,
+                  providerThreadId: providerThread.id,
+                });
+              if (failure === "timeout" && attempts === 2) return yield* Effect.never;
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CODEX_DRIVER,
+                detail: "Native release was not confirmed.",
+              });
+            }),
+        },
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
 );

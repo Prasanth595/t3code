@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -17,6 +18,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -87,6 +89,9 @@ function makeRestartAdapter(
   state: Ref.Ref<RestartAdapterState>,
   sessionCapabilities: OrchestrationV2ProviderCapabilities = pooledCapabilities,
   providerInstanceId = initialSelection.instanceId,
+  onSessionEvents: (
+    events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>,
+  ) => Effect.Effect<unknown> = () => Effect.void,
 ): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: providerInstanceId,
@@ -128,6 +133,7 @@ function makeRestartAdapter(
         }
 
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* onSessionEvents(events);
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -1006,5 +1012,387 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
           assert.deepEqual(messages, ["first", "second", "third"]);
         }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
       }),
+    ),
+);
+
+it.live.each([
+  { queued: true, transition: "restart_session" },
+  { queued: false, transition: "restart_session" },
+  { queued: true, transition: "apply_on_next_turn" },
+  { queued: false, transition: "apply_on_next_turn" },
+] as const)("honors a deferred $transition transition queued=$queued", ({ queued, transition }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = `deferred-selection-${transition}-${queued}`;
+      const cwd = yield* checkpointWorkspace(name);
+      const threadId = ThreadId.make(name);
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: true,
+      });
+      const rejectedModel = yield* Ref.make(false);
+      const firstEvents =
+        yield* Deferred.make<Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>>();
+      const base = makeRestartAdapter(
+        state,
+        exclusiveCapabilities,
+        initialSelection.instanceId,
+        (events) => Deferred.succeed(firstEvents, events),
+      );
+      const adapter = {
+        ...base,
+        planSelectionTransition: () => Effect.succeed({ type: transition }),
+        openSession: (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) =>
+          base.openSession(input).pipe(
+            Effect.map((runtime) => ({
+              ...runtime,
+              startTurn: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                transition === "apply_on_next_turn" ||
+                input.modelSelection.model === turn.modelSelection.model
+                  ? runtime.startTurn(turn)
+                  : Ref.set(rejectedModel, true).pipe(
+                      Effect.andThen(
+                        Effect.fail(
+                          new ProviderAdapter.ProviderAdapterProtocolError({
+                            driver,
+                            detail:
+                              "This adapter requires a new session to change its bound model.",
+                          }),
+                        ),
+                      ),
+                    ),
+            })),
+          ),
+      } satisfies ProviderAdapter.ProviderAdapterV2["Service"];
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const milestone = (ordinal: number, statuses: string[]) =>
+          orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.threadId === threadId &&
+                event.payload.ordinal === ordinal &&
+                statuses.includes(event.payload.status),
+            ),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+        const dispatch = (ordinal: number, selection: ModelSelection, queue: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${name}:dispatch:${ordinal}`),
+            threadId,
+            messageId: MessageId.make(`${name}:message:${ordinal}`),
+            text: "Continue",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            modelSelection: selection,
+            dispatchMode: { type: queue ? "queue_after_active" : "start_immediately" },
+          });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${name}:create`),
+          threadId,
+          projectId: ProjectId.make(name),
+          title: name,
+          modelSelection: initialSelection,
+          createdBy: "user",
+          creationSource: "web",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const running = yield* orchestrator.streamStoredEvents.pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "provider-turn.updated" &&
+              event.threadId === threadId &&
+              event.payload.status === "running",
+          ),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* dispatch(1, initialSelection, false);
+        yield* Fiber.join(running);
+        yield* worker.drain();
+        const initial = yield* orchestrator.getThreadProjection(threadId);
+        const original = initial.providerThreads.find(
+          (t) => t.id === initial.thread.activeProviderThreadId,
+        )!;
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${name}:select`),
+          threadId,
+          modelSelection: replacementSelection,
+        });
+        const afterSelection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(afterSelection.thread.modelSelection.model, replacementSelection.model);
+        assert.isTrue(
+          afterSelection.providerSessions.some((s) => s.id === original.providerSessionId),
+        );
+        const finalMilestone = yield* milestone(2, ["completed", "failed"]);
+        if (queued) yield* dispatch(2, replacementSelection, true);
+        const completedFirst = yield* milestone(1, ["completed"]);
+        const active = (yield* Ref.get(state)).activeTurn!;
+        const queue = yield* Deferred.await(firstEvents);
+        const now = yield* DateTime.now;
+        yield* Queue.offer(queue, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: {
+            id: active.providerTurnId,
+            providerThreadId: active.input.providerThread.id,
+            nodeId: active.input.rootNodeId,
+            runAttemptId: active.input.attemptId,
+            nativeTurnRef: {
+              driver,
+              nativeId: `native:${active.providerTurnId}`,
+              strength: "strong",
+            },
+            ordinal: active.input.providerTurnOrdinal,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          },
+        });
+        yield* Queue.offer(queue, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: active.input.providerThread.id,
+          providerTurnId: active.providerTurnId,
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(completedFirst);
+        if (queued) yield* orchestrator.resumeQueuedRuns;
+        else yield* dispatch(2, replacementSelection, false);
+        yield* Fiber.join(finalMilestone);
+        yield* worker.drain();
+        const final = yield* orchestrator.getThreadProjection(threadId);
+        const captured = yield* Ref.get(state);
+        assert.equal(
+          captured.opened.at(-1)?.model,
+          transition === "restart_session" ? replacementSelection.model : initialSelection.model,
+        );
+        assert.equal(captured.started.at(-1)?.model, replacementSelection.model);
+        assert.equal(final.runs.at(-1)?.status, "completed");
+        assert.isFalse(yield* Ref.get(rejectedModel));
+        assert.equal(captured.closedSessionCount, transition === "restart_session" ? 1 : 0);
+        assert.equal(
+          final.providerThreads.find((t) => t.id === final.thread.activeProviderThreadId)
+            ?.nativeThreadRef?.nativeId,
+          original.nativeThreadRef?.nativeId,
+        );
+        assert.lengthOf(
+          final.contextHandoffs.filter((h) => h.strategy === "full_thread_summary"),
+          0,
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name },
+            ProviderAdapterRegistry.layerSingle(adapter),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  ),
+);
+
+it.live.each([true, false])(
+  "releases the deferred incompatible source session queued=%s",
+  (queued) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = `deferred-selection-incompatible-${queued}`;
+        const cwd = yield* checkpointWorkspace(name);
+        const threadId = ThreadId.make(name);
+        const state = yield* Ref.make<RestartAdapterState>({
+          activeTurn: null,
+          opened: [],
+          started: [],
+          closedSessionCount: 0,
+          failedReplacementOpen: true,
+        });
+        const rejectedModel = yield* Ref.make(false);
+        const firstEvents =
+          yield* Deferred.make<Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>>();
+        const base = makeRestartAdapter(
+          state,
+          exclusiveCapabilities,
+          initialSelection.instanceId,
+          (events) => Deferred.succeed(firstEvents, events),
+        );
+        const adapter = {
+          ...base,
+          openSession: (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) =>
+            base.openSession(input).pipe(
+              Effect.map((runtime) => ({
+                ...runtime,
+                startTurn: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                  input.modelSelection.model === turn.modelSelection.model
+                    ? runtime.startTurn(turn)
+                    : Ref.set(rejectedModel, true).pipe(
+                        Effect.andThen(
+                          Effect.fail(
+                            new ProviderAdapter.ProviderAdapterProtocolError({
+                              driver,
+                              detail:
+                                "This adapter requires a new session to change its bound model.",
+                            }),
+                          ),
+                        ),
+                      ),
+              })),
+            ),
+        } satisfies ProviderAdapter.ProviderAdapterV2["Service"];
+        const targetStarts = yield* Ref.make(0);
+        const targetAdapter = makeCompletingHandoffAdapter(targetStarts);
+        const registry = Layer.succeed(
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+            get: (id) =>
+              id === adapter.instanceId
+                ? Effect.succeed(adapter)
+                : id === targetAdapter.instanceId
+                  ? Effect.succeed(targetAdapter)
+                  : Effect.fail(
+                      new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({
+                        instanceId: id,
+                      }),
+                    ),
+            list: () => Effect.succeed([adapter.instanceId, targetAdapter.instanceId]),
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const milestone = (ordinal: number, statuses: string[]) =>
+            orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.threadId === threadId &&
+                  event.payload.ordinal === ordinal &&
+                  statuses.includes(event.payload.status),
+              ),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
+          const dispatch = (ordinal: number, selection: ModelSelection, queue: boolean) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${name}:dispatch:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`${name}:message:${ordinal}`),
+              text: "Continue",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              modelSelection: selection,
+              dispatchMode: { type: queue ? "queue_after_active" : "start_immediately" },
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`${name}:create`),
+            threadId,
+            projectId: ProjectId.make(name),
+            title: name,
+            modelSelection: initialSelection,
+            createdBy: "user",
+            creationSource: "web",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          const running = yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "provider-turn.updated" &&
+                event.threadId === threadId &&
+                event.payload.status === "running",
+            ),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          yield* dispatch(1, initialSelection, false);
+          yield* Fiber.join(running);
+          yield* worker.drain();
+          const initial = yield* orchestrator.getThreadProjection(threadId);
+          const original = initial.providerThreads.find(
+            (t) => t.id === initial.thread.activeProviderThreadId,
+          )!;
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${name}:select`),
+            threadId,
+            modelSelection: handoffSelection,
+          });
+          const afterSelection = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(afterSelection.thread.modelSelection.model, handoffSelection.model);
+          assert.isTrue(
+            afterSelection.providerSessions.some((s) => s.id === original.providerSessionId),
+          );
+          const finalMilestone = yield* milestone(2, ["completed", "failed"]);
+          if (queued) yield* dispatch(2, handoffSelection, true);
+          const completedFirst = yield* milestone(1, ["completed"]);
+          const active = (yield* Ref.get(state)).activeTurn!;
+          const queue = yield* Deferred.await(firstEvents);
+          const now = yield* DateTime.now;
+          yield* Queue.offer(queue, {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: {
+              id: active.providerTurnId,
+              providerThreadId: active.input.providerThread.id,
+              nodeId: active.input.rootNodeId,
+              runAttemptId: active.input.attemptId,
+              nativeTurnRef: {
+                driver,
+                nativeId: `native:${active.providerTurnId}`,
+                strength: "strong",
+              },
+              ordinal: active.input.providerTurnOrdinal,
+              status: "completed",
+              startedAt: now,
+              completedAt: now,
+            },
+          });
+          yield* Queue.offer(queue, {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: active.input.providerThread.id,
+            providerTurnId: active.providerTurnId,
+            runOrdinal: 1,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* Fiber.join(completedFirst);
+          if (queued) yield* orchestrator.resumeQueuedRuns;
+          else yield* dispatch(2, handoffSelection, false);
+          yield* Fiber.join(finalMilestone);
+          yield* worker.drain();
+          const final = yield* orchestrator.getThreadProjection(threadId);
+          const captured = yield* Ref.get(state);
+          assert.equal(final.runs.at(-1)?.status, "completed");
+          assert.equal(yield* Ref.get(targetStarts), 1);
+          assert.isAbove(
+            captured.closedSessionCount,
+            0,
+            "the deferred source release must not be forgotten by an incompatible starter",
+          );
+        }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, registry)));
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
 );

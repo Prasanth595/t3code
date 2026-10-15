@@ -796,6 +796,23 @@ function rootProviderThreadsForProvider(
     );
 }
 
+function selectionForActiveBinding(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  providerThread: OrchestrationV2ProviderThread | undefined,
+): ModelSelection {
+  if (providerThread === undefined) return projection.thread.modelSelection;
+  const executedRun = projection.runs.findLast(
+    (run) =>
+      run.providerThreadId === providerThread.id &&
+      run.providerInstanceId === providerThread.providerInstanceId &&
+      run.startedAt !== null,
+  );
+  return {
+    ...(executedRun?.modelSelection ?? projection.thread.modelSelection),
+    instanceId: providerThread.providerInstanceId,
+  };
+}
+
 // Failed and interrupted turns still contain conversation the next provider needs.
 // Queued, cancelled, and rolled-back runs must not be replayed as conversation.
 function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
@@ -1429,27 +1446,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const activeProviderThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
-      const instanceChanged =
-        activeProviderThread !== undefined &&
-        activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
-      // Selection commands can run before delivery. Native history still belongs
-      // to the active provider thread, just as in immediate message dispatch.
+      const currentSelection = selectionForActiveBinding(projection, activeProviderThread);
+      // Selection commands can persist the target before the running turn ends.
+      // Delivery still classifies against the binding's last executed selection.
       const switchPlan =
-        selectionChanged || instanceChanged
+        selectionChanged || !modelSelectionsEqual(currentSelection, queuedRun.modelSelection)
           ? yield* providerSwitchService
               .plan({
-                projection: instanceChanged
-                  ? {
-                      ...projection,
-                      thread: {
-                        ...projection.thread,
-                        modelSelection: {
-                          ...projection.thread.modelSelection,
-                          instanceId: activeProviderThread.providerInstanceId,
-                        },
-                      },
-                    }
-                  : projection,
+                projection: {
+                  ...projection,
+                  thread: { ...projection.thread, modelSelection: currentSelection },
+                },
                 targetModelSelection: queuedRun.modelSelection,
               })
               .pipe(
@@ -1930,7 +1937,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               type: "provider-session.detach" as const,
               providerSessionId: session.id,
               detail: "Provider or model selection changed.",
-              ...(canResumeAcrossInstances
+              ...(session.driver === "codex" &&
+              session.providerInstanceId !== queuedRun.providerInstanceId
                 ? { expectedTargetInstanceId: queuedRun.providerInstanceId }
                 : {}),
             },
@@ -5337,26 +5345,67 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const isProviderSwitch =
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== modelSelection.instanceId;
-      // Account overlays share native history. Selection commands may already
-      // have updated the app thread, so classify against the native thread's owner.
+      const currentSelection = selectionForActiveBinding(projection, activeProviderThread);
+      const switchPlan = !modelSelectionsEqual(currentSelection, modelSelection)
+        ? yield* providerSwitchService
+            .plan({
+              projection: {
+                ...projection,
+                thread: { ...projection.thread, modelSelection: currentSelection },
+              },
+              targetModelSelection: modelSelection,
+            })
+            .pipe(mapDispatchError(command))
+        : null;
       const canResumeAcrossInstances =
         isProviderSwitch &&
         activeProviderThread.nativeThreadRef !== null &&
-        (yield* providerSwitchService
-          .plan({
-            projection: {
-              ...projection,
-              thread: {
-                ...projection.thread,
-                modelSelection: {
-                  ...projection.thread.modelSelection,
-                  instanceId: activeProviderThread.providerInstanceId,
-                },
-              },
+        switchPlan?.transition.type === "restart_and_resume";
+      const sessionsToDetach = projection.providerSessions.filter(
+        (session) =>
+          // Direct cross-provider dispatch keeps its existing warm-session behavior.
+          // A saved target selection may instead carry a release deferred by an active turn.
+          (!isProviderSwitch ||
+            canResumeAcrossInstances ||
+            modelSelectionsEqual(projection.thread.modelSelection, modelSelection)) &&
+          switchPlan?.releaseProviderSessionIds.includes(session.id) &&
+          session.status !== "stopped" &&
+          session.status !== "error",
+      );
+      for (const session of sessionsToDetach) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "provider-session.detached",
+          threadId: command.threadId,
+          driver: session.driver,
+          providerInstanceId: session.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            providerSessionId: session.id,
+            detachedAt: now,
+            reason: "Provider or model selection changed.",
+          },
+        });
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: {
+              type: "provider-session.detach",
+              providerSessionId: session.id,
+              detail: "Provider or model selection changed.",
+              ...(session.driver === "codex" &&
+              session.providerInstanceId !== modelSelection.instanceId
+                ? { expectedTargetInstanceId: modelSelection.instanceId }
+                : {}),
             },
-            targetModelSelection: modelSelection,
-          })
-          .pipe(mapDispatchError(command))).transition.type === "restart_and_resume";
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+      }
 
       if (
         pendingForkTransfer === undefined &&
@@ -5374,7 +5423,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
         const providerSessionId =
-          activeProviderThread?.providerSessionId ??
+          (activeProviderThread?.providerSessionId !== undefined &&
+          activeProviderThread.providerSessionId !== null &&
+          !switchPlan?.releaseProviderSessionIds.includes(activeProviderThread.providerSessionId)
+            ? activeProviderThread.providerSessionId
+            : null) ??
           (yield* mapDispatchError(command)(
             providerSessionIdFor({
               adapter,
@@ -6595,35 +6648,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
-      if (canResumeAcrossInstances && activeProviderThread.providerSessionId !== null) {
-        const previousProviderSessionId = activeProviderThread.providerSessionId;
-        yield* emitEvent({
-          type: "provider-session.detached",
-          threadId: command.threadId,
-          driver: activeProviderThread.driver,
-          providerInstanceId: activeProviderThread.providerInstanceId,
-          occurredAt: now,
-          payload: {
-            providerSessionId: previousProviderSessionId,
-            detachedAt: now,
-            reason: "Provider account changed; continuing the native thread.",
-          },
-        });
-        yield* Ref.update(effects, (existing) => [
-          ...existing,
-          {
-            id: `effect:${command.commandId}:provider-session.detach:${previousProviderSessionId}`,
-            commandId: command.commandId,
-            threadId: command.threadId,
-            request: {
-              type: "provider-session.detach",
-              providerSessionId: previousProviderSessionId,
-              detail: "Provider account changed; continuing the native thread.",
-              expectedTargetInstanceId: modelSelection.instanceId,
-            },
-          } satisfies PendingOrchestrationEffectV2,
-        ]);
-      }
       const pendingEffect = {
         id: `effect:${command.commandId}:provider-turn.start:${runId}`,
         commandId: command.commandId,

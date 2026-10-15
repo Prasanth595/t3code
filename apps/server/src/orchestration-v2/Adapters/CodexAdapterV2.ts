@@ -1203,6 +1203,7 @@ interface CodexSubagentThreadContext {
   readonly nativeToolCallId: string;
   readonly ordinal: number;
   readonly nativeTurnIds: Set<string>;
+  initialPromptEmitted: boolean;
   startedAt: DateTime.Utc;
   readonly turnItemId: OrchestrationV2TurnItem["id"];
   readonly turnItemOrdinal: number;
@@ -1803,6 +1804,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const initialized = yield* Ref.make(false);
         const nativeUnloadPermit = yield* Semaphore.make(1);
         const pendingNativeUnloads = new Map<string, Deferred.Deferred<void>>();
+        const unconfirmedThreadUnloads = new Set<ProviderThreadId>();
         yield* client.handleServerNotification("thread/closed", (payload) =>
           Effect.suspend(() => {
             const closed = pendingNativeUnloads.get(payload.threadId);
@@ -1917,6 +1919,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly reasoningEffort?: string | null | undefined;
           }
         >();
+        const subagentAncestryProbes = new Map<string, Deferred.Deferred<void>>();
+        // Bound request traffic while allowing descendant replies before parent replies.
+        const ancestryReadPermit = yield* Semaphore.make(4);
         const subagentSelections = new Map<string, Omit<ModelSelection, "instanceId">>();
         const pendingSubagentTurns = yield* Ref.make(
           new Map<string, ReadonlyArray<PendingCodexSubagentTurnStarted>>(),
@@ -2780,6 +2785,75 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
           });
 
+        const probeSubagentAncestry = (nativeThreadId: string) =>
+          Effect.gen(function* () {
+            if (
+              subagentAncestryProbes.has(nativeThreadId) ||
+              pendingSubagentAncestry.has(nativeThreadId)
+            )
+              return;
+            const resolved = Deferred.makeUnsafe<void>();
+            subagentAncestryProbes.set(nativeThreadId, resolved);
+            yield* Effect.gen(function* () {
+              let retryDelayMs = 1_000;
+              while ((yield* Ref.get(pendingSubagentTurns)).has(nativeThreadId)) {
+                if (pendingSubagentAncestry.has(nativeThreadId)) return;
+                const response = yield* Effect.raceFirst(
+                  ancestryReadPermit.withPermit(
+                    client.raw
+                      .request("thread/read", { threadId: nativeThreadId, includeTurns: false })
+                      .pipe(
+                        Effect.flatMap(decodeCodexChildThread),
+                        Effect.timeout("5 seconds"),
+                        Effect.option,
+                      ),
+                  ),
+                  Deferred.await(resolved).pipe(Effect.as(Option.none())),
+                );
+                if (Option.isSome(response)) {
+                  const recovered = yield* Effect.gen(function* () {
+                    if (!(yield* Ref.get(pendingSubagentTurns)).has(nativeThreadId)) return true;
+                    const { thread } = response.value;
+                    if (thread.id !== nativeThreadId) return false;
+                    const source = thread.source;
+                    const parentId =
+                      thread.parentThreadId ??
+                      (typeof source === "object" &&
+                      source !== null &&
+                      "subAgent" in source &&
+                      typeof source.subAgent === "object" &&
+                      "thread_spawn" in source.subAgent
+                        ? source.subAgent.thread_spawn.parent_thread_id
+                        : undefined);
+                    if (parentId === undefined) return false;
+                    pendingSubagentAncestry.set(thread.id, {
+                      parentNativeThreadId: parentId,
+                      model: thread.model ?? null,
+                      reasoningEffort: thread.reasoningEffort,
+                    });
+                    yield* resolvePendingSubagentAncestry(thread.id);
+                    return true;
+                  }).pipe(turnTerminalizationPermit.withPermits(1));
+                  // Decoded ancestry waits for its parent without more RPCs.
+                  if (recovered) return;
+                }
+                // Unknown ownership stays fenced throughout backoff, even if
+                // its observed turn has completed. Only registration clears it.
+                yield* Effect.raceFirst(Effect.sleep(retryDelayMs), Deferred.await(resolved));
+                retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
+              }
+            }).pipe(
+              Effect.catch(() => Effect.void),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  if (subagentAncestryProbes.get(nativeThreadId) === resolved)
+                    subagentAncestryProbes.delete(nativeThreadId);
+                }),
+              ),
+              Effect.forkIn(scope),
+            );
+          });
+
         const rememberSubagentTurnStarted = (input: {
           readonly nativeThreadId: string;
           readonly nativeTurnId: string;
@@ -2792,49 +2866,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             yield* Ref.update(pendingSubagentTurns, (current) => {
+              const pending = current.get(input.nativeThreadId) ?? [];
+              if (pending.some((turn) => turn.nativeTurnId === input.nativeTurnId)) return current;
               const updated = new Map(current);
               updated.set(input.nativeThreadId, [
-                ...(updated.get(input.nativeThreadId) ?? []),
+                ...pending,
                 { nativeTurnId: input.nativeTurnId, startedAt: input.startedAt },
               ]);
               return updated;
             });
-            // The input reader must remain free to receive the read response.
-            // Native ancestry is needed when no resume/spawn receipt survives.
-            yield* client.raw
-              .request("thread/read", {
-                threadId: input.nativeThreadId,
-                includeTurns: false,
-              })
-              .pipe(
-                Effect.flatMap(decodeCodexChildThread),
-                Effect.flatMap(({ thread }) =>
-                  Effect.gen(function* () {
-                    if (thread.id !== input.nativeThreadId) return;
-                    const source = thread.source;
-                    const parentId =
-                      thread.parentThreadId ??
-                      (typeof source === "object" &&
-                      source !== null &&
-                      "subAgent" in source &&
-                      typeof source.subAgent === "object" &&
-                      "thread_spawn" in source.subAgent
-                        ? source.subAgent.thread_spawn.parent_thread_id
-                        : undefined);
-                    if (parentId === undefined) return;
-                    pendingSubagentAncestry.set(thread.id, {
-                      parentNativeThreadId: parentId,
-                      model: thread.model ?? null,
-                      reasoningEffort: thread.reasoningEffort,
-                    });
-                    yield* resolvePendingSubagentAncestry(thread.id);
-                  }).pipe(turnTerminalizationPermit.withPermits(1)),
-                ),
-                Effect.timeout("5 seconds"),
-                // Failure leaves the unmatched start fenced, never presumed idle.
-                Effect.catch(() => Effect.void),
-                Effect.forkIn(scope),
-              );
+            // The notification reader stays free while one scoped lookup per
+            // native child retries transient failures with bounded concurrency.
+            yield* probeSubagentAncestry(input.nativeThreadId);
           });
 
         const updateSubagentSelection = Effect.fnUntraced(function* (
@@ -3003,7 +3046,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               createdBy: "agent",
               creationSource: "provider",
             });
-            const subagent = {
+            const subagent: CodexSubagentThreadContext = {
               parentContext: input.context,
               providerThread,
               childThread,
@@ -3013,6 +3056,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeToolCallId: input.nativeToolCallId,
               ordinal: input.ordinal,
               nativeTurnIds: new Set<string>(),
+              initialPromptEmitted: false,
               startedAt: now,
               turnItemId: idAllocator.derive.turnItemFromProviderItem({
                 driver: CODEX_PROVIDER,
@@ -3020,7 +3064,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }),
               turnItemOrdinal,
               task,
-            } satisfies CodexSubagentThreadContext;
+            };
 
             yield* Ref.update(subagentThreads, (current) => {
               const updated = new Map(current);
@@ -3111,6 +3155,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 driver: CODEX_PROVIDER,
                 turnItem: promptArtifacts.turnItem,
               });
+              subagent.initialPromptEmitted = true;
             }
             yield* emitSubagentTaskUpdate({
               subagent,
@@ -3126,6 +3171,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             for (const pendingTurn of pendingTurns) {
               yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
             }
+            const ancestryProbe = subagentAncestryProbes.get(input.nativeThreadId);
+            if (ancestryProbe !== undefined) yield* Deferred.succeed(ancestryProbe, undefined);
             if (task.model === null) {
               yield* client.raw
                 .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
@@ -3599,7 +3646,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           nativeStartedAt?: DateTime.Utc,
         ) =>
           Effect.gen(function* () {
-            if (context.subagent === null || context.providerTurnOrdinal === 1) {
+            if (
+              context.subagent === null ||
+              (context.providerTurnOrdinal === 1 && context.subagent.initialPromptEmitted)
+            ) {
               return false;
             }
             const text = codexUserMessageText(item.content);
@@ -6908,10 +6958,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               .withPermit(
                 Effect.gen(function* () {
                   const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
+                  let releaseStarted = unconfirmedThreadUnloads.has(unloadInput.providerThread.id);
                   const assertIdle = Effect.gen(function* () {
                     if (
                       yield* runtime.hasPendingBackgroundWorkForThread!(unloadInput.providerThread)
                     ) {
+                      if (!releaseStarted)
+                        return yield* new ProviderAdapter.ProviderAdapterThreadUnloadRefusedError({
+                          driver: CODEX_PROVIDER,
+                          providerThreadId: unloadInput.providerThread.id,
+                        });
                       return yield* toProtocolError(
                         "Codex thread has unfinished native child or background work.",
                       );
@@ -6946,15 +7002,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }
                   for (const child of descendants.sort((left, right) => right.depth - left.depth)) {
                     yield* assertIdle;
+                    releaseStarted = true;
+                    unconfirmedThreadUnloads.add(unloadInput.providerThread.id);
                     yield* unloadNativeThread(child.nativeId);
                   }
                   yield* assertIdle;
+                  unconfirmedThreadUnloads.add(unloadInput.providerThread.id);
                   yield* unloadNativeThread(nativeThreadId);
+                  unconfirmedThreadUnloads.delete(unloadInput.providerThread.id);
                 }),
               )
               .pipe(
                 Effect.mapError((cause) =>
-                  cause._tag === "ProviderAdapterProtocolError"
+                  cause._tag === "ProviderAdapterProtocolError" ||
+                  cause._tag === "ProviderAdapterThreadUnloadRefusedError"
                     ? cause
                     : new ProviderAdapter.ProviderAdapterProtocolError({
                         driver: CODEX_PROVIDER,
