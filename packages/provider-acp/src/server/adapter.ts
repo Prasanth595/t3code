@@ -36,7 +36,7 @@ import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import { compactDynamicToolOutput, htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -3368,9 +3368,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // the tool keeps it through later updates of this call. A repeated
             // completion replaces that stored output with the summary again,
             // so it reuses the call's page instead of taking another one.
+            // ACP reports status apart from the result, so a completed call
+            // can still carry an MCP error; that error is what the call shows.
+            const outputIsError =
+              compactDynamicToolOutput(output)?.isError === true ||
+              compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
             const page =
               status === "completed" &&
               resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME &&
+              !outputIsError &&
               htmlRenderFromToolItem({ toolName, output }) === undefined
                 ? (htmlRenderFromToolItem({
                     toolName,

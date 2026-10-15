@@ -540,6 +540,10 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         height: 240,
       });
       const revenue = { html: "<p>Revenue</p>", title: "Revenue", height: 240 };
+      const renderError = {
+        content: [{ type: "text", text: "html_render failed" }],
+        isError: true,
+      };
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
@@ -583,6 +587,8 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                   yield* start("trajectory:1", revenue);
                   yield* start("trajectory:2", { ...revenue, title: "Costs" });
                   yield* start("trajectory:3", revenue);
+                  yield* start("trajectory:4", revenue);
+                  yield* start("trajectory:5", revenue);
                   // T3's MCP server publishes while each call runs.
                   yield* mcpSessions.recordHtmlRender(threadId, revenue, page("first"));
                   yield* mcpSessions.recordHtmlRender(threadId, revenue, page("second"));
@@ -612,6 +618,20 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "trajectory:3",
                     status: "failed",
                     rawOutput: "MCP call timed out",
+                  });
+                  // Nor does a completed call whose MCP result is an error,
+                  // whether the agent reports the result bare or wrapped.
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:4",
+                    status: "completed",
+                    rawOutput: renderError,
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "trajectory:5",
+                    status: "completed",
+                    rawOutput: { result: renderError },
                   });
                   return { stopReason: "end_turn" as const };
                 }),
@@ -719,6 +739,18 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         toolName: "t3-code.html_render",
         page: undefined,
         output: "MCP call timed out",
+      });
+      assert.deepEqual(tool("trajectory:4"), {
+        status: "completed",
+        toolName: "t3-code.html_render",
+        page: undefined,
+        output: renderError,
+      });
+      assert.deepEqual(tool("trajectory:5"), {
+        status: "completed",
+        toolName: "t3-code.html_render",
+        page: undefined,
+        output: renderError.content,
       });
       // Each page goes to one call; the unclaimed one stays for a later call.
       assert.deepEqual(yield* mcpSessions.takeHtmlRender(threadId, revenue), page("second"));
