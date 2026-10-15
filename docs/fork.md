@@ -3,6 +3,7 @@
 This fork ([Yarden-zamir/t3code](https://github.com/Yarden-zamir/t3code)) publishes its own desktop builds and server archives.
 The installed app and the headless servers update themselves from the fork releases through the upstream updaters.
 Agents that operate the machines, the machine map or the deploys start with [fork-agents.md](fork-agents.md).
+Each fork behavior is a setting. A setting that only adds something starts on. A setting that changes existing behavior or layout, installs or restarts anything, changes access or needs setup starts off. The machine map sets the values of the owner's machines.
 
 ## How it works
 
@@ -136,7 +137,7 @@ scripts/fork-deploy-local.sh <ssh-host>
 
 ## Changelog
 
-The client setting `forkChangelogEnabled` turns on a changelog of the fork. It is off by default. Turn it on in Settings > General > About > Fork changelog.
+The client setting `forkChangelogEnabled` turns on a changelog of the fork. It is on by default. Turn it off in Settings > General > About > Fork changelog.
 
 - Open it from the Fork changelog row in Settings, or from "Open changelog" in the update button popover on the desktop app. It opens also when no update is available.
 - With the setting on, the update button popover shows the changelog rows of every release between the installed version and the offered one, in one scrolling list. Each release costs two GitHub requests. When GitHub does not answer, for example offline, the popover shows the release notes instead.
@@ -170,7 +171,7 @@ curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fo
 - Both read the release list of the GitHub API, because the nightlies are pre-releases and `releases/latest` skips them.
 - On Linux with a display (`DISPLAY` or `WAYLAND_DISPLAY`), `install.sh` downloads the newest nightly AppImage to `~/Applications/T3-Code.AppImage`, adds a menu entry and starts it. Like on macOS, it keeps an installed app and `--force` replaces it. The app updates itself from `nightly-linux.yml` or `nightly-linux-arm64.yml`. AppImages need FUSE 2, for example `sudo apt install libfuse2t64`.
 - On Linux without a display, `install.sh` runs `scripts/install.sh`, the upstream installer pointed at the fork releases. It unpacks the newest release into `~/.t3/runtime/versions/<version>` and links `~/.local/bin/t3` to it. Then it runs `t3 service install`, the upstream background service `t3code.service`. The drop-in file `~/.config/systemd/user/t3code.service.d/fork.conf` keeps the server on `127.0.0.1:3773` with the PATH of the installer shell. Then it runs `t3 machine-map join <code>`. The machine needs no Node.
-- If the earlier fork service `t3code-fork.service` is on, the installer turns it off. Its files stay. See [fork-migration.md](fork-migration.md).
+- If the earlier fork service `t3code-fork.service` is on, the installer turns it off. Its files stay.
 - The server updates itself, see "Server updates". `t3 update` also works. A restart stops the running agent turns of that server.
 - `--from-source` clones fork main to `~/.local/share/t3code-fork` and builds the server. It installs the systemd user service `t3code-fork.service`, which does not update itself. On macOS it installs no service.
 - The source build needs git, curl, Node and pnpm at the versions of the root `package.json`. The script prints install hints and installs no system packages.
@@ -258,7 +259,7 @@ The client setting `appToggleShortcuts` lists global keys that show and hide the
 
 ## Repository owner filters
 
-The client setting `repositoryOwnerFilters` filters lists by the owner of each repository: a GitHub account or organization. It is off by default. Turn it on in Settings > General > Repository owner filters.
+The client setting `repositoryOwnerFilters` filters lists by the owner of each repository: a GitHub account or organization. It is on by default. Turn it off in Settings > General > Repository owner filters.
 
 - The owner comes from the repository that groups the project in the sidebar. A fork checkout counts under the owner of the fork.
 - The menus offer only owners whose projects have threads. The owner of a cloned repository without threads does not show.
@@ -271,7 +272,7 @@ The client setting `repositoryOwnerFilters` filters lists by the owner of each r
 
 ## Pull request filter chips
 
-The client setting `pullRequestFilterChips` shows the active pull request filters as chips above the list. It is off by default. Turn it on in Settings > General > Pull request filter chips.
+The client setting `pullRequestFilterChips` shows the active pull request filters as chips above the list. It is on by default. Turn it off in Settings > General > Pull request filter chips.
 
 - Each filter that the Filters menu, the provider menu or the project scope sets gets a chip, for example "State: Merged" or "Owner is not qlik-trial".
 - Click "is" or "is not" on a chip to flip it. Owners, drafts and labels can flip. A label flips into a typed `-label:`, because the menu cannot exclude labels.
@@ -291,7 +292,7 @@ The client setting `snoozeQuickOptions` holds the choices of the snooze menus. I
 
 ## Sidebar groups
 
-The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the sidebar search. It is on by default. Turn it off in Settings > General > Sidebar groups.
+The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the sidebar search. It is off by default. Turn it on in Settings > General > Sidebar groups.
 
 - The first tab, "Threads", holds every thread that is in no group. A thread lives in one group, so the groups act like folders.
 - Drag a thread onto a tab to move it into that group. Drag it onto "Threads" to take it out of every group. Drag it onto the empty end of the tab bar to make a new group. A drop on the tab that already holds the thread changes nothing.

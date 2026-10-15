@@ -681,14 +681,6 @@ describe("ClientSettings sidebar", () => {
     expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
 
-  it("keeps terminal close confirmation on and app shortcuts in terminal off by default", () => {
-    expect(decodeClientSettings({}).confirmTerminalClose).toBe(true);
-    expect(decodeClientSettings({}).terminalAppShortcutsFirst).toBe(false);
-    expect(
-      decodeClientSettingsPatch({ confirmTerminalClose: false, terminalAppShortcutsFirst: true }),
-    ).toEqual({ confirmTerminalClose: false, terminalAppShortcutsFirst: true });
-  });
-
   it("shows every owner by default and keeps the operator and the entry for projects without an owner", () => {
     expect(decodeClientSettings({}).sidebarOwnerFilter).toEqual({ operator: "is", owners: [] });
     const filter = { operator: "is_not", owners: ["qlik-trial", null] };

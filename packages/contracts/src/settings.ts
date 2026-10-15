@@ -487,9 +487,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   /** Fork: background work status icons open a details popover; their descriptions render markdown links. */
-  backgroundWorkDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  backgroundWorkDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Fork: a changelog of fork releases, upstream changes and Fork Sync runs from the update UI. */
-  forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Fork: the web app registers a service worker for the installed app (`apps/web/public/sw.js`):
    * an offline page, notifications on Android and iOS, and the badge on the app icon.
@@ -499,12 +499,12 @@ export const ClientSettingsSchema = Schema.Struct({
    * Fork: filter by repository owner (`repositoryOwnerOf`) on the pull request page and in the
    * sidebar. Remove when upstream T3 Code ships its own owner or organization filter.
    */
-  repositoryOwnerFilters: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  repositoryOwnerFilters: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Fork: the active pull request filters show as chips above the list, and an empty list names
    * the filters that emptied it. Remove when upstream T3 Code shows its active filters itself.
    */
-  pullRequestFilterChips: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  pullRequestFilterChips: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Fork: the sidebar filter by repository owner. "is" shows only the projects of these owners,
    * and "is_not" hides them. Null stands for projects without an owner. No owners shows every
@@ -516,7 +516,7 @@ export const ClientSettingsSchema = Schema.Struct({
    * group that the user dragged it into, else in the first group whose rules match it, else in the
    * default tab. The groups are the server setting `sidebarGroups`.
    */
-  sidebarGroupsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarGroupsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: a click on the tab of a group with one thread opens that thread. */
   sidebarGroupSingleThreadOpens: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
