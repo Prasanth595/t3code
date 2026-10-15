@@ -11,14 +11,21 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { GitCommandError } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as Sessions from "./sessions.ts";
 
 // ---- status: the run, its message and the thread fields, read from a projection ----
@@ -267,6 +274,8 @@ const layerProjects = ProjectStore.layer.pipe(Layer.provide(SqlitePersistence.la
 const layerSessions = (
   projections: Partial<ProjectionStore.ProjectionStoreV2["Service"]> = {},
   launches: Partial<ThreadLaunch.ThreadLaunchService["Service"]> = {},
+  management: Partial<ThreadManagement.ThreadManagementService["Service"]> = {},
+  git: Partial<GitVcsDriver.GitVcsDriver["Service"]> = {},
 ) =>
   Layer.mergeAll(
     Sessions.layer.pipe(
@@ -275,10 +284,14 @@ const layerSessions = (
           layerProjects,
           Layer.mock(ProjectionStore.ProjectionStoreV2)(projections),
           Layer.mock(ThreadLaunch.ThreadLaunchService)(launches),
+          Layer.mock(ThreadManagement.ThreadManagementService)(management),
+          Layer.mock(GitVcsDriver.GitVcsDriver)(git),
+          NodeServices.layer,
         ),
       ),
     ),
     layerProjects,
+    NodeServices.layer,
   );
 
 describe("FactorySessions.findProject", () => {
@@ -650,5 +663,465 @@ describe("FactorySessions.status and thread", () => {
         }),
       ),
     ),
+  );
+});
+
+// ---- send ----
+
+type Command = Parameters<ThreadManagement.ThreadManagementService["Service"]["dispatch"]>[0];
+
+/** A dispatch that records its commands and answers like T3 does, which the adapter ignores. */
+const recordingDispatch = (commands: Array<Command>) => ({
+  dispatch: (command: Command) =>
+    Effect.sync(() => {
+      commands.push(command);
+      return {} as never;
+    }),
+});
+
+describe("FactorySessions.send", () => {
+  it.effect("dispatches a message with automatic delivery under the caller's command id", () =>
+    Effect.gen(function* () {
+      const commands: Array<Command> = [];
+      yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        yield* sessions.send(threadId, "softfac:issue-5:send-1", "carry on");
+      }).pipe(Effect.provide(layerSessions({}, {}, recordingDispatch(commands))));
+      assert.deepStrictEqual(commands, [
+        {
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "server",
+          commandId: "softfac:issue-5:send-1",
+          threadId,
+          messageId: "message:softfac:issue-5:send-1",
+          text: "carry on",
+          attachments: [],
+          deliveryIntent: "auto",
+          dispatchMode: { type: "start_immediately" },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("never reads the thread first", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      yield* sessions.send(threadId, "softfac:issue-5:send-1", "carry on");
+    }).pipe(
+      Effect.provide(
+        layerSessions(
+          {
+            getThread: () => Effect.die("send must not read the thread"),
+            getThreadRecords: () => Effect.die("send must not read the thread"),
+          },
+          {},
+          recordingDispatch([]),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("rejects a blank command id as a sessions error without dispatching", () =>
+    Effect.gen(function* () {
+      const commands: Array<Command> = [];
+      const error = yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        return yield* Effect.flip(sessions.send(threadId, "  ", "carry on"));
+      }).pipe(Effect.provide(layerSessions({}, {}, recordingDispatch(commands))));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      if (error._tag === "FactorySessionsError") assert.strictEqual(error.operation, "send");
+      assert.strictEqual(commands.length, 0);
+    }),
+  );
+
+  it.effect("rejects a blank thread id as a thread not found without dispatching", () =>
+    Effect.gen(function* () {
+      const commands: Array<Command> = [];
+      const error = yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        return yield* Effect.flip(sessions.send("", "softfac:issue-5:send-1", "carry on"));
+      }).pipe(Effect.provide(layerSessions({}, {}, recordingDispatch(commands))));
+      assert.strictEqual(error._tag, "FactoryThreadNotFoundError");
+      assert.strictEqual(commands.length, 0);
+    }),
+  );
+
+  it.effect("fails as a sessions error when T3 rejects the message", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      const error = yield* Effect.flip(sessions.send(threadId, "softfac:issue-5:send-1", "x"));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      if (error._tag === "FactorySessionsError") assert.strictEqual(error.operation, "send");
+    }).pipe(
+      Effect.provide(
+        layerSessions(
+          {},
+          {},
+          { dispatch: () => Effect.fail(new Error("no such thread")) as never },
+        ),
+      ),
+    ),
+  );
+});
+
+// ---- archive ----
+
+const archiveCommand = (command: Command) => {
+  assert.strictEqual(command.type, "thread.archive");
+  return command as Extract<Command, { readonly type: "thread.archive" }>;
+};
+
+/** A thread projection read that answers each call in turn, then repeats the last. */
+const readsInTurn = (
+  reads: ReadonlyArray<"live" | "archived" | "unknown" | "broken">,
+  counter: { gets: number; records: number },
+) => ({
+  getThread: (id: ThreadId) => {
+    const kind = reads[Math.min(counter.gets, reads.length - 1)]!;
+    counter.gets += 1;
+    switch (kind) {
+      case "live":
+        return Effect.succeed({ ...thread("t3/abc", "/tmp/wt/t3-abc"), archivedAt: null } as never);
+      case "archived":
+        return Effect.succeed({
+          ...thread("t3/abc", "/tmp/wt/t3-abc"),
+          archivedAt: DateTime.makeUnsafe("2026-10-05T00:00:00Z"),
+        } as never);
+      case "unknown":
+        return Effect.fail(
+          new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId: id }),
+        );
+      case "broken":
+        return Effect.fail(
+          new ProjectionStore.ProjectionStoreReadError({
+            threadId: id,
+            cause: new Error("the thread row did not decode"),
+          }),
+        );
+    }
+  },
+  getThreadRecords: () => {
+    counter.records += 1;
+    return Effect.die("archive reads only the thread's own fields");
+  },
+});
+
+const runArchive = (
+  reads: ReadonlyArray<"live" | "archived" | "unknown" | "broken">,
+  dispatchFails: boolean,
+  attempts = 1,
+) =>
+  Effect.gen(function* () {
+    const counter = { gets: 0, records: 0 };
+    const commands: Array<Command> = [];
+    const results = yield* Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      const outcomes = [];
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        outcomes.push(yield* Effect.result(sessions.archive(threadId)));
+      }
+      return outcomes;
+    }).pipe(
+      Effect.provide(
+        layerSessions(
+          readsInTurn(reads, counter),
+          {},
+          {
+            dispatch: (command) =>
+              dispatchFails
+                ? Effect.sync(() => {
+                    commands.push(command);
+                  }).pipe(Effect.andThen(Effect.fail(new Error("dispatch failed") as never)))
+                : Effect.sync(() => {
+                    commands.push(command);
+                    return {} as never;
+                  }),
+          },
+        ),
+      ),
+    );
+    return { results, commands, counter };
+  });
+
+describe("FactorySessions.archive", () => {
+  it.effect("reads the thread, then archives it under a command id of its own", () =>
+    Effect.gen(function* () {
+      const { results, commands, counter } = yield* runArchive(["live"], false);
+      assert.strictEqual(results[0]!._tag, "Success");
+      assert.strictEqual(commands.length, 1);
+      const command = archiveCommand(commands[0]!);
+      assert.strictEqual(command.threadId, threadId);
+      assert.isTrue(command.commandId.startsWith(`factory-archive:${threadId}:`));
+      assert.deepStrictEqual(Object.keys(command).toSorted(), ["commandId", "threadId", "type"]);
+      assert.strictEqual(counter.gets, 1);
+      assert.strictEqual(counter.records, 0);
+    }),
+  );
+
+  it.effect("sends a new command id for every attempt", () =>
+    Effect.gen(function* () {
+      const { commands } = yield* runArchive(["live"], false, 2);
+      assert.strictEqual(commands.length, 2);
+      assert.notStrictEqual(
+        archiveCommand(commands[0]!).commandId,
+        archiveCommand(commands[1]!).commandId,
+      );
+    }),
+  );
+
+  it.effect("of an archived thread succeeds and dispatches nothing", () =>
+    Effect.gen(function* () {
+      const { results, commands } = yield* runArchive(["archived"], false);
+      assert.strictEqual(results[0]!._tag, "Success");
+      assert.strictEqual(commands.length, 0);
+    }),
+  );
+
+  it.effect("of a thread T3 does not know succeeds and dispatches nothing", () =>
+    Effect.gen(function* () {
+      const { results, commands } = yield* runArchive(["unknown"], false);
+      assert.strictEqual(results[0]!._tag, "Success");
+      assert.strictEqual(commands.length, 0);
+    }),
+  );
+
+  it.effect("still archives when the first read fails otherwise", () =>
+    Effect.gen(function* () {
+      const { results, commands } = yield* runArchive(["broken"], false);
+      assert.strictEqual(results[0]!._tag, "Success");
+      assert.strictEqual(commands.length, 1);
+    }),
+  );
+
+  it.effect("succeeds when a failed archive left the thread archived", () =>
+    Effect.gen(function* () {
+      const { results, commands, counter } = yield* runArchive(["live", "archived"], true);
+      assert.strictEqual(results[0]!._tag, "Success");
+      assert.strictEqual(commands.length, 1);
+      assert.strictEqual(counter.gets, 2);
+    }),
+  );
+
+  it.effect("succeeds when a failed archive is followed by a thread T3 does not know", () =>
+    Effect.gen(function* () {
+      const { results } = yield* runArchive(["live", "unknown"], true);
+      assert.strictEqual(results[0]!._tag, "Success");
+    }),
+  );
+
+  it.effect("fails with the archive error when the thread is still live", () =>
+    Effect.gen(function* () {
+      const { results, counter } = yield* runArchive(["live"], true);
+      const result = results[0]!;
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        const error = result.failure;
+        assert.strictEqual(error._tag, "FactorySessionsError");
+        if (error._tag === "FactorySessionsError") {
+          assert.strictEqual(error.operation, "archive");
+          assert.include(String(error.cause), "dispatch failed");
+        }
+      }
+      assert.strictEqual(counter.gets, 2);
+    }),
+  );
+
+  it.effect("fails with the archive error when the second read fails too", () =>
+    Effect.gen(function* () {
+      const { results, counter } = yield* runArchive(["live", "broken"], true);
+      const result = results[0]!;
+      assert.strictEqual(result._tag, "Failure");
+      if (result._tag === "Failure" && result.failure._tag === "FactorySessionsError") {
+        assert.include(String(result.failure.cause), "dispatch failed");
+      }
+      assert.strictEqual(counter.gets, 2);
+    }),
+  );
+});
+
+// ---- removeWorktree ----
+
+interface GitCall {
+  readonly cwd: string;
+  readonly args: ReadonlyArray<string>;
+  readonly env: unknown;
+  readonly allowNonZeroExit: unknown;
+}
+
+const gitResult = (exitCode: number, stderr = "") => ({ exitCode, stdout: "", stderr });
+
+/** A git driver that records its calls and answers each with `answer`. */
+const recordingGit = (
+  calls: Array<GitCall>,
+  answer: () => ReturnType<GitVcsDriver.GitVcsDriver["Service"]["execute"]>,
+) => ({
+  execute: (input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["execute"]>[0]) => {
+    calls.push({
+      cwd: input.cwd,
+      args: input.args,
+      env: input.env,
+      allowNonZeroExit: input.allowNonZeroExit,
+    });
+    return answer();
+  },
+});
+
+const removeWorktree = (path: string) =>
+  Effect.gen(function* () {
+    const sessions = yield* Sessions.FactorySessions;
+    return yield* sessions.removeWorktree(path);
+  });
+
+describe("FactorySessions.removeWorktree", () => {
+  it.effect("refuses a relative path without running git", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      const error = yield* Effect.flip(removeWorktree("t3code-abc")).pipe(
+        Effect.provide(
+          layerSessions(
+            {},
+            {},
+            {},
+            recordingGit(calls, () => Effect.succeed(gitResult(0) as never)),
+          ),
+        ),
+      );
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      if (error._tag === "FactorySessionsError") {
+        assert.strictEqual(error.operation, "remove-worktree");
+      }
+      assert.strictEqual(calls.length, 0);
+    }),
+  );
+
+  it.effect("runs git worktree remove --force from the worktree itself", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      yield* removeWorktree("/tmp/wt/t3-abc").pipe(
+        Effect.provide(
+          layerSessions(
+            {},
+            {},
+            {},
+            recordingGit(calls, () => Effect.succeed(gitResult(0))),
+          ),
+        ),
+      );
+      assert.deepStrictEqual(calls, [
+        {
+          cwd: "/tmp/wt/t3-abc",
+          args: ["worktree", "remove", "--force", "--", "/tmp/wt/t3-abc"],
+          env: { LC_ALL: "C" },
+          allowNonZeroExit: true,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("counts a worktree already gone from disk as removed", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      yield* removeWorktree("/tmp/factory-sessions-test-no-such-dir/wt").pipe(
+        Effect.provide(
+          layerSessions(
+            {},
+            {},
+            {},
+            recordingGit(calls, () =>
+              Effect.succeed(
+                gitResult(
+                  128,
+                  "fatal: '/tmp/factory-sessions-test-no-such-dir/wt' is not a working tree\n",
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      assert.strictEqual(calls.length, 1);
+    }),
+  );
+
+  it.effect("counts a git that cannot start in a directory that is gone as removed", () =>
+    Effect.gen(function* () {
+      yield* removeWorktree("/tmp/factory-sessions-test-no-such-dir/wt").pipe(
+        Effect.provide(
+          layerSessions(
+            {},
+            {},
+            {},
+            recordingGit([], () =>
+              Effect.fail(
+                new GitCommandError({
+                  operation: "factory.sessions.removeWorktree",
+                  command: "git worktree remove",
+                  cwd: "/tmp/factory-sessions-test-no-such-dir/wt",
+                  detail: "spawn git ENOENT",
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect("removes the directory itself after a wait when git leaves it not empty", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-sessions-remove-" });
+        yield* fs.writeFileString(`${dir}/leftover.txt`, "x");
+        const calls: Array<GitCall> = [];
+        const fiber = yield* removeWorktree(dir).pipe(
+          Effect.provide(
+            layerSessions(
+              {},
+              {},
+              {},
+              recordingGit(calls, () =>
+                Effect.succeed(
+                  gitResult(128, `error: failed to delete '${dir}': Directory not empty\n`),
+                ),
+              ),
+            ),
+          ),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.yieldNow;
+        assert.isTrue(yield* fs.exists(dir));
+        yield* TestClock.adjust("3 seconds");
+        yield* Fiber.join(fiber);
+        assert.isFalse(yield* fs.exists(dir));
+        assert.strictEqual(calls.length, 1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails and keeps the directory on any other git error", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-sessions-remove-" });
+        const calls: Array<GitCall> = [];
+        const error = yield* Effect.flip(removeWorktree(dir)).pipe(
+          Effect.provide(
+            layerSessions(
+              {},
+              {},
+              {},
+              recordingGit(calls, () => Effect.succeed(gitResult(128, "fatal: cannot lock ref\n"))),
+            ),
+          ),
+        );
+        assert.strictEqual(error._tag, "FactorySessionsError");
+        if (error._tag === "FactorySessionsError") {
+          assert.strictEqual(error.operation, "remove-worktree");
+        }
+        assert.strictEqual(calls.length, 1);
+        assert.isTrue(yield* fs.exists(dir));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 });

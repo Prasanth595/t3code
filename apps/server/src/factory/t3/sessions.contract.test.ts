@@ -11,6 +11,7 @@ import { EventId, ProjectId, ThreadId, type Project } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -24,6 +25,10 @@ import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
+import {
+  MULTI_TURN_FIRST_PROMPT,
+  MULTI_TURN_SECOND_PROMPT,
+} from "../../orchestration-v2/testkit/fixtures/shared.ts";
 import * as ProviderReplayHarness from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
@@ -41,12 +46,11 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as Sessions from "./sessions.ts";
 
-const SIMPLE_TRANSCRIPT = new URL(
-  "../../orchestration-v2/testkit/fixtures/simple/claude_transcript.ndjson",
+/** Two turns: the replies are "first fixture turn complete" and "second fixture turn complete". */
+const MULTI_TURN_TRANSCRIPT = new URL(
+  "../../orchestration-v2/testkit/fixtures/multi_turn/claude_transcript.ndjson",
   import.meta.url,
 );
-/** The prompt the transcript was recorded with; the reply is "fixture simple ok". */
-const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
 
 const projectId = ProjectId.make("project:factory-sessions-contract");
 const createdAt = "2026-10-15T00:00:00.000Z";
@@ -58,6 +62,24 @@ const TERMINAL_RUN_STATUSES: ReadonlySet<Sessions.RunStatus> = new Set([
   "cancelled",
   "rolled_back",
 ]);
+
+/** The next terminal `run.updated` of the run with `ordinal`, read from the thread's event stream. */
+const terminalRun = (threadId: ThreadId, ordinal: number) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const terminal = yield* sink.stream({ threadId, eventType: "run.updated" }).pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "run.updated" &&
+          stored.event.payload.ordinal === ordinal &&
+          TERMINAL_RUN_STATUSES.has(stored.event.payload.status),
+      ),
+      Stream.map((stored) => stored.event.payload as { readonly status: Sessions.RunStatus }),
+      Stream.take(1),
+      Stream.runCollect,
+    );
+    return terminal[0]?.status;
+  });
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -85,13 +107,19 @@ const initRepoWithCommit = (cwd: string) =>
     return yield* git(cwd, ["branch", "--show-current"]);
   });
 
+const layerGit = GitVcsDriver.layer.pipe(
+  Layer.provide(VcsProcess.layer),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-sessions-config-" })),
+  Layer.provide(NodeServices.layer),
+);
+
 /** The real orchestration runtime plus the launch service over a real repo. */
 const layerRuntime = (input: { readonly repo: string; readonly worktreesDir: string }) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const transcript = yield* ClaudeOrchestratorReplayHarness.decodeTranscript(
-        yield* readProviderReplayTranscript(SIMPLE_TRANSCRIPT),
+        yield* readProviderReplayTranscript(MULTI_TURN_TRANSCRIPT),
       );
       const project: Project = {
         id: projectId,
@@ -173,18 +201,22 @@ const layerRuntime = (input: { readonly repo: string; readonly worktreesDir: str
         Layer.provide(layerDatabase),
       );
       return Layer.mergeAll(
-        Sessions.layer.pipe(Layer.provide(Layer.merge(layerLaunch, layerStores))),
+        Sessions.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerLaunch,
+              layerStores,
+              layerThreadManagement,
+              layerGit,
+              NodeServices.layer,
+            ),
+          ),
+        ),
         layerStores,
         layerOrchestrator,
       );
     }),
   );
-
-const layerGit = GitVcsDriver.layer.pipe(
-  Layer.provide(VcsProcess.layer),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-sessions-config-" })),
-  Layer.provide(NodeServices.layer),
-);
 
 it.live(
   "launches a thread in a new worktree, reads its status to completion, and starts one thread per command id",
@@ -234,7 +266,7 @@ it.live(
             title: "Factory contract",
             baseRef,
             startFromOrigin: false,
-            message: SIMPLE_PROMPT,
+            message: MULTI_TURN_FIRST_PROMPT,
             model: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
           };
           const launched = yield* sessions.launch(request);
@@ -242,23 +274,12 @@ it.live(
 
           // The worktree is prepared and the provider turn run after launch
           // returns; the run's own events say when it is over.
-          const sink = yield* EventSink.EventSinkV2;
-          const terminal = yield* sink.stream({ threadId, eventType: "run.updated" }).pipe(
-            Stream.filter(
-              (stored) =>
-                stored.event.type === "run.updated" &&
-                TERMINAL_RUN_STATUSES.has(stored.event.payload.status),
-            ),
-            Stream.map((stored) => stored.event.payload as { readonly status: Sessions.RunStatus }),
-            Stream.take(1),
-            Stream.runCollect,
-          );
-          assert.strictEqual(terminal[0]?.status, "completed");
+          assert.strictEqual(yield* terminalRun(threadId, 1), "completed");
 
           const status = yield* sessions.status(launched.threadId);
           assert.strictEqual(status.run, "completed");
           assert.strictEqual(status.runOrdinal, 1);
-          assert.include(status.lastAssistantMessage ?? "", "fixture simple ok");
+          assert.include(status.lastAssistantMessage ?? "", "first fixture turn complete");
           assert.isFalse(status.archived);
           assert.isNotNull(status.branch);
           assert.isNotNull(status.worktreePath);
@@ -284,6 +305,37 @@ it.live(
           const after = yield* sessions.status(launched.threadId);
           assert.strictEqual(after.runOrdinal, 1);
           assert.strictEqual(after.run, "completed");
+
+          // A message after the first run starts the second. The same command
+          // id again is the same message: no third run.
+          const secondRun = yield* terminalRun(threadId, 2).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          const sendId = "softfac:factory-sessions-contract:send-1";
+          yield* sessions.send(launched.threadId, sendId, MULTI_TURN_SECOND_PROMPT);
+          assert.strictEqual(yield* Fiber.join(secondRun), "completed");
+          const second = yield* sessions.status(launched.threadId);
+          assert.strictEqual(second.run, "completed");
+          assert.strictEqual(second.runOrdinal, 2);
+          assert.include(second.lastAssistantMessage ?? "", "second fixture turn complete");
+          yield* sessions.send(launched.threadId, sendId, MULTI_TURN_SECOND_PROMPT);
+          const resent = yield* sessions.status(launched.threadId);
+          assert.strictEqual(resent.runOrdinal, 2);
+          assert.include(resent.lastAssistantMessage ?? "", "second fixture turn complete");
+
+          // Archiving twice, and a thread T3 does not know, change nothing.
+          yield* sessions.archive(launched.threadId);
+          assert.isTrue((yield* sessions.thread(launched.threadId)).archived);
+          yield* sessions.archive(launched.threadId);
+          yield* sessions.archive("thread:project:factory-sessions-contract:unknown");
+
+          // Archiving leaves the worktree on disk; removing it keeps the branch.
+          assert.isTrue(yield* fs.exists(worktreePath));
+          yield* sessions.removeWorktree(worktreePath);
+          assert.isFalse(yield* fs.exists(worktreePath));
+          assert.include(yield* git(repo, ["branch", "--list", status.branch!]), status.branch!);
+          assert.notInclude(yield* git(repo, ["worktree", "list", "--porcelain"]), worktreePath);
+          yield* sessions.removeWorktree(worktreePath);
         }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir })));
       }),
     ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
