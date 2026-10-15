@@ -24,7 +24,7 @@ import {
   type Repo,
   type Report,
 } from "./pass.ts";
-import type { StartError, StartOutcome } from "./runner/start.ts";
+import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
 import { GitHubFailed, type Blocker } from "./tracker/github.ts";
 
 const REPO = "rawphp/softfac";
@@ -86,6 +86,12 @@ class Fake implements PassWorld {
   startLeavesRun: Array<number> = [];
   pause: HandPause | null = null;
   machineLogFails = false;
+  /** What the pass wrote to a run's ledger as an `error` line. */
+  runErrors: Array<{ run: RunId; step: string; kind: ErrorKind; message: string }> = [];
+  /** The next run ledger writes fail: the run's ledger is finished, or cannot be written. */
+  runErrorFails = false;
+  /** The runs whose gate lock is held, by run id. */
+  gateLocks: Array<string> = [];
   now = T0;
   calls: Array<string> = [];
   events: Array<MachineEvent> = [];
@@ -188,6 +194,20 @@ class Fake implements PassWorld {
 
   nowMs() {
     return this.now;
+  }
+
+  recordError(run: RunId, step: "pass" | "start", kind: ErrorKind, message: string) {
+    if (this.runErrorFails) {
+      return Effect.fail(
+        new LedgerIoError({ path: "/data/runs/x.jsonl", cause: new Error("finished") }),
+      );
+    }
+    this.runErrors.push({ run, step, kind, message });
+    return Effect.void;
+  }
+
+  gateRunning(run: RunId) {
+    return this.gateLocks.includes(runIdToString(run));
   }
 
   record(event: MachineEvent) {
@@ -466,6 +486,43 @@ describe("claiming new issues", () => {
         errorEvents(fake).map((e) => (e.data as { run?: string }).run),
         ["rawphp__softfac__40__1"],
       );
+    }),
+  );
+});
+
+// ---- a ready issue whose older run is gating ----
+
+describe("a ready issue whose older run is gating", () => {
+  it.effect("is not claimed again, says gate running, and is neither blocked nor held back", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(14, BUILDING);
+      fake.gateLocks = [runIdToString(rid(14))];
+      fake.ready[REPO] = [14, 15];
+      fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), []);
+      assert.equal(runLine(lines, "rawphp/softfac#14 "), "rawphp/softfac#14 ready: gate running");
+      assert.ok(!fake.calls.some((c) => c.startsWith("blockers")), fake.calls.join("\n"));
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [claimSkipped(15, "limit")],
+      );
+      assert.ok(
+        lines.includes("limit reached: 1 ready issue was not claimed, max_concurrent_runs is 1"),
+      );
+      assert.equal(report.errors, 0);
+    }),
+  );
+
+  it.effect("a start that finds a gate running says so and is no error", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [14];
+      fake.pushStart(`${REPO}#14`, new GateRunningError({ run: rid(14) }));
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(runLine(lines, "rawphp/softfac#14 "), "rawphp/softfac#14 ready: gate running");
+      assert.equal(report.errors, 0);
     }),
   );
 });
@@ -1177,6 +1234,72 @@ describe("what the pass records", () => {
       assert.equal(report.errors, 1);
       assert.ok(lines.at(-1)!.startsWith("pass done:"));
     }),
+  );
+
+  it.effect(
+    "a start that fails after it made a run records the error in that run, with the start step",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1];
+        fake.startLeavesRun = [1];
+        fake.pushStart(`${REPO}#1`, githubFailure());
+        const { report } = yield* pass(fake, machine([REPO], 1));
+        assert.equal(report.errors, 1);
+        assert.deepEqual(
+          fake.runErrors.map((e) => [runIdToString(e.run), e.step, e.kind]),
+          [["rawphp__softfac__1__1", "start", "tracker"]],
+        );
+        assert.ok(fake.runErrors[0]!.message.includes("boom"));
+        assert.deepEqual(errorEvents(fake), []);
+      }),
+  );
+
+  it.effect(
+    "a start that fails before it made a run records the error in the machine log as a start",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1];
+        fake.pushStart(`${REPO}#1`, githubFailure());
+        yield* pass(fake, machine([REPO], 1));
+        assert.deepEqual(fake.runErrors, []);
+        const [error] = errorEvents(fake);
+        assert.ok(error !== undefined);
+        assert.deepEqual(Object.keys(error.data), ["step", "kind", "message"]);
+        assert.equal((error.data as { step: string }).step, "start");
+      }),
+  );
+
+  it.effect("a start that fails before it made a run does not blame an older unfinished run", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(1, "triage");
+      fake.triage[REPO] = [1];
+      fake.ready[REPO] = [2];
+      fake.pushStart(`${REPO}#2`, githubFailure());
+      yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(fake.runErrors, []);
+      assert.equal(errorEvents(fake).length, 1);
+      assert.equal((errorEvents(fake)[0]!.data as { run?: string }).run, undefined);
+    }),
+  );
+
+  it.effect(
+    "an error for a run whose ledger takes no line goes to the machine log with the run",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1];
+        fake.startLeavesRun = [1];
+        fake.runErrorFails = true;
+        fake.pushStart(`${REPO}#1`, githubFailure());
+        yield* pass(fake, machine([REPO], 1));
+        const [error] = errorEvents(fake);
+        assert.ok(error !== undefined);
+        assert.equal((error.data as { run?: string }).run, "rawphp__softfac__1__1");
+        assert.equal((error.data as { step: string }).step, "start");
+      }),
   );
 
   it.effect("the error of a step that fails names its step, kind and message", () =>

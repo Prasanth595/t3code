@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off - one test sets a file's mtime with the wall clock type node wants.
 // @effect-diagnostics nodeBuiltinImport:off - the tests read and lay out real files.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -58,6 +59,12 @@ describe("claims paused by hand", () => {
     const target = NodePath.join(dataDir, "elsewhere");
     NodeFS.writeFileSync(target, formatTs(T0));
     NodeFS.symlinkSync(target, pauseFile(dataDir));
+    expect(loadHandPause(dataDir)).toBeNull();
+  });
+
+  it("a FIFO is no pause, and does not block the read", () => {
+    const dataDir = tempDir();
+    NodeChildProcess.execFileSync("mkfifo", [pauseFile(dataDir)]);
     expect(loadHandPause(dataDir)).toBeNull();
   });
 
