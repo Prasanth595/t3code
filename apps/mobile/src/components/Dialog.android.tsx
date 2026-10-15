@@ -44,23 +44,21 @@ export function Host() {
   }, []);
 
   const handleCancel = useCallback(() => {
-    presented?.request.onCancel?.();
     setPresented(null);
+    presented?.request.onCancel?.();
   }, [presented]);
 
   const handleConfirm = useCallback(
     (nativeInputValue?: string) => {
+      setPresented(null);
       if (presented?.kind === "confirm") {
         presented.request.onConfirm();
       } else if (presented?.kind === "text-input") {
         presented.request.onConfirm(nativeInputValue ?? inputValue);
       }
-      setPresented(null);
     },
     [inputValue, presented],
   );
-
-  const confirmDisabled = presented?.kind === "text-input" && inputValue.trim().length === 0;
 
   return presented ? (
     <DialogPresentation
@@ -70,7 +68,6 @@ export function Host() {
         presented.kind === "text-input" ? presented.request.initialValue : undefined
       }
       onInputChange={setInputValue}
-      confirmDisabled={confirmDisabled}
       onCancel={handleCancel}
       onConfirm={handleConfirm}
     />
@@ -85,9 +82,7 @@ function DialogPresentation(props: DialogPresentationProps) {
   const inputState = useNativeState(props.inputInitialValue ?? "");
   const inputSelection = useNativeState({ start: 0, end: props.inputInitialValue?.length ?? 0 });
   const confirm = () => {
-    if (props.confirmDisabled) return;
     const value = props.inputInitialValue === undefined ? undefined : inputState.get();
-    if (value !== undefined && !value.trim()) return;
     props.onConfirm(value);
   };
   return (
@@ -146,7 +141,6 @@ function DialogPresentation(props: DialogPresentationProps) {
         <AlertDialog.ConfirmButton>
           <TextButton
             onClick={confirm}
-            enabled={!props.confirmDisabled}
             colors={{
               contentColor:
                 colors[
@@ -169,7 +163,6 @@ interface DialogPresentationProps {
   >;
   readonly inputInitialValue?: string;
   readonly onInputChange?: (value: string) => void;
-  readonly confirmDisabled?: boolean;
   readonly onCancel: () => void;
   readonly onConfirm: (inputValue?: string) => void;
 }
