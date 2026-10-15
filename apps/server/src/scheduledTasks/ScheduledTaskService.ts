@@ -675,9 +675,10 @@ export const layer = Layer.effect(
       );
 
     // A launch is accepted before its workspace is prepared, so a run counts as
-    // succeeded first. Wait for that run to leave preparation and record a
-    // failed preparation against this run only: last_run_at is the run's
-    // identity, so a later run's status is never overwritten.
+    // succeeded first. The first time the launched run leaves preparation says
+    // how preparation ended; a later retry or provider failure is not about the
+    // workspace. A failure is recorded against this run only: last_run_at is
+    // the run's identity, so a later run's status is never overwritten.
     const recordFailedPreparation = Effect.fn("ScheduledTaskService.recordFailedPreparation")(
       function* (input: {
         readonly id: ScheduledTaskId;
@@ -685,35 +686,24 @@ export const layer = Layer.effect(
         readonly threadId: ThreadId;
         readonly messageId: MessageId;
       }) {
-        const afterSequence = yield* threadManagement.getThreadEventSequence(input.threadId);
-        const readRun = threadManagement
-          .getThreadRecords(input.threadId, ["runs"])
+        // The thread is new, so replaying its run updates from the start is cheap.
+        const leftPreparation = yield* threadManagement
+          .streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence: 0,
+            eventType: "run.updated",
+          })
           .pipe(
-            Effect.map((records) =>
-              records.runs.find((run) => run.userMessageId === input.messageId),
+            Stream.map((stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.userMessageId === input.messageId
+                ? stored.event.payload.status
+                : "preparing",
             ),
+            Stream.filter((status) => status !== "preparing"),
+            Stream.runHead,
           );
-        let run = yield* readRun;
-        if (run?.status === "preparing") {
-          const runId = run.id;
-          yield* threadManagement
-            .streamStoredEventsFrom({
-              threadId: input.threadId,
-              afterSequence,
-              eventType: "run.updated",
-            })
-            .pipe(
-              Stream.filter(
-                (stored) =>
-                  stored.event.type === "run.updated" &&
-                  stored.event.payload.id === runId &&
-                  stored.event.payload.status !== "preparing",
-              ),
-              Stream.runHead,
-            );
-          run = yield* readRun;
-        }
-        if (run?.status !== "failed") return;
+        if (Option.getOrUndefined(leftPreparation) !== "failed") return;
         yield* sql`
           UPDATE scheduled_tasks
           SET last_run_status = 'failed',
