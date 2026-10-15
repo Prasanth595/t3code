@@ -497,3 +497,38 @@ export function buildSidebarGroupRuleOptions(input: {
       ];
   }
 }
+
+/**
+ * The tabs that fit the bar, by index, in display order. Every tab that shows, shows whole; the
+ * rest go to the "more" menu, which then takes `moreWidth`. The selected tab always shows: when
+ * it would overflow, it takes the place of the last tabs that fit before it.
+ */
+export function fitSidebarGroupTabs(input: {
+  readonly widths: readonly number[];
+  readonly available: number;
+  readonly gap: number;
+  readonly moreWidth: number;
+  readonly selectedIndex: number;
+}): number[] {
+  const { widths, gap, selectedIndex } = input;
+  const all = widths.map((_, index) => index);
+  const total = widths.reduce((sum, width) => sum + width, 0) + gap * (widths.length - 1);
+  if (total <= input.available) return all;
+  const budget = input.available - input.moreWidth - gap;
+  const visible: number[] = [];
+  let used = 0;
+  for (const index of all) {
+    const next = used + (visible.length === 0 ? 0 : gap) + widths[index]!;
+    if (next > budget) break;
+    visible.push(index);
+    used = next;
+  }
+  if (selectedIndex < 0 || selectedIndex >= widths.length || visible.includes(selectedIndex)) {
+    return visible;
+  }
+  const selectedWidth = widths[selectedIndex]!;
+  while (visible.length > 0 && used + gap + selectedWidth > budget) {
+    used -= widths[visible.pop()!]! + (visible.length === 0 ? 0 : gap);
+  }
+  return [...visible, selectedIndex];
+}

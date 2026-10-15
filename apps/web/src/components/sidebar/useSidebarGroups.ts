@@ -59,6 +59,8 @@ import { sidebarGroupTabStatus, type SidebarGroupTabStatus } from "./sidebarGrou
 /** The data attribute that marks a drop target in the tab bar: a tab id, or `new`. */
 export const SIDEBAR_GROUP_DROP_ATTRIBUTE = "data-sidebar-group-drop";
 export const SIDEBAR_GROUP_DROP_NEW = "new";
+/** The "more" button: a drag over it opens the menu of the tabs that do not fit. */
+export const SIDEBAR_GROUP_DROP_MORE = "more";
 
 export interface SidebarGroupTab {
   readonly id: string;
@@ -332,6 +334,7 @@ export function useSidebarGroups(input: {
           ?.closest(`[${SIDEBAR_GROUP_DROP_ATTRIBUTE}]`)
           ?.getAttribute(SIDEBAR_GROUP_DROP_ATTRIBUTE) ?? null;
       return target === SIDEBAR_GROUP_DROP_NEW ||
+        target === SIDEBAR_GROUP_DROP_MORE ||
         tabsRef.current.some((tab) => tab.id === target && !tab.isView)
         ? target
         : null;
@@ -353,6 +356,8 @@ export function useSidebarGroups(input: {
       const target = dropTargetAt(point);
       setDropTargetId(null);
       if (target === null) return false;
+      // A drop on the "more" button itself moves nothing: the open menu holds the targets.
+      if (target === SIDEBAR_GROUP_DROP_MORE) return true;
       if (target === SIDEBAR_GROUP_DROP_NEW) createGroup(threadKeys);
       else
         update((current) =>
@@ -363,6 +368,15 @@ export function useSidebarGroups(input: {
     [createGroup, dropTargetAt, projects, threadsForRefs, update],
   );
   const endDrag = useCallback(() => setDropTargetId(null), []);
+
+  // The empty list of a group says why it is empty. The default tab keeps the upstream text.
+  const openGroup = compiled.byId.get(tabId);
+  const emptyMessage =
+    !enabled || openGroup === undefined
+      ? null
+      : openGroup.rules.length > 0
+        ? "No threads match the rules"
+        : "Drag threads onto this tab";
 
   const ruleOptions = useCallback(
     (field: Exclude<SidebarGroupRuleField, "title">, groupId: string) =>
@@ -397,6 +411,7 @@ export function useSidebarGroups(input: {
 
   return {
     enabled,
+    emptyMessage,
     settings,
     tabId,
     setTabId,

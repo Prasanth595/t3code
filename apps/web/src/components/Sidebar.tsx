@@ -5746,6 +5746,8 @@ export default function Sidebar() {
                 "No threads in the projects of these owners"
               ) : ownerFilter?.operator === "is_not" ? (
                 "No threads outside the hidden owners"
+              ) : sidebarGroups.emptyMessage !== null ? (
+                sidebarGroups.emptyMessage
               ) : (
                 "No threads yet"
               )}

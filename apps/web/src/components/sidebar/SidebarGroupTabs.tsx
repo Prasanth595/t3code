@@ -10,9 +10,17 @@ import {
   type SidebarGroupRuleField,
   type SidebarGroupStoredRule,
 } from "@t3tools/contracts";
-import { FolderIcon, InboxIcon, LayersIcon, PlusIcon, SlidersHorizontalIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  ChevronDownIcon,
+  FolderIcon,
+  InboxIcon,
+  LayersIcon,
+  PlusIcon,
+  SlidersHorizontalIcon,
+} from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { SidebarThreadSummary } from "../../types";
@@ -34,6 +42,7 @@ import { Popover, PopoverPopup } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import {
+  fitSidebarGroupTabs,
   isAnyGroupRule,
   SIDEBAR_GROUP_RULE_FIELDS,
   sidebarGroupRuleFieldLabel,
@@ -43,6 +52,7 @@ import {
 import { THREAD_CARD_TITLE_CLASS } from "./threadCardParts";
 import {
   SIDEBAR_GROUP_DROP_ATTRIBUTE,
+  SIDEBAR_GROUP_DROP_MORE,
   SIDEBAR_GROUP_DROP_NEW,
   type SidebarGroupsState,
   type SidebarGroupTab,
@@ -83,6 +93,40 @@ function TabIcon(props: { tab: SidebarGroupTab }) {
   return <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />;
 }
 
+/** What a tab shows: the favicon of a single thread, the status or group icon, the name and count. */
+function TabLabel(props: { tab: SidebarGroupTab; project: EnvironmentProject | null }) {
+  const { tab, project } = props;
+  const single = tab.singleThread;
+  return (
+    <>
+      {single !== null && project !== null ? (
+        <ProjectFavicon project={project} className="size-3.5 shrink-0" />
+      ) : null}
+      <TabIcon tab={tab} />
+      {single !== null ? (
+        <span className={cn(THREAD_CARD_TITLE_CLASS, "max-w-36 min-w-0 truncate text-xs")}>
+          {single.title}
+        </span>
+      ) : (
+        <>
+          <span className="max-w-32 min-w-0 truncate">{tab.name}</span>
+          <span className="shrink-0 text-muted-foreground/80 tabular-nums">{tab.threadCount}</span>
+        </>
+      )}
+    </>
+  );
+}
+
+const TAB_BOX_CLASS = "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs";
+const TAB_GAP_PX = 4;
+
+function tabTooltip(tab: SidebarGroupTab) {
+  const statusLabel = tab.status === null ? "" : `, ${tab.status.label}`;
+  return tab.singleThread === null
+    ? `${tab.name}: ${tab.threadCount} threads${statusLabel}`
+    : `${tab.singleThread.title} (${tab.name})${statusLabel}`;
+}
+
 function GroupTab(props: {
   tab: SidebarGroupTab;
   selected: boolean;
@@ -93,17 +137,13 @@ function GroupTab(props: {
   onOpenThread: (thread: SidebarThreadSummary) => void;
   onEdit: (anchor: HTMLElement) => void;
 }) {
-  const { tab, selected, dropTarget, project } = props;
+  const { tab, selected, dropTarget } = props;
   const [element, setElement] = useState<HTMLButtonElement | null>(null);
   useAttentionWiggle(element, tab.needsAttention ? (tab.status?.kind ?? null) : null);
   const single = tab.singleThread;
   const singleActive =
     single !== null && props.routeThreadKey === `${single.environmentId}:${single.id}`;
-  const statusLabel = tab.status === null ? "" : `, ${tab.status.label}`;
-  const tooltip =
-    single === null
-      ? `${tab.name}: ${tab.threadCount} threads${statusLabel}`
-      : `${single.title} (${tab.name})${statusLabel}`;
+  const tooltip = tabTooltip(tab);
   return (
     <Tooltip>
       <TooltipTrigger
@@ -116,7 +156,10 @@ function GroupTab(props: {
             aria-label={tooltip}
             {...{ [SIDEBAR_GROUP_DROP_ATTRIBUTE]: tab.id }}
             className={cn(
-              "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              // A tab can shrink a little and end its name with an ellipsis, so a rounding error
+              // of the fit never cuts it mid-word.
+              TAB_BOX_CLASS,
+              "min-w-0 shrink cursor-pointer outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               single !== null
                 ? singleActive
                   ? "bg-sidebar-row-active text-sidebar-foreground"
@@ -137,29 +180,117 @@ function GroupTab(props: {
           />
         }
       >
-        {single !== null && project !== null ? (
-          <ProjectFavicon project={project} className="size-3.5 shrink-0" />
-        ) : null}
-        <TabIcon tab={tab} />
-        {single !== null ? (
-          <span className={cn(THREAD_CARD_TITLE_CLASS, "max-w-36 truncate text-xs")}>
-            {single.title}
-          </span>
-        ) : (
-          <>
-            <span className="max-w-32 truncate">{tab.name}</span>
-            <span className="text-muted-foreground/80 tabular-nums">{tab.threadCount}</span>
-          </>
-        )}
+        <TabLabel tab={tab} project={props.project} />
       </TooltipTrigger>
       <TooltipPopup side="bottom">{tooltip}</TooltipPopup>
     </Tooltip>
   );
 }
 
+/**
+ * The tabs that do not fit the bar. A drag over the button opens the menu, so a hidden tab still
+ * takes a dropped thread.
+ */
+function MoreTabsMenu(props: {
+  tabs: readonly SidebarGroupTab[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  dropTargetId: string | null;
+  projectFor: (thread: SidebarThreadSummary) => EnvironmentProject | null;
+  onSelect: (tab: SidebarGroupTab) => void;
+}) {
+  // The button carries the color of a hidden tab that needs the user.
+  const attention = props.tabs.find((tab) => tab.needsAttention) ?? null;
+  const label = `${props.tabs.length} more ${props.tabs.length === 1 ? "group" : "groups"}`;
+  return (
+    <Menu open={props.open} onOpenChange={props.onOpenChange} modal={false}>
+      <MenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            {...{ [SIDEBAR_GROUP_DROP_ATTRIBUTE]: SIDEBAR_GROUP_DROP_MORE }}
+            className={cn(
+              TAB_BOX_CLASS,
+              "shrink-0 cursor-pointer gap-0.5 text-muted-foreground outline-none select-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+              attention !== null && "bg-current/8 ring-1 ring-inset ring-current/30",
+              attention?.status?.className,
+              props.dropTargetId === SIDEBAR_GROUP_DROP_MORE &&
+                "bg-primary/10 text-primary ring-1 ring-inset ring-primary/40",
+            )}
+          />
+        }
+      >
+        <span className="tabular-nums">+{props.tabs.length}</span>
+        <ChevronDownIcon aria-hidden className="size-3.5 shrink-0" />
+      </MenuTrigger>
+      <MenuPopup align="end">
+        {props.tabs.map((tab) => (
+          <MenuItem
+            key={tab.id}
+            {...{ [SIDEBAR_GROUP_DROP_ATTRIBUTE]: tab.id }}
+            onClick={() => props.onSelect(tab)}
+          >
+            <span
+              className={cn(
+                "flex min-w-0 items-center gap-1.5",
+                props.dropTargetId === tab.id && "text-primary",
+              )}
+            >
+              <TabLabel
+                tab={tab}
+                project={tab.singleThread === null ? null : props.projectFor(tab.singleThread)}
+              />
+            </span>
+          </MenuItem>
+        ))}
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+/**
+ * The width that each tab needs, from an invisible copy of the tabs, and the width that the bar
+ * has. Both update with the tabs and with the sidebar width.
+ */
+function useTabWidths(tabCount: number) {
+  const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
+  const [measureElement, setMeasureElement] = useState<HTMLDivElement | null>(null);
+  const [available, setAvailable] = useState<number | null>(null);
+  const [widths, setWidths] = useState<readonly number[]>([]);
+  useEffect(() => {
+    if (listElement === null) return;
+    return observeResize(listElement, (entries) => {
+      const entry = entries.at(-1);
+      if (entry !== undefined) setAvailable(entry.contentRect.width);
+    });
+  }, [listElement]);
+  // Before paint, so a tab that does not fit never flashes in the bar.
+  useLayoutEffect(() => {
+    if (measureElement === null) return;
+    const next = Array.from(measureElement.children, (child) =>
+      Math.ceil(child.getBoundingClientRect().width),
+    );
+    setWidths((current) =>
+      current.length === next.length && current.every((width, index) => width === next[index])
+        ? current
+        : next,
+    );
+  });
+  // The last measured child is a sample of the "more" button.
+  const measured = widths.length === tabCount + 1;
+  return {
+    setListElement,
+    setMeasureElement,
+    available: measured ? available : null,
+    tabWidths: measured ? widths.slice(0, tabCount) : null,
+    moreWidth: measured ? widths[tabCount]! : 0,
+  };
+}
+
 export function SidebarGroupTabs(props: {
   groups: SidebarGroupsState;
-  /** A thread drag is in progress, so the empty end of the bar offers a new group. */
+  /** A thread drag is in progress, so the "New group" button takes a drop. */
   dragging: boolean;
   routeThreadKey: string | null;
   projectFor: (thread: SidebarThreadSummary) => EnvironmentProject | null;
@@ -172,15 +303,50 @@ export function SidebarGroupTabs(props: {
   const editingGroup =
     editing === null ? null : (groups.find((group) => group.id === editing.groupId) ?? null);
   const selected = state.tabs.find((tab) => tab.id === state.tabId) ?? null;
+
+  const { setListElement, setMeasureElement, available, tabWidths, moreWidth } = useTabWidths(
+    state.tabs.length,
+  );
+  const visibleIndexes = useMemo(
+    () =>
+      available === null || tabWidths === null
+        ? state.tabs.map((_, index) => index)
+        : fitSidebarGroupTabs({
+            widths: tabWidths,
+            available,
+            gap: TAB_GAP_PX,
+            moreWidth,
+            selectedIndex: state.tabs.findIndex((tab) => tab.id === state.tabId),
+          }),
+    [available, moreWidth, state.tabId, state.tabs, tabWidths],
+  );
+  const visibleTabs = visibleIndexes.map((index) => state.tabs[index]!);
+  const hiddenTabs = state.tabs.filter((_, index) => !visibleIndexes.includes(index));
+
+  // A drag over the "more" button opens its menu, and the end of that drag closes it again.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreOpenedByDragRef = useRef(false);
+  useEffect(() => {
+    if (state.dropTargetId !== SIDEBAR_GROUP_DROP_MORE) return;
+    moreOpenedByDragRef.current = true;
+    setMoreOpen(true);
+  }, [state.dropTargetId]);
+  useEffect(() => {
+    if (props.dragging || !moreOpenedByDragRef.current) return;
+    moreOpenedByDragRef.current = false;
+    setMoreOpen(false);
+  }, [props.dragging]);
+
+  const newGroupTarget = state.dropTargetId === SIDEBAR_GROUP_DROP_NEW;
   return (
-    <div className="flex items-center gap-1 px-2 pb-1.5">
+    <div ref={barRef} className="flex items-center gap-1 px-2 pb-1.5">
       <div
-        ref={barRef}
+        ref={setListElement}
         role="tablist"
         aria-label="Thread groups"
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
+        className="relative flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
       >
-        {state.tabs.map((tab) => (
+        {visibleTabs.map((tab) => (
           <GroupTab
             key={tab.id}
             tab={tab}
@@ -193,21 +359,38 @@ export function SidebarGroupTabs(props: {
             onEdit={(anchor) => setEditing({ groupId: tab.id, anchor })}
           />
         ))}
+        {hiddenTabs.length > 0 ? (
+          <MoreTabsMenu
+            tabs={hiddenTabs}
+            open={moreOpen}
+            onOpenChange={setMoreOpen}
+            dropTargetId={state.dropTargetId}
+            projectFor={props.projectFor}
+            onSelect={(tab) =>
+              tab.singleThread === null
+                ? state.setTabId(tab.id)
+                : props.onOpenThread(tab.singleThread)
+            }
+          />
+        ) : null}
+        {/* The widths of every tab and of the "more" button, at their natural size. */}
         <div
-          {...{ [SIDEBAR_GROUP_DROP_ATTRIBUTE]: SIDEBAR_GROUP_DROP_NEW }}
-          className={cn(
-            "flex h-7 min-w-16 flex-1 items-center rounded-md px-2 text-xs",
-            props.dragging && "border border-dashed border-border text-muted-foreground",
-            state.dropTargetId === SIDEBAR_GROUP_DROP_NEW &&
-              "border-primary/40 bg-primary/10 text-primary",
-          )}
+          ref={setMeasureElement}
+          aria-hidden
+          className="pointer-events-none invisible absolute top-0 left-0 flex"
         >
-          {props.dragging ? (
-            <span className="inline-flex items-center gap-1 truncate">
-              <PlusIcon aria-hidden className="size-3.5" />
-              New group
+          {state.tabs.map((tab) => (
+            <span key={tab.id} className={cn(TAB_BOX_CLASS, "shrink-0 font-medium")}>
+              <TabLabel
+                tab={tab}
+                project={tab.singleThread === null ? null : props.projectFor(tab.singleThread)}
+              />
             </span>
-          ) : null}
+          ))}
+          <span className={cn(TAB_BOX_CLASS, "shrink-0 gap-0.5")}>
+            <span className="tabular-nums">+{state.tabs.length}</span>
+            <ChevronDownIcon aria-hidden className="size-3.5 shrink-0" />
+          </span>
         </div>
       </div>
       {selected !== null && !selected.isDefault ? (
@@ -218,16 +401,31 @@ export function SidebarGroupTabs(props: {
           <SlidersHorizontalIcon />
         </SidebarHeaderIconButton>
       ) : null}
-      <SidebarHeaderIconButton
-        label="New group"
-        onClick={() => {
-          const id = state.createGroup([]);
-          // The new tab renders on the next frame; anchor the editor to the bar until then.
-          if (barRef.current !== null) setEditing({ groupId: id, anchor: barRef.current });
-        }}
-      >
-        <PlusIcon />
-      </SidebarHeaderIconButton>
+      {/* Outside the tabs, so it stays in view. During a drag the same slot takes a drop for a
+          new group, at the same size, so the tabs do not reflow. */}
+      {props.dragging ? (
+        <div
+          aria-label="Drop here for a new group"
+          {...{ [SIDEBAR_GROUP_DROP_ATTRIBUTE]: SIDEBAR_GROUP_DROP_NEW }}
+          className={cn(
+            "flex size-7 shrink-0 items-center justify-center rounded-md border border-dashed border-border text-muted-foreground",
+            newGroupTarget && "border-primary/60 bg-primary/10 text-primary",
+          )}
+        >
+          <PlusIcon aria-hidden className="size-4" />
+        </div>
+      ) : (
+        <SidebarHeaderIconButton
+          label="New group"
+          onClick={() => {
+            const id = state.createGroup([]);
+            // The new tab renders on the next frame; anchor the editor to the bar until then.
+            if (barRef.current !== null) setEditing({ groupId: id, anchor: barRef.current });
+          }}
+        >
+          <PlusIcon />
+        </SidebarHeaderIconButton>
+      )}
       <Popover
         open={editing !== null && editingGroup !== null}
         onOpenChange={(open) => {
@@ -456,7 +654,7 @@ function SidebarGroupEditor(props: {
         >
           Move right
         </Button>
-        <Button variant="ghost-destructive" size="xs" className="ms-auto" onClick={props.onDelete}>
+        <Button variant="destructive" size="xs" className="ms-auto" onClick={props.onDelete}>
           Delete group
         </Button>
       </EditorFooter>
