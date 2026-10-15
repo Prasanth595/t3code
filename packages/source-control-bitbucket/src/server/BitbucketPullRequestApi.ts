@@ -112,6 +112,16 @@ export type BitbucketPullRequestApiError =
   | BitbucketRepositoryUnsupportedError
   | BitbucketDiffCommitError;
 
+/** The permissions endpoint refusing or missing for these credentials, rather than answering. */
+function isRepositoryPermissionUnavailableError(
+  error: BitbucketPullRequestApiError,
+): error is BitbucketApi.BitbucketResponseError {
+  return (
+    error._tag === "BitbucketResponseError" &&
+    (error.status === 403 || error.status === 404 || error.status === 410)
+  );
+}
+
 /**
  * Bitbucket's own ceiling. Asking for more does not fail — it answers with an empty page and no
  * error at all, so this is a number to respect rather than to push against.
@@ -651,6 +661,11 @@ export const make = Effect.gen(function* () {
 
     // Ask for the caller's effective permission within this workspace. The full name identifies
     // the repository by its slug, even when its display name differs.
+    //
+    // Bitbucket has retired permission endpoints before (CHANGE-2770), and some credentials may
+    // not reach `/user` endpoints at all. A 403, 404 or 410 here is read as a permission that
+    // could not be learned, the same as an empty page: it grants, and the write itself says why
+    // if the account may not do it. Other failures (a bad token, a network fault) still fail.
     getRepositoryPermission: (input) =>
       withRepository(input.repository, (_path, workspace, slug) =>
         readPage({
@@ -660,7 +675,7 @@ export const make = Effect.gen(function* () {
           )}`,
           decode: decodeRepositoryPermissionJson,
         }),
-      ),
+      ).pipe(Effect.catchIf(isRepositoryPermissionUnavailableError, () => Effect.succeed(true))),
 
     getPullRequestDiff: pullRequestDiff,
 

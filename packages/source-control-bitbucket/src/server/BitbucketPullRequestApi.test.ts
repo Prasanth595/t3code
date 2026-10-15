@@ -1033,28 +1033,38 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  for (const status of [401, 403, 404, 410]) {
-    it.effect(`preserves HTTP ${status} from the workspace permissions endpoint`, () =>
-      Effect.gen(function* () {
-        mockedRequest.mockReturnValue(
-          Effect.fail(
-            new BitbucketApi.BitbucketResponseError({
-              operation: "request",
-              status,
-              responseBodyLength: 0,
-            }),
-          ),
-        );
-        const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
-
-        const error = yield* Effect.flip(api.getRepositoryPermission({ repository: "acme/web" }));
-        assert.strictEqual(error._tag, "BitbucketResponseError");
-        if (error._tag === "BitbucketResponseError") {
-          assert.strictEqual(error.status, status);
-        }
+  const permissionFailure = (status: number) =>
+    Effect.fail(
+      new BitbucketApi.BitbucketResponseError({
+        operation: "request",
+        status,
+        responseBodyLength: 0,
       }),
     );
-  }
+
+  it.effect.each([403, 404, 410])(
+    "reads HTTP %s from the permissions endpoint as an unknown permission",
+    (status) =>
+      Effect.gen(function* () {
+        mockedRequest.mockReturnValue(permissionFailure(status));
+        const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+        assert.isTrue(yield* api.getRepositoryPermission({ repository: "acme/web" }));
+      }),
+  );
+
+  it.effect.each([401, 500])("still fails the permission read on HTTP %s", (status) =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(permissionFailure(status));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const error = yield* Effect.flip(api.getRepositoryPermission({ repository: "acme/web" }));
+      assert.strictEqual(error._tag, "BitbucketResponseError");
+      if (error._tag === "BitbucketResponseError") {
+        assert.strictEqual(error.status, status);
+      }
+    }),
+  );
 
   it.effect("reads the workspace's people and marks whoever is already a reviewer", () =>
     Effect.gen(function* () {
