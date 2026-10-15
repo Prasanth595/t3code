@@ -46,9 +46,10 @@ render. When handlers in one component change at different times, each keeps an 
 holds older handlers, and old renders, with their server config and thread data, stay in memory
 for as long as the component is mounted. React Compiler's memoized closures do the same.
 
-In large, long-lived components such as `ChatView`, `ChatComposer`, and `Sidebar`, use
-[`useStableCallback`](../../apps/web/src/hooks/useStableCallback.ts) for event handlers instead
-of `useCallback`. A function called during render cannot use it; build it in a module-level
-factory instead, so its closure keeps only its inputs.
-`vp run leaks:render-scope` drives a dev client and lists closures that grow with
-each update.
+In large, long-lived components such as `ChatView` and `ChatComposer`, write handlers as plain
+functions and wrap them with [`useStableCallback`](../../apps/web/src/hooks/useStableCallback.ts)
+only where they leave the component: props, hook dependency arrays, and effect or memo bodies.
+Calls inside the component keep the plain function, so work that resumes after an `await` still
+acts on the render it started in. A function that a child calls during render, or after an
+`await`, comes from a module-level factory memoized on its inputs, so its closure keeps only
+those inputs.
