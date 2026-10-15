@@ -1318,7 +1318,7 @@ function renderFeedEntry(
                 accessibilityLabel={intentBadge.accessibilityLabel}
                 accessibilityHint="Explains this message's badge"
                 hitSlop={8}
-                onPress={() => Alert.alert("Message history", intentBadge.explanation)}
+                onPress={() => Dialog.alert("Message history", intentBadge.explanation)}
                 className={cn(
                   "rounded-full border px-1.5 py-0.5",
                   intentBadge.tone === "queued"
