@@ -152,95 +152,94 @@ export function DeviceHostEditor({
           <Collapsible
             open={checksOpen}
             onOpenChange={(open) => setExpandedChecks({ key: connectionKey, open })}
+            render={<div className="rounded-lg border border-border/60" />}
           >
-            <div className="rounded-lg border border-border/60">
-              <div className="flex items-center justify-between gap-3 px-3 py-2.5">
-                {targets.length === 1 ? (
-                  <p role="status" className="text-xs text-muted-foreground">
-                    {checkSummary}
-                  </p>
-                ) : (
-                  <div className="min-w-0 text-xs [--inline-button-white-space:normal]">
-                    <CollapsibleTrigger
-                      disabled={!results}
-                      aria-label={`${checkSummary}. Per-machine results`}
-                      render={<InlineButton tone="muted" />}
-                    >
-                      <span role="status" className="text-left">
-                        {checkSummary}
-                      </span>
-                      {results ? (
-                        <ChevronDownIcon
-                          className={`size-3 shrink-0 ${checksOpen ? "rotate-180" : ""}`}
-                        />
-                      ) : null}
-                    </CollapsibleTrigger>
-                  </div>
-                )}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busy || checking || !valid}
-                  onClick={() => {
-                    if (Option.isSome(input)) void testConnection(input.value);
-                  }}
-                >
-                  {checking ? <Spinner size="xs" /> : null} Test connection
-                </Button>
-              </div>
-              <CollapsiblePanel>
-                {results ? (
-                  <ul className="border-t border-border/60 divide-y divide-border/40">
-                    {targets.map((target) => {
-                      const result = results[target.environmentId];
-                      if (!result) return null;
-                      return (
-                        <li key={target.environmentId} className="px-3 py-2.5 text-xs">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="truncate font-medium">{target.label}</span>
-                            <span
-                              className={`flex shrink-0 items-center gap-1.5 ${result.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}
-                            >
-                              {result.status === "pending" ? (
-                                <>
-                                  <Spinner size="xs" /> Checking…
-                                </>
-                              ) : result.status === "local" ? (
-                                <>
-                                  <MonitorIcon className="size-3" /> Already available locally
-                                </>
-                              ) : result.status === "failed" ? (
-                                <>
-                                  <XIcon className="size-3" /> Failed
-                                </>
-                              ) : (
-                                <>
-                                  <CheckIcon className="size-3" /> Connected
-                                </>
-                              )}
-                            </span>
-                          </div>
-                          {result.status === "connected" ? (
-                            <div className="mt-1.5">
-                              <DeviceHostAvailability platforms={result.platforms} />
-                            </div>
-                          ) : null}
-                          {result.status === "failed" ? (
-                            <details className="mt-1.5 text-muted-foreground">
-                              <summary className="cursor-pointer">Show error</summary>
-                              <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words">
-                                {result.error}
-                              </p>
-                            </details>
-                          ) : null}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : null}
-              </CollapsiblePanel>
+            <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+              {targets.length === 1 ? (
+                <p role="status" className="text-xs text-muted-foreground">
+                  {checkSummary}
+                </p>
+              ) : (
+                <div className="min-w-0 text-xs [--inline-button-white-space:normal]">
+                  <CollapsibleTrigger
+                    disabled={!results}
+                    aria-label={`${checkSummary}. Per-machine results`}
+                    render={<InlineButton tone="muted" />}
+                  >
+                    <span role="status" className="text-left">
+                      {checkSummary}
+                    </span>
+                    {results ? (
+                      <ChevronDownIcon
+                        className={`size-3 shrink-0 ${checksOpen ? "rotate-180" : ""}`}
+                      />
+                    ) : null}
+                  </CollapsibleTrigger>
+                </div>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy || checking || !valid}
+                onClick={() => {
+                  if (Option.isSome(input)) void testConnection(input.value);
+                }}
+              >
+                {checking ? <Spinner size="xs" /> : null} Test connection
+              </Button>
             </div>
+            {results ? (
+              <CollapsiblePanel
+                render={<ul className="border-t border-border/60 divide-y divide-border/40" />}
+              >
+                {targets.map((target) => {
+                  const result = results[target.environmentId];
+                  if (!result) return null;
+                  return (
+                    <li key={target.environmentId} className="px-3 py-2.5 text-xs">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate font-medium">{target.label}</span>
+                        <span
+                          className={`flex shrink-0 items-center gap-1.5 ${result.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}
+                        >
+                          {result.status === "pending" ? (
+                            <>
+                              <Spinner size="xs" /> Checking…
+                            </>
+                          ) : result.status === "local" ? (
+                            <>
+                              <MonitorIcon className="size-3" /> Already available locally
+                            </>
+                          ) : result.status === "failed" ? (
+                            <>
+                              <XIcon className="size-3" /> Failed
+                            </>
+                          ) : (
+                            <>
+                              <CheckIcon className="size-3" /> Connected
+                            </>
+                          )}
+                        </span>
+                      </div>
+                      {result.status === "connected" ? (
+                        <div className="mt-1.5">
+                          <DeviceHostAvailability platforms={result.platforms} />
+                        </div>
+                      ) : null}
+                      {result.status === "failed" ? (
+                        <details className="mt-1.5 text-muted-foreground">
+                          <summary className="cursor-pointer">Show error</summary>
+                          <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words">
+                            {result.error}
+                          </p>
+                        </details>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </CollapsiblePanel>
+            ) : null}
           </Collapsible>
         </DialogPanel>
         <DialogFooter>

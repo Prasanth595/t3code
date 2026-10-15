@@ -251,19 +251,10 @@ function DeviceHostList({
         Atom.make(
           (get) =>
             new Map(
-              environments.map((environment) => [
-                environment.environmentId,
-                Option.getOrUndefined(
-                  AsyncResult.value(
-                    get(
-                      deviceEnvironment.state({
-                        environmentId: environment.environmentId,
-                        input: {},
-                      }),
-                    ),
-                  ),
-                ),
-              ]),
+              environments.map(({ environmentId }) => {
+                const result = get(deviceEnvironment.state({ environmentId, input: {} }));
+                return [environmentId, Option.getOrUndefined(AsyncResult.value(result))] as const;
+              }),
             ),
         ),
       [environments],
@@ -271,6 +262,10 @@ function DeviceHostList({
   );
   const retry = useAtomCommand(deviceEnvironment.list);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const retryHost = (environmentId: EnvironmentId, hostId: string, key = hostId) => {
+    setRetrying(key);
+    void retry({ environmentId, input: { retryHostId: hostId } }).finally(() => setRetrying(null));
+  };
   const rows =
     groups ??
     environments.flatMap((environment) =>
@@ -297,6 +292,7 @@ function DeviceHostList({
           const status = state?.hostStatuses[member.host.id];
           const check = hostChecks?.[member.environmentId];
           const summary = state?.hosts.find((value) => value.id === member.host.id);
+          const label = environmentLabels.get(member.environmentId)?.primary ?? member.label;
           const error =
             check?.status === "failed"
               ? check.error
@@ -307,26 +303,25 @@ function DeviceHostList({
                   : undefined;
           return {
             ...member,
-            label: environmentLabels.get(member.environmentId)?.primary ?? member.label,
+            label,
             address: environmentLabels.get(member.environmentId)?.secondary,
             state,
             status,
             check,
             summary,
             error,
+            versions: (
+              <DeviceToolVersions
+                owner={label}
+                error={summary?.toolInspectionError}
+                tools={summary?.tools ?? (check?.status === "connected" ? check.tools : undefined)}
+              />
+            ),
           };
         });
         const first = results[0];
         if (!first) return null;
-        const {
-          environmentId,
-          label: environmentLabel,
-          state,
-          status,
-          check,
-          summary,
-          error,
-        } = first;
+        const { environmentId, status, check, summary, error } = first;
         const platforms =
           (check?.status === "connected" ? check.platforms : undefined) ?? summary?.platforms ?? [];
         const progress =
@@ -360,93 +355,87 @@ function DeviceHostList({
             result.state?.supportsHostRetry &&
             result.state.hostStatus !== "disabled",
         );
+        const canRetry = !compact && retryable.includes(first);
+        const indicators = compact
+          ? [
+              {
+                key: "connection",
+                label: failed.length
+                  ? "Connection failed"
+                  : pending
+                    ? "Checking connections"
+                    : ready
+                      ? "Connected"
+                      : "Connection not checked",
+                warning: failed.length > 0,
+                icon: failed.length ? (
+                  <TriangleAlertIcon className="size-3.5" />
+                ) : pending ? (
+                  <Spinner size="xs" />
+                ) : ready ? (
+                  <CheckIcon className="size-3.5" />
+                ) : (
+                  <CircleIcon className="size-3.5" />
+                ),
+                detail: failed.length ? (
+                  <div className="space-y-1">
+                    {failed.map((result) => (
+                      <p key={result.environmentId}>
+                        {result.label}: {result.error || "Connection failed"}
+                      </p>
+                    ))}
+                  </div>
+                ) : pending ? (
+                  "Checking connections…"
+                ) : ready ? (
+                  "Connected or available locally on each listed machine"
+                ) : (
+                  "Test the connection to check access from each machine"
+                ),
+              },
+            ]
+          : platforms
+              .filter((platform) => platform.available)
+              .map((platform) => ({
+                key: platform.platform,
+                label: platform.platform === "ios" ? "iOS available" : "Android available",
+                warning: false,
+                icon:
+                  platform.platform === "ios" ? (
+                    // The Apple mark is bottom-heavy; lift it so it does not dip under the label.
+                    <AppleIcon className="size-3.5 -translate-y-px" />
+                  ) : (
+                    <AndroidIcon className="size-3.5" />
+                  ),
+              }));
         return (
           <div key={host.id} className="flex items-center gap-2 border-t border-border/50 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
                 <p className="truncate text-sm font-medium">{host.label}</p>
-                {compact ? (
-                  <Tooltip>
+                {indicators.map((indicator) => (
+                  <Tooltip key={indicator.key}>
                     <TooltipTrigger
                       render={
                         <span
                           tabIndex={0}
                           role="img"
-                          aria-label={
-                            failed.length
-                              ? "Connection failed"
-                              : pending
-                                ? "Checking connections"
-                                : ready
-                                  ? "Connected"
-                                  : "Connection not checked"
-                          }
+                          aria-label={indicator.label}
                           className={
-                            failed.length
+                            indicator.warning
                               ? "shrink-0 text-warning"
                               : "shrink-0 text-muted-foreground"
                           }
                         />
                       }
                     >
-                      {failed.length ? (
-                        <TriangleAlertIcon className="size-3.5" />
-                      ) : pending ? (
-                        <Spinner size="xs" />
-                      ) : ready ? (
-                        <CheckIcon className="size-3.5" />
-                      ) : (
-                        <CircleIcon className="size-3.5" />
-                      )}
+                      {indicator.icon}
                     </TooltipTrigger>
                     <TooltipPopup>
-                      {failed.length ? (
-                        <div className="space-y-1">
-                          {failed.map((result) => (
-                            <p key={result.environmentId}>
-                              {result.label}: {result.error || "Connection failed"}
-                            </p>
-                          ))}
-                        </div>
-                      ) : pending ? (
-                        "Checking connections…"
-                      ) : ready ? (
-                        "Connected or available locally on each listed machine"
-                      ) : (
-                        "Test the connection to check access from each machine"
-                      )}
+                      {"detail" in indicator ? indicator.detail : indicator.label}
                     </TooltipPopup>
                   </Tooltip>
-                ) : (
-                  platforms
-                    .filter((platform) => platform.available)
-                    .map((platform) => (
-                      <Tooltip key={platform.platform}>
-                        <TooltipTrigger
-                          render={
-                            <span
-                              tabIndex={0}
-                              role="img"
-                              aria-label={
-                                platform.platform === "ios" ? "iOS available" : "Android available"
-                              }
-                              className="shrink-0 text-muted-foreground"
-                            />
-                          }
-                        >
-                          {platform.platform === "ios" ? (
-                            // The Apple mark is bottom-heavy; lift it so it does not dip under the label.
-                            <AppleIcon className="size-3.5 -translate-y-px" />
-                          ) : (
-                            <AndroidIcon className="size-3.5" />
-                          )}
-                        </TooltipTrigger>
-                        <TooltipPopup>
-                          {platform.platform === "ios" ? "iOS available" : "Android available"}
-                        </TooltipPopup>
-                      </Tooltip>
-                    ))
-                )}
+                ))}
               </div>
               <p className="truncate text-xs text-muted-foreground">{host.target}</p>
               {compact ? (
@@ -467,9 +456,9 @@ function DeviceHostList({
                       {results.map((result) => (
                         <div key={result.environmentId}>
                           <p className="text-xs text-muted-foreground">{result.label}</p>
-                          {environmentLabels.get(result.environmentId)?.secondary ? (
+                          {result.address ? (
                             <p className="truncate text-xs text-muted-foreground">
-                              {environmentLabels.get(result.environmentId)?.secondary}
+                              {result.address}
                             </p>
                           ) : null}
                           {result.error ? (
@@ -477,16 +466,7 @@ function DeviceHostList({
                               {result.error}
                             </p>
                           ) : null}
-                          <DeviceToolVersions
-                            owner={result.label}
-                            error={result.summary?.toolInspectionError}
-                            tools={
-                              result.summary?.tools ??
-                              (result.check?.status === "connected"
-                                ? result.check.tools
-                                : undefined)
-                            }
-                          />
+                          {result.versions}
                           {result.check?.status === "local" ? (
                             <p className="text-xs text-muted-foreground">
                               Already available locally
@@ -506,13 +486,7 @@ function DeviceHostList({
                   </CollapsiblePanel>
                 </Collapsible>
               ) : (
-                <DeviceToolVersions
-                  owner={environmentLabel}
-                  error={summary?.toolInspectionError}
-                  tools={
-                    summary?.tools ?? (check?.status === "connected" ? check.tools : undefined)
-                  }
-                />
+                first.versions
               )}
               {!compact && check?.status === "local" ? (
                 <p className="mt-1 text-xs text-muted-foreground">Already available locally</p>
@@ -549,13 +523,7 @@ function DeviceHostList({
                 <MoreVertical />
               </MenuTrigger>
               <MenuPopup align="end">
-                <MenuItem
-                  onClick={() => {
-                    onEdit(host);
-                  }}
-                >
-                  Edit
-                </MenuItem>
+                <MenuItem onClick={() => onEdit(host)}>Edit</MenuItem>
                 <MenuItem variant="destructive" onClick={() => onRemove(host)}>
                   Remove
                 </MenuItem>
@@ -564,13 +532,9 @@ function DeviceHostList({
                       <MenuItem
                         key={result.environmentId}
                         disabled={retrying !== null}
-                        onClick={() => {
-                          setRetrying(result.environmentId);
-                          void retry({
-                            environmentId: result.environmentId,
-                            input: { retryHostId: result.host.id },
-                          }).finally(() => setRetrying(null));
-                        }}
+                        onClick={() =>
+                          retryHost(result.environmentId, result.host.id, result.environmentId)
+                        }
                       >
                         {retrying === result.environmentId ? "Retrying" : "Retry"} from{" "}
                         {result.label}
@@ -580,33 +544,19 @@ function DeviceHostList({
                   : null}
               </MenuPopup>
             </Menu>
-            {!compact &&
-            status?.status === "failed" &&
-            state?.supportsHostRetry &&
-            state.hostStatus !== "disabled" ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || retrying !== null}
-                onClick={() => {
-                  setRetrying(host.id);
-                  void retry({ environmentId, input: { retryHostId: host.id } }).finally(() =>
-                    setRetrying(null),
-                  );
-                }}
-              >
-                {retrying === host.id ? "Retrying…" : "Retry"}
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || (compact ? pending : progress !== null)}
-                onClick={() => void testConnection(host)}
-              >
-                Test connection
-              </Button>
-            )}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={
+                busy || (canRetry ? retrying !== null : compact ? pending : progress !== null)
+              }
+              onClick={() => {
+                if (canRetry) retryHost(environmentId, host.id);
+                else void testConnection(host);
+              }}
+            >
+              {canRetry ? (retrying === host.id ? "Retrying…" : "Retry") : "Test connection"}
+            </Button>
           </div>
         );
       })}
