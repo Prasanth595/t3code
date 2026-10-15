@@ -158,3 +158,20 @@ it.live("fails with RunSpawnError when the cwd does not exist", () =>
     assert.instanceOf(error, RunSpawnError);
   }),
 );
+
+it.live("gives a TERM-trapping grandchild its grace before SIGKILL", () =>
+  Effect.gen(function* () {
+    const started = yield* Clock.currentTimeMillis;
+    // The wrapper sh dies on SIGTERM at once; the inner sh keeps the group
+    // alive while its trap runs, and the marker only appears if SIGKILL waits.
+    const result = yield* run({
+      command: `sh -c 'trap "sleep 0.3; printf caught; exit 0" TERM; sleep 100 & wait $!'; printf %s leader`,
+      shell: true,
+      timeoutMs: 300,
+      termGraceMs: 3000,
+    });
+    assert.strictEqual(result.timedOut, true);
+    assert.include(result.tail, "caught");
+    assert.isBelow((yield* Clock.currentTimeMillis) - started, 5000);
+  }),
+);
