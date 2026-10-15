@@ -12,7 +12,6 @@ import {
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -323,7 +322,10 @@ export function isMissingExecutable(error: unknown): boolean {
 }
 
 /** The CLI ran, but its output does not say whether it holds the remote's host. */
-class UnknownRemoteUnanswered extends Data.TaggedError("UnknownRemoteUnanswered") {}
+class UnknownRemoteUnanswered extends Schema.TaggedError<UnknownRemoteUnanswered>()(
+  "UnknownRemoteUnanswered",
+  {},
+) {}
 
 export interface UnknownRemoteVerdict {
   readonly provider: SourceControlProviderInfo | null;
