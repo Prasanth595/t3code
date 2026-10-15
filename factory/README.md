@@ -33,3 +33,24 @@ factory/scripts/build.sh                      # clean tree only: build, smoke te
 factory/scripts/install.sh <archive>          # unpack, point `current` at it, restart the job
 factory/scripts/rollback.sh                   # point `current` at the previous version, restart the job
 ```
+
+## Syncing with upstream
+
+`factory/scripts/sync.sh` merges upstream's newest `v*-nightly.*` tag into `main` through a pull request. `.github/workflows/factory-sync.yml` runs it daily at 03:17 UTC and on `workflow_dispatch`, as two jobs:
+
+1. `sync.sh prepare <dir>` has no write token. It merges, runs `vp i`, the route generator and `check.sh`, which all run upstream's code, and leaves the outcome and a git bundle of the branch in `<dir>`.
+2. `sync.sh publish <dir>` holds `GITHUB_TOKEN` and runs only `git` and `gh`. It refuses a bundled branch that is not the merge of `main` and the tag, apart from `factory/UPSTREAM` and a regenerated route tree. Then it pushes, lands or files.
+
+Run with no arguments, it does both from one checkout, with `git`, `gh` and `vp` on the path and `SYNC_UPSTREAM` pointing at another repo when needed. Its pull requests and issues go to the GitHub repository `origin` names, never the fork's parent.
+
+It picks the newest tag by version order and exits with `up to date` when [UPSTREAM](UPSTREAM) on `main` already names it. When `sync/<tag>` is already on `origin` from an earlier run, it waits on that branch's open pull request, or files `Sync to <tag> is stuck` when there is none; delete the branch to sync the tag again. Otherwise it merges the tag on `sync/<tag>` from `origin/main`, regenerates the route tree with `factory/scripts/regenerate-routes.sh` when only that file conflicts, records `<tag> <sha>` in `UPSTREAM`, commits and runs `check.sh`. Green checks open `sync: <tag>` and fast-forward `main` to the checked merge commit, which merges the pull request with exactly what the checks ran on. When `main` moved while the checks ran, the pull request stays open for a person and the run files `Sync to <tag> cannot land`. When the route tree was regenerated, nothing outside the first job has checked that file, so the pull request stays open and the run files `Sync to <tag> needs a route-tree review`; a person reviews the file and merges. Later runs wait on either pull request. Red checks open it as a draft and file `Sync to <tag> fails checks`, labelled `factory:proposed`, with the failing step and the last 200 lines of its output.
+
+These stop the run, push nothing, and file an issue:
+
+- A conflict in any file other than the route tree files `Sync to <tag> conflicts` with the paths. That includes the upstream files the fork edits ([SEAMS](SEAMS)); they are merged by hand.
+- A failing `vp i` or route generator files `Sync to <tag> fails checks` with its output.
+- A push `GITHUB_TOKEN` refuses files `Sync to <tag> cannot be pushed`. `GITHUB_TOKEN` cannot push changes under `.github/workflows/`, so every tag that changes upstream's workflows stops here until the workflow pushes with a token that has the workflows permission.
+
+When an issue of the same kind is already open, the run comments on it and puts the new tag in its title, so a problem that lasts across tags keeps one issue.
+
+Pull requests opened with `GITHUB_TOKEN` trigger no workflows, which is why the script runs the checks itself and lands only when they pass. Two things stay the first job's word, since checking them means running upstream's code: whether the checks passed, and the content of a regenerated route tree. Code that compromised that job could land upstream's merge unchecked, but a regenerated route tree always waits for a person, and the job never holds the write token.

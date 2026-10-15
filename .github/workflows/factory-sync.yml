@@ -1,0 +1,81 @@
+name: Factory sync
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: factory-sync
+
+# This is the fork's own workflow. It merges upstream's newest nightly tag into
+# main through a pull request; factory/scripts/sync.sh says how. Upstream's code
+# (install scripts, the route generator, the checks) runs only in `prepare`,
+# which has no write token. `publish` holds the token and runs git and gh only.
+jobs:
+  prepare:
+    name: Merge and check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          # No cache: this job runs upstream's install scripts, and a cache it
+          # saves would be restored by the fork's other workflows.
+          cache: false
+
+      - name: Merge and check
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          factory/scripts/sync.sh prepare "$RUNNER_TEMP/sync"
+
+      - name: Upload the prepared sync
+        uses: actions/upload-artifact@v7
+        with:
+          name: sync
+          path: ${{ runner.temp }}/sync
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Push, land or file
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # git push uses gh's credential helper instead.
+          persist-credentials: false
+
+      - name: Download the prepared sync
+        uses: actions/download-artifact@v8
+        with:
+          name: sync
+          path: ${{ runner.temp }}/sync
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh auth setup-git
+          factory/scripts/sync.sh publish "$RUNNER_TEMP/sync"
