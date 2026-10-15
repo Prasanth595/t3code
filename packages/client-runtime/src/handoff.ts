@@ -25,25 +25,12 @@ export function resolvePendingHandoff(
   selection: ModelSelection | null | undefined,
   providers: ReadonlyArray<ServerProvider>,
 ): HandoffEndpoints | null {
-  const startedRuns = projection?.runs.filter(
+  // Nothing to hand off until the thread shows a sent message.
+  if (!projection?.visibleTurnItems.some(({ item }) => item.type === "user_message")) return null;
+  const from = projection.runs.findLast(
     (run) => run.startedAt !== null && run.status !== "rolled_back",
-  );
-  const latest = startedRuns?.at(-1);
-  // A thread whose only run is still running has no conversation to hand off
-  // yet. Bounded snapshots can omit earlier runs, so missing ordinals before
-  // the latest run also count as history.
-  const earlierLoadedRuns =
-    latest === undefined
-      ? 0
-      : (projection?.runs.filter((run) => run.ordinal < latest.ordinal).length ?? 0);
-  const hasHistory =
-    (latest !== undefined && earlierLoadedRuns < latest.ordinal - 1) ||
-    startedRuns?.some(
-      (run) =>
-        run.status === "completed" || run.status === "failed" || run.status === "interrupted",
-    );
-  const from = latest?.modelSelection;
-  if (!hasHistory || from === undefined || selection == null) return null;
+  )?.modelSelection;
+  if (from === undefined || selection == null) return null;
   const source = providers.find((provider) => provider.instanceId === from.instanceId);
   const target = providers.find((provider) => provider.instanceId === selection.instanceId);
   const needsHandoff =

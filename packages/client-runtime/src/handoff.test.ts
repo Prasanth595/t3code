@@ -73,9 +73,9 @@ describe("handoff endpoints shared by web and mobile", () => {
   });
 });
 
-const startedAt = "2026-10-11T00:00:00Z";
 const projection = {
-  runs: [{ ...run("source", 1, from, "source"), startedAt, status: "completed" }],
+  runs: [{ ...run("source", 1, from, "source"), startedAt: "2026-10-11T00:00:00Z" }],
+  visibleTurnItems: [{ item: { type: "user_message" } }],
 } as unknown as OrchestrationV2ThreadProjection;
 
 describe("pending context handoff", () => {
@@ -90,65 +90,10 @@ describe("pending context handoff", () => {
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
   });
-  it("stays hidden until a run has history to hand off", () => {
-    const firstRun = (status: string) =>
-      ({
-        runs: [{ ...run("source", 1, from, "source"), startedAt, status }],
-      }) as unknown as OrchestrationV2ThreadProjection;
-    for (const status of ["running", "cancelled", "rolled_back"]) {
-      expect(
-        resolvePendingHandoff(firstRun(status), { instanceId: to, model: "first" }, []),
-      ).toBeNull();
-    }
-  });
-  it("treats a later run as history when earlier runs are outside the loaded window", () => {
-    const windowed = {
-      runs: [{ ...run("current", 5, from, "source"), startedAt, status: "running" }],
-    } as unknown as OrchestrationV2ThreadProjection;
-    expect(resolvePendingHandoff(windowed, { instanceId: to, model: "next" }, [])?.from).toEqual([
-      { instanceId: from, model: "source" },
-    ]);
-    // Every earlier run is loaded and none produced conversation.
-    const afterFailedStart = {
-      runs: [
-        { ...run("failed", 1, from, "source"), startedAt: null, status: "failed" },
-        { ...run("current", 2, from, "source"), startedAt, status: "running" },
-      ],
-    } as unknown as OrchestrationV2ThreadProjection;
+  it("stays hidden until the thread shows a sent message", () => {
+    const withoutMessages = { ...projection, visibleTurnItems: [] };
     expect(
-      resolvePendingHandoff(afterFailedStart, { instanceId: to, model: "next" }, []),
-    ).toBeNull();
-  });
-  it("hands off from the latest started run, not the latest finished one", () => {
-    const withLaterRun = (status: string, laterStartedAt: string | null) =>
-      ({
-        runs: [
-          ...projection.runs,
-          { ...run("later", 2, to, "later"), startedAt: laterStartedAt, status },
-        ],
-      }) as unknown as OrchestrationV2ThreadProjection;
-    // A running handoff on the new provider is the source for the next send.
-    expect(
-      resolvePendingHandoff(
-        withLaterRun("running", startedAt),
-        { instanceId: to, model: "later" },
-        [],
-      ),
-    ).toBeNull();
-    expect(
-      resolvePendingHandoff(
-        withLaterRun("running", startedAt),
-        { instanceId: from, model: "source" },
-        [],
-      )?.from,
-    ).toEqual([{ instanceId: to, model: "later" }]);
-    // A handoff that failed before starting never reached the new provider.
-    expect(
-      resolvePendingHandoff(
-        withLaterRun("failed", null),
-        { instanceId: from, model: "source" },
-        [],
-      ),
+      resolvePendingHandoff(withoutMessages, { instanceId: to, model: "first" }, []),
     ).toBeNull();
   });
   it("only previews a same-provider model change when it needs a fresh native thread", () => {
