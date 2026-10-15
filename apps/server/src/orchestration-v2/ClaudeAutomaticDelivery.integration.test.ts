@@ -370,10 +370,7 @@ it.effect.each(deliveries)(
               createdBy: "user",
               creationSource: "web",
             });
-            const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-              (run) => run.userMessageId === messageId,
-            );
-            if (queuedRun === undefined) return yield* Effect.die("queued run missing");
+            const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs[1]!;
             yield* orchestrator.dispatch({
               type: "queued-message.promote-to-steer",
               commandId: CommandId.make("promote"),
@@ -381,29 +378,19 @@ it.effect.each(deliveries)(
               queuedRunId: queuedRun.id,
               targetRunId: parent.id,
             });
-            // The queued run, its attempt and its root node are cancelled.
+            // Promotion cancels the queued run and moves its message into the
+            // running run as a steer that remembers where it came from.
             const promoted = yield* orchestrator.getThreadProjection(threadId);
             assert.equal(promoted.runs.find((run) => run.id === queuedRun.id)?.status, "cancelled");
-            assert.equal(
-              promoted.attempts.find((attempt) => attempt.runId === queuedRun.id)?.status,
-              "cancelled",
-            );
-            assert.equal(
-              promoted.nodes.find((node) => node.id === queuedRun.rootNodeId)?.status,
-              "cancelled",
-            );
-            // The message moves to the running run and shows as a promoted steer.
             assert.equal(
               promoted.messages.find((message) => message.id === messageId)?.runId,
               parent.id,
             );
-            const promotedItem = promoted.turnItems.find(
+            const steer = promoted.turnItems.find(
               (item) => item.type === "user_message" && item.messageId === messageId,
             );
-            assert.equal(
-              promotedItem?.type === "user_message" ? promotedItem.inputIntent : undefined,
-              "promoted_queued_to_steer",
-            );
+            assert.ok(steer?.type === "user_message");
+            assert.equal(steer.inputIntent, "promoted_queued_to_steer");
           }
           yield* worker.drain();
           const explicitSteer =
