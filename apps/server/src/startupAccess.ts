@@ -36,7 +36,7 @@ export const isWildcardHost = (host: string | undefined): boolean =>
 export const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 
-// A server bound only to ::1 refuses 127.0.0.1. Wildcard binds accept both.
+// A server bound only to ::1 refuses 127.0.0.1.
 export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>
   address._tag === "InetAddressV6" && NetAddress.isLoopback(address.address)
     ? "[::1]"
