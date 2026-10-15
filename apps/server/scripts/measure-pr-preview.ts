@@ -13,6 +13,7 @@ import { FetchHttpClient } from "effect/http";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as GitHubPullRequestProvider from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
 import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as ServerConfig from "../src/config.ts";
 import * as ServerSettings from "../src/serverSettings.ts";
@@ -89,6 +90,7 @@ const measuredApi = Layer.effect(
     });
   }),
 ).pipe(
+  Layer.provideMerge(GitHubRequestPolicy.layer),
   Layer.provideMerge(GitHubCredentials.layer),
   Layer.provideMerge(GitHubQuota.layer),
   Layer.provideMerge(SourceControlRateLimit.layer),

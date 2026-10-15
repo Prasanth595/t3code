@@ -14,6 +14,7 @@ import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -59,7 +60,7 @@ type ApiCall =
   | ({ readonly kind: "graphql"; readonly partial?: boolean } & GitHubApi.GitHubGraphQlInput)
   | ({ readonly kind: "rest" } & GitHubApi.GitHubRestInput);
 
-type ApiAnswer = Effect.Effect<GitHubApi.GitHubRestResponse, GitHubApi.GitHubApiError>;
+type ApiAnswer = Effect.Effect<GitHubApi.GitHubRestResponse, GitHubRequestPolicy.GitHubApiError>;
 
 const mockedExecute = vi.fn<(call: ApiCall) => ApiAnswer>();
 const defaultCredential = (host: string) =>
@@ -95,7 +96,6 @@ const mockApi = Layer.effect(
         ),
       rest: (input) => mockedExecute({ kind: "rest", ...input }),
       credential: (host) => mockedCredential(host),
-      withRequestSlot: (effect) => effect,
     });
   }),
 );
@@ -151,6 +151,7 @@ const mockHttp = Layer.succeed(
 const layer = it.layer(
   GitHubPullRequestApi.layer.pipe(
     Layer.provideMerge(mockApi),
+    Layer.provideMerge(GitHubRequestPolicy.layer),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
     Layer.provideMerge(mockHttp),
@@ -334,7 +335,7 @@ function threadCommentsPage(
 }
 
 /** What GitHub answers for a pull request it will not serve a whole diff for. */
-const diffRefused = new GitHubApi.GitHubApiResponseError({
+const diffRefused = new GitHubRequestPolicy.GitHubApiResponseError({
   host: "github.com",
   operation: "getPullRequestDiff",
   status: 406,
@@ -1088,7 +1089,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
-          new GitHubApi.GitHubApiNotFoundError({
+          new GitHubRequestPolicy.GitHubApiNotFoundError({
             host: "github.com",
             operation: "getPullRequestStack",
           }),
@@ -1111,7 +1112,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
-          new GitHubApi.GitHubApiAuthenticationError({
+          new GitHubRequestPolicy.GitHubApiAuthenticationError({
             host: "github.com",
             operation: "getPullRequestStack",
           }),
@@ -1134,7 +1135,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("preserves transient stack failures instead of reporting no stack", () =>
     Effect.gen(function* () {
-      const failure = new GitHubApi.GitHubApiResponseError({
+      const failure = new GitHubRequestPolicy.GitHubApiResponseError({
         host: "github.com",
         operation: "getPullRequestStack",
         status: 503,
@@ -1562,7 +1563,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       mockedStackMemberships.mockImplementation((input) =>
         input.kind === "graphql" && Object.values(input.variables ?? {}).includes(26)
           ? Effect.fail(
-              new GitHubApi.GitHubApiResponseError({
+              new GitHubRequestPolicy.GitHubApiResponseError({
                 host: "github.com",
                 operation: "listPullRequestStackMemberships",
                 status: 502,
@@ -3665,7 +3666,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       );
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
-          new GitHubApi.GitHubApiResponseError({
+          new GitHubRequestPolicy.GitHubApiResponseError({
             host: "github.com",
             operation: "getRoutingIdentity",
             status: 502,

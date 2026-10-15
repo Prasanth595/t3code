@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
 import { ChildProcessSpawner } from "effect/process";
 import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
 
@@ -19,7 +20,7 @@ type Call = ReadonlyArray<string>;
 type Send = (
   call: Call,
   kind: "graphql" | "rest",
-) => Effect.Effect<string, GitHubApi.GitHubApiError>;
+) => Effect.Effect<string, GitHubRequestPolicy.GitHubApiError>;
 
 /** Every git command the cascade ran, in order; none actually runs. */
 let gitCalls: Array<ReadonlyArray<string>> = [];

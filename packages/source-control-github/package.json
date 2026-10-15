@@ -35,6 +35,10 @@
       "types": "./src/server/githubGraphQl.ts",
       "import": "./src/server/githubGraphQl.ts"
     },
+    "./server/GitHubRequestPolicy": {
+      "types": "./src/server/GitHubRequestPolicy.ts",
+      "import": "./src/server/GitHubRequestPolicy.ts"
+    },
     "./server/GitHubPullRequestApi": {
       "types": "./src/server/GitHubPullRequestApi.ts",
       "import": "./src/server/GitHubPullRequestApi.ts"

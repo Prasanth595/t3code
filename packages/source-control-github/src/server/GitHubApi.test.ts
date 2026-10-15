@@ -11,6 +11,7 @@ import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 
 import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -72,14 +73,14 @@ const json = (body: unknown, init?: ResponseInit) =>
 
 describe("gitHubApiUrls", () => {
   it("maps github.com, GHE.com and GitHub Enterprise Server", () => {
-    expect(GitHubApi.gitHubApiUrls("GitHub.com")).toEqual({
+    expect(GitHubRequestPolicy.gitHubApiUrls("GitHub.com")).toEqual({
       rest: "https://api.github.com",
       graphql: "https://api.github.com/graphql",
     });
-    expect(GitHubApi.gitHubApiUrls("acme.ghe.com").graphql).toBe(
+    expect(GitHubRequestPolicy.gitHubApiUrls("acme.ghe.com").graphql).toBe(
       "https://api.acme.ghe.com/graphql",
     );
-    expect(GitHubApi.gitHubApiUrls("git.acme.internal")).toEqual({
+    expect(GitHubRequestPolicy.gitHubApiUrls("git.acme.internal")).toEqual({
       rest: "https://git.acme.internal/api/v3",
       graphql: "https://git.acme.internal/api/graphql",
     });
@@ -463,7 +464,7 @@ describe("GitHubApi", () => {
       const error = yield* Effect.flip(
         api.rest({ host: "git.acme.internal", operation: "user", path: "user" }),
       ).pipe(
-        Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+        Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
           host: "github.com",
           token: Redacted.make("pinned"),
           credentialFingerprint: "github.com:pinned",

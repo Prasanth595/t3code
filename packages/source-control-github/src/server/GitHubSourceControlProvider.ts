@@ -22,6 +22,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
 import {
   decodeGitHubPullRequestEntries,
@@ -307,7 +308,7 @@ const REPOSITORY_NOT_FOUND = "Repository not found. Check the owner and name and
 
 /** `notFound` names what was missing, which only the operation knows. */
 function fromGitHubApiError(
-  error: GitHubApi.GitHubApiError,
+  error: GitHubRequestPolicy.GitHubApiError,
   notFound = PULL_REQUEST_NOT_FOUND,
 ): GitHubFailure {
   switch (error._tag) {
@@ -568,7 +569,7 @@ export const make = Effect.gen(function* () {
         request.owner,
         request.name,
         String(request.allowReserve),
-        Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
+        Context.getOrElse(context, GitHubRequestPolicy.PinnedGitHubCredential, () => null)
           ?.credentialFingerprint ?? "",
         Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
       ].join("\0"),

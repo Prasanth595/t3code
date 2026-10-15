@@ -14,6 +14,7 @@ import * as TestClock from "effect/testing/TestClock";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import { parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
@@ -207,7 +208,10 @@ describe("GitHubSourceControlProvider repository resolution", () => {
       api: {
         rest: (input) =>
           Effect.fail(
-            new GitHubApi.GitHubApiNotFoundError({ host: input.host, operation: input.operation }),
+            new GitHubRequestPolicy.GitHubApiNotFoundError({
+              host: input.host,
+              operation: input.operation,
+            }),
           ),
       },
     });
@@ -372,7 +376,7 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
           Effect.fail(
             input.variables?.h0 === "missing"
               ? new GitHubCredentials.GitHubCliMissingError({ host: "github.com" })
-              : new GitHubApi.GitHubApiRateLimitError({
+              : new GitHubRequestPolicy.GitHubApiRateLimitError({
                   host: "github.com",
                   operation: "x",
                   retryAt: 123,
@@ -609,7 +613,7 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
           ),
         rest: () =>
           Effect.fail(
-            new GitHubApi.GitHubApiRequestError({
+            new GitHubRequestPolicy.GitHubApiRequestError({
               host: "github.com",
               operation: "x",
               cause: "offline",
@@ -924,7 +928,7 @@ it.effect.each(["read", "decode"] as const)(
   "retains the %s failure without exposing its raw contents",
   (stage) =>
     Effect.gen(function* () {
-      const cause = new GitHubApi.GitHubApiResponseError({
+      const cause = new GitHubRequestPolicy.GitHubApiResponseError({
         host: "github.com",
         operation: "resolveLink",
         status: 500,

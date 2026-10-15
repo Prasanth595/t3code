@@ -41,6 +41,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import { readGraphQlPages } from "./githubGraphQl.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
@@ -337,7 +338,7 @@ export class GitHubBranchDeletionRefusedError extends Schema.TaggedError<GitHubB
 export type GitHubPullRequestApiError =
   | GitHubBranchDeletionRefusedError
   | GitHubStackActionError
-  | GitHubApi.GitHubApiError
+  | GitHubRequestPolicy.GitHubApiError
   | GitHubPullRequestReadError
   | GitHubDiffCursorError
   | GitHubDiffCommitError
@@ -355,14 +356,7 @@ export type GitHubPullRequestApiError =
 const isGraphQlClientError = (error: unknown): error is GraphQLClientError.GraphQLClientError =>
   GraphQLClientError.isGraphQLClientError(error);
 
-/**
- * GitHub answered that a pull request (or its repository) does not exist, or that the credential
- * cannot see it, which a batch reports for that one pull request alone.
- */
-const isNotFoundOnly = (error: unknown): boolean =>
-  isGraphQlClientError(error) &&
-  error.reason._tag === "ResponseError" &&
-  error.reason.errors.every((graphQlError) => graphQlError["type"] === "NOT_FOUND");
+const { isNotFoundOnly } = GitHubGraphQlClient;
 
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -1218,7 +1212,7 @@ export const make = Effect.gen(function* () {
               const response = yield* api
                 .rest({ host, operation: "getRoutingIdentity", path: "user", allowReserve: true })
                 .pipe(
-                  Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
+                  Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
                   Effect.provideService(SourceControlRateLimit.CredentialScope, key),
                 );
               const identity = yield* decodeRoutingIdentity(response.body).pipe(
@@ -1247,7 +1241,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(({ host, token, accountId, viewer, credentialFingerprint }) =>
         use({ accountId, viewer, credentialFingerprint }).pipe(
           Effect.provideService(SourceControlRateLimit.CredentialScope, credentialFingerprint),
-          Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+          Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
             host,
             token,
             credentialFingerprint,
@@ -1801,7 +1795,7 @@ export const make = Effect.gen(function* () {
     A,
     | Exclude<E, GraphQLClientError.GraphQLClientError>
     | GitHubPullRequestReadError
-    | GitHubApi.GitHubApiNotFoundError,
+    | GitHubRequestPolicy.GitHubApiNotFoundError,
     Exclude<R, GitHubGraphQlClient.GitHubGraphQlTarget>
   > =>
     effect.pipe(
@@ -1813,7 +1807,7 @@ export const make = Effect.gen(function* () {
         !isGraphQlClientError(error)
           ? (error as Exclude<E, GraphQLClientError.GraphQLClientError>)
           : isNotFoundOnly(error)
-            ? new GitHubApi.GitHubApiNotFoundError({
+            ? new GitHubRequestPolicy.GitHubApiNotFoundError({
                 host: input.host,
                 operation: input.operation,
               })
@@ -1848,7 +1842,7 @@ export const make = Effect.gen(function* () {
       );
       const pullRequest = result.repository?.pullRequest;
       if (pullRequest == null) {
-        return yield* new GitHubApi.GitHubApiNotFoundError({
+        return yield* new GitHubRequestPolicy.GitHubApiNotFoundError({
           host: input.host,
           operation: "getPullRequestSummary",
         });

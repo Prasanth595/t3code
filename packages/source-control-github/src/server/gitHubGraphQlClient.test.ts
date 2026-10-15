@@ -172,3 +172,76 @@ describe("GitHubGraphQlAuth", () => {
     }).pipe(Effect.provide(layer));
   });
 });
+
+/** One unbatched stats read on github.com, through `call`. */
+const callStats = (target: Partial<GitHubGraphQlClient.GitHubGraphQlTarget["Service"]> = {}) =>
+  Effect.gen(function* () {
+    const client = yield* GraphQLClient.make(
+      PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+    ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+    return yield* client
+      .PullRequestStats({ owner: "acme", name: "web", number: 7 })
+      .pipe(GitHubGraphQlClient.call({ host: "github.com", operation: "stats", ...target }));
+  });
+
+describe("call", () => {
+  it.effect("fails an answer whose errors all say NOT_FOUND as a missing resource", () => {
+    const { layer } = harness(() =>
+      json({
+        data: { repository: null },
+        errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository" }],
+      }),
+    );
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(callStats());
+      expect(error).toMatchObject({
+        _tag: "GitHubApiNotFoundError",
+        host: "github.com",
+        operation: "stats",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "fails NOT_FOUND alongside another error as a failure carrying GitHub's reasons",
+    () => {
+      const { layer } = harness(() =>
+        json({
+          data: null,
+          errors: [
+            { type: "NOT_FOUND", message: "Could not resolve" },
+            { type: "FORBIDDEN", message: "Resource not accessible" },
+          ],
+        }),
+      );
+      return Effect.gen(function* () {
+        const error = yield* Effect.flip(callStats());
+        expect(error).toMatchObject({
+          _tag: "GitHubApiResponseError",
+          status: 200,
+          githubErrors: ["Could not resolve", "Resource not accessible"],
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("leaves an answer that does not decode to the caller", () => {
+    const { layer } = harness(() =>
+      json({ data: { repository: { pullRequest: { additions: "many" } } } }),
+    );
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(callStats());
+      expect(error).toMatchObject({ _tag: "GraphQLClientError", reason: { _tag: "DecodeError" } });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails an answer past the byte cap with its status", () => {
+    const { layer } = harness(() =>
+      json({ data: { repository: { pullRequest: { ...stats, padding: "x".repeat(200) } } } }),
+    );
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(callStats({ maxResponseBytes: 64 }));
+      expect(error).toMatchObject({ _tag: "GitHubApiResponseError", status: 200 });
+    }).pipe(Effect.provide(layer));
+  });
+});
