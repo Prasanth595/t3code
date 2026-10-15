@@ -147,9 +147,9 @@ async function main() {
   const safeName = build.versionName.replace(/[^0-9A-Za-z.]+/g, "-").replace(/^-|-$/g, "");
   const apkName = `t3code-android-${safeName}-${build.versionCode}.apk`;
   const notes = [
-    `T3 Code for Android that works with nightly servers, mirrored from the Google Play ${trackName} track. Current build: ${build.versionName} (${build.versionCode}).`,
+    `T3 Code for Android, mirrored from the Google Play ${trackName} track. Current build: ${build.versionName} (${build.versionCode}).`,
     "",
-    "The Play Store release can't connect to a nightly server yet. Install this APK if you can't join the Play testing group. Only the newest build is kept here.",
+    "Install this APK if you can't join the Play testing group. Only the newest build is kept here.",
   ].join("\n");
 
   const release = readRelease(tag);
