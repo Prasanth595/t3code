@@ -9,7 +9,7 @@ import {
 import { ExternalLinkIcon, NetworkIcon, RefreshCwIcon } from "lucide-react";
 
 import { useEnvironmentQuery } from "~/state/query";
-import { machinesRead } from "~/state/machineMap";
+import { machinesRead, useMachineMapState } from "~/state/machineMap";
 import { formatRelativeTimeLabel, formatRelativeTimeUntil } from "~/timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -30,6 +30,8 @@ const UNAVAILABLE_TITLES: Record<Unavailable["reason"], string> = {
 export function MachinesPanel({ environmentId }: { environmentId: EnvironmentId }) {
   const query = useEnvironmentQuery(machinesRead({ environmentId, input: {} }));
   const panel = query.data;
+  const portalUrl =
+    useMachineMapState(environmentId).state?.portalUrl ?? DEFAULT_MACHINE_MAP_PORTAL_URL;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -63,7 +65,7 @@ export function MachinesPanel({ environmentId }: { environmentId: EnvironmentId 
           <Button
             size="xs"
             variant="ghost"
-            render={<a href={DEFAULT_MACHINE_MAP_PORTAL_URL} target="_blank" rel="noreferrer" />}
+            render={<a href={portalUrl} target="_blank" rel="noreferrer" />}
           >
             <ExternalLinkIcon className="size-3.5" />
             Open portal

@@ -106,7 +106,11 @@ export function MachineMapSyncedMarker({ keys }: { keys: readonly (keyof ServerS
   const environmentId =
     context?.scope.kind === "environment" ? context.scope.environmentId : primaryEnvironmentId;
   const { state } = useMachineMapState(keys.length === 0 ? null : environmentId);
-  const synced = state?.desired?.settings.server ?? {};
+  // A desired state saved before the map turned off syncs nothing.
+  const synced =
+    state === null || state.connection.status === "off"
+      ? {}
+      : (state.desired?.settings.server ?? {});
   if (!keys.some((key) => Object.hasOwn(synced, key))) return null;
   return (
     <Tooltip>

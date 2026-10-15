@@ -185,6 +185,8 @@ const MACHINE_LOCAL_SETTINGS: Readonly<Record<SettingScope, ReadonlySet<string>>
     "environmentIcon",
     // The time of the last local theme change (MM-408).
     "defaultThemeSetAt",
+    // A one-time migration flag of this machine's own settings file, not a preference.
+    "projectSettingsFolded",
   ]),
   client: new Set([
     // State of this app, not a preference.

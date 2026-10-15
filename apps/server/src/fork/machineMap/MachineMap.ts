@@ -97,6 +97,8 @@ const STATUS_MIN_INTERVAL = Duration.seconds(5);
 const STATUS_IDLE_CHECK = Duration.minutes(1);
 /** MM-1306: a failed session revocation runs again this often. */
 const REVOKE_RETRY_INTERVAL = Duration.seconds(30);
+/** MM-605: queued desktop commands are checked for their expiry this often. */
+const DESKTOP_COMMAND_EXPIRY_CHECK = Duration.minutes(1);
 /** MM-1501: one resource sample a minute, and one on request at most every 10 seconds. */
 const RESOURCE_INTERVAL = Duration.minutes(1);
 const RESOURCE_REQUEST_GAP_MS = 10_000;
@@ -430,6 +432,31 @@ const make = Effect.gen(function* () {
     });
 
   // --- Commands ------------------------------------------------------------------------------
+
+  const expireDesktopCommands = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const expired = (yield* state.snapshot).saved.desktopCommands.filter(
+      (command) => Date.parse(command.expiresAt) <= nowMs,
+    );
+    if (expired.length === 0) return;
+    const ids = new Set(expired.map((command) => command.id));
+    yield* state.updateSaved((saved) => ({
+      ...saved,
+      desktopCommands: saved.desktopCommands.filter((command) => !ids.has(command.id)),
+    }));
+    yield* Effect.forEach(
+      expired,
+      (command) =>
+        sendOrQueue({
+          _tag: "commandResult",
+          commandId: command.id,
+          ok: false,
+          result: null,
+          error: "Expired before the desktop app ran it.",
+        }),
+      { discard: true },
+    );
+  });
 
   const handleCommand = (command: MachineCommand) =>
     Effect.gen(function* () {
@@ -946,7 +973,13 @@ const make = Effect.gen(function* () {
         build: report.build === undefined ? previous.build : report.build,
         clientSettings: report.clientSettings ?? previous.clientSettings,
       });
-      if (report.commandResult !== undefined) {
+      // MM-605: a command that the expiry check removed is already reported as expired.
+      const queued =
+        report.commandResult !== undefined &&
+        (yield* state.snapshot).saved.desktopCommands.some(
+          (command) => command.id === report.commandResult?.commandId,
+        );
+      if (report.commandResult !== undefined && queued) {
         const result = report.commandResult;
         yield* state
           .updateSaved((saved) => ({
@@ -1259,6 +1292,20 @@ const make = Effect.gen(function* () {
           }),
         ),
         Effect.andThen(Effect.sleep(REVOKE_RETRY_INTERVAL)),
+      ),
+    ),
+  );
+  // MM-605: a desktop command that waited past its expiry never runs. The desktop app can stay
+  // closed for days, so the server reports it as failed and drops it.
+  yield* forkParked(
+    Effect.forever(
+      expireDesktopCommands.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Machine map could not expire desktop commands.", {
+            cause: Cause.pretty(cause),
+          }),
+        ),
+        Effect.andThen(Effect.sleep(DESKTOP_COMMAND_EXPIRY_CHECK)),
       ),
     ),
   );

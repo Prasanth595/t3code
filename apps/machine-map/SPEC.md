@@ -77,7 +77,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-409** When a desired state changes `sharedThemes`, the machine writes each changed theme into its themes folder with atomic writes. It refuses a theme with an invalid id, a file over the size limit of the theme watcher, a symlinked theme file, or content that fails the theme file schema. Themes that are not in the value stay. A refused or extra theme shows as drift.
 - **MM-410** When a desired state changes `defaultTheme`, the machine sets it like `t3 theme set`, so connected web and desktop clients switch. The value names a built-in theme or a theme that the machine publishes. An empty value clears it.
 - **MM-411** A change saved in T3 Settings with "All environments" selected becomes the shared value, when the machine has the map role `edit` and a portal connection. Overrides equal to the new value go; other overrides stay. One environment sends it, about one second after the last edit. Otherwise the change stays the bulk edit of T3 Settings. A change for one selected environment follows MM-404.
-- **MM-412** In T3 Settings, a server setting row shows a sync marker when the map syncs its value to the selected machine.
+- **MM-412** In T3 Settings, a server setting row shows a sync marker when the map syncs its value to the selected machine. A machine with the map off shows no marker.
 - **MM-413** "Import shared values" in the Settings view takes JSON in the form `{ "server": { ... }, "client": { ... } }` and sets each key as a shared value in one revision. It refuses a machine-local key or a value that the settings schema refuses.
 
 ## 5. Commands
@@ -103,7 +103,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-602** A change that touches an offline machine waits for it. The map shows the change at once, and marks the affected machine card or setting with a "queued" sticker and a count. A machine that never connected shows "waiting to join" instead. An arrow shows a clock and names each end that did not apply it, in plain text: "queued for <machine>" for a machine that connected before, "waiting for <machine> to join" for a machine that never connected. A "queued for" text opens the Queue of that machine, and a "waiting for" text opens the machine. The work of a machine that never connected does not count in the queued counts or the Queue tab badge.
 - **MM-603** Each machine reports the last revision that it applied. Its desired state is the current map. On connection, the machine applies the current desired state, not each queued revision one by one. A revision that does not change the desired state of a machine, for example a move on the map, a note or a pair card place (MM-1108, MM-1109), queues nothing for it.
 - **MM-604** An arrow with an online target and an offline source shows "applied on <target>, queued for <source>".
-- **MM-605** A command for an offline machine waits in its queue. Each queued command has a delivery rule: "when online" or "when online and idle". It also has an expiry, by default 24 hours. A command that a machine took but never reported a result for expires at the same time, with that reason.
+- **MM-605** A command for an offline machine waits in its queue. Each queued command has a delivery rule: "when online" or "when online and idle". It also has an expiry, by default 24 hours. A command that a machine took but never reported a result for expires at the same time, with that reason. A command that a machine took for its desktop app and that is not run by its expiry fails as expired; it never runs later.
 - **MM-606** The owner can cancel a queued command and see why a command expired or failed.
 - **MM-607** On start, a machine applies its last saved desired state before it accepts connections from other machines. If the portal is not reachable, it keeps that saved state.
 - **MM-608** The Queue view lists every queued change and command of every machine, oldest first.
@@ -217,7 +217,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 ## 13. T3 server
 
-- **MM-1301** The server setting `machineMap` holds `enabled` and the portal URL. It is off by default. Off means no connection and no change to auth.
+- **MM-1301** The server setting `machineMap` holds `enabled` and the portal URL. It is off by default. Off means no connection, no change to auth, and no joined tunnel (MM-1309).
 - **MM-1302** The machine token secret lives in the server secret store, never in `settings.json`.
 - **MM-1303** The server keeps one outbound WebSocket to `/connect`, with backoff after a failure.
 - **MM-1304** The server saves the last desired state in its user data, so MM-607 works after a restart.
@@ -225,14 +225,14 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-1306** When the level of an arrow into the server changes, the server revokes every session with the subject of the source machine. The server compares the level that the sessions got, read at the time the old desired state arrived, with the level now, so an arrow that expired in between counts as a change. At the expiry of an arrow into it, the server also revokes those sessions itself, without waiting for the portal revision, and so does a server that restarts after an expiry. The server saves the subjects to revoke with the desired state, and a revocation that fails runs again until it works.
 - **MM-1307** The server accepts T3 tool calls from a machine session only when its arrow has "agent tools".
 - **MM-1308** Fork code lives in new files. Changes to upstream files are small hooks. A hook has a test only when it could break without a visible error.
-- **MM-1309** A join with a tunnel (MM-213) saves the tunnel token in the server secret store and the hostname and Access login in `<stateDir>/machine-map-tunnel.json`. The server then restarts through its supervisor. At start, the server uses that tunnel as its tunnel URL and Access login. It downloads the official `cloudflared` for its system into `<stateDir>/bin`, runs it as a child process with the token in its environment, starts it again after each exit, and stops it with the server. "Leave" forgets the tunnel.
+- **MM-1309** A join with a tunnel (MM-213) saves the tunnel token in the server secret store and the hostname and Access login in `<stateDir>/machine-map-tunnel.json`. The server then restarts through its supervisor. At start, the server uses that tunnel as its tunnel URL and Access login. It installs the pinned `cloudflared` of the relay client, with its sha256 checked, runs it as a child process with the token in its environment, starts it again after each exit, and stops it with the server. The tunnel applies only while the map is on: turning the map off stops `cloudflared`, and the next start does not use the tunnel. "Leave" stops `cloudflared` and forgets the tunnel.
 - **MM-1310** A tunnel URL or Access login from the environment or the desktop settings wins over the tunnel of a join. Then the join keeps the tunnel of the server and starts no `cloudflared`.
 - **MM-1311** While the map is on, the server trusts the origin `https://<hostname>` of each peer in its desired state like a trusted browser origin: credentialed CORS, cookie sessions, and the `trustedBrowserOrigins` that clients read. Explicit trusted origins stay in addition.
 
 ## 14. Desktop app
 
 - **MM-1401** The desktop app gets the list of machines it can reach from its own server. It adds each one to its saved environments with the machine token headers, and removes it when the arrow drops to `none`.
-- **MM-1402** The desktop app applies queued client settings and commands for windows when it starts.
+- **MM-1402** The desktop app applies queued client settings and commands for windows when it starts. A command past its expiry fails and does not run (MM-605). Install update waits for the update state of the app, at most 1 minute after the start.
 
 ## 15. Resources and health
 
