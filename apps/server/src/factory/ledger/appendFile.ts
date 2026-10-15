@@ -72,16 +72,24 @@ const endsInNewline = (fd: number): boolean => {
 };
 
 /**
- * Open an existing regular file for append, never creating it and never following a symlink
- * (`O_WRONLY | O_APPEND | O_NOFOLLOW`, plus read access to look at the last byte). A last line with
- * no newline is a write that was cut off: it is ended with one `\n` write and an fsync, so the
- * next event starts on its own line, and `repaired` is true. The fragment stays in the file.
- * A missing file is `NotFound`; anything else that goes wrong is `Io`.
+ * A last line with no newline is a write that was cut off: end it with one `\n` write and an
+ * fsync, so the next event starts on its own line, and return true. The fragment stays in the
+ * file. Throws what `node:fs` throws.
  */
-export const openForAppend = (
-  path: string,
-  io: AppendIo = nodeIo,
-): { readonly file: AppendFile; readonly repaired: boolean } => {
+const endCutOffLine = (fd: number): boolean => {
+  if (endsInNewline(fd)) return false;
+  NodeFS.writeSync(fd, "\n");
+  NodeFS.fsyncSync(fd);
+  return true;
+};
+
+/**
+ * Open an existing regular file for append, never creating it and never following a symlink
+ * (`O_RDWR | O_APPEND | O_NOFOLLOW`: the read access is needed, since an append looks at how
+ * the file ends and what other handles wrote). A line cut off at the end is ended first. A
+ * missing file is `NotFound`; anything else that goes wrong is `Io`.
+ */
+export const openForAppend = (path: string, io: AppendIo = nodeIo): AppendFile => {
   let fd: number;
   try {
     fd = NodeFS.openSync(
@@ -92,18 +100,13 @@ export const openForAppend = (
     if (errnoCode(error) === "ENOENT") throw new LedgerError({ kind: "NotFound", path });
     throw ioError(path, error);
   }
-  let repaired = false;
   try {
-    if (!endsInNewline(fd)) {
-      NodeFS.writeSync(fd, "\n");
-      NodeFS.fsyncSync(fd);
-      repaired = true;
-    }
+    endCutOffLine(fd);
   } catch (error) {
     NodeFS.closeSync(fd);
     throw ioError(path, error);
   }
-  return { file: new AppendFile(path, fd, io), repaired };
+  return new AppendFile(path, fd, io);
 };
 
 /** The directory that holds `dir`, which the sync after making `dir` has to reach. */
@@ -135,6 +138,22 @@ export class AppendFile {
   private openFd(): number {
     if (this.fd === null) throw ioError(this.path, new Error("the file is closed"));
     return this.fd;
+  }
+
+  /**
+   * End a line cut off at the end of the file, by this handle or another one, as opening the
+   * file does, so a whole line that only lacked its newline counts before the next append.
+   */
+  endCutOffLine(): void {
+    const fd = this.openFd();
+    let ended: boolean;
+    try {
+      ended = endCutOffLine(fd);
+    } catch (error) {
+      throw ioError(this.path, error);
+    }
+    // That newline is the break an earlier failed write owed, so it is not written twice.
+    if (ended) this.dirty = false;
   }
 
   /**

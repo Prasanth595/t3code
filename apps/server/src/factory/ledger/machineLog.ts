@@ -64,7 +64,7 @@ export class MachineLog {
       throw ioError(dataDir, error);
     }
     const io = options.io ?? nodeIo;
-    const file = existingRegularFile(path) ? openForAppend(path, io).file : createLog(path, io);
+    const file = existingRegularFile(path) ? openForAppend(path, io) : createLog(path, io);
     try {
       syncAt(sync, dataDir);
       syncAt(sync, parentOf(dataDir));

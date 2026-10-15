@@ -121,7 +121,7 @@ export class Ledger {
   static open(dataDir: string, id: RunId, options: LedgerOptions = {}): Ledger {
     const path = runPath(dataDir, id);
     requireRegularFile(path);
-    return new Ledger(openForAppend(path, options.io).file, options.clock ?? Date.now);
+    return new Ledger(openForAppend(path, options.io), options.clock ?? Date.now);
   }
 
   /**
@@ -158,15 +158,18 @@ export class Ledger {
    * Append one event as one line, with why it was written: a single write of the whole line,
    * then a sync, so a crash loses at most the event in flight. A `finished` event has its
    * `total_ms` and `gate_attempts` replaced with the ledger's own count, taken from the file;
-   * use `finish`. Throws `AlreadyFinished` after a `finished` line, whichever handle wrote it,
-   * and `UnknownEvent` for an event name that ledger.md does not list; neither writes anything.
+   * use `finish`. Throws `UnknownEvent`, writing nothing, for an event name that ledger.md does
+   * not list, and `AlreadyFinished` after a `finished` line, whichever handle wrote it. A line
+   * cut off at the end of the file is ended before that check, as a reopen would, so a
+   * `finished` line that only lacked its newline counts; the refusal writes nothing else.
    */
   append(event: RunEvent, cause: Cause): void {
-    this.catchUp();
-    if (this.finished) throw new LedgerError({ kind: "AlreadyFinished", path: this.out.path });
     if (!Object.hasOwn(RUN_EVENT_FIELDS, event.event)) {
       throw new LedgerError({ kind: "UnknownEvent", event: String(event.event) });
     }
+    this.out.endCutOffLine();
+    this.catchUp();
+    if (this.finished) throw new LedgerError({ kind: "AlreadyFinished", path: this.out.path });
     const ms = this.clock();
     const data = runEventData(
       event,

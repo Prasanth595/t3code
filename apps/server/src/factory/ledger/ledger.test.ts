@@ -1598,7 +1598,8 @@ describe("failed writes", () => {
     expect(error.path).toBe(runFileFor(dataDir));
     expect(readText(runFileFor(dataDir))).toBe(`${RED}{"ts":"202`);
 
-    // The recovery append is one write (the `\n` and the line together) and one sync.
+    // The append first ends the cut-off line, as a reopen does; the line is then one write
+    // and one sync.
     faults.calls.length = 0;
     ledger.append(step("refactor"), testCause());
     expect(faults.calls).toEqual(["write", "sync"]);
@@ -1684,6 +1685,25 @@ describe("failed writes", () => {
     );
     expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(afterFailure);
     expect(readSoftfacRun(dataDir).entries).toHaveLength(1);
+  });
+
+  it("a finished line cut off just before its newline still ends the run for live handles", () => {
+    const dataDir = tempDir();
+    const { io, faults } = faultyIo();
+    const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
+    const other = reopen(dataDir);
+    faults.failWriteAfter = Buffer.byteLength(finishedSample.line) - 1;
+    expect(catchLedgerError(() => ledger.finish("pr-open", null, null, testCause())).kind).toBe(
+      "Io",
+    );
+    for (const handle of [ledger, other]) {
+      expect(catchLedgerError(() => handle.append(step("green"), testCause())).kind).toBe(
+        "AlreadyFinished",
+      );
+    }
+    // The refusal ended the cut-off line, as a reopen would, so a reader sees the run finished.
+    expect(readText(runFileFor(dataDir))).toBe(finishedSample.line);
+    expect(readSoftfacRun(dataDir).entries.map((entry) => entry.event)).toEqual(["finished"]);
   });
 
   it("a gate command whose sync failed still counts toward the summary", () => {
