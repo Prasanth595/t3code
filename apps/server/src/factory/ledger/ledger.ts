@@ -31,8 +31,8 @@ export { LedgerError } from "./errors.ts";
 export type { AppendIo } from "./appendFile.ts";
 
 const U32_MAX = 4294967295;
-// The largest u64 as a double; a JSON number past 2^53 is already a double here.
-const U64_MAX = 18446744073709551615;
+// The largest u64 reads as 2^64 once JSON.parse has made it a double.
+const U64_MAX = 2 ** 64;
 const I32_MIN = -2147483648;
 const I32_MAX = 2147483647;
 
