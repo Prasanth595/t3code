@@ -173,7 +173,12 @@ describe("terminal selection actions", () => {
 });
 
 it("retains visible output and selection until a replacement subscription receives its snapshot", () => {
-  const terminal = { resetAndWrite: vi.fn(), write: vi.fn(), clearSelection: vi.fn() };
+  const terminal = {
+    resetAndWrite: vi.fn(),
+    write: vi.fn(),
+    clearSelection: vi.fn(),
+    hasSelection: vi.fn(() => false),
+  };
   const snapshot = {
     threadId: "thread",
     terminalId: "term-1",
@@ -220,4 +225,86 @@ it("retains visible output and selection until a replacement subscription receiv
   });
   synchronizeTerminalOutput(terminal, cleared, observedCursor);
   expect(terminal.resetAndWrite).toHaveBeenLastCalledWith("");
+});
+
+describe("synchronizeTerminalOutput selection", () => {
+  const SNAPSHOT = {
+    threadId: "thread",
+    terminalId: "term-1",
+    cwd: "/repo",
+    worktreePath: null,
+    status: "running" as const,
+    pid: 123,
+    history: "build started",
+    exitCode: null,
+    exitSignal: null,
+    label: "Terminal 1",
+    updatedAt: "2026-09-05T00:00:00.000Z",
+  };
+
+  function createTerminal(hasSelection: boolean) {
+    return {
+      resetAndWrite: vi.fn(),
+      write: vi.fn(),
+      clearSelection: vi.fn(),
+      hasSelection: vi.fn(() => hasSelection),
+    };
+  }
+
+  function attachedSession() {
+    return applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
+      type: "snapshot",
+      snapshot: SNAPSHOT,
+    });
+  }
+
+  function appendOutput(session: ReturnType<typeof attachedSession>, data: string) {
+    return applyTerminalAttachStreamEvent(session, {
+      type: "output",
+      threadId: SNAPSHOT.threadId,
+      terminalId: SNAPSHOT.terminalId,
+      data,
+    });
+  }
+
+  it("keeps an unselected terminal untouched by appended output", () => {
+    const terminal = createTerminal(false);
+    const session = attachedSession();
+    const cursor = synchronizeTerminalOutput(terminal, session, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    terminal.resetAndWrite.mockClear();
+    terminal.clearSelection.mockClear();
+
+    const next = appendOutput(session, "\r\nstep 2 done");
+    synchronizeTerminalOutput(terminal, next, cursor);
+
+    expect(terminal.write).toHaveBeenLastCalledWith("\r\nstep 2 done");
+    expect(terminal.clearSelection).not.toHaveBeenCalled();
+  });
+
+  it("clears a selection that appended output could scroll out from under it", () => {
+    const terminal = createTerminal(true);
+    const session = attachedSession();
+    const cursor = synchronizeTerminalOutput(terminal, session, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    terminal.clearSelection.mockClear();
+
+    synchronizeTerminalOutput(terminal, appendOutput(session, "\r\nstep 2 done"), cursor);
+
+    expect(terminal.clearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the selection on a reset even when nothing is selected", () => {
+    const terminal = createTerminal(false);
+    const session = attachedSession();
+    const cursor = synchronizeTerminalOutput(terminal, session, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    terminal.clearSelection.mockClear();
+
+    const replayed = applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
+      type: "snapshot",
+      snapshot: { ...SNAPSHOT, history: "replayed history" },
+    });
+    synchronizeTerminalOutput(terminal, replayed, cursor);
+
+    expect(terminal.resetAndWrite).toHaveBeenLastCalledWith("replayed history");
+    expect(terminal.clearSelection).toHaveBeenCalledTimes(1);
+  });
 });

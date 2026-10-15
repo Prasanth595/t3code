@@ -1055,6 +1055,11 @@ export class GhosttyTerminalSurface {
   }
 
   clearSelection(): void {
+    // Pointer taps and resets can call this with nothing selected; skip the
+    // forced full repaint and selection notification unless state remains.
+    if (this.selectionAnchorScreen === null && this.selectionEnd === null && !this.hasSelection()) {
+      return;
+    }
     this.clearPrimedCopy();
     this.core.clearSelection();
     this.selectionEnd = null;

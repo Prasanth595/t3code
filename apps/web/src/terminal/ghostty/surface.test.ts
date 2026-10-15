@@ -736,6 +736,34 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.renderedSnapshot.rowData[0]?.cells.some((cell) => cell.selected)).toBe(false);
   });
 
+  it("clears only an existing selection, repainting just for that change", async () => {
+    const onSelectionChange = vi.fn();
+    const harness = createHarness();
+    const surface = await harness.create({ onSelectionChange });
+    surface.write("hello world");
+    harness.flushFrame();
+
+    harness.snapshot.mockClear();
+    surface.clearSelection();
+    harness.flushFrame();
+    expect(onSelectionChange).not.toHaveBeenCalled();
+    expect(harness.snapshot).not.toHaveBeenCalled();
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 37, 1);
+    harness.pointer("pointerup", 37, 0);
+    harness.flushFrame();
+    expect(surface.getSelection()).toBe("hello");
+
+    onSelectionChange.mockClear();
+    harness.snapshot.mockClear();
+    surface.clearSelection();
+    harness.flushFrame();
+    expect(surface.getSelection()).toBe("");
+    expect(onSelectionChange).toHaveBeenCalledTimes(1);
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+  });
+
   it("scrolls a selection drag held at the terminal edge, even when the window ends there", async () => {
     const harness = createHarness();
     const surface = await harness.create();

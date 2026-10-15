@@ -124,15 +124,26 @@ export function writeTerminalOutputUpdate(
   }
 }
 
+/**
+ * A reset replaces the buffer a selection points into, and an append can scroll
+ * it out from under the surface's screen-space anchors. Clearing on every other
+ * update forced a full-canvas repaint for output that cannot affect a selection.
+ */
 export function synchronizeTerminalOutput(
-  terminal: Pick<GhosttyTerminalSurface, "resetAndWrite" | "write" | "clearSelection">,
+  terminal: Pick<
+    GhosttyTerminalSurface,
+    "resetAndWrite" | "write" | "clearSelection" | "hasSelection"
+  >,
   session: Pick<TerminalSessionState, "output" | "version">,
   cursor: TerminalOutputCursor,
 ): TerminalOutputCursor {
   if (session.version === 0) return cursor;
   const update = readTerminalOutputUpdate(session.output, cursor);
+  // Decide before writing, against the selection the user actually had.
+  const invalidatesSelection =
+    update.type === "reset" || (update.type === "append" && terminal.hasSelection());
   writeTerminalOutputUpdate(terminal, update);
-  terminal.clearSelection();
+  if (invalidatesSelection) terminal.clearSelection();
   return update.cursor;
 }
 
