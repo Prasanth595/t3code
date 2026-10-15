@@ -327,57 +327,42 @@ export const make = Effect.gen(function* () {
         });
         // Use stdin so large directories cannot exceed the command-line argument limit.
         // Ignore classification is optional in non-git workspaces or when git is unavailable.
-        const ignored = new Set<string>();
-        const runGit = (args: ReadonlyArray<string>, stdin?: string) =>
+        const checkIgnore = (paths: ReadonlyArray<string>) =>
           vcsProcess
             .run({
               operation: "WorkspaceEntries.list",
               command: "git",
-              args: ["-c", "core.fsmonitor=false", ...args],
+              args: ["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"],
               cwd: normalizedCwd,
-              ...(stdin === undefined ? {} : { stdin }),
+              stdin: `${paths.join("\0")}\0`,
               allowNonZeroExit: true,
               timeoutMs: 10_000,
               maxOutputBytes: 16 * 1024 * 1024,
             })
             .pipe(Effect.orElseSucceed(() => undefined));
         // Git consults the index for every path it classifies, which costs hundreds of
-        // milliseconds for a `node_modules`-sized folder. An ignored directory hides all of its
-        // children, so when nothing under it is tracked they are all ignored without asking.
-        // `check-ignore` reads each path as a pathspec, so a folder like `[id]` can match tracked
-        // files elsewhere and git then answers differently per child; those folders ask git.
-        const wholeDirectoryIgnored =
+        // milliseconds for a `node_modules`-sized folder. Asking about the folder itself answers
+        // for every child: `check-ignore` exits 0 only when the folder is ignored and nothing
+        // under it is tracked, and an ignored folder hides all of its children. Git reads paths as
+        // pathspecs, so a folder whose path has magic (`:foo`) or glob (`[id]`) characters, or
+        // one reached through a symlink, can get a different answer per child and still asks git
+        // about each.
+        if (
           entries.length > IGNORE_CHECK_CHUNK_SIZE &&
           target.relativePath !== "" &&
           !throughSymlink &&
-          !/[*?[\\]/.test(target.relativePath) &&
-          (yield* Effect.gen(function* () {
-            const directory = yield* runGit(
-              ["check-ignore", "-z", "--stdin"],
-              `${target.relativePath}\0`,
-            );
-            if (directory?.exitCode !== 0) return false;
-            const tracked = yield* runGit([
-              "--literal-pathspecs",
-              "ls-files",
-              "--cached",
-              "-z",
-              "--",
-              `${target.relativePath}/`,
-            ]);
-            return tracked?.exitCode === 0 && tracked.stdout === "";
-          }));
-        if (wholeDirectoryIgnored) {
+          !/^:|[*?[\\]/.test(target.relativePath) &&
+          (yield* checkIgnore([target.relativePath]))?.exitCode === 0
+        ) {
           return {
             entries: entries.map((entry) => ({ ...entry, ignored: true })),
             truncated: false,
           };
         }
+        const ignored = new Set<string>();
         for (let offset = 0; offset < entries.length; offset += IGNORE_CHECK_CHUNK_SIZE) {
-          const chunk = entries.slice(offset, offset + IGNORE_CHECK_CHUNK_SIZE);
-          const result = yield* runGit(
-            ["check-ignore", "-z", "--stdin"],
-            `${chunk.map((entry) => entry.path).join("\0")}\0`,
+          const result = yield* checkIgnore(
+            entries.slice(offset, offset + IGNORE_CHECK_CHUNK_SIZE).map((entry) => entry.path),
           );
           if (!result || (result.exitCode !== 0 && result.exitCode !== 1)) break;
           for (const ignoredPath of result.stdout.split("\0")) ignored.add(ignoredPath);

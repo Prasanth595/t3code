@@ -141,9 +141,19 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const platform = yield* HostProcess.Platform;
-        yield* writeTextFile(cwd, ".gitignore", "node_modules/\ndist/\n\\[id\\]/\n*.map\n");
+        yield* writeTextFile(
+          cwd,
+          ".gitignore",
+          "node_modules/\ndist/\n\\[id\\]/\n*.map\nfoo\n!foo/\n",
+        );
         yield* Effect.forEach(
-          ["node_modules", "dist", "[id]", "src"].flatMap((directory) =>
+          [
+            "node_modules",
+            "dist",
+            "[id]",
+            "src",
+            ...(platform !== "win32" ? [":foo"] : []),
+          ].flatMap((directory) =>
             Array.from({ length: 1001 }, (_, index) => `${directory}/pkg-${index}.js`),
           ),
           (relativePath) => writeTextFile(cwd, relativePath),
@@ -171,9 +181,14 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           // git reads `[id]/page.tsx` as a pathspec, which matches the tracked `i/page.tsx`.
           { directoryPath: "[id]", ignored: true, except: ["[id]/page.tsx"] },
           { directoryPath: "src", ignored: false, except: ["src/bundle.map"] },
-          // git refuses to classify paths beyond a symlink, so nothing there is labelled.
           ...(platform !== "win32"
-            ? [{ directoryPath: "node_modules/link", ignored: false, except: [] }]
+            ? [
+                // git refuses to classify paths beyond a symlink, so nothing there is labelled.
+                { directoryPath: "node_modules/link", ignored: false, except: [] },
+                // A leading `:` is pathspec magic, so git reads `:foo/pkg-0.js` as `foo/pkg-0.js`,
+                // which `!foo/` keeps unignored.
+                { directoryPath: ":foo", ignored: false, except: [] },
+              ]
             : []),
         ]) {
           const { entries } = yield* workspaceEntries.list({ cwd, directoryPath });
