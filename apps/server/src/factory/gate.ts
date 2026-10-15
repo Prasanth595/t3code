@@ -634,17 +634,19 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
    * and inside the directory. A checkout that is already gone is fine.
    */
   const remove = (dir: string): Effect.Effect<void, WorkspaceCleanupError> =>
-    Effect.try({
-      try: () => {
+    Effect.tryPromise({
+      // Asynchronous: a checkout with installed dependencies takes seconds to delete, and this
+      // runs inside the server.
+      try: async () => {
         let stat: NodeFS.Stats;
         try {
-          stat = NodeFS.lstatSync(dir);
+          stat = await NodeFS.promises.lstat(dir);
         } catch (error) {
           if (errnoCode(error) === "ENOENT") return;
           throw error;
         }
-        if (stat.isDirectory()) NodeFS.rmSync(dir, { recursive: true, force: true });
-        else NodeFS.unlinkSync(dir);
+        if (stat.isDirectory()) await NodeFS.promises.rm(dir, { recursive: true, force: true });
+        else await NodeFS.promises.unlink(dir);
       },
       catch: (cause) => new WorkspaceCleanupError({ what: `${dir}: ${causeText(cause)}` }),
     });
