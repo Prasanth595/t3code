@@ -81,6 +81,20 @@ describe("peersWithChangedLevel (MM-1306)", () => {
     expect(peersWithChangedLevel(before, desiredState({}), NOW)).toEqual([PEER]);
   });
 
+  it("ends the sessions of an arrow that expired before the next desired state", () => {
+    // The portal reverts the arrow at expiry. Both states then read `none` at the current time,
+    // but the sessions still hold the level they got before the expiry.
+    const expiring = desiredState({
+      arrowsIn: [
+        arrow(PEER, SELF, "standard", {
+          expiresAt: "2026-10-13T11:00:00.000Z",
+          revertLevel: "none",
+        }),
+      ],
+    });
+    expect(peersWithChangedLevel(expiring, desiredState({}), NOW)).toEqual([PEER]);
+  });
+
   it("ignores agent tools and arrows out of this machine", () => {
     const before = desiredState({ arrowsIn: [arrow(PEER, SELF, "read")] });
     const next = desiredState({
