@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 
 import { FactoryRuntime } from "./index.ts";
 import * as Paths from "./t3/paths.ts";
@@ -23,7 +24,12 @@ repos:
 `;
 
 /** Builds FactoryRuntime over a temp base dir whose factory dir holds `config` (or no file) and returns the log lines. */
-const logsFor = (config: string | undefined) =>
+const logsFor = (
+  config: string | undefined,
+  setup: (
+    factoryDir: string,
+  ) => Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> = () => Effect.void,
+) =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -33,6 +39,7 @@ const logsFor = (config: string | undefined) =>
       yield* fs.makeDirectory(factoryDir);
       const machineConfigPath = join(factoryDir, "config.yml");
       if (config !== undefined) yield* fs.writeFileString(machineConfigPath, config);
+      yield* setup(factoryDir);
 
       const logs: Array<string> = [];
       const capture = Logger.make(({ message }) => {
@@ -54,7 +61,10 @@ const logsFor = (config: string | undefined) =>
         ),
       ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
 
-      return { logs, machineConfigPath };
+      const gates = yield* fs
+        .readDirectory(join(factoryDir, "gates"))
+        .pipe(Effect.orElseSucceed(() => []));
+      return { logs, machineConfigPath, gates };
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
@@ -79,4 +89,22 @@ it.effect("logs each config error and does not start for an invalid machine file
     );
     assert.deepStrictEqual(logs, [`${machineConfigPath}: model: is missing`]);
   }),
+);
+
+it.effect("clears the gate locks a dead server left and nothing else under gates", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const { join } = yield* Path.Path;
+    const { logs, gates } = yield* logsFor(VALID, (factoryDir) =>
+      Effect.gen(function* () {
+        const gatesDir = join(factoryDir, "gates");
+        yield* fs.makeDirectory(gatesDir);
+        yield* fs.writeFileString(join(gatesDir, "a.lock"), "");
+        yield* fs.writeFileString(join(gatesDir, "b.lock"), "");
+        yield* fs.writeFileString(join(gatesDir, "notes.txt"), "keep");
+      }),
+    );
+    assert.deepStrictEqual(logs, ["cleared 2 gate lock(s)", "factory started"]);
+    assert.deepStrictEqual(gates, ["notes.txt"]);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

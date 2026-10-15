@@ -4,10 +4,14 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import { formatConfigError, loadMachineConfig } from "./config.ts";
+import { clearGateLocks } from "./gate.ts";
 import * as Paths from "./t3/paths.ts";
 
 const start = Effect.gen(function* () {
-  const { machineConfigPath } = yield* Paths.FactoryPaths;
+  const { factoryDir, machineConfigPath } = yield* Paths.FactoryPaths;
+  // Gates run inside this server, so a lock file left from an earlier run belongs to a dead gate.
+  const cleared = yield* clearGateLocks(factoryDir);
+  if (cleared > 0) yield* Effect.logInfo(`cleared ${cleared} gate lock(s)`);
   const loaded = yield* Effect.result(loadMachineConfig(machineConfigPath));
   if (Result.isFailure(loaded)) {
     for (const error of loaded.failure.errors) {
