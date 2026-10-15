@@ -8192,6 +8192,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
         },
       });
+      // Clients hide the preparation item, so a notice gets an item of its own.
+      if (command.notice !== undefined)
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: state.run.id,
+          nodeId: state.rootNode.id,
+          providerInstanceId: state.run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: idAllocator.derive.turnItemFromProviderItem({
+              driver: state.providerThread.driver,
+              nativeItemId: `workspace-preparation-notice:${state.run.id}`,
+            }),
+            threadId: command.threadId,
+            runId: state.run.id,
+            nodeId: state.rootNode.id,
+            providerThreadId: state.providerThread.id,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: yield* nextTurnItemOrdinal(projection),
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "system_notice",
+            message: command.notice,
+          },
+        });
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
