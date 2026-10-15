@@ -333,6 +333,8 @@ it("moves a child thread to the run that shows its subagent now", () => {
   };
   const resumedChild = ThreadId.make("thread:handoff:resumed");
   const siblingChild = ThreadId.make("thread:handoff:sibling");
+  const providerThreadOf = (childThreadId: ThreadId) =>
+    ProviderThreadId.make(`provider-thread:${childThreadId}`);
   const subagent = (childThreadId: ThreadId, runId: RunId): OrchestrationV2Subagent => ({
     id: NodeId.make(`node:${childThreadId}`),
     threadId,
@@ -342,7 +344,7 @@ it("moves a child thread to the run that shows its subagent now", () => {
     createdBy: "agent",
     driver,
     providerInstanceId: ProviderInstanceId.make("codex"),
-    providerThreadId: null,
+    providerThreadId: providerThreadOf(childThreadId),
     childThreadId,
     nativeTaskRef: null,
     prompt: "Work",
@@ -364,6 +366,17 @@ it("moves a child thread to the run that shows its subagent now", () => {
         runId: null,
       },
     }) as ProviderAdapter.ProviderAdapterV2Event;
+  const childTurn = (childThreadId: ThreadId, ordinal: number) =>
+    ({
+      type: "provider_turn.updated",
+      driver,
+      providerTurn: {
+        id: ProviderTurnId.make(`provider-turn:${childThreadId}:${ordinal}`),
+        providerThreadId: providerThreadOf(childThreadId),
+        runAttemptId: null,
+        status: "running",
+      },
+    }) as ProviderAdapter.ProviderAdapterV2Event;
   // Run 1 launched both subagents, and its root turn ended while they ran.
   const ended = RunExecutionService.routeProviderEvent(
     {
@@ -381,8 +394,15 @@ it("moves a child thread to the run that shows its subagent now", () => {
       identity,
       providerTurnId: rootProviderTurnId,
       relatedThreadIds: [resumedChild, siblingChild],
+      relatedProviderThreadIds: [providerThreadOf(resumedChild), providerThreadOf(siblingChild)],
     }),
   )[1];
+  const [firstTurnAccepted, withChildTurn] = RunExecutionService.routeProviderEvent(
+    childTurn(resumedChild, 1),
+    identity,
+    ended,
+  );
+  assert.isTrue(firstTurnAccepted);
   // A later run resumed one of them: the subagent now belongs to that run.
   const [movedAccepted, afterMove] = RunExecutionService.routeProviderEvent(
     {
@@ -391,15 +411,25 @@ it("moves a child thread to the run that shows its subagent now", () => {
       subagent: subagent(resumedChild, RunId.make("run:handoff:2")),
     },
     identity,
-    ended,
+    withChildTurn,
   );
   assert.isFalse(movedAccepted);
-  // Its child thread is that run's alone; run 1 keeps the one it still shows.
+  // Its child thread and provider thread are that run's alone, with the
+  // child's turns; run 1 keeps the ones it still shows.
   assert.isFalse(
     RunExecutionService.routeProviderEvent(childMessage(resumedChild), identity, afterMove)[0],
   );
   assert.isTrue(
     RunExecutionService.routeProviderEvent(childMessage(siblingChild), identity, afterMove)[0],
+  );
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(childTurn(resumedChild, 1), identity, afterMove)[0],
+  );
+  assert.isFalse(
+    RunExecutionService.routeProviderEvent(childTurn(resumedChild, 2), identity, afterMove)[0],
+  );
+  assert.isTrue(
+    RunExecutionService.routeProviderEvent(childTurn(siblingChild, 1), identity, afterMove)[0],
   );
   assert.isTrue(
     RunExecutionService.routeProviderEvent(
@@ -4432,6 +4462,25 @@ function rootTerminalEvent(
     : { ...common, status, failure: null };
 }
 
+/** The ids of a later run of the same thread as `ids`. */
+function nextRunIds(ids: BackgroundScenarioIds): BackgroundScenarioIds {
+  return {
+    ...ids,
+    runId: RunId.make(`${ids.runId}:next`),
+    attemptId: RunAttemptId.make(`${ids.attemptId}:next`),
+    rootProviderTurnId: ProviderTurnId.make(`${ids.rootProviderTurnId}:next`),
+    rootNodeId: NodeId.make(`${ids.rootNodeId}:next`),
+  };
+}
+
+/**
+ * Runs a root run over `makeEvents`, delivered one event at a time like the
+ * session queue, and returns what it ingested once its subscription closes.
+ * `nextRun` also starts the run of `nextRunIds(ids)`, which sees only its own
+ * events, as a run that subscribes later does; its entries are prefixed
+ * `next:`. With `keepEventStreamOpen`, a run that consumes every event without
+ * closing fails the scenario instead of hanging.
+ */
 function runBackgroundItemScenario(
   key: string,
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
@@ -4441,13 +4490,21 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    readonly nextRun?: (
+      ids: BackgroundScenarioIds,
+    ) => ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
   },
 ) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(key);
+    const next = nextRunIds(ids);
     const providerInstanceId = ProviderInstanceId.make("codex");
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
-    const ingestionDone = yield* Deferred.make<void>();
+    const record = (runId: RunId | undefined, entry: string) =>
+      Ref.update(observed, (current) => [
+        ...current,
+        runId === next.runId ? `next:${entry}` : entry,
+      ]);
     const layerTest = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -4457,12 +4514,14 @@ function runBackgroundItemScenario(
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
-                if (
-                  input.events.some(
-                    (event) => event.type === "run.updated" && event.runId === ids.runId,
-                  )
-                ) {
-                  yield* Ref.update(observed, (current) => [...current, "root-finalized"]);
+                for (const runId of [ids.runId, next.runId]) {
+                  if (
+                    input.events.some(
+                      (event) => event.type === "run.updated" && event.runId === runId,
+                    )
+                  ) {
+                    yield* record(runId, "root-finalized");
+                  }
                 }
                 return [];
               }),
@@ -4474,16 +4533,10 @@ function runBackgroundItemScenario(
               Effect.gen(function* () {
                 const event = input.event;
                 if (event.type === "turn_item.updated") {
-                  yield* Ref.update(observed, (current) => [
-                    ...current,
-                    `turn_item:${event.turnItem.status}`,
-                  ]);
+                  yield* record(input.runId, `turn_item:${event.turnItem.status}`);
                 }
                 if (event.type === "subagent.updated") {
-                  yield* Ref.update(observed, (current) => [
-                    ...current,
-                    `subagent:${event.subagent.status}`,
-                  ]);
+                  yield* record(input.runId, `subagent:${event.subagent.status}`);
                 }
                 return [];
               }),
@@ -4493,76 +4546,103 @@ function runBackgroundItemScenario(
       ),
     );
 
-    yield* Effect.gen(function* () {
-      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-      yield* runExecution.startRootRun({
-        commandId: CommandId.make(`command:${key}`),
-        appThread: { id: ids.threadId } as OrchestrationV2AppThread,
-        providerSessionId: ProviderSessionId.make(`session:${key}`),
-        session: {
-          events: Stream.empty,
-          subscribeEvents: Effect.gen(function* () {
-            yield* options?.onSubscribe ?? Effect.void;
-            const events = Stream.fromIterable(makeEvents(ids));
-            return {
-              events:
-                options?.keepEventStreamOpen === true
-                  ? events.pipe(Stream.concat(Stream.never))
-                  : events,
-              close: Deferred.succeed(ingestionDone, undefined),
-            };
-          }),
-          startTurn: () => Effect.void,
-        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
-        run: {
-          id: ids.runId,
-          threadId: ids.threadId,
-          ordinal: 1,
-          providerInstanceId,
-        } as OrchestrationV2Run,
-        rootNode: { id: ids.rootNodeId } as OrchestrationV2ExecutionNode,
-        checkpointScope: {
-          id: CheckpointScopeId.make(`checkpoint-scope:${key}`),
-        } as OrchestrationV2CheckpointScope,
-        providerThread: {
-          id: ids.providerThreadId,
-          driver,
-        } as OrchestrationV2ProviderThread,
-        attempt: {
-          id: ids.attemptId,
-          providerTurnId: ids.rootProviderTurnId,
-        } as OrchestrationV2RunAttempt,
-        attemptId: ids.attemptId,
-        ...(options?.loadInheritedBackgroundTurnItems === undefined
-          ? {}
-          : {
-              loadInheritedBackgroundTurnItems: options.loadInheritedBackgroundTurnItems,
+    const startRun = (
+      runIds: BackgroundScenarioIds,
+      events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+    ) =>
+      Effect.gen(function* () {
+        const ingestionDone = yield* Deferred.make<void>();
+        const drained = yield* Deferred.make<void>();
+        const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+        yield* runExecution.startRootRun({
+          commandId: CommandId.make(`command:${runIds.runId}`),
+          appThread: { id: runIds.threadId } as OrchestrationV2AppThread,
+          providerSessionId: ProviderSessionId.make(`session:${key}`),
+          session: {
+            events: Stream.empty,
+            subscribeEvents: Effect.gen(function* () {
+              yield* options?.onSubscribe ?? Effect.void;
+              const delivered = Stream.fromIterable(events).pipe(Stream.rechunk(1));
+              return {
+                events:
+                  options?.keepEventStreamOpen === true
+                    ? delivered.pipe(
+                        Stream.concat(Stream.fromEffectDrain(Deferred.succeed(drained, undefined))),
+                        Stream.concat(Stream.never),
+                      )
+                    : delivered,
+                close: Deferred.succeed(ingestionDone, undefined),
+              };
             }),
-        providerTurnOrdinal: 1,
-        message: {
-          messageId: MessageId.make(`message:${key}:user`),
-          text: "Start a background item and finish.",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
-        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-          approvalPolicy: "never",
-          sandboxPolicy: {
-            type: "readOnly",
-            access: { type: "fullAccess" },
-            networkAccess: false,
+            startTurn: () => Effect.void,
+          } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
+          run: {
+            id: runIds.runId,
+            threadId: runIds.threadId,
+            ordinal: runIds.runId === next.runId ? 2 : 1,
+            providerInstanceId,
+          } as OrchestrationV2Run,
+          rootNode: { id: runIds.rootNodeId } as OrchestrationV2ExecutionNode,
+          checkpointScope: {
+            id: CheckpointScopeId.make(`checkpoint-scope:${runIds.runId}`),
+          } as OrchestrationV2CheckpointScope,
+          providerThread: {
+            id: runIds.providerThreadId,
+            driver,
+          } as OrchestrationV2ProviderThread,
+          attempt: {
+            id: runIds.attemptId,
+            providerTurnId: runIds.rootProviderTurnId,
+          } as OrchestrationV2RunAttempt,
+          attemptId: runIds.attemptId,
+          ...(options?.loadInheritedBackgroundTurnItems === undefined
+            ? {}
+            : {
+                loadInheritedBackgroundTurnItems: options.loadInheritedBackgroundTurnItems,
+              }),
+          providerTurnOrdinal: 1,
+          message: {
+            messageId: MessageId.make(`message:${runIds.runId}:user`),
+            text: "Start a background item and finish.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
           },
-        },
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            approvalPolicy: "never",
+            sandboxPolicy: {
+              type: "readOnly",
+              access: { type: "fullAccess" },
+              networkAccess: false,
+            },
+          },
+        });
+        return Effect.raceFirst(
+          Deferred.await(ingestionDone).pipe(Effect.as(true)),
+          Deferred.await(drained).pipe(Effect.as(false)),
+        ).pipe(Effect.timeoutOption("2 seconds"));
       });
+
+    const closings = yield* Effect.gen(function* () {
+      const first = yield* startRun(ids, makeEvents(ids));
+      return options?.nextRun === undefined
+        ? [first]
+        : [first, yield* startRun(next, options.nextRun(ids))];
     }).pipe(Effect.provide(layerTest));
 
-    const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
-    assert.isTrue(Option.isSome(closed), "event ingestion fiber did not finish");
+    for (const closing of closings) {
+      const closed = yield* closing;
+      assert.isTrue(
+        Option.getOrElse(closed, () => false),
+        Option.isSome(closed)
+          ? "event ingestion consumed every event without finishing"
+          : "event ingestion fiber did not finish",
+      );
+    }
     return yield* Ref.get(observed);
   });
 }
@@ -4587,5 +4667,121 @@ it.effect("releases ingestion after idle subagent rows and items settle", () =>
       "turn_item:idle",
       "root-finalized",
     ]);
+  }),
+);
+
+function childSubagentEvent(
+  ids: BackgroundScenarioIds,
+  status: "running" | "completed",
+  runId = ids.runId,
+): ProviderAdapter.ProviderAdapterV2Event {
+  const subagent = makeRunOwnedSubagentFixture({
+    ids,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    childThreadId: ids.childThreadId,
+    driver,
+    status: "running",
+  });
+  return { type: "subagent.updated", driver, subagent: { ...subagent, runId, status } };
+}
+
+/**
+ * A later run resumes the child of `ids`: its row moves to that run, the
+ * child's tool that stayed open across its idle completes, and the resumed
+ * child and the later run end.
+ */
+function resumedChildEvents(
+  ids: BackgroundScenarioIds,
+): ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> {
+  const next = nextRunIds(ids);
+  return [
+    childSubagentEvent(ids, "running", next.runId),
+    childBackgroundTurnItemEvent(ids, "completed", 2),
+    childSubagentEvent(ids, "completed", next.runId),
+    rootTerminalEvent(next, "completed"),
+  ];
+}
+
+it.effect("closes the run a resumed child leaves while the child's tool is still open", () =>
+  Effect.gen(function* () {
+    const observed = yield* runBackgroundItemScenario(
+      "handoff-open-tool",
+      (ids) => [
+        childThreadCreatedEvent(ids),
+        childSubagentEvent(ids, "running"),
+        childBackgroundTurnItemEvent(ids, "running", 1),
+        childSubagentEvent(ids, "completed"),
+        rootTerminalEvent(ids, "completed"),
+        ...resumedChildEvents(ids),
+      ],
+      { keepEventStreamOpen: true, nextRun: resumedChildEvents },
+    );
+
+    assert.deepEqual(
+      observed.filter((entry) => !entry.startsWith("next:")),
+      ["subagent:running", "turn_item:running", "subagent:completed", "root-finalized"],
+    );
+    // The run that resumed the child ingests the tool's completion, once.
+    assert.deepEqual(
+      observed.filter((entry) => entry.startsWith("next:")),
+      [
+        "next:subagent:running",
+        "next:turn_item:completed",
+        "next:subagent:completed",
+        "next:root-finalized",
+      ],
+    );
+  }),
+);
+
+it.effect("keeps the run a resumed child leaves until its other child's tool ends", () =>
+  Effect.gen(function* () {
+    const sibling = (ids: BackgroundScenarioIds): BackgroundScenarioIds => ({
+      ...ids,
+      childThreadId: ThreadId.make(`${ids.childThreadId}:sibling`),
+      childItemId: TurnItemId.make(`${ids.childItemId}:sibling`),
+      subagentNodeId: NodeId.make(`${ids.subagentNodeId}:sibling`),
+    });
+    const observed = yield* runBackgroundItemScenario(
+      "handoff-sibling-tool",
+      (ids) => [
+        childThreadCreatedEvent(ids),
+        childThreadCreatedEvent(sibling(ids)),
+        childSubagentEvent(ids, "running"),
+        childSubagentEvent(sibling(ids), "running"),
+        childBackgroundTurnItemEvent(ids, "running", 1),
+        childBackgroundTurnItemEvent(sibling(ids), "running", 1),
+        childSubagentEvent(ids, "completed"),
+        childSubagentEvent(sibling(ids), "completed"),
+        rootTerminalEvent(ids, "completed"),
+        ...resumedChildEvents(ids),
+        childBackgroundTurnItemEvent(sibling(ids), "completed", 2),
+      ],
+      { keepEventStreamOpen: true, nextRun: resumedChildEvents },
+    );
+
+    // The sibling's tool, which stays with this run, is the last thing it ingests.
+    assert.deepEqual(
+      observed.filter((entry) => !entry.startsWith("next:")),
+      [
+        "subagent:running",
+        "subagent:running",
+        "turn_item:running",
+        "turn_item:running",
+        "subagent:completed",
+        "subagent:completed",
+        "root-finalized",
+        "turn_item:completed",
+      ],
+    );
+    assert.deepEqual(
+      observed.filter((entry) => entry.startsWith("next:")),
+      [
+        "next:subagent:running",
+        "next:turn_item:completed",
+        "next:subagent:completed",
+        "next:root-finalized",
+      ],
+    );
   }),
 );
