@@ -1,5 +1,6 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { PullRequestDiffSide } from "@t3tools/contracts";
+import { isFileDiffCollapsed, type DiffFoldOverride } from "~/lib/diffCollapse";
 
 /**
  * Whether a conversation's line is really in this file's hunks.
@@ -19,27 +20,6 @@ export function isLineInFileDiff(
       ? line >= hunk.deletionStart && line < hunk.deletionStart + hunk.deletionCount
       : line >= hunk.additionStart && line < hunk.additionStart + hunk.additionCount,
   );
-}
-
-/** What the toolbar last asked of every file at once, null being the reader asking nothing yet. */
-export type DiffFoldOverride = "expanded" | "folded" | null;
-
-/**
- * Whether a file is drawn folded.
- *
- * A diff arrives a slice at a time, so the reader's own choices are kept as the difference from
- * what the toolbar last said rather than as the set of folded files: a file that has not loaded
- * yet cannot be in a set, and would otherwise land expanded moments after the reader folded
- * everything. The caller supplies the saved default until the toolbar overrides it; individual
- * files can still be toggled independently.
- */
-export function isFileDiffCollapsed(
-  fileKey: string,
-  foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
-): boolean {
-  const foldedByDefault = foldOverride === "folded";
-  return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
 }
 
 /**

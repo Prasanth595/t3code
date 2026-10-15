@@ -31,7 +31,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
-import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
+import {
+  areAllDiffFilesCollapsed,
+  isFileDiffCollapsed,
+  type DiffFoldOverride,
+} from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment, canResolvePullRequestThread } from "./pullRequestEditing.logic";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
@@ -87,12 +91,7 @@ import {
   ReviewThreadCard,
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
-import {
-  isFileDiffCollapsed,
-  isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
-  type DiffFoldOverride,
-} from "./pullRequestDiff.logic";
+import { isLineInFileDiff, toggleFileDiffFoldForViewed } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import {
