@@ -165,6 +165,14 @@ interface ServiceState {
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
+const missingAndroidEmulatorCommand = (result: {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}) =>
+  result.code === 127 &&
+  /not found|enoent|no such file or directory/i.test(`${result.stderr}\n${result.stdout}`);
+
 export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
   hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
   testHost: DeviceService["Service"]["testHost"] = (host) =>
@@ -397,35 +405,45 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       physical: device.physical,
     });
     const devices = [...list.simulators, ...list.emulators].map(toSummary);
+    const details = [...(list.errors?.map((error) => error.message) ?? [])];
     const host = yield* resolveHost(ready.hostId);
     if ((yield* host.platformAvailability("android")).available) {
       const avds = yield* ready.run("emulator", ["-list-avds"]);
       if (avds.code !== 0) {
-        return yield* new DeviceOperationError({
-          operation: "list",
-          reason: "command_failed",
-          exitCode: avds.code,
-          cause: avds,
-        });
-      }
-      for (const name of avds.stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)) {
-        if (!devices.some((device) => device.platform === "android" && device.name === name)) {
-          devices.push({
-            hostId: ready.hostId,
-            id: name,
-            name,
-            platform: "android",
-            version: "Android",
-            booted: false,
-            physical: false,
+        // Stopped AVD names are optional. A missing emulator must not discard
+        // simulators or physical devices the hub already returned.
+        if (!missingAndroidEmulatorCommand(avds)) {
+          return yield* new DeviceOperationError({
+            operation: "list",
+            reason: "command_failed",
+            exitCode: avds.code,
+            cause: avds,
           });
+        }
+        const reported = avds.stderr.trim() || avds.stdout.trim();
+        details.push(
+          `Android Emulator is not installed, so virtual devices cannot be listed. ${reported}`,
+        );
+      } else {
+        for (const name of avds.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)) {
+          if (!devices.some((device) => device.platform === "android" && device.name === name)) {
+            devices.push({
+              hostId: ready.hostId,
+              id: name,
+              name,
+              platform: "android",
+              version: "Android",
+              booted: false,
+              physical: false,
+            });
+          }
         }
       }
     }
-    return { devices, detail: list.errors?.map((error) => error.message).join("\n") || undefined };
+    return { devices, detail: details.join("\n") || undefined };
   });
 
   const refresh = Effect.fn("DeviceService.refresh")(function* (ready: DeviceReadiness) {

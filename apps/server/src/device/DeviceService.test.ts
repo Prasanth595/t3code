@@ -5,6 +5,7 @@ import {
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
+  type DeviceHostId,
   type DeviceServiceState,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -772,4 +773,138 @@ it.effect("failed manual installation leaves lifecycle state unchanged and can b
     expect(starts).toEqual([]);
     expect(agentStarts).toEqual([]);
   }).pipe(Effect.scoped),
+);
+
+const sshHostWithAdb = (emulator: {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}) =>
+  Effect.gen(function* () {
+    // Android stays available because adb is installed. The emulator binary is a
+    // separate command, matching an SSH host that can see physical devices.
+    const hostId = "olympus" as DeviceHostId;
+    const commands: string[] = [];
+    const ready: DeviceHost.DeviceHostReady = {
+      nodePath: process.execPath,
+      hub: { origin: "http://olympus.test" },
+      helpers: { serveSimAxSettings: null, serveSimCli: null },
+      run: (command, args) =>
+        Effect.sync(() => {
+          commands.push([command, ...args].join(" "));
+          return emulator;
+        }),
+    };
+    const host: DeviceHost.DeviceHost["Service"] = {
+      id: hostId,
+      summary: Effect.succeed({
+        id: hostId,
+        kind: "ssh",
+        label: "Olympus Mac",
+        platforms: [
+          { platform: "ios", available: true },
+          { platform: "android", available: true },
+        ],
+        hubInstalled: true,
+        agentDeviceInstalled: false,
+      }),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+      ensureReady: () => Effect.succeed(ready),
+      ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+      current: Effect.succeed(null),
+      stopAgent: Effect.void,
+      stop: Effect.void,
+    };
+    const http = HttpClient.make((request) =>
+      Effect.sync(() => {
+        const path = new URL(request.url).pathname;
+        if (path !== "/api/devices") throw new Error(`Unexpected hub path: ${path}`);
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            simulators: [
+              {
+                id: "11111111-1111-1111-1111-111111111111",
+                name: "iPhone 16",
+                platform: "ios",
+                version: "26",
+                booted: true,
+                physical: false,
+              },
+            ],
+            emulators: [
+              {
+                id: "R3CW10ABC",
+                name: "Pixel 8",
+                platform: "android",
+                version: "Android 15",
+                booted: false,
+                physical: true,
+              },
+            ],
+          }),
+        );
+      }),
+    );
+    const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
+      Effect.provide(NodeCrypto.layer),
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    return { service, commands, hostId };
+  });
+
+it.effect(
+  "keeps iOS simulators and physical Android devices when the Android emulator is not installed",
+  () =>
+    Effect.gen(function* () {
+      const { service, commands, hostId } = yield* sshHostWithAdb({
+        code: 127,
+        stdout: "",
+        stderr: "sh: emulator: not found",
+      });
+      const state = yield* service.list;
+      expect(commands).toEqual(["emulator -list-avds"]);
+      expect(state.devices).toEqual([
+        {
+          hostId,
+          id: "11111111-1111-1111-1111-111111111111",
+          platform: "ios",
+          name: "iPhone 16",
+          version: "26",
+          booted: true,
+          physical: false,
+        },
+        {
+          hostId,
+          id: "R3CW10ABC",
+          platform: "android",
+          name: "Pixel 8",
+          version: "Android 15",
+          booted: false,
+          physical: true,
+        },
+      ]);
+      expect(state.hostStatuses[hostId]).toEqual({
+        status: "ready",
+        detail:
+          "Android Emulator is not installed, so virtual devices cannot be listed. sh: emulator: not found",
+      });
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+);
+
+it.effect("fails discovery when listing Android virtual devices fails for another reason", () =>
+  Effect.gen(function* () {
+    const { service, commands, hostId } = yield* sshHostWithAdb({
+      code: 1,
+      stdout: "",
+      stderr: "PANIC: Broken AVD config.",
+    });
+    const state = yield* service.list;
+    expect(commands).toEqual(["emulator -list-avds"]);
+    expect(state.devices).toEqual([]);
+    expect(state.hostStatuses[hostId]).toEqual({
+      status: "failed",
+      detail: "Device list failed: The device command failed (exit code 1).",
+    });
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
 );
