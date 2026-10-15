@@ -190,36 +190,45 @@ it.layer(layerTest)("worktree path template", (it) => {
     }),
   );
 
-  it.effect(
-    "uses the default location when the template nests the worktree in a normal checkout",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const cwd = yield* fs.realPath(
-          yield* fs.makeTempDirectoryScoped({ prefix: "template-clone-" }),
-        );
-        yield* git(cwd, ["init", "--initial-branch=main"]);
-        yield* git(cwd, [
-          "-c",
-          "user.email=t@t",
-          "-c",
-          "user.name=T",
-          "commit",
-          "--allow-empty",
-          "-m",
-          "init",
-        ]);
+  it.effect.each([
+    { name: "a normal clone", fromLinkedWorktree: false },
+    // `{repoDir}` is then the main checkout, not the linked worktree.
+    { name: "a linked worktree of a normal clone", fromLinkedWorktree: true },
+  ])("uses the default location when the template nests the worktree in $name", (testCase) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const parent = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "template-clone-" }),
+      );
+      const clone = path.join(parent, "clone");
+      yield* fs.makeDirectory(clone);
+      yield* git(clone, ["init", "--initial-branch=main"]);
+      yield* git(clone, [
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=T",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+      ]);
+      const linked = path.join(parent, "linked");
+      if (testCase.fromLinkedWorktree)
+        yield* git(clone, ["worktree", "add", "-b", "linked", linked]);
+      const cwd = testCase.fromLinkedWorktree ? linked : clone;
 
-        const created = yield* driver.createWorktree(
-          { cwd, path: null, refName: "main", newRefName: "feature" },
-          { worktreePathTemplate: "{repoDir}/{branchLeaf}" },
-        );
+      const created = yield* driver.createWorktree(
+        { cwd, path: null, refName: "main", newRefName: "feature" },
+        { worktreePathTemplate: "{repoDir}/{branchLeaf}" },
+      );
 
-        // The default location: <worktrees>/<repo>/<branch>, outside the checkout.
-        assert.isFalse(created.worktree.path.startsWith(`${cwd}/`));
-        assert.isTrue(created.worktree.path.endsWith(`/${path.basename(cwd)}/feature`));
-      }),
+      // The default location: <worktrees>/<repo>/<branch>, outside every checkout.
+      for (const checkout of [clone, linked])
+        assert.isFalse(created.worktree.path.startsWith(`${checkout}/`));
+      assert.isTrue(created.worktree.path.endsWith(`/${path.basename(cwd)}/feature`));
+    }),
   );
 });

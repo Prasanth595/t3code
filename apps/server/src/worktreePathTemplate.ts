@@ -36,6 +36,8 @@ export const branchConflicts = (candidate: string, branches: ReadonlyArray<strin
 // after a failure only gives a later launch with that name a suffix.
 const claimedBranches = new Map<string, Set<string>>();
 const claimedPaths = new Set<string>();
+// Git common dirs whose template fallback to the default location is logged.
+const defaultLocationLogged = new Set<string>();
 
 const REFS_HEADS = "refs/heads/";
 
@@ -67,6 +69,11 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
   const invalid = validateWorktreePathTemplate(input.template);
   if (invalid !== null) return yield* templateError(input.cwd, invalid);
   const repoDir = input.path.dirname(input.gitCommonDir);
+  // A normal clone keeps its Git dir in `<checkout>/.git`. From a linked
+  // worktree of it, that main checkout is not `checkoutRoot`.
+  const checkouts = [input.checkoutRoot, input.gitCommonDir];
+  if (input.path.basename(input.gitCommonDir) === ".git") checkouts.push(repoDir);
+  let usedDefault = false;
   const resolve = (branch: string): string | GitCommandError => {
     const expanded = expandHomePath(
       expandWorktreePathTemplate(input.template, {
@@ -80,16 +87,25 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
     if (!input.path.isAbsolute(expanded))
       return templateError(input.cwd, `"${expanded}" is not an absolute path.`);
     const resolved = input.path.resolve(expanded);
-    const insideCheckout = [input.checkoutRoot, input.gitCommonDir].some((parent) => {
+    const insideCheckout = checkouts.some((parent) => {
       const relative = input.path.relative(parent, resolved);
       return !relative.startsWith("..") && !input.path.isAbsolute(relative);
     });
-    return insideCheckout ? input.defaultPath(branch) : resolved;
+    if (!insideCheckout) return resolved;
+    usedDefault = true;
+    return input.defaultPath(branch);
   };
+  const first = resolve(input.branch);
+  if (typeof first !== "string") return yield* first;
+  if (usedDefault && !defaultLocationLogged.has(input.gitCommonDir)) {
+    defaultLocationLogged.add(input.gitCommonDir);
+    yield* Effect.logInfo(
+      `The worktree path template puts worktrees inside the checkout of ${repoDir}, so its worktrees use the default location.`,
+    );
+  }
 
   if (!input.pickFreeName) {
-    const path = resolve(input.branch);
-    if (typeof path !== "string") return yield* path;
+    const path = first;
     // A typed or pull request branch keeps its name, so a taken folder is an error.
     if (yield* input.pathExists(path))
       return yield* templateError(
