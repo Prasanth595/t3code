@@ -427,6 +427,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "terminal-option-as-alt",
+    title: "Option as Alt in terminal",
+    to: "/settings/general",
+    searchTerms: ["alt key keyboard layout shell readline emacs macos international"],
+    macOnly: true,
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",

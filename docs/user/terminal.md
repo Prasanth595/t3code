@@ -16,3 +16,8 @@ To copy all retained output, choose Select all in the terminal's context menu,
 then copy. Cmd+A on macOS and Ctrl+Shift+A elsewhere select the same output.
 Ctrl+A still moves to the beginning of shell input on Windows and Linux.
 Jump to latest in the context menu returns to the current output.
+
+On macOS, Option types the characters your keyboard layout puts on it, such as
+@ with Option+L on a German keyboard. To use Option as Alt for shell shortcuts
+like Option+B, choose which Option keys act as Alt in Settings > General >
+Option as Alt in terminal.

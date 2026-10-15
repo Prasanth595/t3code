@@ -4,7 +4,14 @@ import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
-import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  CheckIcon,
+  ChevronRightIcon,
+  InfoIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,6 +35,7 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
   type DiffLayout,
+  TerminalOptionAsAlt,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
@@ -193,6 +201,7 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: "Manual",
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+const isTerminalOptionAsAlt = Schema.is(TerminalOptionAsAlt);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -209,6 +218,13 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
   split: "Split",
+};
+
+const TERMINAL_OPTION_AS_ALT_LABELS: Record<TerminalOptionAsAlt, string> = {
+  off: "Off",
+  left: "Left Option",
+  right: "Right Option",
+  both: "Both",
 };
 
 const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
@@ -604,6 +620,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Diff whitespace changes"]
         : []),
       ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? ["Diff layout"] : []),
+      ...(settings.terminalOptionAsAlt !== DEFAULT_UNIFIED_SETTINGS.terminalOptionAsAlt
+        ? ["Option as Alt in terminal"]
+        : []),
       ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
         ? ["Proactive panels"]
         : []),
@@ -691,6 +710,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffFilesCollapsed,
       settings.diffIgnoreWhitespace,
       settings.diffLayout,
+      settings.terminalOptionAsAlt,
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
@@ -796,6 +816,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
+      terminalOptionAsAlt: DEFAULT_UNIFIED_SETTINGS.terminalOptionAsAlt,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
@@ -1698,6 +1719,78 @@ function FontSmoothingRow() {
           onCheckedChange={(checked) => updateSettings({ fontSmoothing: Boolean(checked) })}
           aria-label="Font smoothing"
         />
+      }
+    />
+  );
+}
+
+function TerminalOptionAsAltRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  if (!isMacPlatform(navigator.platform)) return null;
+  const { id, title } = searchableSetting("terminal-option-as-alt");
+  return (
+    <SettingsRow
+      id={id}
+      title={
+        <span className="inline-flex items-center gap-1.5">
+          {title}
+          <Tooltip>
+            <TooltipTrigger
+              delay={200}
+              render={
+                <Button size="icon-micro" variant="ghost-muted" aria-label="Option as Alt details">
+                  <InfoIcon className="size-3.5" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top">
+              When off, Option types the character your keyboard layout puts on that key. For
+              example, Option+L types @ on a German keyboard, and Option+B types ∫ on a US keyboard.
+            </TooltipPopup>
+          </Tooltip>
+        </span>
+      }
+      description="Use Option for shell shortcuts like Option+B instead of typing characters."
+      resetAction={
+        settings.terminalOptionAsAlt !== DEFAULT_UNIFIED_SETTINGS.terminalOptionAsAlt ? (
+          <SettingResetButton
+            label="Option as Alt"
+            onClick={() =>
+              updateSettings({
+                terminalOptionAsAlt: DEFAULT_UNIFIED_SETTINGS.terminalOptionAsAlt,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={settings.terminalOptionAsAlt}
+          onValueChange={(value) => {
+            if (isTerminalOptionAsAlt(value)) {
+              updateSettings({ terminalOptionAsAlt: value });
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Option as Alt">
+            <SelectValue>{TERMINAL_OPTION_AS_ALT_LABELS[settings.terminalOptionAsAlt]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="off">
+              {TERMINAL_OPTION_AS_ALT_LABELS.off}
+            </SelectItem>
+            <SelectItem hideIndicator value="left">
+              {TERMINAL_OPTION_AS_ALT_LABELS.left}
+            </SelectItem>
+            <SelectItem hideIndicator value="right">
+              {TERMINAL_OPTION_AS_ALT_LABELS.right}
+            </SelectItem>
+            <SelectItem hideIndicator value="both">
+              {TERMINAL_OPTION_AS_ALT_LABELS.both}
+            </SelectItem>
+          </SelectPopup>
+        </Select>
       }
     />
   );
@@ -2849,6 +2942,8 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+
+        <TerminalOptionAsAltRow />
 
         <SettingsRow
           serverScoped

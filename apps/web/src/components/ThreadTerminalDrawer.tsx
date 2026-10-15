@@ -471,6 +471,8 @@ export function TerminalViewport({
     }),
   );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
+  const terminalOptionAsAlt = useClientSettings((settings) => settings.terminalOptionAsAlt);
+  const readTerminalOptionAsAlt = useEffectEvent(() => terminalOptionAsAlt);
   const terminalSession = useAttachedTerminalSession({
     environmentId,
     terminal: {
@@ -591,6 +593,9 @@ export function TerminalViewport({
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
         beforeKey: (event) => handleBeforeKey(event),
+        get optionAsAlt() {
+          return readTerminalOptionAsAlt();
+        },
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
         // The surface listens from construction, so a right-click can land

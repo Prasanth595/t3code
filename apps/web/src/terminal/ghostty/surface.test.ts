@@ -9,6 +9,7 @@ import {
   clearPrimedTerminalCopyInput,
   ghosttyMouseButton,
   isTerminalAltGraphText,
+  isTerminalOptionComposedText,
   isTerminalCompositionCommitInput,
   isTerminalCompositionKey,
   isTerminalCopyShortcut,
@@ -954,6 +955,60 @@ describe("isTerminalAltGraphText", () => {
         getModifierState: (modifier) => modifier === "AltGraph",
       }),
     ).toBe(false);
+  });
+});
+
+describe("isTerminalOptionComposedText", () => {
+  const option = (key: string, extra: { ctrlKey?: boolean; metaKey?: boolean } = {}) => ({
+    key,
+    altKey: true,
+    ctrlKey: extra.ctrlKey ?? false,
+    metaKey: extra.metaKey ?? false,
+  });
+  const noneHeld = { left: false, right: false };
+  const leftHeld = { left: true, right: false };
+  const rightHeld = { left: false, right: true };
+
+  it("types layout characters made with Option on macOS", () => {
+    // German Option+L is @, and Option+Shift+7 is a backslash.
+    expect(isTerminalOptionComposedText(option("@"), "off", leftHeld, "MacIntel")).toBe(true);
+    expect(isTerminalOptionComposedText(option("\\"), "off", rightHeld, "MacIntel")).toBe(true);
+  });
+
+  it("leaves other platforms, chords, and non-character keys to the encoder", () => {
+    expect(isTerminalOptionComposedText(option("@"), "off", leftHeld, "Win32")).toBe(false);
+    expect(
+      isTerminalOptionComposedText(option("@", { ctrlKey: true }), "off", leftHeld, "MacIntel"),
+    ).toBe(false);
+    expect(
+      isTerminalOptionComposedText(option("@", { metaKey: true }), "off", leftHeld, "MacIntel"),
+    ).toBe(false);
+    expect(isTerminalOptionComposedText(option("ArrowLeft"), "off", leftHeld, "MacIntel")).toBe(
+      false,
+    );
+    // Option+Space is a non-breaking space, which breaks shell commands.
+    expect(isTerminalOptionComposedText(option("\u00a0"), "off", leftHeld, "MacIntel")).toBe(false);
+    expect(
+      isTerminalOptionComposedText({ ...option("b"), altKey: false }, "off", noneHeld, "MacIntel"),
+    ).toBe(false);
+  });
+
+  it("keeps Alt for the Option keys the setting names", () => {
+    expect(isTerminalOptionComposedText(option("∫"), "both", leftHeld, "MacIntel")).toBe(false);
+    expect(isTerminalOptionComposedText(option("∫"), "left", leftHeld, "MacIntel")).toBe(false);
+    expect(isTerminalOptionComposedText(option("@"), "left", rightHeld, "MacIntel")).toBe(true);
+    expect(isTerminalOptionComposedText(option("∫"), "right", rightHeld, "MacIntel")).toBe(false);
+    expect(isTerminalOptionComposedText(option("@"), "right", leftHeld, "MacIntel")).toBe(true);
+  });
+
+  it("lets Option dead keys compose in the textarea", () => {
+    // German Option+N starts `~`.
+    expect(isTerminalOptionComposedText(option("Dead"), "off", leftHeld, "MacIntel")).toBe(true);
+    expect(isTerminalOptionComposedText(option("Dead"), "both", leftHeld, "MacIntel")).toBe(false);
+  });
+
+  it("types the character when the held side was never seen", () => {
+    expect(isTerminalOptionComposedText(option("@"), "left", noneHeld, "MacIntel")).toBe(true);
   });
 });
 
