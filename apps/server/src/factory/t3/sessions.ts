@@ -145,18 +145,24 @@ export const threadOf = (thread: ThreadFields): Thread => ({
 const isCancelledUnstarted = (run: ThreadSnapshot["runs"][number]) =>
   run.status === "cancelled" && (run.startedAt === null || run.startedAt === undefined);
 
-const highestOrdinal = (runs: ReadonlyArray<ThreadSnapshot["runs"][number]>) =>
-  runs.reduce<ThreadSnapshot["runs"][number] | undefined>(
+const highestOrdinal = <Run extends ThreadSnapshot["runs"][number]>(runs: ReadonlyArray<Run>) =>
+  runs.reduce<Run | undefined>(
     (best, run) => (best === undefined || run.ordinal >= best.ordinal ? run : best),
     undefined,
   );
 
+/**
+ * The thread's run: the highest ordinal. A cancelled run that never started is
+ * not the thread's run; when every run is one, the highest ordinal among them
+ * decides.
+ */
+export const latestRun = <Run extends ThreadSnapshot["runs"][number]>(
+  runs: ReadonlyArray<Run>,
+): Run | undefined =>
+  highestOrdinal(runs.filter((run) => !isCancelledUnstarted(run))) ?? highestOrdinal(runs);
+
 export const threadStatusOf = (snapshot: ThreadSnapshot): ThreadStatus => {
-  // A cancelled run that never started is not the thread's run. When every run
-  // is one, the highest ordinal among them decides.
-  const latest =
-    highestOrdinal(snapshot.runs.filter((run) => !isCancelledUnstarted(run))) ??
-    highestOrdinal(snapshot.runs);
+  const latest = latestRun(snapshot.runs);
   // Only the reported run's own message: a run that ended quietly must not be
   // read as ending with an older run's result line. A message with no run
   // reference is no run's.
