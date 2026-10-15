@@ -46,14 +46,40 @@ export interface ClaudeSkillDispatch {
  * prompt should go out unchanged. Mentions that do not match a discovered
  * skill stay literal: a `$HOME` in prose must not become a command.
  */
+// Required context is already pinned and validated by the caller. Skill
+// translation must not alter its bytes or invoke a mention found in a reference.
+function requiredContextRanges(prompt: string): ReadonlyArray<readonly [number, number]> {
+  const ranges: Array<readonly [number, number]> = [];
+  const headers =
+    /^=== BEGIN REQUIRED CONTEXT kind=(?:skill-entry|reference) uri=(\S+) chars=(\d+)[^\n]* ===\n/gm;
+  for (const header of prompt.matchAll(headers)) {
+    const start = header.index;
+    if (ranges.some(([from, to]) => start >= from && start < to)) continue;
+    const bodyStart = start + header[0].length;
+    const length = Number(header[2]);
+    const bodyEnd = bodyStart + length;
+    const footer = `\n=== END REQUIRED CONTEXT uri=${header[1]} ===`;
+    // Malformed context is the caller's refusal to report. Do not turn any
+    // of its contents into executable skill invocations in the meantime.
+    const end =
+      Number.isSafeInteger(length) && prompt.startsWith(footer, bodyEnd)
+        ? bodyEnd + footer.length
+        : prompt.length;
+    ranges.push([start, end]);
+  }
+  return ranges;
+}
+
 export function planClaudeSkillDispatch(
   prompt: string,
   skillNames: ReadonlySet<string>,
 ): ClaudeSkillDispatch | undefined {
+  const protectedRanges = requiredContextRanges(prompt);
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     if (!skillNames.has(name)) return [];
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    if (protectedRanges.some(([from, to]) => start >= from && start < to)) return [];
     return [{ name, start, end: (match.index ?? 0) + match[0].length }];
   });
   const last = mentions.at(-1);

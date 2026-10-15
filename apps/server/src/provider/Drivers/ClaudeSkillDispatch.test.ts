@@ -80,3 +80,28 @@ describe("planClaudeSkillDispatch", () => {
     }
   });
 });
+
+describe("required context preservation", () => {
+  const body = "Use $review before selecting a value.\nKeep $implement literal.  ";
+  const fence = `=== BEGIN REQUIRED CONTEXT kind=reference uri=rules.md chars=${body.length} ===\n${body}\n=== END REQUIRED CONTEXT uri=rules.md ===`;
+
+  it("never dispatches a mention inside a required reference", () => {
+    expect(planClaudeSkillDispatch(fence, SKILLS)).toBeUndefined();
+  });
+
+  it("preserves fenced bytes while dispatching a later task mention", () => {
+    expect(planClaudeSkillDispatch(`${fence}\nCurrent task: $review`, SKILLS)).toEqual({
+      leadingText: `${fence}\nCurrent task:`,
+      commandText: "/review",
+      skillName: "review",
+    });
+  });
+
+  it("preserves a trailing reference and dispatches only the task outside it", () => {
+    expect(planClaudeSkillDispatch(`$implement\n${fence}`, SKILLS)).toEqual({
+      leadingText: undefined,
+      commandText: `/implement\n${fence}`,
+      skillName: "implement",
+    });
+  });
+});
