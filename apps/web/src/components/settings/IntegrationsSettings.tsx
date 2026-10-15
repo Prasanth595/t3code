@@ -3,6 +3,7 @@ import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
+import { DictationSettingsSection } from "./DictationSettings";
 /**
  * Integrations settings - preferences for surfaces T3 Code embeds rather than
  * owns. Browser is the first section: the defaults a preview tab opens at,
@@ -1577,6 +1578,7 @@ export function IntegrationsSettingsPanel() {
         <PullRequestLinksOpenInAppSetting />
       </SettingsSection>
       <DeviceIntegrationSettings />
+      <DictationSettingsSection />
     </SettingsPageContainer>
   );
 }
