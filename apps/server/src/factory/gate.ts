@@ -113,7 +113,13 @@ export class GateCommandSpawnError extends Schema.TaggedError<GateCommandSpawnEr
   }
 }
 
-/** Why `run` failed. A failure means no attempt was used; the caller retries on its next pass. */
+/**
+ * Why `run` failed. A failure means no attempt was used and the caller retries on its next pass,
+ * with one exception: the `gate_command` lines are appended one at a time, so a ledger failure
+ * partway through leaves the first of them. The commands did run, so the ledger counts that
+ * attempt; it counts distinct attempt numbers, so a retry under the same number is not counted
+ * twice, though its lines repeat the ones already there.
+ */
 export type GateError = WorkspaceError | GateCommandSpawnError | LedgerError;
 
 // ---- text -----------------------------------------------------------------------------------
@@ -799,7 +805,8 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
         });
 
         // The lines go in once the commands have ended in a pass or a fail, never on an error path:
-        // an attempt that errors (a command that cannot start, a ledger failure) used none.
+        // an attempt that errors (a command that cannot start, a ledger failure) used none. A
+        // ledger failure in this loop is the exception `GateError` describes.
         const record = (outcome: Extract<GateResult, { readonly _tag: "pass" | "fail" }>) =>
           Effect.gen(function* () {
             for (const result of outcome.commands) {
