@@ -25,7 +25,10 @@ export interface MachineGrant {
  * The level of an arrow at `nowMs`. An arrow past its expiry has its revert level, so a machine
  * that missed the expiry revision of the portal (MM-304) still enforces it.
  */
-export const effectiveLevel = (arrow: ArrowRecord, nowMs: number): MachineLevel =>
+export const effectiveLevel = (
+  arrow: Pick<ArrowRecord, "level" | "expiresAt" | "revertLevel">,
+  nowMs: number,
+): MachineLevel =>
   arrow.expiresAt !== null && Date.parse(arrow.expiresAt) <= nowMs
     ? (arrow.revertLevel ?? "none")
     : arrow.level;
@@ -101,8 +104,29 @@ export const machineRequestNamespace = (client: { readonly sessionId: string }) 
 export const isMachineRequestNamespace = (requestNamespace: string) =>
   requestNamespace.startsWith(MACHINE_REQUEST_NAMESPACE_PREFIX);
 
+type Leveled = Pick<ArrowRecord, "level" | "expiresAt" | "revertLevel">;
+
 /**
- * MM-1306: the peers whose level into this machine differs between two desired states. A peer
+ * MM-1306: the sources whose sessions must end. A session got the level that its arrow had when the
+ * desired state arrived, so the old side reads the raw level and the new side the level now. An
+ * arrow that expired between the two states then counts as a change, and its sessions end.
+ */
+const sourcesWithChangedLevel = <K>(
+  previous: ReadonlyArray<readonly [K, Leveled]>,
+  next: ReadonlyArray<readonly [K, Leveled]>,
+  nowMs: number,
+): ReadonlyArray<K> => {
+  const before = new Map(previous.map(([source, arrow]) => [source, arrow.level] as const));
+  const after = new Map(
+    next.map(([source, arrow]) => [source, effectiveLevel(arrow, nowMs)] as const),
+  );
+  return [...new Set([...before.keys(), ...after.keys()])].filter(
+    (source) => (before.get(source) ?? "none") !== (after.get(source) ?? "none"),
+  );
+};
+
+/**
+ * MM-1306: the peers whose level into this machine changed between two desired states. A peer
  * that left the map counts as a change to `none`.
  */
 export const peersWithChangedLevel = (
@@ -110,16 +134,11 @@ export const peersWithChangedLevel = (
   next: MachineDesiredState | null,
   nowMs: number,
 ): ReadonlyArray<MachineId> => {
-  const levels = (desired: MachineDesiredState | null) =>
-    new Map(
-      (desired?.arrowsIn ?? [])
-        .filter((arrow) => arrow.to === desired?.self.id)
-        .map((arrow) => [arrow.from, effectiveLevel(arrow, nowMs)] as const),
-    );
-  const before = levels(previous);
-  const after = levels(next);
-  const peers = new Set<MachineId>([...before.keys(), ...after.keys()]);
-  return [...peers].filter((peer) => (before.get(peer) ?? "none") !== (after.get(peer) ?? "none"));
+  const arrowsIn = (desired: MachineDesiredState | null) =>
+    (desired?.arrowsIn ?? [])
+      .filter((arrow) => arrow.to === desired?.self.id)
+      .map((arrow) => [arrow.from, arrow] as const);
+  return sourcesWithChangedLevel(arrowsIn(previous), arrowsIn(next), nowMs);
 };
 
 /** MM-306: the peers this machine can use, with the origin of their T3 server. */
