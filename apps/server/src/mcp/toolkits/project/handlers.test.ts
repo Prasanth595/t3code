@@ -475,7 +475,15 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
       runtimeModeCeiling: "auto",
       launched,
       checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
-        workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
+        workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "plain"
+          ? Effect.fail(
+              new ThreadLaunch.ThreadLaunchNotRepositoryError({
+                projectId,
+                projectTitle: "Client target",
+                workspaceRoot: "/projects/client-target",
+              }),
+            )
+          : workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
           ? Effect.fail(
               new ThreadLaunch.ThreadLaunchBaseRefError({
                 projectId,
@@ -504,6 +512,14 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect((refused as { message: string }).message).toContain(
       'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created.',
+    );
+    expect(launched).toHaveLength(0);
+
+    // A folder that is not a repository points the agent at the root instead.
+    const plain = (yield* launchFrom("plain")).at(-1)?.result;
+    expect(plain).toMatchObject({ code: "invalid_request" });
+    expect((plain as { message: string }).message).toContain(
+      'No thread was created. Use workspaceStrategy {type:"root"} instead.',
     );
     expect(launched).toHaveLength(0);
 

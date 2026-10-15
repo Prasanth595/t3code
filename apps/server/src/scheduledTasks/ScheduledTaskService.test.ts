@@ -3,16 +3,18 @@ import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskError, ScheduledTaskUpsertInput } from "@t3tools/contracts";
+import { RunId, ScheduledTaskError, ScheduledTaskUpsertInput, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Logger from "effect/Logger";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Deferred from "effect/Deferred";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -392,6 +394,68 @@ it.effect("records a run whose worktree cannot be made as failed instead of laun
       assert.include(ran.lastRunError, "is not a Git repository");
       const [listed] = (yield* service.list()).tasks;
       assert.equal(listed?.lastRunStatus, "failed");
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("marks a run failed when its workspace preparation fails after launch", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:scheduled-preparation");
+    const runId = RunId.make("run:scheduled-preparation");
+    const messageId = yield* Deferred.make<string>();
+    const reads = yield* Ref.make(0);
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        checkWorktreeBase: () => Effect.void,
+        launch: (input) =>
+          Deferred.succeed(messageId, input.initialMessage?.messageId ?? "").pipe(
+            Effect.as({ threadId, projection: {} as never, resumed: false }),
+          ),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadEventSequence: () => Effect.succeed(0),
+        // Preparing when the scheduler first looks, failed once the run moves on.
+        getThreadRecords: () =>
+          Effect.all([Deferred.await(messageId), Ref.getAndUpdate(reads, (count) => count + 1)]).pipe(
+            Effect.map(
+              ([userMessageId, count]) =>
+                ({
+                  runs: [{ id: runId, userMessageId, status: count === 0 ? "preparing" : "failed" }],
+                }) as never,
+            ),
+          ),
+        streamStoredEventsFrom: () =>
+          Stream.make({
+            event: { type: "run.updated", payload: { id: runId, status: "failed" } },
+          } as never),
+      }),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert(
+        yield* decodeUpsertInput({
+          title: "Nightly check",
+          prompt: "Check the build.",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: "project-failing-setup",
+          workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+      const { task: ran } = yield* service.runNow({ id: task.id });
+      assert.equal(ran.lastRunStatus, "succeeded");
+      const failed = yield* service.subscribeList().pipe(
+        Stream.map((list) => list.tasks[0]),
+        Stream.filter((listed) => listed?.lastRunStatus === "failed"),
+        Stream.runHead,
+      );
+      assert.include(Option.getOrUndefined(failed)?.lastRunError, "Workspace preparation failed");
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

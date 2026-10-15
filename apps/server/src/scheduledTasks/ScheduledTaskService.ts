@@ -674,6 +674,63 @@ export const layer = Layer.effect(
         ),
       );
 
+    // A launch is accepted before its workspace is prepared, so a run counts as
+    // succeeded first. Wait for that run to leave preparation and record a
+    // failed preparation against this run only: last_run_at is the run's
+    // identity, so a later run's status is never overwritten.
+    const recordFailedPreparation = Effect.fn("ScheduledTaskService.recordFailedPreparation")(
+      function* (input: {
+        readonly id: ScheduledTaskId;
+        readonly startedAtIso: string;
+        readonly threadId: ThreadId;
+        readonly messageId: MessageId;
+      }) {
+        const afterSequence = yield* threadManagement.getThreadEventSequence(input.threadId);
+        const readRun = threadManagement
+          .getThreadRecords(input.threadId, ["runs"])
+          .pipe(
+            Effect.map((records) =>
+              records.runs.find((run) => run.userMessageId === input.messageId),
+            ),
+          );
+        let run = yield* readRun;
+        if (run?.status === "preparing") {
+          const runId = run.id;
+          yield* threadManagement
+            .streamStoredEventsFrom({
+              threadId: input.threadId,
+              afterSequence,
+              eventType: "run.updated",
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "run.updated" &&
+                  stored.event.payload.id === runId &&
+                  stored.event.payload.status !== "preparing",
+              ),
+              Stream.runHead,
+            );
+          run = yield* readRun;
+        }
+        if (run?.status !== "failed") return;
+        yield* sql`
+          UPDATE scheduled_tasks
+          SET last_run_status = 'failed',
+              last_run_error = ${`Workspace preparation failed. See thread ${input.threadId}.`}
+          WHERE task_id = ${input.id}
+            AND last_run_status = 'succeeded'
+            AND last_run_at = ${input.startedAtIso}
+        `;
+        yield* notifyChanged;
+      },
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("Could not record a failed workspace preparation", { cause }),
+      ),
+    );
+
     // Best-effort escape hatch: if anything fails between markRunning and
     // markCompleted, write a full terminal record so runDueTasks neither skips
     // the task forever (it filters out 'running' rows) nor re-fires it
@@ -802,41 +859,45 @@ export const layer = Layer.effect(
                   : Effect.void
                 ).pipe(
                   Effect.andThen(
-                    threadLaunch.launch({
-                      commandId,
-                      projectId: active.projectId,
-                      title: active.title,
-                      modelSelection: active.modelSelection,
-                      runtimeMode: active.runtimeMode,
-                      interactionMode: active.interactionMode,
-                      workspaceStrategy: active.workspaceStrategy,
-                      initialMessage: {
-                        messageId,
-                        scheduledTaskId: active.id,
-                        text: prompt,
-                        attachments: [],
-                      },
-                      createdBy: active.createdBy,
-                      creationSource: active.creationSource,
-                    }),
+                    threadLaunch
+                      .launch({
+                        commandId,
+                        projectId: active.projectId,
+                        title: active.title,
+                        modelSelection: active.modelSelection,
+                        runtimeMode: active.runtimeMode,
+                        interactionMode: active.interactionMode,
+                        workspaceStrategy: active.workspaceStrategy,
+                        initialMessage: {
+                          messageId,
+                          scheduledTaskId: active.id,
+                          text: prompt,
+                          attachments: [],
+                        },
+                        createdBy: active.createdBy,
+                        creationSource: active.creationSource,
+                      })
+                      .pipe(Effect.map((launched) => launched.threadId)),
                   ),
                 ),
               )
             : yield* Effect.exit(
-                threadManagement.sendToThread({
-                  projectId: active.projectId,
-                  commandId,
-                  threadId: ThreadId.make(active.threadId),
-                  messageId,
-                  scheduledTaskId: active.id,
-                  text: prompt,
-                  attachments: [],
-                  modelSelection: active.modelSelection,
-                  // Scheduled prompts must not interrupt tools in the bound thread.
-                  mode: "queue",
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
+                threadManagement
+                  .sendToThread({
+                    projectId: active.projectId,
+                    commandId,
+                    threadId: ThreadId.make(active.threadId),
+                    messageId,
+                    scheduledTaskId: active.id,
+                    text: prompt,
+                    attachments: [],
+                    modelSelection: active.modelSelection,
+                    // Scheduled prompts must not interrupt tools in the bound thread.
+                    mode: "queue",
+                    createdBy: active.createdBy,
+                    creationSource: active.creationSource,
+                  })
+                  .pipe(Effect.as(null)),
               );
 
         const completedAt = yield* localNow;
@@ -869,6 +930,15 @@ export const layer = Layer.effect(
             startedAtIso,
           });
           yield* notifyChanged;
+          const launchedThreadId = result._tag === "Success" ? result.value : null;
+          if (launchedThreadId !== null) {
+            yield* recordFailedPreparation({
+              id: task.id,
+              startedAtIso,
+              threadId: launchedThreadId,
+              messageId,
+            }).pipe(Effect.forkIn(serviceScope));
+          }
         }
         return completed;
       }).pipe(
