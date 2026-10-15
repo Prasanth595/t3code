@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { PROJECT_CONFIG_PATH } from "../config.ts";
 import type { Approval, Refusal, TextCheck } from "../domain/approval.ts";
+import { dependsOn } from "../domain/dependsOn.ts";
 import {
   STATES,
   stateColor,
@@ -12,6 +13,17 @@ import {
   type State,
 } from "../domain/lifecycle.ts";
 import { FactoryProcess } from "../process.ts";
+import {
+  APPROVAL_QUERY,
+  ApprovalAnswer,
+  HISTORY_PAGE,
+  isHumanInstructor,
+  isUtcSecond,
+  textChangesSince,
+  timelineReaches,
+  type ApprovalIssue,
+  type TimelineNode,
+} from "./approvalHistory.ts";
 
 export type { Approval, Refusal, TextCheck } from "../domain/approval.ts";
 
@@ -442,232 +454,12 @@ const withMarker = (body: string, marker: string): string => `${body}\n\n${marke
 
 // ---- the Depends on section ----
 
-/** An issue named in the `## Depends on` section of an issue body. */
-export interface IssueRef {
-  /** `owner/name` when the text names a repo; null means the repo of the issue it was written in. */
-  readonly repo: string | null;
-  readonly number: number;
-}
-
 /** An open issue that blocks another one. */
 export interface Blocker {
   /** `owner/name` of the repo the blocking issue is in. */
   readonly repo: string;
   readonly number: number;
 }
-
-const isRepoChar = (char: string): boolean => /^[A-Za-z0-9._-]$/.test(char);
-const isDigit = (char: string): boolean => char >= "0" && char <= "9";
-
-/** The lines of a text as Rust's `lines()` gives them: split on `\n`, one `\r` before it dropped. */
-const textLines = (text: string): Array<string> => {
-  const lines = text.split("\n");
-  if (lines[lines.length - 1] === "") lines.pop();
-  return lines.map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
-};
-
-/** A markdown heading: `#`s then a space, a tab or the end of the line. `#13` is a reference. */
-const isHeading = (line: string): boolean => {
-  const rest = line.replace(/^#+/, "");
-  return rest.length < line.length && (rest === "" || rest[0] === " " || rest[0] === "\t");
-};
-
-/** The lines of the `## Depends on` section: after its heading, up to the next heading line. */
-const dependsOnLines = (body: string): Array<string> => {
-  const lines: Array<string> = [];
-  let inSection = false;
-  for (const line of textLines(body)) {
-    if (inSection) {
-      if (isHeading(line)) break;
-      lines.push(line);
-    } else {
-      inSection =
-        line.startsWith("## ") || line.startsWith("##\t")
-          ? line.slice(3).trim().toLowerCase() === "depends on"
-          : false;
-    }
-  }
-  return lines;
-};
-
-/**
- * The issues named in the `## Depends on` section of an issue body, in order of first
- * appearance, each once. The section runs from its heading to the next heading line. It names
- * `#<n>` and `<owner>/<repo>#<n>`; "None", an empty section and no section name nothing.
- */
-export const dependsOn = (body: string): Array<IssueRef> => {
-  const found: Array<IssueRef> = [];
-  for (const line of dependsOnLines(body)) {
-    for (let at = 0; at < line.length; at++) {
-      if (line[at] !== "#") continue;
-      let end = at + 1;
-      while (end < line.length && isDigit(line[end]!)) end++;
-      const number = Number(line.slice(at + 1, end));
-      if (end === at + 1 || !Number.isSafeInteger(number)) continue;
-      let repoStart = at;
-      while (repoStart > 0 && isRepoChar(line[repoStart - 1]!)) repoStart--;
-      let repo: string | null = null;
-      if (repoStart < at && repoStart > 0 && line[repoStart - 1] === "/") {
-        let ownerStart = repoStart - 1;
-        while (ownerStart > 0 && isRepoChar(line[ownerStart - 1]!)) ownerStart--;
-        if (ownerStart === repoStart - 1) continue;
-        repo = line.slice(ownerStart, at);
-      } else if (repoStart < at) {
-        // Word characters run straight into the `#`, as in `page#12`: not an issue.
-        continue;
-      }
-      if (!found.some((issue) => issue.repo === repo && issue.number === number)) {
-        found.push({ repo, number });
-      }
-    }
-  }
-  return found;
-};
-
-// ---- the approval rule's reading of GitHub's history ----
-
-/** How many label events and body edits the approval query asks for. A history this long may be cut off. */
-const HISTORY_PAGE = 100;
-
-/** GitHub's uniform UTC form, so ordering the text orders the times. */
-export const isUtcSecond = (text: string): boolean =>
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(text);
-
-/**
- * Who applied the issue's labels, who renamed it and who edited its body. `last: 100` of the
- * timeline items is the newest 100 (GitHub lists them oldest first), and
- * `userContentEdits(first: 100)` is the newest 100 edits (it lists newest first). Titles are
- * not asked for. `__typename` on an actor tells a person from a GitHub App.
- */
-export const APPROVAL_QUERY =
-  "query($owner: String!, $name: String!, $number: Int!) { " +
-  "repository(owner: $owner, name: $name) { issue(number: $number) { " +
-  "timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT, RENAMED_TITLE_EVENT], last: 100) { " +
-  "totalCount nodes { " +
-  "__typename " +
-  "... on LabeledEvent { createdAt actor { __typename login } label { name } } " +
-  "... on UnlabeledEvent { createdAt actor { __typename login } label { name } } " +
-  "... on RenamedTitleEvent { createdAt actor { __typename login } } } } " +
-  "lastEditedAt editor { __typename login } " +
-  "userContentEdits(first: 100) { totalCount nodes { editedAt editor { __typename login } } } } } }";
-
-/** `typename` is only there when the query asked for it; a rule that wants a person needs a `User`. */
-const Actor = Schema.Struct({
-  __typename: OptionalText,
-  login: Schema.String,
-});
-type Actor = typeof Actor.Type;
-
-const LabelChange = Schema.Struct({
-  createdAt: Schema.String,
-  actor: Schema.optional(Schema.NullOr(Actor)),
-  label: Schema.Struct({ name: Schema.String }),
-});
-
-/** One label event or title rename; a node of any other type is an answer this module cannot read. */
-const TimelineNode = Schema.Union([
-  Schema.Struct({ __typename: Schema.Literal("LabeledEvent"), ...LabelChange.fields }),
-  Schema.Struct({ __typename: Schema.Literal("UnlabeledEvent"), ...LabelChange.fields }),
-  Schema.Struct({
-    __typename: Schema.Literal("RenamedTitleEvent"),
-    createdAt: Schema.String,
-    actor: Schema.optional(Schema.NullOr(Actor)),
-  }),
-]);
-type TimelineNode = typeof TimelineNode.Type;
-
-const ApprovalAnswer = Schema.Struct({
-  data: Schema.Struct({
-    repository: Schema.Struct({
-      issue: Schema.Struct({
-        timelineItems: Schema.Struct({
-          totalCount: Schema.Number,
-          nodes: Schema.Array(TimelineNode),
-        }),
-        lastEditedAt: OptionalText,
-        editor: Schema.optional(Schema.NullOr(Actor)),
-        userContentEdits: Schema.Struct({
-          totalCount: Schema.Number,
-          nodes: Schema.Array(
-            Schema.Struct({
-              editedAt: Schema.String,
-              editor: Schema.optional(Schema.NullOr(Actor)),
-            }),
-          ),
-        }),
-      }),
-    }),
-  }),
-});
-type ApprovalIssue = (typeof ApprovalAnswer.Type)["data"]["repository"]["issue"];
-
-const asciiLower = (text: string): string => text.replace(/[A-Z]/g, (char) => char.toLowerCase());
-
-/**
- * An instructor who is a person: GitHub says the actor is a `User`. A GitHub App's GraphQL login
- * can lack the `[bot]` suffix, so a login that matches an instructor is not enough.
- */
-const isHumanInstructor = (
-  actor: Actor | null | undefined,
-  instructors: ReadonlyArray<string>,
-): boolean =>
-  actor !== null &&
-  actor !== undefined &&
-  actor.__typename === "User" &&
-  instructors.some((name) => asciiLower(name) === asciiLower(actor.login));
-
-/** Whether the timeline page shows every event at or after `since`: not cut off, or its oldest is before `since`. */
-const timelineReaches = (issue: ApprovalIssue, since: string): boolean => {
-  const { totalCount, nodes } = issue.timelineItems;
-  const cutOff = nodes.length >= HISTORY_PAGE || totalCount > nodes.length;
-  return !cutOff || (nodes[0] !== undefined && nodes[0].createdAt < since);
-};
-
-/** Whether the newest history entry is the last edit, by the last editor. */
-const newestIsLastEdit = (issue: ApprovalIssue): boolean => {
-  if (issue.lastEditedAt === null || issue.lastEditedAt === undefined) return true;
-  const newest = issue.userContentEdits.nodes[0];
-  return (
-    newest !== undefined &&
-    newest.editedAt === issue.lastEditedAt &&
-    (newest.editor?.login ?? null) === (issue.editor?.login ?? null)
-  );
-};
-
-/**
- * Whether the body's edit history can be trusted for every edit at or after `since`: the entries
- * come newest first, so when it is cut off the oldest one shown must be before `since`.
- */
-const editsWholeSince = (issue: ApprovalIssue, since: string): boolean => {
-  const { totalCount, nodes } = issue.userContentEdits;
-  const cutOff = nodes.length >= HISTORY_PAGE || totalCount > nodes.length;
-  const reachesBack = !cutOff || (nodes.length > 0 && nodes[nodes.length - 1]!.editedAt < since);
-  return reachesBack && newestIsLastEdit(issue);
-};
-
-/**
- * Judges every body edit and title rename with time at or after `since`. A moment in the same
- * second counts as after, because timestamps have no finer order. `reaches` says the renames on
- * the timeline page cover everything at or after `since`.
- */
-const textChangesSince = (
-  issue: ApprovalIssue,
-  since: string,
-  instructors: ReadonlyArray<string>,
-  reaches: boolean,
-): TextCheck => {
-  const editByStranger = issue.userContentEdits.nodes.some(
-    (edit) => edit.editedAt >= since && !isHumanInstructor(edit.editor, instructors),
-  );
-  const renameByStranger = issue.timelineItems.nodes.some(
-    (event) =>
-      event.__typename === "RenamedTitleEvent" &&
-      event.createdAt >= since &&
-      !isHumanInstructor(event.actor, instructors),
-  );
-  if (editByStranger || renameByStranger) return "changed";
-  return editsWholeSince(issue, since) && reaches ? "unchanged" : "unjudged";
-};
 
 // ---- the client ----
 
