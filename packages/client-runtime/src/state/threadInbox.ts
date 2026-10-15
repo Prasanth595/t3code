@@ -9,6 +9,7 @@ type WorkingThreadInput = Pick<
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "pendingSubagentRequest"
   | "interactionMode"
   | "latestRun"
   | "runtime"
@@ -16,9 +17,11 @@ type WorkingThreadInput = Pick<
 
 /** Threads busy with work that does not need the user fold into the Working
     section: a running run, or one stopped with background work that will wake
-    it. Approvals, questions, plan prompts, and failures stay in the inbox. */
+    it. Approvals, questions (its own or a subagent's), plan prompts, and
+    failures stay in the inbox. */
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  if (thread.pendingSubagentRequest != null) return false;
   if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
   // A plan prompt outranks lingering background work: the user has to act on it.
   const run = thread.latestRun;
@@ -58,6 +61,40 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
       ),
     ]),
   );
+  return sortNewestFirst(threads, timestamps);
+}
+
+type WorkingSortInput = Pick<
+  EnvironmentThreadShell,
+  "id" | "environmentId" | "createdAt" | "latestRun" | "latestUserAuthoredMessageAt"
+>;
+
+/** The Working section lists threads newest first by the last message the
+    user sent. Runs ending and wakes (background results, delegated results,
+    PR watches) do not move a row, so the order stays put while agents finish
+    and resume. Servers without the authored stamp fall back to the latest
+    run's request time. */
+export function sortWorkingThreadsBySend<T extends WorkingSortInput>(threads: readonly T[]): T[] {
+  const timestamps = new Map(
+    threads.map((thread) => [
+      thread,
+      Math.max(
+        toSortableTimestamp(thread.createdAt) ?? 0,
+        toSortableTimestamp(
+          (thread.latestUserAuthoredMessageAt === undefined
+            ? thread.latestRun?.requestedAt
+            : thread.latestUserAuthoredMessageAt) ?? undefined,
+        ) ?? 0,
+      ),
+    ]),
+  );
+  return sortNewestFirst(threads, timestamps);
+}
+
+function sortNewestFirst<T extends Pick<EnvironmentThreadShell, "id" | "environmentId">>(
+  threads: readonly T[],
+  timestamps: ReadonlyMap<T, number>,
+): T[] {
   return [...threads].sort(
     (left, right) =>
       timestamps.get(right)! - timestamps.get(left)! ||
