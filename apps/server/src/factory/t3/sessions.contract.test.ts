@@ -202,15 +202,7 @@ const layerRuntime = (input: { readonly repo: string; readonly worktreesDir: str
       );
       return Layer.mergeAll(
         Sessions.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              layerLaunch,
-              layerStores,
-              layerThreadManagement,
-              layerGit,
-              NodeServices.layer,
-            ),
-          ),
+          Layer.provide(Layer.mergeAll(layerLaunch, layerStores, layerThreadManagement)),
         ),
         layerStores,
         layerOrchestrator,

@@ -12,12 +12,13 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { GitCommandError } from "@t3tools/contracts";
+import { CommandId, GitCommandError, MessageId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
@@ -358,6 +359,9 @@ describe("FactorySessions.findProject", () => {
               }),
               Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
               Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+              Layer.mock(ThreadManagement.ThreadManagementService)({}),
+              Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+              NodeServices.layer,
             ),
           ),
         ),
@@ -668,6 +672,10 @@ describe("FactorySessions.status and thread", () => {
 
 // ---- send ----
 
+class DispatchRejected extends Schema.TaggedError<DispatchRejected>()("DispatchRejected", {
+  message: Schema.String,
+}) {}
+
 type Command = Parameters<ThreadManagement.ThreadManagementService["Service"]["dispatch"]>[0];
 
 /** A dispatch that records its commands and answers like T3 does, which the adapter ignores. */
@@ -692,9 +700,9 @@ describe("FactorySessions.send", () => {
           type: "message.dispatch",
           createdBy: "user",
           creationSource: "server",
-          commandId: "softfac:issue-5:send-1",
+          commandId: CommandId.make("softfac:issue-5:send-1"),
           threadId,
-          messageId: "message:softfac:issue-5:send-1",
+          messageId: MessageId.make("message:softfac:issue-5:send-1"),
           text: "carry on",
           attachments: [],
           deliveryIntent: "auto",
@@ -758,7 +766,10 @@ describe("FactorySessions.send", () => {
         layerSessions(
           {},
           {},
-          { dispatch: () => Effect.fail(new Error("no such thread")) as never },
+          {
+            dispatch: () =>
+              Effect.fail(new DispatchRejected({ message: "no such thread" })) as never,
+          },
         ),
       ),
     ),
@@ -832,7 +843,11 @@ const runArchive = (
               dispatchFails
                 ? Effect.sync(() => {
                     commands.push(command);
-                  }).pipe(Effect.andThen(Effect.fail(new Error("dispatch failed") as never)))
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.fail(new DispatchRejected({ message: "dispatch failed" }) as never),
+                    ),
+                  )
                 : Effect.sync(() => {
                     commands.push(command);
                     return {} as never;
@@ -920,7 +935,7 @@ describe("FactorySessions.archive", () => {
         assert.strictEqual(error._tag, "FactorySessionsError");
         if (error._tag === "FactorySessionsError") {
           assert.strictEqual(error.operation, "archive");
-          assert.include(String(error.cause), "dispatch failed");
+          assert.instanceOf(error.cause, DispatchRejected);
         }
       }
       assert.strictEqual(counter.gets, 2);
@@ -933,7 +948,7 @@ describe("FactorySessions.archive", () => {
       const result = results[0]!;
       assert.strictEqual(result._tag, "Failure");
       if (result._tag === "Failure" && result.failure._tag === "FactorySessionsError") {
-        assert.include(String(result.failure.cause), "dispatch failed");
+        assert.instanceOf(result.failure.cause, DispatchRejected);
       }
       assert.strictEqual(counter.gets, 2);
     }),
@@ -949,7 +964,8 @@ interface GitCall {
   readonly allowNonZeroExit: unknown;
 }
 
-const gitResult = (exitCode: number, stderr = "") => ({ exitCode, stdout: "", stderr });
+const gitResult = (exitCode: number, stderr = "") =>
+  ({ exitCode, stdout: "", stderr, stdoutTruncated: false, stderrTruncated: false }) as never;
 
 /** A git driver that records its calls and answers each with `answer`. */
 const recordingGit = (
@@ -983,7 +999,7 @@ describe("FactorySessions.removeWorktree", () => {
             {},
             {},
             {},
-            recordingGit(calls, () => Effect.succeed(gitResult(0) as never)),
+            recordingGit(calls, () => Effect.succeed(gitResult(0))),
           ),
         ),
       );
@@ -1071,7 +1087,7 @@ describe("FactorySessions.removeWorktree", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-sessions-remove-" });
+        const dir = yield* fs.makeTempDirectory({ prefix: "factory-sessions-remove-" });
         yield* fs.writeFileString(`${dir}/leftover.txt`, "x");
         const calls: Array<GitCall> = [];
         const fiber = yield* removeWorktree(dir).pipe(
@@ -1089,10 +1105,13 @@ describe("FactorySessions.removeWorktree", () => {
           ),
           Effect.forkChild({ startImmediately: true }),
         );
-        yield* Effect.yieldNow;
-        assert.isTrue(yield* fs.exists(dir));
-        yield* TestClock.adjust("3 seconds");
-        yield* Fiber.join(fiber);
+        // The wait is registered after git and a disk check, so move the
+        // clock until the removal has finished rather than once.
+        yield* Fiber.join(fiber).pipe(
+          Effect.race(
+            Effect.forever(TestClock.adjust("3 seconds").pipe(Effect.andThen(Effect.yieldNow))),
+          ),
+        );
         assert.isFalse(yield* fs.exists(dir));
         assert.strictEqual(calls.length, 1);
       }),
