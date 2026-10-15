@@ -130,25 +130,57 @@ effectIt.effect("keeps mise's PATH record with the login shell PATH", () =>
   ),
 );
 
-effectIt.effect("repairs Windows PATH even when the desktop marks it prepared", () =>
+effectIt.effect("skips the Windows PowerShell PATH probes when the desktop prepared PATH", () =>
   Effect.gen(function* () {
-    const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows" };
+    const env: NodeJS.ProcessEnv = { PATH: "C:\\Prepared" };
+    const reads: Array<ReadonlyArray<string>> = [];
     const commands: string[] = [];
 
     yield* fixPath({ shellEnvironmentPrepared: true }).pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(HostProcess.Environment, env),
-      Effect.provideService(WindowsShellEnvironment, () => ({ PATH: "C:\\Tools" })),
+      Effect.provideService(WindowsShellEnvironment, (names) => {
+        reads.push(names);
+        return { PATH: "C:\\Tools" };
+      }),
+      // Unavailable node is the case that would otherwise trigger the slow profile probe.
       Effect.provideService(CommandAvailability, (command) =>
         Effect.sync(() => {
           commands.push(command);
-          return true;
+          return false;
         }),
       ),
       Effect.provide(NodeServices.layer),
     );
 
-    assert.deepEqual(commands, ["node"]);
-    assert.equal(env.PATH, "C:\\Tools;C:\\Windows");
+    assert.deepEqual(reads, []);
+    assert.deepEqual(commands, []);
+    assert.equal(env.PATH, "C:\\Prepared");
   }),
+);
+
+effectIt.effect(
+  "still probes the Windows PATH when the server starts without a desktop handoff",
+  () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows" };
+      const reads: Array<{
+        readonly names: ReadonlyArray<string>;
+        readonly loadProfile?: boolean | undefined;
+      }> = [];
+
+      yield* fixPath().pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Environment, env),
+        Effect.provideService(WindowsShellEnvironment, (names, options) => {
+          reads.push({ names, loadProfile: options?.loadProfile });
+          return { PATH: "C:\\Tools" };
+        }),
+        Effect.provideService(CommandAvailability, () => Effect.succeed(true)),
+        Effect.provide(NodeServices.layer),
+      );
+
+      assert.deepEqual(reads, [{ names: ["PATH"], loadProfile: false }]);
+      assert.equal(env.PATH, "C:\\Tools;C:\\Windows");
+    }),
 );

@@ -61,7 +61,12 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
   const platform = yield* HostProcess.Platform;
   const env = yield* HostProcess.Environment;
 
+  // Same gate as POSIX below: the desktop merges the PowerShell PATH and the
+  // well-known CLI dirs into process.env before the backend starts
+  // (installWindowsEnvironment in apps/desktop/src/shell/DesktopShellEnvironment.ts),
+  // so the PowerShell probes would only repeat that work on the event loop.
   if (platform === "win32") {
+    if (options?.shellEnvironmentPrepared === true) return;
     const repairedEnvironment = yield* resolveWindowsEnvironment(env).pipe(
       Effect.catchDefect((defect) =>
         Effect.sync(() => {
