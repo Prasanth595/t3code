@@ -316,26 +316,32 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
-    // Scratch is not a Git repository, so a worktree request there (a stale
-    // composer mode, an agent, a scheduled task, or a retry of one) runs in a
-    // folder of its own, like a root launch.
-    const scratchFolder =
-      requested.workspaceStrategy.type === "worktree"
-        ? yield* managedFolders
-            .folderForThread({
-              projectId: requested.projectId,
-              threadId,
-              text: requested.initialMessage?.text ?? "",
-            })
-            .pipe(Effect.mapError(mapError(requested, "provision-worktree", threadId)))
-        : Option.none<string>();
-    const input: PreparationInput = Option.match(scratchFolder, {
-      onNone: () => requested,
-      onSome: (worktreePath) => ({
-        ...requested,
-        workspaceStrategy: { type: "existing_worktree", worktreePath },
-      }),
-    });
+    // A folder that is not a Git repository cannot hold a worktree. A worktree
+    // request there (a stale composer mode, an agent, a scheduled task, or a
+    // retry of one) runs like a root launch, as the composer already does.
+    // Scratch gives each such thread a folder of its own.
+    const input: PreparationInput =
+      requested.workspaceStrategy.type === "worktree" &&
+      !(yield* git
+        .isRepository(project.workspaceRoot)
+        .pipe(Effect.mapError(mapError(requested, "provision-worktree", threadId))))
+        ? Option.match(
+            yield* managedFolders
+              .folderForThread({
+                projectId: requested.projectId,
+                threadId,
+                text: requested.initialMessage?.text ?? "",
+              })
+              .pipe(Effect.mapError(mapError(requested, "provision-worktree", threadId))),
+            {
+              onNone: () => ({ ...requested, workspaceStrategy: { type: "root" } }),
+              onSome: (worktreePath) => ({
+                ...requested,
+                workspaceStrategy: { type: "existing_worktree", worktreePath },
+              }),
+            },
+          )
+        : requested;
 
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;

@@ -182,6 +182,7 @@ function makeHarness(options: HarnessOptions = {}) {
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      isRepository: () => Effect.succeed(true),
       remoteExists: () => Effect.succeed(true),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
@@ -1119,16 +1120,17 @@ it.effect("runs a Scratch thread launched at the root in its own folder", () =>
   }),
 );
 
-it.effect("runs a worktree request in Scratch in its own folder", () =>
+it.effect.each([
+  { name: "Scratch in a folder of its own", scratchFolder: Option.some("/scratch/folder") },
+  { name: "another project in the project folder", scratchFolder: Option.none<string>() },
+])("runs a worktree request outside a repository: $name", (testCase) =>
   Effect.gen(function* () {
     // Only `projectId` stands in for the Scratch project here.
     const harness = makeHarness({
+      git: { isRepository: () => Effect.succeed(false) },
       managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
-        folderForThread: (input) =>
-          Effect.succeed(
-            input.projectId === projectId ? Option.some("/scratch/folder") : Option.none(),
-          ),
+        folderForThread: () => Effect.succeed(testCase.scratchFolder),
       }),
     });
     yield* Effect.gen(function* () {
@@ -1136,18 +1138,21 @@ it.effect("runs a worktree request in Scratch in its own folder", () =>
       const threads = yield* ThreadManagement.ThreadManagementService;
       const launched = yield* launches.launch(
         launchInput({
-          command: "command:launch:scratch-worktree",
-          thread: "thread:launch:scratch-worktree",
+          command: "command:launch:non-repository-worktree",
+          thread: "thread:launch:non-repository-worktree",
           message: "Summarize my day",
           workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
         }),
       );
       yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
-      assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder");
+      assert.equal(
+        harness.runSetup.mock.calls[0]?.[0]?.worktreePath,
+        Option.getOrElse(testCase.scratchFolder, () => "/repo"),
+      );
       assert.equal(harness.createWorktree.mock.calls.length, 0);
       assert.equal(
         (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
-        "/scratch/folder",
+        Option.getOrNull(testCase.scratchFolder),
       );
     }).pipe(Effect.provide(harness.layer));
   }),
