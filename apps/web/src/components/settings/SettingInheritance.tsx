@@ -361,12 +361,24 @@ export function SettingInheritance({
                             className="size-3 shrink-0 text-muted-foreground [[data-panel-open]_&]:rotate-90"
                           />
                         </span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {members
-                            .map(({ labels, secondary }) =>
-                              [labels.primary, secondary].filter(Boolean).join(" · "),
-                            )
-                            .join(", ")}
+                        <span className="flex min-w-0 flex-col gap-0.5 text-xs text-muted-foreground">
+                          {members.map((member) => (
+                            <span
+                              key={member.id}
+                              className="flex min-w-0 max-w-full items-center gap-1"
+                            >
+                              <EnvironmentMachineIcon
+                                aria-hidden
+                                kind={member.machine}
+                                className="size-3 shrink-0"
+                              />
+                              <span className="truncate">
+                                {[member.labels.primary, member.secondary]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </span>
+                            </span>
+                          ))}
                         </span>
                       </span>
                     </CollapsibleTrigger>
