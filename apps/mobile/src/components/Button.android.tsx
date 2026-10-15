@@ -1,3 +1,4 @@
+import { SymbolView } from "./AppSymbol";
 import {
   Box,
   Button as ComposeButton,
@@ -5,6 +6,7 @@ import {
   FilledTonalButton,
   Host,
   Row,
+  RNHostView,
   Text,
   TextButton,
 } from "@expo/ui/jetpack-compose";
@@ -87,6 +89,21 @@ export function Button(props: ButtonProps) {
                     modifiers={[size(mediumIconSize, mediumIconSize)]}
                     color={colors["--color-foreground-muted"]}
                   />
+                  <Box modifiers={[size(8 * scale, 1)]} />
+                </>
+              ) : props.icon ? (
+                <>
+                  <RNHostView matchContents modifiers={[size(mediumIconSize, mediumIconSize)]}>
+                    <View style={{ width: mediumIconSize, height: mediumIconSize }}>
+                      <SymbolView
+                        name={props.icon}
+                        size={mediumIconSize}
+                        tintColor={
+                          props.disabled ? colors["--color-foreground-muted"] : contentColor
+                        }
+                      />
+                    </View>
+                  </RNHostView>
                   <Box modifiers={[size(8 * scale, 1)]} />
                 </>
               ) : null}

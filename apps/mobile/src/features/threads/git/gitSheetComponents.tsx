@@ -19,6 +19,7 @@ export function SheetActionButton(props: {
       <View className="flex-1">
         <Button
           label={props.label}
+          icon={props.icon}
           tone={props.tone}
           disabled={props.disabled}
           onPress={props.onPress}
