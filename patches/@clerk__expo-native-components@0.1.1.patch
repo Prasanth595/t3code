@@ -12,7 +12,7 @@ index 0946d68..1926024 100644
 +  // dependency; AGP 9 resolves the compile classpath on its own.
 +  implementation "androidx.savedstate:savedstate-compose:1.4.0"
 +  implementation "androidx.lifecycle:lifecycle-runtime-compose:2.10.0"
- 
+
    testImplementation "junit:junit:4.13.2"
  }
 diff --git a/ios/ClerkAuthNativeView.swift b/ios/ClerkAuthNativeView.swift
@@ -20,7 +20,7 @@ index 5f8d2ba..b170304 100644
 --- a/ios/ClerkAuthNativeView.swift
 +++ b/ios/ClerkAuthNativeView.swift
 @@ -111,7 +111,12 @@ public class ClerkAuthNativeView: ClerkNativeViewHost {
- 
+
    override func makeHostedController() -> UIViewController? {
      let hostBackAction: (() -> Void)? = currentHostBackButton
 -      ? { [weak self] in self?.onHostBack([:]) }
@@ -31,7 +31,7 @@ index 5f8d2ba..b170304 100644
 +          }
 +      }
        : nil
- 
+
      return ClerkNativeBridge.shared.makeAuthViewController(
 diff --git a/ios/ClerkNativeBridge.swift b/ios/ClerkNativeBridge.swift
 index e9527c6..a59ee3b 100644
@@ -39,7 +39,7 @@ index e9527c6..a59ee3b 100644
 +++ b/ios/ClerkNativeBridge.swift
 @@ -1557,6 +1557,8 @@ private struct ClerkReactEmbeddedUserProfileCustomPage: View {
  }
- 
+
  private struct ClerkReactUserProfileCustomPageContent: View {
 +  @Environment(\.clerkTheme) private var theme
 +
@@ -59,9 +59,9 @@ index e9527c6..a59ee3b 100644
 +    .background(theme.colors.background)
    }
  }
- 
+
 diff --git a/ios/ClerkNativeViewHost.swift b/ios/ClerkNativeViewHost.swift
-index 4e6540a..cc16c94 100644
+index 4e6540a..6897350 100644
 --- a/ios/ClerkNativeViewHost.swift
 +++ b/ios/ClerkNativeViewHost.swift
 @@ -5,6 +5,7 @@ public class ClerkNativeViewHost: ExpoView {
@@ -69,13 +69,21 @@ index 4e6540a..cc16c94 100644
    private var hasInitialized: Bool = false
    private var configuredObserver: NSObjectProtocol?
 +  private var isPoppingHostRoute = false
- 
+
    public required init(appContext: AppContext? = nil) {
      super.init(appContext: appContext)
-@@ -58,6 +59,30 @@ public class ClerkNativeViewHost: ExpoView {
- 
+@@ -23,6 +24,7 @@ public class ClerkNativeViewHost: ExpoView {
+     super.didMoveToWindow()
+
+     guard window != nil else {
++      isPoppingHostRoute = false
+       if hasInitialized {
+         hostedViewDidDetachFromWindow()
+       }
+@@ -58,6 +60,37 @@ public class ClerkNativeViewHost: ExpoView {
+
    func hostedViewDidDetachFromWindow() {}
- 
+
 +  /// Pops the React Navigation route that contains this view without waiting for
 +  /// the JavaScript event loop. React Native Screens reports the native dismissal
 +  /// back to React Navigation so its state remains synchronized.
@@ -90,6 +98,13 @@ index 4e6540a..cc16c94 100644
 +         navigationController.viewControllers.count > 1 {
 +        isPoppingHostRoute = true
 +        if navigationController.popViewController(animated: true) != nil {
++          if let coordinator = navigationController.transitionCoordinator {
++            coordinator.animate(alongsideTransition: nil) { [weak self] _ in
++              self?.isPoppingHostRoute = false
++            }
++          } else {
++            isPoppingHostRoute = false
++          }
 +          return true
 +        }
 +        isPoppingHostRoute = false
@@ -102,13 +117,13 @@ index 4e6540a..cc16c94 100644
 +
    private func addConfiguredObserver() {
      guard configuredObserver == nil else { return }
- 
+
 diff --git a/ios/ClerkUserProfileNativeView.swift b/ios/ClerkUserProfileNativeView.swift
 index f2ca604..46f406d 100644
 --- a/ios/ClerkUserProfileNativeView.swift
 +++ b/ios/ClerkUserProfileNativeView.swift
 @@ -47,7 +47,12 @@ public class ClerkUserProfileNativeView: ClerkUserProfileCustomPageHost {
- 
+
    override func makeHostedController() -> UIViewController? {
      let hostBackAction: (() -> Void)? = currentHostBackButton
 -      ? { [weak self] in self?.onHostBack([:]) }
@@ -119,5 +134,5 @@ index f2ca604..46f406d 100644
 +          }
 +      }
        : nil
- 
+
      return ClerkNativeBridge.shared.makeUserProfileViewController(
