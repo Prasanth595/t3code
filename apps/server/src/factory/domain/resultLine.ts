@@ -6,11 +6,11 @@
  */
 
 /** The last line of a finished session: `FACTORY-DONE: <PR URL>`. */
-export const DONE_MARKER = "FACTORY-DONE: ";
+const DONE_MARKER = "FACTORY-DONE: ";
 /** The last line of a session that needs answers, after its numbered questions. */
-export const NEEDS_INFO_LINE = "FACTORY-STOP: needs-info";
+const NEEDS_INFO_LINE = "FACTORY-STOP: needs-info";
 /** The last line of a session that gave up. */
-export const STUCK_LINE = "FACTORY-STOP: stuck";
+const STUCK_LINE = "FACTORY-STOP: stuck";
 
 /** The public reason when the session's run ended with no assistant message at all. */
 export const NO_MESSAGE = "the session ended without a final message";
@@ -40,14 +40,22 @@ export type SessionResult =
     };
 
 // Rust's `trim`/`trim_end` strip Unicode White_Space. JS `trim` differs on U+0085 (not stripped)
-// and U+FEFF (stripped), so spell the Rust set out.
-const WHITE_SPACE =
-  "\\t-\\r \\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000";
-const TRAILING_WHITE_SPACE = new RegExp(`[${WHITE_SPACE}]+$`);
-const LEADING_WHITE_SPACE = new RegExp(`^[${WHITE_SPACE}]+`);
+// and U+FEFF (stripped), so spell the Rust set out. Every member is one UTF-16 code unit.
+const WHITE_SPACE = /[\t-\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/;
 
-const trimEnd = (text: string) => text.replace(TRAILING_WHITE_SPACE, "");
-const trim = (text: string) => trimEnd(text).replace(LEADING_WHITE_SPACE, "");
+// Index loops, not `[...]+$`: that regex backtracks quadratically on a long whitespace run
+// that is followed by other text, and the message is untrusted.
+const trimEnd = (text: string) => {
+  let end = text.length;
+  while (end > 0 && WHITE_SPACE.test(text.charAt(end - 1))) end--;
+  return text.slice(0, end);
+};
+const trim = (text: string) => {
+  const trimmed = trimEnd(text);
+  let start = 0;
+  while (start < trimmed.length && WHITE_SPACE.test(trimmed.charAt(start))) start++;
+  return trimmed.slice(start);
+};
 
 /** Lowercases ASCII letters only, so a non-ASCII character never folds into an ASCII one. */
 const asciiLower = (text: string) => text.replace(/[A-Z]/g, (c) => c.toLowerCase());

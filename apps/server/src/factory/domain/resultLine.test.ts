@@ -199,6 +199,13 @@ describe("result line helpers", () => {
     );
   });
 
+  it("a long whitespace run inside the message is trimmed in linear time", () => {
+    // A backtracking `[...]+$` trim ran for over a minute on this input.
+    const run = " ".repeat(200_000);
+    expect(parse(`${run}x\nFACTORY-STOP: stuck`)).toEqual(stuck(SAID_STUCK, "x"));
+    expect(splitLastLine(`a\nb${run}c${run}`)).toEqual({ before: "a", last: `b${run}c` });
+  });
+
   it("pullRequestUrl compares the number as GitHub writes it", () => {
     expect(pullRequestUrl(URL)).toEqual({ owner: "rawphp", name: "softfac", pr: 12 });
     expect(pullRequestUrl("https://github.com/a.b/c_d-e/pull/1")).toEqual({
