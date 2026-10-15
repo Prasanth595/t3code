@@ -671,10 +671,13 @@ describe("PullRequestSyncReactor", () => {
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
+        const invalidated = yield* Ref.make<ReadonlyArray<number>>([]);
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([
             makeThread("merged", { pullRequests: [makeLink(1, { state: "merged" })] }),
           ]),
+          invalidate: ({ reference }) =>
+            Ref.update(invalidated, (numbers) => [...numbers, reference?.number ?? -1]),
           summary: (input) =>
             Effect.succeed(
               makeSummary(input, { state: "merged", mergedAt: "2026-08-27T00:00:00.000Z" }),
@@ -684,6 +687,8 @@ describe("PullRequestSyncReactor", () => {
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);
           const firstSweep = yield* Ref.get(fixture.syncCommands);
+          // The held merged summary is dropped so the read reaches the host.
+          assert.deepStrictEqual(yield* Ref.get(invalidated), [1]);
           assert.strictEqual(firstSweep.at(-1)?.snapshot.mergedAt, "2026-08-27T00:00:00.000Z");
           yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));
 

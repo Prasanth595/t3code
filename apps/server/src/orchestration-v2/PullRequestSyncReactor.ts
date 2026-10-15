@@ -293,7 +293,14 @@ export const make = Effect.gen(function* () {
         number: first.link.number,
       };
       const generation = requested.get(key);
-      if (generation !== undefined) yield* pullRequests.invalidate({ reference: ref });
+      // A held merged summary is served without asking the host, so a snapshot still missing its
+      // merge time has to drop it or the slow-cadence re-read would hand back the same gap.
+      const missingMergedAt = entries.some(
+        (entry) => entry.link.snapshot?.state === "merged" && entry.link.snapshot.mergedAt == null,
+      );
+      if (generation !== undefined || missingMergedAt) {
+        yield* pullRequests.invalidate({ reference: ref });
+      }
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
       const fields = snapshotFieldsOf(summary);
       const needsStack =
