@@ -229,6 +229,8 @@ export function SnoozeQuickOptionsSettingsRow() {
               size="icon-xs"
               variant="ghost"
               aria-label="Remove"
+              // The last choice stays, because an empty list leaves the snooze menus empty.
+              disabled={options.length === 1}
               onClick={() => save(options.filter((_, at) => at !== index))}
             >
               <XIcon />

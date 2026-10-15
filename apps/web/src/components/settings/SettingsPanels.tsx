@@ -71,7 +71,6 @@ import {
   TerminalAppShortcutsFirstSettingsRow,
   TerminalCloseConfirmationSettingsRow,
 } from "./ForkSettingsRows";
-import { BoundedIntegerInput } from "./BoundedIntegerInput";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -190,6 +189,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ThreadCardLayoutSettingsSection } from "./ThreadCardLayoutSettings";
+import { FORK_SETTINGS_RESTORE_PATCH, forkChangedSettingLabels } from "./forkSettingsRestore";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
@@ -560,6 +560,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
+  const forkSettingLabels = useMemo(() => forkChangedSettingLabels(settings), [settings]);
 
   const changedSettingLabels = useMemo(
     () => [
@@ -664,9 +665,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
         ? ["Continue threads after restarts"]
         : []),
-      ...(settings.recoverInterruptedTurns !== DEFAULT_UNIFIED_SETTINGS.recoverInterruptedTurns
-        ? ["Recover interrupted agents"]
-        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -678,14 +676,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
-      ...(settings.agentSessionImportWindowDays !==
-      DEFAULT_UNIFIED_SETTINGS.agentSessionImportWindowDays
-        ? ["Session import window"]
-        : []),
-      ...(settings.agentSessionImportMaxMessages !==
-      DEFAULT_UNIFIED_SETTINGS.agentSessionImportMaxMessages
-        ? ["Imported messages per session"]
-        : []),
       ...(settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin
         ? ["Unpin confirmation"]
         : []),
@@ -695,29 +685,16 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
-      ...(settings.confirmTerminalClose !== DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose
-        ? ["Terminal close confirmation"]
-        : []),
-      ...(settings.terminalAppShortcutsFirst !== DEFAULT_UNIFIED_SETTINGS.terminalAppShortcutsFirst
-        ? ["App shortcuts in terminal"]
-        : []),
-      ...(settings.backgroundWorkDetails !== DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails
-        ? ["Background work details"]
-        : []),
-      ...(settings.forkChangelogEnabled !== DEFAULT_UNIFIED_SETTINGS.forkChangelogEnabled
-        ? ["Fork changelog"]
-        : []),
-      ...(settings.installedAppEnabled !== DEFAULT_UNIFIED_SETTINGS.installedAppEnabled
-        ? ["Installed app"]
-        : []),
       ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
       ...getChangedBrowserSettingLabels(settings),
       ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
         ? ["Agent browser access"]
         : []),
+      ...forkSettingLabels,
     ],
     [
+      forkSettingLabels,
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
       settings.browserDefaultViewport,
@@ -736,18 +713,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.confirmThreadUnpin,
-      settings.confirmTerminalClose,
-      settings.terminalAppShortcutsFirst,
-      settings.backgroundWorkDetails,
-      settings.forkChangelogEnabled,
-      settings.installedAppEnabled,
       settings.composerCollapseOnScroll,
       settings.composerRichTextEnabled,
       settings.sendShortcut,
       settings.followUpBehavior,
       settings.addProjectBaseDirectory,
-      settings.agentSessionImportWindowDays,
-      settings.agentSessionImportMaxMessages,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffFilesCollapsed,
@@ -770,7 +740,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.persistComposerContextStrip,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
-      settings.recoverInterruptedTurns,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleKeepPullRequests,
       settings.sidebarAutoSettleOnMerge,
@@ -887,10 +856,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
-      recoverInterruptedTurns: DEFAULT_UNIFIED_SETTINGS.recoverInterruptedTurns,
-      recoverInterruptedTurnsMessage: DEFAULT_UNIFIED_SETTINGS.recoverInterruptedTurnsMessage,
-      recoverInterruptedTurnsSubagentMessage:
-        DEFAULT_UNIFIED_SETTINGS.recoverInterruptedTurnsSubagentMessage,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -898,16 +863,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
-      agentSessionImportWindowDays: DEFAULT_UNIFIED_SETTINGS.agentSessionImportWindowDays,
-      agentSessionImportMaxMessages: DEFAULT_UNIFIED_SETTINGS.agentSessionImportMaxMessages,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
-      confirmTerminalClose: DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose,
-      terminalAppShortcutsFirst: DEFAULT_UNIFIED_SETTINGS.terminalAppShortcutsFirst,
-      backgroundWorkDetails: DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails,
-      forkChangelogEnabled: DEFAULT_UNIFIED_SETTINGS.forkChangelogEnabled,
-      installedAppEnabled: DEFAULT_UNIFIED_SETTINGS.installedAppEnabled,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
@@ -930,6 +888,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       // name, so a user restoring defaults is told the agent regains access
       // rather than discovering it later.
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
+      ...FORK_SETTINGS_RESTORE_PATCH,
     });
     onRestored?.();
   }, [
@@ -2119,6 +2078,48 @@ function FontFamilySettingsRow({
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
 
+function AutoSettleDaysInput({
+  value,
+  onCommit,
+}: {
+  value: number;
+  onCommit: (days: number) => void;
+}) {
+  // Local draft so the field can be emptied mid-edit; the setting only moves
+  // on valid input and snaps back to the persisted value on blur.
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  return (
+    <Input
+      size="sm"
+      type="number"
+      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      className="w-full sm:w-24"
+      value={draft}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        // Number(), not parseInt: "3.5" must be rejected (not truncated to a
+        // committed 3 while the field shows 3.5) — commit only when the
+        // persisted value matches the displayed one.
+        const parsed = Number(event.target.value);
+        if (
+          Number.isInteger(parsed) &&
+          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
+          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
+        ) {
+          onCommit(parsed);
+        }
+      }}
+      onBlur={() => setDraft(String(value))}
+      aria-label="Days of inactivity before auto-settle"
+    />
+  );
+}
+
 // The legacy rows sit behind the fold, so a settings-search jump has to
 // expand the section before its target can mount and scroll.
 const LEGACY_FEATURE_TARGET_IDS: ReadonlySet<string> = new Set([
@@ -2517,11 +2518,8 @@ export function GeneralSettingsPanel() {
                 title={searchableSetting("days-before-auto-settle").title}
                 description="Any new activity un-settles a thread automatically."
                 control={
-                  <BoundedIntegerInput
+                  <AutoSettleDaysInput
                     value={settings.sidebarAutoSettleAfterDays}
-                    min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-                    max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-                    aria-label="Days of inactivity before auto-settle"
                     onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
                   />
                 }
