@@ -11,7 +11,12 @@ import { inlineStageAssets, stageAssets } from "./live/assets.ts";
 import { closeProbe } from "./live/probe.ts";
 import { componentsCommit } from "./live/source.ts";
 import { canvasPreset, withPresetCss, withPresetDefaults } from "./presets.ts";
-import { compilerVersion, readStamp, stampInstant, type ArtifactStamp } from "./stamp.ts";
+import {
+  compilerVersion,
+  deterministicStampInstant,
+  readStamp,
+  type ArtifactStamp,
+} from "./stamp.ts";
 
 const USAGE =
   "nofun-artifacts compile (--spec <file> | --tsx <file> | --page <file>) (--preset <id> | --theme <id> --size WxH) [--background transparent|match|#rrggbb] [--name <name>] [--asset-dir <dir>] [--linked --runtime-sha <sha>] --out <dir>";
@@ -172,7 +177,7 @@ async function compile(argv: readonly string[]): Promise<void> {
         compiler: compilerVersion(),
         lane: compiled.lane,
         theme: compiled.theme,
-        at: stampInstant(),
+        at: deterministicStampInstant(bytes, componentsCommit()),
       }
     : readStamp(compiled.html);
   if (!stamp) throw new Error("Compiled HTML is missing the nofun-artifact stamp.");
@@ -245,8 +250,6 @@ if (directInvocation()) {
   } catch {
     // The module path can be missing in a torn checkout; report it as-is.
   }
-  console.error(
-    `nofun-artifacts did not run: ${entry} is not this CLI (${here}) after realpath.`,
-  );
+  console.error(`nofun-artifacts did not run: ${entry} is not this CLI (${here}) after realpath.`);
   process.exit(2);
 }

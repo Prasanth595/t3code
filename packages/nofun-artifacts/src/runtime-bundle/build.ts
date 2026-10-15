@@ -175,7 +175,10 @@ function nextFonts(dir: string): NextFonts {
         .filter((name) => name.endsWith(".css"))
         .map((name) => NodePath.join(chunks, name))
         .filter((path) => NodeFs.readFileSync(path, "utf8").includes("--font-geist-sans:"))
-        .sort((a, b) => NodeFs.statSync(a).size - NodeFs.statSync(b).size)[0];
+        .sort(
+          (a, b) =>
+            NodeFs.statSync(a).size - NodeFs.statSync(b).size || (a < b ? -1 : a > b ? 1 : 0),
+        )[0];
     } catch {
       return undefined;
     }
@@ -224,6 +227,8 @@ async function brandCss(dir: string, brand: string, fonts: NextFonts): Promise<s
   const minified = await esbuild.transform(head + sheet, {
     loader: "css",
     minify: true,
+    charset: "utf8",
+    legalComments: "none",
     target: CSS_TARGET,
     logLevel: "silent",
   });

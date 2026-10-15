@@ -43,6 +43,17 @@ The output directory is a Canvas bundle:
 | `source/<file>`    | The input file. `source/meta.json` `file` is this name, relative to `source/`.                                                                                                  |
 | `source/meta.json` | `{kind: spec\|tsx\|page, file, theme?}`. `file` stays inside `source/` (no absolute path, no `..`).                                                                             |
 
+`at` is not the wall clock. It is a UTC instant (`YYYY-MM-DDTHH:mm:ssZ`, no fractional seconds) derived
+from the SHA-256 of the components commit and the input bytes. The same source and commit always
+produce the same instant. That instant is written into `index.html` and `stamp.json`. The manifest
+`sha256` is the digest of `index.html`, and `createdAt` is this same instant, so a no-op recompile
+keeps the hash. Theme, lane, and size stay their own fields; changing them still changes the page.
+
+The script and stylesheet are pinned the same way. esbuild always resolves the `production` export
+condition, leaves `jsxDev` off, and writes a fixed outfile name (`write: false`, so nothing is
+written into the checkout). Stylesheet `@import`s, Tailwind candidates, and `#nf-assets` keys are
+sorted, because esbuild loads CSS as files finish and a probe records images as requests arrive.
+
 Compile failures exit 2 and print the message. The compiler allows a 24 MiB page, the same entry cap
 Canvas has (its bundle cap is 48 MiB).
 

@@ -35,7 +35,12 @@ import {
   perStampMap,
   sourceStamp,
 } from "./live/source.ts";
-import { compilerVersion, formatStamp, stampInstant, type ArtifactStamp } from "./stamp.ts";
+import {
+  compilerVersion,
+  deterministicStampInstant,
+  formatStamp,
+  type ArtifactStamp,
+} from "./stamp.ts";
 import { DEFAULT_ARTIFACT_THEME, T3_THEME, isArtifactTheme, artifactThemeIds } from "./themes.ts";
 
 export {
@@ -118,13 +123,24 @@ const ARTIFACT_FRAME_CSS = `${PAGE_FRAME_CSS}
 body[data-brand],body[data-nf-theme="t3"]{padding:16px;border-radius:14px;background:var(--nf-canvas,var(--background));color:var(--nf-ink,var(--foreground));--font-weight-medium:400;--font-weight-semibold:700}
 body[data-nf-theme="t3"]{--nf-canvas:var(--background);--nf-ink:var(--foreground);--nf-ink-muted:var(--muted-foreground);--nf-rule:var(--border);--nf-surface:var(--muted);--nf-surface-product:var(--card);--nf-accent:var(--accent);--nf-accent-foreground:var(--accent-foreground);--nf-accent-soft:var(--muted);--nf-accent-soft-foreground:var(--foreground);--nf-primary:var(--primary);--nf-primary-foreground:var(--primary-foreground);--nf-success:var(--success);--nf-warning:var(--warning);--nf-danger:var(--destructive);--nf-display:var(--font-sans);--nf-body:var(--font-sans);--nf-mono:var(--font-mono);--error:var(--destructive)}`;
 
-function makeStamp(dir: string, lane: ArtifactStamp["lane"], theme: string): ArtifactStamp {
+function stampSource(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+/** Provenance for one compile. `at` is a function of the source bytes and the components commit. */
+export function artifactStamp(
+  dir: string,
+  lane: ArtifactStamp["lane"],
+  theme: string,
+  source: Buffer | string,
+): ArtifactStamp {
+  const components = componentsCommit(dir);
   return {
-    components: componentsCommit(dir),
+    components,
     compiler: compilerVersion(),
     lane,
     theme,
-    at: stampInstant(),
+    at: deterministicStampInstant(source, components),
   };
 }
 
@@ -310,7 +326,7 @@ export async function compileArtifact(input: ArtifactCompileInput): Promise<Comp
       data: `<script type="application/json" id="nf-spec">${escapeLocalPaths(specJson)}</script>`,
       js: built.js,
       assets,
-      stamp: makeStamp(dir, "spec", theme),
+      stamp: artifactStamp(dir, "spec", theme, stampSource(input.spec)),
     });
     return finish(html, started, {
       title,
@@ -343,7 +359,7 @@ export async function compileArtifact(input: ArtifactCompileInput): Promise<Comp
     cssImports: built.cssImports,
     extraCss: ARTIFACT_FRAME_CSS,
   });
-  const stamp = makeStamp(dir, "tsx", theme);
+  const stamp = artifactStamp(dir, "tsx", theme, tsx);
   const page = (assets: AssetMap) =>
     documentFor({
       title,
@@ -394,7 +410,7 @@ export async function compilePage(input: PageCompileInput): Promise<CompiledArti
   const source = await sourceStamp(dir);
   const [built, css] = await Promise.all([pageBundle(), pageCss(brand)]);
   const data = jsonScript({ spec, brand, scheme, schemes });
-  const stamp = makeStamp(dir, "page", brand);
+  const stamp = artifactStamp(dir, "page", brand, stampSource(input.spec));
   const page = (assets: AssetMap) =>
     documentFor({
       title,
