@@ -5,6 +5,10 @@ inputs:
     description: Install arguments forwarded to setup-vp.
     required: false
     default: "true"
+  cache-save:
+    description: Save the pnpm store on a cache miss. Jobs that install part of the workspace must not, or the next job restores their partial store.
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -32,4 +36,5 @@ runs:
       with:
         node-version-file: package.json
         cache: true
+        cache-save: ${{ inputs.cache-save }}
         run-install: ${{ inputs.run-install }}
