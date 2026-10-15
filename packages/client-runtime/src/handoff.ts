@@ -25,16 +25,10 @@ export function resolvePendingHandoff(
   selection: ModelSelection | null | undefined,
   providers: ReadonlyArray<ServerProvider>,
 ): HandoffEndpoints | null {
-  // Nothing to hand off until the thread shows conversation. Wake runs start
-  // with a notification, and paging can drop older user messages from view.
-  const hasConversation = projection?.visibleTurnItems.some(
-    ({ item }) =>
-      item.type === "user_message" ||
-      item.type === "assistant_message" ||
-      item.type === "notification",
-  );
-  if (!hasConversation) return null;
-  const from = projection?.runs.findLast(
+  // A thread with an empty timeline has nothing to hand off. Any loaded row
+  // counts: paging can leave a window of only tool rows.
+  if (!projection?.visibleTurnItems.length) return null;
+  const from = projection.runs.findLast(
     (run) => run.startedAt !== null && run.status !== "rolled_back",
   )?.modelSelection;
   if (from === undefined || selection == null) return null;
