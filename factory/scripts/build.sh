@@ -48,7 +48,12 @@ echo "build: version $version (SEA node $sea_node)"
 
 vp i
 vp run --filter t3 build
-(cd native/resource-monitor && cargo build --locked --release)
+# Cargo reads .cargo/config.toml from every parent of the cwd and from CARGO_HOME, so a
+# build under $HOME would inherit a host-level crates.io replacement. The lockfile pins
+# crates.io, so build from / with a CARGO_HOME of its own under the gitignored target/.
+cargo_home="$root/native/resource-monitor/target/cargo-home"
+mkdir -p "$cargo_home"
+(cd / && CARGO_HOME="$cargo_home" cargo build --locked --release --manifest-path "$root/native/resource-monitor/Cargo.toml")
 VP_NODE_VERSION="$sea_node" vp node apps/server/scripts/cli.ts build-exe
 
 stage=$(mktemp -d)
@@ -84,11 +89,12 @@ ok=""
 start=$SECONDS
 for _ in $(seq 1 120); do
   kill -0 "$server_pid" 2>/dev/null || fail "server exited early"
-  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/.well-known/t3/environment" || true)
+  code=$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/.well-known/t3/environment" || true)
   if [[ $code == 200 ]]; then
     ok=1
     break
   fi
+  (( SECONDS - start >= 60 )) && break
   sleep 0.5
 done
 [[ -n $ok ]] || fail "/.well-known/t3/environment did not answer 200 within 60s"
