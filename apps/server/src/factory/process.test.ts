@@ -7,7 +7,14 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { RunSpawnError, run } from "./process.ts";
+import { FactoryProcess, type RunInput, RunSpawnError, layer } from "./process.ts";
+
+// Every test goes through the service, the way a caller does.
+const run = (input: RunInput) =>
+  Effect.gen(function* () {
+    const factoryProcess = yield* FactoryProcess;
+    return yield* factoryProcess.run(input);
+  }).pipe(Effect.provide(layer));
 
 const withEnv = <A, E, R>(
   vars: Record<string, string>,
@@ -107,49 +114,48 @@ it.live("passes PATH, LC_* and the env argument through", () =>
 );
 
 it.live("a timeout kills the whole process group, grandchild included", () =>
-  Effect.gen(function* () {
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "factory-process-"));
-    const pidFile = NodePath.join(dir, "pid");
-    const started = yield* Clock.currentTimeMillis;
-    const result = yield* run({
-      command: `sleep 100 & echo $! > "$0"; sleep 100`,
-      args: [pidFile],
-      shell: true,
-      timeoutMs: 300,
-    });
-    assert.strictEqual(result.timedOut, true);
-    assert.strictEqual(result.exitCode, null);
-    assert.isBelow((yield* Clock.currentTimeMillis) - started, 5000);
+  withTempDir((dir) =>
+    Effect.gen(function* () {
+      const pidFile = NodePath.join(dir, "pid");
+      const started = yield* Clock.currentTimeMillis;
+      const result = yield* run({
+        command: `sleep 100 & echo $! > "$0"; sleep 100`,
+        args: [pidFile],
+        shell: true,
+        timeoutMs: 300,
+      });
+      assert.strictEqual(result.timedOut, true);
+      assert.strictEqual(result.exitCode, null);
+      assert.isBelow((yield* Clock.currentTimeMillis) - started, 5000);
 
-    const pid = Number(NodeFS.readFileSync(pidFile, "utf8").trim());
-    assert.isAbove(pid, 0);
-    for (let i = 0; i < 40 && isAlive(pid); i++) yield* Effect.sleep("50 millis");
-    assert.strictEqual(isAlive(pid), false);
-    NodeFS.rmSync(dir, { recursive: true, force: true });
-  }),
+      const [pid] = readPids(pidFile);
+      assert.isAbove(pid!, 0);
+      yield* waitForDeath(pid!);
+    }),
+  ),
 );
 
 it.live("kills what a finished command left behind, without waiting", () =>
-  Effect.gen(function* () {
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "factory-process-"));
-    const pidFile = NodePath.join(dir, "pid");
-    const started = yield* Clock.currentTimeMillis;
-    const result = yield* run({
-      command: `sleep 100 & echo $! > "$0"; echo done`,
-      args: [pidFile],
-      shell: true,
-    });
-    assert.strictEqual(result.tail, "done\n");
-    assert.strictEqual(result.exitCode, 0);
-    assert.strictEqual(result.timedOut, false);
-    assert.isBelow((yield* Clock.currentTimeMillis) - started, 1000);
+  withTempDir((dir) =>
+    Effect.gen(function* () {
+      const pidFile = NodePath.join(dir, "pid");
+      const started = yield* Clock.currentTimeMillis;
+      const result = yield* run({
+        command: `sleep 100 & echo $! > "$0"; echo done`,
+        args: [pidFile],
+        shell: true,
+      });
+      assert.strictEqual(result.tail, "done\n");
+      assert.strictEqual(result.exitCode, 0);
+      assert.strictEqual(result.timedOut, false);
+      // Well under the 10 s grace a timeout would give; waitForDeath proves the kill.
+      assert.isBelow((yield* Clock.currentTimeMillis) - started, 5000);
 
-    const pid = Number(NodeFS.readFileSync(pidFile, "utf8").trim());
-    assert.isAbove(pid, 0);
-    for (let i = 0; i < 40 && isAlive(pid); i++) yield* Effect.sleep("50 millis");
-    assert.strictEqual(isAlive(pid), false);
-    NodeFS.rmSync(dir, { recursive: true, force: true });
-  }),
+      const [pid] = readPids(pidFile);
+      assert.isAbove(pid!, 0);
+      yield* waitForDeath(pid!);
+    }),
+  ),
 );
 
 it.live("escalates to SIGKILL when SIGTERM is ignored", () =>

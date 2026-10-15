@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - The factory runs commands as detached process groups, which Node's child_process exposes and ProcessRunner does not.
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as NodeChildProcess from "node:child_process";
 
@@ -121,7 +123,7 @@ const buildEnv = (extra: Readonly<Record<string, string>> | undefined): Record<s
   return { ...env, ...extra };
 };
 
-export const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
+const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
   Effect.gen(function* () {
     const args = input.args ?? [];
     const tail = new Tail(input.tailBytes ?? DEFAULT_TAIL_BYTES);
@@ -234,3 +236,13 @@ export const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
 
     return yield* Effect.acquireUseRelease(acquire, use, release);
   });
+
+/** Callers depend on this tag, so their tests can swap in a fake that starts no process. */
+export class FactoryProcess extends Context.Service<
+  FactoryProcess,
+  {
+    readonly run: (input: RunInput) => Effect.Effect<RunResult, RunSpawnError>;
+  }
+>()("t3/factory/process/FactoryProcess") {}
+
+export const layer = Layer.succeed(FactoryProcess, FactoryProcess.of({ run }));
