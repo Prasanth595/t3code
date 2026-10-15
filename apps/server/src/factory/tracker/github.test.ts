@@ -293,6 +293,20 @@ it.effect("fileAt decodes content wrapped over several lines and padded", () =>
   }),
 );
 
+it.effect("fileAt refuses a file over the size cap even when its content is whole", () =>
+  Effect.gen(function* () {
+    // The size check must refuse it on its own: the content matches the stated size.
+    const size = MAX_FILE_BYTES + 1;
+    const t = setup(reply(fileReply("file", "base64", size, btoa("a".repeat(size)))));
+    const error = yield* t.err(t.github.fileAt(".dw/config.yml", FILE_SHA));
+    assert.strictEqual(error._tag, "GitHubParse");
+    assert.ok(
+      error._tag === "GitHubParse" && error.expected.includes("it is too big"),
+      error.message,
+    );
+  }),
+);
+
 it.effect("fileAt refuses what is not a plain complete file", () =>
   Effect.gen(function* () {
     for (const answer of [
