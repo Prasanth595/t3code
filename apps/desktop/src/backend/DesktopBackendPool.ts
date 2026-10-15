@@ -90,17 +90,19 @@ import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as FileSystem from "effect/FileSystem";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 
 const { logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
@@ -114,7 +116,7 @@ export type BackendInstanceSpec = DesktopBackendManager.BackendInstanceSpec;
 // Caller tried to register an id that's already in the pool. The pool
 // refuses overwrites so two independent orchestrators racing on the
 // same id surface as a typed failure instead of one silently winning.
-export class DesktopBackendPoolInstanceAlreadyRegisteredError extends Schema.TaggedErrorClass<DesktopBackendPoolInstanceAlreadyRegisteredError>()(
+export class DesktopBackendPoolInstanceAlreadyRegisteredError extends Schema.TaggedError<DesktopBackendPoolInstanceAlreadyRegisteredError>()(
   "DesktopBackendPoolInstanceAlreadyRegisteredError",
   {
     id: Schema.String,
@@ -128,7 +130,7 @@ export class DesktopBackendPoolInstanceAlreadyRegisteredError extends Schema.Tag
 // Primary instance is registered for the pool's lifetime. Unregister is
 // a no-op for it today (no real callers), but if someone wires it up
 // later it's a clear bug rather than something to "handle".
-export class DesktopBackendPoolCannotUnregisterPrimaryError extends Schema.TaggedErrorClass<DesktopBackendPoolCannotUnregisterPrimaryError>()(
+export class DesktopBackendPoolCannotUnregisterPrimaryError extends Schema.TaggedError<DesktopBackendPoolCannotUnregisterPrimaryError>()(
   "DesktopBackendPoolCannotUnregisterPrimaryError",
   {},
 ) {
@@ -180,6 +182,7 @@ export type BackendInstanceFactoryRequirements =
   | HttpClient.HttpClient
   | DesktopObservability.DesktopBackendOutputLogFactory
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
+  | DesktopBrowserHost.DesktopBrowserHost
   | DesktopWslEnvironment.DesktopWslEnvironment;
 
 interface ActiveRegisteredInstance {
@@ -213,6 +216,7 @@ export const layer = Layer.effect(
     const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
+    const electronApp = yield* ElectronApp.ElectronApp;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     // Anchor the pool's lifetime to its layer scope so registered
     // instance scopes can be forked off it. Without this, instance
@@ -301,6 +305,13 @@ export const layer = Layer.effect(
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
+      onStateDirOwned: () =>
+        electronDialog
+          .showErrorBox(
+            "This T3 home is unavailable",
+            "Another T3 Code server, such as the background service, is using this data directory. Stop that server and reopen T3 Code, or set a separate T3CODE_HOME and pair with the running server.",
+          )
+          .pipe(Effect.andThen(electronApp.quit)),
     });
 
     const instancesRef = yield* SynchronizedRef.make<

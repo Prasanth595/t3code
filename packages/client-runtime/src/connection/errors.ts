@@ -1,8 +1,9 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { ClientConnectionMethod, EnvironmentId } from "@t3tools/contracts";
 import type { RelayProtectedError } from "@t3tools/contracts/relay";
 import type { ManagedRelayClientError } from "../relay/managedRelay.ts";
 import { dpopFailureMessage, relayProtectedErrorMessage } from "../relay/errorPresentation.ts";
 import type { RemoteEnvironmentAuthError } from "../authorization/remote.ts";
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import {
   ConnectionBlockedError,
   type ConnectionAttemptError,
@@ -45,6 +46,20 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
         traceId: error.traceId,
       });
     case "RelayEnvironmentConnectNotAuthorizedError":
+      // A host swapping in a new tunnel leaves its allocation unready until
+      // the tunnel is up, and nothing on the client changes when it is.
+      if (error.reason === "managed_endpoint_allocation_not_ready") {
+        return new ConnectionTransientError({
+          reason: "endpoint-unavailable",
+          detail: relayProtectedErrorMessage(error),
+          traceId: error.traceId,
+        });
+      }
+      return new ConnectionBlockedError({
+        reason: "permission",
+        detail: relayProtectedErrorMessage(error),
+        traceId: error.traceId,
+      });
     case "RelayEnvironmentLinkProofInvalidError":
     case "RelayEnvironmentLinkLimitExceededError":
       return new ConnectionBlockedError({
@@ -113,7 +128,9 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
 
 export function mapRemoteEnvironmentError(
   error: RemoteEnvironmentAuthError,
+  connectionMethod: ClientConnectionMethod = "direct",
 ): ConnectionAttemptError {
+  const networkHint = connectionMethod === "relay" ? ` ${NETWORK_BLOCKING_HINT}` : "";
   switch (error._tag) {
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
@@ -146,12 +163,12 @@ export function mapRemoteEnvironmentError(
     case "RemoteEnvironmentAuthTimeoutError":
       return new ConnectionTransientError({
         reason: "timeout",
-        detail: error.message,
+        detail: `${error.message}${networkHint}`,
       });
     case "RemoteEnvironmentAuthFetchError":
       return new ConnectionTransientError({
         reason: "network",
-        detail: error.message,
+        detail: `${error.message}${networkHint}`,
       });
     case "EnvironmentInternalError":
       return new ConnectionTransientError({
@@ -185,5 +202,5 @@ export function mapRemoteDpopEnvironmentError(
       traceId: error.traceId,
     });
   }
-  return mapRemoteEnvironmentError(error);
+  return mapRemoteEnvironmentError(error, "relay");
 }

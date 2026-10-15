@@ -3,15 +3,12 @@ export function composerEditorHeight(input: {
   contentHeight: number;
   availableHeight: number;
   lineHeight: number;
-  expanded: boolean;
 }) {
   const maximum = Math.max(input.lineHeight + 8, input.availableHeight);
   const inlineMaximum = Math.max(
     input.lineHeight + 8,
-    Math.min(maximum, input.lineHeight * 9, maximum * 0.7),
+    Math.min(maximum, input.lineHeight * 9 + 8, maximum * 0.7),
   );
   const minimum = Math.min(input.lineHeight * 3 + 8, inlineMaximum);
-  return input.expanded
-    ? maximum
-    : Math.min(inlineMaximum, Math.max(minimum, Math.ceil(input.contentHeight) + 8));
+  return Math.min(inlineMaximum, Math.max(minimum, Math.ceil(input.contentHeight) + 8));
 }

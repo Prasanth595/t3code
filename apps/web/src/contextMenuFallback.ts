@@ -9,6 +9,12 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" } },
     { tag: "path", attrs: { d: "M10 12h4" } },
   ],
+  check: [{ tag: "path", attrs: { d: "M20 6 9 17l-5-5" } }],
+  timer: [
+    { tag: "line", attrs: { x1: "10", x2: "14", y1: "2", y2: "2" } },
+    { tag: "line", attrs: { x1: "12", x2: "15", y1: "14", y2: "11" } },
+    { tag: "circle", attrs: { cx: "12", cy: "14", r: "8" } },
+  ],
   "chevron-right": [{ tag: "path", attrs: { d: "m9 19 7-7-7-7" } }],
   "circle-check": [
     { tag: "circle", attrs: { cx: "12", cy: "12", r: "10" } },
@@ -95,6 +101,15 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "path", attrs: { d: "M21 3v5h-5" } },
     { tag: "path", attrs: { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" } },
     { tag: "path", attrs: { d: "M8 16H3v5" } },
+  ],
+  settings: [
+    {
+      tag: "path",
+      attrs: {
+        d: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z",
+      },
+    },
+    { tag: "circle", attrs: { cx: "12", cy: "12", r: "3" } },
   ],
   "folder-tree": [
     {
@@ -186,6 +201,10 @@ function isNodeWithinMenuStack(target: EventTarget | null, menuStack: readonly H
 // tracked so a state change (for example a terminal selection clearing) can
 // dismiss it with the same result as an outside click or Escape.
 let activeContextMenuDismiss: (() => void) | null = null;
+
+export function isContextMenuOpen(): boolean {
+  return activeContextMenuDismiss !== null;
+}
 
 /**
  * Closes the currently open fallback context menu, resolving its show() with
@@ -284,10 +303,12 @@ export function showContextMenuFallback<T extends string>(
       menu.dataset.level = String(level);
 
       const inner = document.createElement("div");
+      // Fit the viewport (minus clampMenuPosition's 4px margins) so menus only
+      // scroll when the window is shorter than the menu itself.
       inner.className =
-        "max-h-[min(24rem,70vh)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1";
+        "max-h-[calc(100vh-0.5rem)] min-w-0 max-w-sm overflow-y-auto overflow-x-hidden p-1";
       inner.style.cssText =
-        "max-height:min(24rem,70vh);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;";
+        "max-height:calc(100vh - 0.5rem);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;";
 
       for (const item of entries) {
         if (item.separatorBefore === true && inner.children.length > 0) {
@@ -334,7 +355,22 @@ export function showContextMenuFallback<T extends string>(
           button.style.pointerEvents = "none";
         }
 
-        if (typeof item.icon === "string") {
+        if (typeof item.checked === "boolean") {
+          // Option rows use the icon slot for the check so labels line up
+          // with icon rows. The unselected option keeps the slot empty.
+          button.setAttribute("role", "menuitemradio");
+          button.setAttribute("aria-checked", item.checked ? "true" : "false");
+          const check = item.checked ? createIconElement("check", "neutral") : null;
+          if (check) {
+            button.appendChild(check);
+          } else {
+            const spacer = document.createElement("span");
+            spacer.className = "size-4.5 shrink-0 sm:size-4";
+            spacer.style.cssText = "display:inline-block;width:1rem;height:1rem;flex-shrink:0;";
+            spacer.setAttribute("aria-hidden", "true");
+            button.appendChild(spacer);
+          }
+        } else if (typeof item.icon === "string") {
           const icon = createIconElement(item.icon, isLeafDestructive ? "destructive" : "neutral");
           if (icon) {
             button.appendChild(icon);

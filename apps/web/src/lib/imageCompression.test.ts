@@ -1,13 +1,19 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  createComposerImageThumbnail,
   compressImageForStash,
   compressImageToByteLimit,
+  dataUrlToFile,
   isHeicImageFile,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
   prepareImageForAttachment,
 } from "./imageCompression";
+
+import type { SnapShotSource } from "@t3tools/contracts";
+import { hydrateImagesFromPersisted } from "../composerDraftStore";
+import { resizeSnapShotSource } from "./snapShotSource";
 
 const mocks = vi.hoisted(() => ({
   heicTo: vi.fn(),
@@ -27,6 +33,26 @@ vi.mock("heic-to/csp", () => ({
 
 const originalCreateImageBitmap = globalThis.createImageBitmap;
 const originalOffscreenCanvas = globalThis.OffscreenCanvas;
+
+beforeEach(() => {
+  vi.stubGlobal(
+    "FileReader",
+    class extends EventTarget {
+      result: string | null = null;
+      error: unknown = null;
+      async readAsDataURL(blob: Blob) {
+        try {
+          const bytes = await blob.arrayBuffer();
+          this.result = `data:${blob.type || "application/octet-stream"};base64,${Buffer.from(bytes).toString("base64")}`;
+          this.dispatchEvent(new Event("load"));
+        } catch (error) {
+          this.error = error;
+          this.dispatchEvent(new Event("error"));
+        }
+      }
+    },
+  );
+});
 
 function makeFile(sizeBytes: number, type = "image/png"): File {
   return new File([new Uint8Array(sizeBytes).fill(7)], "shot.png", { type });
@@ -79,7 +105,7 @@ function makeHeicFile(options?: {
  */
 function stubCanvasPipeline(
   sizeForQuality: (quality: number) => number,
-  options?: { supportsWebp?: boolean },
+  options?: { supportsWebp?: boolean; htmlCanvas?: boolean },
 ) {
   const supportsWebp = options?.supportsWebp ?? true;
   const close = vi.fn();
@@ -108,6 +134,17 @@ function stubCanvasPipeline(
       }
     },
   );
+  if (options?.htmlCanvas) {
+    const Canvas = globalThis.OffscreenCanvas;
+    class HtmlCanvas extends Canvas {
+      toBlob(callback: BlobCallback, type: string, quality: number) {
+        void this.convertToBlob({ type, quality }).then(callback);
+      }
+    }
+    vi.stubGlobal("OffscreenCanvas", undefined);
+    vi.stubGlobal("HTMLCanvasElement", HtmlCanvas);
+    vi.stubGlobal("document", { createElement: () => new HtmlCanvas(0, 0) });
+  }
   return { close, fillRect };
 }
 
@@ -118,7 +155,121 @@ afterEach(() => {
   globalThis.OffscreenCanvas = originalOffscreenCanvas;
 });
 
+describe("composer image thumbnails", () => {
+  it("decodes a tall original once and caches a bounded center crop", async () => {
+    const close = vi.fn();
+    const bitmap = { width: 2304, height: 32766, close };
+    const decode = vi.fn(async () => bitmap);
+    const drawImage = vi.fn();
+    const dimensions: number[][] = [];
+    vi.stubGlobal("createImageBitmap", decode);
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        constructor(width: number, height: number) {
+          dimensions.push([width, height]);
+        }
+        getContext() {
+          return { drawImage };
+        }
+        async convertToBlob() {
+          return new Blob(["thumbnail"], { type: "image/png" });
+        }
+      },
+    );
+    const original = new File(["original bytes"], "tall.png", { type: "image/png" });
+    const [first, second] = await Promise.all([
+      createComposerImageThumbnail(original),
+      createComposerImageThumbnail(original),
+    ]);
+    expect(first).toBe("data:image/png;base64,dGh1bWJuYWls");
+    expect(second).toBe(first);
+    expect(await createComposerImageThumbnail(original)).toBe(first);
+    expect(decode).toHaveBeenCalledExactlyOnceWith(original);
+    expect(dimensions).toEqual([[256, 256]]);
+    expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 15231, 2304, 2304, 0, 0, 256, 256);
+    expect(close).toHaveBeenCalledOnce();
+    expect(await original.text()).toBe("original bytes");
+  });
+
+  it("releases the decoded image when thumbnail encoding fails", async () => {
+    const close = vi.fn();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => ({ width: 500, height: 500, close })),
+    );
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        getContext() {
+          return { drawImage: vi.fn() };
+        }
+        async convertToBlob() {
+          throw new Error("encoder unavailable");
+        }
+      },
+    );
+    expect(await createComposerImageThumbnail(makeFile(5))).toBeNull();
+    expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("dataUrlToFile", () => {
+  it("decodes a captured image without a fetch request", async () => {
+    const file = dataUrlToFile("data:image/png;base64,AAEC/w==", "window.png", "image/png");
+
+    expect(file.name).toBe("window.png");
+    expect(file.type).toBe("image/png");
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0, 1, 2, 255]);
+  });
+});
+
 describe("compressImageForStash", () => {
+  it.each([true, false])(
+    "encodes with HTML canvas when WebP support is %s",
+    async (supportsWebp) => {
+      const { close } = stubCanvasPipeline(() => 120_000, { htmlCanvas: true, supportsWebp });
+
+      const result = await compressImageToByteLimit(makeFile(2_000_000), 1_000_000);
+
+      expect(result.ok && result.file.type).toBe(supportsWebp ? "image/webp" : "image/jpeg");
+      expect(result.ok && result.file.size).toBe(120_000);
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps the exact data URL budget boundary and original bytes", async () => {
+    const original = makeFile(3);
+    const dataUrl = "data:image/png;base64,BwcH";
+
+    const result = await compressImageForStash(original, dataUrl.length);
+
+    expect(result.ok && result.image.dataUrl).toBe(dataUrl);
+    expect(result.ok && result.image.recompressed).toBe(false);
+    expect(await compressImageForStash(original, dataUrl.length - 1)).toEqual({
+      ok: false,
+      reason: "too-large",
+    });
+  });
+
+  it("reports unreadable if reading a small image fails", async () => {
+    const original = makeFile(3);
+    vi.spyOn(original, "arrayBuffer").mockRejectedValue(new Error("read failed"));
+
+    expect(await compressImageForStash(original)).toEqual({ ok: false, reason: "unreadable" });
+  });
+
+  it("compresses an oversized source before reading it as a data URL", async () => {
+    stubCanvasPipeline(() => 120_000);
+    const original = makeFile(4_000_000);
+    const read = vi.spyOn(original, "arrayBuffer").mockRejectedValue(new Error("unneeded read"));
+
+    const result = await compressImageForStash(original);
+
+    expect(result.ok && result.image.recompressed).toBe(true);
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it("stores a small image verbatim without re-encoding", async () => {
     const bitmapSpy = vi.fn();
     vi.stubGlobal("createImageBitmap", bitmapSpy);
@@ -444,5 +595,196 @@ describe("HEIC attachment preparation", () => {
     expect(result.ok && result.file).toBe(original);
     expect(result.ok && result.recompressed).toBe(false);
     expect(mocks.heicTo).not.toHaveBeenCalled();
+  });
+});
+
+describe("attachment max edge", () => {
+  const u32 = (n: number) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
+  const u16 = (n: number) => [(n >>> 8) & 0xff, n & 0xff];
+  const pngHeader = (width: number, height: number) => [
+    0x89,
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
+    ...u32(13),
+    0x49,
+    0x48,
+    0x44,
+    0x52,
+    ...u32(width),
+    ...u32(height),
+    8,
+    6,
+    0,
+    0,
+    0,
+  ];
+  const jpegHeader = (width: number, height: number) => [
+    0xff,
+    0xd8,
+    0xff,
+    0xc0,
+    ...u16(17),
+    8,
+    ...u16(height),
+    ...u16(width),
+  ];
+  const image = (header: number[], name: string, type: string) =>
+    new File([new Uint8Array([...header, ...new Uint8Array(2048).fill(7)])], name, { type });
+
+  /** Records the decoded size, the canvas sizes, and the encode calls. */
+  function stubDecoder(bitmapSize: { width: number; height: number }) {
+    const decode = vi.fn(async () => ({ ...bitmapSize, close: vi.fn() }));
+    const canvases: Array<{ width: number; height: number }> = [];
+    const encodes: Array<{ type: string; quality: number }> = [];
+    const fillRect = vi.fn();
+    vi.stubGlobal("createImageBitmap", decode);
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        constructor(width: number, height: number) {
+          canvases.push({ width, height });
+        }
+        getContext() {
+          return { fillRect, drawImage: vi.fn() };
+        }
+        async convertToBlob(options: { type: string; quality: number }) {
+          encodes.push(options);
+          return new Blob([new Uint8Array(500_000)], { type: options.type });
+        }
+      },
+    );
+    return { decode, canvases, encodes, fillRect };
+  }
+
+  it("scales a large PNG screenshot under the byte cap to 2000px and keeps it a PNG", async () => {
+    const { decode, canvases, encodes, fillRect } = stubDecoder({ width: 3024, height: 1964 });
+    const original = image(pngHeader(3024, 1964), "shot.png", "image/png");
+
+    const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
+
+    expect(decode).toHaveBeenCalledExactlyOnceWith(original, { imageOrientation: "from-image" });
+    expect(canvases).toEqual([{ width: 2000, height: 1299 }]);
+    expect(encodes.map(({ type }) => type)).toEqual(["image/png"]);
+    // PNG keeps alpha, so nothing paints a matte behind it.
+    expect(fillRect).not.toHaveBeenCalled();
+    expect(result.ok && result.recompressed).toBe(true);
+    expect(result.ok && result.imageSize).toEqual({ width: 2000, height: 1299 });
+    expect(result.ok && result.file.name).toBe("shot.png");
+    expect(result.ok && result.file.type).toBe("image/png");
+  });
+
+  it("scales a rotated JPEG by its displayed size and keeps it a JPEG", async () => {
+    // Stored landscape, displayed portrait after the EXIF rotation.
+    const { canvases, encodes } = stubDecoder({ width: 3024, height: 4032 });
+    const original = image(jpegHeader(4032, 3024), "photo.jpg", "image/jpeg");
+
+    const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
+
+    expect(canvases).toEqual([{ width: 1500, height: 2000 }]);
+    expect(encodes).toEqual([{ type: "image/jpeg", quality: 0.92 }]);
+    expect(result.ok && result.file.type).toBe("image/jpeg");
+    expect(result.ok && result.imageSize).toEqual({ width: 1500, height: 2000 });
+  });
+
+  it.each([
+    { label: "a 2000px PNG", header: pngHeader(2000, 1200), type: "image/png" },
+    {
+      label: "a 3000px GIF",
+      header: [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0xb8, 0x0b, 0x10, 0x04],
+      type: "image/gif",
+    },
+  ])("passes $label through without decoding it", async ({ header, type }) => {
+    const { decode } = stubDecoder({ width: 3000, height: 1040 });
+    const original = image(header, "image", type);
+
+    const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
+
+    expect(result.ok && result.file).toBe(original);
+    expect(result.ok && result.recompressed).toBe(false);
+    expect(decode).not.toHaveBeenCalled();
+  });
+});
+
+describe("snapshot coordinates after compression", () => {
+  const source: SnapShotSource = {
+    kind: "snap-shot",
+    capturedAt: "2026-09-01T00:00:00.000Z",
+    appName: "Editor",
+    windowTitle: "main.ts",
+    accessibility: {
+      format: "element-tree",
+      coordinateSpace: "captured-image",
+      imageSize: { width: 2560, height: 1600 },
+      truncated: false,
+      root: {
+        role: "window",
+        bounds: { x: 0, y: 0, width: 2560, height: 1600 },
+        children: [
+          {
+            role: "button",
+            name: "Save",
+            bounds: { x: 2400, y: 1400, width: 100, height: 100 },
+            children: [],
+          },
+          { role: "static_text", name: "Untitled", bounds: null, children: [] },
+        ],
+      },
+    },
+  };
+
+  it.each(["stash", "delivery"])(
+    "rescales the source and restores it with the compressed %s image",
+    async (path) => {
+      stubCanvasPipeline(() => 100);
+      vi.stubGlobal(
+        "createImageBitmap",
+        vi.fn(async () => ({ width: 2560, height: 1600, close: vi.fn() })),
+      );
+      const original = makeFile(2000);
+      const compressed =
+        path === "stash"
+          ? await compressImageForStash(original, 1000)
+          : await compressImageToByteLimit(original, 1000);
+      expect(compressed.ok).toBe(true);
+      if (!compressed.ok) throw new Error("Compression failed");
+      const image =
+        "image" in compressed
+          ? compressed.image
+          : {
+              ...compressed,
+              mimeType: compressed.file.type,
+              sizeBytes: compressed.file.size,
+              dataUrl: `data:${compressed.file.type};base64,${Buffer.from(await compressed.file.arrayBuffer()).toString("base64")}`,
+            };
+      expect(image.imageSize).toEqual({ width: 2000, height: 1250 });
+      const resized = resizeSnapShotSource(source, image.imageSize);
+      const [restored] = hydrateImagesFromPersisted([
+        {
+          id: "capture",
+          name: "window.webp",
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: image.dataUrl,
+          source: resized,
+        },
+      ]);
+      expect(restored?.source?.accessibility).toMatchObject({
+        imageSize: { width: 2000, height: 1250 },
+        root: {
+          bounds: { x: 0, y: 0, width: 2000, height: 1250 },
+          children: [{ bounds: { x: 1875, y: 1094, width: 78, height: 78 } }, { bounds: null }],
+        },
+      });
+      expect(source.accessibility).toMatchObject({ imageSize: { width: 2560, height: 1600 } });
+    },
+  );
+
+  it("keeps uncompressed sources unchanged", () => {
+    expect(resizeSnapShotSource(source)).toBe(source);
   });
 });
