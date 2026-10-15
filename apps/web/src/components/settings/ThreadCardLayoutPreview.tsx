@@ -118,7 +118,12 @@ const SAMPLE_THREADS: ReadonlyArray<SampleThread> = [
     project: { name: "dotfiles", monogram: "DF", color: "green" },
     branch: "main",
     worktree: false,
-    status: { label: "Waiting", icon: null, className: "text-muted-foreground", elapsed: null },
+    status: {
+      label: "Waiting",
+      icon: "waiting",
+      className: "text-muted-foreground",
+      elapsed: "19m",
+    },
     time: "19m",
     pinned: false,
     terminal: false,
