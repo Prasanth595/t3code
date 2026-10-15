@@ -735,8 +735,10 @@ it.live("a head that is behind the base gets a merge commit and not a fast-forwa
     const made = yield* checkout(remoteOptions(remote), REPO, old, base, dir);
     assert.strictEqual(made.head, old);
     assert.deepStrictEqual(made.merge, { _tag: "merged" });
-    // The first parent is still the PR head, as the gate checks.
+    // The first parent is still the PR head, as the gate checks, and the second is the base:
+    // a fast-forward would leave HEAD at the base with no second parent.
     assert.strictEqual(git(dir, "rev-parse", "HEAD^1").trim(), old);
+    assert.strictEqual(git(dir, "rev-parse", "HEAD^2").trim(), base);
     assert.isTrue(NodeFS.existsSync(NodePath.join(dir, "base.txt")));
   }),
 );
