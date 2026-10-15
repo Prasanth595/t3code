@@ -1196,6 +1196,9 @@ export default function GitActionsControl({
     () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasPrimaryRemote),
     [gitStatusForActions, hasPrimaryRemote, isGitActionRunning],
   );
+  // The dropdown trigger stays disabled while every menu item is unavailable, so it
+  // never opens onto a menu with no clickable options (#13406).
+  const hasAvailableGitActions = gitActionMenuItems.some((item) => !item.disabled);
   const quickAction = useMemo(
     () =>
       resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
@@ -1886,7 +1889,7 @@ export default function GitActionsControl({
                       panel={isPanel}
                     />
                   }
-                  disabled={isGitActionRunning}
+                  disabled={isGitActionRunning || !hasAvailableGitActions}
                 >
                   <ChevronDownIcon
                     aria-hidden="true"
