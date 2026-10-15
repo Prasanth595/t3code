@@ -190,33 +190,36 @@ it.layer(layerTest)("worktree path template", (it) => {
     }),
   );
 
-  it.effect("refuses a template that nests the worktree in a normal checkout", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const driver = yield* GitVcsDriver.GitVcsDriver;
-      const cwd = yield* fs.realPath(
-        yield* fs.makeTempDirectoryScoped({ prefix: "template-clone-" }),
-      );
-      yield* git(cwd, ["init", "--initial-branch=main"]);
-      yield* git(cwd, [
-        "-c",
-        "user.email=t@t",
-        "-c",
-        "user.name=T",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "init",
-      ]);
+  it.effect(
+    "uses the default location when the template nests the worktree in a normal checkout",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cwd = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "template-clone-" }),
+        );
+        yield* git(cwd, ["init", "--initial-branch=main"]);
+        yield* git(cwd, [
+          "-c",
+          "user.email=t@t",
+          "-c",
+          "user.name=T",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "init",
+        ]);
 
-      const error = yield* driver
-        .createWorktree(
+        const created = yield* driver.createWorktree(
           { cwd, path: null, refName: "main", newRefName: "feature" },
           { worktreePathTemplate: "{repoDir}/{branchLeaf}" },
-        )
-        .pipe(Effect.flip);
+        );
 
-      assert.include(error.detail, "is inside");
-    }),
+        // The default location: <worktrees>/<repo>/<branch>, outside the checkout.
+        assert.isFalse(created.worktree.path.startsWith(`${cwd}/`));
+        assert.isTrue(created.worktree.path.endsWith(`/${path.basename(cwd)}/feature`));
+      }),
   );
 });
