@@ -307,7 +307,8 @@ const make = Effect.gen(function* () {
     // blocks, as `docs` blocks `docs/x`. Limit: short names read a branch that
     // shares its name with a tag as `heads/<name>`, so the launch reports that
     // case instead. Revisit if agents name branches after tags.
-    if (branch !== undefined) {
+    // A temporary `t3/<id>` name is flattened at launch when it conflicts.
+    if (branch !== undefined && !isTemporaryWorktreeBranch(branch)) {
       const taken = yield* Effect.gen(function* () {
         const project = Option.getOrUndefined(yield* projects.getById(input.projectId));
         if (project === undefined) return undefined;

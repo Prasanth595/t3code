@@ -1160,8 +1160,9 @@ it.effect.each([
           .getThreadRecords(launched.threadId, ["runs"])
           .pipe(Effect.map(({ runs }) => runs[0]?.status !== "preparing")),
       );
-      const notices = (yield* threads.getThreadRecords(launched.threadId, ["turnItems"]))
-        .turnItems.filter((item) => item.type === "system_notice");
+      const notices = (yield* threads.getThreadRecords(launched.threadId, [
+        "turnItems",
+      ])).turnItems.filter((item) => item.type === "system_notice");
       assert.equal(notices.length, Option.isSome(testCase.scratchFolder) ? 0 : 1);
     }).pipe(Effect.provide(harness.layer));
   }),
@@ -2676,6 +2677,22 @@ it.effect.each([
         _tag: "ThreadLaunchBranchExistsError",
         projectId,
         branch: "docs/taken",
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("leaves a temporary branch that a branch blocks to the launch, which flattens it", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      hasCommit: () => Effect.succeed(true),
+      git: { listLocalBranchNames: () => Effect.succeed(["main", "t3"]) },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.checkWorktreeBase({
+        projectId,
+        workspaceStrategy: { type: "worktree", baseRef: "main", branch: "t3/0123abcd" },
       });
     }).pipe(Effect.provide(harness.layer));
   }),
