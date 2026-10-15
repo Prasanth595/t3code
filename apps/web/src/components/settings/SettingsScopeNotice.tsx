@@ -4,7 +4,8 @@ import { ChevronRightIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
-import { useEnvironments } from "../../state/environments";
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -15,10 +16,9 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import type { SettingsScopeSearch } from "./settingsScope";
 import {
   settingsScopeEnvironmentAddress,
-  settingsScopeEnvironmentLabel,
   settingsScopeEnvironmentLabels,
+  settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
-import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 
 interface ScopeChoice {
   label: string;
@@ -39,121 +39,84 @@ export function SettingsScopeNotice({
   targetId?: string;
   eligibleEnvironmentIds?: readonly EnvironmentId[];
 }) {
-  const { selectScope, search } = useSettingsScope();
+  const { selectScope, search, groups } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();
-  const groups = useSettingsProjectGroups();
-  const choiceGroups: { key: string; title?: string; choices: ScopeChoice[] }[] =
+  const environmentIcon = (environment: EnvironmentPresentation | undefined) =>
+    environment ? (
+      <EnvironmentMachineIcon
+        aria-hidden
+        kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+        className="size-4 shrink-0 text-muted-foreground"
+      />
+    ) : null;
+  const choiceGroups =
     target === "checkout"
-      ? groups
-          .filter((group) => !search.project || group.projectKey === search.project)
-          .map((group) => ({
-            key: group.projectKey,
-            title: group.displayName,
-            choices: group.memberProjects.map((member) => {
-              const environment = environments.find(
-                (entry) => entry.environmentId === member.environmentId,
-              );
-              return {
-                label: environment
-                  ? settingsScopeEnvironmentLabels(environment, environments).primary
-                  : (member.environmentLabel ?? "Environment"),
-                secondary: [
-                  environment
-                    ? settingsScopeEnvironmentLabels(environment, environments).secondary
-                    : member.environmentId,
-                  member.workspaceRoot,
-                ]
-                  .filter(Boolean)
-                  .join(" · "),
-                icon: environment ? (
-                  <EnvironmentMachineIcon
-                    aria-hidden
-                    kind={resolveEnvironmentMachineKind(environment.serverConfig)}
-                    className="size-4 shrink-0 text-muted-foreground"
-                  />
-                ) : null,
-                search: {
-                  project: group.projectKey,
-                  machine: member.environmentId,
-                  checkout: member.physicalProjectKey,
-                },
+      ? groups.filter((group) => !search.project || group.projectKey === search.project)
+      : [null];
+  const renderChoices = (group: SidebarProjectSnapshot | null) => {
+    const choices: ScopeChoice[] = group
+      ? group.memberProjects.map((member) => {
+          const environment = environments.find(
+            (entry) => entry.environmentId === member.environmentId,
+          );
+          const { primary, secondary } = environment
+            ? settingsScopeEnvironmentLabels(environment, environments)
+            : {
+                primary: member.environmentLabel ?? "Environment",
+                secondary: member.environmentId,
               };
-            }),
+          return {
+            label: primary,
+            secondary: [secondary, member.workspaceRoot].filter(Boolean).join(" · "),
+            icon: environmentIcon(environment),
+            search: {
+              project: group.projectKey,
+              machine: member.environmentId,
+              checkout: member.physicalProjectKey,
+            },
+          };
+        })
+      : target === "project"
+        ? groups.map((group) => ({
+            label: group.displayName,
+            secondary: [
+              ...(groups.some(
+                (other) =>
+                  other.projectKey !== group.projectKey && other.displayName === group.displayName,
+              )
+                ? settingsScopeProjectMachines(group, environments)
+                : []),
+              group.workspaceRoot,
+            ].join(" · "),
+            icon: <ProjectFavicon project={group} className="size-4 shrink-0" />,
+            search: { project: group.projectKey },
           }))
-      : [
-          {
-            key: target,
-            choices:
-              target === "project"
-                ? groups.map((group) => ({
-                    label: group.displayName,
-                    secondary: [
-                      ...(groups.some(
-                        (other) =>
-                          other.projectKey !== group.projectKey &&
-                          other.displayName === group.displayName,
-                      )
-                        ? Array.from(
-                            new Set(
-                              group.memberProjects.map((member) => {
-                                const environment = environments.find(
-                                  (entry) => entry.environmentId === member.environmentId,
-                                );
-                                return environment
-                                  ? settingsScopeEnvironmentLabel(environment, environments)
-                                  : (member.environmentLabel ?? member.environmentId);
-                              }),
-                            ),
-                          )
-                        : []),
-                      group.workspaceRoot,
-                    ].join(" · "),
-                    icon: <ProjectFavicon project={group} className="size-4 shrink-0" />,
-                    search: { project: group.projectKey },
-                  }))
-                : target === "environment"
-                  ? environments
-                      .filter(
-                        (entry) =>
-                          eligibleEnvironmentIds === undefined ||
-                          eligibleEnvironmentIds.includes(entry.environmentId),
-                      )
-                      .map((entry) => {
-                        const { primary, secondary } = settingsScopeEnvironmentLabels(
-                          entry,
-                          environments,
-                        );
-                        return {
-                          label: primary,
-                          secondary: secondary || settingsScopeEnvironmentAddress(entry),
-                          icon: (
-                            <EnvironmentMachineIcon
-                              aria-hidden
-                              kind={resolveEnvironmentMachineKind(entry.serverConfig)}
-                              className="size-4 shrink-0 text-muted-foreground"
-                            />
-                          ),
-                          search: { machine: entry.environmentId },
-                        };
-                      })
-                  : [
-                      {
-                        label: "Open all environments",
-                        icon: (
-                          <LayersIcon
-                            aria-hidden
-                            className="size-4 shrink-0 text-muted-foreground"
-                          />
-                        ),
-                        search: {},
-                      },
-                    ],
-          },
-        ];
-  const renderChoices = (choices: ScopeChoice[]) =>
-    choices.map((choice) => (
+        : target === "environment"
+          ? environments
+              .filter(
+                (entry) =>
+                  eligibleEnvironmentIds === undefined ||
+                  eligibleEnvironmentIds.includes(entry.environmentId),
+              )
+              .map((entry) => {
+                const { primary, secondary } = settingsScopeEnvironmentLabels(entry, environments);
+                return {
+                  label: primary,
+                  secondary: secondary || settingsScopeEnvironmentAddress(entry),
+                  icon: environmentIcon(entry),
+                  search: { machine: entry.environmentId },
+                };
+              })
+          : [
+              {
+                label: "Open all environments",
+                icon: <LayersIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />,
+                search: {},
+              },
+            ];
+    return choices.map((choice) => (
       <button
         key={JSON.stringify(choice.search)}
         type="button"
@@ -184,6 +147,7 @@ export function SettingsScopeNotice({
         <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       </button>
     ));
+  };
   return (
     <SettingsPageContainer>
       <div className="space-y-3">
@@ -192,12 +156,14 @@ export function SettingsScopeNotice({
         </p>
         <div className="space-y-4">
           {choiceGroups.map((group) =>
-            group.title ? (
-              <SettingsSection key={group.key} title={group.title}>
-                {renderChoices(group.choices)}
+            group?.displayName ? (
+              <SettingsSection key={group.projectKey} title={group.displayName}>
+                {renderChoices(group)}
               </SettingsSection>
             ) : (
-              <SettingsGroup key={group.key}>{renderChoices(group.choices)}</SettingsGroup>
+              <SettingsGroup key={group?.projectKey ?? target}>
+                {renderChoices(group)}
+              </SettingsGroup>
             ),
           )}
         </div>

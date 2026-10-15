@@ -1,3 +1,4 @@
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { ResolvedSettingsScope, SettingsScopeSearch } from "./settingsScope";
 
@@ -36,6 +37,22 @@ export function settingsScopeEnvironmentLabel(
 ) {
   const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
   return secondary ? `${primary} · ${secondary}` : primary;
+}
+
+export function settingsScopeProjectMachines(
+  group: SidebarProjectSnapshot,
+  environments: readonly ScopeEnvironment[],
+  includeAddresses = false,
+) {
+  const machines = group.memberProjects.map((member) => {
+    const environment = environments.find((entry) => entry.environmentId === member.environmentId);
+    if (!environment) return member.environmentLabel ?? member.environmentId;
+    const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
+    const address =
+      secondary || (includeAddresses ? settingsScopeEnvironmentAddress(environment) : "");
+    return includeAddresses || address ? `${primary} · ${address}` : primary;
+  });
+  return Array.from(new Set(machines));
 }
 
 export const ALL_ENVIRONMENTS_VALUE = "all";

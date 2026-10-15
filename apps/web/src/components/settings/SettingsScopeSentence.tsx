@@ -38,6 +38,7 @@ import {
   settingsScopeEnvironmentAddress,
   settingsScopeEnvironmentLabel,
   settingsScopeEnvironmentLabels,
+  settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
 
 /** Pages whose every row is saved on this client; they have no scope to pick. */
@@ -131,17 +132,22 @@ function ScopeMenu({
   label: string;
   value: string;
   options: ScopeOption[];
-  allOption?: ScopeOption;
+  allOption: ScopeOption | null;
   searchLabel: string;
   onChange: (next: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const Trigger = options.length > 6 ? ComboboxTrigger : MenuTrigger;
   const trigger = (
-    <>
+    <Trigger
+      aria-label={`${ariaLabel}: ${label}`}
+      render={<InlineButton tone="picker" />}
+      className="min-w-0 max-w-72"
+    >
       {icon}
       <span className="min-w-0 truncate">{label}</span>
       <ChevronDownIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-    </>
+    </Trigger>
   );
   const choices = allOption ? [allOption, ...options] : options;
   if (options.length > 6) {
@@ -165,13 +171,7 @@ function ScopeMenu({
           if (option) onChange(option.value);
         }}
       >
-        <ComboboxTrigger
-          aria-label={`${ariaLabel}: ${label}`}
-          render={<InlineButton tone="picker" />}
-          className="min-w-0 max-w-72"
-        >
-          {trigger}
-        </ComboboxTrigger>
+        {trigger}
         <ComboboxPopup align="start" className="w-80">
           <ComboboxSearchInput
             aria-label={searchLabel}
@@ -196,13 +196,7 @@ function ScopeMenu({
   }
   return (
     <Menu>
-      <MenuTrigger
-        aria-label={`${ariaLabel}: ${label}`}
-        render={<InlineButton tone="picker" />}
-        className="min-w-0 max-w-72"
-      >
-        {trigger}
-      </MenuTrigger>
+      {trigger}
       <MenuPopup align="start">
         <div className="w-72 max-w-full">
           <MenuRadioGroup
@@ -268,15 +262,15 @@ function EnvironmentScopeMenu({
       value={environmentValue}
       onChange={(next) => onChange(selectEnvironmentAxis(value, next))}
       searchLabel="Search environments"
-      {...(!singleEnvironment
-        ? {
-            allOption: {
+      allOption={
+        singleEnvironment
+          ? null
+          : {
               value: ALL_ENVIRONMENTS_VALUE,
               label: "All environments",
               icon: <LayersIcon aria-hidden className="size-3.5 shrink-0" />,
-            },
-          }
-        : {})}
+            }
+      }
       options={environments.map((environment) => {
         const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
         return {
@@ -304,18 +298,7 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
   const selected = groups.find((group) => group.projectKey === value.project);
   const projects = groups.map((group) => ({
     group,
-    machines: Array.from(
-      new Set(
-        group.memberProjects.map((member) => {
-          const environment = environments.find(
-            (entry) => entry.environmentId === member.environmentId,
-          );
-          if (!environment) return member.environmentLabel ?? member.environmentId;
-          const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
-          return `${primary} · ${secondary || settingsScopeEnvironmentAddress(environment)}`;
-        }),
-      ),
-    ).join(", "),
+    machines: settingsScopeProjectMachines(group, environments, true).join(", "),
   }));
   return (
     <ScopeMenu
