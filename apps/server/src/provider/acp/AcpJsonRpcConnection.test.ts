@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -396,8 +397,11 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reports the signal and child stderr when the ACP process is killed", () =>
+  // A child's self `process.kill` is TerminateProcess(handle, 1) on Windows, so
+  // the parent sees exit code 1 there and SIGKILL only on POSIX.
+  it.effect("reports how a self-killed ACP process ended with its stderr", () =>
     Effect.gen(function* () {
+      const platform = yield* HostProcess.Platform;
       const runtime = yield* AcpSessionRuntime.make({
         ...mockRuntimeOptions,
         spawn: {
@@ -409,10 +413,15 @@ describe("AcpSessionRuntime", () => {
         },
       });
       const error = yield* runtime.initialize().pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "AcpProcessExitedError", signal: "SIGKILL" });
-      expect(error.message).toBe(
-        "ACP process was terminated by signal SIGKILL\nruntime aborted during startup",
-      );
+      const expected =
+        platform === "win32"
+          ? { exit: { code: 1 }, message: "ACP process exited with code 1" }
+          : {
+              exit: { signal: "SIGKILL" },
+              message: "ACP process was terminated by signal SIGKILL",
+            };
+      expect(error).toMatchObject({ _tag: "AcpProcessExitedError", ...expected.exit });
+      expect(error.message).toBe(`${expected.message}\nruntime aborted during startup`);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
