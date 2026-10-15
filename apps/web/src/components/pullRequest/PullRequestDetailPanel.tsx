@@ -171,6 +171,7 @@ import {
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
+import { shouldCondenseDetailChrome } from "./pullRequestSummaryScroll.logic";
 import {
   resolvePickableEnvironments,
   type PickableEnvironment,
@@ -2952,7 +2953,15 @@ export function PullRequestDetailPanel({
               if (top < 4 && foldHeight > 0) {
                 next = false;
               }
-            } else if (foldHeight > 0 && top > foldHeight + 32) {
+            } else if (
+              shouldCondenseDetailChrome({
+                scrollTop: top,
+                scrollHeight: scroller.scrollHeight,
+                clientHeight: scroller.clientHeight,
+                foldHeight,
+                chromeDelta,
+              })
+            ) {
               compensationRef.current = { tab, scroller, delta: -chromeDelta };
               next = true;
             }

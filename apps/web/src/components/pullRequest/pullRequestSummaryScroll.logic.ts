@@ -18,3 +18,22 @@ export function sectionCollapseAnchorScrollTop(input: {
 
   return Math.max(0, input.scrollTop + input.sectionTop - input.viewportTop);
 }
+
+/**
+ * Whether scrolling should condense the detail header. Collapsing the fold grows the scroller, so
+ * a short tab can lose most of its range. Condense only when more than a fold's height remains;
+ * otherwise the refund lands at the top and the reopen check starts a collapse/reopen loop.
+ */
+export function shouldCondenseDetailChrome(input: {
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+  readonly foldHeight: number;
+  readonly chromeDelta: number;
+}): boolean {
+  return (
+    input.foldHeight > 0 &&
+    input.scrollTop > input.foldHeight + 32 &&
+    input.scrollHeight - input.clientHeight - input.chromeDelta > input.foldHeight
+  );
+}

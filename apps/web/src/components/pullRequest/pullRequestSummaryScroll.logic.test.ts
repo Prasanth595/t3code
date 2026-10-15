@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
+import {
+  sectionCollapseAnchorScrollTop,
+  shouldCondenseDetailChrome,
+} from "./pullRequestSummaryScroll.logic";
 
 describe("section collapse scroll anchoring", () => {
   it("returns the section's natural offset when its heading is pinned", () => {
@@ -45,5 +48,22 @@ describe("section collapse scroll anchoring", () => {
         headingTop: 264,
       }),
     ).toBe(0);
+  });
+});
+
+describe("detail header condensing", () => {
+  // Measured on a one-file diff: a 108px fold that leaves an 80px gap when it condenses.
+  const chrome = { foldHeight: 108, chromeDelta: 80, clientHeight: 606 };
+
+  it("keeps the header open when the collapse would leave too little range", () => {
+    expect(shouldCondenseDetailChrome({ ...chrome, scrollTop: 146, scrollHeight: 752 })).toBe(
+      false,
+    );
+  });
+
+  it("condenses once a long diff scrolls past the fold", () => {
+    expect(shouldCondenseDetailChrome({ ...chrome, scrollTop: 146, scrollHeight: 3000 })).toBe(
+      true,
+    );
   });
 });
