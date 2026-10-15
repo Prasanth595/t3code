@@ -37,9 +37,7 @@ import {
 } from "react";
 import { cn } from "../lib/utils";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
-import { isTerminalDockEligible } from "../lib/terminalDock";
-import { getClientSettingsSnapshot } from "../hooks/useSettings";
-import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import { getTerminalDockEligibleSnapshot } from "../hooks/useThreadTerminalVisible";
 
 import { parseChangeRequestUrl } from "../lib/openPullRequestLink";
 import { useEnvironmentQuery } from "../state/query";
@@ -824,14 +822,7 @@ export function ThreadTerminalStatusButton({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              revealThreadTerminal(
-                threadRef,
-                terminalId,
-                isTerminalDockEligible({
-                  settingEnabled: getClientSettingsSnapshot().terminalDockRightPanel,
-                  sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
-                }),
-              );
+              revealThreadTerminal(threadRef, terminalId, getTerminalDockEligibleSnapshot());
               onThreadActivate(threadRef);
             }}
           />
