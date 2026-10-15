@@ -125,7 +125,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
+/**
+ * The reasoning efforts a Grok model advertises in its `_meta`, which back both
+ * the composer's Reasoning picker and what a session switch may request.
+ */
+export function grokReasoningOptionsFromModel(model: EffectAcpSchema.ModelInfo): {
   readonly options: ReadonlyArray<{
     value: string;
     label: string;

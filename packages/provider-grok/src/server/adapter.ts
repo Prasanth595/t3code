@@ -22,6 +22,8 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -29,10 +31,12 @@ import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeL
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
+  GROK_DEFAULT_MODEL_SLUG,
   grokApprovalOptions,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "./acpSupport.ts";
+import { grokReasoningOptionsFromModel } from "./status.ts";
 import {
   extractGrokPlanMarkdownFromToolCallData,
   extractXAiAcpBackgroundToolMutation,
@@ -226,6 +230,112 @@ export function grokLaunchRuntimeMode(
     : "approval-required";
 }
 
+/** The capability id the composer stores Grok's reasoning effort under. */
+const GROK_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+
+const grokReasoningEffortOption = (
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+) =>
+  configOptions.find((option) => option.type === "select" && option.category === "thought_level");
+
+/**
+ * Applies a thread's model and reasoning effort to a live Grok session and
+ * returns the model it now runs on. Protocol 1 sends the effort as
+ * `session/set_model` metadata, so a model switch and its effort land in one
+ * request. That response carries no config options, so T3 has no
+ * authoritative live effort to compare against: a requested effort is sent
+ * every time this runs. configureSession only runs on activation or a
+ * selection or interaction-mode change, so the cost is at most one redundant
+ * write per change. Newer protocols write Grok's `thought_level` config
+ * option after the model; its response updates the live value, so only a
+ * change is sent. An omitted effort never resets Grok's. An effort the target
+ * model does not offer, or that Grok refuses, is skipped with a warning and
+ * Grok's own default applies, as for other ACP options.
+ */
+const applyGrokSessionModelSelection: NonNullable<AcpAdapterV2Flavor["applyModelSelection"]> = ({
+  runtime,
+  startResult,
+  modelSelection,
+}) =>
+  Effect.gen(function* () {
+    const requestedModelId = resolveGrokAcpBaseModelId(modelSelection.model);
+    const requestedEffort = getModelSelectionStringOptionValue(
+      modelSelection,
+      GROK_REASONING_EFFORT_OPTION_ID,
+    );
+    const skipEffort = (detail: string) =>
+      Effect.logWarning("Grok session skipped the requested reasoning effort", {
+        sessionId: startResult.sessionId,
+        reasoningEffort: requestedEffort,
+        detail,
+      });
+
+    if (startResult.initializeResult.protocolVersion === 1) {
+      const setup = startResult.sessionSetupResult;
+      const currentModelId = currentGrokModelIdFromSessionSetup(setup);
+      const targetModelId =
+        requestedModelId === GROK_DEFAULT_MODEL_SLUG ? currentModelId : requestedModelId;
+      const targetModel = setup.models?.availableModels.find(
+        (model) => model.modelId.trim() === targetModelId,
+      );
+      const offeredEfforts =
+        targetModel === undefined
+          ? []
+          : grokReasoningOptionsFromModel(targetModel).options.map((option) => option.value);
+      const effort =
+        requestedEffort !== undefined &&
+        (offeredEfforts.length === 0 || offeredEfforts.includes(requestedEffort))
+          ? requestedEffort
+          : undefined;
+      if (requestedEffort !== undefined && effort === undefined) {
+        yield* skipEffort(`${targetModelId} does not offer it`);
+      }
+      // No currentReasoningEffort: a provided effort always counts as a change.
+      const apply = (requestedReasoningEffort: string | undefined) =>
+        applyGrokAcpModelSelection({
+          runtime,
+          currentModelId,
+          requestedModelId,
+          requestedReasoningEffort,
+          mapError: (cause) => cause,
+        });
+      return yield* effort === undefined
+        ? apply(undefined)
+        : apply(effort).pipe(
+            Effect.catchTags({
+              AcpRequestError: (error) =>
+                skipEffort(error.message).pipe(Effect.andThen(apply(undefined))),
+            }),
+          );
+    }
+
+    const configOptions = yield* runtime.getConfigOptions;
+    const configuredModel = configOptions.find(
+      (option) => option.category === "model",
+    )?.currentValue;
+    const appliedModelId = yield* applyGrokAcpModelSelection({
+      runtime: { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
+      currentModelId: typeof configuredModel === "string" ? configuredModel : undefined,
+      requestedModelId,
+      mapError: (cause) => cause,
+    });
+    if (requestedEffort === undefined) {
+      return appliedModelId;
+    }
+    // Read after the model switch: the effort choices belong to the new model.
+    const effortOption = grokReasoningEffortOption(yield* runtime.getConfigOptions);
+    if (effortOption === undefined) {
+      yield* skipEffort("the session has no reasoning effort option");
+      return appliedModelId;
+    }
+    // setConfigOption rejects a value the option does not offer and skips the
+    // current one.
+    yield* runtime
+      .setConfigOption(effortOption.id, requestedEffort)
+      .pipe(Effect.catchTags({ AcpRequestError: (error) => skipEffort(error.message) }));
+    return appliedModelId;
+  });
+
 /** The flavor runs Grok's launcher through the adapter's spawner. */
 export function makeGrokAcpAdapterFlavor(
   options: GrokAdapterV2Options,
@@ -255,24 +365,8 @@ export function makeGrokAcpAdapterFlavor(
     supportsImagePrompts: true,
     supportsCompaction: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
-    applyModelSelection: ({ runtime, startResult, modelSelection }) =>
-      Effect.gen(function* () {
-        const legacy = startResult.initializeResult.protocolVersion === 1;
-        const options = legacy ? [] : yield* runtime.getConfigOptions;
-        const configuredModel = options.find((option) => option.category === "model")?.currentValue;
-        return yield* applyGrokAcpModelSelection({
-          runtime: legacy
-            ? runtime
-            : { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
-          currentModelId: legacy
-            ? currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult)
-            : typeof configuredModel === "string"
-              ? configuredModel
-              : undefined,
-          requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
-          mapError: (cause) => cause,
-        });
-      }),
+    applyModelSelection: applyGrokSessionModelSelection,
+    ownedOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
     makeRuntime:
       options.makeRuntime ??
       (({ runtimePolicy, ...input }) =>
