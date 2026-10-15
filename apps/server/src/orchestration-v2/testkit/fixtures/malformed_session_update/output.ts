@@ -1,3 +1,4 @@
+import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
@@ -19,7 +20,11 @@ export function assertMalformedSessionUpdateOutput(
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
   assertUserMessagesInclude(projection, [MALFORMED_SESSION_UPDATE_PROMPT]);
-  // No error item: the dropped update does not fail the turn.
   assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
+  // The dropped update does not fail the turn.
+  assert.notInclude(
+    projection.turnItems.map((item) => item.type),
+    "error",
+  );
   assertAssistantTextIncludes(projection, "malformed update fixture ok");
 }
