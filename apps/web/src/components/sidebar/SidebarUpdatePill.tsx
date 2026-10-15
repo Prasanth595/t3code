@@ -35,7 +35,11 @@ import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
 import { SidebarUpdateCapsule } from "./SidebarUpdateCapsule";
 import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
 import type { UpdateEverythingRun, UpdateRunLocalState } from "./updateEverything.logic";
-import { useUpdateEverythingRun } from "./updateEverythingRun";
+import {
+  clearSavedUpdateEverythingResult,
+  saveUpdateEverythingResult,
+  useUpdateEverythingRun,
+} from "./updateEverythingRun";
 import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
@@ -424,7 +428,21 @@ function SidebarUpdateControl() {
           // After "Later", this app's downloaded update can still be installed
           // while the run follows the other machines.
           {...(run.localVersion === null && action === "install" && window.desktopBridge
-            ? { onRestart: () => void installLocalUpdate(window.desktopBridge!) }
+            ? {
+                onRestart: async () => {
+                  // Like the countdown, keep following servers still restarting.
+                  saveUpdateEverythingResult({
+                    localVersion: localUpdateVersion,
+                    updatedServers: 0,
+                    updatedProviders: 0,
+                    failures: [],
+                    restarting: [],
+                  });
+                  if (!(await installLocalUpdate(window.desktopBridge!))) {
+                    clearSavedUpdateEverythingResult();
+                  }
+                },
+              }
             : {})}
         />
         {confirmDialog}

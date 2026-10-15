@@ -83,7 +83,7 @@ export function SidebarUpdateCapsule({
   readonly local: UpdateRunLocalState;
   readonly icon: ReactNode;
   /** Installs this app's downloaded update after the user postponed it. */
-  readonly onRestart?: () => void;
+  readonly onRestart?: () => Promise<void>;
 }) {
   const machines = useUpdateRunMachineViews(run);
   const hasActiveMachine = machines.some(
@@ -156,7 +156,7 @@ export function SidebarUpdateCapsule({
           ) : onRestart ? (
             <div className="flex items-center justify-between gap-3">
               <span>This app</span>
-              <Button size="xs" variant="outline" onClick={onRestart}>
+              <Button size="xs" variant="outline" onClick={() => void onRestart()}>
                 Restart to update
               </Button>
             </div>
