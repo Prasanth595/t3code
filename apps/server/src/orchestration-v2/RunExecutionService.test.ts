@@ -3844,6 +3844,24 @@ it.effect("fails the run when its event stream ends without a root terminal", ()
   }),
 );
 
+it.effect("interrupts open tool calls when the stream ends without a root terminal", () =>
+  Effect.gen(function* () {
+    const { written } = yield* captureRootRunTermination({
+      key: "stream-end-open-tool",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.fromIterable([backgroundTurnItemEvent(ids, "command_execution", "running", 1)]),
+    });
+    assert.deepEqual(
+      written.map((item) => [item.type, item.status]),
+      [
+        ["command_execution", "interrupted"],
+        ["error", "failed"],
+      ],
+    );
+  }),
+);
+
 it.effect("leaves the run to restart recovery when shutdown interrupts its event stream", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({
