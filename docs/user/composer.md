@@ -29,6 +29,13 @@ On mobile, the model picker shows each OpenCode model's upstream provider, such 
 GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
 when starting a thread or changing an existing thread's model.
 
+## Long prompts on mobile
+
+The editor grows as you type, then scrolls when it reaches the space available above the keyboard.
+Tap the outward arrows beside Send for a larger view, and the inward arrows to return.
+Your draft and attachments stay in place. Text at the top fades when more content is scrolled
+out of view; the fade disappears as you scroll back to the beginning.
+
 ## Prompt stash
 
 Use the default shortcut, `Cmd+S` on macOS or `Ctrl+S` on Windows and Linux, to stash the current

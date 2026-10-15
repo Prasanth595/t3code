@@ -26,6 +26,7 @@ import {
   Platform,
   Pressable,
   View,
+  useWindowDimensions,
   type ViewStyle,
 } from "react-native";
 import ImageViewing from "react-native-image-viewing";
@@ -34,10 +35,10 @@ import Animated, {
   FadeInDown,
   FadeOut,
   FadeOutDown,
-  LinearTransition,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
-  withTiming,
+  withSpring,
 } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
@@ -47,6 +48,7 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { GlassSurface } from "../../components/GlassSurface";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
   ComposerInlineControl,
@@ -61,6 +63,7 @@ import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
+import { useComposerEditorSize } from "./use-composer-editor-size";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   type ExistingThreadSettingsRouteSession,
@@ -88,6 +91,8 @@ export interface ThreadComposerProps {
   readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
+  readonly viewportHeight?: number;
+  /** Safe-area padding when the keyboard is closed. */
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
   readonly connectionError: string | null;
@@ -125,33 +130,22 @@ export interface ThreadComposerProps {
  * iOS 26+ devices and keeps the existing opaque fallback elsewhere.
  * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
-// The bottom-anchored dock position and clipped surface height use the same
-// transition so the card grows upward without exposing its final-size content.
-// Android gets NO layout transition: the composer rides the keyboard via
-// KeyboardStickyView (frame-synced to the IME), and a time-based morph
-// running alongside that translate reads as jitter. Snapping the layout and
-// letting the keyboard-synced slide be the only motion looks native there.
-export const COMPOSER_TRANSITION_DURATION_MS = 220;
-export const COMPOSER_LAYOUT_TRANSITION =
-  Platform.OS === "android"
-    ? undefined
-    : LinearTransition.duration(COMPOSER_TRANSITION_DURATION_MS);
+import { COMPOSER_SPRING } from "../../components/composerMotion";
 
 export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   /** Existing thread composers morph between pill and card layouts. */
-  readonly animateLayout?: boolean;
+  readonly animateShape?: boolean;
+  readonly opaque?: boolean;
 }) {
   const targetBorderRadius =
     typeof props.style.borderRadius === "number" ? props.style.borderRadius : 0;
   const animatedBorderRadius = useSharedValue(targetBorderRadius);
-  const shouldAnimate = props.animateLayout !== false && Platform.OS !== "android";
+  const shouldAnimate = props.animateShape !== false;
   useLayoutEffect(() => {
     animatedBorderRadius.value = shouldAnimate
-      ? withTiming(targetBorderRadius, {
-          duration: COMPOSER_TRANSITION_DURATION_MS,
-        })
+      ? withSpring(targetBorderRadius, COMPOSER_SPRING)
       : targetBorderRadius;
   }, [animatedBorderRadius, shouldAnimate, targetBorderRadius]);
   const animatedShapeStyle = useAnimatedStyle(() => ({
@@ -162,8 +156,11 @@ export function ComposerSurface(props: {
   // bottom-anchored host owns the geometry transition.
   return (
     <Animated.View
-      className="shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
-      layout={props.animateLayout === false ? undefined : COMPOSER_LAYOUT_TRANSITION}
+      className={
+        NATIVE_LIQUID_GLASS_SUPPORTED
+          ? "shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
+          : "border border-border shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
+      }
       style={[
         animatedShapeStyle,
         {
@@ -175,7 +172,7 @@ export function ComposerSurface(props: {
     >
       <GlassSurface
         chrome="none"
-        fallbackClassName="border border-border bg-card-translucent"
+        fallbackClassName={props.opaque ? "bg-card" : "bg-card-translucent"}
         glassEffectStyle="regular"
         // The composer is a passive material containing interactive controls.
         // Keep native glass out of the interactive content's layout path.
@@ -184,12 +181,12 @@ export function ComposerSurface(props: {
         style={{
           position: "absolute",
           inset: 0,
-          borderRadius: targetBorderRadius,
+          borderRadius: 0,
         }}
       >
         {null}
       </GlassSurface>
-      <View style={props.style}>{props.children}</View>
+      <View style={[props.style, { borderRadius: 0, overflow: "visible" }]}>{props.children}</View>
     </Animated.View>
   );
 }
@@ -280,6 +277,7 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const navigation = useNavigation();
+  const { width: windowWidth } = useWindowDimensions();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
   const bodyText = useScaledTextRole("body");
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
@@ -300,7 +298,34 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   // Opening and presentation count as active so the composer stays expanded
   // while focus moves between its native editor and the settings picker.
   const isExpanded = isFocused || settingsSheetPresentation.isActive;
+  const editorSize = useComposerEditorSize(
+    props.draftAttachments.length > 0,
+    props.queueCount > 0 ? 24 : 0,
+    props.viewportHeight,
+    isExpanded,
+    { closed: props.bottomInset ?? 0, opened: 0 },
+  );
+  const targetWidth = editorSize.expanded ? windowWidth : (props.contentMaxWidth ?? windowWidth);
+  const widthStyle = useAnimatedStyle(() => ({
+    maxWidth: withSpring(targetWidth, COMPOSER_SPRING),
+  }));
+  const targetVerticalPadding = editorSize.expanded ? 0 : isExpanded ? 8 : 6;
+  const bottomPadding = editorSize.bottomPadding;
+  const animateVerticalPadding = editorSize.animateLayout;
+  const animatedVerticalPadding = useDerivedValue(() =>
+    animateVerticalPadding
+      ? withSpring(targetVerticalPadding, COMPOSER_SPRING)
+      : targetVerticalPadding,
+  );
+  const verticalPaddingStyle = useAnimatedStyle(() => ({
+    paddingTop: animatedVerticalPadding.value,
+    paddingBottom: bottomPadding.value + animatedVerticalPadding.value,
+  }));
   const canSend = hasContent;
+
+  useEffect(() => {
+    editorSize.setExpanded(false);
+  }, [props.environmentId, props.selectedThread.id, editorSize.setExpanded]);
 
   // Keep the parent's feed inset synchronized while the settings sheet keeps
   // the composer expanded between editor focus events.
@@ -332,11 +357,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
+    editorSize.setExpanded(false);
     if (!settingsSheetPresentation.isActive) {
       onExpandedChange?.(false);
     }
     onEditorFocusChange?.(false);
-  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.isActive]);
+  }, [
+    onEditorFocusChange,
+    onExpandedChange,
+    settingsSheetPresentation.isActive,
+    editorSize.setExpanded,
+  ]);
   const showStopAction =
     props.selectedThread.session?.status === "running" ||
     props.selectedThread.session?.status === "starting";
@@ -380,6 +411,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (messageId === null) {
         return;
       }
+      editorSize.setExpanded(false);
       // Sending a prompt starts agent work: arm the lock-screen card while the
       // app is foregrounded and the activity token can be registered. Armed
       // after the send so its preference read and native Activity start don't
@@ -394,6 +426,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
   }, [
     onSendMessage,
+    editorSize.setExpanded,
     props.environmentId,
     props.environmentLabel,
     props.selectedThread.id,
@@ -494,13 +527,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   );
 
   return (
-    <Animated.View
-      className="px-4"
-      style={{
-        paddingTop: isExpanded ? 8 : 6,
-        paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
-      }}
-    >
+    <Animated.View style={[editorSize.gutterStyle, verticalPaddingStyle]}>
       {/* The backdrop gradient lives on a plain View: Reanimated's Animated.View
           silently drops experimental_backgroundImage on Android, which left this
           strip fully transparent and the feed text legible through the composer. */}
@@ -508,11 +535,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         className="absolute inset-0 bg-linear-to-b from-screen/0 via-screen/60 to-screen/90"
         pointerEvents="none"
       />
-      <Animated.View
-        className="relative w-full self-center"
-        style={{ maxWidth: props.contentMaxWidth }}
-      >
-        {composerMenu.trigger && composerMenu.items.length > 0 ? (
+      <Animated.View className="relative w-full self-center" style={widthStyle}>
+        {!editorSize.expanded && composerMenu.trigger && composerMenu.items.length > 0 ? (
           <View className="absolute inset-x-0 bottom-full z-10 mb-2">
             <ComposerCommandPopover
               items={composerMenu.items}
@@ -531,10 +555,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ) : null}
 
         <ComposerSurface
+          animateShape={editorSize.animateLayout}
+          opaque={isExpanded}
           style={
             isExpanded
               ? {
-                  borderRadius: 26,
+                  borderRadius: editorSize.expanded ? 0 : 26,
                   minHeight: 140,
                   overflow: "hidden" as const,
                   paddingBottom: 6,
@@ -554,11 +580,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           {/* Attachment strip — inside the card, above the text input */}
           {isExpanded ? (
             <Animated.View
-              className={props.draftAttachments.length > 0 ? "pb-2.5" : undefined}
+              style={editorSize.attachmentStyle}
               entering={FadeIn.duration(160)}
               exiting={FadeOut.duration(120)}
             >
               <ComposerAttachmentStrip
+                imageSize={editorSize.attachmentSize}
                 attachments={props.draftAttachments}
                 onRemove={props.onRemoveDraftImage}
                 onPressImage={onPressImage}
@@ -567,7 +594,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ) : null}
 
           <View className={isExpanded ? undefined : "flex-row items-center"}>
-            <View className={isExpanded ? undefined : "min-w-0 flex-1"}>
+            <Animated.View
+              className={isExpanded ? undefined : "min-w-0 flex-1"}
+              style={editorSize.editorStyle}
+            >
               <ComposerEditor
                 ref={inputRef}
                 multiline
@@ -575,13 +605,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 skills={selectedProviderStatus?.skills ?? []}
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
+                onContentHeightChange={editorSize.setContentHeight}
                 onSelectionChange={composerMenu.onSelectionChange}
                 onPasteImages={(uris) => void props.onNativePasteImages(uris)}
                 placeholder={props.placeholder}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
                 onSubmit={handleSend}
-                scrollEnabled={isExpanded}
+                scrollEnabled={editorSize.scrollEnabled}
                 // Android: collapsed single line centers natively (gravity) in
                 // a pill-height box matching the send button; iOS keeps insets.
                 singleLineCentered={!isExpanded}
@@ -589,13 +620,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 style={
                   isExpanded
                     ? {
-                        minHeight: 72,
-                        maxHeight: 160,
+                        flex: 1,
                         paddingHorizontal: 4,
                         paddingVertical: 4,
                       }
                     : {
-                        height: 36,
+                        flex: 1,
                         paddingHorizontal: 4,
                       }
                 }
@@ -604,7 +634,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   color: foregroundColor,
                 }}
               />
-            </View>
+            </Animated.View>
             {!isExpanded && props.draftAttachments.length > 0 ? (
               <View className="flex-row gap-1 pl-1">
                 {props.draftAttachments.slice(0, 3).map((attachment) =>
@@ -667,6 +697,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   }
             }
           >
+            {editorSize.expanded && composerMenu.trigger && composerMenu.items.length > 0 ? (
+              <View className="absolute inset-x-0 bottom-full z-10 mb-2">
+                <ComposerCommandPopover
+                  maxHeight={Math.min(180, Math.max(44, editorSize.height - 40))}
+                  items={composerMenu.items}
+                  triggerKind={composerMenu.trigger.kind}
+                  isLoading={composerMenu.isLoading}
+                  onSelect={composerMenu.onSelect}
+                />
+              </View>
+            ) : null}
             <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
               <View className="min-w-0 flex-1 flex-row items-center gap-2">
                 <ComposerToolbarButton
@@ -698,7 +739,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   />
                 </View>
               </View>
-              <View className="shrink-0 flex-row items-center gap-2">
+              <View className="shrink-0 flex-row items-center gap-1">
+                <ComposerToolbarButton
+                  accessibilityLabel={editorSize.expanded ? "Collapse editor" : "Expand editor"}
+                  expanded={editorSize.expanded}
+                  icon={
+                    editorSize.expanded
+                      ? "arrow.down.right.and.arrow.up.left"
+                      : "arrow.up.left.and.arrow.down.right"
+                  }
+                  onPress={() => editorSize.setExpanded(!editorSize.expanded)}
+                  showChevron={false}
+                />
                 <ComposerToolbarButton
                   accessibilityLabel={sendLabel}
                   icon="arrow.up"

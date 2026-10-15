@@ -62,6 +62,11 @@ private final class ComposerTextView: UITextView {
   private static let stalePastedImageAge: TimeInterval = 60 * 60
 
   var onPasteImages: (([String]) -> Void)?
+  var onContentSizeChange: (() -> Void)?
+  override var contentSize: CGSize {
+    didSet { onContentSizeChange?() }
+  }
+
   var onAttributedMutation: (() -> Void)?
   var onSubmit: (() -> Void)?
 
@@ -285,6 +290,7 @@ private final class ComposerTextView: UITextView {
 public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDropDelegate {
   private let textView = ComposerTextView()
   private let placeholderLabel = UILabel()
+  private let scrollFadeMask = CAGradientLayer()
   private var value = ""
   private var tokensJson = "[]"
   private var tokens: [ComposerTokenPayload] = []
@@ -337,6 +343,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.onPasteImages = { [weak self] urls in
       self?.onComposerPasteImages(["uris": urls])
     }
+    textView.onContentSizeChange = { [weak self] in
+      self?.emitContentSizeIfNeeded()
+      self?.updateScrollFade()
+    }
     textView.onAttributedMutation = { [weak self] in
       self?.emitTextChange()
     }
@@ -369,6 +379,27 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       height: max(lineHeight, placeholderLabel.font.lineHeight)
     )
     emitContentSizeIfNeeded()
+    updateScrollFade()
+  }
+
+  public func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    updateScrollFade()
+  }
+
+  private func updateScrollFade() {
+    let offset = max(0, textView.contentOffset.y + textView.adjustedContentInset.top)
+    let strength = min(1, offset / 18)
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    scrollFadeMask.frame = bounds
+    scrollFadeMask.colors = [
+      UIColor.black.withAlphaComponent(1 - strength).cgColor,
+      UIColor.black.cgColor,
+      UIColor.black.cgColor,
+    ]
+    scrollFadeMask.locations = [0, NSNumber(value: Double(min(1, 18 / max(1, bounds.height)))), 1]
+    layer.mask = strength > 0 && textView.isScrollEnabled ? scrollFadeMask : nil
+    CATransaction.commit()
   }
 
   public override func didMoveToWindow() {
@@ -452,7 +483,14 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   func setScrollEnabled(_ scrollEnabled: Bool) {
+    let wasScrollEnabled = textView.isScrollEnabled
     textView.isScrollEnabled = scrollEnabled
+    if !scrollEnabled {
+      textView.setContentOffset(CGPoint(x: 0, y: -textView.adjustedContentInset.top), animated: false)
+    } else if !wasScrollEnabled && textView.isFirstResponder {
+      textView.scrollRangeToVisible(textView.selectedRange)
+    }
+    updateScrollFade()
   }
 
   func setAutoFocus(_ autoFocus: Bool) {

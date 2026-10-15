@@ -35,6 +35,7 @@ export interface ComposerEditorProps {
   readonly onChangeText: (value: string) => void;
   readonly onSelectionChange?: (selection: ComposerEditorSelection) => void;
   readonly onPasteImages?: (uris: ReadonlyArray<string>) => void;
+  readonly onContentHeightChange?: (height: number) => void;
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
   /** Invoked by the native editor when Command-Return is pressed on a hardware keyboard. */

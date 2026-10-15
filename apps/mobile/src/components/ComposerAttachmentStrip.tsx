@@ -1,5 +1,7 @@
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import { COMPOSER_LAYOUT_TRANSITION } from "./composerMotion";
 import { SymbolView } from "../components/AppSymbol";
-import { Image, Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./AppText";
 import type { DraftComposerAttachment } from "../lib/composerImages";
@@ -41,7 +43,10 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
     >
       <View className="flex-row gap-2.5">
         {props.attachments.map((attachment) => (
-          <View
+          <Animated.View
+            layout={COMPOSER_LAYOUT_TRANSITION}
+            entering={FadeIn.duration(180)}
+            exiting={FadeOut.duration(120)}
             key={attachment.id}
             className="relative"
             style={{
@@ -55,7 +60,8 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                   props.onPressImage ? () => props.onPressImage!(attachment.previewUri) : undefined
                 }
               >
-                <Image
+                <Animated.Image
+                  layout={COMPOSER_LAYOUT_TRANSITION}
                   source={{ uri: attachment.previewUri }}
                   style={{
                     width: size,
@@ -67,7 +73,8 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                 />
               </Pressable>
             ) : (
-              <View
+              <Animated.View
+                layout={COMPOSER_LAYOUT_TRANSITION}
                 className="items-center justify-center gap-1 bg-subtle px-2"
                 style={{
                   width: size,
@@ -79,7 +86,7 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                 <Text className="w-full text-center text-2xs text-foreground" numberOfLines={1}>
                   {attachment.name}
                 </Text>
-              </View>
+              </Animated.View>
             )}
             <Pressable
               className="absolute h-[22px] w-[22px] items-center justify-center rounded-[11px] bg-black/55"
@@ -98,7 +105,7 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                 weight="bold"
               />
             </Pressable>
-          </View>
+          </Animated.View>
         ))}
       </View>
     </ScrollView>

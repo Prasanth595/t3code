@@ -78,8 +78,6 @@ import {
 import {
   COMPOSER_COLLAPSED_CHROME,
   COMPOSER_EXPANDED_CHROME,
-  COMPOSER_LAYOUT_TRANSITION,
-  COMPOSER_TRANSITION_DURATION_MS,
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
@@ -265,17 +263,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
+  const [composerExtraHeight, setComposerExtraHeight] = useState(0);
+  const [composerViewportHeight, setComposerViewportHeight] = useState<number>();
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
-  // Android keys the safe-area padding on keyboard visibility (#5988): the
-  // back gesture closes the keyboard while the editor stays focused, and a
-  // focus-keyed inset would leave the toolbar under the gesture bar. iOS must
-  // NOT use visibility — it only flips on keyboardDidHide, after the hide
-  // animation, so the composer would ride down flush to the screen edge and
-  // then snap up into the inset. On iOS blur precedes the hide, so the
-  // focus-keyed inset is already in place while the composer rides down.
+  // Questionnaire padding and the initial overlay estimate follow visibility
+  // on Android, where Back can hide the keyboard without blurring the editor.
+  // iOS blur precedes keyboardDidHide, so focus avoids a late inset change.
   const composerBottomInset = (Platform.OS === "android" ? isKeyboardVisible : composerExpanded)
     ? 0
     : Math.max(insets.bottom, 12);
@@ -357,7 +353,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     composerOverlayRef,
     Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
     -nativeInsetOvercount,
-    Platform.OS === "ios" ? COMPOSER_TRANSITION_DURATION_MS : 0,
+    150,
   );
   // The expanded questionnaire is an absolute overlay on iOS, so it never
   // changes the measured overlay height (that constancy is what keeps the
@@ -643,7 +639,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, []);
 
   return (
-    <View className="flex-1">
+    <View
+      className="flex-1"
+      onLayout={(event) =>
+        setComposerViewportHeight(
+          event.nativeEvent.layout.height -
+            (props.usesAutomaticContentInsets ? navigationHeaderHeight : 0),
+        )
+      }
+    >
       {showContent ? (
         <View
           className="flex-1"
@@ -699,7 +703,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               coordinate space. Its top and height can then animate together
               instead of the auto-sized host jumping to Yoga's destination. */}
           <Animated.View
-            layout={COMPOSER_LAYOUT_TRANSITION}
             pointerEvents="box-none"
             style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
           >
@@ -707,53 +710,55 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
             <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
-              <FloatingWorkingControl
-                colorScheme={isDarkMode ? "dark" : "light"}
-                startedAt={floatingWorkingStartedAt}
-                showScrollToEnd={showScrollToEndButton}
-                onScrollToEnd={handleScrollToEnd}
-              />
-              <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
-                {props.activePendingApproval || props.activePendingUserInput ? (
-                  <Animated.View
-                    className="shrink-0 gap-3 px-4 pb-3"
-                    // The questionnaire replaces the composer, so it must pad
-                    // the home indicator the composer normally covers.
-                    style={
-                      activeUserInputRequestId !== null
-                        ? { paddingBottom: composerBottomInset }
-                        : undefined
-                    }
-                    entering={FadeInDown.duration(220)}
-                    exiting={FadeOut.duration(140)}
-                  >
-                    {props.activePendingApproval ? (
-                      <PendingApprovalCard
-                        approval={props.activePendingApproval}
-                        respondingApprovalId={props.respondingApprovalId}
-                        onRespond={props.onRespondToApproval}
-                      />
-                    ) : null}
-                    {props.activePendingUserInput ? (
-                      <PendingUserInputCard
-                        pendingUserInput={props.activePendingUserInput}
-                        maxHeight={pendingUserInputMaxHeight}
-                        collapsed={userInputCollapsed}
-                        onToggleCollapsed={handleToggleUserInputCollapsed}
-                        onStopThread={props.onStopThread}
-                        cardProgress={userInputCardProgress}
-                        cardCoverage={userInputCardCoverage}
-                        onInputFocusChange={handleOwnedInputFocusChange}
-                        drafts={props.activePendingUserInputDrafts}
-                        answers={props.activePendingUserInputAnswers}
-                        respondingUserInputId={props.respondingUserInputId}
-                        onSelectOption={props.onSelectUserInputOption}
-                        onChangeCustomAnswer={props.onChangeUserInputCustomAnswer}
-                        onSubmit={props.onSubmitUserInput}
-                      />
-                    ) : null}
-                  </Animated.View>
-                ) : null}
+              <View onLayout={(event) => setComposerExtraHeight(event.nativeEvent.layout.height)}>
+                <FloatingWorkingControl
+                  colorScheme={isDarkMode ? "dark" : "light"}
+                  startedAt={floatingWorkingStartedAt}
+                  showScrollToEnd={showScrollToEndButton}
+                  onScrollToEnd={handleScrollToEnd}
+                />
+                <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                  {props.activePendingApproval || props.activePendingUserInput ? (
+                    <Animated.View
+                      className="shrink-0 gap-3 px-4 pb-3"
+                      // The questionnaire replaces the composer, so it must pad
+                      // the home indicator the composer normally covers.
+                      style={
+                        activeUserInputRequestId !== null
+                          ? { paddingBottom: composerBottomInset }
+                          : undefined
+                      }
+                      entering={FadeInDown.duration(220)}
+                      exiting={FadeOut.duration(140)}
+                    >
+                      {props.activePendingApproval ? (
+                        <PendingApprovalCard
+                          approval={props.activePendingApproval}
+                          respondingApprovalId={props.respondingApprovalId}
+                          onRespond={props.onRespondToApproval}
+                        />
+                      ) : null}
+                      {props.activePendingUserInput ? (
+                        <PendingUserInputCard
+                          pendingUserInput={props.activePendingUserInput}
+                          maxHeight={pendingUserInputMaxHeight}
+                          collapsed={userInputCollapsed}
+                          onToggleCollapsed={handleToggleUserInputCollapsed}
+                          onStopThread={props.onStopThread}
+                          cardProgress={userInputCardProgress}
+                          cardCoverage={userInputCardCoverage}
+                          onInputFocusChange={handleOwnedInputFocusChange}
+                          drafts={props.activePendingUserInputDrafts}
+                          answers={props.activePendingUserInputAnswers}
+                          respondingUserInputId={props.respondingUserInputId}
+                          onSelectOption={props.onSelectUserInputOption}
+                          onChangeCustomAnswer={props.onChangeUserInputCustomAnswer}
+                          onSubmit={props.onSubmitUserInput}
+                        />
+                      ) : null}
+                    </Animated.View>
+                  ) : null}
+                </View>
               </View>
 
               {/* Hidden (not unmounted) while a user-input request owns the
@@ -761,6 +766,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               <View style={activeUserInputRequestId !== null ? { display: "none" } : undefined}>
                 <ThreadComposer
                   editorRef={composerEditorRef}
+                  viewportHeight={
+                    composerViewportHeight === undefined
+                      ? undefined
+                      : composerViewportHeight - composerExtraHeight
+                  }
                   draftMessage={props.draftMessage}
                   draftAttachments={props.draftAttachments}
                   placeholder="Ask the repo agent, or run a command…"
@@ -774,7 +784,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   queueCount={props.selectedThreadQueueCount}
                   environmentId={props.environmentId}
                   projectCwd={props.projectWorkspaceRoot}
-                  bottomInset={composerBottomInset}
+                  bottomInset={Math.max(insets.bottom, 12)}
                   onChangeDraftMessage={props.onChangeDraftMessage}
                   onPickDraftImages={props.onPickDraftImages}
                   onPickDraftFiles={props.onPickDraftFiles}

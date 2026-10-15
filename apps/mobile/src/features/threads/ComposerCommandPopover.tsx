@@ -43,6 +43,7 @@ export type ComposerCommandItem =
     };
 
 interface ComposerCommandPopoverProps {
+  readonly maxHeight?: number;
   readonly items: ReadonlyArray<ComposerCommandItem>;
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
@@ -177,7 +178,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       ) : null}
       {props.items.length > 0 ? (
         <ScrollView
-          className="max-h-[180px]"
+          style={{ maxHeight: props.maxHeight ?? 180 }}
           keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         >

@@ -12,6 +12,7 @@ export function ComposerEditor({
   skills: _skills,
   selection,
   onPasteImages,
+  onContentHeightChange,
   style,
   textStyle,
   contentInsetVertical = 0,
@@ -41,6 +42,9 @@ export function ComposerEditor({
         {...props}
         selection={selection}
         onSelectionChange={(event) => props.onSelectionChange?.(event.nativeEvent.selection)}
+        onContentSizeChange={(event) =>
+          onContentHeightChange?.(event.nativeEvent.contentSize.height)
+        }
         multiline={props.multiline ?? true}
         placeholderTextColorClassName={"accent-placeholder"}
         className="text-foreground"

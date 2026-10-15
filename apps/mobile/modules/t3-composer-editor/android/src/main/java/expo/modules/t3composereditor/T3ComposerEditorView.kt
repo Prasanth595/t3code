@@ -14,8 +14,10 @@ import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.view.Gravity
 import android.view.ViewGroup
+import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import androidx.core.view.doOnPreDraw
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -36,6 +38,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private var applyingNativeValue = false
   private var desiredLineHeightPx = 0
   private var lastContentHeight = 0
+  private var contentSizePending = false
   private var contentInsetVertical = 0
   private var tokensJson = "[]"
   private var tokens: List<ComposerToken> = emptyList()
@@ -50,6 +53,8 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.includeFontPadding = false
     editor.isSingleLine = false
     editor.minLines = 1
+    editor.isVerticalFadingEdgeEnabled = true
+    editor.setFadingEdgeLength((18 * resources.displayMetrics.density).toInt())
     editor.inputType =
       InputType.TYPE_CLASS_TEXT or
       InputType.TYPE_TEXT_FLAG_MULTI_LINE or
@@ -99,6 +104,15 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       },
     )
     editor.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> emitContentSizeIfNeeded() }
+    editor.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+      override fun onViewAttachedToWindow(view: View) {
+        emitContentSizeIfNeeded()
+      }
+
+      override fun onViewDetachedFromWindow(view: View) {
+        contentSizePending = false
+      }
+    })
     addView(
       editor,
       LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
@@ -213,7 +227,18 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun setScrollEnabled(scrollEnabled: Boolean) {
+    val wasScrollEnabled = editor.composerScrollEnabled
+    editor.composerScrollEnabled = scrollEnabled
+    if (!scrollEnabled) editor.scrollTo(0, 0)
+    if (scrollEnabled && !wasScrollEnabled) {
+      editor.post {
+        if (editor.composerScrollEnabled && editor.hasFocus() && editor.selectionEnd >= 0) {
+          editor.bringPointIntoView(editor.selectionEnd)
+        }
+      }
+    }
     editor.isVerticalScrollBarEnabled = scrollEnabled
+    editor.isVerticalFadingEdgeEnabled = scrollEnabled
   }
 
   fun setAutoFocus(autoFocus: Boolean) {
@@ -298,13 +323,19 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   private fun emitContentSizeIfNeeded() {
-    val height = editor.layout?.height ?: editor.measuredHeight
-    val contentHeight = height + contentInsetVertical * 2
-    if (contentHeight == lastContentHeight) return
-    lastContentHeight = contentHeight
-    onComposerContentSizeChange(
-      mapOf("height" to contentHeight / resources.displayMetrics.density),
-    )
+    if (contentSizePending) return
+    contentSizePending = true
+    editor.doOnPreDraw {
+      contentSizePending = false
+      val height = editor.layout?.height ?: return@doOnPreDraw
+      val contentHeight = height + contentInsetVertical * 2
+      if (contentHeight != lastContentHeight) {
+        lastContentHeight = contentHeight
+        onComposerContentSizeChange(
+          mapOf("height" to contentHeight / resources.displayMetrics.density),
+        )
+      }
+    }
   }
 
   private fun applyTokenSpans() {
@@ -455,6 +486,17 @@ private fun parseTokens(value: String): List<ComposerToken> = try {
 }
 
 private class SelectionAwareEditText(context: Context) : EditText(context) {
+  var composerScrollEnabled = true
+
+  override fun bringPointIntoView(offset: Int): Boolean =
+    composerScrollEnabled && super.bringPointIntoView(offset)
+
+  override fun scrollTo(x: Int, y: Int) {
+    super.scrollTo(x, if (composerScrollEnabled) y else 0)
+  }
+
+  override fun getBottomFadingEdgeStrength(): Float = 0f
+
   var selectionListener: ((Int, Int) -> Unit)? = null
   var pasteImagesListener: ((List<String>) -> Unit)? = null
 

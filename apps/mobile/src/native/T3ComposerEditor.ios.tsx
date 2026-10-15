@@ -69,6 +69,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerChange: (event: NativeEditorEvent) => void;
   readonly onComposerSelectionChange?: (event: NativeSelectionEvent) => void;
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
+  readonly onComposerContentSizeChange?: (event: NativeSyntheticEvent<{ height: number }>) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
   readonly onComposerSubmit?: () => void;
@@ -95,6 +96,7 @@ export function ComposerEditor({
   onSelectionChange,
   onPasteImages,
   onFocus,
+  onContentHeightChange,
   onBlur,
   onSubmit,
   contentInsetVertical = 0,
@@ -279,6 +281,7 @@ export function ComposerEditor({
         forceNativeEventRender((sequence) => sequence + 1);
       }}
       onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
+      onComposerContentSizeChange={(event) => onContentHeightChange?.(event.nativeEvent.height)}
       onComposerFocus={onFocus}
       onComposerBlur={onBlur}
       onComposerSubmit={onSubmit}

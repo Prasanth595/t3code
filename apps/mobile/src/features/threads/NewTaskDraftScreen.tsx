@@ -1,3 +1,5 @@
+import { HeaderHeightContext } from "@react-navigation/elements";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
@@ -5,7 +7,7 @@ import {
   useNavigation,
   usePreventRemove,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import {
   KeyboardController,
@@ -34,8 +36,10 @@ import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStri
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import Animated from "react-native-reanimated";
 import { ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
+import { useComposerEditorSize } from "./use-composer-editor-size";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   useThreadSettingsSheetPresentation,
@@ -126,6 +130,10 @@ export function NewTaskDraftScreen(props: {
   const projects = useProjects();
   const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
+  const nativeHeaderHeight = useContext(HeaderHeightContext) ?? 0;
+  const transparentHeaderHeight =
+    Platform.OS === "ios" && NATIVE_LIQUID_GLASS_SUPPORTED ? nativeHeaderHeight : 0;
+  const [composerViewportHeight, setComposerViewportHeight] = useState<number>();
   const navigation = useNavigation();
   const {
     consumeShare,
@@ -138,6 +146,13 @@ export function NewTaskDraftScreen(props: {
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const controlsBottomPadding = Math.max(insets.bottom, 10);
   const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
+  const editorSize = useComposerEditorSize(
+    flow.attachments.length > 0,
+    40,
+    composerViewportHeight,
+    true,
+    { closed: controlsBottomPadding, opened: controlsBottomPadding - keyboardOpenedOffset },
+  );
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
@@ -943,33 +958,38 @@ export function NewTaskDraftScreen(props: {
     !flow.submitting &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
-    <ComposerEditor
-      ref={promptInputRef}
-      // The context-first screen intentionally opens with the keyboard closed.
-      // Focusing is a user action, so presenting the form sheet has one motion.
-      autoFocus={false}
-      editable={!isComposerInteractionLocked}
-      multiline
-      scrollEnabled
-      value={flow.prompt}
-      skills={flow.selectedProviderStatus?.skills ?? []}
-      selection={composerMenu.selection}
-      onChangeText={flow.setPrompt}
-      onSelectionChange={composerMenu.onSelectionChange}
-      onFocus={() => setIsComposerFocused(true)}
-      onBlur={() => setIsComposerFocused(false)}
-      onPasteImages={(uris) => void handleNativePasteImages(uris)}
-      placeholder="Ask anything…"
-      singleLineCentered={false}
-      contentInsetVertical={0}
-      style={{
-        minHeight: 72,
-        maxHeight: 160,
-        paddingHorizontal: 4,
-        paddingVertical: 4,
-      }}
-      textStyle={{ ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }}
-    />
+    <Animated.View style={editorSize.editorStyle}>
+      <ComposerEditor
+        ref={promptInputRef}
+        // The context-first screen intentionally opens with the keyboard closed.
+        // Focusing is a user action, so presenting the form sheet has one motion.
+        autoFocus={false}
+        editable={!isComposerInteractionLocked}
+        multiline
+        scrollEnabled={editorSize.scrollEnabled}
+        value={flow.prompt}
+        skills={flow.selectedProviderStatus?.skills ?? []}
+        selection={composerMenu.selection}
+        onChangeText={flow.setPrompt}
+        onContentHeightChange={editorSize.setContentHeight}
+        onSelectionChange={composerMenu.onSelectionChange}
+        onFocus={() => setIsComposerFocused(true)}
+        onBlur={() => {
+          setIsComposerFocused(false);
+          editorSize.setExpanded(false);
+        }}
+        onPasteImages={(uris) => void handleNativePasteImages(uris)}
+        placeholder="Ask anything…"
+        singleLineCentered={false}
+        contentInsetVertical={0}
+        style={{
+          flex: 1,
+          paddingHorizontal: 4,
+          paddingVertical: 4,
+        }}
+        textStyle={{ ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }}
+      />
+    </Animated.View>
   );
 
   const closeNewTask = () => {
@@ -1041,7 +1061,13 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
   const heroViewport = (
-    <View className="flex-1" collapsable={false}>
+    <View
+      className="flex-1"
+      collapsable={false}
+      onLayout={(event) =>
+        setComposerViewportHeight(event.nativeEvent.layout.height - transparentHeaderHeight)
+      }
+    >
       <ScrollView
         alwaysBounceVertical={isKeyboardVisible}
         className="flex-1"
@@ -1089,8 +1115,11 @@ export function NewTaskDraftScreen(props: {
   );
 
   const composerDock = (
-    <View className="bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
-      {composerMenu.trigger && composerMenu.items.length > 0 ? (
+    <Animated.View
+      className="bg-sheet pt-1"
+      style={[editorSize.gutterStyle, { paddingBottom: controlsBottomPadding }]}
+    >
+      {!editorSize.expanded && composerMenu.trigger && composerMenu.items.length > 0 ? (
         <View className="mb-2">
           <ComposerCommandPopover
             items={composerMenu.items}
@@ -1103,9 +1132,10 @@ export function NewTaskDraftScreen(props: {
       <View className="pb-1">{workspaceControls}</View>
 
       <ComposerSurface
-        animateLayout={false}
+        opaque
+        animateShape={editorSize.animateLayout}
         style={{
-          borderRadius: 26,
+          borderRadius: editorSize.expanded ? 0 : 26,
           minHeight: 140,
           overflow: "hidden",
           paddingBottom: 6,
@@ -1113,81 +1143,108 @@ export function NewTaskDraftScreen(props: {
           paddingTop: 14,
         }}
       >
-        {flow.attachments.length > 0 ? (
-          <View className="pb-2.5">
-            <ComposerAttachmentStrip
-              attachments={flow.attachments}
-              imageBorderRadius={16}
-              imageSize={72}
-              onRemove={isComposerInteractionLocked ? () => undefined : flow.removeAttachment}
-            />
-          </View>
-        ) : null}
+        <Animated.View style={editorSize.attachmentStyle}>
+          <ComposerAttachmentStrip
+            attachments={flow.attachments}
+            imageBorderRadius={16}
+            imageSize={editorSize.attachmentSize}
+            onRemove={isComposerInteractionLocked ? () => undefined : flow.removeAttachment}
+          />
+        </Animated.View>
 
         {promptEditor}
 
-        <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
-          <ComposerToolbarScroller contentPaddingRight={8} fadeSurface="sheet">
-            <ComposerToolbarButton
-              accessibilityLabel="Add attachment"
-              disabled={isComposerInteractionLocked}
-              icon="plus"
-              onPress={() => {
-                if (selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments) {
-                  Alert.alert("Add attachment", undefined, [
-                    { text: "Photos", onPress: () => void handlePickImages() },
-                    { text: "Files", onPress: () => void handlePickFiles() },
-                    { text: "Cancel", style: "cancel" },
-                  ]);
-                  return;
-                }
-                void handlePickImages();
-              }}
-              showChevron={false}
-            />
-            <ComposerInlineControl
-              accessibilityLabel="Model and reasoning settings"
-              disabled={isComposerInteractionLocked}
-              emphasized
-              iconNode={
-                <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
-              }
-              label={flow.selectedModelOption?.label ?? "Choose model"}
-              maxWidth={152}
-              onPress={settingsSheetPresentation.open}
-            />
-            {flow.planModeEnabled ? (
-              <ComposerInlineControl
-                accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
-                accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
+        <View>
+          {editorSize.expanded && composerMenu.trigger && composerMenu.items.length > 0 ? (
+            <View className="absolute inset-x-0 bottom-full z-10 mb-2">
+              <ComposerCommandPopover
+                maxHeight={Math.min(180, Math.max(44, editorSize.height - 40))}
+                items={composerMenu.items}
+                triggerKind={composerMenu.trigger.kind}
+                isLoading={composerMenu.isLoading}
+                onSelect={composerMenu.onSelect}
+              />
+            </View>
+          ) : null}
+          <ComposerToolbarRow paddingBottom={0} paddingHorizontal={0} paddingTop={4}>
+            <ComposerToolbarScroller contentPaddingRight={8} fadeSurface="sheet">
+              <ComposerToolbarButton
+                accessibilityLabel="Add attachment"
                 disabled={isComposerInteractionLocked}
-                emphasized
-                icon={
-                  flow.interactionMode === "plan"
-                    ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
-                    : { ios: "hammer", android: "construction" }
-                }
-                label={flow.interactionMode === "plan" ? "Plan" : "Build"}
-                onPress={() =>
-                  flow.setInteractionMode(flow.interactionMode === "plan" ? "default" : "plan")
-                }
+                icon="plus"
+                onPress={() => {
+                  if (selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments) {
+                    Alert.alert("Add attachment", undefined, [
+                      { text: "Photos", onPress: () => void handlePickImages() },
+                      { text: "Files", onPress: () => void handlePickFiles() },
+                      { text: "Cancel", style: "cancel" },
+                    ]);
+                    return;
+                  }
+                  void handlePickImages();
+                }}
                 showChevron={false}
               />
-            ) : null}
-          </ComposerToolbarScroller>
-          <ComposerToolbarButton
-            accessibilityLabel={
-              flow.submitting ? "Starting task" : environmentConnected ? "Start task" : "Queue task"
-            }
-            disabled={!canStart}
-            icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
-            onPress={() => void handleStart()}
-            showChevron={false}
-            variant="primary"
-          />
-        </ComposerToolbarRow>
+              <ComposerInlineControl
+                accessibilityLabel="Model and reasoning settings"
+                disabled={isComposerInteractionLocked}
+                emphasized
+                iconNode={
+                  <ProviderIcon provider={flow.selectedModelOption?.providerDriver} size={16} />
+                }
+                label={flow.selectedModelOption?.label ?? "Choose model"}
+                maxWidth={152}
+                onPress={settingsSheetPresentation.open}
+              />
+              {flow.planModeEnabled ? (
+                <ComposerInlineControl
+                  accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
+                  accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
+                  disabled={isComposerInteractionLocked}
+                  emphasized
+                  icon={
+                    flow.interactionMode === "plan"
+                      ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
+                      : { ios: "hammer", android: "construction" }
+                  }
+                  label={flow.interactionMode === "plan" ? "Plan" : "Build"}
+                  onPress={() =>
+                    flow.setInteractionMode(flow.interactionMode === "plan" ? "default" : "plan")
+                  }
+                  showChevron={false}
+                />
+              ) : null}
+            </ComposerToolbarScroller>
+            <ComposerToolbarButton
+              accessibilityLabel={editorSize.expanded ? "Collapse editor" : "Expand editor"}
+              expanded={editorSize.expanded}
+              disabled={isComposerInteractionLocked}
+              icon={
+                editorSize.expanded
+                  ? "arrow.down.right.and.arrow.up.left"
+                  : "arrow.up.left.and.arrow.down.right"
+              }
+              onPress={() => editorSize.setExpanded(!editorSize.expanded)}
+              showChevron={false}
+            />
+            <ComposerToolbarButton
+              accessibilityLabel={
+                flow.submitting
+                  ? "Starting task"
+                  : environmentConnected
+                    ? "Start task"
+                    : "Queue task"
+              }
+              disabled={!canStart}
+              icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
+              onPress={() => void handleStart()}
+              showChevron={false}
+              variant="primary"
+            />
+          </ComposerToolbarRow>
+        </View>
       </ComposerSurface>
-    </View>
+    </Animated.View>
   );
 
   if (isAndroid) {
