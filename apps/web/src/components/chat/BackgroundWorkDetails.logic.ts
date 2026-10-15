@@ -156,6 +156,46 @@ export function resolveBackgroundWorkDetails(
   };
 }
 
+// CommonMark lets a backslash escape any ASCII punctuation character.
+const ASCII_PUNCTUATION = new Set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~");
+
+const escapeMarkdownText = (text: string) =>
+  Array.from(text, (character) =>
+    ASCII_PUNCTUATION.has(character) ? `\\${character}` : character,
+  ).join("");
+
+/**
+ * A label or command as chat markdown in which only its `[label](target)` links are markdown.
+ * Every other character shows as written, so `*`, `_` or `#` in a command stay plain. Null
+ * when the text has no link, so callers show the plain text.
+ */
+export function linksOnlyMarkdown(text: string): string | null {
+  let markdown = "";
+  let plainStart = 0;
+  let hasLink = false;
+  for (let open = text.indexOf("["); open !== -1; open = text.indexOf("[", open + 1)) {
+    const close = text.indexOf("](", open + 1);
+    if (close === -1) break;
+    const end = text.indexOf(")", close + 2);
+    const label = text.slice(open + 1, close);
+    const target = text.slice(close + 2, end);
+    if (
+      end === -1 ||
+      label.length === 0 ||
+      label.includes("[") ||
+      label.includes("]") ||
+      target.length === 0
+    )
+      continue;
+    if (target.includes(" ") || target.includes("\n")) continue;
+    markdown += escapeMarkdownText(text.slice(plainStart, open)) + text.slice(open, end + 1);
+    plainStart = end + 1;
+    open = end;
+    hasLink = true;
+  }
+  return hasLink ? markdown + escapeMarkdownText(text.slice(plainStart)) : null;
+}
+
 /** A code fence longer than any backtick run in `code`, so the code cannot close it. */
 function fence(code: string): string {
   let longest = 0;
@@ -170,7 +210,9 @@ function fence(code: string): string {
 /** The details as chat markdown, so links, the command, and the output file act as in chat. */
 export function backgroundWorkDetailsMarkdown(details: BackgroundWorkDetails): string {
   const blocks = [`**${BACKGROUND_WORK_KIND_LABELS[details.kind]}**`];
-  if (details.description !== undefined) blocks.push(details.description);
+  if (details.description !== undefined) {
+    blocks.push(linksOnlyMarkdown(details.description) ?? escapeMarkdownText(details.description));
+  }
   if (details.definition !== undefined) {
     const marker = fence(details.definition);
     const language = details.kind === "subagent" ? "text" : "sh";

@@ -10,6 +10,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   backgroundWorkDetailsMarkdown,
   type BackgroundWorkRef,
+  linksOnlyMarkdown,
   resolveBackgroundWorkDetails,
 } from "./BackgroundWorkDetails.logic";
 
@@ -29,7 +30,8 @@ function stopRowKeys(event: KeyboardEvent) {
 
 /**
  * Background work text with its markdown links clickable, rendered by the chat's
- * markdown renderer. Plain text while the "Background work details" setting is off.
+ * markdown renderer. The rest of the text stays plain, and a text without a link skips the
+ * renderer. Plain text while the "Background work details" setting is off.
  */
 export function BackgroundWorkText(props: {
   readonly text: string;
@@ -37,11 +39,12 @@ export function BackgroundWorkText(props: {
   readonly threadRef: ScopedThreadRef | null;
 }) {
   const enabled = useClientSettings(selectBackgroundWorkDetails);
-  if (!enabled) return props.text;
+  const markdown = enabled ? linksOnlyMarkdown(props.text) : null;
+  if (markdown === null) return props.text;
   return (
     <span className="contents" onClick={stopRowClick} onKeyDown={stopRowKeys}>
       <ChatMarkdown
-        text={props.text}
+        text={markdown}
         cwd={props.cwd}
         threadRef={props.threadRef ?? undefined}
         parseRawHtml={false}
