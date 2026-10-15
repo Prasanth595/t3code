@@ -5,7 +5,6 @@ import * as Layer from "effect/Layer";
 import { PROJECT_CONFIG_PATH } from "../config.ts";
 import { FactoryProcess, type RunInput, type RunResult, RunSpawnError } from "../process.ts";
 import {
-  FACTORY_LABELS,
   GitHubFailed,
   GitHubOutputTooLarge,
   GitHubParse,
@@ -158,8 +157,8 @@ const issueJson = (labels: ReadonlyArray<string>, assignees: ReadonlyArray<strin
 it.effect("runs gh with the config dir, a 60 s limit and separate stderr on every call", () =>
   Effect.gen(function* () {
     const t = setup(reply("[]"), reply("[]"), reply(ISSUE_VIEW), reply(""));
-    yield* t.ok(t.github.listIssues("factory:ready"));
-    yield* t.ok(t.github.listIssues("factory:ready"));
+    yield* t.ok(t.github.listIssues("ready"));
+    yield* t.ok(t.github.listIssues("ready"));
     yield* t.ok(t.github.issue(10));
     yield* t.ok(t.github.assign(6, "rawphp"));
     assert.strictEqual(t.inputs.length, 4);
@@ -376,6 +375,65 @@ it.effect("fileAt of a file that is not there is the gh failure", () =>
 
 // ---- labelNames, createLabel, ensureLabels ----
 
+/** Literal copies of softfac's lifecycle.rs table, so drift in either module is caught. */
+const LABEL_TABLE = [
+  [
+    "proposed",
+    "c5def5",
+    "A bot filed it. The factory ignores it until a person sets `factory:ready`.",
+  ],
+  ["ready", "0e8a16", "Approved for the factory."],
+  ["triage", "fbca04", "Claimed. The session is being launched."],
+  [
+    "needs-info",
+    "d93f0b",
+    "The factory asked questions on the issue. Answer them, then set `factory:ready`.",
+  ],
+  ["building", "1d76db", "A session is building it."],
+  ["pr-open", "5319e7", "The PR is open and has passed the gate."],
+  ["stuck", "b60205", "The factory gave up and said why in a comment."],
+] as const;
+const ALL_LABEL_NAMES = LABEL_TABLE.map(([state]) => `factory:${state}`);
+const createCall = (state: string, color: string, description: string) => [
+  "label",
+  "create",
+  `factory:${state}`,
+  "--repo",
+  REPO,
+  "--color",
+  color,
+  "--description",
+  description,
+];
+
+it.effect("ensureLabels on an empty repo creates all seven labels exactly", () =>
+  Effect.gen(function* () {
+    const t = setup(reply("[]"), ...LABEL_TABLE.map(() => reply("")));
+    const created = yield* t.ok(t.github.ensureLabels());
+    assert.deepStrictEqual(
+      created,
+      LABEL_TABLE.map(([state]) => state),
+    );
+    assert.deepStrictEqual(t.calls().slice(1), [
+      createCall(
+        "proposed",
+        "c5def5",
+        "A bot filed it. The factory ignores it until a person sets `factory:ready`.",
+      ),
+      createCall("ready", "0e8a16", "Approved for the factory."),
+      createCall("triage", "fbca04", "Claimed. The session is being launched."),
+      createCall(
+        "needs-info",
+        "d93f0b",
+        "The factory asked questions on the issue. Answer them, then set `factory:ready`.",
+      ),
+      createCall("building", "1d76db", "A session is building it."),
+      createCall("pr-open", "5319e7", "The PR is open and has passed the gate."),
+      createCall("stuck", "b60205", "The factory gave up and said why in a comment."),
+    ]);
+  }),
+);
+
 it.effect("labelNames lists every page with the exact call", () =>
   Effect.gen(function* () {
     const t = setup(
@@ -430,29 +488,6 @@ it.effect("a refused createLabel is the gh failure", () =>
   }),
 );
 
-it("the factory labels are the seven lifecycle labels, in order", () => {
-  assert.deepStrictEqual(
-    FACTORY_LABELS.map((label) => [label.name, label.color, label.description]),
-    [
-      [
-        "factory:proposed",
-        "c5def5",
-        "A bot filed it. The factory ignores it until a person sets `factory:ready`.",
-      ],
-      ["factory:ready", "0e8a16", "Approved for the factory."],
-      ["factory:triage", "fbca04", "Claimed. The session is being launched."],
-      [
-        "factory:needs-info",
-        "d93f0b",
-        "The factory asked questions on the issue. Answer them, then set `factory:ready`.",
-      ],
-      ["factory:building", "1d76db", "A session is building it."],
-      ["factory:pr-open", "5319e7", "The PR is open and has passed the gate."],
-      ["factory:stuck", "b60205", "The factory gave up and said why in a comment."],
-    ],
-  );
-});
-
 it.effect("ensureLabels creates only the missing factory labels, in table order", () =>
   Effect.gen(function* () {
     const t = setup(
@@ -464,13 +499,7 @@ it.effect("ensureLabels creates only the missing factory labels, in table order"
       reply(""),
     );
     const created = yield* t.ok(t.github.ensureLabels());
-    assert.deepStrictEqual(created, [
-      "factory:proposed",
-      "factory:triage",
-      "factory:needs-info",
-      "factory:building",
-      "factory:pr-open",
-    ]);
+    assert.deepStrictEqual(created, ["proposed", "triage", "needs-info", "building", "pr-open"]);
     const calls = t.calls();
     assert.strictEqual(calls.length, 6);
     assert.deepStrictEqual(calls[1], [
@@ -493,7 +522,7 @@ it.effect("ensureLabels creates only the missing factory labels, in table order"
 
 it.effect("ensureLabels creates nothing when every label exists", () =>
   Effect.gen(function* () {
-    const t = setup(reply(JSON.stringify(FACTORY_LABELS.map(({ name }) => ({ name })))));
+    const t = setup(reply(JSON.stringify(ALL_LABEL_NAMES.map((name) => ({ name })))));
     assert.deepStrictEqual(yield* t.ok(t.github.ensureLabels()), []);
     assert.strictEqual(t.calls().length, 1);
   }),
@@ -506,6 +535,23 @@ it.effect("ensureLabels stops at the first failure", () =>
     assert.strictEqual(error._tag, "GitHubFailed");
     assert.strictEqual(t.calls().length, 3);
   }),
+);
+
+it.effect(
+  "a NUL byte in an argument is refused before gh starts and never reaches the message",
+  () =>
+    Effect.gen(function* () {
+      const t = setup(reply(""));
+      const error = yield* t.err(t.github.postComment(6, "secret\u0000tail"));
+      assert.strictEqual(error._tag, "GitHubSpawnError");
+      const bytes = new TextEncoder().encode("secret\u0000tail\n\n<!-- softfac -->").length;
+      assert.strictEqual(
+        error.message,
+        `cannot start \`gh issue comment 6 --repo rawphp/softfac --body <${bytes} bytes>\`: argument contains a NUL byte`,
+      );
+      assert.notInclude(error.message, "secret");
+      assert.strictEqual(t.calls().length, 0);
+    }),
 );
 
 // ---- baseConfig ----
@@ -557,7 +603,7 @@ it.effect("baseConfig passes on a missing file and any other failure", () =>
 it.effect("listIssues with none", () =>
   Effect.gen(function* () {
     const t = setup(reply("[]"));
-    const issues = yield* t.ok(t.github.listIssues("factory:ready"));
+    const issues = yield* t.ok(t.github.listIssues("ready"));
     assert.deepStrictEqual(issues, { items: [], cut: false });
     assert.deepStrictEqual(t.calls(), [
       [
@@ -581,7 +627,7 @@ it.effect("listIssues with none", () =>
 it.effect("listIssues with one ignores unknown fields", () =>
   Effect.gen(function* () {
     const t = setup(reply(LIST_ONE));
-    const issues = yield* t.ok(t.github.listIssues("factory:needs-info"));
+    const issues = yield* t.ok(t.github.listIssues("needs-info"));
     assert.deepStrictEqual(issues.items, [
       { number: 6, title: "GitHub client", assignees: ["rawphp"] },
     ]);
@@ -592,7 +638,7 @@ it.effect("listIssues with one ignores unknown fields", () =>
 it.effect("listIssues with several", () =>
   Effect.gen(function* () {
     const t = setup(reply(LIST_MANY));
-    const issues = yield* t.ok(t.github.listIssues("factory:ready"));
+    const issues = yield* t.ok(t.github.listIssues("ready"));
     assert.deepStrictEqual(issues.items, [
       { number: 6, title: "GitHub client", assignees: [] },
       { number: 9, title: "Daemon loop", assignees: ["a", "b"] },
@@ -604,7 +650,7 @@ it.effect("listIssues past the limit returns the first 200 and says it was cut",
   Effect.gen(function* () {
     assert.strictEqual(LIST_LIMIT, 200);
     const t = setup(reply(listingOf(201)));
-    const issues = yield* t.ok(t.github.listIssues("factory:ready"));
+    const issues = yield* t.ok(t.github.listIssues("ready"));
     assert.isTrue(issues.cut);
     assert.strictEqual(issues.items.length, 200);
     assert.deepStrictEqual(
@@ -618,7 +664,7 @@ it.effect("listIssues past the limit returns the first 200 and says it was cut",
 it.effect("listIssues at the limit returns them all and says nothing", () =>
   Effect.gen(function* () {
     const t = setup(reply(listingOf(200)));
-    const issues = yield* t.ok(t.github.listIssues("factory:ready"));
+    const issues = yield* t.ok(t.github.listIssues("ready"));
     assert.isFalse(issues.cut);
     assert.strictEqual(issues.items.length, 200);
   }),
@@ -638,9 +684,8 @@ it.effect("issue reads the real shape with the exact call", () =>
       labels: ["factory:ready", "phase:1"],
       assignees: ["rawphp"],
       author: "tomkaczocha",
-      state: "OPEN",
+      state: "ready",
       closed: false,
-      factoryLabel: "factory:ready",
     });
   }),
 );
@@ -650,8 +695,7 @@ it.effect("issue says when GitHub has it closed and keeps its factory label", ()
     const t = setup(reply(ISSUE_VIEW.replace('"state":"OPEN"', '"state":"CLOSED"')));
     const detail = yield* t.ok(t.github.issue(10));
     assert.isTrue(detail.closed);
-    assert.strictEqual(detail.state, "CLOSED");
-    assert.strictEqual(detail.factoryLabel, "factory:ready");
+    assert.strictEqual(detail.state, "ready");
   }),
 );
 
@@ -666,44 +710,44 @@ it.effect("issue author is null when gh gives null or nothing", () =>
   }),
 );
 
-it.effect("issue factoryLabel is null with no factory label", () =>
+it.effect("issue state is null with no factory label", () =>
   Effect.gen(function* () {
     const t = setup(reply(issueJson(["phase:1", "bug"], [], '"b"')));
     const detail = yield* t.ok(t.github.issue(10));
-    assert.strictEqual(detail.factoryLabel, null);
+    assert.strictEqual(detail.state, null);
     assert.deepStrictEqual(detail.assignees, []);
   }),
 );
 
-it.effect("issue factoryLabel is the one factory label", () =>
+it.effect("issue state is the one factory label", () =>
   Effect.gen(function* () {
     const t = setup(reply(issueJson(["bug", "factory:needs-info"], [], '"b"')));
-    assert.strictEqual((yield* t.ok(t.github.issue(10))).factoryLabel, "factory:needs-info");
+    assert.strictEqual((yield* t.ok(t.github.issue(10))).state, "needs-info");
   }),
 );
 
-it.effect("issue factoryLabel is null with two factory labels", () =>
+it.effect("issue state is null with two factory labels", () =>
   Effect.gen(function* () {
     const t = setup(reply(issueJson(["factory:ready", "factory:building"], [], '"b"')));
-    assert.strictEqual((yield* t.ok(t.github.issue(10))).factoryLabel, null);
+    assert.strictEqual((yield* t.ok(t.github.issue(10))).state, null);
   }),
 );
 
-it.effect("issue factoryLabel is null for an unknown factory label", () =>
+it.effect("issue state is null for an unknown factory label", () =>
   Effect.gen(function* () {
     const t = setup(reply(issueJson(["factory:bogus"], [], '"b"')));
-    assert.strictEqual((yield* t.ok(t.github.issue(10))).factoryLabel, null);
+    assert.strictEqual((yield* t.ok(t.github.issue(10))).state, null);
   }),
 );
 
-it.effect("issue factoryLabel is null with a bogus and a real factory label in either order", () =>
+it.effect("issue state is null with a bogus and a real factory label in either order", () =>
   Effect.gen(function* () {
     for (const labels of [
       ["factory:bogus", "factory:ready"],
       ["factory:ready", "factory:bogus"],
     ]) {
       const t = setup(reply(issueJson(labels, [], '"b"')));
-      assert.strictEqual((yield* t.ok(t.github.issue(10))).factoryLabel, null, labels.join());
+      assert.strictEqual((yield* t.ok(t.github.issue(10))).state, null, labels.join());
     }
   }),
 );
@@ -748,7 +792,7 @@ it.effect("issue uses the number it is given", () =>
 it.effect("setState from one wrong label", () =>
   Effect.gen(function* () {
     const t = setup(reply(labelsReply(["factory:ready"])), reply(""));
-    yield* t.ok(t.github.setState(6, "factory:triage"));
+    yield* t.ok(t.github.setState(6, "triage"));
     assert.deepStrictEqual(t.calls(), [
       viewLabelsCall,
       editCall("--add-label", "factory:triage", "--remove-label", "factory:ready"),
@@ -759,7 +803,7 @@ it.effect("setState from one wrong label", () =>
 it.effect("setState from two factory labels", () =>
   Effect.gen(function* () {
     const t = setup(reply(labelsReply(["factory:ready", "factory:stuck"])), reply(""));
-    yield* t.ok(t.github.setState(6, "factory:building"));
+    yield* t.ok(t.github.setState(6, "building"));
     assert.deepStrictEqual(t.calls(), [
       viewLabelsCall,
       editCall(
@@ -777,7 +821,7 @@ it.effect("setState from two factory labels", () =>
 it.effect("setState removes extras when the target is already present", () =>
   Effect.gen(function* () {
     const t = setup(reply(labelsReply(["factory:triage", "factory:ready"])), reply(""));
-    yield* t.ok(t.github.setState(6, "factory:triage"));
+    yield* t.ok(t.github.setState(6, "triage"));
     assert.deepStrictEqual(t.calls(), [
       viewLabelsCall,
       editCall("--remove-label", "factory:ready"),
@@ -788,7 +832,7 @@ it.effect("setState removes extras when the target is already present", () =>
 it.effect("setState adds when there is no factory label", () =>
   Effect.gen(function* () {
     const t = setup(reply(labelsReply(["phase:1"])), reply(""));
-    yield* t.ok(t.github.setState(6, "factory:ready"));
+    yield* t.ok(t.github.setState(6, "ready"));
     assert.deepStrictEqual(t.calls(), [viewLabelsCall, editCall("--add-label", "factory:ready")]);
   }),
 );
@@ -796,7 +840,7 @@ it.effect("setState adds when there is no factory label", () =>
 it.effect("setState already correct makes no edit", () =>
   Effect.gen(function* () {
     const t = setup(reply(labelsReply(["phase:1", "factory:building"])));
-    yield* t.ok(t.github.setState(6, "factory:building"));
+    yield* t.ok(t.github.setState(6, "building"));
     assert.deepStrictEqual(t.calls(), [viewLabelsCall]);
   }),
 );
@@ -807,7 +851,7 @@ it.effect("setState leaves non-factory labels alone", () =>
       reply(labelsReply(["phase:1", "factory:ready", "bug", "factory-ish"])),
       reply(""),
     );
-    yield* t.ok(t.github.setState(6, "factory:triage"));
+    yield* t.ok(t.github.setState(6, "triage"));
     assert.deepStrictEqual(
       t.calls()[1],
       editCall("--add-label", "factory:triage", "--remove-label", "factory:ready"),
@@ -820,7 +864,7 @@ it.effect("setState reads the real view shape", () =>
     const real =
       '{"assignees":[{"login":"rawphp"}],"labels":[{"id":"x","name":"factory:ready","description":"d","color":"0e8a16"},{"name":"phase:1"}]}';
     const t = setup(reply(real), reply(""));
-    yield* t.ok(t.github.setState(6, "factory:triage"));
+    yield* t.ok(t.github.setState(6, "triage"));
     assert.strictEqual(t.calls().length, 2);
   }),
 );
@@ -828,7 +872,7 @@ it.effect("setState reads the real view shape", () =>
 it.effect("setState surfaces a failing edit", () =>
   Effect.gen(function* () {
     const t = setup(reply(labelsReply(["factory:ready"])), fail(1, "label does not exist"));
-    const error = yield* t.err(t.github.setState(6, "factory:triage"));
+    const error = yield* t.err(t.github.setState(6, "triage"));
     assert.strictEqual(error._tag, "GitHubFailed");
     if (error._tag !== "GitHubFailed") return;
     assert.strictEqual(error.stderr, "label does not exist");
@@ -866,7 +910,7 @@ it.effect("assign adds the user and a failure is an error", () =>
 it.effect("a non-zero exit carries args, status and stderr", () =>
   Effect.gen(function* () {
     const t = setup(fail(4, "HTTP 404: Not Found\n"));
-    const error = yield* t.err(t.github.listIssues("factory:ready"));
+    const error = yield* t.err(t.github.listIssues("ready"));
     assert.strictEqual(error._tag, "GitHubFailed");
     if (error._tag !== "GitHubFailed") return;
     assert.deepStrictEqual(error.args.slice(0, 2), ["issue", "list"]);
@@ -909,7 +953,7 @@ it.effect("a signal-killed gh is a failure with status -1", () =>
 it.effect("malformed JSON is a parse error carrying the args", () =>
   Effect.gen(function* () {
     const t = setup(reply("not json"));
-    const error = yield* t.err(t.github.listIssues("factory:ready"));
+    const error = yield* t.err(t.github.listIssues("ready"));
     assert.strictEqual(error._tag, "GitHubParse");
     if (error._tag !== "GitHubParse") return;
     assert.deepStrictEqual(error.args, t.calls()[0]);
@@ -918,7 +962,7 @@ it.effect("malformed JSON is a parse error carrying the args", () =>
     assert.include(error.message, "gh issue list --repo rawphp/softfac");
 
     const labels = setup(reply('{"labels":"nope"}'));
-    const labelsError = yield* labels.err(labels.github.setState(6, "factory:ready"));
+    const labelsError = yield* labels.err(labels.github.setState(6, "ready"));
     assert.strictEqual(labelsError._tag, "GitHubParse");
     if (labelsError._tag !== "GitHubParse") return;
     assert.deepStrictEqual(labelsError.args, viewLabelsCall);
@@ -929,7 +973,7 @@ it.effect("malformed JSON is a parse error carrying the args", () =>
 it.effect("a spawn failure is a spawn error carrying the args", () =>
   Effect.gen(function* () {
     const t = setup(spawnError());
-    const error = yield* t.err(t.github.listIssues("factory:ready"));
+    const error = yield* t.err(t.github.listIssues("ready"));
     assert.strictEqual(error._tag, "GitHubSpawnError");
     if (error._tag !== "GitHubSpawnError") return;
     assert.deepStrictEqual(error.args, t.calls()[0]);
@@ -947,7 +991,7 @@ it.effect("a spawn failure is a spawn error carrying the args", () =>
 it.effect("a timed out gh is a timeout error", () =>
   Effect.gen(function* () {
     const t = setup(timedOut());
-    const error = yield* t.err(t.github.listIssues("factory:ready"));
+    const error = yield* t.err(t.github.listIssues("ready"));
     assert.strictEqual(error._tag, "GitHubTimedOut");
     if (error._tag !== "GitHubTimedOut") return;
     assert.strictEqual(error.seconds, 60);
@@ -958,7 +1002,7 @@ it.effect("a timed out gh is a timeout error", () =>
 it.effect("output past the cap is an error, never a truncation", () =>
   Effect.gen(function* () {
     const t = setup(truncated());
-    const error = yield* t.err(t.github.listIssues("factory:ready"));
+    const error = yield* t.err(t.github.listIssues("ready"));
     assert.strictEqual(error._tag, "GitHubOutputTooLarge");
     if (error._tag !== "GitHubOutputTooLarge") return;
     assert.strictEqual(error.limit, 8 * 1024 * 1024);
@@ -975,7 +1019,7 @@ it.effect("only the rate limit is read as a rate limit", () =>
       "gh: API rate limit exceeded (HTTP 403)",
     ]) {
       const t = setup(fail(1, stderr));
-      const error = yield* t.err(t.github.listIssues("factory:ready"));
+      const error = yield* t.err(t.github.listIssues("ready"));
       assert.strictEqual(error._tag, "GitHubRateLimited");
       if (error._tag !== "GitHubRateLimited") return;
       assert.strictEqual(error.stderr, stderr);
@@ -984,17 +1028,14 @@ it.effect("only the rate limit is read as a rate limit", () =>
       assert.include(error.message, `hit GitHub's rate limit: ${stderr}`);
     }
     const other = setup(fail(1, "HTTP 404: Not Found"));
-    assert.strictEqual(
-      (yield* other.err(other.github.listIssues("factory:ready")))._tag,
-      "GitHubFailed",
-    );
+    assert.strictEqual((yield* other.err(other.github.listIssues("ready")))._tag, "GitHubFailed");
   }),
 );
 
 it.effect("a success that mentions the rate limit is not an error", () =>
   Effect.gen(function* () {
     const t = setup(reply("[]", "API rate limit"));
-    const issues = yield* t.ok(t.github.listIssues("factory:ready"));
+    const issues = yield* t.ok(t.github.listIssues("ready"));
     assert.deepStrictEqual(issues, { items: [], cut: false });
   }),
 );
