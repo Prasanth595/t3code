@@ -362,9 +362,9 @@ function ComposerBannerStackAlert({
           <span className="min-w-0 truncate font-medium leading-7 sm:leading-6">{item.title}</span>
           {item.description ? (
             descriptionBelow ? (
-              <span className="min-w-0 pb-1 text-muted-foreground whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full">
-                {item.description}
-              </span>
+              <ComposerBanner.Scroll className="text-muted-foreground whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full">
+                <span className="block pb-1">{item.description}</span>
+              </ComposerBanner.Scroll>
             ) : (
               <NoticeDescription>{item.description}</NoticeDescription>
             )
