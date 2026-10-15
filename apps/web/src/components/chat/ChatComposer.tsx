@@ -1261,7 +1261,7 @@ const supervisedRuntimeModeOption = {
   ...runtimeModeConfig["approval-required"],
 };
 const BLANK_SLATE_DESCRIPTION =
-  "The agent starts without T3 instructions or tools, and without your or the project's instruction files, skills, hooks, and memory.";
+  "Starts without T3's runtime instructions or tools. User and project context is disabled where the provider supports it; some provider context may remain.";
 
 const ComposerBlankSlateControl = memo(function ComposerBlankSlateControl(props: {
   blankSlate: boolean;

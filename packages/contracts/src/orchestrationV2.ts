@@ -372,8 +372,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
-  /** Provider sessions get no T3 instructions or MCP server and skip the
-      user's and project's instructions, skills, hooks, and memory. */
+  /** Omits T3 runtime instructions and MCP; disables user and project
+      context where the provider supports it. */
   blankSlate: Schema.optional(Schema.Boolean),
   /** Pull request the user linked to this thread (#8160); optional so
       pre-linking servers still decode. */
