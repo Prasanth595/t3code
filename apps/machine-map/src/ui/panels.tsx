@@ -1261,8 +1261,29 @@ function ClientPanel({ id }: { id: string }) {
         </div>
       )}
 
+      <Section>App</Section>
+      {client.serviceToken ? (
+        <p className="small">
+          <span className="sticker ok flat">app</span> A native app holds the token{" "}
+          <code>{client.serviceToken.clientId}</code>. A new invite replaces it.
+        </p>
+      ) : (
+        <p className="hint">No app yet. An invite lets a native app join this client.</p>
+      )}
+      <div className="actions spaced">
+        <button
+          type="button"
+          className="btn small"
+          onClick={() => portal.open({ _tag: "inviteApp", clientId: client.id })}
+        >
+          Invite an app
+        </button>
+      </div>
+
       <Section>Remove</Section>
-      <p className="hint">Removes the client, its keys and its arrows.</p>
+      <p className="hint">
+        Removes the client, its keys and its arrows. An app token ends in Cloudflare at once.
+      </p>
       <div className="actions spaced">
         <button
           type="button"
@@ -1273,12 +1294,14 @@ function ClientPanel({ id }: { id: string }) {
               title: `Remove ${client.name}?`,
               body: "Its browsers lose all access. Each one can sign in again and wait for approval.",
               confirmLabel: "Remove",
-              action: () => {
-                portal.select(NO_SELECTION);
-                void portal.submit(`Removed ${client.name}`, [
-                  { _tag: "removeClient", clientId: client.id },
-                ]);
-              },
+              action: () =>
+                portal.call(async () => {
+                  const result = await callApi<WriteResult>("POST", "/api/clients/remove", {
+                    clientId: client.id,
+                  });
+                  portal.select(NO_SELECTION);
+                  return result;
+                }, `Removed ${client.name}.`),
             })
           }
         >

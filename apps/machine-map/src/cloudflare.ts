@@ -182,8 +182,21 @@ export type ApprovalsApp = ReturnType<typeof decodeApprovalsApp>;
 /** The CNAME target of a tunnel. */
 export const tunnelTarget = (tunnelId: string): string => `${tunnelId}.cfargotunnel.com`;
 
-/** The app policy that holds every machine token. The portal edits no other policy. */
+/** The app policy that holds every machine token. */
 export const MACHINE_POLICY_NAME = "t3 machine map tokens";
+/**
+ * MM-911: the policy of the machine hostnames app that holds the app tokens of native clients.
+ * It is never on the `/connect` app, so a client token cannot connect as a machine. The portal
+ * edits no other policy.
+ */
+export const CLIENT_POLICY_NAME = "t3 client tokens";
+/** MM-914: the Access app of `/client`, where a native app reads its machines with its token. */
+const CLIENT_APP_NAME = "t3 portal client tokens";
+/** MM-914: the path of that app. */
+export const CLIENT_PATH = "/client";
+/** MM-913: the Bypass Access app of the invite path. The invite code is the credential. */
+const INVITE_APP_NAME = "t3 portal app invites";
+export const INVITE_PATH = "/enroll/client";
 
 export interface OwnerSession {
   readonly name: string;
@@ -277,18 +290,20 @@ export class CloudflareApi {
     return tokens.find((token) => token.client_id === clientId)?.id ?? null;
   }
 
-  async #machinePolicy(appId: string): Promise<Policy | undefined> {
+  async #tokenPolicy(appId: string, name: string): Promise<Policy | undefined> {
     const policies = await this.#call("GET", `/access/apps/${appId}/policies`, decodePolicies);
-    return policies.find((policy) => policy.name === MACHINE_POLICY_NAME);
+    return policies.find((policy) => policy.name === name);
   }
 
-  /** MM-201: adds the token to the machine token policy of the app. Creates the policy once. */
-  async addTokenToApp(appId: string, tokenId: string): Promise<void> {
+  /**
+   * MM-201, MM-911: adds the token to the token policy `name` of the app. Creates the policy once.
+   */
+  async addTokenToApp(appId: string, tokenId: string, name = MACHINE_POLICY_NAME): Promise<void> {
     const rule = { service_token: { token_id: tokenId } };
-    const policy = await this.#machinePolicy(appId);
+    const policy = await this.#tokenPolicy(appId, name);
     if (!policy) {
       await this.#call("POST", `/access/apps/${appId}/policies`, ignoreResult, {
-        name: MACHINE_POLICY_NAME,
+        name,
         decision: "non_identity",
         include: [rule],
       });
@@ -298,9 +313,13 @@ export class CloudflareApi {
     await this.#putPolicy(appId, policy, [...policy.include, rule]);
   }
 
-  /** MM-208: removes the token from the policy. An empty policy is deleted. */
-  async removeTokenFromApp(appId: string, tokenId: string): Promise<void> {
-    const policy = await this.#machinePolicy(appId);
+  /** MM-208, MM-915: removes the token from the policy `name`. An empty policy is deleted. */
+  async removeTokenFromApp(
+    appId: string,
+    tokenId: string,
+    name = MACHINE_POLICY_NAME,
+  ): Promise<void> {
+    const policy = await this.#tokenPolicy(appId, name);
     if (!policy) return;
     const include = policy.include.filter((rule) => ruleTokenId(rule) !== tokenId);
     if (include.length === policy.include.length) return;
@@ -472,6 +491,55 @@ export class CloudflareApi {
           include: owners.map((email) => ({ email: { email } })),
         },
       ],
+    });
+  }
+
+  /**
+   * MM-914: creates the Access app of `/client` once. It lets in any service token of the account;
+   * the Worker then accepts only the token of a client. Returns its audience.
+   */
+  async ensureClientTokensApp(host: string): Promise<string> {
+    const found = await this.#call(
+      "GET",
+      `/access/apps?name=${encodeURIComponent(CLIENT_APP_NAME)}&exact=true`,
+      decodeApprovalsApps,
+    );
+    const existing = found.find((a) => a.name === CLIENT_APP_NAME);
+    if (existing) return (await this.approvalsApp(existing.id)).aud;
+    const domain = `${host}${CLIENT_PATH}`;
+    const app = await this.#call("POST", "/access/apps", decodeApprovalsApp, {
+      type: "self_hosted",
+      name: CLIENT_APP_NAME,
+      domain,
+      destinations: [{ type: "public", uri: domain }],
+      app_launcher_visible: false,
+      policies: [
+        {
+          name: CLIENT_POLICY_NAME,
+          decision: "non_identity",
+          include: [{ any_valid_service_token: {} }],
+        },
+      ],
+    });
+    return app.aud;
+  }
+
+  /** MM-913: creates the Bypass Access app of the invite path once, so an app reaches it unsigned. */
+  async ensureInviteBypassApp(host: string): Promise<void> {
+    const found = await this.#call(
+      "GET",
+      `/access/apps?name=${encodeURIComponent(INVITE_APP_NAME)}&exact=true`,
+      decodeApprovalsApps,
+    );
+    if (found.some((a) => a.name === INVITE_APP_NAME)) return;
+    const domain = `${host}${INVITE_PATH}`;
+    await this.#call("POST", "/access/apps", ignoreResult, {
+      type: "self_hosted",
+      name: INVITE_APP_NAME,
+      domain,
+      destinations: [{ type: "public", uri: domain }],
+      app_launcher_visible: false,
+      policies: [{ name: "everyone", decision: "bypass", include: [{ everyone: {} }] }],
     });
   }
 

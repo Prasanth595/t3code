@@ -31,6 +31,7 @@ export const client = (overrides: Partial<ClientRecord> = {}): ClientRecord => (
   name: "Phone",
   email: "owner@example.com",
   keys: [{ thumbprint: "key-1", addedAt: "2026-10-01T00:00:00.000Z", describedAs: "Safari" }],
+  serviceToken: null,
   position: { x: 0.2, y: 0.2 },
   createdAt: "2026-10-01T00:00:00.000Z",
   ...overrides,

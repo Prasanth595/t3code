@@ -8,6 +8,9 @@ import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 import {
   ClientId,
+  type ClientEnrollRequest,
+  type ClientEnrollResponse,
+  type ClientMachine,
   MACHINE_MAP_PROTOCOL,
   machineSessionSubject,
   MachineCommand,
@@ -47,6 +50,8 @@ import type {
   ApprovalsStatus,
   ApproveClientRequest,
   ChangesRequest,
+  InviteRequest,
+  InviteResponse,
   CommandRequest,
   DevicesResponse,
   EnrolledEvent,
@@ -81,6 +86,7 @@ import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
 import { sendPush, vapidKey, type PushTarget, type VapidKey } from "./push.ts";
 import {
   approvalsAppProblem,
+  CLIENT_POLICY_NAME,
   CloudflareApi,
   tunnelTarget,
   type ApprovalsApp,
@@ -214,6 +220,8 @@ const PauseRecord = Schema.Struct({ state: PauseState, before: PausedAccess });
 type PauseRecord = typeof PauseRecord.Type;
 const decodePause = decodeJson(PauseRecord);
 const decodeApprovalsApp = decodeJson(Schema.Struct({ id: Schema.String, aud: Schema.String }));
+/** MM-913: an invite of a native app works this long. */
+const INVITE_MINUTES = 24 * 60;
 const decodeHelloProtocol = Schema.decodeUnknownOption(
   Schema.TaggedStruct("hello", { protocol: Schema.Number }),
 );
@@ -388,6 +396,8 @@ export class MachineMapObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS enroll_attempts (ip TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sign_ins (id TEXT PRIMARY KEY, device TEXT NOT NULL, browser TEXT NOT NULL, place TEXT NOT NULL, first_seen TEXT NOT NULL, last_used TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS machine_tunnels (machine_id TEXT PRIMARY KEY, tunnel_id TEXT NOT NULL, hostname TEXT NOT NULL, created_tunnel INTEGER NOT NULL, dns_record_id TEXT, access_host_added INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS client_invites (code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL, expires_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS client_tokens (client_id TEXT PRIMARY KEY, token_id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pending_clients (thumbprint TEXT PRIMARY KEY, described_as TEXT NOT NULL, email TEXT, seen_on TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, state TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, sign_in_id TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
@@ -1693,6 +1703,9 @@ export class MachineMapObject extends DurableObject<Env> {
     const times = [
       ...this.#map.arrows.flatMap((arrow) => (arrow.expiresAt ? [arrow.expiresAt] : [])),
       ...this.#map.clientArrows.flatMap((arrow) => (arrow.expiresAt ? [arrow.expiresAt] : [])),
+      ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM client_invites").map(
+        (r) => r.expires_at,
+      ),
       ...this.#sql<{ last_seen: string }>("SELECT last_seen FROM pending_clients").map((r) =>
         new Date(Date.parse(r.last_seen) + PENDING_KEEP_MS).toISOString(),
       ),
@@ -1769,6 +1782,7 @@ export class MachineMapObject extends DurableObject<Env> {
         ],
       );
     }
+    this.#sql("DELETE FROM client_invites WHERE expires_at <= ?", new Date(now).toISOString());
     const stale = this.#sql<{ thumbprint: string }>(
       "DELETE FROM pending_clients WHERE last_seen < ? RETURNING thumbprint",
       new Date(now - PENDING_KEEP_MS).toISOString(),
@@ -2375,6 +2389,12 @@ export class MachineMapObject extends DurableObject<Env> {
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('approvals_app', ?)",
         JSON.stringify({ id: app.id, aud: app.aud }),
       );
+      // MM-914: the app of `/client` comes with it, so native apps can read their machines.
+      this.#sql(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('client_app_aud', ?)",
+        await api.ensureClientTokensApp(host),
+      );
+      await api.ensureInviteBypassApp(host);
       const problem = await this.#approvalsProblem(host);
       return problem === null ? { _tag: "ready" } : { _tag: "missing", reason: problem };
     });
@@ -2432,6 +2452,7 @@ export class MachineMapObject extends DurableObject<Env> {
           name,
           email: pending.email,
           keys: [key],
+          serviceToken: null,
           position: freePosition([
             ...this.#map.machines.map((m) => m.position),
             ...this.#map.clients.map((c) => c.position),
@@ -2459,6 +2480,204 @@ export class MachineMapObject extends DurableObject<Env> {
       );
       this.#sql("DELETE FROM pending_clients WHERE thumbprint = ?", pending.thumbprint);
       this.#broadcast(this.#pendingEvent());
+      return { _tag: "applied", revision: revision.revision };
+    });
+  }
+
+  /** MM-914: the audience that the Worker checks on `/client`. No owner: an app calls it. */
+  clientAppAud(): string | null {
+    return (
+      this.#sql<{ value: string }>("SELECT value FROM meta WHERE key = 'client_app_aud'")[0]
+        ?.value ?? null
+    );
+  }
+
+  /** MM-914: the machines that a client reaches: an arrow above `none` and a hostname. */
+  #clientMachines(client: ClientRecord): Array<ClientMachine> {
+    return this.#map.machines.flatMap((machine) => {
+      const arrow = this.#map.clientArrows.find(
+        (a) => a.client === client.id && a.to === machine.id,
+      );
+      if (!arrow || arrow.level === "none" || machine.hostname === null) return [];
+      return [{ id: machine.id, name: machine.name, origin: `https://${machine.hostname}` }];
+    });
+  }
+
+  /**
+   * MM-913: an invite of a native app. It runs on the approval path, because the app gets the
+   * access of its client. A new client gets the arrows of the request; an existing one keeps its own.
+   */
+  createInvite(owner: OwnerContext, host: string, request: InviteRequest) {
+    return this.#run(owner, async (): Promise<InviteResponse> => {
+      const problem = await this.#approvalsProblem(host);
+      if (problem) throw new PortalError(409, problem);
+      let clientId: ClientId;
+      if (request.client._tag === "existing") {
+        const existing = findClient(this.#map, request.client.clientId);
+        if (!existing) throw new PortalError(404, "This client is gone.");
+        if (request.arrows.length > 0)
+          throw new PortalError(400, "An existing client keeps its own arrows.");
+        if (this.#pause?.before.clientArrows.some((a) => a.client === existing.id)) {
+          throw new PortalError(
+            423,
+            `Everything is paused, and Resume gives ${existing.name} access again. Resume first.`,
+          );
+        }
+        clientId = existing.id;
+      } else {
+        const name = request.client.name;
+        if (this.#map.clients.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+          throw new PortalError(409, `A client named ${name} is already on the map.`);
+        }
+        const client: ClientRecord = {
+          id: ClientId.make(`client-${slug(name)}-${randomHex(2)}`),
+          name,
+          email: null,
+          keys: [],
+          serviceToken: null,
+          position: freePosition([
+            ...this.#map.machines.map((m) => m.position),
+            ...this.#map.clients.map((c) => c.position),
+          ]),
+          createdAt: nowIso(),
+        };
+        const arrows = request.arrows
+          .filter((arrow) => arrow.level !== "none")
+          .map((arrow) => {
+            if (!findMachine(this.#map, arrow.to))
+              throw new PortalError(404, `Unknown machine ${arrow.to}.`);
+            return clientArrowChange(this.#map, {
+              client: client.id,
+              to: arrow.to,
+              level: arrow.level,
+              expiresAt: null,
+            });
+          });
+        this.#commit(ownerActor(owner), `Added ${name} for an app invite`, [
+          { _tag: "putClient", client },
+          ...arrows,
+        ]);
+        clientId = client.id;
+      }
+      // A 128-bit code: it travels in a QR or a link, never typed.
+      const code = randomHex(16);
+      const expiresAt = addMinutes(Date.now(), INVITE_MINUTES);
+      this.#sql("DELETE FROM client_invites WHERE client_id = ?", clientId);
+      this.#sql(
+        "INSERT INTO client_invites (code_hash, client_id, expires_at) VALUES (?, ?, ?)",
+        await sha256Hex(code),
+        clientId,
+        expiresAt,
+      );
+      return { clientId, url: `https://${host}/enroll/client#code=${code}`, expiresAt };
+    });
+  }
+
+  /**
+   * MM-913: a native app uses its invite. The portal makes the app token now, so the secret is
+   * only in this answer. A token from an older invite of the client ends.
+   */
+  redeemInvite(ip: string, host: string, request: ClientEnrollRequest) {
+    return this.#run(null, async (): Promise<ClientEnrollResponse> => {
+      const now = Date.now();
+      this.#countEnrollAttempt(ip, now);
+      const api = this.#cloudflare();
+      if (!api) throw new PortalError(503, "App invites need the CF_API_TOKEN secret (MM-1205).");
+      const [appId] = this.#accessAppIds();
+      if (!appId) throw new PortalError(503, "Set MACHINE_ACCESS_APP_ID first.");
+      const codeHash = await sha256Hex(request.code.trim().toLowerCase());
+      const row = this.#sql<{ client_id: string; expires_at: string }>(
+        "SELECT client_id, expires_at FROM client_invites WHERE code_hash = ?",
+        codeHash,
+      )[0];
+      if (!row) throw new PortalError(404, "Unknown or used invite.");
+      if (isDue(row.expires_at, now)) throw new PortalError(410, "This invite expired.");
+      const client = findClient(this.#map, ClientId.make(row.client_id));
+      if (!client) throw new PortalError(404, "The client of this invite is gone.");
+      // MM-711: Resume returns the arrows that the pause cut, so a token made now would get them.
+      if (this.#pause?.before.clientArrows.some((a) => a.client === client.id)) {
+        throw new PortalError(423, "Everything is paused. Use the invite after Resume.");
+      }
+      // Delete in one step with the check, so two requests cannot both use the code.
+      const claimed = this.#sql<{ client_id: string }>(
+        "DELETE FROM client_invites WHERE code_hash = ? RETURNING client_id",
+        codeHash,
+      );
+      if (claimed.length === 0) throw new PortalError(404, "Unknown or used invite.");
+      const created = await api.createServiceToken(`t3-client-${slug(client.name)}`);
+      try {
+        await api.addTokenToApp(appId, created.id, CLIENT_POLICY_NAME);
+      } catch (error) {
+        await api.deleteServiceToken(created.id).catch(() => undefined);
+        throw error;
+      }
+      await this.#dropClientToken(api, appId, client.id);
+      this.#sql(
+        "INSERT OR REPLACE INTO client_tokens (client_id, token_id) VALUES (?, ?)",
+        client.id,
+        created.id,
+      );
+      const next: ClientRecord = { ...client, serviceToken: { clientId: created.client_id } };
+      this.#commit(
+        { _tag: "portal", reason: "app invite" },
+        `${client.name} joined from ${request.device || "an app"}`,
+        [{ _tag: "putClient", client: next }],
+      );
+      return {
+        clientId: client.id,
+        name: client.name,
+        serviceToken: { clientId: created.client_id, clientSecret: created.client_secret },
+        machines: this.#clientMachines(next),
+        machinesUrl: `https://${host}/client/machines`,
+      };
+    });
+  }
+
+  /** MM-914: the machines of the client whose app token signed the request. */
+  machinesOfToken(tokenClientId: string) {
+    return this.#run(null, () => {
+      const client = this.#map.clients.find((c) => c.serviceToken?.clientId === tokenClientId);
+      if (!client) throw new PortalError(403, "This token belongs to no client.");
+      return { machines: this.#clientMachines(client) };
+    });
+  }
+
+  /** MM-915: ends the app token of a client in Cloudflare, if it has one. */
+  async #dropClientToken(api: CloudflareApi, appId: string, clientId: ClientId): Promise<void> {
+    const row = this.#sql<{ token_id: string }>(
+      "SELECT token_id FROM client_tokens WHERE client_id = ?",
+      clientId,
+    )[0];
+    if (!row) return;
+    await api.removeTokenFromApp(appId, row.token_id, CLIENT_POLICY_NAME);
+    await api.deleteServiceToken(row.token_id);
+    this.#sql("DELETE FROM client_tokens WHERE client_id = ?", clientId);
+  }
+
+  /**
+   * MM-915: removes a client. Its app token ends in Cloudflare first, so the edge refuses the app
+   * at once; then machines end its sessions with the new desired state.
+   */
+  removeClient(owner: OwnerContext, clientId: ClientId) {
+    return this.#run(owner, async (): Promise<WriteResult> => {
+      const client = findClient(this.#map, clientId);
+      if (!client) throw new PortalError(404, "This client is gone.");
+      if (client.serviceToken) {
+        const api = this.#cloudflare();
+        if (!api) {
+          throw new PortalError(
+            503,
+            "Removing an app client needs the CF_API_TOKEN secret, to end its token.",
+          );
+        }
+        const [appId] = this.#accessAppIds();
+        if (!appId) throw new PortalError(503, "Set MACHINE_ACCESS_APP_ID first.");
+        await this.#dropClientToken(api, appId, client.id);
+      }
+      this.#sql("DELETE FROM client_invites WHERE client_id = ?", client.id);
+      const revision = this.#commit(ownerActor(owner), `Removed ${client.name}`, [
+        { _tag: "removeClient", clientId: client.id },
+      ]);
       return { _tag: "applied", revision: revision.revision };
     });
   }
@@ -2530,23 +2749,28 @@ export class MachineMapObject extends DurableObject<Env> {
   }
 
   /** MM-204, MM-1204: exchanges a join code for the machine token. Each code works once. */
+  /** MM-1204: counts one join or invite attempt of an address, and refuses too many. */
+  #countEnrollAttempt(ip: string, now: number): void {
+    const attempts = this.#sql<{ window_start: number; count: number }>(
+      "SELECT window_start, count FROM enroll_attempts WHERE ip = ?",
+      ip,
+    )[0];
+    const fresh = !attempts || now - attempts.window_start > ENROLL_WINDOW_MS;
+    if (!fresh && attempts.count >= ENROLL_LIMIT) {
+      throw new PortalError(429, "Too many join attempts. Wait 15 minutes.");
+    }
+    this.#sql(
+      "INSERT OR REPLACE INTO enroll_attempts (ip, window_start, count) VALUES (?, ?, ?)",
+      ip,
+      fresh ? now : attempts.window_start,
+      fresh ? 1 : attempts.count + 1,
+    );
+  }
+
   enroll(ip: string, code: string) {
     return this.#run(null, async (): Promise<EnrollResponse> => {
       const now = Date.now();
-      const attempts = this.#sql<{ window_start: number; count: number }>(
-        "SELECT window_start, count FROM enroll_attempts WHERE ip = ?",
-        ip,
-      )[0];
-      const fresh = !attempts || now - attempts.window_start > ENROLL_WINDOW_MS;
-      if (!fresh && attempts.count >= ENROLL_LIMIT) {
-        throw new PortalError(429, "Too many join attempts. Wait 15 minutes.");
-      }
-      this.#sql(
-        "INSERT OR REPLACE INTO enroll_attempts (ip, window_start, count) VALUES (?, ?, ?)",
-        ip,
-        fresh ? now : attempts.window_start,
-        fresh ? 1 : attempts.count + 1,
-      );
+      this.#countEnrollAttempt(ip, now);
       const codeHash = await sha256Hex(normalizeJoinCode(code));
       // Read and delete in one step, so two requests cannot both use the code.
       const row = this.#sql<{

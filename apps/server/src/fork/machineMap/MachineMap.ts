@@ -36,6 +36,7 @@ import {
   type SettingValues,
   TrimmedNonEmptyString,
   isMachineLocalSetting,
+  clientSessionSubject,
   machineSessionSubject,
   withoutMachineLocalSettings,
 } from "@t3tools/contracts";
@@ -70,7 +71,12 @@ import * as ServerConfig from "../../config.ts";
 import * as EnvironmentTheme from "../../environmentTheme.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import { isMachineSubject, peersWithChangedLevel, reachablePeers } from "./machineAccess.ts";
+import {
+  clientsWithChangedLevel,
+  isMapSubject,
+  peersWithChangedLevel,
+  reachablePeers,
+} from "./machineAccess.ts";
 import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachineResources from "./MachineResources.ts";
@@ -341,9 +347,11 @@ const make = Effect.gen(function* () {
       // Save first: the auth hooks read the saved state, so the new levels hold before any
       // session of a changed peer ends and it pairs again.
       yield* state.updateSaved((saved) => ({ ...saved, desired }));
-      const changed = new Set(
-        peersWithChangedLevel(before, desired, nowMs).map((peer) => machineSessionSubject(peer)),
-      );
+      const changed = new Set([
+        ...peersWithChangedLevel(before, desired, nowMs).map((peer) => machineSessionSubject(peer)),
+        // MM-912: a client whose level changed pairs again with its app token, or not at all.
+        ...clientsWithChangedLevel(before, desired, nowMs).map((id) => clientSessionSubject(id)),
+      ]);
       if (changed.size > 0) {
         yield* revokeSessions((subject) => changed.has(subject));
       }
@@ -517,12 +525,13 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Forgets the token, the desired state and the desktop commands, and ends machine sessions.
+   * Forgets the token, the desired state and the desktop commands, and ends machine and client
+   * sessions.
    * The token goes last: its change restarts the connection fiber, which may be the caller.
    */
   const forgetMap = Effect.gen(function* () {
     yield* state.updateSaved((saved) => ({ ...saved, desired: null, desktopCommands: [] }));
-    yield* revokeSessions(isMachineSubject).pipe(Effect.ignore({ log: true }));
+    yield* revokeSessions(isMapSubject).pipe(Effect.ignore({ log: true }));
     yield* state.setToken(null);
   });
 
@@ -630,8 +639,8 @@ const make = Effect.gen(function* () {
       Stream.fromEffect(
         Effect.gen(function* () {
           if (next.turnedOff) {
-            // MM-1301: off means no change to auth, so no machine session stays.
-            yield* revokeSessions(isMachineSubject).pipe(
+            // MM-1301: off means no change to auth, so no machine or client session stays.
+            yield* revokeSessions(isMapSubject).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Machine map could not end machine sessions.", {
                   cause: Cause.pretty(cause),

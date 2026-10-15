@@ -533,6 +533,13 @@ export function checkEditableChanges(
       if (next.email !== previous.email || next.createdAt !== previous.createdAt) {
         throw new MapRuleError(`The email of ${previous.name} comes from its approval.`);
       }
+      // MM-911: only the portal sets the token, because the token lives in Cloudflare too.
+      if (!sameJson(next.serviceToken, previous.serviceToken)) {
+        throw new MapRuleError(`The app token of ${previous.name} comes from its invite.`);
+      }
+    }
+    if (change._tag === "removeClient" && findClient(current, change.clientId)?.serviceToken) {
+      throw new MapRuleError('Use "Remove client" to remove a client with an app token.');
     }
     // MM-907: a browser key enters the map only through an approval, which needs a fresh MFA.
     if (change._tag === "addClientKey") {
@@ -560,8 +567,9 @@ export function checkEditableChanges(
 }
 
 /**
- * MM-909: an owner record of a client keeps the keys that the client has now. A held draft, an open
- * panel or a drag can hold an older record, and that record must not drop a key approved since.
+ * MM-909, MM-911: an owner record of a client keeps the keys and the app token that the client has
+ * now. A held draft, an open panel or a drag can hold an older record, and that record must not
+ * drop a key approved since or undo a redeemed invite.
  */
 export function keepClientKeys(
   map: MachineMapDocument,
@@ -570,7 +578,12 @@ export function keepClientKeys(
   return changes.map((change): MapChange => {
     if (change._tag !== "putClient") return change;
     const current = findClient(map, change.client.id);
-    return current ? { ...change, client: { ...change.client, keys: current.keys } } : change;
+    return current
+      ? {
+          ...change,
+          client: { ...change.client, keys: current.keys, serviceToken: current.serviceToken },
+        }
+      : change;
   });
 }
 
@@ -632,12 +645,28 @@ export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineI
         if (previous.mapRole !== change.machine.mapRole) touched.add(change.machine.id);
         break;
       }
+      // MM-912: machines apply the clients that hold an app token. A browser client has none yet.
+      case "setClientArrow":
+        touched.add(change.arrow.to);
+        break;
+      case "removeClient":
+        return "all";
+      case "putClient": {
+        const previous = revision.inverse.findLast(
+          (c): c is Extract<MapChange, { _tag: "putClient" }> =>
+            c._tag === "putClient" && c.client.id === change.client.id,
+        )?.client;
+        if (
+          !previous ||
+          previous.name !== change.client.name ||
+          !sameJson(previous.serviceToken, change.client.serviceToken)
+        )
+          return "all";
+        break;
+      }
       case "putPreset":
       case "removePreset":
-      // No machine applies client records yet. Clients reach machines through Cloudflare Access.
-      case "putClient":
-      case "removeClient":
-      case "setClientArrow":
+      // Browser keys reach machines through Cloudflare Access until machines enforce them.
       case "addClientKey":
       case "removeClientKey":
       // MM-1108, MM-1109: display data. No machine applies it.
@@ -706,5 +735,20 @@ export function desiredState(
     arrowsOut: others.map((other) => findArrow(map, machineId, other.id)),
     settings: effectiveSettings(map, machineId),
     paused,
+    clients: map.clients.flatMap((client) => {
+      const arrow = findClientArrow(map, client.id, machineId);
+      if (client.serviceToken === null || (arrow.level === "none" && arrow.revertLevel === null))
+        return [];
+      return [
+        {
+          id: client.id,
+          name: client.name,
+          tokenClientId: client.serviceToken.clientId,
+          level: arrow.level,
+          expiresAt: arrow.expiresAt,
+          revertLevel: arrow.revertLevel,
+        },
+      ];
+    }),
   };
 }

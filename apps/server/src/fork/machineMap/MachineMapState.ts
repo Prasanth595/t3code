@@ -34,6 +34,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import {
   type MachineGrant,
   isLocalDesktopSubject,
+  clientGrantFor,
   machineGrantFor,
   machineMcpAccessFor,
 } from "./machineAccess.ts";
@@ -297,7 +298,10 @@ const make = Effect.gen(function* () {
     machineGrant: (tokenClientId) =>
       Effect.all([activeDesired, Clock.currentTimeMillis]).pipe(
         Effect.map(([desired, nowMs]) =>
-          desired === null ? undefined : machineGrantFor(desired, tokenClientId, nowMs),
+          desired === null
+            ? undefined
+            : (machineGrantFor(desired, tokenClientId, nowMs) ??
+              clientGrantFor(desired, tokenClientId, nowMs)),
         ),
       ),
     mcpClient: (session) =>

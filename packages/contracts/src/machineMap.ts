@@ -52,6 +52,9 @@ export const MACHINE_LEVEL_SCOPES: Readonly<Record<MachineLevel, ReadonlyArray<A
 /** The session subject of a machine on the server of another machine (MM-1305). */
 export const machineSessionSubject = (machineId: MachineId): string => `machine:${machineId}`;
 
+/** The session subject of a client on a machine (MM-911). */
+export const clientSessionSubject = (clientId: string): string => `client:${clientId}`;
+
 const MapCoordinate = Schema.Number.check(Schema.isFinite());
 
 /**
@@ -106,6 +109,13 @@ export const ClientRecord = Schema.Struct({
   /** The Cloudflare Access email that the client signed in with. */
   email: Schema.NullOr(TrimmedNonEmptyString),
   keys: Schema.Array(ClientKey),
+  /**
+   * MM-911: the Cloudflare Access service token of a native app, by its client id. The portal
+   * makes it when the app uses its invite, and never stores the secret. Older maps decode with none.
+   */
+  serviceToken: Schema.NullOr(Schema.Struct({ clientId: TrimmedNonEmptyString })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   position: MapPosition,
   createdAt: MapTime,
 });
@@ -527,6 +537,17 @@ export const MachineTunnelGrant = Schema.Struct({
 });
 export type MachineTunnelGrant = typeof MachineTunnelGrant.Type;
 
+/** MM-912: a native client as the machine that it may use sees it. */
+export const DesiredClient = Schema.Struct({
+  id: ClientId,
+  name: TrimmedNonEmptyString,
+  tokenClientId: TrimmedNonEmptyString,
+  level: MachineLevel,
+  expiresAt: Schema.NullOr(MapTime),
+  revertLevel: Schema.NullOr(MachineLevel),
+});
+export type DesiredClient = typeof DesiredClient.Type;
+
 /** What one machine must apply (MM-603, MM-1202). */
 export const MachineDesiredState = Schema.Struct({
   revision: NonNegativeInt,
@@ -538,8 +559,50 @@ export const MachineDesiredState = Schema.Struct({
   settings: ScopedSettingValues,
   /** MM-718: true while the emergency pause is on. The machine then locks every client except its own desktop app. Absent means false. */
   paused: Schema.optionalKey(Schema.Boolean),
+  /**
+   * MM-912: the clients with a service token and an arrow above `none` to this machine. Absent
+   * from portals before native clients.
+   */
+  clients: Schema.optionalKey(Schema.Array(DesiredClient)),
 });
 export type MachineDesiredState = typeof MachineDesiredState.Type;
+
+/** MM-913: what a native app sends to `POST /enroll/client` with the code of its invite. */
+export const ClientEnrollRequest = Schema.Struct({
+  code: TrimmedNonEmptyString,
+  /** The phone or device, for example "Pixel 8 · Android 16". */
+  device: Schema.String.check(Schema.isMaxLength(200)),
+});
+export type ClientEnrollRequest = typeof ClientEnrollRequest.Type;
+
+/** MM-914: a machine that a client can reach, with the origin of its T3 server. */
+export const ClientMachine = Schema.Struct({
+  id: MachineId,
+  name: TrimmedNonEmptyString,
+  origin: TrimmedNonEmptyString,
+});
+export type ClientMachine = typeof ClientMachine.Type;
+
+/** MM-914: `GET <portal>/client/machines` with the token headers of a native app. */
+export const ClientMachinesResponse = Schema.Struct({ machines: Schema.Array(ClientMachine) });
+export type ClientMachinesResponse = typeof ClientMachinesResponse.Type;
+
+/**
+ * MM-913: the answer to a used invite. The secret is in this answer only. The app keeps it and
+ * sends both values as `CF-Access-Client-Id` and `CF-Access-Client-Secret` on every request.
+ */
+export const ClientEnrollResponse = Schema.Struct({
+  clientId: ClientId,
+  name: TrimmedNonEmptyString,
+  serviceToken: Schema.Struct({
+    clientId: TrimmedNonEmptyString,
+    clientSecret: TrimmedNonEmptyString,
+  }),
+  machines: Schema.Array(ClientMachine),
+  /** The absolute URL of `GET /client/machines`. */
+  machinesUrl: TrimmedNonEmptyString,
+});
+export type ClientEnrollResponse = typeof ClientEnrollResponse.Type;
 
 /** Agent tools that run through the portal (MM-801). `machine_tool_call` goes machine to machine. */
 export const MapToolName = Schema.Literals([

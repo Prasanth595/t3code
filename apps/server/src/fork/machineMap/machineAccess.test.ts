@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { AuthStandardClientScopes, MACHINE_LEVEL_SCOPES } from "@t3tools/contracts";
+import { AuthStandardClientScopes, ClientId, MACHINE_LEVEL_SCOPES } from "@t3tools/contracts";
 
 import {
+  clientGrantFor,
+  clientsWithChangedLevel,
   machineGrantFor,
   machineMcpAccessFor,
   peersWithChangedLevel,
@@ -44,6 +46,35 @@ describe("machineGrantFor (MM-1305)", () => {
       MACHINE_LEVEL_SCOPES.read,
     );
     expect(machineGrantFor(expired(null), PEER_TOKEN, NOW)).toBeUndefined();
+  });
+});
+
+describe("clientGrantFor (MM-912)", () => {
+  it("gives an app token its client level, ends at expiry, and ends when the client goes", () => {
+    const PHONE = ClientId.make("client-phone");
+    const withPhone = (level: "standard" | "admin", expiresAt: string | null = null) => ({
+      ...desiredState({}),
+      clients: [
+        {
+          id: PHONE,
+          name: "Phone",
+          tokenClientId: "phone.access",
+          level,
+          expiresAt,
+          revertLevel: expiresAt === null ? null : ("none" as const),
+        },
+      ],
+    });
+    expect(clientGrantFor(withPhone("standard"), "phone.access", NOW)).toEqual({
+      subject: "client:client-phone",
+      scopes: AuthStandardClientScopes,
+      label: "client Phone",
+    });
+    expect(clientGrantFor(withPhone("standard"), PEER_TOKEN, NOW)).toBeUndefined();
+    expect(
+      clientGrantFor(withPhone("admin", "2026-10-13T11:00:00.000Z"), "phone.access", NOW),
+    ).toBeUndefined();
+    expect(clientsWithChangedLevel(withPhone("standard"), desiredState({}), NOW)).toEqual([PHONE]);
   });
 });
 

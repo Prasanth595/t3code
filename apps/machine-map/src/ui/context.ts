@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type {
+  ClientId,
   CommandDelivery,
   MachineCommandInput,
   MachineId,
@@ -48,6 +49,8 @@ export type Dialog =
   | { readonly _tag: "newJoinCode"; readonly machineId: MachineId; readonly machineName: string }
   | { readonly _tag: "savePreset" }
   | { readonly _tag: "importSettings" }
+  /** MM-913: an invite QR for a native app, for a new client or for `clientId`. */
+  | { readonly _tag: "inviteApp"; readonly clientId?: ClientId }
   /** MM-708: the big red button, opened from the command palette. */
   | { readonly _tag: "emergency" }
   | {

@@ -5,6 +5,8 @@
 import {
   type ArrowRecord,
   type AuthEnvironmentScope,
+  clientSessionSubject,
+  type DesiredClient,
   type AuthMcpClientAccess,
   MACHINE_LEVEL_SCOPES,
   type MachineDesiredState,
@@ -55,7 +57,46 @@ export const machineGrantFor = (
   };
 };
 
+/**
+ * MM-912: the grant for the native client whose app token signed the request. A client token is
+ * never an owner subject, so without this grant it gets nothing. Undefined for `none`.
+ */
+export const clientGrantFor = (
+  desired: MachineDesiredState,
+  tokenClientId: string,
+  nowMs: number,
+): MachineGrant | undefined => {
+  const client = desired.clients?.find((candidate) => candidate.tokenClientId === tokenClientId);
+  if (client === undefined) return undefined;
+  const level = effectiveLevel(client, nowMs);
+  if (level === "none") return undefined;
+  return {
+    subject: clientSessionSubject(client.id),
+    scopes: MACHINE_LEVEL_SCOPES[level],
+    label: `client ${client.name}`,
+  };
+};
+
+/**
+ * MM-912: the clients whose level on this machine differs between two desired states. A client
+ * that left the desired state counts as a change to `none`, so its sessions end.
+ */
+export const clientsWithChangedLevel = (
+  previous: MachineDesiredState | null,
+  next: MachineDesiredState | null,
+  nowMs: number,
+): ReadonlyArray<DesiredClient["id"]> => {
+  const levels = (desired: MachineDesiredState | null) =>
+    new Map((desired?.clients ?? []).map((client) => [client.id, effectiveLevel(client, nowMs)]));
+  const before = levels(previous);
+  const after = levels(next);
+  return [...new Set([...before.keys(), ...after.keys()])].filter(
+    (id) => (before.get(id) ?? "none") !== (after.get(id) ?? "none"),
+  );
+};
+
 const MACHINE_SUBJECT_PREFIX = "machine:";
+const CLIENT_SUBJECT_PREFIX = "client:";
 
 /** The peer of a session subject `machine:<id>`, or undefined for any other subject. */
 const peerOfSubject = (desired: MachineDesiredState, subject: string): PeerMachine | undefined =>
@@ -66,6 +107,10 @@ const peerOfSubject = (desired: MachineDesiredState, subject: string): PeerMachi
     : undefined;
 
 export const isMachineSubject = (subject: string) => subject.startsWith(MACHINE_SUBJECT_PREFIX);
+
+/** A session that exists only through the map: a machine (MM-1305) or a client (MM-912). */
+export const isMapSubject = (subject: string) =>
+  isMachineSubject(subject) || subject.startsWith(CLIENT_SUBJECT_PREFIX);
 
 /**
  * MM-1307: the MCP access of a machine session, or undefined when its arrow has no agent tools.
