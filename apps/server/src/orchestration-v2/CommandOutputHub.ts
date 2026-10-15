@@ -1,9 +1,9 @@
 import {
+  isOrchestrationV2WorkActive,
   OrchestrationV2CommandOutputError,
   type OrchestrationV2CommandOutputFrame,
+  type OrchestrationV2SubscribeCommandOutputInput,
   type OrchestrationV2TurnItem,
-  type ThreadId,
-  type TurnItemId,
 } from "@t3tools/contracts";
 import {
   appendTerminalOutput,
@@ -58,10 +58,7 @@ interface Subscriber {
   readonly wake: Queue.Queue<void>;
 }
 
-export interface CommandOutputTarget {
-  readonly threadId: ThreadId;
-  readonly itemId: TurnItemId;
-}
+export type CommandOutputTarget = OrchestrationV2SubscribeCommandOutputInput;
 
 export interface CommandOutputHubShape {
   /** Add raw output for a running command. Called for every provider chunk. */
@@ -87,14 +84,11 @@ function commandKey(target: CommandOutputTarget): string {
   return `${target.threadId}\u0000${target.itemId}`;
 }
 
-function isSettled(item: OrchestrationV2TurnItem): boolean {
-  return item.status !== "pending" && item.status !== "running" && item.status !== "waiting";
-}
-
-/** The output a row shows from a persisted item, bounded before normalization. */
 /** Claude Bash rows stored before #15505 hold the raw `{ stdout, stderr, interrupted, ... }` result. */
 const decodeLegacyClaudeBashResult = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ stdout: Schema.String, stderr: Schema.String })),
+  Schema.fromJsonString(
+    Schema.Struct({ stdout: Schema.String, stderr: Schema.String, interrupted: Schema.Boolean }),
+  ),
 );
 
 function legacyClaudeBashOutput(output: string): string {
@@ -106,12 +100,12 @@ function legacyClaudeBashOutput(output: string): string {
   return out.length > 0 && err.length > 0 && !out.endsWith("\n") ? `${out}\n${err}` : out + err;
 }
 
-function persistedCommandOutput(rawOutput: string | undefined): {
+/** The output a row shows from a persisted item, bounded before normalization. */
+function persistedCommandOutput(output: string | undefined): {
   readonly text: string;
   readonly truncated: boolean;
 } {
-  if (rawOutput === undefined) return { text: "", truncated: false };
-  const output = legacyClaudeBashOutput(rawOutput);
+  if (output === undefined) return { text: "", truncated: false };
   let source = output;
   if (output.length > MAX_FINAL_SOURCE_CHARS) {
     // Start on a fresh line, so the cut can't land inside an escape sequence.
@@ -124,6 +118,22 @@ function persistedCommandOutput(rawOutput: string | undefined): {
     text: normalized.text,
     truncated: normalized.truncated || source.length !== output.length,
   };
+}
+
+/** Sets `key` as the newest entry of `map`, dropping the oldest beyond `max`. */
+function setBounded<V>(
+  map: Map<string, V>,
+  key: string,
+  value: V,
+  max: number,
+  onEvict?: (key: string) => void,
+): void {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size <= max) return;
+  const oldest = map.keys().next().value!;
+  map.delete(oldest);
+  onEvict?.(oldest);
 }
 
 export const make = Effect.gen(function* () {
@@ -155,21 +165,14 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => {
       if (chunk.length === 0) return Effect.void;
       const key = commandKey(target);
-      const previous = tails.get(key);
-      tails.delete(key);
-      tails.set(key, appendTerminalOutput(previous ?? EMPTY_TERMINAL_OUTPUT, chunk));
-      if (previous === undefined) {
-        while (tails.size > MAX_LIVE_COMMANDS) {
-          const oldest = tails.keys().next().value;
-          if (oldest === undefined) break;
-          // Its viewers no longer share the hub's state; resync them on the next frame.
-          for (const subscriber of subscribers.get(oldest) ?? []) {
-            subscriber.needsReplace = true;
-            subscriber.pendingAppend = "";
-          }
-          tails.delete(oldest);
+      const tail = appendTerminalOutput(tails.get(key) ?? EMPTY_TERMINAL_OUTPUT, chunk);
+      setBounded(tails, key, tail, MAX_LIVE_COMMANDS, (oldest) => {
+        // Its viewers no longer share the hub's state; resync them on the next frame.
+        for (const subscriber of subscribers.get(oldest) ?? []) {
+          subscriber.needsReplace = true;
+          subscriber.pendingAppend = "";
         }
-      }
+      });
       return wakeAll(key, chunk);
     });
 
@@ -179,12 +182,7 @@ export const make = Effect.gen(function* () {
       const tail = tails.get(key);
       if (tail === undefined) return;
       tails.delete(key);
-      finished.set(key, tail);
-      while (finished.size > MAX_FINISHED_COMMANDS) {
-        const oldest = finished.keys().next().value;
-        if (oldest === undefined) break;
-        finished.delete(oldest);
-      }
+      setBounded(finished, key, tail, MAX_FINISHED_COMMANDS);
     });
 
   const subscribe: CommandOutputHubShape["subscribe"] = (target) =>
@@ -219,7 +217,7 @@ export const make = Effect.gen(function* () {
         const observe = (item: OrchestrationV2TurnItem | undefined) =>
           Effect.suspend(() => {
             if (item === undefined || item.type !== "command_execution") return Effect.void;
-            if (isSettled(item)) {
+            if (!isOrchestrationV2WorkActive(item.status)) {
               settled = item;
             } else if (item.output !== undefined && item.output !== snapshotOutput) {
               snapshotOutput = item.output;
@@ -264,12 +262,10 @@ export const make = Effect.gen(function* () {
 
         let lastFrameAt: number | undefined;
         let throttle = COMMAND_OUTPUT_FRAME_INTERVAL_MS;
-        let ended = false;
         const nextFrame = Effect.gen(function* (): Effect.fn.Return<
           OrchestrationV2CommandOutputFrame,
-          Cause.Done | OrchestrationV2CommandOutputError
+          OrchestrationV2CommandOutputError
         > {
-          if (ended) return yield* Cause.done();
           yield* Queue.take(wake);
           if (lost !== undefined) {
             return yield* new OrchestrationV2CommandOutputError({
@@ -286,7 +282,6 @@ export const make = Effect.gen(function* () {
           throttle = COMMAND_OUTPUT_FRAME_INTERVAL_MS;
           const tail = tails.get(key);
           if (settled !== undefined) {
-            ended = true;
             const lastTail = tail ?? finished.get(key);
             if (settled.output === undefined && lastTail !== undefined) {
               return {
@@ -296,7 +291,8 @@ export const make = Effect.gen(function* () {
                 running: false,
               };
             }
-            return { kind: "replace", ...persistedCommandOutput(settled.output), running: false };
+            const output = settled.output && legacyClaudeBashOutput(settled.output);
+            return { kind: "replace", ...persistedCommandOutput(output), running: false };
           }
           if (subscriber.needsReplace || tail === undefined) {
             if (subscriber.overflowed) throttle = COMMAND_OUTPUT_REPLACE_INTERVAL_MS;
@@ -321,6 +317,7 @@ export const make = Effect.gen(function* () {
         });
         return Stream.fromEffectRepeat(nextFrame).pipe(
           Stream.filter((frame) => frame.kind !== "append" || frame.text.length > 0),
+          Stream.takeUntil((frame) => !frame.running),
         );
       }).pipe(
         Effect.mapError((cause) =>

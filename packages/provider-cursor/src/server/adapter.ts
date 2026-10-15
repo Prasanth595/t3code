@@ -792,12 +792,6 @@ interface CursorProjectionTarget {
 // ever shows a bounded tail, so keep a little more than that.
 const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
 
-function boundCursorShellOutput(output: string): string {
-  return output.length > MAX_CURSOR_STREAMED_OUTPUT_CHARS
-    ? output.slice(output.length - MAX_CURSOR_STREAMED_OUTPUT_CHARS)
-    : output;
-}
-
 interface ActiveCursorToolCall {
   readonly callId: string;
   toolCall: ToolCall;
@@ -1937,7 +1931,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               // The completed call persists the final output once. Re-emitting the
               // whole accumulated output on every delta grew the event store
               // quadratically; live output goes to the command output hub instead.
-              shell.streamedOutput = boundCursorShellOutput(shell.streamedOutput + chunk);
+              shell.streamedOutput = (shell.streamedOutput + chunk).slice(
+                -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
+              );
               yield* emitProviderEvent({
                 type: "command_output.delta",
                 driver: CursorAgentSdk.CURSOR_PROVIDER,

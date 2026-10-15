@@ -73,8 +73,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         label: "environment-data:orchestration-v2:command-output",
         tag: ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput,
         idleTtlMs: 0,
+        // `scan` emits its seed first; skipping it keeps the row "loading" until the first frame.
         transform: (frames) =>
-          frames.pipe(Stream.scan(() => EMPTY_COMMAND_OUTPUT, applyCommandOutputFrame)),
+          frames.pipe(
+            Stream.scan(() => EMPTY_COMMAND_OUTPUT, applyCommandOutputFrame),
+            Stream.filter((view) => view !== EMPTY_COMMAND_OUTPUT),
+          ),
       }),
     },
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {

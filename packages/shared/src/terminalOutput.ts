@@ -47,20 +47,11 @@ interface TerminalScreen {
   readonly saved: { readonly row: number; readonly col: number } | null;
 }
 
-const EMPTY_SCREEN: TerminalScreen = {
-  settled: "",
-  lines: [[]],
-  row: 0,
-  col: 0,
-  pen: "",
-  saved: null,
-};
-
 export const EMPTY_TERMINAL_OUTPUT: TerminalOutputState = {
   text: "",
   truncated: false,
   pending: "",
-  screen: EMPTY_SCREEN,
+  screen: { settled: "", lines: [[]], row: 0, col: 0, pen: "", saved: null },
 };
 
 /** The default tail kept for one running command, in UTF-16 code units. */
@@ -182,8 +173,6 @@ function serializeLine(line: Line): string {
   return current === "" ? out : out + sgr("");
 }
 
-const SGR_COLOR_BASE = { fg: 30, bg: 40 } as const;
-
 interface Attributes {
   bold: boolean;
   dim: boolean;
@@ -225,7 +214,7 @@ function formatPen(attributes: Attributes): string {
 
 /** Reads an extended colour (`5;n` or `2;r;g;b`) starting at `index`; returns the code and next index. */
 function extendedColor(
-  base: number,
+  code: number,
   params: ReadonlyArray<number>,
   index: number,
 ): [string | undefined, number] {
@@ -234,12 +223,12 @@ function extendedColor(
     const value = params[index + 2];
     return value === undefined || value > 255
       ? [undefined, index + 3]
-      : [`${base + 8};5;${value}`, index + 3];
+      : [`${code};5;${value}`, index + 3];
   }
   if (mode === 2) {
     const [r, g, b] = [params[index + 2], params[index + 3], params[index + 4]];
     if (r === undefined || g === undefined || b === undefined) return [undefined, index + 5];
-    return [`${base + 8};2;${r & 255};${g & 255};${b & 255}`, index + 5];
+    return [`${code};2;${r & 255};${g & 255};${b & 255}`, index + 5];
   }
   return [undefined, index + 2];
 }
@@ -267,15 +256,8 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
     else if (code === 39) attributes.fg = "";
     else if (code === 49) attributes.bg = "";
     else if (code === 38 || code === 48) {
-      const [color, next] = extendedColor(
-        code === 38 ? SGR_COLOR_BASE.fg : SGR_COLOR_BASE.bg,
-        params,
-        index,
-      );
-      if (color !== undefined) {
-        if (code === 38) attributes.fg = color;
-        else attributes.bg = color;
-      }
+      const [color, next] = extendedColor(code, params, index);
+      if (color !== undefined) attributes[code === 38 ? "fg" : "bg"] = color;
       index = next;
       continue;
     }
@@ -385,13 +367,19 @@ class Terminal {
     // result never depends on how the output was split into chunks.
     let current = lineLength(line);
     if (current > this.maxChars) {
-      const removed = current - this.maxChars;
+      let removed = current - this.maxChars;
       if (!this.owned.has(line)) {
         line = line.slice();
         this.owned.add(line);
       }
       trimLineStart(line as Array<Run>, removed);
-      current = this.maxChars;
+      // Never start on a lone low surrogate.
+      const first = line[0]?.text.charCodeAt(0) ?? 0;
+      if (first >= 0xdc00 && first <= 0xdfff) {
+        trimLineStart(line as Array<Run>, 1);
+        removed += 1;
+      }
+      current -= removed;
       this.dropped = true;
       this.col = Math.max(0, this.col - removed);
       if (this.saved !== null && this.saved.row === this.row) {
@@ -406,11 +394,16 @@ class Terminal {
     this.row += 1;
     this.col = 0;
     if (this.row === this.lines.length) this.lines.push([]);
-    while (this.lines.length > LIVE_LINES) {
-      this.settle(this.lines.shift()!);
-      this.row -= 1;
-      if (this.saved !== null) this.saved = { ...this.saved, row: Math.max(0, this.saved.row - 1) };
-    }
+    while (this.lines.length > LIVE_LINES) this.scrollOut();
+  }
+
+  /** Moves the top line out of the window into scrollback; returns its length. */
+  scrollOut(): number {
+    const line = this.lines.shift()!;
+    this.settle(line);
+    this.row -= 1;
+    if (this.saved !== null) this.saved = { ...this.saved, row: Math.max(0, this.saved.row - 1) };
+    return lineLength(line);
   }
 
   /** Fixes a line that left the window, keeping scrollback near the tail size as it grows. */
@@ -429,8 +422,7 @@ class Terminal {
   }
 
   csi(params: string, final: string): void {
-    const private_ = params.startsWith("?") || params.startsWith(">") || params.startsWith("=");
-    if (private_) return; // Mode switches (cursor visibility, bracketed paste).
+    if (/^[?>=]/u.test(params)) return; // Mode switches (cursor visibility, bracketed paste).
     const numbers = params === "" ? [] : csiParams(params);
     const count = Math.max(1, numbers[0] || 1);
     switch (final) {
@@ -603,15 +595,7 @@ export function appendTerminalOutput(
   let truncated = state.truncated;
   // The window as a whole stays within the tail too: oldest lines scroll out early.
   let windowChars = terminal.lines.reduce((total, line) => total + lineLength(line), 0);
-  while (windowChars > maxChars && terminal.row > 0) {
-    const line = terminal.lines.shift()!;
-    windowChars -= lineLength(line);
-    terminal.settle(line);
-    terminal.row -= 1;
-    if (terminal.saved !== null) {
-      terminal.saved = { ...terminal.saved, row: Math.max(0, terminal.saved.row - 1) };
-    }
-  }
+  while (windowChars > maxChars && terminal.row > 0) windowChars -= terminal.scrollOut();
   // Lines below a cursor that moved up can't scroll out; they keep only their ends.
   if (windowChars > maxChars) {
     let budget = maxChars;
@@ -661,14 +645,7 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
   // Moves are relative to the last line, and a viewer only holds the lines in `text`.
-  let shownLines = 1;
-  for (
-    let index = state.text.indexOf("\n");
-    index !== -1;
-    index = state.text.indexOf("\n", index + 1)
-  ) {
-    shownLines += 1;
-  }
+  const shownLines = state.text.split("\n").length;
   const reachable = Math.min(LIVE_LINES, shownLines) - 1;
   const up = (row: number) => Math.min(lastRow - row, reachable);
   const goTo = (row: number, col: number) =>
@@ -704,15 +681,15 @@ export interface TerminalSpan {
   readonly style: TerminalSpanStyle | null;
 }
 
+/** A span's style, usable as-is by a web or React Native `style` prop. */
 export interface TerminalSpanStyle {
   /** CSS colours, already resolved against the palette. */
   readonly color?: string;
   readonly backgroundColor?: string;
-  readonly bold?: true;
-  readonly dim?: true;
-  readonly italic?: true;
-  readonly underline?: true;
-  readonly strike?: true;
+  readonly fontWeight?: "600";
+  readonly opacity?: number;
+  readonly fontStyle?: "italic";
+  readonly textDecorationLine?: "underline" | "line-through" | "underline line-through";
 }
 
 /** The 16 standard terminal colours, chosen to stay readable on each app theme. */
@@ -827,14 +804,20 @@ function spanStyle(pen: string, palette: ReadonlyArray<string>): TerminalSpanSty
       color = luminance(background) > 0.35 ? "#1f2328" : "#ffffff";
     }
   }
+  const textDecorationLine = attributes.underline
+    ? attributes.strike
+      ? "underline line-through"
+      : "underline"
+    : attributes.strike
+      ? "line-through"
+      : undefined;
   return {
     ...(color === undefined ? {} : { color }),
     ...(backgroundColor === undefined ? {} : { backgroundColor }),
-    ...(attributes.bold ? { bold: true } : {}),
-    ...(attributes.dim ? { dim: true } : {}),
-    ...(attributes.italic ? { italic: true } : {}),
-    ...(attributes.underline ? { underline: true } : {}),
-    ...(attributes.strike ? { strike: true } : {}),
+    ...(attributes.bold ? { fontWeight: "600" } : {}),
+    ...(attributes.dim ? { opacity: 0.65 } : {}),
+    ...(attributes.italic ? { fontStyle: "italic" } : {}),
+    ...(textDecorationLine === undefined ? {} : { textDecorationLine }),
   };
 }
 
@@ -881,9 +864,9 @@ export function terminalOutputSpans(
   return spans;
 }
 
-/** Shown output without its colour codes. */
 const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, "gu");
 
+/** Shown output without its colour codes. */
 export function terminalOutputPlainText(text: string): string {
   return text.replace(SGR_PATTERN, "");
 }

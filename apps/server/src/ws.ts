@@ -1239,6 +1239,7 @@ const layerWsRpc = (
         }
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -2070,11 +2071,7 @@ const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-              Effect.andThen(
-                CommandOutputHub.CommandOutputHub.use((hub) =>
-                  Effect.succeed(hub.subscribe(input)),
-                ),
-              ),
+              Effect.as(commandOutputHub.subscribe(input)),
             ),
           ),
         [WS_METHODS.scheduledTasksList]: (_input) =>

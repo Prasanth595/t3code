@@ -248,7 +248,7 @@ describe("terminalOutputSpans", () => {
     expect(terminalOutputSpans(text, TERMINAL_PALETTES.dark)).toEqual([
       { text: "red", style: { color: TERMINAL_PALETTES.dark[1] } },
       { text: " ", style: null },
-      { text: "hot", style: { color: "rgb(255,0,0)", bold: true } },
+      { text: "hot", style: { color: "rgb(255,0,0)", fontWeight: "600" } },
       { text: " ", style: null },
       { text: "rgb", style: { color: "rgb(1,2,3)" } },
     ]);

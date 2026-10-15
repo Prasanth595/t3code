@@ -26,12 +26,12 @@ export function applyCommandOutputFrame(
   view: CommandOutputView,
   frame: OrchestrationV2CommandOutputFrame,
 ): CommandOutputView {
-  const output =
-    frame.kind === "replace"
-      ? appendTerminalOutput({ ...EMPTY_TERMINAL_OUTPUT, truncated: frame.truncated }, frame.text)
-      : appendTerminalOutput(
-          { ...view.output, truncated: view.output.truncated || frame.truncated },
-          frame.text,
-        );
-  return { output, running: frame.running };
+  const base = frame.kind === "replace" ? EMPTY_TERMINAL_OUTPUT : view.output;
+  return {
+    output: appendTerminalOutput(
+      { ...base, truncated: base.truncated || frame.truncated },
+      frame.text,
+    ),
+    running: frame.running,
+  };
 }

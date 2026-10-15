@@ -2,6 +2,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  isOrchestrationV2WorkActive,
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
@@ -2033,9 +2034,7 @@ export const layerWithOptions = (
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
               event.turnItem.type === "command_execution" &&
-              event.turnItem.status !== "running" &&
-              event.turnItem.status !== "pending" &&
-              event.turnItem.status !== "waiting"
+              !isOrchestrationV2WorkActive(event.turnItem.status)
                 ? commandOutput.finish({
                     threadId: event.turnItem.threadId,
                     itemId: event.turnItem.id,

@@ -1034,6 +1034,12 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                 ? "Output is no longer available."
                 : "Loading output…"
               : null;
+  const exitLine =
+    failedExitCode === null ? null : (
+      <Text className="mt-1.5 font-mono text-2xs leading-normal text-danger-foreground">
+        exit {failedExitCode}
+      </Text>
+    );
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
   const answerPreview = row.workEntry.questionAnswer
@@ -1280,23 +1286,18 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                 {fetchedOutput}
               </Text>
             ) : null}
-            {failedExitCode !== null && !streamsOutput ? (
-              <Text className="mt-1.5 font-mono text-2xs leading-normal text-danger-foreground">
-                exit {failedExitCode}
-              </Text>
-            ) : null}
+            {streamsOutput ? null : exitLine}
           </ScrollView>
           {streamsOutput ? (
-            <ThreadCommandOutput
-              environmentId={props.environmentId}
-              threadId={row.projectedItem.sourceThreadId}
-              itemId={row.projectedItem.sourceItemId}
-            />
-          ) : null}
-          {failedExitCode !== null && streamsOutput ? (
-            <Text className="mt-1.5 font-mono text-2xs leading-normal text-danger-foreground">
-              exit {failedExitCode}
-            </Text>
+            <>
+              <ThreadCommandOutput
+                environmentId={props.environmentId}
+                threadId={row.projectedItem.sourceThreadId}
+                itemId={row.projectedItem.sourceItemId}
+                themeAppearance={props.themeAppearance}
+              />
+              {exitLine}
+            </>
           ) : null}
         </Animated.View>
       ) : null}
