@@ -16,6 +16,7 @@ import {
   GitHubTimedOut,
   LIST_LIMIT,
   MARKER,
+  MAX_DEPENDS_ON,
   MAX_FILE_BYTES,
   STATUS_MARKER,
   type Blocker,
@@ -2156,6 +2157,40 @@ it.effect("text blockers resolved once every named issue is closed", () =>
   Effect.gen(function* () {
     const t = setup(reply(bodyReply("## Depends on\n#13\n")), reply('{"state":"closed"}'));
     assert.deepStrictEqual(yield* t.ok(t.github.textBlockers(14)), []);
+  }),
+);
+
+it.effect("only the exact REST state `closed` resolves a named issue; any other still blocks", () =>
+  Effect.gen(function* () {
+    // The same rule as the dependency listing: a state in another case is not taken as resolved.
+    const t = setup(
+      reply(bodyReply("## Depends on\n#13, #12, #11\n")),
+      reply('{"state":"CLOSED"}'),
+      reply('{"state":"unknown"}'),
+      reply('{"state":"closed"}'),
+    );
+    assert.deepStrictEqual(yield* t.ok(t.github.textBlockers(14)), [
+      openBlocker(13, REPO),
+      openBlocker(12, REPO),
+    ]);
+  }),
+);
+
+it.effect("a Depends on section naming more than the cap is an error before any is read", () =>
+  Effect.gen(function* () {
+    const refs = (count: number) =>
+      Array.from({ length: count }, (_, at) => `#${at + 1}`).join(" ");
+
+    const over = setup(reply(bodyReply(`## Depends on\n${refs(MAX_DEPENDS_ON + 1)}\n`)));
+    assert.strictEqual((yield* over.err(over.github.textBlockers(14)))._tag, "GitHubParse");
+    assert.deepStrictEqual(over.calls(), [bodyCall("14")]);
+
+    const atCap = setup(
+      reply(bodyReply(`## Depends on\n${refs(MAX_DEPENDS_ON)}\n`)),
+      ...Array.from({ length: MAX_DEPENDS_ON }, () => reply('{"state":"closed"}')),
+    );
+    assert.deepStrictEqual(yield* atCap.ok(atCap.github.textBlockers(14)), []);
+    assert.strictEqual(atCap.calls().length, MAX_DEPENDS_ON + 1);
   }),
 );
 

@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { PROJECT_CONFIG_PATH } from "../config.ts";
-import type { Approval, Refusal, TextCheck } from "../domain/approval.ts";
+import type { Approval, TextCheck } from "../domain/approval.ts";
 import { dependsOn } from "../domain/dependsOn.ts";
 import {
   STATES,
@@ -16,13 +16,12 @@ import { FactoryProcess } from "../process.ts";
 import {
   APPROVAL_QUERY,
   ApprovalAnswer,
-  HISTORY_PAGE,
-  isHumanInstructor,
+  editedSince,
   isUtcSecond,
+  judgeApproval,
   textChangesSince,
   timelineReaches,
   type ApprovalIssue,
-  type TimelineNode,
 } from "./approvalHistory.ts";
 
 export type { Approval, Refusal, TextCheck } from "../domain/approval.ts";
@@ -209,7 +208,7 @@ const BlockerRows = Schema.Array(
 );
 
 const IssueBody = Schema.Struct({ body: OptionalText });
-/** The REST state is lowercase: `open` or `closed`. */
+/** The REST state is lowercase: `open` or `closed`. Any other state, in any case, still blocks. */
 const IssueRestState = Schema.Struct({ state: Schema.String });
 
 const RepoView = Schema.Struct({ default_branch: OptionalText });
@@ -453,6 +452,12 @@ const checkOutcome = (status: string, conclusion: string | null): readonly [Chec
 const withMarker = (body: string, marker: string): string => `${body}\n\n${marker}`;
 
 // ---- the Depends on section ----
+
+/**
+ * The most issues a `## Depends on` section may name. Each costs a `gh` call on every check, so
+ * a longer list is refused rather than read: the issue author does not need approval to write it.
+ */
+export const MAX_DEPENDS_ON = 100;
 
 /** An open issue that blocks another one. */
 export interface Blocker {
@@ -969,19 +974,27 @@ export const makeGitHub = (options: GitHubOptions) => {
    * The issues named in the `## Depends on` section of `issue` that are not closed, in the order
    * the text names them. A reference without a repo is in this repo. It costs one read of the
    * body and one of each named issue, and is an error when any of them cannot be read: an issue
-   * that cannot be read is not taken as resolved.
+   * that cannot be read is not taken as resolved. A section naming more than `MAX_DEPENDS_ON`
+   * issues is an error before any of them is read.
    */
   const textBlockers = (issue: number): GitHubEffect<Array<Blocker>> =>
     Effect.gen(function* () {
       const bodyArgs = [...repoArgs(["issue", "view", String(issue)]), "--json", "body"];
       const raw = yield* ghJson(bodyArgs, IssueBody, "an object with the issue's body");
+      const named = dependsOn(raw.body ?? "");
+      if (named.length > MAX_DEPENDS_ON) {
+        return yield* parseError(
+          bodyArgs,
+          `a Depends on section naming at most ${MAX_DEPENDS_ON} issues, got ${named.length}`,
+        );
+      }
       const open: Array<Blocker> = [];
-      for (const named of dependsOn(raw.body ?? "")) {
-        const namedRepo = named.repo ?? repo;
-        const args = ["api", `repos/${namedRepo}/issues/${named.number}`];
+      for (const ref of named) {
+        const namedRepo = ref.repo ?? repo;
+        const args = ["api", `repos/${namedRepo}/issues/${ref.number}`];
         const read = yield* ghJson(args, IssueRestState, "an object with the issue's state");
-        if (read.state.toLowerCase() !== "closed") {
-          open.push({ repo: namedRepo, number: named.number });
+        if (read.state !== "closed") {
+          open.push({ repo: namedRepo, number: ref.number });
         }
       }
       return open;
@@ -1043,63 +1056,14 @@ export const makeGitHub = (options: GitHubOptions) => {
         );
 
   /**
-   * Whether the factory may build the issue: an instructor applied the `factory:ready` label
-   * that is in force now, and every edit of the body and every rename of the title at or after
-   * that moment was an instructor's. One GraphQL call.
-   *
-   * The timeline events (label changes and renames, oldest first) are walked so that the walk
-   * keeps the last `factory:ready` event that no later removal cancelled. Label names are matched
-   * exactly. Only the newest 100 events are read; the one in force among them is enough, because
-   * every later event, a rename included, is on the page too. A full page of a longer history
-   * without it is `label-history-incomplete`.
-   *
-   * An edit or rename before the label's time is ignored: the instructor approved the text as it
-   * stood. One in the label's own second counts as after it. Timestamps are compared as strings.
-   * Only a `User` can be an instructor: a deleted account or a bot never is.
+   * Whether the factory may build the issue, by `judgeApproval` over the issue's label events and
+   * edit history: an instructor applied the `factory:ready` label in force now, and every edit
+   * and rename since was an instructor's. One GraphQL call.
    */
   const approval = (issue: number, instructors: ReadonlyArray<string>): GitHubEffect<Approval> =>
-    Effect.gen(function* () {
-      const found = yield* readHistory(issue);
-      const ready = stateLabel("ready");
-
-      let inForce: Extract<TimelineNode, { __typename: "LabeledEvent" }> | null = null;
-      for (const event of found.timelineItems.nodes) {
-        if (event.__typename === "LabeledEvent" && event.label.name === ready) inForce = event;
-        else if (event.__typename === "UnlabeledEvent" && event.label.name === ready) {
-          inForce = null;
-        }
-      }
-      if (inForce === null) {
-        const { totalCount, nodes } = found.timelineItems;
-        const cutOff = nodes.length >= HISTORY_PAGE && totalCount > HISTORY_PAGE;
-        const refusal: Refusal = { kind: cutOff ? "label-history-incomplete" : "label-not-found" };
-        return { kind: "refused", refusal } satisfies Approval;
-      }
-      const labeledAt = inForce.createdAt;
-      const actor = inForce.actor;
-      if (actor === null || actor === undefined || !isHumanInstructor(actor, instructors)) {
-        return {
-          kind: "refused",
-          refusal: { kind: "labeled-by-non-instructor", by: actor?.login ?? null, labeledAt },
-        } satisfies Approval;
-      }
-
-      // The label is on the page, so the renames at or after it are too.
-      switch (textChangesSince(found, labeledAt, instructors, true)) {
-        case "changed":
-          return {
-            kind: "refused",
-            refusal: { kind: "edited-after-label", labeledAt },
-          } satisfies Approval;
-        case "unjudged":
-          return {
-            kind: "refused",
-            refusal: { kind: "edit-history-incomplete", labeledAt },
-          } satisfies Approval;
-        case "unchanged":
-          return { kind: "approved", labeledAt, labeledBy: actor.login } satisfies Approval;
-      }
-    });
+    Effect.map(readHistory(issue), (found) =>
+      judgeApproval(found, stateLabel("ready"), instructors),
+    );
 
   /**
    * Whether the issue text is as an instructor left it: every body edit and every title rename
@@ -1129,15 +1093,7 @@ export const makeGitHub = (options: GitHubOptions) => {
   const textEditedSince = (issue: number, since: string): GitHubEffect<boolean> =>
     Effect.gen(function* () {
       yield* requireUtcSecond(since);
-      const found = yield* readHistory(issue);
-      const edited =
-        found.lastEditedAt !== null && found.lastEditedAt !== undefined
-          ? found.lastEditedAt >= since
-          : false;
-      const renamed = found.timelineItems.nodes.some(
-        (event) => event.__typename === "RenamedTitleEvent" && event.createdAt >= since,
-      );
-      return edited || renamed || !timelineReaches(found, since);
+      return editedSince(yield* readHistory(issue), since);
     });
 
   return {

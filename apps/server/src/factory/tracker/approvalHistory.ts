@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import type { TextCheck } from "../domain/approval.ts";
+import type { Approval, Refusal, TextCheck } from "../domain/approval.ts";
 
 /**
  * The pure half of the approval rule: the shape of GitHub's answer about an issue's label
@@ -25,14 +25,14 @@ export const isUtcSecond = (text: string): boolean =>
 export const APPROVAL_QUERY =
   "query($owner: String!, $name: String!, $number: Int!) { " +
   "repository(owner: $owner, name: $name) { issue(number: $number) { " +
-  "timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT, RENAMED_TITLE_EVENT], last: 100) { " +
+  `timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT, RENAMED_TITLE_EVENT], last: ${HISTORY_PAGE}) { ` +
   "totalCount nodes { " +
   "__typename " +
   "... on LabeledEvent { createdAt actor { __typename login } label { name } } " +
   "... on UnlabeledEvent { createdAt actor { __typename login } label { name } } " +
   "... on RenamedTitleEvent { createdAt actor { __typename login } } } } " +
   "lastEditedAt editor { __typename login } " +
-  "userContentEdits(first: 100) { totalCount nodes { editedAt editor { __typename login } } } } } }";
+  `userContentEdits(first: ${HISTORY_PAGE}) { totalCount nodes { editedAt editor { __typename login } } } } } }`;
 
 /** `typename` is only there when the query asked for it; a rule that wants a person needs a `User`. */
 export const Actor = Schema.Struct({
@@ -99,11 +99,14 @@ export const isHumanInstructor = (
   actor.__typename === "User" &&
   instructors.some((name) => asciiLower(name) === asciiLower(actor.login));
 
+/** Whether a page may leave out older entries: it is full, or GitHub counts more than it holds. */
+const isCutOff = (page: { readonly totalCount: number; readonly nodes: ReadonlyArray<unknown> }) =>
+  page.nodes.length >= HISTORY_PAGE || page.totalCount > page.nodes.length;
+
 /** Whether the timeline page shows every event at or after `since`: not cut off, or its oldest is before `since`. */
 export const timelineReaches = (issue: ApprovalIssue, since: string): boolean => {
-  const { totalCount, nodes } = issue.timelineItems;
-  const cutOff = nodes.length >= HISTORY_PAGE || totalCount > nodes.length;
-  return !cutOff || (nodes[0] !== undefined && nodes[0].createdAt < since);
+  const { nodes } = issue.timelineItems;
+  return !isCutOff(issue.timelineItems) || (nodes[0] !== undefined && nodes[0].createdAt < since);
 };
 
 /** Whether the newest history entry is the last edit, by the last editor. */
@@ -122,9 +125,10 @@ const newestIsLastEdit = (issue: ApprovalIssue): boolean => {
  * come newest first, so when it is cut off the oldest one shown must be before `since`.
  */
 const editsWholeSince = (issue: ApprovalIssue, since: string): boolean => {
-  const { totalCount, nodes } = issue.userContentEdits;
-  const cutOff = nodes.length >= HISTORY_PAGE || totalCount > nodes.length;
-  const reachesBack = !cutOff || (nodes.length > 0 && nodes[nodes.length - 1]!.editedAt < since);
+  const { nodes } = issue.userContentEdits;
+  const reachesBack =
+    !isCutOff(issue.userContentEdits) ||
+    (nodes.length > 0 && nodes[nodes.length - 1]!.editedAt < since);
   return reachesBack && newestIsLastEdit(issue);
 };
 
@@ -150,4 +154,69 @@ export const textChangesSince = (
   );
   if (editByStranger || renameByStranger) return "changed";
   return editsWholeSince(issue, since) && reaches ? "unchanged" : "unjudged";
+};
+
+/**
+ * Whether the factory may build the issue: an instructor applied the `ready` label that is in
+ * force now, and every edit of the body and every rename of the title at or after that moment
+ * was an instructor's.
+ *
+ * The timeline events (label changes and renames, oldest first) are walked so that the walk
+ * keeps the last `ready` event that no later removal cancelled. Label names are matched
+ * exactly. Only the newest page of events is read; the one in force among them is enough,
+ * because every later event, a rename included, is on the page too. A full page of a longer
+ * history without it is `label-history-incomplete`.
+ *
+ * An edit or rename before the label's time is ignored: the instructor approved the text as it
+ * stood. One in the label's own second counts as after it. Timestamps are compared as strings.
+ * Only a `User` can be an instructor: a deleted account or a bot never is.
+ */
+export const judgeApproval = (
+  issue: ApprovalIssue,
+  ready: string,
+  instructors: ReadonlyArray<string>,
+): Approval => {
+  let inForce: Extract<TimelineNode, { __typename: "LabeledEvent" }> | null = null;
+  for (const event of issue.timelineItems.nodes) {
+    if (event.__typename === "LabeledEvent" && event.label.name === ready) inForce = event;
+    else if (event.__typename === "UnlabeledEvent" && event.label.name === ready) inForce = null;
+  }
+  if (inForce === null) {
+    const { totalCount, nodes } = issue.timelineItems;
+    const cutOff = nodes.length >= HISTORY_PAGE && totalCount > HISTORY_PAGE;
+    const refusal: Refusal = { kind: cutOff ? "label-history-incomplete" : "label-not-found" };
+    return { kind: "refused", refusal };
+  }
+  const labeledAt = inForce.createdAt;
+  const actor = inForce.actor;
+  if (actor === null || actor === undefined || !isHumanInstructor(actor, instructors)) {
+    return {
+      kind: "refused",
+      refusal: { kind: "labeled-by-non-instructor", by: actor?.login ?? null, labeledAt },
+    };
+  }
+  // The label is on the page, so the renames at or after it are too.
+  switch (textChangesSince(issue, labeledAt, instructors, true)) {
+    case "changed":
+      return { kind: "refused", refusal: { kind: "edited-after-label", labeledAt } };
+    case "unjudged":
+      return { kind: "refused", refusal: { kind: "edit-history-incomplete", labeledAt } };
+    case "unchanged":
+      return { kind: "approved", labeledAt, labeledBy: actor.login };
+  }
+};
+
+/**
+ * Whether anyone, an instructor included, edited the body or renamed the title at or after
+ * `since`. A timeline page that may hide a rename at or after the moment counts as a change.
+ */
+export const editedSince = (issue: ApprovalIssue, since: string): boolean => {
+  const edited =
+    issue.lastEditedAt !== null && issue.lastEditedAt !== undefined
+      ? issue.lastEditedAt >= since
+      : false;
+  const renamed = issue.timelineItems.nodes.some(
+    (event) => event.__typename === "RenamedTitleEvent" && event.createdAt >= since,
+  );
+  return edited || renamed || !timelineReaches(issue, since);
 };

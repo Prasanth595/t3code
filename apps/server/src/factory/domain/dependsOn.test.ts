@@ -68,3 +68,14 @@ it("depends on heading needs two hashes and a space", () => {
   assert.deepStrictEqual(dependsOn("### Depends on\n#3\n"), []);
   assert.deepStrictEqual(dependsOn("# Depends on\n#3\n"), []);
 });
+
+it("depends on skips an owner or repo made only of dots, which would leave the API path", () => {
+  assert.deepStrictEqual(
+    dependsOn("## Depends on\n../..#3 ./widgets#4 acme/..#5 acme/.#6 ...//x#8\n"),
+    [],
+  );
+  assert.deepStrictEqual(dependsOn("## Depends on\nacme/.github#7 a.b/c..d#9\n"), [
+    cross("acme/.github", 7),
+    cross("a.b/c..d", 9),
+  ]);
+});

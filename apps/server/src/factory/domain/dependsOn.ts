@@ -9,6 +9,7 @@ export interface IssueRef {
 
 const isRepoChar = (char: string): boolean => /^[A-Za-z0-9._-]$/.test(char);
 const isDigit = (char: string): boolean => char >= "0" && char <= "9";
+const isDots = (segment: string): boolean => /^\.+$/.test(segment);
 
 /** The lines of a text as Rust's `lines()` gives them: split on `\n`, one `\r` before it dropped. */
 const textLines = (text: string): Array<string> => {
@@ -62,7 +63,11 @@ export const dependsOn = (body: string): Array<IssueRef> => {
         let ownerStart = repoStart - 1;
         while (ownerStart > 0 && isRepoChar(line[ownerStart - 1]!)) ownerStart--;
         if (ownerStart === repoStart - 1) continue;
-        repo = line.slice(ownerStart, at);
+        const owner = line.slice(ownerStart, repoStart - 1);
+        const name = line.slice(repoStart, at);
+        // `.` and `..` would step out of `repos/<owner>/<name>` in the API path: not a repo.
+        if (isDots(owner) || isDots(name)) continue;
+        repo = `${owner}/${name}`;
       } else if (repoStart < at) {
         // Word characters run straight into the `#`, as in `page#12`: not an issue.
         continue;
