@@ -1,8 +1,15 @@
+import type { EnvironmentId, ProjectScript } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import { RotateCwIcon, XIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 
+import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import { isElectron } from "~/env";
+import { readPreparedConnection } from "~/state/session";
 import { Button } from "./ui/button";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
 interface AppOverlayStore {
   /** The page the overlay holds. It stays loaded while the overlay is hidden. */
@@ -113,8 +120,75 @@ export function AppOverlay() {
   );
 }
 
+/** True when the environment runs on the machine that draws this client. */
+function environmentIsThisMachine(environmentId: EnvironmentId): boolean {
+  const connection = readPreparedConnection(environmentId);
+  if (!connection) return false;
+  if (
+    isElectron &&
+    (connection.target._tag === "PrimaryConnectionTarget" ||
+      isDesktopLocalConnectionTarget(connection.target))
+  ) {
+    return true;
+  }
+  return isLocalLoopbackHost(new URL(connection.httpBaseUrl).hostname);
+}
+
+/**
+ * The page that the overlay shows for an action, or null when the action uses the preview path.
+ * A remote client cannot frame the page: an HTTPS page blocks an `http:` frame as mixed content,
+ * and another machine's loopback page is not reachable from here.
+ */
+export function appOverlayUrl(environmentId: EnvironmentId, script: ProjectScript): string | null {
+  if (!script.previewOverlay || !script.previewUrl) return null;
+  if (!environmentIsThisMachine(environmentId)) return null;
+  const url = resolveDiscoveredServerUrl(environmentId, script.previewUrl);
+  if (window.location.protocol === "https:" && url.startsWith("http:")) return null;
+  return url;
+}
+
+/** The overlay pages whose check or command runs now. */
+const startingOverlayUrls = new Set<string>();
+
+/**
+ * Shows the overlay page, or runs `start` first when nothing answers there. `start` is undefined
+ * for a client that cannot run commands. A click while the page's check or command runs does
+ * nothing, so a double click does not start two servers.
+ */
+export async function runAppOverlayAction(
+  url: string,
+  title: string,
+  start: (() => Promise<void>) | undefined,
+): Promise<void> {
+  if (startingOverlayUrls.has(url)) return;
+  startingOverlayUrls.add(url);
+  try {
+    if (await pageAnswers(url)) {
+      useAppOverlayStore.getState().toggle(url, title);
+      return;
+    }
+    if (start === undefined) return;
+    await start();
+    // A hidden overlay can still hold the page of a server that stopped, for example after an
+    // upgrade. Load it again so the page matches the server that just started.
+    if (await waitForPage(url)) {
+      useAppOverlayStore.getState().showFresh(url, title);
+      return;
+    }
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: `${title} did not start`,
+        description: `Nothing answered at ${url}. Its command runs in a background terminal.`,
+      }),
+    );
+  } finally {
+    startingOverlayUrls.delete(url);
+  }
+}
+
 /** True when something serves `url`. An opaque answer counts: only a network failure does not. */
-export async function pageAnswers(url: string): Promise<boolean> {
+async function pageAnswers(url: string): Promise<boolean> {
   try {
     await fetch(url, { mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(1_500) });
     return true;
@@ -124,7 +198,7 @@ export async function pageAnswers(url: string): Promise<boolean> {
 }
 
 /** Waits for a page that a command just started, for at most `timeoutMs`. */
-export async function waitForPage(url: string, timeoutMs = 20_000): Promise<boolean> {
+async function waitForPage(url: string, timeoutMs = 20_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await pageAnswers(url)) return true;

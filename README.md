@@ -42,7 +42,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 **Scripts and terminal**
 
-- **Global scripts:** scripts for every project and pinned script buttons. Global pins show in the title bar and next to the thread details toggle; project pins show only next to the toggle. Right-click opens the in-app pin menu. A global script's preview opens as a floating popup. An action with "Open as an app overlay" opens its page in a large panel over the app instead, and runs its command only when the page is down (`previewOverlay`). Scripts can run in the background (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`).
+- **Global scripts:** scripts for every project and pinned script buttons. Global pins show in the title bar and next to the thread details toggle; project pins show only next to the toggle. Right-click opens the in-app pin menu. A global script's preview opens as a floating popup. An action with "Open as an app overlay" opens its page in a large panel over the app instead, and runs its command only when the page is down (`previewOverlay`). A remote client, such as an HTTPS page or a client of another machine, opens the preview instead, because it cannot frame that page. Scripts can run in the background (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`).
 - **App toggle shortcuts:** global keys that show and hide the desktop app at once, like a Raycast hotkey (`appToggleShortcuts`).
 - **Terminal settings:** app shortcuts first in the terminal, and a confirmation before a terminal closes (`terminalAppShortcutsFirst`; `confirmTerminalClose`, on by default).
 

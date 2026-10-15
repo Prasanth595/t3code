@@ -462,7 +462,7 @@ import {
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
-import { pageAnswers, useAppOverlayStore, waitForPage } from "./AppOverlay";
+import { appOverlayUrl, runAppOverlayAction } from "./AppOverlay";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type PinnedScriptsTarget, usePinnedScriptsTargetStore } from "./PinnedScripts";
 import { useRemoteOpenState } from "~/remoteOpen";
@@ -4999,7 +4999,7 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
   const runProjectScript = useCallback(
-    async (
+    async function runScript(
       script: ProjectScript,
       options?: {
         cwd?: string;
@@ -5010,14 +5010,18 @@ export default function ChatView(props: ChatViewProps) {
         /** Where the script's preview opens. The right panel when omitted. */
         previewPresentation?: "panel" | "floating";
       },
-    ) => {
-      // An overlay action whose page already answers needs no terminal at all.
-      const overlayUrl =
-        script.previewOverlay && script.previewUrl
-          ? resolveDiscoveredServerUrl(environmentId, script.previewUrl)
-          : null;
-      if (overlayUrl !== null && (await pageAnswers(overlayUrl))) {
-        useAppOverlayStore.getState().toggle(overlayUrl, script.name);
+    ) {
+      // Fork: an overlay action shows its page in the app overlay and runs its command, in a
+      // background terminal, only when the page is down.
+      const overlayUrl = appOverlayUrl(environmentId, script);
+      if (overlayUrl !== null) {
+        await runAppOverlayAction(
+          overlayUrl,
+          script.name,
+          hasTerminalWriteAccess()
+            ? () => runScript({ ...script, previewOverlay: false, runInBackground: true }, options)
+            : undefined,
+        );
         return;
       }
       if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
@@ -5031,8 +5035,7 @@ export default function ChatView(props: ChatViewProps) {
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
-      // An overlay action starts its page's server; the overlay, not the terminal, is its view.
-      const showTerminal = shouldShowScriptTerminal(script) && overlayUrl === null;
+      const showTerminal = shouldShowScriptTerminal(script);
       // A background script gets its own terminal so it never types into a shell
       // the user is not looking at. The session stays listed in the drawer.
       // Limit: the command runs inside an interactive shell, so no exit status
@@ -5121,23 +5124,12 @@ export default function ChatView(props: ChatViewProps) {
         }
         return;
       }
-      if (overlayUrl !== null) {
-        // A hidden overlay can still hold the page of a server that stopped, for example
-        // after an upgrade. Load it again so the page matches the server that just started.
-        if (await waitForPage(overlayUrl)) {
-          useAppOverlayStore.getState().showFresh(overlayUrl, script.name);
-        } else {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: `${script.name} did not start`,
-              description: `Nothing answered at ${overlayUrl}. Its command runs in a background terminal.`,
-            }),
-          );
-        }
-        return;
-      }
-      if (script.autoOpenPreview && script.previewUrl && isPreviewSupportedInRuntime()) {
+      // Fork: an overlay action that the overlay cannot show here opens the preview instead.
+      if (
+        (script.autoOpenPreview || script.previewOverlay) &&
+        script.previewUrl &&
+        isPreviewSupportedInRuntime()
+      ) {
         const previewResult = await openUrlInPreview({
           threadRef: activeThreadRef,
           url: resolveDiscoveredServerUrl(activeThreadRef.environmentId, script.previewUrl),
