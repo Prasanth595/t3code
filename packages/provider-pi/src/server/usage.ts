@@ -16,7 +16,15 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { PiSettings } from "../settings.ts";
 
-const PiScanState = Schema.Struct({ sessionId: Schema.mutableKey(Schema.String) });
+// The scan cache drops entries whose saved state no longer decodes, so bumping
+// `version` re-parses files cached before a change to what a file parses to.
+// v2: faux records are dropped.
+const PiScanState = Schema.Struct({
+  sessionId: Schema.mutableKey(Schema.String),
+  version: Schema.Literal(2),
+});
+/** pi-ai's in-memory test provider. Its usage is scripted, never billed. */
+const FAUX_PROVIDER = "faux";
 const Usage = Schema.Struct({
   input: Schema.optional(Schema.Unknown),
   output: Schema.optional(Schema.Unknown),
@@ -62,6 +70,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
   const timestampMs = parseTimestampMs(entry.timestamp);
   if (timestampMs === null) return [];
   const source = entry.type === "message" ? entry.message : entry;
+  if ("provider" in source && source.provider === FAUX_PROVIDER) return [];
   const usage = source.usage;
   // Pi's auxiliary tool and summary records carry no model attribution. Match
   // Pi's own breakdown rather than assigning them to the conversation model.
@@ -126,7 +135,7 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
     return parseRecord(parsed, state);
   },
   parseProjected: parseRecord,
-  state: { initial: () => ({ sessionId: "" }), schema: PiScanState },
+  state: { initial: () => ({ sessionId: "", version: 2 }), schema: PiScanState },
 };
 
 export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {
