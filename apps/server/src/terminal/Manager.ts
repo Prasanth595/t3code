@@ -1501,19 +1501,43 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
             ? terminalHome
             : `${input.cwd}${input.cwd.endsWith(input.path.sep) ? "" : input.path.sep}${terminalHome}`
         : undefined;
-      const inspectionLayouts = [recoveryLayout];
-      if (
-        terminalHomePath !== undefined &&
-        (recoveryLayout.mode !== "authOverlay" ||
-          terminalHomePath !== recoveryLayout.effectiveHomePath)
-      ) {
-        inspectionLayouts.push({
+      yield* Effect.gen(function* () {
+        yield* inspectCodexShadowSqlite(recoveryLayout);
+        if (
+          terminalHomePath === undefined ||
+          (recoveryLayout.mode === "authOverlay" &&
+            terminalHomePath === recoveryLayout.effectiveHomePath)
+        )
+          return;
+
+        if (layout.mode === "direct") {
+          // Shared homes may deliberately link a database. Directory identity
+          // also recognizes aliases without lexically collapsing symlink/.. paths.
+          if (terminalHomePath === layout.sharedHomePath) return;
+          const fileSystem = yield* FileSystem.FileSystem;
+          // Unverifiable identity keeps inspection; an unused shared home's
+          // metadata failure must not become another launch requirement.
+          const terminalInfo = yield* fileSystem.stat(terminalHomePath).pipe(Effect.option);
+          const sharedInfo = yield* fileSystem.stat(layout.sharedHomePath).pipe(Effect.option);
+          if (
+            Option.isSome(terminalInfo) &&
+            Option.isSome(sharedInfo) &&
+            terminalInfo.value.type === "Directory" &&
+            sharedInfo.value.type === "Directory" &&
+            Option.isSome(terminalInfo.value.ino) &&
+            Option.isSome(sharedInfo.value.ino) &&
+            terminalInfo.value.ino.value > 0 &&
+            terminalInfo.value.dev === sharedInfo.value.dev &&
+            terminalInfo.value.ino.value === sharedInfo.value.ino.value
+          )
+            return;
+        }
+        yield* inspectCodexShadowSqlite({
           ...layout,
           mode: "authOverlay",
           effectiveHomePath: terminalHomePath,
         });
-      }
-      yield* Effect.forEach(inspectionLayouts, inspectCodexShadowSqlite).pipe(
+      }).pipe(
         Effect.provideService(Path.Path, input.path),
         Effect.mapError(
           (cause) =>

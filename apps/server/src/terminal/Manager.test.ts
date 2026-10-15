@@ -2451,7 +2451,147 @@ it.layer(
     }
   }
 
-  for (const mode of ["cwd-symlink", "home-symlink", "absolute-home-symlink"] as const) {
+  for (const mode of [
+    "configured",
+    "implicit",
+    "relative",
+    "directory-alias",
+    "alias-no-id",
+    "alias-zero-id",
+    "unsafe-generated",
+  ] as const) {
+    const isAlias =
+      mode === "directory-alias" || mode === "alias-no-id" || mode === "alias-zero-id";
+    it.effect.skipIf(
+      !symlinksSupported || (isAlias && HostProcess.Platform.defaultValue() === "win32"),
+    )(`allows the known direct shared home without bypassing generated recovery (${mode})`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-direct-shared-" });
+        const home = path.join(root, "home");
+        const shared = path.join(home, ".codex");
+        yield* fs.makeDirectory(shared, { recursive: true });
+        const database = path.join(root, "database.sqlite");
+        yield* fs.writeFileString(database, "shared database");
+        const sharedLink = path.join(shared, "state_5.sqlite");
+        yield* fs.symlink(database, sharedLink);
+        yield* fs.writeFileString(path.join(shared, "state_5.sqlite-wal"), "shared WAL");
+        const providerInstanceId = ProviderInstanceId.make(
+          mode === "configured" ? "codex" : "codex_shared",
+        );
+        const generated = path.join(root, "providers", "codex", providerInstanceId, "shadow");
+        const generatedLink = path.join(generated, "state_5.sqlite");
+        if (mode === "unsafe-generated") {
+          yield* fs.makeDirectory(generated, { recursive: true });
+          yield* fs.symlink(database, generatedLink);
+          yield* fs.writeFileString(path.join(generated, "state_5.sqlite-wal"), "private WAL");
+        }
+        let terminalHome = mode === "relative" ? "." : shared;
+        if (isAlias) {
+          terminalHome = path.join(root, "shared-alias");
+          yield* fs.symlink(shared, terminalHome);
+        }
+        const cwd = mode === "relative" ? shared : root;
+        const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+          Effect.provide(
+            ServerSettings.layerTest({
+              providerInstances: {
+                [providerInstanceId]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: {
+                    setupMode: "managed",
+                    homePath: mode === "configured" ? shared : "",
+                    shadowHomePath: "",
+                  },
+                },
+              },
+            }),
+          ),
+        );
+        const resolverFs =
+          mode === "alias-no-id" || mode === "alias-zero-id"
+            ? {
+                ...fs,
+                stat: (candidate: string) =>
+                  fs.stat(candidate).pipe(
+                    Effect.map((info) => ({
+                      ...info,
+                      ino: mode === "alias-no-id" ? Option.none() : Option.some(0),
+                    })),
+                  ),
+              }
+            : fs;
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: {},
+          resolveProviderInstanceEnvironment: (
+            rawProviderInstanceId,
+            env,
+            inheritedEnvironment,
+            cwd,
+          ) =>
+            TerminalManager.resolveProviderInstanceTerminalEnvironment({
+              serverSettings,
+              path,
+              rawProviderInstanceId,
+              stateDir: root,
+              cwd,
+              env,
+              inheritedEnvironment,
+            }).pipe(Effect.provideService(FileSystem.FileSystem, resolverFs)),
+        });
+        const input = openInput({ providerInstanceId, cwd, env: { CODEX_HOME: terminalHome } });
+        const blocked =
+          mode === "unsafe-generated" || mode === "alias-no-id" || mode === "alias-zero-id";
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const result = yield* manager
+            .open(input)
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home), Effect.result);
+          expect(result._tag).toBe(blocked ? "Failure" : "Success");
+          if (blocked && result._tag === "Failure") {
+            expect(result.failure).toMatchObject({
+              _tag: "TerminalProviderEnvironmentError",
+              cause: {
+                _tag: "CodexShadowHomeSqliteRecoveryRequiredError",
+                linkPath:
+                  mode === "unsafe-generated"
+                    ? generatedLink
+                    : path.join(terminalHome, "state_5.sqlite"),
+              },
+            });
+            expect(result.failure.message).not.toContain(root);
+            expect(ptyAdapter.spawnInputs).toHaveLength(0);
+            if (mode === "unsafe-generated") {
+              expect(yield* fs.readLink(generatedLink)).toBe(database);
+              expect(yield* fs.readFileString(path.join(generated, "state_5.sqlite-wal"))).toBe(
+                "private WAL",
+              );
+            } else {
+              expect(yield* fs.exists(path.join(root, "providers"))).toBe(false);
+            }
+          } else if (!blocked) {
+            expect(ptyAdapter.spawnInputs).toHaveLength(1);
+            expect(ptyAdapter.spawnInputs[0]?.cwd).toBe(cwd);
+            expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBe(terminalHome);
+            expect(ptyAdapter.spawnInputs[0]?.env.CODEX_SQLITE_HOME).toBeUndefined();
+            expect(yield* fs.exists(path.join(root, "providers"))).toBe(false);
+          }
+          expect(yield* fs.readLink(sharedLink)).toBe(database);
+          expect(yield* fs.readFileString(database)).toBe("shared database");
+          expect(yield* fs.readFileString(path.join(shared, "state_5.sqlite-wal"))).toBe(
+            "shared WAL",
+          );
+        }
+      }),
+    );
+  }
+
+  for (const mode of [
+    "cwd-symlink",
+    "home-symlink",
+    "absolute-home-symlink",
+    "shared-decoy",
+  ] as const) {
     for (const physicalUnsafe of [true, false]) {
       it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
         `preserves physical terminal home selection (${mode}, unsafe=${physicalUnsafe})`,
@@ -2467,12 +2607,14 @@ it.layer(
             let cwd = work;
             let home = "hop/../legacy";
             let lexicalHome = path.join(work, "legacy");
-            const physicalHome = path.join(root, "physical", "legacy");
-            if (mode === "cwd-symlink") {
+            const entry = mode === "shared-decoy" ? ".codex" : "legacy";
+            const fixtureHome = mode === "shared-decoy" ? root : path.join(root, "home");
+            const physicalHome = path.join(root, "physical", entry);
+            if (mode === "cwd-symlink" || mode === "shared-decoy") {
               cwd = path.join(root, "alias");
               yield* fs.symlink(child, cwd);
-              home = "../legacy";
-              lexicalHome = path.join(root, "legacy");
+              home = `../${entry}`;
+              lexicalHome = path.join(root, entry);
             } else {
               yield* fs.symlink(child, path.join(work, "hop"));
               if (mode === "absolute-home-symlink") home = `${work}/hop/../legacy`;
@@ -2524,7 +2666,9 @@ it.layer(
             const input = openInput({ providerInstanceId, cwd, env: { CODEX_HOME: home } });
             const lookupHome = path.isAbsolute(home) ? home : `${cwd}/${home}`;
             for (let attempt = 0; attempt < 2; attempt += 1) {
-              const result = yield* manager.open(input).pipe(Effect.result);
+              const result = yield* manager
+                .open(input)
+                .pipe(Effect.provideService(HostProcess.HomeDirectory, fixtureHome), Effect.result);
               expect(result._tag).toBe(physicalUnsafe ? "Failure" : "Success");
               if (physicalUnsafe && result._tag === "Failure") {
                 expect(result.failure).toMatchObject({
@@ -2784,10 +2928,14 @@ it.layer(
           expect(yield* fs.readLink(linkPath)).toBe(target);
           expect(yield* fs.exists(target)).toBe(false);
 
-          // Attaching to the running shell must not launch again. A new launch
-          // must still refuse links introduced since the original inspection.
-          yield* fs.makeDirectory(safeHome);
-          const selectedLink = path.join(safeHome, "state_5.sqlite-shm");
+          // Attaching must not relaunch. Restart still checks generated shadows
+          // even when the selected home is the legitimate direct shared home.
+          const recoveryHome =
+            winner === "home"
+              ? path.join(root, "providers", "codex", providerInstanceId, "shadow")
+              : safeHome;
+          yield* fs.makeDirectory(recoveryHome, { recursive: true });
+          const selectedLink = path.join(recoveryHome, "state_5.sqlite-shm");
           yield* fs.symlink(target, selectedLink);
           const unsubscribe = yield* manager.attachStream(input, () => Effect.void);
           yield* Effect.sync(unsubscribe);
