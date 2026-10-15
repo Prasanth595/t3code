@@ -184,6 +184,16 @@ describe("result line helpers", () => {
     expect(splitLastLine("only")).toEqual({ before: "", last: "only" });
     expect(splitLastLine("a\n\nb  \n\n")).toEqual({ before: "a\n", last: "b" });
     expect(splitLastLine("a\r\nb\r\n")).toEqual({ before: "a\r", last: "b" });
+    // Rust's White_Space set, not JS trim: U+0085 is stripped, U+FEFF is kept.
+    expect(splitLastLine("a\nb\u0085")).toEqual({ before: "a", last: "b" });
+    expect(splitLastLine("\u0085")).toBeUndefined();
+    expect(splitLastLine("a\nb\uFEFF")).toEqual({ before: "a", last: "b\uFEFF" });
+    expect(parseSessionResult(REPO, "FACTORY-STOP: stuck\u0085")).toEqual(
+      stuck(SAID_STUCK, undefined),
+    );
+    expect(parseSessionResult(REPO, "FACTORY-STOP: stuck\uFEFF")).toEqual(
+      stuck(NO_RESULT_LINE, "FACTORY-STOP: stuck\uFEFF"),
+    );
   });
 
   it("pullRequestUrl compares the number as GitHub writes it", () => {
@@ -195,7 +205,8 @@ describe("result line helpers", () => {
     });
     expect(pullRequestUrl("https://github.com/rawphp/softfac/pull/007")).toBeUndefined();
     expect(pullRequestUrl("https://github.com/rawphp/softfac/pull/0")).toBeUndefined();
-    // Past 2^53 a JS number loses digits, so the round trip rejects it, as u64 parsing does in Rust.
+    // Past 2^53 a JS number loses digits, so the round trip rejects it. Rust accepts anything that
+    // fits a u64; the divergence is deliberate and unreachable, no GitHub number gets that large.
     expect(
       pullRequestUrl("https://github.com/rawphp/softfac/pull/9007199254740993"),
     ).toBeUndefined();
