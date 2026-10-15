@@ -1,1 +1,2 @@
+.gitignore
 apps/server/src/server.ts
