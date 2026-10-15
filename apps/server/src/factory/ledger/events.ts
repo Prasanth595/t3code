@@ -357,8 +357,8 @@ export type DesiredState = (typeof DESIRED_STATES)[number];
 
 /**
  * Something that happened that belongs to no run, as `{ event, data }`. `reason` is a code from
- * ledger.md; it is not checked here. An issue is a GitHub number as a JSON number, or a Linear
- * identifier as a string. Three event types have more than one shape: a `claim_skipped` for the
+ * ledger.md; it is not checked here. An issue is the issue key string (`"8"`, `"ENG-42"`), written
+ * by `issueKeyJson`. Three event types have more than one shape: a `claim_skipped` for the
  * claims pause has only a `reason`, and an `attention` for the machine has no `run`.
  */
 export type MachineEvent =
@@ -374,11 +374,11 @@ export type MachineEvent =
     }
   | {
       readonly event: "claim_skipped";
-      readonly data: { repo: string; issue: number | string; reason: string } | { reason: string };
+      readonly data: { repo: string; issue: string; reason: string } | { reason: string };
     }
   | {
       readonly event: "claim_repaired";
-      readonly data: { repo: string; issue: number | string; outcome: ClaimRepair };
+      readonly data: { repo: string; issue: string; outcome: ClaimRepair };
     }
   | {
       readonly event: "attention";
@@ -433,6 +433,13 @@ export type MachineEvent =
     };
 
 export type MachineEventName = MachineEvent["event"];
+
+/**
+ * An issue key as softfac's `IssueKey` serialises it: a GitHub number as a JSON number, a Linear
+ * identifier as its capitalised string. The key is the canonical form `parseIssueKey` returns.
+ */
+export const issueKeyJson = (key: string): number | string =>
+  /^\d+$/.test(key) ? Number(key) : key;
 
 type KeysOfEach<T> = T extends unknown ? keyof T : never;
 type MachineDataKeys<N extends MachineEventName> = KeysOfEach<

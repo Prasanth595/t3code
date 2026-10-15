@@ -13,7 +13,7 @@ import {
   type SyncDir,
 } from "./appendFile.ts";
 import { LedgerError, errnoCode, ioError } from "./errors.ts";
-import { MACHINE_EVENT_FIELDS, buildData, type MachineEvent } from "./events.ts";
+import { MACHINE_EVENT_FIELDS, buildData, issueKeyJson, type MachineEvent } from "./events.ts";
 import { decodeLine, isBlankLine, lineHead } from "./read.ts";
 import { formatTs } from "./time.ts";
 
@@ -111,7 +111,9 @@ export class MachineLog {
     const ms = this.clock();
     let line: string;
     try {
-      const data = buildData(MACHINE_EVENT_FIELDS[event.event], event.data);
+      // An issue key is written the way softfac's `IssueKey` serialises: a number or a string.
+      const issue = "issue" in event.data ? { issue: issueKeyJson(event.data.issue) } : {};
+      const data = buildData(MACHINE_EVENT_FIELDS[event.event], event.data, issue);
       line = `${JSON.stringify({ ts: formatTs(ms), ms, event: event.event, data })}\n`;
     } catch (error) {
       throw ioError(this.out.path, error);

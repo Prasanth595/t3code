@@ -64,7 +64,10 @@ const samples: ReadonlyArray<{ readonly event: MachineEvent; readonly line: stri
     ),
   },
   {
-    event: { event: "claim_skipped", data: { repo: "rawphp/softfac", issue: 12, reason: "limit" } },
+    event: {
+      event: "claim_skipped",
+      data: { repo: "rawphp/softfac", issue: "12", reason: "limit" },
+    },
     line: lineAtT0("claim_skipped", `{"repo":"rawphp/softfac","issue":12,"reason":"limit"}`),
   },
   {
@@ -81,7 +84,7 @@ const samples: ReadonlyArray<{ readonly event: MachineEvent; readonly line: stri
   {
     event: {
       event: "claim_repaired",
-      data: { repo: "rawphp/softfac", issue: 12, outcome: "finished" },
+      data: { repo: "rawphp/softfac", issue: "12", outcome: "finished" },
     },
     line: lineAtT0("claim_repaired", `{"repo":"rawphp/softfac","issue":12,"outcome":"finished"}`),
   },
@@ -347,7 +350,7 @@ describe("append", () => {
     log.append({ event: "pass_finished", data: { runs: 3, claimed: 1, errors: 2, attention: 0 } });
     log.append({
       event: "claim_skipped",
-      data: { repo: "rawphp/softfac", issue: 12, reason: "limit" },
+      data: { repo: "rawphp/softfac", issue: "12", reason: "limit" },
     });
     log.append({ event: "attention", data: { run: "rawphp__softfac__8__1", reason: "abandoned" } });
     log.append({
