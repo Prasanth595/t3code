@@ -134,126 +134,60 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    describe("wide ignored directories", () => {
-      // More children than one `git check-ignore` chunk, which is where listing skips asking git
-      // about each child when the whole directory is ignored.
-      const WIDE = 1001;
-      const writeWideDirectory = (cwd: string, directory: string) =>
-        Effect.forEach(
-          Array.from({ length: WIDE }, (_, index) => `${directory}/pkg-${index}.js`),
+    it.effect("labels the children of wide folders exactly as git does for each child", () =>
+      Effect.gen(function* () {
+        // Above 1,000 children, listing first asks whether the whole folder is ignored.
+        const cwd = yield* makeTempDir({ git: true });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const platform = yield* HostProcess.Platform;
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\ndist/\n\\[id\\]/\n*.map\n");
+        yield* Effect.forEach(
+          ["node_modules", "dist", "[id]", "src"].flatMap((directory) =>
+            Array.from({ length: 1001 }, (_, index) => `${directory}/pkg-${index}.js`),
+          ),
           (relativePath) => writeTextFile(cwd, relativePath),
-          { concurrency: 16, discard: true },
+          { concurrency: 32, discard: true },
         );
+        for (const relativePath of [
+          "dist/kept.js",
+          "dist/vendored/index.js",
+          "i/page.tsx",
+          "[id]/page.tsx",
+          "src/bundle.map",
+        ]) {
+          yield* writeTextFile(cwd, relativePath);
+        }
+        yield* git(cwd, ["add", "-f", "dist/kept.js", "dist/vendored/index.js", "i/page.tsx"]);
+        if (platform !== "win32") {
+          yield* fileSystem.symlink(path.join(cwd, "src"), path.join(cwd, "node_modules/link"));
+        }
 
-      it.effect("marks every child of an ignored directory with nothing tracked as ignored", () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTempDir({ git: true });
-          yield* writeTextFile(cwd, ".gitignore", "node_modules/\n");
-          yield* writeWideDirectory(cwd, "node_modules");
-
-          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          const listing = yield* workspaceEntries.list({ cwd, directoryPath: "node_modules" });
-          expect(listing.entries).toHaveLength(WIDE);
-          expect(listing.entries.every((entry) => entry.ignored === true)).toBe(true);
-        }),
-      );
-
-      it.effect("labels a glob-named directory's children as git does for each child", () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTempDir({ git: true });
-          yield* writeTextFile(cwd, ".gitignore", "\\[id\\]/\n");
-          yield* writeTextFile(cwd, "i/page.tsx");
-          yield* git(cwd, ["add", ".gitignore", "i/page.tsx"]);
-          yield* writeWideDirectory(cwd, "[id]");
-          yield* writeTextFile(cwd, "[id]/page.tsx");
-
-          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          const listing = yield* workspaceEntries.list({ cwd, directoryPath: "[id]" });
-
-          // `check-ignore` reads each path as a pathspec, so `[id]/page.tsx` matches the tracked
-          // `i/page.tsx` and is not reported as ignored. Ask git per child for the answer.
-          const vcsProcess = yield* VcsProcess.VcsProcess;
-          const childPaths = listing.entries.map((entry) => entry.path);
-          const answer = yield* vcsProcess.run({
-            operation: "WorkspaceEntries.test.checkIgnore",
-            command: "git",
-            args: ["check-ignore", "-z", "--stdin"],
-            cwd,
-            stdin: `${childPaths.join("\0")}\0`,
-            allowNonZeroExit: true,
-            timeoutMs: 10_000,
-          });
-          const expectedIgnored = new Set(answer.stdout.split("\0").filter(Boolean));
-
-          expect(childPaths).toHaveLength(WIDE + 1);
-          expect(expectedIgnored.has("[id]/pkg-0.js")).toBe(true);
-          expect(expectedIgnored.has("[id]/page.tsx")).toBe(false);
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        for (const { directoryPath, ignored, except } of [
+          { directoryPath: "node_modules", ignored: true, except: [] },
+          // A force-tracked file and a folder holding tracked files stay unignored.
+          { directoryPath: "dist", ignored: true, except: ["dist/kept.js", "dist/vendored"] },
+          // git reads `[id]/page.tsx` as a pathspec, which matches the tracked `i/page.tsx`.
+          { directoryPath: "[id]", ignored: true, except: ["[id]/page.tsx"] },
+          { directoryPath: "src", ignored: false, except: ["src/bundle.map"] },
+          // git refuses to classify paths beyond a symlink, so nothing there is labelled.
+          ...(platform !== "win32"
+            ? [{ directoryPath: "node_modules/link", ignored: false, except: [] }]
+            : []),
+        ]) {
+          const { entries } = yield* workspaceEntries.list({ cwd, directoryPath });
+          expect(entries.length, directoryPath).toBeGreaterThan(1000);
           expect(
-            new Set(listing.entries.filter((entry) => entry.ignored).map((entry) => entry.path)),
-          ).toEqual(expectedIgnored);
-        }),
-      );
-
-      it.effect("keeps a force-tracked file and a directory with tracked files unignored", () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTempDir({ git: true });
-          yield* writeTextFile(cwd, ".gitignore", "node_modules/\n");
-          yield* writeWideDirectory(cwd, "node_modules");
-          yield* writeTextFile(cwd, "node_modules/kept.js");
-          yield* writeTextFile(cwd, "node_modules/vendored/index.js");
-          yield* git(cwd, ["add", "-f", "node_modules/kept.js", "node_modules/vendored/index.js"]);
-
-          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          const listing = yield* workspaceEntries.list({ cwd, directoryPath: "node_modules" });
-          const ignoredPaths = new Set(
-            listing.entries.filter((entry) => entry.ignored).map((entry) => entry.path),
-          );
-          expect(listing.entries).toHaveLength(WIDE + 2);
-          expect(ignoredPaths.has("node_modules/pkg-0.js")).toBe(true);
-          expect(ignoredPaths.has("node_modules/kept.js")).toBe(false);
-          expect(ignoredPaths.has("node_modules/vendored")).toBe(false);
-        }),
-      );
-
-      it.effect(
-        "leaves children of a symlinked directory unlabelled, as git cannot classify them",
-        () =>
-          Effect.gen(function* () {
-            const platform = yield* HostProcess.Platform;
-            if (platform === "win32") return;
-            const cwd = yield* makeTempDir({ git: true });
-            const fileSystem = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            yield* writeTextFile(cwd, ".gitignore", "node_modules/\n");
-            yield* writeWideDirectory(cwd, "store");
-            yield* fileSystem.makeDirectory(path.join(cwd, "node_modules"), { recursive: true });
-            yield* fileSystem.symlink(path.join(cwd, "store"), path.join(cwd, "node_modules/link"));
-
-            const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-            const listing = yield* workspaceEntries.list({
-              cwd,
-              directoryPath: "node_modules/link",
-            });
-            expect(listing.entries).toHaveLength(WIDE);
-            expect(listing.entries.some((entry) => entry.ignored)).toBe(false);
-          }),
-      );
-
-      it.effect("does not mark a wide directory that is not ignored", () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTempDir({ git: true });
-          yield* writeTextFile(cwd, ".gitignore", "*.map\n");
-          yield* writeWideDirectory(cwd, "src");
-          yield* writeTextFile(cwd, "src/bundle.map");
-
-          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-          const listing = yield* workspaceEntries.list({ cwd, directoryPath: "src" });
-          expect(
-            listing.entries.filter((entry) => entry.ignored).map((entry) => entry.path),
-          ).toEqual(["src/bundle.map"]);
-        }),
-      );
-    });
+            entries
+              .filter((entry) => (entry.ignored === true) !== ignored)
+              .map((entry) => entry.path)
+              .toSorted(),
+            directoryPath,
+          ).toEqual(except);
+        }
+      }),
+    );
 
     it.effect(
       "rejects directory traversal, git internals, and symlinks outside the workspace",
