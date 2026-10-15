@@ -329,7 +329,7 @@ const withManager = <A>(
 
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
-  /** Optional so fixtures that never open picture-in-picture need not stub it. */
+  /** Only fixtures that deliver picture-in-picture frames need pixels to fingerprint. */
   readonly toBitmap?: () => Buffer;
   readonly getSize: () => { readonly width: number; readonly height: number };
 }
@@ -414,7 +414,6 @@ const setupRecordingRaceTabs = (manager: PreviewManager.PreviewManager["Service"
   Effect.gen(function* () {
     const capturePage = vi.fn(async () => ({
       toJPEG: () => Buffer.from("unused-recording-frame"),
-      toBitmap: () => Buffer.from("unused-recording-frame"),
       getSize: () => ({ width: 1280, height: 720 }),
     }));
     const host = makeTestHostWebContents();
@@ -2240,7 +2239,6 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("close-race-frame"),
-          toBitmap: () => Buffer.from("close-race-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         const firstWebContents = makeTestPreviewWebContents(capturePage, 42);
@@ -2533,7 +2531,6 @@ describe("PreviewManager", () => {
         const pngImage = (png: Buffer) => ({
           toPNG: () => png,
           toJPEG: () => png,
-          toBitmap: () => png,
           getSize: () => ({ width: 1280, height: 720 }),
         });
         const capturePage = vi
@@ -2566,7 +2563,6 @@ describe("PreviewManager", () => {
         const setBackgroundThrottling = vi.fn();
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("recording-frame"),
-          toBitmap: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         const host = makeTestHostWebContents();
@@ -2616,7 +2612,6 @@ describe("PreviewManager", () => {
         const setBackgroundThrottling = vi.fn<(enabled: boolean) => void>();
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("recording-frame"),
-          toBitmap: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -2666,7 +2661,6 @@ describe("PreviewManager", () => {
         const setWindowBackgroundThrottling = vi.fn();
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("recording-frame"),
-          toBitmap: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         const wc = makeTestPreviewWebContents(capturePage);
@@ -2711,7 +2705,6 @@ describe("PreviewManager", () => {
         });
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("recording-frame"),
-          toBitmap: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -2743,7 +2736,6 @@ describe("PreviewManager", () => {
         const replacementWindowThrottling = vi.fn();
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("recording-frame"),
-          toBitmap: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -2781,7 +2773,6 @@ describe("PreviewManager", () => {
         const replacementWindowThrottling = vi.fn();
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("recording-frame"),
-          toBitmap: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         const host = makeTestHostWebContents();
@@ -2844,7 +2835,6 @@ describe("PreviewManager", () => {
         });
         const capturedImage = {
           toJPEG: () => Buffer.from("recording-frame"),
-          toBitmap: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         };
         const capturePage = vi.fn(
@@ -2902,7 +2892,6 @@ describe("PreviewManager", () => {
       const capturePage = vi.fn(async () => ({
         toPNG: () => Buffer.from("png"),
         toJPEG: () => Buffer.from("jpeg"),
-        toBitmap: () => Buffer.from("jpeg"),
         getSize: () => ({ width: 100, height: 80 }),
       }));
       fromId.mockReturnValue(
@@ -2927,7 +2916,6 @@ describe("PreviewManager", () => {
         const capturePage = vi.fn(async () => ({
           toPNG: () => Buffer.from("png"),
           toJPEG: () => Buffer.from("jpeg"),
-          toBitmap: () => Buffer.from("jpeg"),
           getSize: () => ({ width: 100, height: 80 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage, 42));
@@ -2959,7 +2947,6 @@ describe("PreviewManager", () => {
         const image = {
           toPNG: () => Buffer.from("stale-png"),
           toJPEG: () => Buffer.from("stale-jpeg"),
-          toBitmap: () => Buffer.from("stale-jpeg"),
           getSize: () => ({ width: 100, height: 80 }),
         };
         const pending = Promise.withResolvers<typeof image>();
@@ -2992,12 +2979,10 @@ describe("PreviewManager", () => {
         const secondJpeg = Buffer.from("second-recording-frame");
         const firstCapturePage = vi.fn(async () => ({
           toJPEG: () => firstJpeg,
-          toBitmap: () => firstJpeg,
           getSize: () => ({ width: 800, height: 600 }),
         }));
         const secondCapturePage = vi.fn(async () => ({
           toJPEG: () => secondJpeg,
-          toBitmap: () => secondJpeg,
           getSize: () => ({ width: 390, height: 844 }),
         }));
         const firstSendCommand = vi.fn(async () => undefined);
@@ -3226,7 +3211,6 @@ describe("PreviewManager", () => {
                 cursorAtCapture.push(cursorActive);
                 return {
                   toJPEG: () => Buffer.from("frame"),
-                  toBitmap: () => Buffer.from("frame"),
                   getSize: () => ({ width: 800, height: 600 }),
                 };
               },
@@ -3267,7 +3251,6 @@ describe("PreviewManager", () => {
         const contents = Object.assign(
           makeTestPreviewWebContents(async () => ({
             toJPEG: () => Buffer.from("frame"),
-            toBitmap: () => Buffer.from("frame"),
             getSize: () => ({ width: 800, height: 600 }),
           })),
           {
@@ -3311,7 +3294,6 @@ describe("PreviewManager", () => {
         const contents = Object.assign(
           makeTestPreviewWebContents(async () => ({
             toJPEG: () => Buffer.from("frame"),
-            toBitmap: () => Buffer.from("frame"),
             getSize: () => ({ width: 800, height: 600 }),
           })),
           {
@@ -3408,7 +3390,6 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const capturedImage = {
           toJPEG: () => Buffer.from("unused-recording-frame"),
-          toBitmap: () => Buffer.from("unused-recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         };
         let markWarmupStarted!: () => void;
@@ -3675,7 +3656,6 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("native-close-preview-frame"),
-          toBitmap: () => Buffer.from("native-close-preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -3767,41 +3747,46 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect(
-    "skips the JPEG encode while the captured picture-in-picture bitmap is unchanged",
-    () =>
-      withManager((manager) =>
-        Effect.gen(function* () {
-          let bitmap = Buffer.from("static-page-pixels");
-          const toJPEG = vi.fn(() => Buffer.from("encoded-frame"));
-          const capturePage = vi.fn(async () => ({
-            toJPEG,
-            toBitmap: () => bitmap,
+  effectIt.effect("encodes a picture-in-picture frame only when the page changes", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let page = "static-page";
+        const toJPEG = vi.fn((pixels: string) => Buffer.from(`jpeg:${pixels}`));
+        const capturePage = vi.fn(async () => {
+          const pixels = page;
+          return {
+            toJPEG: () => toJPEG(pixels),
+            toBitmap: () => Buffer.from(pixels),
             getSize: () => ({ width: 1280, height: 720 }),
-          }));
-          fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
-          const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
-          browserWindowConstructor.mockImplementation(function () {
-            return pictureInPictureWindow;
-          });
+          };
+        });
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
 
-          yield* manager.createTab("tab_pip_skip_unchanged");
-          yield* manager.registerWebview("tab_pip_skip_unchanged", 42);
-          yield* manager.openPictureInPicture("tab_pip_skip_unchanged");
-          yield* TestClock.adjust(300);
+        yield* manager.createTab("tab_pip_unchanged");
+        yield* manager.registerWebview("tab_pip_unchanged", 42);
+        yield* manager.openPictureInPicture("tab_pip_unchanged");
+        yield* TestClock.adjust(100);
 
-          expect(capturePage.mock.calls.length).toBeGreaterThan(1);
-          expect(toJPEG).toHaveBeenCalledOnce();
-          expect(send).toHaveBeenCalledOnce();
+        expect(capturePage).toHaveBeenCalledTimes(2);
+        expect(toJPEG).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledOnce();
 
-          bitmap = Buffer.from("changed-page-pixels");
-          yield* TestClock.adjust(100);
+        page = "changed-page";
+        yield* TestClock.adjust(100);
 
-          expect(toJPEG).toHaveBeenCalledTimes(2);
-          expect(send).toHaveBeenCalledTimes(2);
-          yield* manager.closePictureInPicture("tab_pip_skip_unchanged");
-        }),
-      ),
+        expect(toJPEG).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenLastCalledWith(
+          "desktop:preview-pip-frame",
+          expect.objectContaining({ data: Buffer.from("jpeg:changed-page").toString("base64") }),
+        );
+        yield* manager.closePictureInPicture("tab_pip_unchanged");
+      }),
+    ),
   );
 
   effectIt.effect("drops empty frames before picture-in-picture delivery", () =>
@@ -3815,7 +3800,6 @@ describe("PreviewManager", () => {
         const capturePage = vi.fn(async () => validImage);
         capturePage.mockResolvedValueOnce({
           toJPEG: () => Buffer.from("empty-preview-frame"),
-          toBitmap: () => Buffer.from("empty-preview-frame"),
           getSize: () => ({ width: 0, height: 0 }),
         });
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -3846,7 +3830,6 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("closing-preview-frame"),
-          toBitmap: () => Buffer.from("closing-preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -3881,7 +3864,6 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("serialized-preview-frame"),
-          toBitmap: () => Buffer.from("serialized-preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -3960,12 +3942,10 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const initialCapturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("stale-preview-frame"),
-          toBitmap: () => Buffer.from("stale-preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         const replacementCapturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("replacement-preview-frame"),
-          toBitmap: () => Buffer.from("replacement-preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         const initialWebContents = makeTestPreviewWebContents(initialCapturePage, 42);
@@ -4096,7 +4076,6 @@ describe("PreviewManager", () => {
         const picked = new Map<number, (event: unknown, ...args: unknown[]) => void>();
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("annotation"),
-          toBitmap: () => Buffer.from("annotation"),
           toDataURL: () => "data:image/png;base64,YW5ub3RhdGlvbg==",
           getSize: () => ({ width: 10, height: 10 }),
         }));
