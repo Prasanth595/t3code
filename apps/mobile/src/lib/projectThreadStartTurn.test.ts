@@ -15,7 +15,7 @@ import {
 
 describe("project thread title", () => {
   it.each([
-    ["![pasted-image.png](t3-context://v1/image/image-1)", "Image: pasted-image.png"],
+    ["![pasted-image.png](t3-context://v1/image/image-1)", "Attached image"],
     ["![pasted-image.png](t3-context://v1/image/image-1) Fix the spacing", "Fix the spacing"],
     ["Fix [src/app.ts](t3-context://v1/mention/source)", "Fix src/app.ts"],
     ["x".repeat(80), `${"x".repeat(69)}...`],
@@ -59,7 +59,7 @@ describe("project thread title", () => {
         worktreeBranchName: "unused",
       });
 
-      expect(input.titleSeed).toBe("Image: photo.png");
+      expect(input.titleSeed).toBe("Attached image");
       expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
       expect(input.message.attachments).toEqual(uploadedAttachments);
       expect(input.message.text).toBe(text);

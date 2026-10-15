@@ -9593,7 +9593,9 @@ export default function ChatView(props: ChatViewProps) {
         );
         const title = truncate(
           assistantCitationsToPlainText(stripInlineContextReferences(trimmed)).trim() ||
-            composerAttachmentsSnapshot[0]?.name ||
+            (composerImagesSnapshot.length > 0
+              ? deriveThreadTitleSeed({ text: "", attachments: composerImagesSnapshot })
+              : composerAttachmentsSnapshot[0]?.name) ||
             "New thread",
         );
         promptRef.current = "";
@@ -9910,17 +9912,10 @@ export default function ChatView(props: ChatViewProps) {
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
-    let firstComposerImageName: string | null = null;
-    if (composerImagesSnapshot.length > 0) {
-      const firstComposerImage = composerImagesSnapshot[0];
-      if (firstComposerImage) {
-        firstComposerImageName = firstComposerImage.name;
-      }
-    }
     let titleSeed = assistantCitationsToPlainText(stripInlineContextReferences(trimmed)).trim();
     if (!titleSeed) {
-      if (firstComposerImageName) {
-        titleSeed = `Image: ${firstComposerImageName}`;
+      if (composerImagesSnapshot.length > 0) {
+        titleSeed = deriveThreadTitleSeed({ text: "", attachments: composerImagesSnapshot });
       } else if (composerFilesSnapshot[0]) {
         titleSeed = `File: ${composerFilesSnapshot[0].name}`;
       } else if (composerTerminalContextsSnapshot.length > 0) {

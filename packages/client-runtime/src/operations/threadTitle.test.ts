@@ -8,7 +8,7 @@ describe("deriveThreadTitleSeed", () => {
   it.each([{ attachments: [] }, { attachments: [{ name: "pasted-image.png" }] }])(
     "uses a readable image-only title with attachments $attachments",
     ({ attachments }) => {
-      expect(deriveThreadTitleSeed({ text: image, attachments })).toBe("Image: pasted-image.png");
+      expect(deriveThreadTitleSeed({ text: image, attachments })).toBe("Attached image");
     },
   );
 
@@ -19,13 +19,19 @@ describe("deriveThreadTitleSeed", () => {
     },
   );
 
-  it("uses the first image label for several images", () => {
+  it("uses a plural placeholder for several images", () => {
     expect(
       deriveThreadTitleSeed({
         text: `${image}\n![other.png](t3-context://v1/image/other)`,
         attachments: [],
       }),
-    ).toBe("Image: pasted-image.png");
+    ).toBe("Attached images");
+  });
+
+  it("counts repeated references to the same image once", () => {
+    expect(deriveThreadTitleSeed({ text: `${image}\n${image}`, attachments: [] })).toBe(
+      "Attached image",
+    );
   });
 
   it("keeps context labels without exposing their internal URLs", () => {
@@ -47,13 +53,13 @@ describe("deriveThreadTitleSeed", () => {
     ).toBe("Investigate login failures");
   });
 
-  it("uses the first attachment name when text is empty", () => {
+  it.each([1, 2])("uses a placeholder for %i attachments when text is empty", (count) => {
     expect(
       deriveThreadTitleSeed({
         text: " \n ",
-        attachments: [{ name: "login-error.png" }, { name: "other.png" }],
+        attachments: [{ name: "login-error.png" }, { name: "other.png" }].slice(0, count),
       }),
-    ).toBe("Image: login-error.png");
+    ).toBe(count === 1 ? "Attached image" : "Attached images");
   });
 
   it("uses the first non-empty fallback label after text and attachments", () => {
