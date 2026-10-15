@@ -14,30 +14,26 @@ const NEWEST = "v0.0.10-nightly.20261015.3145";
 const ROUTE_TREE = "apps/web/src/routeTree.gen.ts";
 
 // Every stub appends its invocation to $SYNC_TEST_LOG and whether GH_TOKEN
-// reached it to $SYNC_TEST_LOG.env. `gh` answers the calls
-// sync.sh reads from: `pr create` prints a URL, and `issue list` prints the
-// number of the issue in $SYNC_TEST_ISSUES whose title is the quoted --search
-// text, as the real command does with its --jq filter. `check.sh` fails with
-// $SYNC_TEST_CHECK_OUTPUT when set.
+// reached it to $SYNC_TEST_LOG.env. `gh` answers the calls sync.sh reads
+// from: `pr create` prints a URL, and `issue list` prints every issue in
+// $SYNC_TEST_ISSUES as the `number<TAB>title` rows the script's --jq asks for,
+// so the script's own title match is what the test exercises. `check.sh`
+// fails with $SYNC_TEST_CHECK_OUTPUT when set.
 const ghStub = `#!/usr/bin/env bash
 echo "gh $*" >> "$SYNC_TEST_LOG"
 echo "gh \${GH_TOKEN-unset}" >> "$SYNC_TEST_LOG.env"
 for ((i = 1; i <= $#; i++)); do
   j=$((i + 1))
-  case "\${!i}" in
-    --body-file) cp "\${!j}" "$SYNC_TEST_LOG.body" ;;
-    --search) search=\${!j} ;;
-  esac
+  [[ \${!i} == --body-file ]] && cp "\${!j}" "$SYNC_TEST_LOG.body"
 done
 case "$1 $2" in
   "pr create") echo "https://example.test/pr/1" ;;
   "issue list")
     node -e '
-      const title = process.argv[1].replace(/^"(.*)" in:title$/, "$1");
-      const issues = JSON.parse(process.env.SYNC_TEST_ISSUES || "[]");
-      const hit = issues.find((issue) => issue.title === title);
-      if (hit) console.log(hit.number);
-    ' "$search"
+      for (const issue of JSON.parse(process.env.SYNC_TEST_ISSUES || "[]")) {
+        console.log(issue.number + "\\t" + issue.title);
+      }
+    '
     ;;
 esac
 exit 0
@@ -172,10 +168,12 @@ describe("sync.sh", () => {
     write(upstream, "README.md", "upstream\n");
     write(upstream, ROUTE_TREE, "routes v9\n");
     write(upstream, "apps/server/src/server.ts", "server v9\n");
+    write(upstream, "docs/old.md", "removed in v10\n");
     oldSha = commit(upstream, "v9");
     git(upstream, "tag", OLD);
     write(upstream, "README.md", "upstream, later\n");
     write(upstream, ROUTE_TREE, "routes v10\n");
+    NodeFS.rmSync(NodePath.join(upstream, "docs/old.md"));
     commit(upstream, "v10 middle");
     git(upstream, "tag", MIDDLE);
     write(upstream, "apps/server/src/server.ts", "server v10\n");
@@ -246,11 +244,24 @@ describe("sync.sh", () => {
     expect(body).not.toContain(`- ${ROUTE_TREE}`);
   });
 
+  it("aborts on a file the fork edited and the tag deleted", () => {
+    makeFork(`${OLD} ${oldSha}`, { "docs/old.md": "fork edit\n" });
+    const { status, calls, body } = run();
+    expect(status).toBe(1);
+    expect(originBranches()).toEqual(["main"]);
+    expect(git(fork, "status", "--porcelain")).toBe("");
+    expect(calls.at(-1)).toMatch(
+      new RegExp(`^gh issue create --title Sync to ${NEWEST} conflicts --body-file `),
+    );
+    expect(body).toContain("- docs/old.md");
+  });
+
   it("comments on the open conflicts issue instead of opening another", () => {
     makeFork(`${OLD} ${oldSha}`, { "README.md": "fork edit\n" });
     const { status, calls, body } = run({
       SYNC_TEST_ISSUES: JSON.stringify([
         { number: 3, title: `Sync to ${MIDDLE} conflicts` },
+        { number: 5, title: `Sync to ${NEWEST} conflicts, resolved by hand` },
         { number: 7, title: `Sync to ${NEWEST} conflicts` },
       ]),
     });
