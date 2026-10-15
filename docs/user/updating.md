@@ -99,6 +99,10 @@ update can roll back to the previous version. If the update still fails:
 2. Check that you updated the server's machine, not only the device you are using.
 3. For a command-line server, stop it and relaunch the exact version shown in the notice.
 
+Only one server can use a T3 home directory at a time. If startup reports that
+another server owns it, stop that server before retrying, or use a separate home
+directory and pair with the running server.
+
 ## Update providers
 
 **Settings → Providers** shows provider updates for the selected environment.
@@ -118,7 +122,9 @@ The same page lets you refresh provider status and update supported providers.
 These controls require a connected environment and permission to operate it.
 Provider update checks and restart continuation preferences are in
 **Settings → Maintenance**. If provider update checks are disabled, enable them
-there before refreshing to find newer versions.
+there before refreshing to find newer versions. The same setting controls whether
+T3 Code downloads model catalog updates, so with it off new models may not appear
+until you enable it and refresh provider status.
 
 Install App Store or Google Play releases as usual. The mobile app can also
 download updates in the background and apply them when you next leave the app.
