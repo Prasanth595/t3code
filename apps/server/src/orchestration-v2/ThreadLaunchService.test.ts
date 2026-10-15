@@ -2682,6 +2682,22 @@ it.effect.each([
   }),
 );
 
+it.effect("leaves a temporary branch that a branch blocks to the launch, which flattens it", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      hasCommit: () => Effect.succeed(true),
+      git: { listLocalBranchNames: () => Effect.succeed(["main", "t3"]) },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.checkWorktreeBase({
+        projectId,
+        workspaceStrategy: { type: "worktree", baseRef: "main", branch: "t3/0123abcd" },
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect.each([
   { name: "a base ref that resolves", baseRef: "main", commits: ["main", "HEAD"] },
   // Provisioning fetches it; the ref may exist nowhere else yet.

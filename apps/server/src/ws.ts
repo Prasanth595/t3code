@@ -120,6 +120,7 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -1996,6 +1997,30 @@ const layerWsRpc = (
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
+            // A launch is accepted before its worktree exists, so a branch
+            // that cannot be created is refused while the client can still act.
+            Effect.andThen(
+              input.workspaceStrategy.type === "worktree" &&
+                input.workspaceStrategy.branch !== undefined &&
+                !isTemporaryWorktreeBranch(input.workspaceStrategy.branch)
+                ? threadLaunch
+                    .checkWorktreeBase({
+                      projectId: input.projectId,
+                      workspaceStrategy: input.workspaceStrategy,
+                    })
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new OrchestrationV2ThreadLaunchError({
+                            commandId: input.commandId,
+                            projectId: input.projectId,
+                            message: cause.message,
+                            cause,
+                          }),
+                      ),
+                    )
+                : Effect.void,
+            ),
             Effect.andThen(
               startup
                 .enqueueCommand(
