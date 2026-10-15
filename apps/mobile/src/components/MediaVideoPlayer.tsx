@@ -1,7 +1,7 @@
 import { useIsFocused } from "@react-navigation/native";
 import { useEvent } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
 
 import { AppActivityIndicator } from "./AppActivityIndicator";
@@ -10,12 +10,7 @@ import { SymbolView } from "./AppSymbol";
 import { VideoThumbnailImage } from "./VideoThumbnailImage";
 import { useMediaActions } from "../state/mediaActions";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
-import {
-  isFullscreenVideoOpen,
-  subscribeFullscreenVideo,
-  videoPlaybackStarted,
-  videoPlaybackStopped,
-} from "../lib/videoAudioSession";
+import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../lib/videoAudioSession";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 
 /** Loads only after Play or opening the viewer. Source replacement never starts playback itself. */
@@ -26,9 +21,8 @@ function LoadedMediaVideo(props: {
   readonly paused: boolean;
 }) {
   const focused = useIsFocused();
-  // Inline players pause instead of playing under the iOS fullscreen player.
-  const nativeVideoOpen = useSyncExternalStore(subscribeFullscreenVideo, isFullscreenVideoOpen);
-  const paused = props.paused || nativeVideoOpen;
+  const fullscreenVideoOpen = useFullscreenVideoOpen();
+  const paused = props.paused || fullscreenVideoOpen;
   const active = useRef(focused && AppState.currentState === "active");
   const fullscreen = useRef(false);
   const [attempt, setAttempt] = useState(0);
@@ -40,11 +34,8 @@ function LoadedMediaVideo(props: {
   });
   const { status } = useEvent(player, "statusChange", { status: player.status });
   const { isPlaying } = useEvent(player, "playingChange", { isPlaying: player.playing });
-  useEffect(() => {
-    if (!isPlaying) return;
-    videoPlaybackStarted();
-    return () => videoPlaybackStopped();
-  }, [isPlaying]);
+  // A buffering stall reports not playing while loading; it keeps the session.
+  useMediaAudioSessionHold(isPlaying || status === "loading");
   const loadSource = useEffectEvent(async (signal: AbortSignal) => {
     const uri = props.resolvePlaybackUri ? await props.resolvePlaybackUri() : props.uri;
     if (signal.aborted) return;

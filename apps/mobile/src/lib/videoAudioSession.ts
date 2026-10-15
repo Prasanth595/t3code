@@ -1,4 +1,5 @@
 import { requireOptionalNativeModule } from "expo";
+import { useEffect, useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 
 const nativeControls = requireOptionalNativeModule<{
@@ -11,17 +12,18 @@ const RELEASE_DELAY_MS = 100;
 let playingCount = 0;
 let releaseTimer: ReturnType<typeof setTimeout> | undefined;
 
-/** Pairs with `videoPlaybackStopped` for each inline player that is playing. */
-export function videoPlaybackStarted(): void {
+/** Pairs with `mediaPlaybackStopped` for each inline video or audio player holding the session. */
+export function mediaPlaybackStarted(): void {
   playingCount += 1;
 }
 
 /**
  * expo-video activates the iOS playback session but never deactivates it, so
  * interrupted apps (Spotify, Podcasts) are never told they may resume. The
- * last player to stop releases it.
+ * last player to stop releases it. In-app audio previews count too, since
+ * deactivating stops them.
  */
-export function videoPlaybackStopped(): void {
+export function mediaPlaybackStopped(): void {
   playingCount -= 1;
   if (playingCount > 0 || Platform.OS !== "ios") return;
   clearTimeout(releaseTimer);
@@ -45,7 +47,6 @@ export function fullscreenVideoClosed(): void {
   for (const listener of fullscreenListeners) listener();
 }
 
-/** `useSyncExternalStore` source: inline players pause while fullscreen owns playback. */
 export function subscribeFullscreenVideo(listener: () => void): () => void {
   fullscreenListeners.add(listener);
   return () => {
@@ -55,4 +56,18 @@ export function subscribeFullscreenVideo(listener: () => void): () => void {
 
 export function isFullscreenVideoOpen(): boolean {
   return fullscreenCount > 0;
+}
+
+/** In-app players pause while the iOS fullscreen player owns playback and the session. */
+export function useFullscreenVideoOpen(): boolean {
+  return useSyncExternalStore(subscribeFullscreenVideo, isFullscreenVideoOpen);
+}
+
+/** Holds the session for as long as `active`, releasing it with the last holder. */
+export function useMediaAudioSessionHold(active: boolean): void {
+  useEffect(() => {
+    if (!active) return;
+    mediaPlaybackStarted();
+    return () => mediaPlaybackStopped();
+  }, [active]);
 }

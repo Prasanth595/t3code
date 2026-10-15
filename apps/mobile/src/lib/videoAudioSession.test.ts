@@ -23,19 +23,19 @@ afterEach(() => vi.useRealTimers());
 
 describe("video audio session", () => {
   it("releases once, after the last playing player stops, unless playback restarts first", () => {
-    session.videoPlaybackStarted();
-    session.videoPlaybackStarted();
-    session.videoPlaybackStopped();
+    session.mediaPlaybackStarted();
+    session.mediaPlaybackStarted();
+    session.mediaPlaybackStopped();
     vi.advanceTimersByTime(1_000);
     expect(mocks.release).not.toHaveBeenCalled();
 
     // A player starting inside the deferral window keeps the session.
-    session.videoPlaybackStopped();
-    session.videoPlaybackStarted();
+    session.mediaPlaybackStopped();
+    session.mediaPlaybackStarted();
     vi.advanceTimersByTime(1_000);
     expect(mocks.release).not.toHaveBeenCalled();
 
-    session.videoPlaybackStopped();
+    session.mediaPlaybackStopped();
     vi.advanceTimersByTime(1_000);
     expect(mocks.release).toHaveBeenCalledTimes(1);
   });
