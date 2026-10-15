@@ -633,6 +633,30 @@ describe("AcpRegistryAdapterV2", () => {
       ),
     );
 
+    // The requested model owns the model picker. A saved option under the
+    // picker's own ID, whether another provider or one Cline retired, must
+    // neither replace the requested provider nor fail the open.
+    it.effect("ignores a saved option under the model picker's ID", () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("acp-registry-picker-id");
+        for (const savedProvider of ["cline", "retired-provider"]) {
+          // The script expects the provider write, then exactly the saved model.
+          const open = yield* makeClineSessions(instanceId, "model.applied");
+          yield* open({
+            instanceId,
+            model: "cline-pass",
+            options: [
+              { id: "provider", value: savedProvider },
+              ...CLINE_SECONDARY_MODEL_SELECTION.options,
+            ],
+          });
+        }
+      }).pipe(
+        Effect.provide(Layer.merge(layerTest, AcpRegistryRuntimeCoordinator.layer)),
+        Effect.scoped,
+      ),
+    );
+
     // Cline's later `model` option and its default belong to the provider that
     // reported them. Options stored while on one provider, including that
     // provider's default model, must not constrain another provider's open.

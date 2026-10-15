@@ -6362,8 +6362,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               },
             );
           }
+          // The requested model owns the model picker. A saved option under the
+          // picker's ID (an older descriptor set, or another model's option of
+          // the same ID) must neither replace that model nor fail the open.
+          const modelOptionId = findModelConfigOption(configOptions)?.id;
           for (const selection of configSelections) {
-            if (!availableConfigIds.has(selection.id)) continue;
+            if (!availableConfigIds.has(selection.id) || selection.id === modelOptionId) continue;
             const option = configOptions.find((candidate) => candidate.id === selection.id);
             // A later model option (Cline's `model` after its `provider`) picks
             // the model the turn runs on. These options were read after the
