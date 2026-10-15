@@ -495,9 +495,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 }
                 onPress={confirmDeleteBranch}
               >
-                <Toolbar.Label>
-                  {PR_ACTION_LABELS["delete-branch"]}
-                </Toolbar.Label>
+                <Toolbar.Label>{PR_ACTION_LABELS["delete-branch"]}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
           </Toolbar.Menu>
