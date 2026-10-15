@@ -14,7 +14,7 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, useCallback, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -486,10 +486,14 @@ function PoolBar({
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
   const columns = pool.columns.length;
   const [labeled, setLabeled] = useState(false);
+  const gridRef = useRef<HTMLDivElement>(null);
   const observeWidth = useCallback(
-    (bar: HTMLDivElement) =>
-      observeResize(bar, ([entry]) => {
-        if (entry) setLabeled(entry.contentRect.width >= columns * LABELED_SEGMENT_MIN_WIDTH);
+    (probe: HTMLDivElement) =>
+      observeResize(probe, ([entry]) => {
+        if (!entry || !gridRef.current) return;
+        const gap = Number.parseFloat(getComputedStyle(gridRef.current).columnGap) || 0;
+        const segmentWidth = (entry.contentRect.width - gap * (columns - 1)) / columns;
+        setLabeled(segmentWidth >= LABELED_SEGMENT_MIN_WIDTH);
       }),
     [columns],
   );
@@ -498,6 +502,7 @@ function PoolBar({
       {/* Empty so its size never changes with the layout: measuring the bar itself would loop. */}
       <div ref={observeWidth} aria-hidden />
       <div
+        ref={gridRef}
         className="grid gap-x-1 gap-y-1"
         style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
       >
