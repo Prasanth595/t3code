@@ -4,7 +4,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Base64 from "effect/encoding/Base64";
 
-import * as GitHubApi from "./GitHubApi.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 export interface CascadeLayer {
@@ -42,7 +42,7 @@ export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (inp
   readonly layers: ReadonlyArray<CascadeLayer>;
   readonly remote?: string;
 }) {
-  const api = yield* GitHubApi.GitHubApi;
+  const api = yield* GitHubRest.GitHubRest;
   const { process } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const { token } = yield* api.credential(input.host);

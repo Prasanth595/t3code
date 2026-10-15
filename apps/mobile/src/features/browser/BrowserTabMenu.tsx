@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import type { MenuAction } from "@react-native-menu/menu";
 import {
   DEFAULT_PREVIEW_ZOOM_FACTOR,
@@ -9,9 +10,9 @@ import {
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
-import { Alert } from "react-native";
 
-import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { Menu } from "../../components/ui/Menu";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -107,7 +108,7 @@ export function BrowserTabMenu({
 
   const run = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
     const result = await adjust({ environmentId, input: { ...target, ...change } });
-    if (result._tag === "Failure") Alert.alert("Could not change this browser tab");
+    if (result._tag === "Failure") Dialog.alert("Could not change this browser tab");
   };
 
   const onAction = (id: string) => {
@@ -127,7 +128,7 @@ export function BrowserTabMenu({
       if (!option) return;
       void resize({ environmentId, input: { ...target, viewport: option.setting } }).then(
         (result) => {
-          if (result._tag === "Failure") Alert.alert("Could not change the viewport");
+          if (result._tag === "Failure") Dialog.alert("Could not change the viewport");
         },
       );
     }
@@ -138,7 +139,7 @@ export function BrowserTabMenu({
   );
   if (disabled) return pill;
   return (
-    <ControlPillMenu
+    <Menu
       accessible
       accessibilityLabel="Browser tab options"
       accessibilityRole="button"
@@ -146,6 +147,6 @@ export function BrowserTabMenu({
       onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
     >
       {pill}
-    </ControlPillMenu>
+    </Menu>
   );
 }

@@ -233,7 +233,10 @@ describe("mobile dependency graph", () => {
     const ceilings: ReadonlyArray<readonly [Layer, Layer, number, string]> = [
       ["state", "features", 6, "state must not add imports from features"],
       ["lib", "features", 7, "lib must not add imports from features"],
-      ["components", "features", 33, "components must not add imports from features"],
+      // components -> features: mostly the appearance preferences provider
+      // and the layout toolbar bridges.
+      ["components", "features", 30, "components must not add imports from features"],
+      // native -> features: native glue reading appearance/keyboard/review features.
       ["native", "features", 8, "native must not add imports from features"],
       ["lib", "state", 10, "lib must not add imports from state"],
     ];

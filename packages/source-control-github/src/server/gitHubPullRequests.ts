@@ -79,7 +79,8 @@ function normalizeGitHubPullRequestState(input: {
   return "open";
 }
 
-function normalizeGitHubPullRequestRecord(
+/** A pull request row, in `gh --json` or GraphQL node shape, as every read reports it. */
+export function normalizeGitHubPullRequestRecord(
   raw: Schema.Schema.Type<typeof GitHubPullRequestSchema>,
 ): NormalizedGitHubPullRequestRecord {
   const explicitNameWithOwner = trimOptionalString(raw.headRepository?.nameWithOwner);
@@ -117,7 +118,11 @@ function normalizeGitHubPullRequestRecord(
 const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
 
-export function decodeGitHubPullRequestEntries(
+/**
+ * Pull request rows in `gh --json` or GraphQL node shape. A row that does not decode is
+ * skipped, so one malformed pull request cannot hide the rest.
+ */
+function decodeGitHubPullRequestEntries(
   entries: ReadonlyArray<unknown>,
 ): ReadonlyArray<NormalizedGitHubPullRequestRecord> {
   const pullRequests: NormalizedGitHubPullRequestRecord[] = [];

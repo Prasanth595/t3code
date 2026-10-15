@@ -1,6 +1,6 @@
 import { ScrollView } from "react-native";
 
-import { AppText } from "./AppText";
+import { AppText } from "./ui/AppText";
 
 export function MediaSourceCaption(props: { readonly source: string | undefined }) {
   if (!props.source) return null;
