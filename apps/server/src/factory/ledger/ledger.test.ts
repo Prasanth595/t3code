@@ -707,6 +707,27 @@ describe("append", () => {
     expect(readText(ledger.path)).toBe(expected);
   });
 
+  it("append cleans a hand-built cause on the way to the file", () => {
+    const dataDir = tempDir();
+    const ledger = create(dataDir, ticking(T0, 1000));
+    const cause: Cause = {
+      step: "start",
+      reason: "approved",
+      actor: `al\u202ei${"x".repeat(150)}`,
+      command: `a\nb${"c".repeat(1500)}`,
+      label: "la\u0007bel\u2066",
+    };
+    ledger.append(step("s"), cause);
+    const written = JSON.parse(readText(ledger.path).trimEnd()).cause;
+    expect(written).toEqual({
+      step: "start",
+      reason: "approved",
+      actor: `ali${"x".repeat(97)}`,
+      command: `ab${"c".repeat(998)}`,
+      label: "label",
+    });
+  });
+
   it("a cause cleans actor and label of control and bidi characters and cuts them at 100, and cuts a command at 1000", () => {
     const actor = makeCause("start", "approved", { actor: "al\u0007i‮ce⁦\u0000\n\u007f\u0085" });
     expect(actor.actor).toBe("alice");
