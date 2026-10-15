@@ -403,6 +403,8 @@ interface GitCall {
   readonly timeoutMs: number;
   /** The fetch from the remote: it is the only call that gets credentials. */
   readonly fetch?: boolean;
+  /** Its stdout is read, so output cut at the cap is refused. The other calls' output is only shown. */
+  readonly parsed?: boolean;
 }
 
 /** Whether `text` is a full commit id: 40 hex digits (64 in a SHA-256 repo). */
@@ -512,24 +514,26 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
       })
       .pipe(
         Effect.mapError((error) => new WorkspaceSpawnError({ cause: error.cause })),
-        Effect.flatMap((result) => {
+        Effect.flatMap((result): Effect.Effect<string, WorkspaceError> => {
           const failed = (status: number | null, stderr: string) =>
             Effect.fail(new WorkspaceFailedError({ args: call.args.join(" "), status, stderr }));
           if (result.timedOut) {
             return failed(null, `it did not finish within ${call.timeoutMs}ms and was killed`);
           }
-          // Output cut at the cap would be parsed from a truncated front.
-          if (result.truncated) {
-            return failed(null, `it printed more than ${gitTailBytes} bytes and was killed`);
+          if (result.exitCode !== 0) return failed(result.exitCode, result.stderrTail);
+          // Output cut at the cap would be parsed from a truncated front. A merge that prints a
+          // line per file of a large base update is not parsed, so its size does not matter.
+          if (call.parsed === true && result.truncated) {
+            return Effect.fail(
+              unexpected(`\`git ${call.args.join(" ")}\` printed more than ${gitTailBytes} bytes`),
+            );
           }
-          return result.exitCode === 0
-            ? Effect.succeed(result.tail)
-            : failed(result.exitCode, result.stderrTail);
+          return Effect.succeed(result.tail);
         }),
       );
 
   const quick = (dir: string, args: ReadonlyArray<string>, pre?: ReadonlyArray<string>) =>
-    git(dir, { args, timeoutMs: gitTimeoutMs, ...(pre && { pre }) });
+    git(dir, { args, timeoutMs: gitTimeoutMs, parsed: true, ...(pre && { pre }) });
 
   /** Exact: the files are the commit's only when nothing is modified, deleted, untracked or ignored. */
   const checkTree = (dir: string) =>
@@ -561,7 +565,12 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
   const isNotAncestor = (error: WorkspaceError) =>
     error._tag === "WorkspaceFailedError" && error.status === 1;
 
-  const checkoutIn = (repo: string, sha: string, base: string, dir: string) =>
+  const checkoutIn = (
+    repo: string,
+    sha: string,
+    base: string,
+    dir: string,
+  ): Effect.Effect<Checkout, WorkspaceError> =>
     Effect.gen(function* () {
       // No template: nothing is copied into `.git`, hooks included.
       yield* git(dir, { args: ["init", "--quiet", "--template="], timeoutMs: checkoutTimeoutMs });
@@ -600,7 +609,8 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
       const ancestor = yield* Effect.result(
         quick(dir, ["merge-base", "--is-ancestor", base, "HEAD"]),
       );
-      if (Result.isSuccess(ancestor)) return { head, merge: { _tag: "contained" } } as Checkout;
+      if (Result.isSuccess(ancestor))
+        return { head, merge: { _tag: "contained" } } satisfies Checkout;
       if (!isNotAncestor(ancestor.failure)) return yield* ancestor.failure;
 
       // The gate's identity, no signing, `--no-ff` so that the head is always the first parent
@@ -628,7 +638,7 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
         if (paths.length === 0) return yield* merged.failure;
         // Leave the tree as the head's. The caller removes the directory anyway.
         yield* Effect.ignore(quick(dir, ["merge", "--abort"]));
-        return { head, merge: { _tag: "conflict", paths } } as Checkout;
+        return { head, merge: { _tag: "conflict", paths } } satisfies Checkout;
       }
       // The merge commit must hold exactly the head and the base, in that order.
       const [first = "", second = ""] = lines(
@@ -640,7 +650,7 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
         );
       }
       yield* checkTree(dir);
-      return { head, merge: { _tag: "merged" } } as Checkout;
+      return { head, merge: { _tag: "merged" } } satisfies Checkout;
     });
 
   /**
@@ -790,9 +800,7 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
 
         // The lines go in once the commands have ended in a pass or a fail, never on an error path:
         // an attempt that errors (a command that cannot start, a ledger failure) used none.
-        const record = <R extends { readonly commands: ReadonlyArray<CommandResult> }>(
-          outcome: R,
-        ) =>
+        const record = (outcome: Extract<GateResult, { readonly _tag: "pass" | "fail" }>) =>
           Effect.gen(function* () {
             for (const result of outcome.commands) {
               yield* append(
@@ -878,9 +886,9 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
                 },
                 makeCause("gate", "gate-merge-conflict", { attempt }),
               );
-              return { _tag: "conflict", dir, paths: made.merge.paths } as GateResult;
+              return { _tag: "conflict", dir, paths: made.merge.paths } satisfies GateResult;
             }
-            return (yield* runCommands) as GateResult;
+            return yield* runCommands;
           }).pipe(Effect.ensuring(cleanup));
         });
 

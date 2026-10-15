@@ -501,12 +501,16 @@ it.live("the user's global git config cannot change a checkout", () =>
     // The test has teeth: plain git with that HOME runs the hook and the filter, and converts
     // line endings.
     const plain = remote.checkoutDir("plain");
+    // Without the suite's pinned settings (gitConfig.setup.ts), which outrank that HOME's file.
+    const ambient = Object.fromEntries(
+      Object.entries(globalThis.process.env).filter(([name]) => !name.startsWith("GIT_CONFIG_")),
+    );
     const cloned = NodeChildProcess.spawnSync(
       "git",
       ["clone", "-q", "--branch", "main", NodePath.join(remote.root, "rawphp/softfac.git"), plain],
       {
         encoding: "utf8",
-        env: { ...globalThis.process.env, HOME: home, GIT_CONFIG_NOSYSTEM: "1" },
+        env: { ...ambient, HOME: home, GIT_CONFIG_NOSYSTEM: "1" },
       },
     );
     assert.strictEqual(cloned.status, 0, cloned.stderr);
@@ -853,6 +857,49 @@ it.live("a merge whose parents are not the head and the base is refused", () =>
   ),
 );
 
+it.live("a merge that exits 1 and names no conflicted file is an error and not a conflict", () =>
+  usingFakeGit(
+    "mg-no-paths",
+    `d="$(dirname "$0")"\necho "CALL $*" >> "$d/log"\ncase "$*" in\n*merge-base*) exit 1;;\n*" merge "*) echo "merge failed" >&2; exit 1;;\n*rev-parse*) echo ${SOME_SHA};;\nesac`,
+    (fake) =>
+      Effect.gen(function* () {
+        const error = yield* checkoutWithFake(fake, fake.options()).pipe(Effect.flip);
+        const failed = expectFailed(error);
+        assert.strictEqual(failed.args, `merge --no-ff --no-edit ${BASE}`);
+        assert.strictEqual(failed.status, 1);
+        assert.strictEqual(failed.stderr, "merge failed\n");
+        assert.isFalse(recordedCalls(fake).some((call) => call.includes("--abort")));
+      }),
+  ),
+);
+
+it.live("a merge-base that fails is an error and no merge is tried", () =>
+  usingFakeGit(
+    "mg-base-fails",
+    `d="$(dirname "$0")"\necho "CALL $*" >> "$d/log"\ncase "$*" in\n*merge-base*) echo "fatal: bad object" >&2; exit 128;;\n*rev-parse*) echo ${SOME_SHA};;\nesac`,
+    (fake) =>
+      Effect.gen(function* () {
+        const error = yield* checkoutWithFake(fake, fake.options()).pipe(Effect.flip);
+        const failed = expectFailed(error);
+        assert.strictEqual(failed.args, `merge-base --is-ancestor ${BASE} HEAD`);
+        assert.strictEqual(failed.status, 128);
+        assert.isFalse(recordedCalls(fake).some((call) => call.includes(" merge --")));
+      }),
+  ),
+);
+
+it.live("a merge that prints more than the cap still merges", () =>
+  usingFakeGit(
+    "mg-loud",
+    `case "$*" in\n*merge-base*) exit 1;;\n*HEAD^1*) echo ${SOME_SHA}; echo ${BASE};;\n*rev-parse*) echo ${SOME_SHA};;\n*" merge "*) printf '%0200d\\n' 0; printf '%0200d\\n' 0 >&2;;\nesac`,
+    (fake) =>
+      Effect.gen(function* () {
+        const made = yield* checkoutWithFake(fake, fake.options({ gitTailBytes: 100 }));
+        assert.strictEqual(made.merge._tag, "merged");
+      }),
+  ),
+);
+
 it.live("removing a checkout deletes the directory", () =>
   Effect.gen(function* () {
     const remote = makeRemote("rm-plain");
@@ -1014,6 +1061,7 @@ it.live("the fetch inherits the login variables and no other call and no other v
         GH_TOKEN: "tok-a",
         GITHUB_TOKEN: "tok-b",
         XDG_CONFIG_HOME: "/xdg",
+        GH_CONFIG_DIR: "/gh-config",
         SSH_AUTH_SOCK: "/agent",
         T3_TOKEN: "tok-d",
         GIT_ASKPASS: "askpass",
@@ -1024,7 +1072,12 @@ it.live("the fetch inherits the login variables and no other call and no other v
           const head = call.split("\n")[0]!;
           const lines = call.split("\n");
           const isFetch = head.includes(" fetch");
-          for (const line of ["GH_TOKEN=tok-a", "GITHUB_TOKEN=tok-b", "XDG_CONFIG_HOME=/xdg"]) {
+          for (const line of [
+            "GH_TOKEN=tok-a",
+            "GITHUB_TOKEN=tok-b",
+            "XDG_CONFIG_HOME=/xdg",
+            "GH_CONFIG_DIR=/gh-config",
+          ]) {
             assert.strictEqual(lines.includes(line), isFetch, `${line} in ${head}`);
           }
           for (const name of ["SSH_AUTH_SOCK=", "T3_TOKEN=", "GIT_ASKPASS="]) {
@@ -1372,6 +1425,7 @@ it.live("a failing gate command ends the attempt and the later commands do not r
     assert.strictEqual(out._tag, "fail");
     if (out._tag !== "fail") return;
     assert.strictEqual(out.commands.length, 2);
+    assert.strictEqual(out.gateCount, 2);
     assert.strictEqual(out.failure, out.commands[1]);
     assert.strictEqual(out.failure.exitCode, 4);
     assert.strictEqual(out.failure.output, "boom\n");
@@ -1801,17 +1855,18 @@ it.live("a failed git call carries its stderr and not its stdout", () =>
   ),
 );
 
-it.live("a git call that prints more than the cap fails the checkout", () =>
+it.live("a git call whose output is parsed and passes the cap fails the checkout", () =>
   usingFakeGit("co-too-much", `case "$*" in *rev-parse*) printf '%0200d\\n' 0;; esac`, (fake) =>
     Effect.gen(function* () {
       const error = yield* checkoutWithFake(
         fake,
         fake.options({ remoteBase: "https://example.test", gitTailBytes: 64 }),
       ).pipe(Effect.flip);
-      const failed = expectFailed(error);
-      assert.strictEqual(failed.args, "rev-parse HEAD");
-      assert.strictEqual(failed.status, null);
-      assert.strictEqual(failed.stderr, "it printed more than 64 bytes and was killed");
+      assert.strictEqual(error._tag, "WorkspaceUnexpectedError");
+      assert.strictEqual(
+        error.message,
+        "unexpected output from git: `git rev-parse HEAD` printed more than 64 bytes",
+      );
     }),
   ),
 );
