@@ -1,0 +1,114 @@
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+
+import * as EventSink from "../../orchestration-v2/EventSink.ts";
+import { latestRun, type RunStatus } from "./sessions.ts";
+
+/**
+ * When the factory hears that a session's run changed, so it need not wait for
+ * its next pass. Built on T3's event sink, called in-process.
+ */
+
+export class EventsError extends Schema.TaggedError<EventsError>()("FactoryEventsError", {
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return "Factory events failed.";
+  }
+}
+
+/** The fields of a `run.updated` event the stream reads. */
+export interface RunUpdate {
+  readonly threadId: string;
+  readonly id: string;
+  readonly ordinal: number;
+  readonly status: RunStatus;
+  /** Absent for a run that never started. */
+  readonly startedAt?: unknown;
+}
+
+/**
+ * The thread ids from `updates` each time that thread's latest run changes
+ * status.
+ *
+ * T3 writes `run.updated` for more than status (a checkpoint id, a queue
+ * position), so an update that leaves the latest run and its status as they
+ * were emits nothing. The latest run is chosen as `status` does, because a
+ * queued run cancelled before it started must not hide the completion of the
+ * run that is working.
+ *
+ * State belongs to one run of the returned stream, so each run starts empty.
+ */
+export const latestRunStatusChanges = <E, R>(
+  updates: Stream.Stream<RunUpdate, E, R>,
+): Stream.Stream<string, E, R> =>
+  Stream.suspend(() => {
+    const runsByThread = new Map<string, Map<string, RunUpdate>>();
+    const lastEmitted = new Map<string, string>();
+    return updates.pipe(
+      Stream.filterMap((update) => {
+        let runs = runsByThread.get(update.threadId);
+        if (runs === undefined) {
+          runs = new Map();
+          runsByThread.set(update.threadId, runs);
+        }
+        runs.set(update.id, update);
+        const latest = latestRun(Array.from(runs.values()));
+        if (latest === undefined) return Result.failVoid;
+        // A started run outranks every lower ordinal for good.
+        if (latest.startedAt !== null && latest.startedAt !== undefined) {
+          for (const [id, run] of runs) {
+            if (run.ordinal < latest.ordinal) runs.delete(id);
+          }
+        }
+        const key = `${latest.id}:${latest.status}`;
+        if (lastEmitted.get(update.threadId) === key) return Result.failVoid;
+        lastEmitted.set(update.threadId, key);
+        return Result.succeed(update.threadId);
+      }),
+    );
+  });
+
+export class FactoryEvents extends Context.Service<
+  FactoryEvents,
+  {
+    /**
+     * The id of a thread each time its latest run changes status. Each run of
+     * the stream starts at the live position and replays no history.
+     */
+    readonly runStatusChanges: Stream.Stream<string, EventsError>;
+  }
+>()("t3/factory/t3/events/FactoryEvents") {}
+
+export const make = Effect.gen(function* () {
+  const sink = yield* EventSink.EventSinkV2;
+
+  const runUpdates = Stream.unwrap(
+    sink
+      .latestSequence()
+      .pipe(
+        Effect.map((afterSequence) => sink.stream({ eventType: "run.updated", afterSequence })),
+      ),
+  ).pipe(
+    Stream.filterMap((stored) =>
+      stored.event.type === "run.updated"
+        ? Result.succeed<RunUpdate>({
+            ...stored.event.payload,
+            threadId: (stored.event.threadId ?? stored.event.payload.threadId) as string,
+          })
+        : Result.failVoid,
+    ),
+  );
+
+  return FactoryEvents.of({
+    runStatusChanges: latestRunStatusChanges(runUpdates).pipe(
+      Stream.mapError((cause) => new EventsError({ cause })),
+    ),
+  });
+});
+
+export const layer = Layer.effect(FactoryEvents, make);

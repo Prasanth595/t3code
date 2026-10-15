@@ -13,9 +13,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import * as EffectWorker from "../../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import {
   SIMPLE_PROMPT,
@@ -70,17 +70,13 @@ it.live(
               Stream.runDrain,
             );
 
-          // Thread A finishes before anyone listens: it is history.
-          const a = yield* launch("a");
-          yield* untilTerminal(ThreadId.make(a.threadId));
-
           // The factory wakes on an id and reads the thread, so the stream
-          // is done once an id leads to a completed run.
-          const seen = yield* Ref.make<ReadonlyArray<string>>([]);
+          // is done once an id leads to a finished run. (The replay
+          // transcript serves one turn, so the run may end failed, not
+          // completed; any terminal status is a status change.)
           const arrived = yield* events.runStatusChanges.pipe(
-            Stream.tap((id) => Ref.update(seen, (ids) => [...ids, id])),
             Stream.mapEffect((id) => sessions.status(id).pipe(Effect.map((s) => ({ id, s })))),
-            Stream.filter(({ s }) => s.run === "completed"),
+            Stream.filter(({ s }) => s.run !== null && TERMINAL_RUN_STATUSES.has(s.run)),
             Stream.take(1),
             Stream.mapEffect(({ id }) =>
               Clock.currentTimeMillis.pipe(Effect.map((at) => ({ id, at }))),
@@ -90,17 +86,26 @@ it.live(
             Effect.forkScoped,
           );
 
-          const b = yield* launch("b");
-          yield* untilTerminal(ThreadId.make(b.threadId));
+          const launched = yield* launch("a");
+          yield* untilTerminal(ThreadId.make(launched.threadId));
           const terminalAt = yield* Clock.currentTimeMillis;
 
           const head = yield* Fiber.join(arrived);
           assert.isTrue(head._tag === "Some");
           if (head._tag !== "Some") return;
-          assert.strictEqual(head.value.id, b.threadId);
+          assert.strictEqual(head.value.id, launched.threadId);
           assert.isBelow(head.value.at - terminalAt, 10_000);
-          // Never A, whose run only exists in history.
-          assert.isFalse((yield* Ref.get(seen)).includes(a.threadId));
+
+          // The run is history now. A stream that starts after it replays
+          // nothing: once the run's own follow-up writes (its checkpoint)
+          // have settled, no id arrives.
+          yield* EffectWorker.OrchestrationEffectWorkerV2.use((worker) => worker.drain());
+          const replayed = yield* events.runStatusChanges.pipe(
+            Stream.take(1),
+            Stream.runHead,
+            Effect.timeoutOption("1 second"),
+          );
+          assert.isTrue(replayed._tag === "None");
         }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir })));
       }),
     ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
