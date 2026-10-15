@@ -94,6 +94,8 @@ beforeEach(() => {
   state.settings = {
     ...DEFAULT_SERVER_SETTINGS,
     storageCleanup: {
+      settledArtifactDirectories: [],
+      settledArtifactsAfterDays: null,
       worktreeKeepWhen: "uncommitted-changes",
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,

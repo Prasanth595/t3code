@@ -560,6 +560,7 @@ const make = Effect.gen(function* () {
     serverSettings: ServerSettings,
     now: number,
     entries: StorageCleanupReportEntry[],
+    threadSnapshot: ReturnType<typeof readThreads>,
   ) {
     if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
     const roots: Array<string> = [];
@@ -586,7 +587,7 @@ const make = Effect.gen(function* () {
         Effect.map((thread) => ({ ...thread, workspaceRoot: row.workspaceRoot })),
       ),
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
-    const snapshot = yield* readThreads();
+    const snapshot = yield* threadSnapshot;
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const groups = Map.groupBy(
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
@@ -867,6 +868,162 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const cleanSettledArtifacts = Effect.fn("StorageCleanup.cleanSettledArtifacts")(function* (
+    serverSettings: ServerSettings,
+    now: number,
+    entries: StorageCleanupReportEntry[],
+    threadSnapshot: ReturnType<typeof readThreads>,
+  ) {
+    const days = serverSettings.storageCleanup.settledArtifactsAfterDays;
+    const directories = serverSettings.storageCleanup.settledArtifactDirectories;
+    if (days === null || directories.length === 0) return;
+    const directoryPrefixes = directories.flatMap((directory) => {
+      const parts = directory.split("/");
+      return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"));
+    });
+    const eligible = (thread: OrchestrationV2ThreadShell) =>
+      thread.settledOverride === "settled" &&
+      thread.settledAt !== null &&
+      DateTime.toEpochMillis(thread.settledAt) < now - days * DAY_MS &&
+      storageCleanupThreadIdle(thread, now);
+    const snapshot = yield* threadSnapshot;
+    const roots: string[] = [];
+    for (const directory of managedWorktreesDirectories(
+      serverSettings,
+      config.worktreesDir,
+      path,
+      yield* HostProcess.HomeDirectory,
+    )) {
+      const root = yield* fs.realPath(directory).pipe(Effect.orElseSucceed(() => null));
+      if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
+    }
+    for (const thread of snapshot.threads.filter(eligible)) {
+      const worktreePath = path.resolve(thread.worktreePath!);
+      yield* Effect.gen(function* () {
+        if (!(yield* fs.exists(worktreePath))) return;
+        const root = yield* fs.realPath(worktreePath);
+        const parent = yield* fs.realPath(path.dirname(worktreePath));
+        if (
+          root !== path.join(parent, path.basename(worktreePath)) ||
+          !roots.some((managed) => inside(managed, root))
+        )
+          return;
+        if ((yield* fs.stat(path.join(root, ".git"))).type !== "File") return;
+        const blocked = Effect.fnUntraced(function* () {
+          const current = yield* readThreads();
+          if (yield* containsProjectRoot(root, current.projects)) return true;
+          const sharing = [];
+          for (const other of current.threads) {
+            if (other.worktreePath === null) continue;
+            const otherPath = yield* fs
+              .realPath(other.worktreePath)
+              .pipe(Effect.orElseSucceed(() => path.resolve(other.worktreePath!)));
+            if (otherPath === root || inside(root, otherPath) || inside(otherPath, root))
+              sharing.push(other);
+          }
+          if (sharing.length !== 1 || sharing[0]!.id !== thread.id || !eligible(sharing[0]!))
+            return true;
+          if (hasTerminal(worktreePath) || hasTerminal(root)) return true;
+          const currentSettings = (yield* settingsService.getSettings).storageCleanup;
+          if (
+            currentSettings.settledArtifactsAfterDays !== days ||
+            !Equal.equals(currentSettings.settledArtifactDirectories, directories)
+          )
+            return true;
+          const rows = yield* sql<{ payload_json: string }>`
+            SELECT payload_json FROM orchestration_v2_projection_provider_sessions WHERE status != 'stopped'
+          `;
+          for (const row of rows) {
+            const session = yield* decodeCleanupSession(row.payload_json);
+            const cwd = yield* fs
+              .realPath(session.cwd)
+              .pipe(Effect.orElseSucceed(() => path.resolve(session.cwd)));
+            if (cwd === root || inside(root, cwd)) return true;
+          }
+          return yield* branchChanged(root, thread.branch);
+        });
+        if (yield* blocked()) return;
+        // Walk source directories only, never dependency trees, build output,
+        // symlinks or nested repositories. Bound discovery for very large repos.
+        const pending = [root];
+        const targets: string[] = [];
+        let visited = 0;
+        while (pending.length > 0) {
+          const directory = pending.pop()!;
+          for (const name of yield* fs.readDirectory(directory)) {
+            if (++visited > 100_000) return;
+            if (name === ".git") continue;
+            const target = path.join(directory, name);
+            const canonical = yield* fs.realPath(target).pipe(Effect.orElseSucceed(() => null));
+            if (canonical !== target || !inside(root, target)) continue;
+            if ((yield* fs.stat(target)).type !== "Directory") continue;
+            if (yield* fs.exists(path.join(target, ".git"))) continue;
+            const relative = path.relative(root, target).split(path.sep).join("/");
+            if (
+              directories.some((suffix) => relative === suffix || relative.endsWith(`/${suffix}`))
+            ) {
+              targets.push(target);
+            } else {
+              const inGeneratedTree = relative
+                .split("/")
+                .some((part) => part === "node_modules" || part === ".next");
+              const isConfiguredParent = directoryPrefixes.some(
+                (prefix) => relative === prefix || relative.endsWith(`/${prefix}`),
+              );
+              if (!inGeneratedTree || isConfiguredParent) pending.push(target);
+            }
+          }
+        }
+        for (const target of targets) {
+          // Only wholly ignored directories qualify. Use -x after checking the
+          // directory: -X can collapse a nested pathspec to its ignored parent
+          // and delete siblings (e.g. .next/cache also deleting .next/build).
+          // Git still protects tracked files and nested repositories.
+          const ignored = yield* git.execute({
+            operation: "StorageCleanup.ignoredArtifacts",
+            cwd: root,
+            args: ["check-ignore", "--no-index", "-q", "--", path.relative(root, target)],
+            allowNonZeroExit: true,
+          });
+          if (ignored.exitCode !== 0) continue;
+          if (yield* blocked()) return;
+          if ((yield* fs.realPath(target)) !== target) continue;
+          yield* cleanupGit(
+            root,
+            ["clean", "-fdx", "--", path.relative(root, target)],
+            "git clean",
+          );
+          entries.push({
+            kind: "worktree-artifacts",
+            outcome: "removed",
+            reason: `Cleaned ignored ${path.basename(target)} after ${days} days settled`,
+            path: target,
+            threadId: thread.id,
+            threadTitle: thread.title,
+            bytes: null,
+            files: null,
+          });
+        }
+      }).pipe(
+        (effect) => withWorkspaceLease(worktreePath, effect),
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            entries.push({
+              kind: "worktree-artifacts",
+              outcome: "failed",
+              reason: cleanupFailureReason(error),
+              path: worktreePath,
+              threadId: thread.id,
+              threadTitle: thread.title,
+              bytes: null,
+              files: null,
+            });
+          }),
+        ),
+      );
+    }
+  });
+
   const cleanFiles = Effect.fn("StorageCleanup.cleanFiles")(function* (
     root: string,
     days: number | null,
@@ -911,7 +1068,9 @@ const make = Effect.gen(function* () {
     const serverSettings = yield* settingsService.getSettings;
     const settings = serverSettings.storageCleanup;
     const entries: StorageCleanupReportEntry[] = [];
-    yield* cleanWorktrees(serverSettings, now, entries).pipe(
+    // Both cleanup policies share discovery; destructive actions still recheck live state.
+    const threadSnapshot = yield* Effect.cached(readThreads());
+    yield* cleanWorktrees(serverSettings, now, entries, threadSnapshot).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
           entries.push({
@@ -927,6 +1086,9 @@ const make = Effect.gen(function* () {
           yield* Effect.logWarning("worktree cleanup failed", { error });
         }),
       ),
+    );
+    yield* cleanSettledArtifacts(serverSettings, now, entries, threadSnapshot).pipe(
+      Effect.catch((error) => Effect.logWarning("settled artifact cleanup failed", { error })),
     );
     for (const category of [
       {

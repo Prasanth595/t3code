@@ -67,9 +67,22 @@ describe("serverSettings helpers", () => {
       worktreeOnDelete: false,
       worktreeUnchanged: false,
       worktreeKeepWhen: "uncommitted-changes",
+      settledArtifactsAfterDays: 14,
+      settledArtifactDirectories: ["node_modules", ".next"],
       browserArtifactsAfterDays: null,
       logsAfterDays: 30,
     });
+  });
+  it("replaces and clears the artifact directory list without resetting retention", () => {
+    const custom = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { settledArtifactDirectories: [".turbo/cache"] },
+    });
+    expect(custom.storageCleanup.settledArtifactDirectories).toEqual([".turbo/cache"]);
+    const cleared = applyServerSettingsPatch(custom, {
+      storageCleanup: { settledArtifactDirectories: [] },
+    });
+    expect(cleared.storageCleanup.settledArtifactDirectories).toEqual([]);
+    expect(cleared.storageCleanup.settledArtifactsAfterDays).toBe(14);
   });
   it("replaces a source control host's patched field so a cleared account pin does not survive", () => {
     const pinned = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {

@@ -93,6 +93,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   storageCleanupRun: Schema.optionalKey(Schema.Boolean),
   /** Server streams database size and reclaimable space for the Storage settings notice. */
   databaseStorage: Schema.optionalKey(Schema.Boolean),
+  settledArtifactCleanup: Schema.optionalKey(Schema.Boolean),
   /** Server checks OTLP endpoints for the telemetry export settings. */
   otlpEndpointCheck: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),

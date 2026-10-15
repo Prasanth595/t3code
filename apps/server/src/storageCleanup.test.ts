@@ -407,6 +407,9 @@ const cleanupFixture = (
       setProjectRoots: (roots: string[]) => {
         projectRoots = roots;
       },
+      setArtifacts: (patch: Partial<StorageCleanupSettings>) => {
+        settings = { ...settings, storageCleanup: { ...settings.storageCleanup, ...patch } };
+      },
       setSessionLive: (live: boolean) => {
         sessionLive = live;
       },
@@ -1202,6 +1205,183 @@ describe("storage cleanup reports and local file policies", () => {
       ),
   );
 
+  it.live("cleans old settled dependencies and Next builds without removing the worktree", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, disable, setThreads } = yield* cleanupFixture();
+        disable();
+        setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: worktree,
+            settledOverride: "settled",
+            settledAt: at(-30 * DAY_MS),
+          }),
+        ]);
+        yield* fs.writeFileString(`${worktree}/.gitignore`, "node_modules/\n.next/\n");
+        for (const dir of ["node_modules/pkg", "apps/web/.next/cache"]) {
+          yield* fs.makeDirectory(`${worktree}/${dir}`, { recursive: true });
+          yield* fs.writeFileString(`${worktree}/${dir}/data`, "cache");
+        }
+        yield* service.runNow;
+        expect(yield* fs.exists(`${worktree}/node_modules`)).toBe(false);
+        expect(yield* fs.exists(`${worktree}/apps/web/.next`)).toBe(false);
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
+        expect(yield* fs.exists(`${worktree}/.git`)).toBe(true);
+      }),
+    ),
+  );
+  it.live("uses configured directory suffixes and preserves unignored and tracked files", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, disable, setThreads, setArtifacts, command } =
+          yield* cleanupFixture();
+        disable();
+        setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: worktree,
+            settledOverride: "settled",
+            settledAt: at(-30 * DAY_MS),
+          }),
+        ]);
+        setArtifacts({ settledArtifactDirectories: [".turbo/cache", ".next/cache", "output"] });
+        yield* fs.makeDirectory(`${worktree}/apps/web/.turbo/cache`, { recursive: true });
+        yield* fs.writeFileString(`${worktree}/apps/web/.turbo/cache/tracked`, "source");
+        yield* command(worktree, ["add", "apps/web/.turbo/cache/tracked"]);
+        yield* fs.writeFileString(
+          `${worktree}/.gitignore`,
+          "**/.turbo/cache/\nnode_modules/\n.next/\n",
+        );
+        yield* fs.makeDirectory(`${worktree}/apps/web/.next/cache`, { recursive: true });
+        yield* fs.writeFileString(`${worktree}/apps/web/.next/cache/data`, "cache");
+        yield* fs.writeFileString(`${worktree}/apps/web/.next/build`, "keep build");
+        yield* fs.writeFileString(`${worktree}/apps/web/.turbo/cache/generated`, "cache");
+        yield* fs.makeDirectory(`${worktree}/node_modules`);
+        yield* fs.makeDirectory(`${worktree}/output`);
+        yield* fs.writeFileString(`${worktree}/output/notes`, "source");
+        yield* service.runNow;
+        expect(yield* fs.exists(`${worktree}/apps/web/.turbo/cache/generated`)).toBe(false);
+        expect(yield* fs.readFileString(`${worktree}/apps/web/.turbo/cache/tracked`)).toBe(
+          "source",
+        );
+        expect(yield* fs.exists(`${worktree}/node_modules`)).toBe(true);
+        expect(yield* fs.exists(`${worktree}/apps/web/.next/cache`)).toBe(false);
+        expect(yield* fs.readFileString(`${worktree}/apps/web/.next/build`)).toBe("keep build");
+        expect(yield* fs.readFileString(`${worktree}/output/notes`)).toBe("source");
+      }),
+    ),
+  );
+  it.live("keeps artifacts for recent, active, shared, disabled and session-held worktrees", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, disable, setThreads, setArtifacts, setOpenSessionCwd } =
+          yield* cleanupFixture();
+        disable();
+        const old = shell({
+          branch: "feature",
+          worktreePath: worktree,
+          settledOverride: "settled",
+          settledAt: at(-30 * DAY_MS),
+        });
+        yield* fs.makeDirectory(`${worktree}/node_modules`);
+        yield* fs.writeFileString(`${worktree}/node_modules/data`, "keep");
+        for (const threads of [
+          [
+            {
+              ...old,
+              settledAt: DateTime.makeUnsafe(
+                DateTime.toEpochMillis(yield* DateTime.now) - 13 * DAY_MS,
+              ),
+            },
+          ],
+          [{ ...old, settledOverride: "active" as const }],
+          [{ ...old, activeRunId: RunId.make("running") }],
+          [old, { ...old, id: ThreadId.make("other") }],
+        ]) {
+          setThreads(threads);
+          yield* service.runNow;
+          expect(yield* fs.exists(`${worktree}/node_modules/data`)).toBe(true);
+        }
+        setThreads([old]);
+        setOpenSessionCwd(worktree);
+        yield* service.runNow;
+        expect(yield* fs.exists(`${worktree}/node_modules/data`)).toBe(true);
+        setOpenSessionCwd(null);
+        setArtifacts({ settledArtifactsAfterDays: null });
+        yield* service.runNow;
+        expect(yield* fs.exists(`${worktree}/node_modules/data`)).toBe(true);
+        setArtifacts({ settledArtifactsAfterDays: 14, settledArtifactDirectories: [] });
+        yield* service.runNow;
+        expect(yield* fs.exists(`${worktree}/node_modules/data`)).toBe(true);
+      }),
+    ),
+  );
+  it.live("does not follow symlinks or clean nested repositories", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, disable, setThreads, command } = yield* cleanupFixture();
+        disable();
+        setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: worktree,
+            settledOverride: "settled",
+            settledAt: at(-30 * DAY_MS),
+          }),
+        ]);
+        const outside = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(`${outside}/keep`, "source");
+        yield* fs.symlink(outside, `${worktree}/node_modules`);
+        yield* fs.makeDirectory(`${worktree}/nested/node_modules`, { recursive: true });
+        yield* command(`${worktree}/nested`, ["init"]);
+        yield* fs.writeFileString(`${worktree}/nested/node_modules/keep`, "source");
+        yield* service.runNow;
+        expect(yield* fs.readFileString(`${outside}/keep`)).toBe("source");
+        expect(yield* fs.readFileString(`${worktree}/nested/node_modules/keep`)).toBe("source");
+      }),
+    ),
+  );
+  it.live("rechecks settlement after discovering artifacts", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const discovering = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        let root: string | undefined;
+        const fixture = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: (directory) =>
+              Effect.gen(function* () {
+                if (directory === root) {
+                  yield* Deferred.succeed(discovering, undefined);
+                  yield* Deferred.await(resume);
+                }
+                return yield* fs.readDirectory(directory);
+              }),
+          }),
+        );
+        fixture.disable();
+        root = yield* fs.realPath(fixture.worktree);
+        const old = shell({
+          branch: "feature",
+          worktreePath: fixture.worktree,
+          settledOverride: "settled",
+          settledAt: at(-30 * DAY_MS),
+        });
+        fixture.setThreads([old]);
+        yield* fs.makeDirectory(`${root}/node_modules`);
+        yield* fs.writeFileString(`${root}/node_modules/data`, "keep");
+        const cleanup = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(discovering);
+        fixture.setThreads([{ ...old, settledOverride: "active" }]);
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(cleanup);
+        expect(yield* fs.exists(`${root}/node_modules/data`)).toBe(true);
+      }),
+    ),
+  );
   it.live("measures nested regular files without following symlinks", () =>
     runCleanupTest(
       Effect.gen(function* () {

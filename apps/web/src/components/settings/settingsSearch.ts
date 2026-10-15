@@ -167,7 +167,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Artifacts and logs",
     to: "/settings/storage",
     scope: "environment-defaults",
-    searchTerms: ["disk storage browser screenshots captures rotated logs cleanup retention"],
+    searchTerms: [
+      "disk storage browser screenshots captures rotated logs cleanup retention settled artifacts node_modules .next turbo cache",
+    ],
   },
   {
     id: "project-defaults",

@@ -52,7 +52,7 @@ describe("ServerSettings response streaming", () => {
 });
 
 describe("storage cleanup settings", () => {
-  it("keeps cleanup disabled for existing installations", () => {
+  it("defaults to cleaning settled artifacts after two weeks, with checkout deletion disabled", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
     expect(decodeServerSettings({}).storageCleanup).toEqual({
       worktreeAfterDays: null,
@@ -61,9 +61,26 @@ describe("storage cleanup settings", () => {
       worktreeOnDelete: false,
       worktreeUnchanged: false,
       worktreeKeepWhen: "uncommitted-changes",
+      settledArtifactsAfterDays: 14,
+      settledArtifactDirectories: ["node_modules", ".next"],
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
     });
+  });
+
+  it.each([
+    "..",
+    "/tmp",
+    "foo/../bar",
+    ".git",
+    "foo/.git/objects",
+    "foo/*",
+    "C:\\cache",
+    "foo//bar",
+  ])("rejects unsafe artifact directory %s", (directory) => {
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { settledArtifactDirectories: [directory] } }),
+    ).toThrow();
   });
 
   it("accepts eight-day retention and disabling one rule without resetting others", () => {

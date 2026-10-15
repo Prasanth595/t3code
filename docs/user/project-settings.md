@@ -141,8 +141,17 @@ are, and cleanup covers both the default folder and the custom one.
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected
-environments. Policies are off by default and run on the server at startup, when changed, and
-hourly. Offline machines keep their existing policies.
+environments. Cleanup runs on the server at startup, when changed, and hourly. Offline machines keep their existing policies.
+
+By default, threads settled for more than 14 days have ignored `node_modules` and `.next`
+directories cleaned from their managed worktrees, including nested packages. Change **Clean
+settled worktree artifacts** to adjust the period or disable it. **Directories to clean** accepts
+comma-separated relative paths such as `.turbo/cache`, matched at any depth; it does not accept
+globs. An empty list disables artifact cleanup. Threads, branches, and source files remain.
+Reinstall dependencies and rebuild generated output when returning to a cleaned thread.
+Shared worktrees, active provider sessions, pending work, and open T3 terminals prevent cleanup.
+Artifact retention is machine-wide and separate from the worktree deletion rules below, which
+are off by default.
 
 Select a project to set **Automatic worktree cleanup** to **Inherit**, **Off**, or **Custom**.
 Inherit follows each machine's rules; Off keeps that project's worktrees until you remove them
