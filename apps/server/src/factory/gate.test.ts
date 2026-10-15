@@ -1,5 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off - Tests make real git repositories, lock files and fake `git` scripts in temp dirs, and probe process groups with kill(pid, 0).
+// @effect-diagnostics nodeBuiltinImport:off - Tests make real git repositories, lock files and fake `git` scripts in temp dirs, and probe process groups with kill(pid, 0).
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -24,6 +25,7 @@ import {
   makeWorkspace,
   sanitize,
   type CommandResult,
+  type GateError,
   type GateInput,
   type GateOptions,
 } from "./gate.ts";
@@ -169,8 +171,11 @@ const remoteOptions = (remote: Remote, extra: Partial<GateOptions> = {}): GateOp
 
 const read = (file: string) => NodeFS.readFileSync(file, "utf8");
 
-const tagOf = (error: unknown): string =>
-  typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "";
+const expectFailed = (error: GateError): WorkspaceFailedError => {
+  if (error._tag !== "WorkspaceFailedError")
+    throw new Error(`expected a failed git call, got ${error._tag}`);
+  return error;
+};
 
 const withEnv = <A, E, R>(
   vars: Record<string, string>,
@@ -798,7 +803,7 @@ it.live("a base the remote does not have fails the fetch", () =>
       remote.checkoutDir("no-base"),
     ).pipe(Effect.flip);
     assert.strictEqual(error._tag, "WorkspaceFailedError");
-    assert.match((error as WorkspaceFailedError).args, /^fetch /);
+    assert.match(expectFailed(error).args, /^fetch /);
   }),
 );
 
@@ -1118,13 +1123,13 @@ it.live("a git that is not on PATH fails the call and leaves no directory", () =
 it.live("a checkout that runs past its limit is killed with everything it started", () =>
   usingFakeGit("co-hang", "sleep 3032 &\nsleep 3032", (fake) =>
     Effect.gen(function* () {
-      const started = Date.now();
+      const started = yield* Clock.currentTimeMillis;
       const error = yield* checkoutWithFake(fake, fake.options({ checkoutTimeoutMs: 300 })).pipe(
         Effect.flip,
       );
-      assert.isBelow(Date.now() - started, 10_000);
+      assert.isBelow((yield* Clock.currentTimeMillis) - started, 10_000);
       assert.strictEqual(error._tag, "WorkspaceFailedError");
-      const failed = error as WorkspaceFailedError;
+      const failed = expectFailed(error);
       assert.strictEqual(failed.status, null);
       assert.include(failed.stderr, "did not finish within 300ms");
       // The script's own process group, not a search by name: another run of this suite on the

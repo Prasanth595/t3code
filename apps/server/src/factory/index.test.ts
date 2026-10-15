@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 
 import { FactoryRuntime } from "./index.ts";
 import * as Paths from "./t3/paths.ts";
@@ -25,8 +26,9 @@ repos:
 /** Builds FactoryRuntime over a temp base dir whose factory dir holds `config` (or no file) and returns the log lines. */
 const logsFor = (
   config: string | undefined,
-  setup: (factoryDir: string) => Effect.Effect<void, unknown, FileSystem.FileSystem> = () =>
-    Effect.void,
+  setup: (
+    factoryDir: string,
+  ) => Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> = () => Effect.void,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
