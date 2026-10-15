@@ -14,7 +14,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 **Machine map** (all lines need `machineMap`, which a join to a map turns on)
 
 - **Portal:** one portal at `t3.yarden-zamir.com` (Cloudflare Worker) maps every T3 machine and sets what each machine can do on the others. Requirements: `apps/machine-map/SPEC.md`.
-- **Portal views:** Map, Table, Health, Settings, Queue, Tasks, History, Inbox and Clients. Every portal action is also an agent tool: `machines_*` and `machine_tool_call`.
+- **Portal views:** Map, Table, Health, Settings, Queue, Tasks, History, Inbox and Clients. Agent tools (`machines_*` and `machine_tool_call`) cover machine operations; client approvals, invites and emergency resume stay owner-only.
 - **Join and install:** "Add machine" shows one command per system that installs the fork and joins with a one-time code. The portal makes the tunnel of the machine.
 - **Join feedback:** the open join dialog shows when a machine uses the code, and if it connected.
 - **Emergency pause:** a big red button stops all agents and sets all access to none. While paused, each machine locks T3 Code for every client except its own desktop app.
