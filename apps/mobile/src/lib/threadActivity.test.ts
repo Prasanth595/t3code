@@ -2242,6 +2242,24 @@ describe("pending user input answers", () => {
     ).toEqual({ customAnswer: "" });
   });
 
+  it.each([
+    ["single-select", singleSelectQuestion, ["Go"], '"Go"'],
+    ["multi-select", multiSelectQuestion, ["Orders", "Listings"], '["Orders","Listings"]'],
+  ])("sends a %s answer to a question with the id __proto__", (_kind, question, selected, json) => {
+    const answers = buildPendingUserInputAnswers(
+      [
+        { ...question, id: "__proto__" },
+        { ...singleSelectQuestion, id: "name" },
+      ],
+      {
+        ["__proto__"]: { selectedOptionValues: selected },
+        name: { selectedOptionValues: ["Go"] },
+      },
+    );
+
+    expect(JSON.stringify(answers)).toBe(`{"__proto__":${json},"name":"Go"}`);
+  });
+
   it("builds array answers for multi-select questions", () => {
     expect(
       buildPendingUserInputAnswers([singleSelectQuestion, multiSelectQuestion], {

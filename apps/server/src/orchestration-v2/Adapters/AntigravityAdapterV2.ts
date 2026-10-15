@@ -136,9 +136,10 @@ export function makeAntigravityAcpAdapterFlavor(
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
+          // `input.clientCapabilities` matches the handlers AcpAdapterV2
+          // registers for this flavor: client file system and form elicitation.
           options.makeRuntime({
             ...input,
-            clientFileSystem: true,
             additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )

@@ -30,7 +30,6 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "authMethodId"
   | "authenticateEagerly"
   | "cancelBehavior"
-  | "clientCapabilities"
   | "onStderr"
   | "resumeMethod"
   | "transformSessionUpdate"
@@ -41,13 +40,14 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /**
-   * Advertise `fs.readTextFile` and `fs.writeTextFile`. The agent then routes
-   * workspace reads and writes through T3, which turns each edit into a
-   * `session/request_permission` with the file content, instead of writing
-   * through its own tools. Chat sessions turn this on. Setup, probe, and text
-   * generation helpers leave it off so they never touch a workspace.
+   * What T3 serves back to the agent. Chat sessions pass the capabilities of
+   * the ACP adapter that registers the handlers: client file system, which
+   * turns each agent edit into a `session/request_permission` with the file
+   * content, and form elicitation. Setup, probe, and text generation helpers
+   * omit it, so they advertise nothing and never touch a workspace or ask the
+   * user a question.
    */
-  readonly clientFileSystem?: boolean;
+  readonly clientCapabilities?: AcpSessionRuntime.AcpSessionRuntimeOptions["clientCapabilities"];
   /** ACP `authenticate` method id. Defaults to the personal Google account flow. */
   readonly authMethod?: AntigravityAuthMethod;
 }
@@ -67,13 +67,6 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       authenticateEagerly: true,
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
-      clientCapabilities: {
-        fs: {
-          readTextFile: input.clientFileSystem === true,
-          writeTextFile: input.clientFileSystem === true,
-        },
-        terminal: false,
-      },
       transformStdout: makeAntigravityStdoutTransform(
         input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
       ),
