@@ -1600,6 +1600,25 @@ it.effect("markPrDraft on a PR that is closed or merged is done whatever gh says
   }),
 );
 
+it.effect("markPrDraft reads the state after any failure, not only a non-zero exit", () =>
+  Effect.gen(function* () {
+    // A timed out, rate limited or oversized undo on a PR that is closed by now is done too.
+    for (const first of [
+      timedOut(),
+      fail(1, "gh: API rate limit exceeded (HTTP 403)"),
+      truncated(),
+    ]) {
+      const t = setup(first, reply(prView("CLOSED", false)));
+      yield* t.ok(t.github.markPrDraft(9));
+      assert.deepStrictEqual(t.calls(), [undoCall, prViewCall("9")]);
+    }
+    // On one that is still open the original error comes back, whatever kind it was.
+    const open = setup(timedOut(), reply(prView("OPEN", false)));
+    const error = yield* open.err(open.github.markPrDraft(9));
+    assert.strictEqual(error._tag, "GitHubTimedOut");
+  }),
+);
+
 it.effect("markPrDraft that fails on an open PR or cannot read it is the original error", () =>
   Effect.gen(function* () {
     // Open: the failure is real.
