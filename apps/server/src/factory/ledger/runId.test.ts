@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
+import { InvalidRunIdError } from "./errors.ts";
 import {
   issueRunPart,
   newRunId,
@@ -23,8 +24,8 @@ const tempDir = useTempDirs();
 const runId = (repo: string, issue: string, attempt: number): RunId => ({ repo, issue, attempt });
 
 const expectInvalid = (run: () => unknown, input: string) => {
-  const error = catchLedgerError(run);
-  expect(error.kind).toBe("InvalidRunId");
+  const error = catchLedgerError(run, InvalidRunIdError);
+  expect(error._tag).toBe("InvalidRunIdError");
   expect(error.input).toBe(input);
 };
 
@@ -81,9 +82,9 @@ describe("run id", () => {
   it("run id new rejects a bad issue or attempt", () => {
     expectInvalid(() => newRunId("a/b", "08", 1), "08");
     expectInvalid(() => newRunId("a/b", "18446744073709551616", 1), "18446744073709551616");
-    expect(catchLedgerError(() => newRunId("a/b", "1", 4294967296)).kind).toBe("InvalidRunId");
-    expect(catchLedgerError(() => newRunId("a/b", "1", -1)).kind).toBe("InvalidRunId");
-    expect(catchLedgerError(() => newRunId("a/b", "1", 1.5)).kind).toBe("InvalidRunId");
+    expect(catchLedgerError(() => newRunId("a/b", "1", 4294967296))._tag).toBe("InvalidRunIdError");
+    expect(catchLedgerError(() => newRunId("a/b", "1", -1))._tag).toBe("InvalidRunIdError");
+    expect(catchLedgerError(() => newRunId("a/b", "1", 1.5))._tag).toBe("InvalidRunIdError");
     expect(newRunId("a/b", "eng-42", 0)).toEqual(runId("a/b", "ENG-42", 0));
   });
 
@@ -94,7 +95,9 @@ describe("run id", () => {
     expectInvalid(() => validateRunId(runId("Rawphp/softfac", "1", 1)), "Rawphp/softfac");
     // The issue and attempt end up in a file name too.
     expectInvalid(() => validateRunId(runId("a/b", "../x", 1)), "../x");
-    expect(catchLedgerError(() => validateRunId(runId("a/b", "1", -1))).kind).toBe("InvalidRunId");
+    expect(catchLedgerError(() => validateRunId(runId("a/b", "1", -1)))._tag).toBe(
+      "InvalidRunIdError",
+    );
   });
 
   it("run id round trips an owner with an interior underscore", () => {

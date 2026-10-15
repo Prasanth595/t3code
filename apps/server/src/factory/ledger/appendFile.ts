@@ -2,7 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { LedgerError, errnoCode, ioError } from "./errors.ts";
+import { LedgerNotFoundError, LedgerIoError, errnoCode } from "./errors.ts";
 import { NEWLINE } from "./limits.ts";
 
 /**
@@ -58,7 +58,7 @@ export const syncAt = (sync: SyncDir, dir: string): void => {
   try {
     sync(dir);
   } catch (error) {
-    throw ioError(dir, error);
+    throw new LedgerIoError({ path: dir, cause: error });
   }
 };
 
@@ -97,14 +97,14 @@ export const openForAppend = (path: string, io: AppendIo = nodeIo): AppendFile =
       NodeFS.constants.O_RDWR | NodeFS.constants.O_APPEND | NodeFS.constants.O_NOFOLLOW,
     );
   } catch (error) {
-    if (errnoCode(error) === "ENOENT") throw new LedgerError({ kind: "NotFound", path });
-    throw ioError(path, error);
+    if (errnoCode(error) === "ENOENT") throw new LedgerNotFoundError({ path });
+    throw new LedgerIoError({ path, cause: error });
   }
   try {
     endCutOffLine(fd, io);
   } catch (error) {
     NodeFS.closeSync(fd);
-    throw ioError(path, error);
+    throw new LedgerIoError({ path, cause: error });
   }
   return new AppendFile(path, fd, io);
 };
@@ -136,7 +136,8 @@ export class AppendFile {
   }
 
   private openFd(): number {
-    if (this.fd === null) throw ioError(this.path, new Error("the file is closed"));
+    if (this.fd === null)
+      throw new LedgerIoError({ path: this.path, cause: new Error("the file is closed") });
     return this.fd;
   }
 
@@ -150,7 +151,7 @@ export class AppendFile {
     try {
       ended = endCutOffLine(fd, this.io);
     } catch (error) {
-      throw ioError(this.path, error);
+      throw new LedgerIoError({ path: this.path, cause: error });
     }
     // That newline is the break an earlier failed write owed, so it is not written twice.
     if (ended) this.dirty = false;
@@ -176,7 +177,7 @@ export class AppendFile {
       this.seen += whole.length;
       return whole;
     } catch (error) {
-      throw ioError(this.path, error);
+      throw new LedgerIoError({ path: this.path, cause: error });
     }
   }
 
@@ -191,7 +192,7 @@ export class AppendFile {
     try {
       breakFirst = this.dirty || !endsInNewline(fd);
     } catch (error) {
-      throw ioError(this.path, error);
+      throw new LedgerIoError({ path: this.path, cause: error });
     }
     const bytes = Buffer.from(breakFirst ? `\n${line}` : line, "utf8");
     try {
@@ -203,13 +204,13 @@ export class AppendFile {
       }
     } catch (error) {
       this.dirty = true;
-      throw ioError(this.path, error);
+      throw new LedgerIoError({ path: this.path, cause: error });
     }
     try {
       this.io.fsyncSync(fd);
     } catch (error) {
       this.dirty = true;
-      throw ioError(this.path, error);
+      throw new LedgerIoError({ path: this.path, cause: error });
     }
     this.dirty = false;
   }

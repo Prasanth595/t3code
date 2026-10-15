@@ -7,6 +7,14 @@ import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import {
+  InvalidRunIdError,
+  LedgerAlreadyExistsError,
+  LedgerAlreadyFinishedError,
+  LedgerNotFoundError,
+  LedgerUnknownEventError,
+  LedgerIoError,
+} from "./errors.ts";
 import { RUN_EVENT_FIELDS, makeCause, type Cause, type RunEvent } from "./events.ts";
 import { Ledger, type LedgerOptions } from "./ledger.ts";
 import type { AppendIo } from "./appendFile.ts";
@@ -452,10 +460,11 @@ describe("create", () => {
 
   it("create rejects an invalid run id and makes nothing", () => {
     const dataDir = tempDir();
-    const error = catchLedgerError(() =>
-      create(dataDir, ticking(T0, 1), { ...softfacRun, repo: "../x" }),
+    const error = catchLedgerError(
+      () => create(dataDir, ticking(T0, 1), { ...softfacRun, repo: "../x" }),
+      InvalidRunIdError,
     );
-    expect(error.kind).toBe("InvalidRunId");
+    expect(error._tag).toBe("InvalidRunIdError");
     expect(error.input).toBe("../x");
     expect(NodeFS.existsSync(NodePath.join(dataDir, "runs"))).toBe(false);
   });
@@ -467,8 +476,8 @@ describe("create", () => {
     ledger.close();
     const before = NodeFS.readFileSync(runFileFor(dataDir));
 
-    const error = catchLedgerError(() => create(dataDir));
-    expect(error.kind).toBe("AlreadyExists");
+    const error = catchLedgerError(() => create(dataDir), LedgerAlreadyExistsError);
+    expect(error._tag).toBe("LedgerAlreadyExistsError");
     expect(error.path).toBe(runFileFor(dataDir));
     expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(before);
   });
@@ -543,7 +552,10 @@ describe("create", () => {
       synced.push(dir);
     };
     expect(
-      catchLedgerError(() => create(dataDir, ticking(T0, 1), softfacRun, { syncDir })).path,
+      catchLedgerError(
+        () => create(dataDir, ticking(T0, 1), softfacRun, { syncDir }),
+        LedgerIoError,
+      ).path,
     ).toBe(dataDir);
     failing = false;
     synced.length = 0;
@@ -553,14 +565,16 @@ describe("create", () => {
 
   it("create removes the file it just made if the directory sync fails", () => {
     const dataDir = tempDir();
-    const error = catchLedgerError(() =>
-      create(dataDir, ticking(T0, 1000), softfacRun, {
-        syncDir: () => {
-          throw new Error("injected disk error");
-        },
-      }),
+    const error = catchLedgerError(
+      () =>
+        create(dataDir, ticking(T0, 1000), softfacRun, {
+          syncDir: () => {
+            throw new Error("injected disk error");
+          },
+        }),
+      LedgerIoError,
     );
-    expect(error.kind).toBe("Io");
+    expect(error._tag).toBe("LedgerIoError");
     expect(error.path).toBe(NodePath.join(dataDir, "runs"));
     expect(NodeFS.existsSync(runFileFor(dataDir))).toBe(false);
 
@@ -580,7 +594,7 @@ describe("create", () => {
         },
       }),
     );
-    expect(error.kind).toBe("AlreadyExists");
+    expect(error._tag).toBe("LedgerAlreadyExistsError");
     expect(readText(runFileFor(dataDir))).toBe(RED);
   });
 
@@ -589,7 +603,7 @@ describe("create", () => {
     const target = NodePath.join(dataDir, "elsewhere.jsonl");
     NodeFS.mkdirSync(NodePath.join(dataDir, "runs"));
     NodeFS.symlinkSync(target, runFileFor(dataDir));
-    expect(catchLedgerError(() => create(dataDir)).kind).toBe("AlreadyExists");
+    expect(catchLedgerError(() => create(dataDir))._tag).toBe("LedgerAlreadyExistsError");
     expect(NodeFS.existsSync(target)).toBe(false);
   });
 });
@@ -683,10 +697,12 @@ describe("append", () => {
     ledger.append(step("red"), testCause());
     const before = readText(ledger.path);
     for (const name of ["merged", "toString", "__proto__", "constructor"]) {
-      const error = catchLedgerError(() =>
-        ledger.append({ event: name, data: { sha: "abc" } } as unknown as RunEvent, testCause()),
+      const error = catchLedgerError(
+        () =>
+          ledger.append({ event: name, data: { sha: "abc" } } as unknown as RunEvent, testCause()),
+        LedgerUnknownEventError,
       );
-      expect(error.kind).toBe("UnknownEvent");
+      expect(error._tag).toBe("LedgerUnknownEventError");
       expect(error.event).toBe(name);
       expect(error.message).toContain(name);
     }
@@ -797,8 +813,8 @@ describe("append", () => {
 describe("open", () => {
   it("open a missing run is not found", () => {
     const dataDir = tempDir();
-    const error = catchLedgerError(() => reopen(dataDir));
-    expect(error.kind).toBe("NotFound");
+    const error = catchLedgerError(() => reopen(dataDir), LedgerNotFoundError);
+    expect(error._tag).toBe("LedgerNotFoundError");
     expect(error.path).toBe(runFileFor(dataDir));
   });
 
@@ -858,8 +874,8 @@ describe("open", () => {
     const before = NodeFS.readFileSync(runFileFor(dataDir));
 
     const second = reopen(dataDir);
-    expect(catchLedgerError(() => second.append(stuck(), testCause())).kind).toBe(
-      "AlreadyFinished",
+    expect(catchLedgerError(() => second.append(stuck(), testCause()))._tag).toBe(
+      "LedgerAlreadyFinishedError",
     );
     expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(before);
   });
@@ -870,11 +886,11 @@ describe("open", () => {
     writeRun(dataDir, `${RED}${newerFinished}`);
     const before = NodeFS.readFileSync(runFileFor(dataDir));
     const ledger = reopen(dataDir);
-    expect(catchLedgerError(() => ledger.append(step("green"), testCause())).kind).toBe(
-      "AlreadyFinished",
+    expect(catchLedgerError(() => ledger.append(step("green"), testCause()))._tag).toBe(
+      "LedgerAlreadyFinishedError",
     );
-    expect(catchLedgerError(() => ledger.finish("stuck", null, null, testCause())).kind).toBe(
-      "AlreadyFinished",
+    expect(catchLedgerError(() => ledger.finish("stuck", null, null, testCause()))._tag).toBe(
+      "LedgerAlreadyFinishedError",
     );
     expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(before);
   });
@@ -928,11 +944,11 @@ describe("open", () => {
     NodeFS.mkdirSync(NodePath.join(dataDir, "runs"));
     NodeFS.symlinkSync(target, runFileFor(dataDir));
 
-    const readError = catchLedgerError(() => readSoftfacRun(dataDir));
-    expect(readError.kind).toBe("NotFound");
+    const readError = catchLedgerError(() => readSoftfacRun(dataDir), LedgerNotFoundError);
+    expect(readError._tag).toBe("LedgerNotFoundError");
     expect(readError.path).toBe(runFileFor(dataDir));
-    const openError = catchLedgerError(() => reopen(dataDir));
-    expect(openError.kind).toBe("NotFound");
+    const openError = catchLedgerError(() => reopen(dataDir), LedgerNotFoundError);
+    expect(openError._tag).toBe("LedgerNotFoundError");
     expect(openError.path).toBe(runFileFor(dataDir));
     expect(readText(target)).toBe(RED);
     // Nothing was created or truncated through the link.
@@ -949,28 +965,31 @@ describe("open", () => {
         const dataDir = tempDir();
         const error = catchLedgerError(() => reopen(dataDir));
         const caught = yield* Effect.fail(error).pipe(
-          Effect.catchTags({ LedgerError: (failure) => Effect.succeed(failure.kind) }),
+          Effect.catchTags({
+            LedgerNotFoundError: (failure) => Effect.succeed(failure.path),
+            LedgerIoError: () => Effect.succeed("io"),
+          }),
         );
-        expect(caught).toBe("NotFound");
+        expect(caught).toBe(runFileFor(dataDir));
         expect(error.message).toBe(`no run file at ${runFileFor(dataDir)}`);
       }),
   );
 
   it("open a missing run is not found and creates no file", () => {
     const dataDir = tempDir();
-    expect(catchLedgerError(() => reopen(dataDir)).kind).toBe("NotFound");
+    expect(catchLedgerError(() => reopen(dataDir))._tag).toBe("LedgerNotFoundError");
     expect(NodeFS.existsSync(runFileFor(dataDir))).toBe(false);
     // The same with a runs directory that exists but holds no such run.
     NodeFS.mkdirSync(NodePath.join(dataDir, "runs"));
-    expect(catchLedgerError(() => reopen(dataDir)).kind).toBe("NotFound");
+    expect(catchLedgerError(() => reopen(dataDir))._tag).toBe("LedgerNotFoundError");
     expect(NodeFS.existsSync(runFileFor(dataDir))).toBe(false);
   });
 
   it("read and open refuse a directory named like a run", () => {
     const dataDir = tempDir();
     NodeFS.mkdirSync(runFileFor(dataDir), { recursive: true });
-    expect(catchLedgerError(() => readSoftfacRun(dataDir)).kind).toBe("NotFound");
-    expect(catchLedgerError(() => reopen(dataDir)).kind).toBe("NotFound");
+    expect(catchLedgerError(() => readSoftfacRun(dataDir))._tag).toBe("LedgerNotFoundError");
+    expect(catchLedgerError(() => reopen(dataDir))._tag).toBe("LedgerNotFoundError");
   });
 
   it("open counts a whole finished line that a crash left without its newline", () => {
@@ -978,8 +997,8 @@ describe("open", () => {
     writeRun(dataDir, `${RED}${finishedSample.line.trimEnd()}`);
     const ledger = reopen(dataDir);
     const before = NodeFS.readFileSync(runFileFor(dataDir));
-    expect(catchLedgerError(() => ledger.append(step("green"), testCause())).kind).toBe(
-      "AlreadyFinished",
+    expect(catchLedgerError(() => ledger.append(step("green"), testCause()))._tag).toBe(
+      "LedgerAlreadyFinishedError",
     );
     expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(before);
   });
@@ -1001,11 +1020,11 @@ describe("open", () => {
     const second = reopen(dataDir);
     first.finish("stuck", null, null, testCause());
     const before = NodeFS.readFileSync(runFileFor(dataDir));
-    expect(catchLedgerError(() => second.append(step("green"), testCause())).kind).toBe(
-      "AlreadyFinished",
+    expect(catchLedgerError(() => second.append(step("green"), testCause()))._tag).toBe(
+      "LedgerAlreadyFinishedError",
     );
-    expect(catchLedgerError(() => second.finish("stuck", null, null, testCause())).kind).toBe(
-      "AlreadyFinished",
+    expect(catchLedgerError(() => second.finish("stuck", null, null, testCause()))._tag).toBe(
+      "LedgerAlreadyFinishedError",
     );
     expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(before);
   });
@@ -1062,15 +1081,18 @@ describe("read", () => {
 
   it("read a missing run is not found", () => {
     const dataDir = tempDir();
-    const error = catchLedgerError(() => readSoftfacRun(dataDir));
-    expect(error.kind).toBe("NotFound");
+    const error = catchLedgerError(() => readSoftfacRun(dataDir), LedgerNotFoundError);
+    expect(error._tag).toBe("LedgerNotFoundError");
     expect(error.path).toBe(runFileFor(dataDir));
   });
 
   it("read refuses an invalid run id", () => {
     const dataDir = tempDir();
-    const error = catchLedgerError(() => readRun(dataDir, { ...softfacRun, repo: "../x" }));
-    expect(error.kind).toBe("InvalidRunId");
+    const error = catchLedgerError(
+      () => readRun(dataDir, { ...softfacRun, repo: "../x" }),
+      InvalidRunIdError,
+    );
+    expect(error._tag).toBe("InvalidRunIdError");
     expect(error.input).toBe("../x");
   });
 
@@ -1511,8 +1533,8 @@ describe("finish", () => {
       () => ledger.append(stuck(), testCause()),
       () => ledger.finish("stuck", null, null, testCause()),
     ]) {
-      const error = catchLedgerError(attempt);
-      expect(error.kind).toBe("AlreadyFinished");
+      const error = catchLedgerError(attempt, LedgerAlreadyFinishedError);
+      expect(error._tag).toBe("LedgerAlreadyFinishedError");
       expect(error.path).toBe(runFileFor(dataDir));
     }
     expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(before);
@@ -1609,8 +1631,8 @@ describe("failed writes", () => {
     ledger.append(step("red"), testCause());
 
     faults.failWriteAfter = 10;
-    const error = catchLedgerError(() => ledger.append(step("green"), testCause()));
-    expect(error.kind).toBe("Io");
+    const error = catchLedgerError(() => ledger.append(step("green"), testCause()), LedgerIoError);
+    expect(error._tag).toBe("LedgerIoError");
     expect(error.path).toBe(runFileFor(dataDir));
     expect(readText(runFileFor(dataDir))).toBe(`${RED}{"ts":"202`);
 
@@ -1632,22 +1654,39 @@ describe("failed writes", () => {
     expect(record.skipped).toBe(1);
   });
 
+  it("an Io error's message is the path and the file system's own words, as softfac prints it", () => {
+    const dataDir = tempDir();
+    const { io, faults } = faultyIo();
+    const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
+    faults.failSync = true;
+    const error = catchLedgerError(() => ledger.append(step("red"), testCause()), LedgerIoError);
+    expect(error.message).toBe(`${runFileFor(dataDir)}: injected disk error`);
+    expect(error.cause).toEqual(new Error("injected disk error"));
+  });
+
   it("an append whose repair of a cut-off line fails writes nothing, and the next one repairs it", () => {
     const dataDir = tempDir();
     const { io, faults } = faultyIo();
     const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
     ledger.append(step("red"), testCause());
     faults.failWriteAfter = 10;
-    expect(catchLedgerError(() => ledger.append(step("green"), testCause())).kind).toBe("Io");
+    expect(catchLedgerError(() => ledger.append(step("green"), testCause()))._tag).toBe(
+      "LedgerIoError",
+    );
 
     faults.failWriteAfter = 0;
-    const error = catchLedgerError(() => ledger.append(step("refactor"), testCause()));
-    expect(error.kind).toBe("Io");
+    const error = catchLedgerError(
+      () => ledger.append(step("refactor"), testCause()),
+      LedgerIoError,
+    );
+    expect(error._tag).toBe("LedgerIoError");
     expect(error.path).toBe(runFileFor(dataDir));
     expect(readText(runFileFor(dataDir))).toBe(`${RED}{"ts":"202`);
 
     faults.failSync = true;
-    expect(catchLedgerError(() => ledger.append(step("ship"), testCause())).kind).toBe("Io");
+    expect(catchLedgerError(() => ledger.append(step("ship"), testCause()))._tag).toBe(
+      "LedgerIoError",
+    );
     // The newline went in before its sync failed, and the event was not written.
     expect(readText(runFileFor(dataDir))).toBe(`${RED}{"ts":"202\n`);
 
@@ -1663,14 +1702,17 @@ describe("failed writes", () => {
     writeRun(dataDir, `${RED}${FRAGMENT}`);
     const { io, faults } = faultyIo();
     faults.failWriteAfter = 0;
-    const thrown = catchLedgerError(() => reopen(dataDir, ticking(T0, 1000), softfacRun, { io }));
-    expect(thrown.kind).toBe("Io");
+    const thrown = catchLedgerError(
+      () => reopen(dataDir, ticking(T0, 1000), softfacRun, { io }),
+      LedgerIoError,
+    );
+    expect(thrown._tag).toBe("LedgerIoError");
     expect(thrown.path).toBe(runFileFor(dataDir));
     const writesNothing: AppendIo = { writeSync: () => 0, fsyncSync: () => {} };
     const refused = catchLedgerError(() =>
       reopen(dataDir, ticking(T0, 1000), softfacRun, { io: writesNothing }),
     );
-    expect(refused.kind).toBe("Io");
+    expect(refused._tag).toBe("LedgerIoError");
     expect(readText(runFileFor(dataDir))).toBe(`${RED}${FRAGMENT}`);
 
     reopen(dataDir);
@@ -1683,7 +1725,9 @@ describe("failed writes", () => {
     const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
     ledger.append(step("red"), testCause());
     faults.failWriteAfter = 0;
-    expect(catchLedgerError(() => ledger.append(step("green"), testCause())).kind).toBe("Io");
+    expect(catchLedgerError(() => ledger.append(step("green"), testCause()))._tag).toBe(
+      "LedgerIoError",
+    );
     ledger.append(step("refactor"), testCause());
     expect(readText(runFileFor(dataDir))).toBe(`${RED}\n${REFACTOR}`);
   });
@@ -1693,7 +1737,9 @@ describe("failed writes", () => {
     const { io, faults } = faultyIo();
     const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
     faults.failSync = true;
-    expect(catchLedgerError(() => ledger.append(step("red"), testCause())).kind).toBe("Io");
+    expect(catchLedgerError(() => ledger.append(step("red"), testCause()))._tag).toBe(
+      "LedgerIoError",
+    );
     ledger.append(step("green"), testCause());
     expect(readText(runFileFor(dataDir))).toBe(`${RED}\n${GREEN}`);
     // The repair line break is not a damaged line.
@@ -1708,7 +1754,9 @@ describe("failed writes", () => {
     const { io, faults } = faultyIo();
     const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
     faults.failWriteAfter = 3;
-    expect(catchLedgerError(() => ledger.append(step("red"), testCause())).kind).toBe("Io");
+    expect(catchLedgerError(() => ledger.append(step("red"), testCause()))._tag).toBe(
+      "LedgerIoError",
+    );
     ledger.append(step("green"), testCause());
     ledger.append(step("refactor"), testCause());
     expect(readText(runFileFor(dataDir))).toBe(`{"t\n${GREEN}${REFACTOR}`);
@@ -1720,7 +1768,9 @@ describe("failed writes", () => {
     const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
     ledger.append(step("red"), testCause());
     faults.failWriteAfter = 5;
-    expect(catchLedgerError(() => ledger.finish("stuck", null, null, testCause())).kind).toBe("Io");
+    expect(catchLedgerError(() => ledger.finish("stuck", null, null, testCause()))._tag).toBe(
+      "LedgerIoError",
+    );
     ledger.finish("stuck", null, null, testCause());
 
     const record = readSoftfacRun(dataDir);
@@ -1735,14 +1785,16 @@ describe("failed writes", () => {
     const { io, faults } = faultyIo();
     const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
     faults.failSync = true;
-    expect(catchLedgerError(() => ledger.finish("stuck", null, null, testCause())).kind).toBe("Io");
+    expect(catchLedgerError(() => ledger.finish("stuck", null, null, testCause()))._tag).toBe(
+      "LedgerIoError",
+    );
     const afterFailure = NodeFS.readFileSync(runFileFor(dataDir));
 
-    expect(catchLedgerError(() => ledger.finish("stuck", null, null, testCause())).kind).toBe(
-      "AlreadyFinished",
+    expect(catchLedgerError(() => ledger.finish("stuck", null, null, testCause()))._tag).toBe(
+      "LedgerAlreadyFinishedError",
     );
-    expect(catchLedgerError(() => ledger.append(step("red"), testCause())).kind).toBe(
-      "AlreadyFinished",
+    expect(catchLedgerError(() => ledger.append(step("red"), testCause()))._tag).toBe(
+      "LedgerAlreadyFinishedError",
     );
     expect(NodeFS.readFileSync(runFileFor(dataDir))).toEqual(afterFailure);
     expect(readSoftfacRun(dataDir).entries).toHaveLength(1);
@@ -1754,12 +1806,12 @@ describe("failed writes", () => {
     const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
     const other = reopen(dataDir);
     faults.failWriteAfter = Buffer.byteLength(finishedSample.line) - 1;
-    expect(catchLedgerError(() => ledger.finish("pr-open", null, null, testCause())).kind).toBe(
-      "Io",
+    expect(catchLedgerError(() => ledger.finish("pr-open", null, null, testCause()))._tag).toBe(
+      "LedgerIoError",
     );
     for (const handle of [ledger, other]) {
-      expect(catchLedgerError(() => handle.append(step("green"), testCause())).kind).toBe(
-        "AlreadyFinished",
+      expect(catchLedgerError(() => handle.append(step("green"), testCause()))._tag).toBe(
+        "LedgerAlreadyFinishedError",
       );
     }
     // The refusal ended the cut-off line, as a reopen would, so a reader sees the run finished.
@@ -1772,8 +1824,8 @@ describe("failed writes", () => {
     const { io, faults } = faultyIo();
     const ledger = create(dataDir, ticking(T0, 1000), softfacRun, { io });
     faults.failSync = true;
-    expect(catchLedgerError(() => ledger.append(gate(1, "cargo test"), testCause())).kind).toBe(
-      "Io",
+    expect(catchLedgerError(() => ledger.append(gate(1, "cargo test"), testCause()))._tag).toBe(
+      "LedgerIoError",
     );
     ledger.finish("stuck", null, null, testCause());
 

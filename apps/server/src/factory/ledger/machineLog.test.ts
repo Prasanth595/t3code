@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import { LedgerUnknownEventError, LedgerIoError } from "./errors.ts";
 import type { AppendIo } from "./appendFile.ts";
 import { MACHINE_EVENT_FIELDS, type MachineEvent } from "./events.ts";
 import { MachineLog, scanMachineLog, type MachineLogOptions } from "./machineLog.ts";
@@ -282,14 +283,16 @@ describe("open", () => {
   it("an open whose directory sync fails is an Io error, and the retry syncs and appends", () => {
     const root = tempDir();
     const dataDir = NodePath.join(root, "data");
-    const error = catchLedgerError(() =>
-      open(dataDir, ticking(T0, 1), {
-        syncDir: () => {
-          throw new Error("injected disk error");
-        },
-      }),
+    const error = catchLedgerError(
+      () =>
+        open(dataDir, ticking(T0, 1), {
+          syncDir: () => {
+            throw new Error("injected disk error");
+          },
+        }),
+      LedgerIoError,
     );
-    expect(error.kind).toBe("Io");
+    expect(error._tag).toBe("LedgerIoError");
     expect(error.path).toBe(dataDir);
 
     const synced: Array<string> = [];
@@ -323,26 +326,26 @@ describe("open", () => {
     const target = NodePath.join(linked, "elsewhere.jsonl");
     NodeFS.writeFileSync(target, "");
     NodeFS.symlinkSync(target, logFile(linked));
-    const error = catchLedgerError(() => open(linked));
-    expect(error.kind).toBe("Io");
+    const error = catchLedgerError(() => open(linked), LedgerIoError);
+    expect(error._tag).toBe("LedgerIoError");
     expect(error.path).toBe(logFile(linked));
     expect(readText(target)).toBe("");
 
     const dangling = tempDir();
     NodeFS.symlinkSync(NodePath.join(dangling, "missing.jsonl"), logFile(dangling));
-    expect(catchLedgerError(() => open(dangling)).kind).toBe("Io");
+    expect(catchLedgerError(() => open(dangling))._tag).toBe("LedgerIoError");
     expect(NodeFS.existsSync(NodePath.join(dangling, "missing.jsonl"))).toBe(false);
 
     const directory = tempDir();
     NodeFS.mkdirSync(logFile(directory));
-    expect(catchLedgerError(() => open(directory)).kind).toBe("Io");
+    expect(catchLedgerError(() => open(directory))._tag).toBe("LedgerIoError");
   });
 
   it("open refuses a pipe at events.jsonl without waiting on it", () => {
     const dataDir = tempDir();
     const made = NodeChildProcess.spawnSync("mkfifo", [logFile(dataDir)]);
     expect(made.status).toBe(0);
-    expect(catchLedgerError(() => open(dataDir)).kind).toBe("Io");
+    expect(catchLedgerError(() => open(dataDir))._tag).toBe("LedgerIoError");
   });
 });
 
@@ -448,10 +451,11 @@ describe("append", () => {
     const dataDir = tempDir();
     const log = open(dataDir, ticking(T0, 0));
     for (const name of ["merged", "toString", "__proto__", "claimed"]) {
-      const error = catchLedgerError(() =>
-        log.append({ event: name, data: {} } as unknown as MachineEvent),
+      const error = catchLedgerError(
+        () => log.append({ event: name, data: {} } as unknown as MachineEvent),
+        LedgerUnknownEventError,
       );
-      expect(error.kind).toBe("UnknownEvent");
+      expect(error._tag).toBe("LedgerUnknownEventError");
       expect(error.event).toBe(name);
     }
     expect(readText(logFile(dataDir))).toBe("");
@@ -488,8 +492,8 @@ describe("append", () => {
     const log = open(dataDir, ticking(T0, 0), { io });
     log.append(passStarted);
     failAfter = 10;
-    const error = catchLedgerError(() => log.append(passStarted));
-    expect(error.kind).toBe("Io");
+    const error = catchLedgerError(() => log.append(passStarted), LedgerIoError);
+    expect(error._tag).toBe("LedgerIoError");
     expect(error.path).toBe(logFile(dataDir));
     log.append(passStarted);
     log.append(passStarted);
@@ -517,7 +521,7 @@ describe("append", () => {
     const first = open(dataDir, ticking(T0, 0), { io });
     const second = open(dataDir, ticking(T0, 0));
     failAfter = 10;
-    expect(catchLedgerError(() => first.append(passStarted)).kind).toBe("Io");
+    expect(catchLedgerError(() => first.append(passStarted))._tag).toBe("LedgerIoError");
     second.append(passStarted);
     const line = lineAtT0("pass_started", `{}`);
     expect(readText(logFile(dataDir))).toBe(`{"ts":"202\n${line}`);
@@ -541,7 +545,7 @@ describe("append", () => {
       },
     };
     const log = open(dataDir, ticking(T0, 0), { io });
-    expect(catchLedgerError(() => log.append(passStarted)).kind).toBe("Io");
+    expect(catchLedgerError(() => log.append(passStarted))._tag).toBe("LedgerIoError");
     log.append(passStarted);
     const line = lineAtT0("pass_started", `{}`);
     expect(readText(logFile(dataDir))).toBe(`${line}\n${line}`);
@@ -643,18 +647,18 @@ describe("scan machine log", () => {
     const linked = tempDir();
     NodeFS.writeFileSync(NodePath.join(linked, "real"), machineLine(1, "pass_started", "a"));
     NodeFS.symlinkSync(NodePath.join(linked, "real"), logFile(linked));
-    const error = catchLedgerError(() => scanMachineLog(linked));
-    expect(error.kind).toBe("Io");
+    const error = catchLedgerError(() => scanMachineLog(linked), LedgerIoError);
+    expect(error._tag).toBe("LedgerIoError");
     expect(error.path).toBe(logFile(linked));
 
     const directory = tempDir();
     NodeFS.mkdirSync(logFile(directory));
-    expect(catchLedgerError(() => scanMachineLog(directory)).kind).toBe("Io");
+    expect(catchLedgerError(() => scanMachineLog(directory))._tag).toBe("LedgerIoError");
   });
 
   it("scanMachineLog refuses a pipe without waiting on it", () => {
     const dataDir = tempDir();
     expect(NodeChildProcess.spawnSync("mkfifo", [logFile(dataDir)]).status).toBe(0);
-    expect(catchLedgerError(() => scanMachineLog(dataDir)).kind).toBe("Io");
+    expect(catchLedgerError(() => scanMachineLog(dataDir))._tag).toBe("LedgerIoError");
   });
 });

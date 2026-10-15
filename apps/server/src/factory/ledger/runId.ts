@@ -2,7 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { LedgerError } from "./errors.ts";
+import { InvalidRunIdError } from "./errors.ts";
 import { U32_MAX } from "./limits.ts";
 
 /** The directory under the data dir that holds the run files. */
@@ -40,9 +40,6 @@ const canonicalU64 = (text: string) => CANONICAL.test(text) && BigInt(text) <= U
 const canonicalU32 = (text: string): number | null =>
   CANONICAL.test(text) && Number(text) <= U32_MAX ? Number(text) : null;
 
-const invalid = (input: string, reason: string) =>
-  new LedgerError({ kind: "InvalidRunId", input, reason });
-
 /**
  * `8`, `ENG-42` or `eng-42`. A number must be canonical and fit an unsigned 64-bit integer; an
  * identifier is a team key (letters and digits, starting with a letter), a hyphen, then such a
@@ -58,7 +55,7 @@ export const parseIssueKey = (text: string): string => {
       return `${asciiLower(team).toUpperCase()}-${number}`;
     }
   }
-  throw invalid(text, ISSUE_REASON);
+  throw new InvalidRunIdError({ input: text, reason: ISSUE_REASON });
 };
 
 /** `8` or `eng-42`: the run id field. Never holds `_`, `/` or a capital. */
@@ -89,9 +86,9 @@ const normaliseRepo = (input: string): string | null => {
 /** A run id for `owner/name`, lowercased. Throws for a repo that is not a legal GitHub one. */
 export const newRunId = (repo: string, issue: string, attempt: number): RunId => {
   const normalised = normaliseRepo(repo);
-  if (normalised === null) throw invalid(repo, REPO_REASON);
+  if (normalised === null) throw new InvalidRunIdError({ input: repo, reason: REPO_REASON });
   if (!Number.isInteger(attempt) || attempt < 0 || attempt > U32_MAX) {
-    throw invalid(String(attempt), ATTEMPT_REASON);
+    throw new InvalidRunIdError({ input: String(attempt), reason: ATTEMPT_REASON });
   }
   return { repo: normalised, issue: parseIssueKey(issue), attempt };
 };
@@ -103,16 +100,17 @@ export const newRunId = (repo: string, issue: string, attempt: number): RunId =>
  * runs directory.
  */
 export const validateRunId = (id: RunId): void => {
-  if (normaliseRepo(id.repo) !== id.repo) throw invalid(id.repo, REPO_REASON);
+  if (normaliseRepo(id.repo) !== id.repo)
+    throw new InvalidRunIdError({ input: id.repo, reason: REPO_REASON });
   let issue: string | null = null;
   try {
     issue = parseIssueKey(id.issue);
   } catch {
     // Reported below.
   }
-  if (issue !== id.issue) throw invalid(id.issue, ISSUE_REASON);
+  if (issue !== id.issue) throw new InvalidRunIdError({ input: id.issue, reason: ISSUE_REASON });
   if (!Number.isInteger(id.attempt) || id.attempt < 0 || id.attempt > U32_MAX) {
-    throw invalid(String(id.attempt), ATTEMPT_REASON);
+    throw new InvalidRunIdError({ input: String(id.attempt), reason: ATTEMPT_REASON });
   }
 };
 
@@ -124,7 +122,7 @@ export const validateRunId = (id: RunId): void => {
  * which may itself contain `__`. That makes the split unambiguous.
  */
 export const parseRunId = (text: string): RunId => {
-  const bad = (reason: string) => invalid(text, reason);
+  const bad = (reason: string) => new InvalidRunIdError({ input: text, reason });
   const first = text.indexOf("__");
   if (first === -1) throw bad(SHAPE);
   const owner = text.slice(0, first);

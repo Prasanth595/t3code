@@ -13,7 +13,13 @@ import {
   type AppendIo,
   type SyncDir,
 } from "./appendFile.ts";
-import { LedgerError, errnoCode, ioError } from "./errors.ts";
+import {
+  LedgerAlreadyExistsError,
+  LedgerAlreadyFinishedError,
+  LedgerUnknownEventError,
+  LedgerIoError,
+  errnoCode,
+} from "./errors.ts";
 import { isU32 } from "./limits.ts";
 import {
   RUN_EVENT_FIELDS,
@@ -89,8 +95,8 @@ export class Ledger {
         0o600,
       );
     } catch (error) {
-      if (errnoCode(error) === "EEXIST") throw new LedgerError({ kind: "AlreadyExists", path });
-      throw ioError(path, error);
+      if (errnoCode(error) === "EEXIST") throw new LedgerAlreadyExistsError({ path });
+      throw new LedgerIoError({ path, cause: error });
     }
     // The new file's directory entry must be durable too, or a crash could lose the whole file
     // and the events synced into it. Every directory on the way is synced each time, not only
@@ -165,11 +171,11 @@ export class Ledger {
    */
   append(event: RunEvent, cause: Cause): void {
     if (!Object.hasOwn(RUN_EVENT_FIELDS, event.event)) {
-      throw new LedgerError({ kind: "UnknownEvent", event: String(event.event) });
+      throw new LedgerUnknownEventError({ event: String(event.event) });
     }
     this.out.endCutOffLine();
     this.catchUp();
-    if (this.finished) throw new LedgerError({ kind: "AlreadyFinished", path: this.out.path });
+    if (this.finished) throw new LedgerAlreadyFinishedError({ path: this.out.path });
     const ms = this.clock();
     const data = runEventData(
       event,
@@ -184,7 +190,7 @@ export class Ledger {
     try {
       line = `${JSON.stringify({ ts: formatTs(ms), ms, event: event.event, data, cause: causeObject(cause) })}\n`;
     } catch (error) {
-      throw ioError(this.out.path, error);
+      throw new LedgerIoError({ path: this.out.path, cause: error });
     }
     // A line whose sync fails is still in the file, so the next append's catch-up counts it: a
     // failed sync on `finished` does not allow a second `finished` line.
@@ -230,6 +236,6 @@ const ensureDirAt = (dir: string): void => {
   try {
     ensureDir(dir);
   } catch (error) {
-    throw ioError(dir, error);
+    throw new LedgerIoError({ path: dir, cause: error });
   }
 };

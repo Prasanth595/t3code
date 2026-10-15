@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import { afterEach } from "vite-plus/test";
 
-import { LedgerError } from "./errors.ts";
+import { isLedgerError, type LedgerError } from "./errors.ts";
 
 /**
  * Temp directories for one test file: each call makes a fresh empty directory, and all of them
@@ -23,16 +23,24 @@ export const useTempDirs = () => {
   };
 };
 
-/** The `LedgerError` that `run` throws; fails the test when it throws nothing or something else. */
-export const catchLedgerError = (run: () => unknown): LedgerError => {
+/**
+ * The ledger error that `run` throws, checked to be an `expected` when one is given; fails the
+ * test when it throws nothing or something else.
+ */
+export function catchLedgerError(run: () => unknown): LedgerError;
+export function catchLedgerError<E>(run: () => unknown, expected: new (...args: never) => E): E;
+export function catchLedgerError(
+  run: () => unknown,
+  expected?: new (...args: never) => unknown,
+): unknown {
   try {
     run();
   } catch (error) {
-    if (error instanceof LedgerError) return error;
+    if (expected ? error instanceof expected : isLedgerError(error)) return error;
     throw error;
   }
-  throw new Error("expected a LedgerError, but nothing was thrown");
-};
+  throw new Error("expected a ledger error, but nothing was thrown");
+}
 
 /** A clock that starts at `start` and moves on by `step` ms every time it is read. */
 export const ticking = (start: number, step: number): (() => number) => {

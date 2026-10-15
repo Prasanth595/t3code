@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - a run file is read the way softfac reads it: lstat first, then the bytes.
 import * as NodeFS from "node:fs";
 
-import { LedgerError, errnoCode, ioError } from "./errors.ts";
+import { LedgerNotFoundError, LedgerIoError, errnoCode } from "./errors.ts";
 import { NEWLINE, isU32 } from "./limits.ts";
 import { runPath, type RunId } from "./runId.ts";
 
@@ -126,14 +126,14 @@ export const parseLines = (
  * directory is private to its owner, which is who could make that swap.
  */
 export const requireRegularFile = (path: string): void => {
-  const notFound = () => new LedgerError({ kind: "NotFound", path });
+  let isFile: boolean;
   try {
-    if (!NodeFS.lstatSync(path).isFile()) throw notFound();
+    isFile = NodeFS.lstatSync(path).isFile();
   } catch (error) {
-    if (error instanceof LedgerError) throw error;
-    if (errnoCode(error) === "ENOENT") throw notFound();
-    throw ioError(path, error);
+    if (errnoCode(error) === "ENOENT") throw new LedgerNotFoundError({ path });
+    throw new LedgerIoError({ path, cause: error });
   }
+  if (!isFile) throw new LedgerNotFoundError({ path });
 };
 
 /** Read a run file's bytes, once `requireRegularFile` accepts it. */
@@ -142,8 +142,8 @@ const readRunBytes = (path: string): Buffer => {
   try {
     return NodeFS.readFileSync(path);
   } catch (error) {
-    if (errnoCode(error) === "ENOENT") throw new LedgerError({ kind: "NotFound", path });
-    throw ioError(path, error);
+    if (errnoCode(error) === "ENOENT") throw new LedgerNotFoundError({ path });
+    throw new LedgerIoError({ path, cause: error });
   }
 };
 

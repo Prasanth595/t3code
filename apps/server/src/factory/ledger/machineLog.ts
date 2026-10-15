@@ -14,7 +14,7 @@ import {
   type AppendIo,
   type SyncDir,
 } from "./appendFile.ts";
-import { LedgerError, errnoCode, ioError } from "./errors.ts";
+import { LedgerUnknownEventError, LedgerIoError, errnoCode } from "./errors.ts";
 import { MACHINE_EVENT_FIELDS, buildData, issueKeyJson, type MachineEvent } from "./events.ts";
 import { NEWLINE } from "./limits.ts";
 import { decodeLine, isBlankLine, lineHead } from "./read.ts";
@@ -61,7 +61,7 @@ export class MachineLog {
     try {
       ensureDir(dataDir);
     } catch (error) {
-      throw ioError(dataDir, error);
+      throw new LedgerIoError({ path: dataDir, cause: error });
     }
     const io = options.io ?? nodeIo;
     const file = existingRegularFile(path) ? openForAppend(path, io) : createLog(path, io);
@@ -81,7 +81,7 @@ export class MachineLog {
    */
   append(event: MachineEvent): void {
     if (!Object.hasOwn(MACHINE_EVENT_FIELDS, event.event)) {
-      throw new LedgerError({ kind: "UnknownEvent", event: String(event.event) });
+      throw new LedgerUnknownEventError({ event: String(event.event) });
     }
     const ms = this.clock();
     let line: string;
@@ -91,7 +91,7 @@ export class MachineLog {
       const data = buildData(MACHINE_EVENT_FIELDS[event.event], event.data, issue);
       line = `${JSON.stringify({ ts: formatTs(ms), ms, event: event.event, data })}\n`;
     } catch (error) {
-      throw ioError(this.out.path, error);
+      throw new LedgerIoError({ path: this.out.path, cause: error });
     }
     this.out.writeLine(line);
   }
@@ -116,7 +116,7 @@ const createLog = (path: string, io: AppendIo): AppendFile => {
     );
     return new AppendFile(path, fd, io);
   } catch (error) {
-    throw ioError(path, error);
+    throw new LedgerIoError({ path, cause: error });
   }
 };
 
@@ -127,9 +127,9 @@ const existingRegularFile = (path: string): boolean => {
     isFile = NodeFS.lstatSync(path).isFile();
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return false;
-    throw ioError(path, error);
+    throw new LedgerIoError({ path, cause: error });
   }
-  if (!isFile) throw ioError(path, new Error(NOT_REGULAR));
+  if (!isFile) throw new LedgerIoError({ path, cause: new Error(NOT_REGULAR) });
   return true;
 };
 
@@ -162,14 +162,14 @@ export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
     );
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return [];
-    throw ioError(path, error);
+    throw new LedgerIoError({ path, cause: error });
   }
   let bytes: Buffer;
   try {
     if (!NodeFS.fstatSync(fd).isFile()) throw new Error(NOT_REGULAR);
     bytes = NodeFS.readFileSync(fd);
   } catch (error) {
-    throw ioError(path, error);
+    throw new LedgerIoError({ path, cause: error });
   } finally {
     NodeFS.closeSync(fd);
   }
