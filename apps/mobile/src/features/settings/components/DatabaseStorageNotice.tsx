@@ -3,7 +3,7 @@ import { shouldRecommendDatabaseCompaction } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../../components/AppText";
+import { AppText as Text } from "../../../components/ui/AppText";
 import { copyTextWithHaptic } from "../../../lib/copyTextWithHaptic";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import { serverEnvironment } from "../../../state/server";
