@@ -51,7 +51,7 @@ import {
   type SettingsSearchItem,
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
-import { forkSettingsSearchItems } from "./ForkSettings";
+import { forkSettingsSearchItems } from "./forkSettingsCatalog";
 import { validateSettingsScopeSearch } from "./settingsScope";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [

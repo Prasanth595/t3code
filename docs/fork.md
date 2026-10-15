@@ -24,7 +24,7 @@ Fork main only moves forward. Nothing rebases or force-pushes it.
 - Fork CI compares the push with the commit of the last green run. When only `docs`, `*.md` or `apps/machine-map` changed, only the Lint job runs, and it checks only the changed files. A change in `apps/machine-map` also runs the Machine map job: its typecheck and tests. A manual run always runs every job.
 - To see all fork changes, run `git diff upstream/main...main`.
 - The top of `README.md` lists the fork features and fixes, up to the first `---` line. A pull request that adds, removes or changes a fork feature or fix updates its line in that list.
-- Settings > Fork shows every fork setting and each upstream setting that the fork changed, with the same rows as their usual pages. A pull request that adds a fork setting adds its row to `FORK_SETTING_GROUPS` in `apps/web/src/components/settings/ForkSettings.tsx`.
+- Settings > Fork shows every fork setting and each upstream setting that the fork changed, with the same rows as their usual pages. A pull request that adds a fork setting adds it to `FORK_SETTING_GROUPS` in `apps/web/src/components/settings/forkSettingsCatalog.ts` and its row component to `FORK_SETTING_ROWS` in `ForkSettings.tsx`. The catalog imports no components, because the settings search on every route reads it.
 - If a Fork Sync merge conflicts in `README.md`, keep the fork section on top and take the upstream text below the `---` line.
 - A merge without conflicts can still break a fork feature. Each fork feature that changes upstream behaviour needs a test of that behaviour, so that the fork tests catch the break.
 

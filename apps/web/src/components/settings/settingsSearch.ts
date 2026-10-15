@@ -54,6 +54,8 @@ export interface SettingsSearchItem {
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
+  // Fork: its row renders only outside the desktop app.
+  readonly webOnly?: boolean;
   readonly macOnly?: boolean;
   // Its row only renders on Windows desktop, so other desktop platforms must
   // not expose a result that points to a missing anchor.
@@ -427,6 +429,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Installed app",
     to: "/settings/general",
     searchTerms: ["install pwa home screen offline service worker badge phone android iphone"],
+    webOnly: true,
   },
   {
     id: "time-format",
@@ -1334,6 +1337,7 @@ export function filterAvailableSettingsSearchItems(
 /** Whether the row of `item` renders on this client and platform. */
 export function isSettingsSearchItemOnPlatform(item: SettingsSearchItem, platform: string) {
   if (!isElectron && item.desktopOnly === true) return false;
+  if (isElectron && item.webOnly === true) return false;
   if (item.releaseChannelOnly && !isElectron && HOSTED_APP_CHANNEL === null) return false;
   if (item.macOnly && !isMacPlatform(platform)) return false;
   if (item.windowsOnly && !isWindowsPlatform(platform)) return false;
