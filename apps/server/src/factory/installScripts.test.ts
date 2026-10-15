@@ -18,12 +18,15 @@ let home: string;
 let bin: string;
 let launchctlLog: string;
 let launchctlLoaded: string;
+let launchctlDrain: string;
 const archives: Record<string, string> = {};
 
 const plistPath = () => NodePath.join(home, "Library/LaunchAgents", `${label}.plist`);
 const root = () => NodePath.join(home, ".local/share/t3fac");
 
-const run = (script: string, ...args: Array<string>) => {
+const run = (script: string, ...args: Array<string>) => runWith({}, script, ...args);
+
+const runWith = (extraEnv: Record<string, string>, script: string, ...args: Array<string>) => {
   NodeFS.writeFileSync(launchctlLog, "");
   const result = NodeChildProcess.spawnSync("bash", [NodePath.join(scripts, script), ...args], {
     env: {
@@ -31,6 +34,8 @@ const run = (script: string, ...args: Array<string>) => {
       PATH: `${bin}:/usr/bin:/bin`,
       LAUNCHCTL_LOG: launchctlLog,
       LAUNCHCTL_LOADED: launchctlLoaded,
+      LAUNCHCTL_DRAIN: launchctlDrain,
+      ...extraEnv,
     },
     encoding: "utf8",
   });
@@ -43,16 +48,19 @@ const run = (script: string, ...args: Array<string>) => {
   };
 };
 
-const makeArchive = (version: string) => {
+const makeArchive = (version: string, options: { binary?: boolean; label?: string } = {}) => {
+  const base = options.label ? NodePath.join(tmp, options.label) : tmp;
   const dir = `t3-${version}-darwin-arm64`;
-  const src = NodePath.join(tmp, "src", dir);
+  const src = NodePath.join(base, "src", dir);
   NodeFS.mkdirSync(NodePath.join(src, "client"), { recursive: true });
-  NodeFS.writeFileSync(NodePath.join(src, "t3"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  if (options.binary !== false) {
+    NodeFS.writeFileSync(NodePath.join(src, "t3"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  }
   NodeFS.writeFileSync(NodePath.join(src, "client/index.html"), "<html></html>\n");
-  const archive = NodePath.join(tmp, `t3fac-${version}-darwin-arm64.tar.gz`);
+  const archive = NodePath.join(base, `t3fac-${version}-darwin-arm64.tar.gz`);
   const result = NodeChildProcess.spawnSync(
     "tar",
-    ["-czf", archive, "-C", NodePath.join(tmp, "src"), dir],
+    ["-czf", archive, "-C", NodePath.join(base, "src"), dir],
     {
       encoding: "utf8",
     },
@@ -61,30 +69,60 @@ const makeArchive = (version: string) => {
   return archive;
 };
 
+// A little launchd-like: bootout leaves the job loaded for two more `print` polls, and
+// bootstrap fails with EIO while it is still loaded (or when LAUNCHCTL_BOOTSTRAP_FAIL is set).
+const setupSandbox = () => {
+  tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-install-")));
+  home = NodePath.join(tmp, "home");
+  bin = NodePath.join(tmp, "bin");
+  launchctlLog = NodePath.join(tmp, "launchctl.log");
+  launchctlLoaded = NodePath.join(tmp, "launchctl.loaded");
+  launchctlDrain = NodePath.join(tmp, "launchctl.drain");
+  NodeFS.mkdirSync(home);
+  NodeFS.mkdirSync(bin);
+  NodeFS.writeFileSync(
+    NodePath.join(bin, "launchctl"),
+    [
+      "#!/bin/sh",
+      'echo "$@" >> "$LAUNCHCTL_LOG"',
+      'case "$1" in',
+      "  print)",
+      '    if [ -e "$LAUNCHCTL_DRAIN" ]; then',
+      '      n=$(cat "$LAUNCHCTL_DRAIN")',
+      '      if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$LAUNCHCTL_DRAIN"; exit 0; fi',
+      '      rm -f "$LAUNCHCTL_DRAIN" "$LAUNCHCTL_LOADED"',
+      "      exit 113",
+      "    fi",
+      '    [ -e "$LAUNCHCTL_LOADED" ] && exit 0',
+      "    exit 113 ;;",
+      "  bootstrap)",
+      '    if [ -n "$LAUNCHCTL_BOOTSTRAP_FAIL" ] || [ -e "$LAUNCHCTL_LOADED" ]; then',
+      '      echo "Bootstrap failed: 5: Input/output error" >&2',
+      "      exit 5",
+      "    fi",
+      '    touch "$LAUNCHCTL_LOADED" ;;',
+      '  bootout) echo 2 > "$LAUNCHCTL_DRAIN" ;;',
+      "esac",
+      "exit 0",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+};
+
+// bootout, then at least one print poll, then bootstrap.
+const expectRestartSequence = (calls: Array<string>) => {
+  expect(calls[0]).toBe(`print gui/${uid}/${label}`);
+  expect(calls[1]).toBe(`bootout gui/${uid}/${label}`);
+  expect(calls.at(-1)).toBe(`bootstrap gui/${uid} ${plistPath()}`);
+  const between = calls.slice(2, -1);
+  expect(between.length).toBeGreaterThanOrEqual(1);
+  expect(between.every((call) => call === `print gui/${uid}/${label}`)).toBe(true);
+};
+
 describe("install.sh and rollback.sh", () => {
   beforeAll(() => {
-    tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-install-")));
-    home = NodePath.join(tmp, "home");
-    bin = NodePath.join(tmp, "bin");
-    launchctlLog = NodePath.join(tmp, "launchctl.log");
-    launchctlLoaded = NodePath.join(tmp, "launchctl.loaded");
-    NodeFS.mkdirSync(home);
-    NodeFS.mkdirSync(bin);
-    NodeFS.writeFileSync(
-      NodePath.join(bin, "launchctl"),
-      [
-        "#!/bin/sh",
-        'echo "$@" >> "$LAUNCHCTL_LOG"',
-        'case "$1" in',
-        '  print) [ -e "$LAUNCHCTL_LOADED" ] && exit 0; exit 113 ;;',
-        '  bootstrap) touch "$LAUNCHCTL_LOADED" ;;',
-        '  bootout) rm -f "$LAUNCHCTL_LOADED" ;;',
-        "esac",
-        "exit 0",
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+    setupSandbox();
     archives[v1] = makeArchive(v1);
     archives[v2] = makeArchive(v2);
   });
@@ -128,11 +166,7 @@ describe("install.sh and rollback.sh", () => {
     expect(result.status).toBe(0);
     expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
     expect(NodeFS.readlinkSync(NodePath.join(root(), "previous"))).toBe(`versions/${v1}`);
-    expect(result.calls).toEqual([
-      `print gui/${uid}/${label}`,
-      `bootout gui/${uid}/${label}`,
-      `bootstrap gui/${uid} ${plistPath()}`,
-    ]);
+    expectRestartSequence(result.calls);
   });
 
   it("rolls back to the previous version", () => {
@@ -141,11 +175,7 @@ describe("install.sh and rollback.sh", () => {
     expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
     expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
     expect(NodeFS.lstatSync(plistPath()).isFile()).toBe(true);
-    expect(result.calls).toEqual([
-      `print gui/${uid}/${label}`,
-      `bootout gui/${uid}/${label}`,
-      `bootstrap gui/${uid} ${plistPath()}`,
-    ]);
+    expectRestartSequence(result.calls);
   });
 
   it("exits 1 when there is no earlier version", () => {
@@ -162,6 +192,56 @@ describe("install.sh and rollback.sh", () => {
     const result = run("install.sh", wrong);
     expect(result.status).toBe(1);
     expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+  });
+});
+
+describe("install.sh and rollback.sh failure cases", () => {
+  let v2Dir: string;
+
+  beforeAll(() => {
+    setupSandbox();
+    archives[v1] = makeArchive(v1);
+    archives[v2] = makeArchive(v2);
+    expect(run("install.sh", archives[v1]!).status).toBe(0);
+    expect(run("install.sh", archives[v2]!).status).toBe(0);
+    v2Dir = NodePath.join(root(), "versions", v2);
+  });
+
+  afterAll(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("keeps the live version when reinstalling it from an archive without a binary", () => {
+    const broken = makeArchive(v2, { binary: false, label: "broken" });
+    const result = run("install.sh", broken);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("archive has no t3 binary");
+    expect(NodeFS.existsSync(NodePath.join(v2Dir, "t3"))).toBe(true);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "previous"))).toBe(`versions/${v1}`);
+    expect(NodeFS.readdirSync(NodePath.join(root(), "versions")).sort()).toEqual([v1, v2].sort());
+    expect(result.calls).toEqual([]);
+  });
+
+  it("rejects an archive name with an empty version before touching disk", () => {
+    const versionsBefore = NodeFS.readdirSync(NodePath.join(root(), "versions")).sort();
+    const result = run("install.sh", makeArchive("", { label: "empty" }));
+    expect(result.status).toBe(1);
+    expect(NodeFS.readdirSync(NodePath.join(root(), "versions")).sort()).toEqual(versionsBefore);
+    expect(NodeFS.existsSync(NodePath.join(v2Dir, "t3"))).toBe(true);
+    expect(result.calls).toEqual([]);
+  });
+
+  it("leaves previous in place when the restart fails, so rollback can be rerun", () => {
+    const failed = runWith({ LAUNCHCTL_BOOTSTRAP_FAIL: "1" }, "rollback.sh");
+    expect(failed.status).not.toBe(0);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+    expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(true);
+
+    const retry = run("rollback.sh");
+    expect(retry.status).toBe(0);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+    expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
   });
 });
 
