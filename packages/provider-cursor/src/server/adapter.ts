@@ -9,7 +9,7 @@ import type {
   ToolCall,
 } from "@cursor/sdk";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   isOrchestrationV2WorkActive,
   defaultInstanceIdForDriver,
@@ -34,7 +34,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -193,7 +192,7 @@ export function cursorRuntimeAgentPolicy(
   return {
     autoReview:
       runtimePolicy.approvalPolicy === undefined
-        ? runtimePolicy.runtimeMode === "approval-required"
+        ? runtimePolicy.runtimeMode === "approval-required" || runtimePolicy.runtimeMode === "auto"
         : runtimePolicy.approvalPolicy !== "never",
     sandboxEnabled:
       runtimePolicy.sandboxPolicy === undefined
@@ -2207,12 +2206,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const message = yield* resolveUserMessage(turnInput, mcpServers);
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
+            // MCP send overrides replace the ambient servers loaded when the agent opens.
             const sdkRun = yield* agent.session.send({
               message,
               options: {
                 model: cursorSdkModelSelection(turnInput.modelSelection),
                 mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                ...(mcpServers === undefined ? {} : { mcpServers }),
               },
               onDelta: (update) => {
                 if (context === null) {
@@ -2621,14 +2620,14 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
   defaultConfig: (): CursorSettings => DEFAULT_CURSOR_SETTINGS,
   create: Effect.fn("CursorAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<CursorSettings>) {
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       return yield* makeCursorAdapterV2({
         instanceId: input.instanceId,
         settings: {
           ...input.config,
           enabled: input.enabled,
         },
-        environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
       });
     },
     (effect, input) =>
@@ -2645,24 +2644,3 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
       ),
   ),
 };
-
-const layer: Layer.Layer<
-  ProviderAdapter.ProviderAdapterV2,
-  never,
-  | CursorAgentSdk.CursorAgentSdkRunner
-  | FileSystem.FileSystem
-  | Path.Path
-  | IdAllocator.IdAllocatorV2
-  | McpProviderSessions.McpProviderSessions
-  | ProviderHost.ProviderHost
-> = Layer.effect(
-  ProviderAdapter.ProviderAdapterV2,
-  Effect.gen(function* () {
-    const hostEnvironment = yield* HostProcessEnvironment;
-    return yield* makeCursorAdapterV2({
-      instanceId: CURSOR_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_CURSOR_SETTINGS,
-      environment: hostEnvironment,
-    });
-  }),
-);

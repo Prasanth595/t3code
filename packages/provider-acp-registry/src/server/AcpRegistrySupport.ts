@@ -12,11 +12,8 @@ import {
 } from "@t3tools/contracts";
 import type { AcpRegistryDistributionPreference } from "../settings.ts";
 import type { AcpRegistrySettings } from "../settings.ts";
-import {
-  HostProcessArchitecture,
-  HostProcessEnvironment,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   mergePathEntries,
   resolveSpawnCommand,
@@ -39,8 +36,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { sha256 } from "@noble/hashes/sha2";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -239,6 +239,18 @@ export function resolveAcpRegistryPlatformTarget(
   return os && arch ? (`${os}-${arch}` as AcpRegistryPlatformTarget) : undefined;
 }
 
+function resolveAcpRegistryPlatformTargetCandidates(
+  platformTarget: AcpRegistryPlatformTarget | undefined,
+): ReadonlyArray<AcpRegistryPlatformTarget> {
+  if (platformTarget === undefined) return [];
+  // Windows 11 on ARM executes windows-x86_64 binaries under Prism emulation
+  // when an agent does not publish a native windows-aarch64 binary.
+  if (platformTarget === "windows-aarch64") {
+    return ["windows-aarch64", "windows-x86_64"];
+  }
+  return [platformTarget];
+}
+
 interface ExactPackageSpec {
   readonly name: string;
   readonly version: string;
@@ -308,26 +320,26 @@ function withPreferredPath(
  * managed binary agents are both available by name. Best effort: unreadable
  * directories resolve to no entries.
  */
-export const acpRegistryManagedBinaryDirectories = (input: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly cacheDir: string;
-  readonly toolsDir: string;
-  readonly platform: NodeJS.Platform;
-  readonly architecture: NodeJS.Architecture;
-}): Effect.Effect<ReadonlyArray<string>> =>
-  Effect.gen(function* () {
+export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManagedBinaryDirectories")(
+  function* (input: {
+    readonly cacheDir: string;
+    readonly toolsDir: string;
+    readonly platform: NodeJS.Platform;
+    readonly architecture: NodeJS.Architecture;
+  }): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const target = resolveAcpRegistryPlatformTarget(input.platform, input.architecture);
-    const registryDirectory = input.path.join(input.cacheDir, "acp-registry");
+    const registryDirectory = path.join(input.cacheDir, "acp-registry");
     const installsDirectory = input.toolsDir;
-    const packageReceiptsDirectory = input.path.join(registryDirectory, "package-installs");
+    const packageReceiptsDirectory = path.join(registryDirectory, "package-installs");
     const listDirectories = (directory: string) =>
-      input.fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): Array<string> => []));
+      fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): Array<string> => []));
     const directories: Array<string> = [];
 
     for (const receiptFile of (yield* listDirectories(packageReceiptsDirectory)).toSorted()) {
-      const receipt = yield* input.fileSystem
-        .readFileString(input.path.join(packageReceiptsDirectory, receiptFile))
+      const receipt = yield* fileSystem
+        .readFileString(path.join(packageReceiptsDirectory, receiptFile))
         .pipe(
           Effect.map(decodePackageInstallReceipt),
           Effect.orElseSucceed(() => Option.none()),
@@ -335,15 +347,15 @@ export const acpRegistryManagedBinaryDirectories = (input: {
       if (
         Option.isSome(receipt) &&
         receipt.value.binDirectory ===
-          input.path.join(
+          path.join(
             installsDirectory,
             receipt.value.agentId,
             encodeURIComponent(receipt.value.agentVersion),
             receipt.value.distribution === "npx" ? "npm" : "python",
             ...(receipt.value.distribution === "npx" && input.platform === "win32" ? [] : ["bin"]),
           ) &&
-        input.path.dirname(receipt.value.executablePath) === receipt.value.binDirectory &&
-        (yield* input.fileSystem
+        path.dirname(receipt.value.executablePath) === receipt.value.binDirectory &&
+        (yield* fileSystem
           .exists(receipt.value.executablePath)
           .pipe(Effect.orElseSucceed(() => false)))
       ) {
@@ -352,8 +364,8 @@ export const acpRegistryManagedBinaryDirectories = (input: {
     }
 
     if (target === undefined) return Array.from(new Set(directories));
-    const cachedAgents = yield* input.fileSystem
-      .readFileString(input.path.join(registryDirectory, "registry.json"))
+    const cachedAgents = yield* fileSystem
+      .readFileString(path.join(registryDirectory, "registry.json"))
       .pipe(
         Effect.flatMap(decodeJson),
         Effect.flatMap(decodeRegistryIndexEnvelope),
@@ -372,28 +384,33 @@ export const acpRegistryManagedBinaryDirectories = (input: {
       ),
     );
     for (const agent of (yield* listDirectories(installsDirectory)).toSorted()) {
-      const versions = (yield* listDirectories(input.path.join(installsDirectory, agent))).toSorted(
+      const versions = (yield* listDirectories(path.join(installsDirectory, agent))).toSorted(
         (left, right) => right.localeCompare(left, undefined, { numeric: true }),
       );
       for (const version of versions) {
-        const installRoot = input.path.join(installsDirectory, agent, version, target);
-        if (yield* input.fileSystem.exists(installRoot).pipe(Effect.orElseSucceed(() => false))) {
-          const binaryTarget = cachedAgentByInstall.get(`${agent}\0${version}`)?.distribution
-            .binary?.[target];
-          const commandSegments =
-            binaryTarget === undefined ? undefined : normalizeRegistryCommandPath(binaryTarget.cmd);
-          const directory =
-            commandSegments === undefined
-              ? installRoot
-              : input.path.join(installRoot, ...commandSegments.slice(0, -1));
-          if (yield* input.fileSystem.exists(directory).pipe(Effect.orElseSucceed(() => false))) {
-            directories.push(directory);
+        for (const candidateTarget of resolveAcpRegistryPlatformTargetCandidates(target)) {
+          const installRoot = path.join(installsDirectory, agent, version, candidateTarget);
+          if (yield* fileSystem.exists(installRoot).pipe(Effect.orElseSucceed(() => false))) {
+            const binaryTarget = cachedAgentByInstall.get(`${agent}\0${version}`)?.distribution
+              .binary?.[candidateTarget];
+            const commandSegments =
+              binaryTarget === undefined
+                ? undefined
+                : normalizeRegistryCommandPath(binaryTarget.cmd);
+            const directory =
+              commandSegments === undefined
+                ? installRoot
+                : path.join(installRoot, ...commandSegments.slice(0, -1));
+            if (yield* fileSystem.exists(directory).pipe(Effect.orElseSucceed(() => false))) {
+              directories.push(directory);
+            }
           }
         }
       }
     }
     return Array.from(new Set(directories));
-  });
+  },
+);
 
 export interface ResolvedAcpRegistryDistribution {
   readonly kind: AcpRegistryDistributionKind;
@@ -409,7 +426,9 @@ export function resolveAcpRegistryDistribution(input: {
   readonly platformTarget: AcpRegistryPlatformTarget | undefined;
 }): ResolvedAcpRegistryDistribution | undefined {
   const { agent, platformTarget } = input;
-  const binary = platformTarget ? agent.distribution.binary?.[platformTarget] : undefined;
+  const binary = resolveAcpRegistryPlatformTargetCandidates(platformTarget)
+    .map((candidate) => agent.distribution.binary?.[candidate])
+    .find((entry) => entry !== undefined);
   const candidates: ReadonlyArray<AcpRegistryDistributionKind> =
     input.preference === "auto" ? ["binary", "npx", "uvx"] : [input.preference];
 
@@ -633,9 +652,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const httpClient = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { settings: hostSettings } = yield* ProviderHost.ProviderHost;
-  const platform = yield* HostProcessPlatform;
-  const architecture = yield* HostProcessArchitecture;
-  const hostEnvironment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
+  const hostEnvironment = yield* HostProcess.Environment;
   const resolveExecutable = yield* SpawnExecutableResolution;
   const platformTarget = resolveAcpRegistryPlatformTarget(platform, architecture);
   const registryUrl = input.registryUrl ?? ACP_REGISTRY_URL;
@@ -758,7 +777,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     .pipe(Effect.flatMap(decodeRegistryText), Effect.option);
 
   const writeRegistryCache = (text: string) =>
-    crypto.randomUUIDv4.pipe(
+    crypto.randomUUIDv4().pipe(
       Effect.flatMap((id) => {
         const temporaryPath = `${registryCachePath}.${process.pid}-${id}.tmp`;
         return fileSystem
@@ -1336,11 +1355,16 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const binaryPaths = (agent: AcpRegistryAgent, target: typeof AcpRegistryBinaryTarget.Type) => {
     const commandSegments = normalizeRegistryCommandPath(target.cmd);
-    if (platformTarget === undefined || commandSegments === undefined) return undefined;
-    const installRoot = path.join(agentInstallRoot(agent), platformTarget);
+    const matchedPlatformTarget =
+      resolveAcpRegistryPlatformTargetCandidates(platformTarget).find(
+        (candidate) => agent.distribution.binary?.[candidate] === target,
+      ) ?? platformTarget;
+    if (matchedPlatformTarget === undefined || commandSegments === undefined) return undefined;
+    const installRoot = path.join(agentInstallRoot(agent), matchedPlatformTarget);
     return {
       commandSegments,
       installRoot,
+      platformTarget: matchedPlatformTarget,
       executablePath: path.join(installRoot, ...commandSegments),
     };
   };
@@ -1487,6 +1511,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         yield* fileSystem.makeDirectory(path.dirname(targetPath), { recursive: true });
         yield* fileSystem.rename(archivePath, targetPath);
       } else {
+        // The new Windows ARM fallback must extract x64 ZIPs even when Git's GNU tar wins PATH.
+        // Keep archive selection for existing native distributions unchanged in this PR.
+        const tarCommand =
+          platformTarget === "windows-aarch64" &&
+          paths.platformTarget === "windows-x86_64" &&
+          kind === "zip"
+            ? cliArchiveTarCommand(platform, hostEnvironment)
+            : "tar";
         const listArgs =
           kind === "tar_gz"
             ? ["-tzf", archivePath]
@@ -1498,7 +1530,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const entries =
           listArgs === undefined
             ? yield* runCommand("unzip", ["-Z1", archivePath])
-            : yield* runCommand("tar", listArgs);
+            : yield* runCommand(tarCommand, listArgs);
         if (!validateArchiveEntries(entries)) {
           return yield* new AcpRegistryError({
             reason: "archive_invalid",
@@ -1509,7 +1541,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           yield* runCommand("unzip", ["-q", archivePath, "-d", extractionRoot]);
         } else {
           const extractFlag = kind === "tar_gz" ? "-xzf" : kind === "tar_bz2" ? "-xjf" : "-xf";
-          yield* runCommand("tar", [extractFlag, archivePath, "-C", extractionRoot]);
+          yield* runCommand(tarCommand, [extractFlag, archivePath, "-C", extractionRoot]);
         }
       }
 

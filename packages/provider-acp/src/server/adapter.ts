@@ -31,6 +31,7 @@ import {
   type ThreadTokenUsageSnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
+import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
@@ -50,7 +51,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import type { ChildProcessSpawner } from "effect/process";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -88,7 +89,7 @@ import {
   resolveEmbeddedTerminalContent,
   type AcpClientTerminals,
 } from "./clientTerminals.ts";
-import { ACP_SESSION_MODE_OPTION_ID } from "./sessionConfig.ts";
+import { ACP_EMPTY_OPTION_VALUE, ACP_SESSION_MODE_OPTION_ID } from "./sessionConfig.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import {
   t3AcpPromptWithInstructions,
@@ -217,7 +218,9 @@ export interface AcpAdapterV2Flavor {
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
-  readonly clientCapabilitiesMeta?: Record<string, boolean>;
+  readonly clientCapabilitiesMeta?: NonNullable<
+    EffectAcpSchema.InitializeRequest["clientCapabilities"]
+  >["_meta"];
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
@@ -239,7 +242,7 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
-    Crypto.Crypto | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
   >;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
   /**
@@ -485,11 +488,10 @@ export interface AcpAdapterV2Options {
   /**
    * Opts the session into the ACP client `terminal` capability. Agents run
    * commands themselves unless an adapter sets this; with it, sessions
-   * advertise `terminal: true` and run agent-created terminals through this
-   * spawner with the provider instance's environment. Devin sets it.
+   * advertise `terminal: true` and run agent-created terminals through the
+   * adapter's spawner with the provider instance's environment. Devin sets it.
    */
   readonly clientTerminals?: {
-    readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly environment?: NodeJS.ProcessEnv;
     readonly shellCommands?: boolean;
   };
@@ -1486,6 +1488,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 ) {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const agentScope = yield* AgentScope;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -1586,7 +1590,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           options.clientTerminals === undefined
             ? undefined
             : yield* makeAcpClientTerminals({
-                spawner: options.clientTerminals.childProcessSpawner,
                 defaultCwd: input.runtimePolicy.cwd ?? process.cwd(),
                 environment: options.clientTerminals.environment,
                 shellCommands: options.clientTerminals.shellCommands,
@@ -1607,7 +1610,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ? pendingTerminalEnvironment.environment
                     : undefined;
                 },
-              });
+              }).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+              );
         if (clientTerminals !== undefined) {
           yield* Scope.addFinalizer(sessionScope, clientTerminals.disposeAll);
         }
@@ -5996,7 +6001,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpBridge = yield* makeAcpMcpOverAcpBridge({
             endpoint: mcpContext.endpoint,
             authorization: mcpContext.authorization,
-            allocateConnectionId: crypto.randomUUIDv4.pipe(Effect.orDie),
+            allocateConnectionId: crypto.randomUUIDv4().pipe(Effect.orDie),
           });
           yield* Scope.addFinalizer(scope, mcpBridge.dispose);
           return mcpBridge;
@@ -6018,6 +6023,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             .pipe(
               Effect.provideService(Scope.Scope, runtimeScope),
               Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+              Effect.provideService(AgentScope, agentScope),
+              Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
             );
         });
 
@@ -6096,6 +6104,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               .pipe(
                 Effect.provideService(Scope.Scope, replacementScope),
                 Effect.provideService(Crypto.Crypto, crypto),
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+                Effect.provideService(AgentScope, agentScope),
+                Effect.provideService(AgentScopeThreadId, threadId ?? undefined),
               );
             // Session setup may publish commands before it returns. Buffer those
             // notifications, but do not expose request or extension handlers
@@ -6272,6 +6283,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           modelSelection: ModelSelection,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         ) {
+          // A step failing below leaves the native config partly changed, so
+          // the previously applied selection no longer describes the session.
+          // Callers record the new selection only once this completes.
+          yield* Ref.set(activeSelection, null);
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
           let appliedModel: string | undefined;
           if (flavor.applyModelSelection !== undefined) {
@@ -6316,7 +6331,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               };
             });
           }
-          const optionSelections = modelSelection.options ?? [];
+          // Restore the agent's own empty value for choices T3 stores under a
+          // reserved ID (see ACP_EMPTY_OPTION_VALUE).
+          const optionSelections = (modelSelection.options ?? []).map((selection) =>
+            selection.value === ACP_EMPTY_OPTION_VALUE ? { ...selection, value: "" } : selection,
+          );
           const configOptions = yield* runtime.getConfigOptions;
           const availableConfigIds = new Set(configOptions.map((option) => option.id));
           const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(
