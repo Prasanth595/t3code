@@ -57,6 +57,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
@@ -94,8 +95,9 @@ import {
 const STATUS_MIN_INTERVAL = Duration.seconds(5);
 /** Host load can change without any event, so the status is checked this often too. */
 const STATUS_IDLE_CHECK = Duration.minutes(1);
-/** MM-1501: one resource sample a minute, and one on request at most every 10 seconds. */
+/** MM-1306: a failed session revocation runs again this often. */
 const REVOKE_RETRY_INTERVAL = Duration.seconds(30);
+/** MM-1501: one resource sample a minute, and one on request at most every 10 seconds. */
 const RESOURCE_INTERVAL = Duration.minutes(1);
 const RESOURCE_REQUEST_GAP_MS = 10_000;
 const TOOL_CALL_TIMEOUT = Duration.seconds(30);
@@ -342,8 +344,12 @@ const make = Effect.gen(function* () {
       );
     });
 
+  // One revocation pass at a time. Without it, a pass could clear a subject that a later desired
+  // state added again after the pass ended its sessions, and a session at the old level stays.
+  const revokeLock = yield* Semaphore.make(1);
+
   /** Ends the sessions of the saved `pendingRevokes`, then clears the ones that ended. */
-  const revokePending = Effect.gen(function* () {
+  const revokePendingUnlocked = Effect.gen(function* () {
     const pending = new Set((yield* state.snapshot).saved.pendingRevokes);
     if (pending.size === 0) return;
     yield* revokeSessions((subject) => pending.has(subject));
@@ -352,21 +358,38 @@ const make = Effect.gen(function* () {
       pendingRevokes: saved.pendingRevokes.filter((subject) => !pending.has(subject)),
     }));
   });
+  const revokePending = revokeLock.withPermits(1)(revokePendingUnlocked);
 
   /**
    * MM-1306: ends the sessions of these subjects. They stay in `pendingRevokes` until that works,
    * so a failure runs again with the next desired state or the retry loop.
    */
   const endSessionsOf = (subjects: ReadonlyArray<string>) =>
-    Effect.gen(function* () {
-      if (subjects.length > 0) {
-        yield* state.updateSaved((saved) => ({
-          ...saved,
-          pendingRevokes: [...new Set([...saved.pendingRevokes, ...subjects])],
-        }));
-      }
-      yield* revokePending;
-    });
+    revokeLock.withPermits(1)(
+      Effect.gen(function* () {
+        if (subjects.length > 0) {
+          yield* state.updateSaved((saved) => ({
+            ...saved,
+            pendingRevokes: [...new Set([...saved.pendingRevokes, ...subjects])],
+          }));
+        }
+        yield* revokePendingUnlocked;
+      }),
+    );
+
+  /**
+   * MM-1301: ends every machine and client session and pairing link, through `pendingRevokes`,
+   * so a failure runs again also while the map is off.
+   */
+  const endAllMapSessions = Effect.gen(function* () {
+    const sessions = yield* auth.listSessions();
+    const links = yield* auth.listPairingLinks({ excludeSubjects: [] });
+    yield* endSessionsOf(
+      [...sessions, ...links]
+        .map((item) => item.subject)
+        .filter((subject) => isMapSubject(subject)),
+    );
+  });
 
   const applyDesired = (desired: MachineDesiredState) =>
     Effect.gen(function* () {
@@ -384,13 +407,24 @@ const make = Effect.gen(function* () {
       // Save first: the auth hooks read the saved state, so the new levels hold before any
       // session of a changed peer ends and it pairs again. The subjects to end are saved in the
       // same write, so a failed revocation is not lost.
-      yield* state.updateSaved((saved) => ({
-        ...saved,
-        desired,
-        desiredAtMs: nowMs,
-        pendingRevokes: [...new Set([...saved.pendingRevokes, ...changed])],
-      }));
-      yield* revokePending;
+      yield* revokeLock.withPermits(1)(
+        Effect.gen(function* () {
+          yield* state.updateSaved((saved) => ({
+            ...saved,
+            desired,
+            desiredAtMs: nowMs,
+            pendingRevokes: [...new Set([...saved.pendingRevokes, ...changed])],
+          }));
+          // A stuck revocation must not hold back the settings; the retry loop runs it again.
+          yield* revokePendingUnlocked.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Machine map could not end sessions; it tries again.", {
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+        }),
+      );
       yield* applyServerSettings(desired.settings.server);
       // Client settings reach the desktop app through the client stream (MM-403).
     });
@@ -572,7 +606,7 @@ const make = Effect.gen(function* () {
       desiredAtMs: null,
       desktopCommands: [],
     }));
-    yield* revokeSessions(isMapSubject).pipe(Effect.ignore({ log: true }));
+    yield* endAllMapSessions.pipe(Effect.ignore({ log: true }));
     yield* state.setToken(null);
   });
 
@@ -681,7 +715,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           if (next.turnedOff) {
             // MM-1301: off means no change to auth, so no machine or client session stays.
-            yield* revokeSessions(isMapSubject).pipe(
+            yield* endAllMapSessions.pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Machine map could not end machine sessions.", {
                   cause: Cause.pretty(cause),
