@@ -221,6 +221,30 @@ describe("sync.sh", () => {
     expect(originBranches()).toEqual(["main"]);
   });
 
+  it("reads UPSTREAM from origin's main, not from the checkout", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    git(fork, "checkout", "-q", "-b", "stale");
+    write(fork, "factory/UPSTREAM", `${NEWEST} ${newestSha}\n`);
+    commit(fork, "checkout names the newest tag");
+    const { status, stdout } = run();
+    expect(status).toBe(0);
+    expect(stdout).not.toContain("up to date");
+    expect(originFile(`sync/${NEWEST}`, "factory/UPSTREAM")).toBe(`${NEWEST} ${newestSha}`);
+    expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
+  });
+
+  it("is up to date when origin's main names the tag, whatever the checkout says", () => {
+    makeFork(`${NEWEST} ${newestSha}`);
+    git(fork, "checkout", "-q", "-b", "stale");
+    write(fork, "factory/UPSTREAM", `${OLD} ${oldSha}\n`);
+    commit(fork, "checkout names an older tag");
+    const { status, stdout, calls } = run();
+    expect(status).toBe(0);
+    expect(stdout.trim().split("\n").at(-1)).toBe("up to date");
+    expect(calls).toEqual([]);
+    expect(originBranches()).toEqual(["main"]);
+  });
+
   it("merges the newest tag, records it, runs the checks and lands the pull request", () => {
     makeFork(`${OLD} ${oldSha}`);
     const { status, stdout, calls, tokens, repos } = run();
@@ -356,6 +380,14 @@ describe("sync.sh", () => {
     expect(body).toContain("line 250\n");
     expect(body).not.toContain("line 50\n");
     expect(body).not.toContain("seams ok");
+
+    // The next run waits on the draft rather than rebuilding the branch.
+    const branchSha = git(origin, "rev-parse", `sync/${NEWEST}`);
+    const second = run({ SYNC_TEST_PR_URL: "https://example.test/pr/1" });
+    expect(second.status).toBe(0);
+    expect(second.stdout).toContain(`sync: ${NEWEST} waits on https://example.test/pr/1`);
+    expect(second.calls).toHaveLength(1);
+    expect(git(origin, "rev-parse", `sync/${NEWEST}`)).toBe(branchSha);
   });
 
   it("comments on the open fails-checks issue instead of opening another", () => {
@@ -503,6 +535,20 @@ describe("sync.sh", () => {
     );
     expect(body).toContain("refusing");
     expect(body).toContain(".github/workflows/");
+    expect(originBranches()).toEqual(["main"]);
+
+    // Nothing reached origin, so the next run tries again and comments on the
+    // issue the first one filed.
+    const second = run({
+      SYNC_TEST_ISSUES: JSON.stringify([
+        { number: 8, title: `Sync to ${NEWEST} cannot be pushed` },
+      ]),
+    });
+    expect(second.status).toBe(1);
+    expect(second.calls.slice(-2)).toEqual([
+      `gh issue edit 8 --title Sync to ${NEWEST} cannot be pushed`,
+      expect.stringMatching(/^gh issue comment 8 --body-file /),
+    ]);
     expect(originBranches()).toEqual(["main"]);
   });
 
