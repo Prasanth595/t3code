@@ -288,12 +288,13 @@ The client setting `snoozeQuickOptions` holds the choices of the snooze menus. I
 
 ## Sidebar groups
 
-The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the sidebar search. It is off by default. Turn it on in Settings > General > Sidebar groups.
+The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the sidebar search. It is on by default. Turn it off in Settings > General > Sidebar groups.
 
 - The first tab, "Threads", holds every thread that is in no group. A thread lives in one group, so the groups act like folders.
-- Drag a thread onto a tab to move it into that group. Drag it onto "Threads" to take it out of every group. Drag it onto the empty end of the tab bar to make a new group.
+- Drag a thread onto a tab to move it into that group. Drag it onto "Threads" to take it out of every group. Drag it onto the empty end of the tab bar to make a new group. A drop on the tab that already holds the thread changes nothing.
 - Click + to make an empty group. Right-click a tab, or click the sliders button of the open tab, to rename it, edit its rules, move it or delete it.
-- Rules put threads in a group automatically. A thread matches a group when it matches every rule. Rules compare the project, the repository owner, the status, the provider, who created the thread, its background work and its title.
+- Rules put threads in a group automatically. A thread matches a group when it matches every rule. Rules compare the repository, the repository owner, the status, the provider, who created the thread, its background work and its title.
+- A repository rule compares the repository of the project, such as `github.com/yarden-zamir/t3code`. The same repository matches on every machine, also where its project has another id or path. A project without a remote has no repository.
 - A thread lives in the group that you dragged it into. Otherwise it lives in the first group, from left to right, whose rules match. Otherwise it lives in "Threads". New threads follow the same order.
 - A group without rules holds only the threads that you drag into it.
 - A rule on "Group" makes a view. A view shows the threads of the groups that it names and holds no thread itself. Pick Group > "Any group" to make an "All" tab.
@@ -301,7 +302,9 @@ The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the 
 - Settled and snoozed threads stay in their group, in its Settled and Snoozed shelves. They do not count in the tab status.
 - Search covers every tab. When you open a thread from a link or a notification, the sidebar shows its tab.
 - The client setting `sidebarGroupSingleThreadOpens` makes a group with one thread show that thread on its tab. A click opens the thread.
-- The groups and the drag assignments are saved in the server setting `sidebarGroups`. It is a shared setting: a change goes to every connected server, so all devices and machines see the same groups.
+- The groups and the drag assignments are saved in the server setting `sidebarGroups` of the primary server. The machine map owns its sync: after a change saves, it becomes the shared value of the map (MM-411), and every machine on the map applies it. A machine without the map role `edit`, or off the map, keeps the change on its own server only.
+- A drag writes an assignment only where the rules give another group. Assignments of deleted or archived threads go at the next change. An environment that is not connected keeps its assignments.
+- A rule from a newer T3 version shows as "Rule: from a newer version". This version skips it.
 - The client setting `sidebarGroupsEnabled` decides per device whether the tabs show. The open tab is also per device.
 - A change replaces all groups at once. When two devices change groups at the same moment, the last change wins.
 - The hosted app at app.t3.codes has no primary server to keep the groups, so it shows no tabs. The mobile app does not show groups yet.

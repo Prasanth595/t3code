@@ -18,7 +18,7 @@ export function SidebarGroupsSettingsRow() {
     <>
       <SettingsRow
         {...searchableSetting("sidebar-groups")}
-        description="Group threads in tabs above the sidebar list. Drag a thread onto a tab to move it, or onto the empty end of the tab bar to make a new group. Rules put matching threads in a group. The groups are saved on your servers, so every device sees them."
+        description="Group threads in tabs above the sidebar list. Drag a thread onto a tab to move it, or onto the empty end of the tab bar to make a new group. Rules put matching threads in a group. The machine map syncs the groups to your other machines."
         resetAction={
           enabled !== DEFAULT_CLIENT_SETTINGS.sidebarGroupsEnabled ? (
             <SettingResetButton

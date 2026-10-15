@@ -18,6 +18,7 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
+import { SidebarGroups } from "./sidebarGroups.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
@@ -84,50 +85,6 @@ export const SidebarOwnerFilter = Schema.Struct({
   ),
 });
 export type SidebarOwnerFilter = typeof SidebarOwnerFilter.Type;
-/** Fork: what a sidebar group rule compares. `group` compares the group that holds the thread. */
-export const SidebarGroupRuleField = Schema.Literals([
-  "group",
-  "project",
-  "owner",
-  "status",
-  "provider",
-  "createdBy",
-  "background",
-  "title",
-]);
-export type SidebarGroupRuleField = typeof SidebarGroupRuleField.Type;
-/**
- * Fork: one rule of a sidebar group. "is" matches a thread that has one of `values`, and "is_not"
- * matches a thread that has none of them. A `title` value matches when the title contains it.
- * Null stands for "none", for example a project without a repository owner.
- */
-export const SidebarGroupRule = Schema.Struct({
-  field: SidebarGroupRuleField,
-  operator: Schema.Literals(["is", "is_not"]),
-  values: Schema.Array(Schema.NullOr(TrimmedNonEmptyString)),
-});
-export type SidebarGroupRule = typeof SidebarGroupRule.Type;
-/** Fork: a sidebar group. A thread matches the group when it matches every rule. */
-export const SidebarGroup = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  name: TrimmedNonEmptyString,
-  rules: Schema.Array(SidebarGroupRule).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-});
-export type SidebarGroup = typeof SidebarGroup.Type;
-/** Fork: the value of the `sidebarGroups` server setting. */
-export const SidebarGroups = Schema.Struct({
-  /** Groups in tab order. The default tab is not in this list. */
-  groups: Schema.Array(SidebarGroup).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  /**
-   * Thread key (`environmentId:threadId`) to the group that the user dragged the thread into.
-   * Keys of deleted threads stay until their group is deleted.
-   * The id `default` puts the thread in the default tab, also when a group rule matches it.
-   */
-  assignments: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-  ),
-});
-export type SidebarGroups = typeof SidebarGroups.Type;
 /** Fork: a local time of day for a snooze quick option. */
 const SnoozeQuickOptionTime = Schema.Struct({
   hour: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 23 })),
@@ -550,7 +507,7 @@ export const ClientSettingsSchema = Schema.Struct({
    * group that the user dragged it into, else in the first group whose rules match it, else in the
    * default tab. The groups are the server setting `sidebarGroups`.
    */
-  sidebarGroupsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarGroupsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Fork: a click on the tab of a group with one thread opens that thread. */
   sidebarGroupSingleThreadOpens: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -1576,8 +1533,9 @@ export const ServerSettings = Schema.Struct({
   /** Fork: user-built thread card layouts. See `ThreadCardLayouts`. */
   threadCardLayouts: ThreadCardLayouts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
-   * Fork: sidebar thread groups and their drag assignments. A shared setting, so every machine
-   * holds the same groups. Clients show them while the client setting `sidebarGroupsEnabled` is on.
+   * Fork: sidebar thread groups and their drag assignments. The machine map syncs the value: a
+   * change from the sidebar becomes its shared value (MM-411). Clients show the groups while the
+   * client setting `sidebarGroupsEnabled` is on.
    */
   sidebarGroups: SidebarGroups.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
