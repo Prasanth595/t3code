@@ -5,8 +5,9 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { markdownWithHtml } from "../lib/markdownDocument";
+import { widestOrderedListMarkerDigits } from "../lib/orderedListMarkers";
 import { useCallback, useMemo, useState } from "react";
-import { ActionSheetIOS, Platform, Share, StyleSheet, View } from "react-native";
+import { ActionSheetIOS, PixelRatio, Platform, Share, StyleSheet, View } from "react-native";
 import {
   EnrichedMarkdownText,
   type DocumentAssetsEvent,
@@ -25,9 +26,18 @@ import {
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
 
+// The native list gutter only fits "99.", so wider numbers draw past the left
+// edge. DM Sans digits are at most 0.71em wide and the period 0.26em, in every
+// weight; the gutter is in dp while the marker scales with the system font size.
+function orderedListMarkerMinWidth(digits: number, fontSize: number): number {
+  if (digits < 3) return 0;
+  return Math.ceil((digits * 0.71 + 0.26) * fontSize * PixelRatio.getFontScale());
+}
+
 function enrichedStyle(
   style: SelectableMarkdownTextProps["textStyle"],
   dark: boolean,
+  orderedListMarkerDigits: number,
 ): MarkdownStyle {
   const monospace = Platform.OS === "ios" ? "Menlo" : "monospace";
   // Keep the radius modest: iOS clips square table-cell borders without stroking the corner arcs.
@@ -116,7 +126,13 @@ function enrichedStyle(
       borderWidth: 2,
       gapWidth: 12,
     },
-    list: { ...body, bulletColor: style.mutedColor, markerColor: style.mutedColor, gapWidth: 6 },
+    list: {
+      ...body,
+      bulletColor: style.mutedColor,
+      markerColor: style.mutedColor,
+      gapWidth: 6,
+      markerMinWidth: orderedListMarkerMinWidth(orderedListMarkerDigits, style.fontSize),
+    },
     thematicBreak: { color: style.dividerColor, height: 1, marginTop: 8, marginBottom: 8 },
     table: {
       ...body,
@@ -239,9 +255,16 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       mimeTypes: { "app.t3.context-fragment": props.contextClipboardFragment! },
     };
   }, [props.contextClipboardFragment, props.markdown]);
+  const orderedListMarkerDigits = useMemo(
+    () => widestOrderedListMarkerDigits(props.markdown),
+    [props.markdown],
+  );
   const markdownStyle = useMemo(
-    () => ({ ...enrichedStyle(props.textStyle, themeAppearance === "dark"), linkVariants }),
-    [props.textStyle, themeAppearance, linkVariants],
+    () => ({
+      ...enrichedStyle(props.textStyle, themeAppearance === "dark", orderedListMarkerDigits),
+      linkVariants,
+    }),
+    [props.textStyle, themeAppearance, orderedListMarkerDigits, linkVariants],
   );
   const renderMedia = useCallback(
     (asset: MarkdownMediaAsset) =>
