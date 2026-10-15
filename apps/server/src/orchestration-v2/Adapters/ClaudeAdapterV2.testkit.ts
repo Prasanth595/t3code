@@ -17,8 +17,8 @@ import {
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -242,9 +242,17 @@ interface ClaudeSubagentFoundFrame {
 }
 
 type ClaudeOutboundFrame =
+  | { readonly type: "query.stop_task"; readonly taskId: string }
+  | { readonly type: "query.background_tasks"; readonly toolUseId: string }
   | ClaudeQueryOpenFrame
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
+  | {
+      readonly type: "query.apply_flag_settings";
+      readonly settings: Parameters<
+        ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"]
+      >[0];
+    }
   | ClaudeQuerySetPermissionModeFrame
   | ClaudeQueryInterruptFrame
   | ClaudePermissionResponseFrame
@@ -818,6 +826,13 @@ function makeReplayQueryRunner(
               model,
             });
           }),
+        applyFlagSettings: (settings) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({
+              type: "query.apply_flag_settings",
+              settings,
+            });
+          }),
         setPermissionMode: (mode) =>
           replayEffect(() => {
             assertNextOutboundFrame({
@@ -825,6 +840,14 @@ function makeReplayQueryRunner(
               mode,
             });
           }),
+        stopTask: (taskId) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({ type: "query.stop_task", taskId });
+          }),
+        backgroundTasks: (toolUseId) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({ type: "query.background_tasks", toolUseId });
+          }).pipe(Effect.as(true)),
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });
         }),
@@ -1583,7 +1606,7 @@ async function recordClaudeStreamingQuery(input: {
         text: prompt,
         uuid: await Effect.runPromise(
           Crypto.Crypto.pipe(
-            Effect.flatMap((crypto) => crypto.randomUUIDv4),
+            Effect.flatMap((crypto) => crypto.randomUUIDv4()),
             Effect.filterOrFail(ClaudeAdapterV2.isClaudePromptUuid),
             Effect.provide(NodeServices.layer),
           ),
