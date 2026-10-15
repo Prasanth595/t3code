@@ -3751,12 +3751,13 @@ describe("PreviewManager", () => {
     withManager((manager) =>
       Effect.gen(function* () {
         let page = "static-page";
+        let pixelsReadable = true;
         const toJPEG = vi.fn((pixels: string) => Buffer.from(`jpeg:${pixels}`));
         const capturePage = vi.fn(async () => {
           const pixels = page;
           return {
             toJPEG: () => toJPEG(pixels),
-            toBitmap: () => Buffer.from(pixels),
+            toBitmap: () => (pixelsReadable ? Buffer.from(pixels) : Buffer.alloc(0)),
             getSize: () => ({ width: 1280, height: 720 }),
           };
         });
@@ -3784,6 +3785,13 @@ describe("PreviewManager", () => {
           "desktop:preview-pip-frame",
           expect.objectContaining({ data: Buffer.from("jpeg:changed-page").toString("base64") }),
         );
+
+        // A frame whose pixels cannot be read has no fingerprint and is still delivered.
+        pixelsReadable = false;
+        yield* TestClock.adjust(100);
+
+        expect(toJPEG).toHaveBeenCalledTimes(3);
+        expect(send).toHaveBeenCalledTimes(3);
         yield* manager.closePictureInPicture("tab_pip_unchanged");
       }),
     ),
