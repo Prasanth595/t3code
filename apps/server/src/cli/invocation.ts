@@ -150,10 +150,14 @@ const shellWord = (value: string) =>
 /**
  * Quotes `value` for PowerShell, the default Windows terminal. Always quoted,
  * so a path reads the same whether or not it holds a space. Inside double
- * quotes `"` doubles, and `$` and the backtick are escaped so nothing expands.
+ * quotes `"` and its typographic forms (which also end the string) double,
+ * and `$` and the backtick are escaped so nothing expands.
  */
 const powershellWord = (value: string) =>
-  `"${value.replaceAll("`", "``").replaceAll("$", "`$").replaceAll('"', '""')}"`;
+  `"${value
+    .replaceAll("`", "``")
+    .replaceAll("$", "`$")
+    .replace(/["\u201C\u201D\u201E]/g, "$&$&")}"`;
 
 /** Quotes a word for the host's shell: POSIX, or PowerShell on Windows. */
 const hostShellWord = (platform: NodeJS.Platform, value: string) =>
