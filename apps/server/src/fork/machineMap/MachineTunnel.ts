@@ -139,51 +139,56 @@ const make = Effect.gen(function* () {
       Effect.map(Option.getOrNull),
     );
 
-  const runOnce = (token: string) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        // The pinned release of the upstream relay client, with its sha256 checked.
-        const binary = (yield* relayClient.install).executablePath;
-        // The token goes in the environment, so it does not show in the process list.
-        const child = yield* spawner.spawn(
-          ChildProcess.make(
-            binary,
-            [
-              "tunnel",
-              "--loglevel",
-              "warn",
-              "--logfile",
-              path.join(config.logsDir, "cloudflared.log"),
-              "run",
-            ],
-            {
-              env: { TUNNEL_TOKEN: token },
-              extendEnv: true,
-              detached: false,
-              stdin: "ignore",
-              stdout: "ignore",
-              stderr: "ignore",
-            },
-          ),
-        );
-        yield* Effect.logInfo("cloudflared started.", { pid: child.pid });
-        const exitCode = yield* child.exitCode;
-        yield* Effect.logWarning("cloudflared exited. It starts again.", {
-          exitCode: Number(exitCode),
-        });
-      }),
-    );
+  const runOnce = Effect.scoped(
+    Effect.gen(function* () {
+      // Read on each start: "Leave" deletes the token, and a new join saves another one.
+      const token = yield* readToken;
+      if (token === null) {
+        yield* Effect.logWarning("The machine map tunnel has no token. Join the map again.");
+        return;
+      }
+      // The pinned release of the upstream relay client, with its sha256 checked.
+      const binary = (yield* relayClient.install).executablePath;
+      // The token goes in the environment, so it does not show in the process list.
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          binary,
+          [
+            "tunnel",
+            // The relay client pins and checks this binary, and T3 Connect shares it.
+            "--no-autoupdate",
+            "--loglevel",
+            "warn",
+            "--logfile",
+            path.join(config.logsDir, "cloudflared.log"),
+            "run",
+          ],
+          {
+            env: { TUNNEL_TOKEN: token },
+            extendEnv: true,
+            detached: false,
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+          },
+        ),
+      );
+      yield* Effect.logInfo("cloudflared started.", { pid: child.pid });
+      const exitCode = yield* child.exitCode;
+      yield* Effect.logWarning("cloudflared exited. It starts again.", {
+        exitCode: Number(exitCode),
+      });
+    }),
+  );
 
   // MM-1309: run `cloudflared` only when the server uses the joined tunnel. A tunnel from the
   // environment or the desktop settings has its own `cloudflared` (MM-1310).
   const joined = yield* provide(readJoinedTunnel(config.stateDir));
-  const token = yield* readToken.pipe(Effect.orElseSucceed(() => null));
-  if (
-    joined !== undefined &&
-    token !== null &&
-    config.tunnelPairingUrl === joinedTunnelOrigin(joined)
-  ) {
-    const runForever = runOnce(token).pipe(
+  // The config took its tunnel from the joined file at start, not from the environment.
+  const startedWithJoined =
+    joined !== undefined && config.tunnelPairingUrl === joinedTunnelOrigin(joined);
+  if (startedWithJoined) {
+    const runForever = runOnce.pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("cloudflared could not run. It tries again.", { cause: String(cause) }),
       ),
@@ -207,9 +212,9 @@ const make = Effect.gen(function* () {
   const adopt: MachineTunnel["Service"]["adopt"] = (grant) =>
     Effect.gen(function* () {
       const saved = yield* provide(readJoinedTunnel(config.stateDir));
-      const usesSaved =
-        saved !== undefined && config.tunnelPairingUrl === joinedTunnelOrigin(saved);
-      if (config.tunnelPairingUrl !== undefined && !usesSaved) {
+      // MM-1310: only a tunnel from the environment or the desktop settings is the server's own.
+      // A tunnel from an earlier join stays the map's, also after "Leave" deleted its file.
+      if (config.tunnelPairingUrl !== undefined && !startedWithJoined) {
         yield* Effect.logInfo("Machine map join keeps the tunnel of this server.", {
           tunnel: config.tunnelPairingUrl,
         });
@@ -219,7 +224,10 @@ const make = Effect.gen(function* () {
       const contents = yield* encodeJoinedTunnel(next);
       const savedToken = yield* readToken;
       const unchanged =
-        usesSaved && savedToken === grant.token && contents === (yield* encodeJoinedTunnel(saved));
+        saved !== undefined &&
+        config.tunnelPairingUrl === joinedTunnelOrigin(saved) &&
+        savedToken === grant.token &&
+        contents === (yield* encodeJoinedTunnel(saved));
       if (unchanged) return "unchanged" as const;
       yield* secrets.set(TOKEN_SECRET_NAME, new TextEncoder().encode(grant.token));
       yield* provide(writeFileStringAtomically({ filePath, contents }));

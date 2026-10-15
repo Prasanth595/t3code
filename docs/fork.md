@@ -191,7 +191,7 @@ sudo apt-get update && sudo apt-get install -y curl tar ca-certificates libatomi
 curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
 ```
 
-The installer starts the server and joins the map. The portal made a tunnel `t3-<name>.yarden-zamir.com` for the machine (MM-213). The server saves it, restarts once, downloads `cloudflared` into its state folder and runs it as a child process (MM-1309). The join dialog in the portal then shows that the machine joined.
+The installer starts the server and joins the map. The portal made a tunnel `t3-<name>.yarden-zamir.com` for the machine (MM-213). The server saves it, restarts once, installs the pinned `cloudflared` into `~/.t3/tools/cloudflared/` and runs it as a child process (MM-1309). The join dialog in the portal then shows that the machine joined.
 
 - The join code expires after 10 minutes. If it expired, make a new code in the machine panel of the portal.
 - The tunnel connects outbound, and the server listens only on `127.0.0.1`. Thus the cloud firewall needs no change. On Oracle Cloud, keep the default security list and the `iptables` rules of the image.

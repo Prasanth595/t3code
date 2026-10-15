@@ -344,11 +344,12 @@ function MachineDesktopReports({
     for (const command of commands) {
       if (handledCommands.current.has(command.id)) continue;
       const expired = Date.parse(command.expiresAt) <= Date.now();
-      // MM-1402: the update state loads after the app starts; until then, "no update" is unknown.
+      // MM-1402: after the start, the update state passes "disabled" and "checking" before it
+      // can say "install". Until it does, or the wait is over, "no update" is unknown.
       if (
         !expired &&
         command.input._tag === "installUpdate" &&
-        updateState === null &&
+        (updateState === null || resolveDesktopUpdateButtonAction(updateState) !== "install") &&
         !updateStateWaitOver
       ) {
         continue;
