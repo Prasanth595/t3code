@@ -255,9 +255,9 @@ The server setting `preferOriginRemote` makes a fork checkout count as its fork.
 
 The server setting `globalScripts` holds scripts for every project. It is empty by default. Edit it in Settings > General > Global scripts.
 
-- Pin a script to get a button. Global pins (`pinnedGlobalScriptIds`) show in the title bar and next to the thread details toggle. Project pins (`pinnedProjectScriptIds`) show only next to the toggle. Right-click a button for the pin menu.
+- Pin a script to get a button. Global pins (`pinnedGlobalScriptIds`) show in the title bar. Project pins (`pinnedProjectScriptIds`) show next to the thread details toggle. Right-click a button for the pin menu.
 - A global script's preview opens as a floating popup.
-- An action with "Open as an app overlay" (`previewOverlay`) opens its page in a large panel over the app instead. It runs its command only when the page is down.
+- An action with "Open as an app overlay" (`previewOverlay`) opens its page in a large panel over the app instead. It runs its command only when the page is down. A remote client, such as an HTTPS page or a client of another machine, opens the preview instead, because it cannot frame that page.
 - Scripts can run in the background.
 
 ## App toggle shortcuts

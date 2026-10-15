@@ -1,6 +1,6 @@
 # Yarden-zamir fork of T3 Code
 
-This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Each fork behavior is a setting that starts on when it only adds something, and off when it changes behavior, installs or restarts anything, changes access or needs setup. Settings > Fork shows every fork setting. Details and setup: [docs/fork.md](docs/fork.md).
+This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Each fork behavior is a setting that starts on when it only adds something, and off when it changes behavior, installs or restarts anything, changes access or needs setup. Settings > Fork shows every fork setting, in the groups of this list. Details and setup: [docs/fork.md](docs/fork.md).
 
 ## Fork features
 
@@ -26,20 +26,23 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Desktop app on the map:** the desktop app adds each reachable machine as an environment and applies the shared client settings.
 - **Zoom and pan:** the map zooms, pans and fits all cards, also on phones and small windows.
 - **Approved clients:** a new browser waits in the Clients view until the owner approves it with a fresh MFA. Each client gets a card and a level per machine.
-- **Observe browser keys:** each browser proves its browser key at sign-in. The machine reports unknown keys to the portal and gives an approved client the level of its arrow, at most `standard` (`clientAccess`: `observe`).
-- **App invites and app tokens:** "Invite an app" shows a QR code that a native app, such as the T3 Android app, uses once. The app gets its own Cloudflare Access token, and each machine gives it the level of its arrow.
+- **Client access:** each machine decides which browsers get in through Cloudflare Access. `off` keeps the owner login. `observe` gives a browser of an approved client the level of its arrow, at most `standard`. `enforce` lets in only browsers of approved clients; other browsers wait for approval (`clientAccess`).
+- **Owner-only access changes:** only the owner changes `clientAccess` and `machineMap`, in the portal with the passkey step or in the desktop app of the machine. Agents cannot change them.
+- **Sibling client sessions:** a browser client session lasts 1 day, also on sibling machines. A refused sibling pairs again by itself with the browser key.
+- **App invites and app tokens:** only the owner makes an invite, in the portal. "Invite an app" shows a QR code that a native app, such as the T3 Android app, uses once. The app gets its own Cloudflare Access token, and each machine gives it the level of its arrow.
 - **Machines panel:** a read-only map in the right panel of a thread. Open it with "Show machines" in the command palette.
 
 **Updates and releases**
 
 - **Fork releases:** nightly desktop builds for macOS (signed with a self-made certificate), Windows and Linux, plus Linux server archives and `SHA256SUMS`. A release builds on each push to main that changes more than docs or the portal. `t3 update`, "Update everything" and `scripts/install.sh` install from the fork releases.
-- **Fork installers:** one command installs the fork on macOS, Windows or Linux and joins the machine map.
+- **Fork installers:** one command installs the fork from the fork releases on macOS, Windows or Linux and joins the machine map. The installer has no source build.
 - **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now".
 - **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`).
 - **Local deploy:** `scripts/fork-deploy-local.sh <ssh-host>` builds this checkout for a headless Linux server and switches its service to it.
 - **Changelog:** a timeline of fork releases and commits, also in the update popover for the offered update, the pending upstream commits, a "Start Fork Sync" button and an "Ask agent" menu (`forkChangelogEnabled`, on by default).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
-- **Repair agent:** a failed sync, release or Fork CI run calls a webhook that starts a repair agent.
+- **Fork CI:** runs on each push to main and on each pull request to main. Branch protection requires the one check "Fork CI result".
+- **Repair agent:** a failed Fork Sync or Fork Release run, or a failed Fork CI run on main, calls the webhook task "Fork repair" on the VPS, which starts a repair agent. A pull request never calls it.
 
 **Agents**
 
