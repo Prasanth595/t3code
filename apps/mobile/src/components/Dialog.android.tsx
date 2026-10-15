@@ -36,9 +36,13 @@ type DialogRequest =
 let presentRequest: ((request: DialogRequest) => void) | null = null;
 
 export function alert(...[title, message, buttons, options]: Parameters<typeof Alert.alert>): void {
+  const actions = buttons?.length ? buttons.slice(0, 3) : [{ text: "OK" }];
+  const normalized = actions.map((action, index) =>
+    index === actions.length - 1 ? { ...action, text: action.text || "OK" } : action,
+  );
   presentRequest?.({
     kind: "alert",
-    request: { title, message, buttons: buttons?.slice(0, 3), options },
+    request: { title, message, buttons: normalized, options },
   });
 }
 
