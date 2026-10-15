@@ -63,6 +63,12 @@ export interface RunInput {
   readonly tailBytes?: number;
   /** How long after SIGTERM to send SIGKILL. Default 10_000. Exists so a test can be fast. */
   readonly termGraceMs?: number;
+  /**
+   * Keep stderr apart from stdout: stdout alone is `tail`, stderr is `stderrTail`.
+   * Default false, which merges both into `tail` in order. For commands whose
+   * stdout is data (gh's JSON) that stderr text must not end up in.
+   */
+  readonly separateStderr?: boolean;
 }
 
 export interface RunResult {
@@ -75,6 +81,10 @@ export interface RunResult {
   readonly timedOut: boolean;
   /** The last `tailBytes` of stdout and stderr interleaved, decoded as UTF-8. */
   readonly tail: string;
+  /** The last `tailBytes` of stderr; "" unless `separateStderr` was set. */
+  readonly stderrTail: string;
+  /** True when a tail dropped bytes, i.e. the output was longer than `tailBytes`. */
+  readonly truncated: boolean;
 }
 
 /**
@@ -94,6 +104,10 @@ class Tail {
   push(chunk: Buffer): void {
     this.buf = Buffer.concat([this.buf, chunk]);
     if (this.buf.length > 2 * this.cap) this.trim();
+  }
+
+  get truncated(): boolean {
+    return this.dropped || this.buf.length > this.cap;
   }
 
   finish(): string {
@@ -126,20 +140,25 @@ const buildEnv = (extra: Readonly<Record<string, string>> | undefined): Record<s
 const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
   Effect.gen(function* () {
     const args = input.args ?? [];
+    const separate = input.separateStderr === true;
     const tail = new Tail(input.tailBytes ?? DEFAULT_TAIL_BYTES);
+    const stderrTail = new Tail(input.tailBytes ?? DEFAULT_TAIL_BYTES);
 
-    // One pipe for both streams: Node cannot hand one pipe to two fds, so the
-    // wrapper shell merges stderr into stdout. /bin/sh is absolute because the
-    // caller may override PATH.
+    // By default one pipe for both streams: Node cannot hand one pipe to two
+    // fds, so the wrapper shell merges stderr into stdout. With separateStderr
+    // there are two pipes and no merge. /bin/sh is absolute because the caller
+    // may override PATH.
+    const merge = separate ? "" : "exec 2>&1\n";
     const script = input.shell
-      ? ["-c", `exec 2>&1\n${input.command}`, ...args]
-      : ["-c", 'exec 2>&1\nexec "$0" "$@"', input.command, ...args];
+      ? ["-c", `${merge}${input.command}`, ...args]
+      : ["-c", `${merge}exec "$0" "$@"`, input.command, ...args];
 
     const exited = Deferred.makeUnsafe<
       readonly [number | null, NodeJS.Signals | null],
       RunSpawnError
     >();
     const closed = Deferred.makeUnsafe<void>();
+    const stderrClosed = Deferred.makeUnsafe<void>();
 
     const spawnError = (cause: unknown) =>
       new RunSpawnError({ shell: input.shell === true, cwd: input.cwd, cause });
@@ -152,7 +171,7 @@ const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
         const child = NodeChildProcess.spawn("/bin/sh", script, {
           cwd: input.cwd,
           env: buildEnv(input.env),
-          stdio: ["ignore", "pipe", "ignore"],
+          stdio: ["ignore", "pipe", separate ? "pipe" : "ignore"],
           detached: true,
         });
         child.once("error", (cause) => Deferred.doneUnsafe(exited, Exit.fail(spawnError(cause))));
@@ -163,6 +182,9 @@ const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
         child.stdout?.once("close", () => Deferred.doneUnsafe(closed, Exit.void));
         // No stdout (spawn failed): nothing to drain.
         if (!child.stdout) Deferred.doneUnsafe(closed, Exit.void);
+        child.stderr?.on("data", (chunk: Buffer) => stderrTail.push(chunk));
+        child.stderr?.once("close", () => Deferred.doneUnsafe(stderrClosed, Exit.void));
+        if (!child.stderr) Deferred.doneUnsafe(stderrClosed, Exit.void);
         return child;
       },
       catch: spawnError,
@@ -189,6 +211,7 @@ const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
       Effect.sync(() => {
         killGroup(child, "SIGKILL");
         child.stdout?.destroy();
+        child.stderr?.destroy();
       });
 
     const use = (child: NodeChildProcess.ChildProcess) =>
@@ -228,10 +251,24 @@ const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
         // ends a stray in the group still held; a process that left the group
         // (setsid, setpgid) escapes, and the drain wait below bounds it.
         killGroup(child, "SIGKILL");
-        const drained = yield* Deferred.await(closed).pipe(Effect.timeoutOption(DRAIN_WAIT_MS));
-        if (drained._tag === "None") child.stdout?.destroy();
+        const drained = yield* Deferred.await(closed).pipe(
+          Effect.andThen(Deferred.await(stderrClosed)),
+          Effect.timeoutOption(DRAIN_WAIT_MS),
+        );
+        if (drained._tag === "None") {
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }
 
-        return { exitCode, timedOut, tail: tail.finish() } satisfies RunResult;
+        const out = tail.finish();
+        const err = stderrTail.finish();
+        return {
+          exitCode,
+          timedOut,
+          tail: out,
+          stderrTail: err,
+          truncated: tail.truncated || stderrTail.truncated,
+        } satisfies RunResult;
       });
 
     return yield* Effect.acquireUseRelease(acquire, use, release);
