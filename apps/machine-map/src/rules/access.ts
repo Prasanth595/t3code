@@ -16,7 +16,6 @@ import type {
 import {
   applyChanges,
   findArrow,
-  findClient,
   findClientArrow,
   findMachine,
   levelRank,
@@ -110,12 +109,9 @@ function clientRaises(map: MachineMapDocument, change: MapChange): boolean {
       change.arrow,
     );
   }
-  if (change._tag !== "putClient") return false;
-  const before = findClient(map, change.client.id)?.keys ?? [];
-  const added = change.client.keys.some(
-    (key) => !before.some((old) => old.thumbprint === key.thumbprint),
-  );
-  return added && map.clientArrows.some((arrow) => arrow.client === change.client.id);
+  // A new client has no arrows yet; its arrows count as their own changes.
+  if (change._tag !== "addClientKey") return false;
+  return map.clientArrows.some((arrow) => arrow.client === change.clientId);
 }
 
 /** MM-807: client changes that only the owner makes. */
@@ -124,6 +120,8 @@ export const touchesClients = (changes: ReadonlyArray<MapChange>): boolean =>
     (change) =>
       change._tag === "putClient" ||
       change._tag === "removeClient" ||
+      change._tag === "addClientKey" ||
+      change._tag === "removeClientKey" ||
       change._tag === "setClientArrow",
   );
 

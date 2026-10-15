@@ -150,10 +150,9 @@ describe("raisesAnyAccess (MM-711)", () => {
       arrow: { ...findClientArrow(withClient, PHONE, MAC), level: "admin" as const },
     };
     const newKey = {
-      _tag: "putClient" as const,
-      client: client({
-        keys: [...client().keys, { thumbprint: "key-2", addedAt: "", describedAs: "Chrome" }],
-      }),
+      _tag: "addClientKey" as const,
+      clientId: PHONE,
+      key: { thumbprint: "key-2", addedAt: "", describedAs: "Chrome" },
     };
     expect(raisesAnyAccess(withClient, [raise])).toBe(true);
     expect(raisesAnyAccess(withClient, [newKey])).toBe(true);

@@ -1196,10 +1196,13 @@ function ClientPanel({ id }: { id: string }) {
                   body: "That browser loses the access of this client. It can sign in again and wait for approval.",
                   confirmLabel: "Remove key",
                   action: () =>
-                    put(`Removed a key from ${client.name}`, {
-                      ...client,
-                      keys: client.keys.filter((k) => k.thumbprint !== key.thumbprint),
-                    }),
+                    void portal.submit(`Removed a key from ${client.name}`, [
+                      {
+                        _tag: "removeClientKey",
+                        clientId: client.id,
+                        thumbprint: key.thumbprint,
+                      },
+                    ]),
                 })
               }
             >

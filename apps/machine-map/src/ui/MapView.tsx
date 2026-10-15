@@ -910,7 +910,10 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     switch (subject._tag) {
       case "machine": {
         const machine = subject.machine;
-        const settled = settle(machines.indexOf(machine), nodeBox(machine, finished.at));
+        const settled = settle(
+          machines.findIndex((m) => m.id === machine.id),
+          nodeBox(machine, finished.at),
+        );
         paint(subject, toPixels(settled), finished.element);
         if (samePosition(settled, toPosition(finished.from))) return;
         save(setHeldPlaces, `machine:${machine.id}`, settled, `Moved ${machine.name}`, {

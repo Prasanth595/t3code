@@ -15,6 +15,8 @@ import {
   type SettingScope,
 } from "@t3tools/contracts/machineMap";
 
+import { clientKeyCode } from "@t3tools/contracts/machineMap";
+
 import type { PauseView, PendingRotation } from "../api.ts";
 import { arrowChange, usesText } from "../rules/access.ts";
 import {
@@ -219,6 +221,10 @@ export function describeChange(change: MapChange, map: MachineMapDocument): stri
       return `Client ${change.client.name}`;
     case "removeClient":
       return `Remove ${clientName(map, change.clientId)}`;
+    case "addClientKey":
+      return `Key ${clientKeyCode(change.key.thumbprint)} joins ${clientName(map, change.clientId)}`;
+    case "removeClientKey":
+      return `Remove key ${clientKeyCode(change.thumbprint)} from ${clientName(map, change.clientId)}`;
   }
 }
 

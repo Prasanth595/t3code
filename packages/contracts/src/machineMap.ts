@@ -298,6 +298,10 @@ export const MapChange = Schema.Union([
   Schema.TaggedStruct("removeNote", { id: TrimmedNonEmptyString }),
   Schema.TaggedStruct("putClient", { client: ClientRecord }),
   Schema.TaggedStruct("removeClient", { clientId: ClientId }),
+  /** MM-907: only an approval adds a key. No owner change and no undo can add one. */
+  Schema.TaggedStruct("addClientKey", { clientId: ClientId, key: ClientKey }),
+  /** MM-909: removes one browser key. Its undo refuses, because the inverse adds a key. */
+  Schema.TaggedStruct("removeClientKey", { clientId: ClientId, thumbprint: TrimmedNonEmptyString }),
   Schema.TaggedStruct("setClientArrow", { arrow: ClientArrowRecord }),
 ]);
 export type MapChange = typeof MapChange.Type;

@@ -118,7 +118,8 @@ import {
   emptyMap,
   findClient,
   findMachine,
-  undoKeepingKeys,
+  keepClientKeys,
+  undoChanges,
   freePosition,
   hasJoined,
   machinesTouched,
@@ -1341,7 +1342,7 @@ export class MachineMapObject extends DurableObject<Env> {
   #undoChanges(revisionNumber: number): { summary: string; changes: ReadonlyArray<MapChange> } {
     const revision = this.#revision(revisionNumber);
     if (!revision) throw new PortalError(404, `Unknown revision ${revisionNumber}.`);
-    const changes = undoKeepingKeys(this.#map, revision);
+    const changes = undoChanges(this.#map, revision.inverse);
     checkEditableChanges(this.#map, changes);
     return { summary: `Undo rev ${revision.revision}: ${revision.summary}`, changes };
   }
@@ -1852,10 +1853,12 @@ export class MachineMapObject extends DurableObject<Env> {
   /** POST /api/changes: owner changes apply at once (MM-701). */
   changes(owner: OwnerContext, request: ChangesRequest) {
     return this.#run(owner, (): WriteResult => {
-      checkEditableChanges(this.#map, request.changes);
+      // MM-909: a held draft or an open panel can send an older client record. It keeps the keys.
+      const changes = keepClientKeys(this.#map, request.changes);
+      checkEditableChanges(this.#map, changes);
       return {
         _tag: "applied",
-        revision: this.#commit(ownerActor(owner), request.summary, request.changes).revision,
+        revision: this.#commit(ownerActor(owner), request.summary, changes).revision,
       };
     });
   }
@@ -2396,6 +2399,7 @@ export class MachineMapObject extends DurableObject<Env> {
       const at = nowIso();
       const key = { thumbprint: pending.thumbprint, addedAt: at, describedAs: pending.describedAs };
       let client: ClientRecord;
+      let joins: MapChange;
       if (request.client._tag === "existing") {
         const existing = findClient(this.#map, request.client.clientId);
         if (!existing) throw new PortalError(404, "This client is gone.");
@@ -2415,7 +2419,8 @@ export class MachineMapObject extends DurableObject<Env> {
             `${existing.name} signs in as ${existing.email}, but this sign-in used ${pending.email ?? "no email"}.`,
           );
         }
-        client = { ...existing, keys: [...existing.keys, key] };
+        client = existing;
+        joins = { _tag: "addClientKey", clientId: existing.id, key };
       } else {
         const name = request.client.name;
         if (this.#map.clients.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
@@ -2432,6 +2437,7 @@ export class MachineMapObject extends DurableObject<Env> {
           ]),
           createdAt: at,
         };
+        joins = { _tag: "putClient", client };
       }
       const arrows: Array<MapChange> = request.arrows
         .filter((arrow) => arrow.level !== "none")
@@ -2448,7 +2454,7 @@ export class MachineMapObject extends DurableObject<Env> {
       const revision = this.#commit(
         ownerActor(owner),
         `Approved ${pending.describedAs || "a browser"} as ${client.name}`,
-        [{ _tag: "putClient", client }, ...arrows],
+        [joins, ...arrows],
       );
       this.#sql("DELETE FROM pending_clients WHERE thumbprint = ?", pending.thumbprint);
       this.#broadcast(this.#pendingEvent());

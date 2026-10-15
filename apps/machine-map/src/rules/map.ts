@@ -225,6 +225,10 @@ function applyChange(map: MachineMapDocument, change: MapChange): Step {
       return putClient(map, change.client);
     case "removeClient":
       return removeClient(map, change.clientId);
+    case "addClientKey":
+      return addClientKey(map, change.clientId, change.key);
+    case "removeClientKey":
+      return removeClientKey(map, change.clientId, change.thumbprint);
     case "setClientArrow":
       return setClientArrow(map, change.arrow);
   }
@@ -423,6 +427,9 @@ function putClient(map: MachineMapDocument, client: ClientRecord): Step {
   );
   if (clash) throw new MapRuleError(`${clash.name} already holds this browser key.`);
   const previous = findClient(map, client.id);
+  // MM-907, MM-909: keys of an existing client change only with addClientKey and removeClientKey.
+  if (previous && !sameJson(previous.keys, client.keys))
+    throw new MapRuleError(`The keys of ${previous.name} change only by approval or removal.`);
   const clients = previous
     ? map.clients.map((c) => (c.id === client.id ? client : c))
     : [...map.clients, client];
@@ -451,6 +458,39 @@ function removeClient(map: MachineMapDocument, clientId: ClientId): Step {
       { _tag: "putClient", client: previous },
       ...removedArrows.map((arrow): MapChange => ({ _tag: "setClientArrow", arrow })),
     ],
+  };
+}
+
+type ClientKey = ClientRecord["keys"][number];
+
+/** MM-907: an approved key joins an existing client. A key belongs to one client only. */
+function addClientKey(map: MachineMapDocument, clientId: ClientId, key: ClientKey): Step {
+  const client = findClient(map, clientId);
+  if (!client) throw new MapRuleError(`Unknown client ${clientId}.`);
+  const holder = clientWithKey(map, key.thumbprint);
+  if (holder) throw new MapRuleError(`${holder.name} already holds this browser key.`);
+  return {
+    map: {
+      ...map,
+      clients: map.clients.map((c) => (c.id === clientId ? { ...c, keys: [...c.keys, key] } : c)),
+    },
+    inverse: [{ _tag: "removeClientKey", clientId, thumbprint: key.thumbprint }],
+  };
+}
+
+/** MM-909: removes one browser key. The removed browser can sign in again and wait. */
+function removeClientKey(map: MachineMapDocument, clientId: ClientId, thumbprint: string): Step {
+  const client = findClient(map, clientId);
+  const key = client?.keys.find((k) => k.thumbprint === thumbprint);
+  if (!client || !key) throw new MapRuleError("This browser key is gone.");
+  return {
+    map: {
+      ...map,
+      clients: map.clients.map((c) =>
+        c.id === clientId ? { ...c, keys: c.keys.filter((k) => k.thumbprint !== thumbprint) } : c,
+      ),
+    },
+    inverse: [{ _tag: "addClientKey", clientId, key }],
   };
 }
 
@@ -487,17 +527,16 @@ export function checkEditableChanges(
   let current = map;
   for (const change of changes) {
     if (change._tag === "putClient") {
-      // MM-907: a browser key enters the map only through an approval, which needs a fresh MFA.
       const previous = findClient(current, change.client.id);
       if (!previous) throw new MapRuleError("Approve a waiting sign-in to add a client.");
       const next = change.client;
-      if (
-        next.email !== previous.email ||
-        next.createdAt !== previous.createdAt ||
-        next.keys.some((key) => !previous.keys.some((old) => sameJson(old, key)))
-      ) {
-        throw new MapRuleError(`The keys and the email of ${previous.name} come from approvals.`);
+      if (next.email !== previous.email || next.createdAt !== previous.createdAt) {
+        throw new MapRuleError(`The email of ${previous.name} comes from its approval.`);
       }
+    }
+    // MM-907: a browser key enters the map only through an approval, which needs a fresh MFA.
+    if (change._tag === "addClientKey") {
+      throw new MapRuleError("A browser key joins a client only through an approval.");
     }
     if (change._tag === "removeMachine") {
       throw new MapRuleError('Use "Remove machine" to remove a machine.');
@@ -521,31 +560,32 @@ export function checkEditableChanges(
 }
 
 /**
- * MM-720: the inverse of a revision for an undo. Each client keeps the keys it has now, minus the
- * keys that the revision added. So an undo removes the keys it added, and never drops a key that
- * came later or brings back a removed key.
+ * MM-909: an owner record of a client keeps the keys that the client has now. A held draft, an open
+ * panel or a drag can hold an older record, and that record must not drop a key approved since.
  */
-export function undoKeepingKeys(
+export function keepClientKeys(
   map: MachineMapDocument,
-  revision: {
-    readonly changes: ReadonlyArray<MapChange>;
-    readonly inverse: ReadonlyArray<MapChange>;
-  },
+  changes: ReadonlyArray<MapChange>,
 ): ReadonlyArray<MapChange> {
-  return revision.inverse.map((change): MapChange => {
+  return changes.map((change): MapChange => {
     if (change._tag !== "putClient") return change;
     const current = findClient(map, change.client.id);
-    if (!current) return change;
-    const before = change.client.keys;
-    const added = revision.changes.flatMap((forward) =>
-      forward._tag === "putClient" && forward.client.id === change.client.id
-        ? forward.client.keys.filter((key) => !before.some((b) => b.thumbprint === key.thumbprint))
-        : [],
-    );
-    const keys = current.keys.filter((key) => !added.some((a) => a.thumbprint === key.thumbprint));
-    return { ...change, client: { ...change.client, keys } };
+    return current ? { ...change, client: { ...change.client, keys: current.keys } } : change;
   });
 }
+
+/**
+ * MM-720: the changes of an undo. A client keeps its current keys, and the arrows of a client that
+ * left the map since are skipped, for example in the undo of an old machine removal.
+ */
+export const undoChanges = (
+  map: MachineMapDocument,
+  inverse: ReadonlyArray<MapChange>,
+): ReadonlyArray<MapChange> =>
+  keepClientKeys(
+    map,
+    inverse.filter((c) => c._tag !== "setClientArrow" || findClient(map, c.arrow.client)),
+  );
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
@@ -598,6 +638,8 @@ export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineI
       case "putClient":
       case "removeClient":
       case "setClientArrow":
+      case "addClientKey":
+      case "removeClientKey":
       // MM-1108, MM-1109: display data. No machine applies it.
       case "placePair":
       case "putNote":

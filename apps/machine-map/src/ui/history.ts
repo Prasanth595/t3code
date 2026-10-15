@@ -14,6 +14,7 @@ import type {
   MapRevision,
 } from "@t3tools/contracts/machineMap";
 import type { HealthAlert } from "@t3tools/contracts/machineMapResources";
+import { clientKeyCode } from "@t3tools/contracts/machineMap";
 
 import { arrowRaises, clientArrowRaises, usesText } from "../rules/access.ts";
 import { defaultArrow, defaultClientArrow, roleRank } from "../rules/map.ts";
@@ -169,11 +170,13 @@ function changeKind(revision: RevisionChanges, change: MapChange): ChangeKind {
     case "putClient": {
       const next = change.client;
       const previous = before(revision, "putClient", (c) => c.client.id === next.id)?.client;
-      if (!previous || previous.keys.length !== next.keys.length) return "clients";
+      if (!previous) return "clients";
       if (previous.name !== next.name) return "other";
       return "move";
     }
     case "removeClient":
+    case "addClientKey":
+    case "removeClientKey":
       return "clients";
   }
 }
@@ -322,6 +325,8 @@ export function entryMachines(entry: HistoryEntry): ReadonlySet<string> {
       case "removeNote":
       case "putClient":
       case "removeClient":
+      case "addClientKey":
+      case "removeClientKey":
         break;
     }
   }
@@ -633,10 +638,27 @@ export function revisionDiff(revision: RevisionChanges, map: MachineMapDocument)
             });
         };
         field("name", previous.name, next.name);
-        field("keys", keys(previous.keys.length), keys(next.keys.length));
         field("place", placeText(previous.position), placeText(next.position));
         return rows;
       }
+      case "addClientKey":
+        return [
+          {
+            label: `${clientName(map, change.clientId)} key ${clientKeyCode(change.key.thumbprint)}`,
+            ...clientLink(map, change.clientId),
+            before: NOTHING,
+            after: `approved, ${change.key.describedAs || "a browser"}`,
+          },
+        ];
+      case "removeClientKey":
+        return [
+          {
+            label: `${clientName(map, change.clientId)} key ${clientKeyCode(change.thumbprint)}`,
+            ...clientLink(map, change.clientId),
+            before: "approved",
+            after: "removed",
+          },
+        ];
       case "removeClient": {
         const previous = before(revision, "putClient", (c) => c.client.id === change.clientId);
         return [
