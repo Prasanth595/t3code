@@ -67,6 +67,7 @@ import {
   acpContentBlockDisplayText,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
+  findModelConfigOption,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
@@ -643,8 +644,7 @@ function negotiatedCapabilities(
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
-  const hasModelConfig =
-    setup.configOptions?.some((option) => option.category === "model") === true;
+  const hasModelConfig = findModelConfigOption(setup.configOptions) !== undefined;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
@@ -6300,11 +6300,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             requestedModel !== "auto" &&
             requestedModel !== "default"
           ) {
-            const hasModelConfig =
-              startResult.sessionSetupResult.configOptions?.some(
-                (option) => option.category === "model",
-              ) === true;
-            if (hasModelConfig) {
+            if (findModelConfigOption(startResult.sessionSetupResult.configOptions) !== undefined) {
               yield* runtime.setModel(requestedModel);
             }
           }
@@ -6368,6 +6364,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           for (const selection of configSelections) {
             if (!availableConfigIds.has(selection.id)) continue;
+            const option = configOptions.find((candidate) => candidate.id === selection.id);
+            // A later model option (Cline's `model` after its `provider`) picks
+            // the model the turn runs on. These options were read after the
+            // model write, so a value the session does not offer fails the
+            // open like an unknown model does, instead of silently running
+            // the agent's default model.
+            if (option?.category === "model") {
+              yield* runtime.setConfigOption(selection.id, selection.value);
+              continue;
+            }
             // Tuning knobs degrade instead of failing the session open: agents
             // advertise the union of values across models but can reject a
             // per-model invalid one at set time (codex-acp advertises "ultra"
@@ -6375,7 +6381,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // values the session does not currently offer and downgrade an
             // agent-side set rejection to a warning; the agent's default
             // applies for that option.
-            const option = configOptions.find((candidate) => candidate.id === selection.id);
             if (
               option !== undefined &&
               option.type === "select" &&

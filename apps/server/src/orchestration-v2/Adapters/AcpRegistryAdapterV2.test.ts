@@ -27,6 +27,8 @@ import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/s
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
+import { CLINE_SECONDARY_MODEL_SELECTION } from "../testkit/fixtures/acp_secondary_model/input.ts";
 import {
   decodeAcpReplayTranscript,
   makeAcpReplayCompletenessAssertion,
@@ -266,6 +268,85 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });
+
+  // Cline lists `provider` and then `model`, both `category: "model"`, and its
+  // `model` setter accepts any id. A stored model from another provider's
+  // catalog must fail the open rather than run Cline's default model.
+  it.effect("fails the open when the provider no longer offers the stored later model", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const replayDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-later-model-",
+      });
+      const statusPath = path.join(replayDir, "status.json");
+      const recorded = yield* readProviderReplayTranscript(
+        new URL(
+          "../testkit/fixtures/acp_secondary_model/registry_transcript.ndjson",
+          import.meta.url,
+        ),
+      );
+      // The agent switches provider and then sees nothing else.
+      const providerApplied = recorded.entries.findIndex(
+        (entry) => entry.type === "emit_inbound" && entry.label === "provider.applied",
+      );
+      const transcript = yield* decodeAcpReplayTranscript(
+        { ...recorded, entries: recorded.entries.slice(0, providerApplied + 1) },
+        ACP_REGISTRY_PROVIDER,
+      );
+      const instanceId = ProviderInstanceId.make("acp-registry-later-model");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        selfInvocation: yield* resolveSelfInvocation(),
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({
+          agentId: "fixture-agent",
+          authMethodId: "replay",
+        }),
+        environment: {},
+        makeRuntime: makeAcpReplayRuntime({
+          transcript,
+          statusPath,
+          scriptPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+          ),
+          childProcessSpawner,
+          fileSystem,
+        }),
+      }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+      const staleModel = "cline-free/muse-spark-1.3-contributor";
+      const error = yield* adapter
+        .openSession({
+          threadId: ThreadId.make("thread-acp-registry-later-model"),
+          providerSessionId: ProviderSessionId.make("provider-session-later-model"),
+          modelSelection: {
+            ...CLINE_SECONDARY_MODEL_SELECTION,
+            instanceId,
+            options: [{ id: "model", value: staleModel }],
+          },
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: replayDir,
+          }),
+        })
+        .pipe(Effect.scoped, Effect.flip);
+
+      // T3 rejected the stale model against ClinePass's catalog, the options
+      // the agent answered the provider write with, so no model write was sent.
+      assert.strictEqual(error._tag, "ProviderAdapterOpenSessionError");
+      assert.instanceOf(error.cause, EffectAcpErrors.AcpRequestError);
+      assert.deepEqual(error.cause.data, {
+        configId: "model",
+        allowedValues: [
+          "cline-pass/mimo-v2.6-flash",
+          "cline-pass/deepseek-v4.1-flash",
+          "cline-pass/muse-spark-1.3-contributor",
+        ],
+        receivedValue: staleModel,
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
 
   it.effect("offers client terminals to Devin only and client fs to no registry agent", () =>
     Effect.gen(function* () {
