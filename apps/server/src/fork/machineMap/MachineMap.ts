@@ -343,14 +343,18 @@ const make = Effect.gen(function* () {
   const applyDesired = (desired: MachineDesiredState) =>
     Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
-      const before = (yield* state.snapshot).saved.desired;
+      const { desired: before, desiredAtMs: beforeAtMs } = (yield* state.snapshot).saved;
       // Save first: the auth hooks read the saved state, so the new levels hold before any
       // session of a changed peer ends and it pairs again.
-      yield* state.updateSaved((saved) => ({ ...saved, desired }));
+      yield* state.updateSaved((saved) => ({ ...saved, desired, desiredAtMs: nowMs }));
       const changed = new Set([
-        ...peersWithChangedLevel(before, desired, nowMs).map((peer) => machineSessionSubject(peer)),
+        ...peersWithChangedLevel(before, beforeAtMs, desired, nowMs).map((peer) =>
+          machineSessionSubject(peer),
+        ),
         // MM-912: a client whose level changed pairs again with its app token, or not at all.
-        ...clientsWithChangedLevel(before, desired, nowMs).map((id) => clientSessionSubject(id)),
+        ...clientsWithChangedLevel(before, beforeAtMs, desired, nowMs).map((id) =>
+          clientSessionSubject(id),
+        ),
       ]);
       if (changed.size > 0) {
         yield* revokeSessions((subject) => changed.has(subject));
@@ -530,7 +534,12 @@ const make = Effect.gen(function* () {
    * The token goes last: its change restarts the connection fiber, which may be the caller.
    */
   const forgetMap = Effect.gen(function* () {
-    yield* state.updateSaved((saved) => ({ ...saved, desired: null, desktopCommands: [] }));
+    yield* state.updateSaved((saved) => ({
+      ...saved,
+      desired: null,
+      desiredAtMs: null,
+      desktopCommands: [],
+    }));
     yield* revokeSessions(isMapSubject).pipe(Effect.ignore({ log: true }));
     yield* state.setToken(null);
   });

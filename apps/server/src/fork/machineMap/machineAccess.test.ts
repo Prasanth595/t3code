@@ -12,6 +12,8 @@ import {
 import { PEER, PEER_TOKEN, SELF, arrow, desiredState } from "./MachineMap.testkit.ts";
 
 const NOW = Date.parse("2026-10-13T12:00:00.000Z");
+/** When a desired state with an arrow that expires at 11:00 arrived. */
+const BEFORE_EXPIRY = Date.parse("2026-10-13T10:00:00.000Z");
 
 describe("machineGrantFor (MM-1305)", () => {
   it("gives a peer token the scopes of its arrow and the subject machine:<id>", () => {
@@ -74,11 +76,14 @@ describe("clientGrantFor (MM-912)", () => {
     expect(
       clientGrantFor(withPhone("admin", "2026-10-13T11:00:00.000Z"), "phone.access", NOW),
     ).toBeUndefined();
-    expect(clientsWithChangedLevel(withPhone("standard"), desiredState({}), NOW)).toEqual([PHONE]);
+    expect(clientsWithChangedLevel(withPhone("standard"), null, desiredState({}), NOW)).toEqual([
+      PHONE,
+    ]);
     // The portal drops an expired client from the desired state; its sessions still end.
     expect(
       clientsWithChangedLevel(
         withPhone("admin", "2026-10-13T11:00:00.000Z"),
+        BEFORE_EXPIRY,
         desiredState({}),
         NOW,
       ),
@@ -115,9 +120,14 @@ describe("peersWithChangedLevel (MM-1306)", () => {
   it("lists a peer whose level into this machine changed, or that left the map", () => {
     const before = desiredState({ arrowsIn: [arrow(PEER, SELF, "admin")] });
     expect(
-      peersWithChangedLevel(before, desiredState({ arrowsIn: [arrow(PEER, SELF, "read")] }), NOW),
+      peersWithChangedLevel(
+        before,
+        null,
+        desiredState({ arrowsIn: [arrow(PEER, SELF, "read")] }),
+        NOW,
+      ),
     ).toEqual([PEER]);
-    expect(peersWithChangedLevel(before, desiredState({}), NOW)).toEqual([PEER]);
+    expect(peersWithChangedLevel(before, null, desiredState({}), NOW)).toEqual([PEER]);
   });
 
   it("ends the sessions of an arrow that expired before the next desired state", () => {
@@ -131,7 +141,19 @@ describe("peersWithChangedLevel (MM-1306)", () => {
         }),
       ],
     });
-    expect(peersWithChangedLevel(expiring, desiredState({}), NOW)).toEqual([PEER]);
+    expect(peersWithChangedLevel(expiring, BEFORE_EXPIRY, desiredState({}), NOW)).toEqual([PEER]);
+  });
+
+  it("keeps sessions issued at the revert level when the old state arrived after the expiry", () => {
+    // The portal was offline at the expiry, so the state arrived already expired and the sessions
+    // got the revert level. The next state with the reverted arrow changes nothing for them.
+    const expired = desiredState({
+      arrowsIn: [
+        arrow(PEER, SELF, "admin", { expiresAt: "2026-10-13T11:00:00.000Z", revertLevel: "read" }),
+      ],
+    });
+    const reverted = desiredState({ arrowsIn: [arrow(PEER, SELF, "read")] });
+    expect(peersWithChangedLevel(expired, NOW - 60_000, reverted, NOW)).toEqual([]);
   });
 
   it("ignores agent tools and arrows out of this machine", () => {
@@ -140,7 +162,7 @@ describe("peersWithChangedLevel (MM-1306)", () => {
       arrowsIn: [arrow(PEER, SELF, "read", { agentTools: true })],
       arrowsOut: [arrow(SELF, PEER, "admin")],
     });
-    expect(peersWithChangedLevel(before, next, NOW)).toEqual([]);
+    expect(peersWithChangedLevel(before, null, next, NOW)).toEqual([]);
   });
 });
 

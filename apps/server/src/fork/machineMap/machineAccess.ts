@@ -83,12 +83,13 @@ export const clientGrantFor = (
  */
 export const clientsWithChangedLevel = (
   previous: MachineDesiredState | null,
+  previousAtMs: number | null,
   next: MachineDesiredState | null,
   nowMs: number,
 ): ReadonlyArray<DesiredClient["id"]> => {
   const clients = (desired: MachineDesiredState | null) =>
     (desired?.clients ?? []).map((client) => [client.id, client] as const);
-  return sourcesWithChangedLevel(clients(previous), clients(next), nowMs);
+  return sourcesWithChangedLevel(clients(previous), previousAtMs, clients(next), nowMs);
 };
 
 const MACHINE_SUBJECT_PREFIX = "machine:";
@@ -148,16 +149,27 @@ export const isMachineRequestNamespace = (requestNamespace: string) =>
 type Leveled = Pick<ArrowRecord, "level" | "expiresAt" | "revertLevel">;
 
 /**
- * MM-1306: the sources whose sessions must end. A session got the level that its arrow had when the
- * desired state arrived, so the old side reads the raw level and the new side the level now. An
- * arrow that expired between the two states then counts as a change, and its sessions end.
+ * MM-1306: the sources whose sessions must end. A session got the level of its arrow at the time
+ * the old desired state arrived (`previousAtMs`), so the old side reads that level and the new
+ * side the level now. An arrow that expired between the two states then counts as a change, and
+ * an arrow that had expired before the old state arrived does not. A state saved before the time
+ * was kept (`null`) reads its raw level.
  */
 const sourcesWithChangedLevel = <K>(
   previous: ReadonlyArray<readonly [K, Leveled]>,
+  previousAtMs: number | null,
   next: ReadonlyArray<readonly [K, Leveled]>,
   nowMs: number,
 ): ReadonlyArray<K> => {
-  const before = new Map(previous.map(([source, arrow]) => [source, arrow.level] as const));
+  const before = new Map(
+    previous.map(
+      ([source, arrow]) =>
+        [
+          source,
+          previousAtMs === null ? arrow.level : effectiveLevel(arrow, previousAtMs),
+        ] as const,
+    ),
+  );
   const after = new Map(
     next.map(([source, arrow]) => [source, effectiveLevel(arrow, nowMs)] as const),
   );
@@ -172,6 +184,7 @@ const sourcesWithChangedLevel = <K>(
  */
 export const peersWithChangedLevel = (
   previous: MachineDesiredState | null,
+  previousAtMs: number | null,
   next: MachineDesiredState | null,
   nowMs: number,
 ): ReadonlyArray<MachineId> => {
@@ -179,7 +192,7 @@ export const peersWithChangedLevel = (
     (desired?.arrowsIn ?? [])
       .filter((arrow) => arrow.to === desired?.self.id)
       .map((arrow) => [arrow.from, arrow] as const);
-  return sourcesWithChangedLevel(arrowsIn(previous), arrowsIn(next), nowMs);
+  return sourcesWithChangedLevel(arrowsIn(previous), previousAtMs, arrowsIn(next), nowMs);
 };
 
 /** MM-306: the peers this machine can use, with the origin of their T3 server. */
