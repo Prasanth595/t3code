@@ -8,13 +8,9 @@ import { useFileContextMenu } from "~/fileContextMenu";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 
-import { binaryFileInfo } from "./binaryFileInfo";
+import { binaryFileInfo, fileMenuTarget } from "./binaryFileInfo";
 
-export function BinaryFileFallback(props: {
-  environmentId: EnvironmentId;
-  path: string;
-  canActOnHost: boolean;
-}) {
+export function BinaryFileFallback(props: { environmentId: EnvironmentId; path: string }) {
   const info = binaryFileInfo(props.path);
   const { resolvedTheme } = useTheme();
   const menu = useFileContextMenu(props.environmentId);
@@ -23,11 +19,7 @@ export function BinaryFileFallback(props: {
     onError: (error) =>
       toastManager.add({ type: "error", title: "Could not copy path", description: error.message }),
   });
-  const target = {
-    environmentId: props.environmentId,
-    filePath: props.path,
-    workspaceRoot: undefined,
-  };
+  const target = { environmentId: props.environmentId, ...fileMenuTarget(props.path) };
 
   return (
     <div className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col overflow-auto px-6 py-8">
@@ -47,13 +39,13 @@ export function BinaryFileFallback(props: {
           <dd className="break-all text-end">{info.kind}</dd>
         </dl>
         <div className="flex w-full flex-col gap-2">
-          {props.canActOnHost && info.canOpenDefault && menu.capabilities.canOpenDefault ? (
+          {info.canOpenDefault && menu.capabilities.canOpenDefault ? (
             <Button onClick={() => void menu.activate("open", target)}>
               <ExternalLink aria-hidden="true" />
               Open in default app
             </Button>
           ) : null}
-          {props.canActOnHost && menu.capabilities.revealLabel ? (
+          {menu.capabilities.revealLabel ? (
             <Button
               variant="outline"
               onClick={() => void menu.activate("reveal-in-folder", target)}

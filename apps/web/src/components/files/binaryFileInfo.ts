@@ -27,3 +27,15 @@ export function binaryFileInfo(path: string) {
     canOpenDefault: Boolean(match),
   };
 }
+
+/**
+ * The file menu resolves a path under a root, so a file is named relative to
+ * its own folder. That works the same for workspace and host files.
+ */
+export function fileMenuTarget(absolutePath: string) {
+  const separator = Math.max(absolutePath.lastIndexOf("/"), absolutePath.lastIndexOf("\\"));
+  return {
+    filePath: absolutePath.slice(separator + 1),
+    workspaceRoot: absolutePath.slice(0, separator) || absolutePath.slice(0, 1),
+  };
+}

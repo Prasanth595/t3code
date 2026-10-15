@@ -1408,9 +1408,6 @@ export default function FilePreviewPanel({
               key={absolutePath}
               environmentId={environmentId}
               path={absolutePath}
-              canActOnHost={
-                environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec"
-              }
             />
           ) : relativePath && file.error && file.data === null ? (
             <div

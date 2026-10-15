@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { binaryFileInfo } from "./binaryFileInfo";
+import { resolveFileContextMenuAbsolutePath } from "~/fileContextMenu";
+
+import { binaryFileInfo, fileMenuTarget } from "./binaryFileInfo";
 
 describe("binaryFileInfo", () => {
   it.each([
@@ -34,5 +36,18 @@ describe("binaryFileInfo", () => {
   it("describes unknown formats without assuming an application", () => {
     expect(binaryFileInfo("data.bin").kind).toBe("BIN file");
     expect(binaryFileInfo("data").kind).toBe("Binary file");
+  });
+});
+
+describe("fileMenuTarget", () => {
+  it.each([
+    "/tmp/files/brochure.pptx",
+    "/brochure.pptx",
+    "C:\\work\\brochure.pptx",
+    "\\\\server\\share\\brochure.pptx",
+  ])("lets the file menu act on %s", (path) => {
+    expect(
+      resolveFileContextMenuAbsolutePath({ environmentId: null, ...fileMenuTarget(path) }),
+    ).toBe(path);
   });
 });
