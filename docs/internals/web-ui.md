@@ -37,3 +37,18 @@ The composer banners are the reference.
 Build new UI the same way. Compose or extend a component instead of copying its markup and classes.
 When a call site repeats a treatment another one already uses, make it a variant or a slot on the
 shared component. A new composer banner or notice uses the `ComposerBanner` slots.
+
+## Handlers in large components
+
+V8 gives every closure created in one render a single shared scope. A memoized handler keeps
+the scope of the render that created it, and that scope holds the other memoized values of that
+render. When handlers in one component change at different times, each keeps an older scope that
+holds older handlers, and old renders, with their server config and thread data, stay in memory
+for as long as the component is mounted. React Compiler's memoized closures do the same.
+
+In large, long-lived components such as `ChatView`, `ChatComposer`, and `Sidebar`, use
+[`useStableCallback`](../../apps/web/src/hooks/useStableCallback.ts) for event handlers instead
+of `useCallback`. A function called during render cannot use it; build it in a module-level
+factory instead, so its closure keeps only its inputs.
+`node scripts/find-render-scope-leaks.ts` drives a dev client and lists closures that grow with
+each update.
