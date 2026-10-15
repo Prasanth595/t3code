@@ -6,8 +6,9 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
+import * as NodeURL from "node:url";
 
-const scriptPath = new URL("./acp-replay-agent.ts", import.meta.url).pathname;
+const scriptPath = NodeURL.fileURLToPath(new URL("./acp-replay-agent.ts", import.meta.url));
 
 const sessionUpdate = (text: string) => ({
   kind: "notification",
