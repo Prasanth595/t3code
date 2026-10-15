@@ -310,3 +310,60 @@ it.live("a tail cut inside a UTF-8 character drops the partial character", () =>
     assert.strictEqual(result.tail, "é".repeat(2048));
   }),
 );
+
+it.live("separateStderr keeps stderr out of tail and puts it in stderrTail", () =>
+  Effect.gen(function* () {
+    const result = yield* run({
+      command: "echo out1; echo err1 >&2; echo out2",
+      shell: true,
+      separateStderr: true,
+    });
+    assert.strictEqual(result.tail, "out1\nout2\n");
+    assert.strictEqual(result.stderrTail, "err1\n");
+    assert.strictEqual(result.exitCode, 0);
+  }),
+);
+
+it.live("separateStderr works without a shell", () =>
+  Effect.gen(function* () {
+    const result = yield* run({
+      command: "sh",
+      args: ["-c", "echo o; echo e >&2; exit 2"],
+      separateStderr: true,
+    });
+    assert.strictEqual(result.tail, "o\n");
+    assert.strictEqual(result.stderrTail, "e\n");
+    assert.strictEqual(result.exitCode, 2);
+  }),
+);
+
+it.live("merged mode leaves stderrTail empty", () =>
+  Effect.gen(function* () {
+    const result = yield* run({ command: "echo out; echo err >&2", shell: true });
+    assert.strictEqual(result.tail, "out\nerr\n");
+    assert.strictEqual(result.stderrTail, "");
+    assert.strictEqual(result.truncated, false);
+  }),
+);
+
+it.live("truncated is true only when a tail dropped bytes", () =>
+  Effect.gen(function* () {
+    const within = yield* run({ command: "printf abcd", shell: true, tailBytes: 4 });
+    assert.strictEqual(within.tail, "abcd");
+    assert.strictEqual(within.truncated, false);
+
+    const stdoutCut = yield* run({ command: "printf abcdefgh", shell: true, tailBytes: 4 });
+    assert.strictEqual(stdoutCut.tail, "efgh");
+    assert.strictEqual(stdoutCut.truncated, true);
+
+    const stderrCut = yield* run({
+      command: "echo ok; printf abcdefgh >&2",
+      shell: true,
+      tailBytes: 4,
+      separateStderr: true,
+    });
+    assert.strictEqual(stderrCut.tail, "ok\n");
+    assert.strictEqual(stderrCut.stderrTail, "efgh");
+    assert.strictEqual(stderrCut.truncated, true);
+  }),
+);
