@@ -112,10 +112,13 @@ export type BitbucketPullRequestApiError =
   | BitbucketRepositoryUnsupportedError
   | BitbucketDiffCommitError;
 
-function isRepositoryPermissionRemovedError(
+function isRepositoryPermissionUnavailableError(
   error: BitbucketPullRequestApiError,
 ): error is BitbucketApi.BitbucketResponseError {
-  return error._tag === "BitbucketResponseError" && (error.status === 404 || error.status === 410);
+  return (
+    error._tag === "BitbucketResponseError" &&
+    (error.status === 403 || error.status === 404 || error.status === 410)
+  );
 }
 
 /**
@@ -408,16 +411,19 @@ export const make = Effect.gen(function* () {
   const bitbucket = yield* BitbucketApi.BitbucketApi;
 
   /**
-   * The repository's own path, and the workspace above it — which the people who may review are
-   * kept on rather than on the repository, so both are handed over at once.
+   * The repository's API path and normalized segments, used for workspace reads and filters.
    */
   const withRepository = <A>(
     repository: string,
-    use: (path: string, workspace: string) => Effect.Effect<A, BitbucketPullRequestApiError>,
+    use: (
+      path: string,
+      workspace: string,
+      slug: string,
+    ) => Effect.Effect<A, BitbucketPullRequestApiError>,
   ): Effect.Effect<A, BitbucketPullRequestApiError> => {
     const segments = repositorySegments(repository);
     return Result.isSuccess(segments)
-      ? use(repositoryPathOf(segments.success), segments.success.workspace)
+      ? use(repositoryPathOf(segments.success), segments.success.workspace, segments.success.slug)
       : Effect.fail(segments.failure);
   };
 
@@ -653,15 +659,15 @@ export const make = Effect.gen(function* () {
       ),
 
     getRepositoryPermission: (input) =>
-      withRepository(input.repository, () =>
+      withRepository(input.repository, (_path, workspace, slug) =>
         readPage({
           operation: "getRepositoryPermission",
-          url: `/user/permissions/repositories?q=${encodeURIComponent(
-            `repository.full_name="${filterLiteral(input.repository.trim())}"`,
+          url: `/user/workspaces/${encodeURIComponent(workspace)}/permissions/repositories?q=${encodeURIComponent(
+            `repository.full_name="${filterLiteral(`${workspace}/${slug}`)}"`,
           )}`,
           decode: decodeRepositoryPermissionJson,
         }),
-      ).pipe(Effect.catchIf(isRepositoryPermissionRemovedError, () => Effect.succeed(true))),
+      ).pipe(Effect.catchIf(isRepositoryPermissionUnavailableError, () => Effect.succeed(true))),
 
     getPullRequestDiff: pullRequestDiff,
 
