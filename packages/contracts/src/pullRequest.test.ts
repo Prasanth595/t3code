@@ -89,6 +89,21 @@ describe("PullRequestListResult", () => {
       ),
     ).toBe("forge.example");
   });
+  it("names a GitHub checkout behind a github.com subdomain by github.com", () => {
+    const identity = {
+      canonicalKey: "work.github.com/acme/web",
+      locator: { remoteUrl: "git@work.github.com:acme/web.git" },
+    };
+    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("github"))).toBe(
+      "github.com",
+    );
+    expect(
+      pullRequestHostOf(
+        { canonicalKey: "github.example.com/acme/web" },
+        SourceControlProviderKind.make("github"),
+      ),
+    ).toBe("github.example.com");
+  });
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record
    * with an optional value, for one — fails as an interrupted request rather than as a schema
