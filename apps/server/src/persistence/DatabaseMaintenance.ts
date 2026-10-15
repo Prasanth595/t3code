@@ -11,26 +11,48 @@ import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
-export class DatabaseMaintenanceError extends Schema.TaggedError<DatabaseMaintenanceError>()(
-  "DatabaseMaintenanceError",
-  {
-    reason: Schema.Literals(["running", "missing", "invalid-projections", "inspect", "compact"]),
-    cause: Schema.optional(Schema.Defect()),
-  },
+export class DatabaseMissingError extends Schema.TaggedError<DatabaseMissingError>()(
+  "DatabaseMissingError",
+  { path: Schema.String },
 ) {
   override get message() {
-    switch (this.reason) {
-      case "running":
-        return "Stop the T3 Code server and desktop app before compacting the database.";
-      case "missing":
-        return "No existing T3 Code database was found in this data directory.";
-      case "invalid-projections":
-        return "Database projections need repair before compaction. Start T3 Code once so it rebuilds them, then run doctor again. If this CLI is older than the one that wrote the database, update T3 Code first.";
-      case "inspect":
-        return "Could not read the database. Check that this user can open it.";
-      case "compact":
-        return "Database compaction failed. Check that no other process has the database open and enough disk space is available.";
-    }
+    return "No existing T3 Code database was found in this data directory.";
+  }
+}
+
+export class DatabaseInUseError extends Schema.TaggedError<DatabaseInUseError>()(
+  "DatabaseInUseError",
+  { path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message() {
+    return "Stop the T3 Code server and desktop app before compacting the database.";
+  }
+}
+
+export class DatabaseProjectionsInvalidError extends Schema.TaggedError<DatabaseProjectionsInvalidError>()(
+  "DatabaseProjectionsInvalidError",
+  { path: Schema.String },
+) {
+  override get message() {
+    return "Database projections need repair before compaction. Start T3 Code once so it rebuilds them, then run doctor again. If this CLI is older than the one that wrote the database, update T3 Code first.";
+  }
+}
+
+export class DatabaseInspectError extends Schema.TaggedError<DatabaseInspectError>()(
+  "DatabaseInspectError",
+  { path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message() {
+    return "Could not read the database. Check that this user can open it.";
+  }
+}
+
+export class DatabaseCompactError extends Schema.TaggedError<DatabaseCompactError>()(
+  "DatabaseCompactError",
+  { path: Schema.String, cause: Schema.Defect() },
+) {
+  override get message() {
+    return "Database compaction failed. Check that no other process has the database open and enough disk space is available.";
   }
 }
 
@@ -44,7 +66,7 @@ export class DatabaseMaintenance extends Context.Service<
         readonly reclaimableBytes: number;
         readonly incrementalVacuumEnabled: boolean;
       },
-      DatabaseMaintenanceError
+      DatabaseMissingError | DatabaseInspectError
     >;
     /** Compacts history, then VACUUMs into incremental auto_vacuum. Refuses while a server has it open. */
     readonly compact: (databasePath: string) => Effect.Effect<
@@ -54,12 +76,17 @@ export class DatabaseMaintenance extends Context.Service<
         readonly deletedEventCount: number;
         readonly deletedReceiptCount: number;
       },
-      DatabaseMaintenanceError
+      | DatabaseMissingError
+      | DatabaseInUseError
+      | DatabaseProjectionsInvalidError
+      | DatabaseCompactError
     >;
   }
 >()("t3/persistence/DatabaseMaintenance") {}
 
-const isDatabaseMaintenanceError = Schema.is(DatabaseMaintenanceError);
+const isDomainError = Schema.is(
+  Schema.Union([DatabaseMissingError, DatabaseInUseError, DatabaseProjectionsInvalidError]),
+);
 
 const readStorage = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -80,70 +107,81 @@ const make = Effect.gen(function* () {
 
   const locate = Effect.fn("DatabaseMaintenance.locate")(function* (databasePath: string) {
     if (!(yield* fs.exists(databasePath))) {
-      return yield* new DatabaseMaintenanceError({ reason: "missing" });
+      return yield* new DatabaseMissingError({ path: databasePath });
     }
   });
 
-  const asMaintenanceError = (reason: "inspect" | "compact") =>
-    Effect.mapError((cause: unknown) =>
-      isDatabaseMaintenanceError(cause) ? cause : new DatabaseMaintenanceError({ reason, cause }),
-    );
-
-  const inspect = Effect.fn("DatabaseMaintenance.inspect")(function* (databasePath: string) {
-    yield* locate(databasePath);
-    return yield* readStorage.pipe(
-      Effect.provide(NodeSqliteClient.layer({ filename: databasePath, readonly: true })),
-    );
-  }, asMaintenanceError("inspect"));
-
-  const compact = Effect.fn("DatabaseMaintenance.compact")(function* (databasePath: string) {
-    yield* locate(databasePath);
-    const beforeBytes = Number((yield* fs.stat(databasePath)).size);
-    const result = yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      // Hold an exclusive lock through compaction and VACUUM. In WAL mode this
-      // is refused while any other connection has the file open, even an idle
-      // one, which is how a running server or desktop app is detected.
-      yield* sql`PRAGMA busy_timeout = 0`;
-      yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
-      yield* sql`BEGIN EXCLUSIVE`.pipe(
-        Effect.mapError((cause) =>
-          isSqlError(cause) && cause.reason._tag === "LockTimeoutError"
-            ? new DatabaseMaintenanceError({ reason: "running", cause })
-            : cause,
-        ),
+  const inspect = Effect.fn("DatabaseMaintenance.inspect")(
+    function* (databasePath: string) {
+      yield* locate(databasePath);
+      return yield* readStorage.pipe(
+        Effect.provide(NodeSqliteClient.layer({ filename: databasePath, readonly: true })),
       );
-      yield* sql`COMMIT`;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-      if (!(yield* maintenance.verify).valid) {
-        return yield* new DatabaseMaintenanceError({ reason: "invalid-projections" });
-      }
-      const summary = yield* maintenance.compactEventStore;
-      if (!(yield* maintenance.verify).valid) {
-        return yield* new DatabaseMaintenanceError({ reason: "invalid-projections" });
-      }
-      // VACUUM rebuilds the file, which is the only way to switch an existing
-      // database to incremental auto_vacuum; the server reclaims online after.
-      yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
-      yield* sql`VACUUM`;
-      yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
-      return summary;
-    }).pipe(
-      Effect.provide(
-        ProjectionMaintenance.layer.pipe(
-          Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
-          Layer.provideMerge(NodeSqliteClient.layer({ filename: databasePath })),
+    },
+    (effect, databasePath) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isDomainError(cause) ? cause : new DatabaseInspectError({ path: databasePath, cause }),
         ),
       ),
-    );
-    const afterBytes = Number((yield* fs.stat(databasePath)).size);
-    return {
-      beforeBytes,
-      afterBytes,
-      deletedEventCount: result.deletedEventCount,
-      deletedReceiptCount: result.deletedReceiptCount,
-    };
-  }, asMaintenanceError("compact"));
+  );
+
+  const compact = Effect.fn("DatabaseMaintenance.compact")(
+    function* (databasePath: string) {
+      yield* locate(databasePath);
+      const beforeBytes = Number((yield* fs.stat(databasePath)).size);
+      const result = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        // Hold an exclusive lock through compaction and VACUUM. In WAL mode this
+        // is refused while any other connection has the file open, even an idle
+        // one, which is how a running server or desktop app is detected.
+        yield* sql`PRAGMA busy_timeout = 0`;
+        yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
+        yield* sql`BEGIN EXCLUSIVE`.pipe(
+          Effect.mapError((cause) =>
+            isSqlError(cause) && cause.reason._tag === "LockTimeoutError"
+              ? new DatabaseInUseError({ path: databasePath, cause })
+              : cause,
+          ),
+        );
+        yield* sql`COMMIT`;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        if (!(yield* maintenance.verify).valid) {
+          return yield* new DatabaseProjectionsInvalidError({ path: databasePath });
+        }
+        const summary = yield* maintenance.compactEventStore;
+        if (!(yield* maintenance.verify).valid) {
+          return yield* new DatabaseProjectionsInvalidError({ path: databasePath });
+        }
+        // VACUUM rebuilds the file, which is the only way to switch an existing
+        // database to incremental auto_vacuum; the server reclaims online after.
+        yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
+        yield* sql`VACUUM`;
+        yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+        return summary;
+      }).pipe(
+        Effect.provide(
+          ProjectionMaintenance.layer.pipe(
+            Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
+            Layer.provideMerge(NodeSqliteClient.layer({ filename: databasePath })),
+          ),
+        ),
+      );
+      const afterBytes = Number((yield* fs.stat(databasePath)).size);
+      return {
+        beforeBytes,
+        afterBytes,
+        deletedEventCount: result.deletedEventCount,
+        deletedReceiptCount: result.deletedReceiptCount,
+      };
+    },
+    (effect, databasePath) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isDomainError(cause) ? cause : new DatabaseCompactError({ path: databasePath, cause }),
+        ),
+      ),
+  );
 
   return DatabaseMaintenance.of({ inspect, compact });
 });

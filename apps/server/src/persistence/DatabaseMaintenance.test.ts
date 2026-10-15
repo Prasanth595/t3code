@@ -27,7 +27,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         );
         yield* fs.writeFileString(dbPath, "not a database");
         const failure = yield* Effect.flip(maintenance.inspect(dbPath));
-        assert.equal(failure.reason, "inspect");
+        assert.equal(failure._tag, "DatabaseInspectError");
       }).pipe(Effect.scoped),
     );
 
@@ -69,7 +69,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* sql`SELECT value FROM retained_data`;
           return yield* maintenance.compact(dbPath).pipe(Effect.flip);
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
-        assert.equal(refused.reason, "running");
+        assert.equal(refused._tag, "DatabaseInUseError");
         assert.equal((yield* fs.stat(dbPath)).size, sizeBefore);
 
         const result = yield* maintenance.compact(dbPath);
