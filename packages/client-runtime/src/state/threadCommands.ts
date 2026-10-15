@@ -57,6 +57,9 @@ import {
   archiveThread,
   cancelQueuedRun,
   createThread,
+  createSideChat,
+  keepSideChat,
+  type CreateSideChatInput,
   deleteThread,
   editQueuedRun,
   interruptThreadTurn,
@@ -314,6 +317,21 @@ export function createThreadEnvironmentAtoms<R, E>(
     stopSession: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:stop-session",
       execute: (input: StopThreadSessionInput) => stopThreadSession(input),
+      scheduler,
+      concurrency,
+    }),
+    createSideChat: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:side-chat-create",
+      execute: (input: CreateSideChatInput) => createSideChat(input),
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.sourceThreadId]),
+      },
+    }),
+    keepSideChat: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:side-chat-keep",
+      execute: (input: ThreadCommandInput) => keepSideChat(input),
       scheduler,
       concurrency,
     }),

@@ -166,10 +166,12 @@ export function createEnvironmentThreadShellAtoms(input: {
   const environmentThreadRefsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyArray<ScopedThreadRef> = [];
     return Atom.make((get) => {
-      const next = get(environmentThreadsAtom(environmentId)).map((thread) => ({
-        environmentId,
-        threadId: thread.id,
-      }));
+      const next = get(environmentThreadsAtom(environmentId))
+        .filter((thread) => !thread.sideChatOf)
+        .map((thread) => ({
+          environmentId,
+          threadId: thread.id,
+        }));
       if (threadRefsEqual(previous, next)) {
         return previous;
       }
@@ -186,6 +188,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     return Atom.make((get) => {
       const grouped = new Map<ProjectId, ScopedThreadRef[]>();
       for (const thread of get(environmentThreadsAtom(environmentId))) {
+        if (thread.sideChatOf) continue;
         const refs = grouped.get(thread.projectId);
         const ref = { environmentId, threadId: thread.id };
         if (refs === undefined) {
@@ -334,6 +337,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const subagentRequests = get(pendingSubagentRequestsAtom(environmentId));
       for (const thread of get(environmentThreadsAtom(environmentId))) {
+        if (thread.sideChatOf) continue;
         next.push(scopedThread(environmentId, thread, subagentRequests));
       }
     }
@@ -350,6 +354,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const subagentRequests = get(pendingSubagentRequestsAtom(environmentId));
       for (const thread of get(environmentThreadsAtom(environmentId))) {
+        if (thread.sideChatOf) continue;
         if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
           continue;
         next.push(scopedThread(environmentId, thread, subagentRequests));

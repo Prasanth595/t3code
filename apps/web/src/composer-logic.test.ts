@@ -1,3 +1,4 @@
+import { parseSideChatPrompt } from "./composer-logic";
 import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
@@ -870,5 +871,28 @@ describe("literal editor answer cursor state", () => {
       });
     }
     expect(composerStateAtPromptEnd("Use $my").trigger?.kind).toBe("skill");
+  });
+});
+
+describe("SideChat command", () => {
+  it("only consumes a standalone leading command and retains multiline prompts", () => {
+    expect(parseSideChatPrompt("/side\nExplain this\nin detail")).toBe("Explain this\nin detail");
+    expect(parseSideChatPrompt("/side")).toBe("");
+    expect(parseSideChatPrompt("mention /side in prose")).toBeNull();
+    expect(parseSideChatPrompt("/sidebar")).toBeNull();
+  });
+
+  it("leaves pending answers literal while routing the same text from the main composer", () => {
+    const answer = "/side\n- [X] done $my-skill\nUse @README";
+    expect(parseSideChatPrompt(answer, [], "pending-user-input")).toBeNull();
+    expect(composerStateAtPromptEnd(answer, true)).toEqual({
+      cursor: answer.length,
+      trigger: null,
+    });
+    expect(parseSideChatPrompt(answer, [], "provider-turn")).toBe(
+      "- [X] done $my-skill\nUse @README",
+    );
+    expect(parseStandaloneComposerSlashCommand("/plan")).toBe("plan");
+    expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
   });
 });

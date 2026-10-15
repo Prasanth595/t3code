@@ -34,6 +34,8 @@ interface ComposerPrimaryActionsProps {
   /** Stop can reach a run, including one still preparing or starting. */
   canInterrupt: boolean;
   followUpBehavior?: "queue" | "steer";
+  /** Single-mode composers do not advertise or activate the alternate modifier action. */
+  allowAlternateFollowUp?: boolean;
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
@@ -92,6 +94,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isRunning,
   canInterrupt,
   followUpBehavior = "steer",
+  allowAlternateFollowUp = true,
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
   promptHasText,
@@ -123,7 +126,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     resolveComposerDispatchMode({
       running: isRunning,
       activeTurnDefault: followUpBehavior,
-      alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
+      alternateModifier:
+        allowAlternateFollowUp && (shortcutModifiers.metaKey || shortcutModifiers.ctrlKey),
     }) === "queue";
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
@@ -303,7 +307,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     submitStatus ??
     (compactsBeforeSend
       ? `Summarize ${compactTokens} tokens of history, then send`
-      : isRunning && !isEditingQueuedMessage
+      : isRunning && !isEditingQueuedMessage && allowAlternateFollowUp
         ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
         : submitLabel);
 

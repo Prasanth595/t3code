@@ -446,6 +446,7 @@ const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLin
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
+    case "thread.side-chat.keep":
     case "thread.create":
     case "thread.archive":
     case "thread.unarchive":
@@ -503,6 +504,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.parentThreadId;
     case "secret_request.record":
       return command.threadId;
+    case "thread.side-chat.create":
     case "thread.fork":
     case "thread.merge_back":
       return command.targetThreadId;
@@ -882,10 +884,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
     readonly providerInstanceId: ProviderInstanceId;
     readonly threadId: ThreadId;
+    readonly isolated?: boolean;
   }) =>
     input.adapter.getCapabilities().pipe(
       Effect.flatMap((capabilities) =>
-        capabilities.sessions.supportsMultipleProviderThreadsPerSession
+        capabilities.sessions.supportsMultipleProviderThreadsPerSession && !input.isolated
           ? Effect.succeed(
               idAllocator.derive.providerSession({
                 providerInstanceId: input.providerInstanceId,
@@ -1560,6 +1563,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 },
                 runs: projection.runs,
                 strategy: handoffStrategy,
+                initialHistory: projection.contextTransfers.find((t) => t.type === "side_chat")
+                  ?.snapshotHistory,
                 items: [
                   ...(needsFullContext && latestCompletedRun !== undefined
                     ? legacyImportItems
@@ -1637,6 +1642,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (yield* providerAdapters.get(queuedRun.providerInstanceId).pipe(
           Effect.flatMap((adapter) =>
             providerSessionIdFor({
+              isolated: projection.contextTransfers.some(
+                (transfer) => transfer.type === "side_chat",
+              ),
               adapter,
               providerInstanceId: queuedRun.providerInstanceId,
               threadId,
@@ -3595,6 +3603,60 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const dispatchSideChat = Effect.fn("orchestrationV2.dispatch.sideChat")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "thread.side-chat.create" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const sourceProjection = yield* projectionStore
+      .getThreadProjection(command.sourceThreadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.sourceThreadId, cause }),
+        ),
+      );
+    if (sourceProjection.thread.deletedAt !== null || sourceProjection.thread.sideChatOf) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Choose an existing main conversation for a side chat.",
+      });
+    }
+    yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
+    const now = yield* DateTime.now;
+    const transferId = yield* mapDispatchError(command)(
+      idAllocator.allocate.contextTransfer({
+        sourceThreadId: command.sourceThreadId,
+        targetThreadId: command.targetThreadId,
+        type: "side_chat",
+      }),
+    );
+    const { targetThread, transfer } = yield* threadForkService
+      .planSideChat({
+        sourceProjection,
+        transferId,
+        targetThreadId: command.targetThreadId,
+        createdBy: command.createdBy,
+        creationSource: command.creationSource,
+        createdAt: now,
+      })
+      .pipe(mapDispatchError(command));
+    const emitEvent = emit(events, command);
+    yield* emitEvent({
+      type: "thread.created",
+      threadId: command.targetThreadId,
+      providerInstanceId: targetThread.providerInstanceId,
+      occurredAt: now,
+      payload: targetThread,
+    });
+    yield* emitEvent({
+      type: "context-transfer.created",
+      threadId: command.targetThreadId,
+      providerInstanceId: targetThread.providerInstanceId,
+      occurredAt: now,
+      payload: transfer,
+    });
+  });
+
   const dispatchThreadFork = Effect.fn("orchestrationV2.dispatch.threadFork")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.fork" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -3851,6 +3913,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       | "nodes"
       | "thread"
       | "turnItems"
+      | "contextTransfers"
     >;
     readonly modelSelection: ModelSelection;
     readonly targetRunId: OrchestrationV2Run["id"];
@@ -4231,6 +4294,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           existingTargetProviderThread?.providerSessionId ??
           (yield* mapDispatchError(input.command)(
             providerSessionIdFor({
+              isolated: input.projection.contextTransfers.some(
+                (transfer) => transfer.type === "side_chat",
+              ),
               adapter: targetAdapter,
               providerInstanceId: input.modelSelection.instanceId,
               threadId: input.command.threadId,
@@ -4284,6 +4350,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             strategy: "full_thread_summary",
             items: yield* readHandoffItems(input.command.threadId),
             runs: input.projection.runs,
+            initialHistory: input.projection.contextTransfers.find((t) => t.type === "side_chat")
+              ?.snapshotHistory,
             createdAt: now,
           })
           .pipe(mapDispatchError(input.command));
@@ -5338,6 +5406,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           activeProviderThread?.providerSessionId ??
           (yield* mapDispatchError(command)(
             providerSessionIdFor({
+              isolated: projection.contextTransfers.some(
+                (transfer) => transfer.type === "side_chat",
+              ),
               adapter,
               providerInstanceId: modelSelection.instanceId,
               threadId: command.threadId,
@@ -5349,22 +5420,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             driver: adapter.driver,
             nativeThreadId: `pending:${runId}`,
           });
-        const legacyImportHandoff = shouldPrepareLegacyImportHandoff({
-          historyOrigin: projection.thread.historyOrigin,
-          hasCompletedRun: latestCompletedRun !== undefined,
-          legacyImportItemCount: legacyImportItems.length,
-        })
-          ? yield* contextHandoffService
-              .prepareLegacyImport({
-                threadId: command.threadId,
-                targetRunId: runId,
-                toProviderThreadId: providerThreadId,
-                toProviderInstanceId: modelSelection.instanceId,
-                items: legacyImportItems,
-                createdAt: now,
-              })
-              .pipe(mapDispatchError(command))
-          : null;
+        const sideChatTransfer = projection.contextTransfers.find(
+          (transfer) => transfer.type === "side_chat" && transfer.status === "pending",
+        );
+        const legacyImportHandoff =
+          sideChatTransfer !== undefined
+            ? yield* contextHandoffService
+                .prepareLegacyImport({
+                  threadId: command.threadId,
+                  targetRunId: runId,
+                  toProviderThreadId: providerThreadId,
+                  toProviderInstanceId: modelSelection.instanceId,
+                  items: [],
+                  snapshotHistory: sideChatTransfer.snapshotHistory,
+                  transferId: sideChatTransfer.id,
+                  createdAt: now,
+                })
+                .pipe(mapDispatchError(command))
+            : shouldPrepareLegacyImportHandoff({
+                  historyOrigin: projection.thread.historyOrigin,
+                  hasCompletedRun: latestCompletedRun !== undefined,
+                  legacyImportItemCount: legacyImportItems.length,
+                })
+              ? yield* contextHandoffService
+                  .prepareLegacyImport({
+                    threadId: command.threadId,
+                    targetRunId: runId,
+                    toProviderThreadId: providerThreadId,
+                    toProviderInstanceId: modelSelection.instanceId,
+                    items: legacyImportItems,
+                    createdAt: now,
+                  })
+                  .pipe(mapDispatchError(command))
+              : null;
         const providerThread: OrchestrationV2ProviderThread =
           activeProviderThread === undefined
             ? {
@@ -5564,6 +5652,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: providerThread,
         });
+        if (sideChatTransfer !== undefined && legacyImportHandoff !== null) {
+          yield* emitEvent({
+            type: "context-transfer.updated",
+            threadId: command.threadId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              ...sideChatTransfer,
+              status: "consumed",
+              targetProviderInstanceId: modelSelection.instanceId,
+              targetRunId: runId,
+              resolution: {
+                strategy: "portable_context",
+                contextHandoffId: legacyImportHandoff.id,
+              },
+              consumedAt: now,
+              updatedAt: now,
+            },
+          });
+        }
         if (legacyImportHandoff !== null) {
           yield* emitEvent({
             type: "context-handoff.updated",
@@ -5726,6 +5834,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (canResumeAcrossInstances ? undefined : targetProviderThread?.providerSessionId) ??
         (yield* mapDispatchError(command)(
           providerSessionIdFor({
+            isolated: projection.contextTransfers.some((transfer) => transfer.type === "side_chat"),
             adapter,
             providerInstanceId: modelSelection.instanceId,
             threadId: command.threadId,
@@ -5926,6 +6035,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : yield* contextHandoffService
               .prepareProviderHandoff({
                 threadId: command.threadId,
+                initialHistory: projection.contextTransfers.find((t) => t.type === "side_chat")
+                  ?.snapshotHistory,
                 targetRunId: runId,
                 transferId: providerSwitchTransferId,
                 fromProviderThreadIds: Array.from(
@@ -7635,6 +7746,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "turnItems",
             "runtimeRequests",
             "subagents",
+            "contextTransfers",
           ],
           { turnItemTypes: [], messageRoles: ["user"] },
         )
@@ -10807,6 +10919,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       | undefined;
     switch (command.type) {
+      case "thread.side-chat.create":
+        yield* dispatchSideChat(command, events);
+        break;
+      case "thread.side-chat.keep": {
+        const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+        if (!projection.thread.sideChatOf) break;
+        const now = yield* DateTime.now;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...projection.thread, sideChatOf: null, updatedAt: now },
+        });
+        break;
+      }
       case "thread.create":
         yield* dispatchThreadCreate(command, events);
         break;

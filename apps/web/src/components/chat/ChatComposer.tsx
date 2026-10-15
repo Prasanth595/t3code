@@ -4,6 +4,7 @@ import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { buildMessageContext } from "../../lib/composerContextRecords";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
@@ -13,6 +14,7 @@ import {
 } from "@t3tools/shared/composerPullRequestMatches";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
+import { parseSideChatPrompt } from "../../composer-logic";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   questionAttachmentDraftId,
@@ -1262,7 +1264,7 @@ const supervisedRuntimeModeOption = {
   mode: "approval-required" as const,
   ...runtimeModeConfig["approval-required"],
 };
-const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
+export const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
@@ -1689,6 +1691,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onCompactContext: () => void;
+  onSideChat?: ((prompt?: string) => void) | undefined;
   onSend: (
     e?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
@@ -1818,6 +1821,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onCompactContext,
     onSend,
     onResume,
+    onSideChat,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -2745,6 +2749,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
+        ...(onSideChat
+          ? [
+              {
+                id: "slash:side",
+                type: "slash-command" as const,
+                command: "side" as const,
+                label: "/side",
+                description: "Ask in a temporary side chat · Ctrl+Alt+S",
+              },
+            ]
+          : []),
         {
           id: "slash:model",
           type: "slash-command",
@@ -2889,6 +2904,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestProjectId,
     pullRequestRepository,
     pullRequestTriggerNumber,
+    onSideChat,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -4015,6 +4031,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "slash-command") {
+      if (item.command === "side" && onSideChat) {
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+          onSideChat();
+        }
+        return;
+      }
       if (item.command === "model") {
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -4190,6 +4217,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     ) {
       event?.preventDefault();
+      return;
+    }
+    const side = parseSideChatPrompt(
+      promptRef.current,
+      [],
+      activePendingProgress ? "pending-user-input" : "provider-turn",
+    );
+    if (side !== null && onSideChat) {
+      event?.preventDefault();
+      const prompt = promptRef.current;
+      if (
+        applyPromptReplacement(0, prompt.length, "", {
+          expectedText: prompt,
+          focusEditorAfterReplace: false,
+        })
+      )
+        onSideChat(
+          parseSideChatPrompt(
+            prompt,
+            buildMessageContext({
+              terminalContexts: composerTerminalContexts,
+              reviewComments: composerReviewComments,
+              previewAnnotations: composerPreviewAnnotations,
+            })?.records,
+          ) ?? side,
+        );
       return;
     }
     // A send while a pasted image is still compressing would strand that

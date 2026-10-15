@@ -52,14 +52,16 @@ function Panel({
   edge = "left",
   maxWidth = 800,
   storageKey = "test-panel-width",
+  defaultWidth = 400,
 }: {
   edge?: "left" | "right";
   maxWidth?: number;
   storageKey?: string;
+  defaultWidth?: number;
 }) {
   const resize = useResizableWidth({
     storageKey,
-    defaultWidth: 400,
+    defaultWidth,
     minWidth: 200,
     maxWidth,
     edge,
@@ -251,5 +253,41 @@ describe("panel width storage changes", () => {
     expect(setItem).not.toHaveBeenCalled();
     await act(() => renderer.update(<Panel />));
     expect(result.width).toBe(400);
+  });
+});
+
+describe("measured panel defaults", () => {
+  it("follows the measured row until the first drag, then keeps that user choice", async () => {
+    await act(() => renderer.update(<Panel defaultWidth={650} />));
+    expect(result.width).toBe(650);
+    expect(setItem).not.toHaveBeenCalled();
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerUp(pointer(50));
+    });
+    expect(result.width).toBe(700);
+    await act(() => renderer.update(<Panel defaultWidth={500} />));
+    expect(result.width).toBe(700);
+    await act(() => renderer.unmount());
+    await act(() => {
+      renderer = create(<Panel defaultWidth={500} />);
+    });
+    expect(result.width).toBe(700);
+  });
+
+  it("keeps SideChat's width independent from the file/browser panel", async () => {
+    savedWidths.set("browser", "540");
+    await act(() => renderer.update(<Panel storageKey="browser" />));
+    expect(result.width).toBe(540);
+    await act(() => renderer.update(<Panel storageKey="sidechat" defaultWidth={750} />));
+    expect(result.width).toBe(750);
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerUp(pointer(150));
+    });
+    await act(() => renderer.update(<Panel storageKey="browser" />));
+    expect(result.width).toBe(540);
+    await act(() => renderer.update(<Panel storageKey="sidechat" defaultWidth={600} />));
+    expect(result.width).toBe(700);
   });
 });

@@ -221,6 +221,7 @@ function currentSubagent<Agent extends RuntimeSubagent>(
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly agentsOnly?: boolean;
 }) {
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
@@ -291,7 +292,9 @@ export function ThreadRelationshipsPanel(props: {
     () =>
       orderWebThreadLineageRows({
         graph,
-        rows: immediateThreadRelationships(graph, props.threadId),
+        rows: immediateThreadRelationships(graph, props.threadId).filter(
+          ({ edge }) => !props.agentsOnly || edge.kind === "subagent",
+        ),
         currentThreadId: props.threadId,
         mergeTargetThreadId,
       }).map((row) => {
@@ -304,7 +307,14 @@ export function ThreadRelationshipsPanel(props: {
           ? row
           : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
       }),
-    [graph, mergeTargetThreadId, props.threadId, subagentsByThreadId, workflowGroupsById],
+    [
+      graph,
+      mergeTargetThreadId,
+      props.threadId,
+      props.agentsOnly,
+      subagentsByThreadId,
+      workflowGroupsById,
+    ],
   );
   const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
@@ -334,7 +344,9 @@ export function ThreadRelationshipsPanel(props: {
     ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
 
   if (relationshipRows.length === 0 && runningCount === 0) {
-    return null;
+    return props.agentsOnly ? (
+      <p className="p-4 text-sm text-muted-foreground">No agents in this thread yet.</p>
+    ) : null;
   }
 
   const openThread = (threadId: ThreadId) => {
@@ -409,10 +421,16 @@ export function ThreadRelationshipsPanel(props: {
   return (
     <ThreadDetailsSection
       headingId="thread-details-lineage-heading"
-      title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
+      title={
+        props.agentsOnly
+          ? `Agents${runningCount > 0 ? ` · ${runningCount} running` : ""}`
+          : runningCount > 0
+            ? `Lineage · ${runningCount} running`
+            : "Lineage"
+      }
       data-thread-relationships-panel
       actions={
-        canDetach ? (
+        canDetach && !props.agentsOnly ? (
           <Menu>
             <MenuTrigger
               render={

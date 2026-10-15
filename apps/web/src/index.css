@@ -2367,3 +2367,21 @@ code {
     }
   }
 }
+
+.side-chat-composer-padding {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
+}
+.side-chat-input {
+  font-family: var(--font-composer, var(--font-sans));
+  font-size: var(--font-size-prompt);
+}
+@media (min-width: 40rem) {
+  .side-chat-composer-padding {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 1.25rem);
+  }
+}
+@media (max-width: 39.999rem) and (pointer: coarse) {
+  .side-chat-input {
+    font-size: var(--font-size-prompt-touch);
+  }
+}

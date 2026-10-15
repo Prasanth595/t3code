@@ -76,111 +76,119 @@ afterEach(async () => {
   state.projection = null;
 });
 
-it("stops the entire native workflow through its parent without changing state before acknowledgement", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const coordinator = {
-    id: "workflow",
-    origin: "provider_native",
-    driver: "claudeAgent",
-    providerInstanceId: "claude-work",
-    childThreadId: "workflow-chat",
-    title: "Checkout review",
-    status: "running",
-    startedAt: DateTime.makeUnsafe("2026-09-21T12:00:00Z"),
-    completedAt: null,
-    updatedAt: DateTime.makeUnsafe("2026-09-21T12:00:00Z"),
-    workflow: {
-      name: "Checkout review",
-      phases: [{ index: 0, title: "Inspect" }],
-      agents: [{ index: 0, label: "Checker", state: "running", phaseIndex: 0 }],
-    },
-  };
-  state.projection = {
-    thread: { id: "parent", lineage: { relationshipToParent: null } },
-    runs: [],
-    providerThreads: [],
-    providerSessions: [],
-    contextTransfers: [],
-    subagents: [
-      coordinator,
+it.each([false, true])(
+  "stops the native workflow through its parent with agentsOnly=%s after acknowledgement",
+  async (agentsOnly) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const coordinator = {
+      id: "workflow",
+      origin: "provider_native",
+      driver: "claudeAgent",
+      providerInstanceId: "claude-work",
+      childThreadId: "workflow-chat",
+      title: "Checkout review",
+      status: "running",
+      startedAt: DateTime.makeUnsafe("2026-09-21T12:00:00Z"),
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe("2026-09-21T12:00:00Z"),
+      workflow: {
+        name: "Checkout review",
+        phases: [{ index: 0, title: "Inspect" }],
+        agents: [{ index: 0, label: "Checker", state: "running", phaseIndex: 0 }],
+      },
+    };
+    state.projection = {
+      thread: { id: "parent", lineage: { relationshipToParent: null } },
+      runs: [],
+      providerThreads: [],
+      providerSessions: [],
+      contextTransfers: [],
+      subagents: [
+        coordinator,
+        {
+          ...coordinator,
+          id: "worker",
+          childThreadId: "worker-chat",
+          origin: "app_owned",
+          title: "Worker",
+          workflow: undefined,
+        },
+      ],
+    };
+    state.shells = [
       {
-        ...coordinator,
-        id: "worker",
-        childThreadId: "worker-chat",
-        origin: "app_owned",
-        title: "Worker",
-        workflow: undefined,
+        environmentId: "remote",
+        source: {
+          id: "workflow-chat",
+          title: "Coordinator chat",
+          lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+          activityRunStatus: "waiting",
+        },
       },
-    ],
-  };
-  state.shells = [
-    {
-      environmentId: "remote",
-      source: {
-        id: "workflow-chat",
-        title: "Coordinator chat",
-        lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
-        activityRunStatus: "waiting",
-      },
-    },
-  ];
-  await act(async () => {
-    renderer = create(
-      <ThreadRelationshipsPanel
-        environmentId={EnvironmentId.make("remote")}
-        threadId={ThreadId.make("parent")}
-      />,
+    ];
+    await act(async () => {
+      renderer = create(
+        <ThreadRelationshipsPanel
+          environmentId={EnvironmentId.make("remote")}
+          threadId={ThreadId.make("parent")}
+          agentsOnly={agentsOnly}
+        />,
+      );
+    });
+    await act(async () =>
+      renderer.root.findByProps({ "aria-label": "Expand Checkout review" }).props.onClick(),
     );
-  });
-  await act(async () =>
-    renderer.root.findByProps({ "aria-label": "Expand Checkout review" }).props.onClick(),
-  );
-  const stopButton = () =>
-    renderer.root.findByProps({ "aria-label": "Stop workflow Checkout review" });
-  expect(
-    renderer.root.findAll(
-      (node) => node.type === "button" && String(node.props["aria-label"]).startsWith("Stop "),
-    ),
-  ).toHaveLength(2);
-  let acknowledge!: (result: { _tag: string }) => void;
-  state.workflowCommand.mockImplementationOnce(
-    () =>
-      new Promise((resolve) => {
-        acknowledge = resolve;
-      }),
-  );
-  await act(async () => {
-    stopButton().props.onClick();
-  });
-  expect(state.workflowCommand).toHaveBeenCalledExactlyOnceWith({
-    environmentId: "remote",
-    input: { threadId: "parent", subagentId: "workflow" },
-  });
-  expect(state.command).not.toHaveBeenCalled();
-  expect(state.navigate).not.toHaveBeenCalled();
-  expect(stopButton().props.disabled).toBe(true);
-  expect(renderer.root.findByProps({ "aria-label": "Stop subagent Worker" }).props.disabled).toBe(
-    true,
-  );
-  expect(renderer.root.findByProps({ "aria-label": "Open Checker chat" })).toBeDefined();
-  expect(renderer.root.findByType("h3").children).toEqual(["Lineage · 2 running"]);
-  await act(async () => {
-    acknowledge({ _tag: "Success" });
-  });
-  expect(stopButton().props.disabled).toBe(false);
-  expect(renderer.root.findByType("h3").children).toEqual(["Lineage · 2 running"]);
-  state.workflowCommand.mockResolvedValueOnce({ _tag: "Failure" });
-  await act(async () => {
-    stopButton().props.onClick();
-  });
-  expect(state.toast).toHaveBeenCalledExactlyOnceWith({
-    type: "error",
-    title: "Could not stop workflow",
-  });
-  expect(stopButton().props.disabled).toBe(false);
-  expect(state.command).not.toHaveBeenCalled();
-  expect(state.navigate).not.toHaveBeenCalled();
-});
+    const stopButton = () =>
+      renderer.root.findByProps({ "aria-label": "Stop workflow Checkout review" });
+    expect(
+      renderer.root.findAll(
+        (node) => node.type === "button" && String(node.props["aria-label"]).startsWith("Stop "),
+      ),
+    ).toHaveLength(2);
+    let acknowledge!: (result: { _tag: string }) => void;
+    state.workflowCommand.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          acknowledge = resolve;
+        }),
+    );
+    await act(async () => {
+      stopButton().props.onClick();
+    });
+    expect(state.workflowCommand).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "remote",
+      input: { threadId: "parent", subagentId: "workflow" },
+    });
+    expect(state.command).not.toHaveBeenCalled();
+    expect(state.navigate).not.toHaveBeenCalled();
+    expect(stopButton().props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ "aria-label": "Stop subagent Worker" }).props.disabled).toBe(
+      true,
+    );
+    expect(renderer.root.findByProps({ "aria-label": "Open Checker chat" })).toBeDefined();
+    expect(renderer.root.findByType("h3").children).toEqual([
+      `${agentsOnly ? "Agents" : "Lineage"} · 2 running`,
+    ]);
+    await act(async () => {
+      acknowledge({ _tag: "Success" });
+    });
+    expect(stopButton().props.disabled).toBe(false);
+    expect(renderer.root.findByType("h3").children).toEqual([
+      `${agentsOnly ? "Agents" : "Lineage"} · 2 running`,
+    ]);
+    state.workflowCommand.mockResolvedValueOnce({ _tag: "Failure" });
+    await act(async () => {
+      stopButton().props.onClick();
+    });
+    expect(state.toast).toHaveBeenCalledExactlyOnceWith({
+      type: "error",
+      title: "Could not stop workflow",
+    });
+    expect(stopButton().props.disabled).toBe(false);
+    expect(state.command).not.toHaveBeenCalled();
+    expect(state.navigate).not.toHaveBeenCalled();
+  },
+);
 
 it.each([
   ["claudeAgent", "provider_native", "completed"],
@@ -528,6 +536,7 @@ it.each([
     state.projection = projection;
     const panel = (
       <ThreadRelationshipsPanel
+        agentsOnly
         environmentId={EnvironmentId.make("test")}
         threadId={ThreadId.make("parent")}
       />
@@ -1272,3 +1281,53 @@ it.each(["source", "target"])(
     }
   },
 );
+
+it("shows an explicit empty Agents surface without exposing unrelated lineage", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  await act(async () => {
+    renderer = create(
+      <ThreadRelationshipsPanel
+        environmentId={EnvironmentId.make("test")}
+        threadId={ThreadId.make("parent")}
+        agentsOnly
+      />,
+    );
+  });
+  expect(renderer.root.findByType("p").children.join("")).toBe("No agents in this thread yet.");
+});
+
+it("updates Agents filtering when the same projection is shown as lineage and Agents", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.shells = ["source", "target"].map((id) => ({
+    environmentId: EnvironmentId.make("test"),
+    source: { id, title: `${id} conversation`, lineage: { relationshipToParent: null } },
+  }));
+  state.projection = {
+    thread: { id: "target", lineage: { relationshipToParent: null } },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [{ sourceThreadId: "source", targetThreadId: "target", status: "consumed" }],
+    subagents: [],
+  };
+  const panel = (
+    <ThreadRelationshipsPanel
+      environmentId={EnvironmentId.make("test")}
+      threadId={ThreadId.make("target")}
+    />
+  );
+  await act(async () => {
+    renderer = create(panel);
+  });
+  const text = () =>
+    renderer.root
+      .findAll((node) => typeof node.type === "string")
+      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+      .join(" ");
+  expect(text()).toContain("source conversation");
+  await act(async () => renderer.update(cloneElement(panel, { agentsOnly: true })));
+  expect(text()).toContain("No agents in this thread yet.");
+  expect(text()).not.toContain("source conversation");
+  await act(async () => renderer.update(cloneElement(panel, { agentsOnly: false })));
+  expect(text()).toContain("source conversation");
+});

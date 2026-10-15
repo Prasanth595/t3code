@@ -9,6 +9,9 @@ import {
 } from "@t3tools/shared/keybindings";
 
 import { RightPanelTabs } from "./RightPanelTabs";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
 vi.mock("~/browser/browserDefaults", () => ({ useBrowserDefaults: () => ({ profiles: [] }) }));
@@ -206,9 +209,7 @@ describe("right panel new-tab shortcut", () => {
     };
     await renderPanel(panel);
     await press("t", { metaKey: true });
-    await press("ArrowDown");
-    await press("ArrowDown");
-    await press("ArrowDown");
+    for (let index = 0; index < 5; index += 1) await press("ArrowDown");
     expect(document.activeElement?.textContent).toContain("Files");
     await press("Enter");
     expect(addFiles).toHaveBeenCalledOnce();
@@ -219,3 +220,43 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
   });
 });
+
+it.each(["inline", "sheet"] as const)(
+  "reopens Side chat and Agents from the %s plus menu without duplicates",
+  async (mode) => {
+    const ref = scopeThreadRef(
+      EnvironmentId.make("panel-menu-env"),
+      ThreadId.make(`panel-menu-${mode}`),
+    );
+    const panels = useRightPanelStore.getState();
+    panels.showThreadTools(ref);
+    panels.closeSurface(ref, "side-chat");
+    panels.closeSurface(ref, "agents");
+    const renderCurrent = () => {
+      const state = useRightPanelStore.getState().byThreadKey[scopedThreadKey(ref)];
+      return renderPanel({
+        mode,
+        surfaces: state?.surfaces ?? [],
+        activeSurfaceId: state?.activeSurfaceId ?? null,
+        onAddSideChat: () => useRightPanelStore.getState().open(ref, "side-chat"),
+        onAddAgents: () => useRightPanelStore.getState().open(ref, "agents"),
+      });
+    };
+    for (const label of ["Side chat", "Agents", "Side chat"]) {
+      await renderCurrent();
+      await press("t", { metaKey: true });
+      const menu = document.querySelector('[role="menu"]');
+      const item = [...menu!.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((node) =>
+        node.textContent?.startsWith(label),
+      );
+      expect(item).toBeDefined();
+      await act(() => item!.click());
+      await act(() => vi.runOnlyPendingTimersAsync());
+      const state = useRightPanelStore.getState().byThreadKey[scopedThreadKey(ref)]!;
+      const kind = label === "Side chat" ? "side-chat" : "agents";
+      expect(state.activeSurfaceId).toBe(kind);
+      expect(state.surfaces.filter((surface) => surface.kind === kind)).toHaveLength(1);
+      expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
+    }
+  },
+);

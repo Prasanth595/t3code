@@ -1,5 +1,8 @@
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
+import { SideChatPortal } from "./chat/SideChatPortal";
+import { ThreadRelationshipsPanel } from "./chat/ThreadRelationshipsControl";
+import { type SideChatRequest } from "./chat/SideChatPanel";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   resolveBackgroundDraftWorkspaceOptions,
@@ -2364,10 +2367,6 @@ export default function ChatView(props: ChatViewProps) {
   );
   // Electron hosts its own browser tabs; other clients need the environment to host them.
   const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
-  const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
-    container: workspaceLayoutElement,
-    widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}`,
-  });
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
@@ -2498,6 +2497,16 @@ export default function ChatView(props: ChatViewProps) {
   );
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized = canMaximizeRightPanel && rightPanelState.maximized === true;
+  const sideChatPanelActive = rightPanelOpen && activeRightPanelKind === "side-chat";
+  const previewPanelInlineSize = usePreviewPanelInlineSize(undefined, {
+    container: workspaceLayoutElement,
+    // SideChat gets its own remembered split; keep file/browser widths intact.
+    widthStorageKey:
+      activeRightPanelKind === "side-chat"
+        ? `t3code:side-chat-panel-width:v1:${activeThreadKey}`
+        : `t3code:preview-panel-width:${activeThreadKey}`,
+    balancedDefault: activeRightPanelKind === "side-chat",
+  });
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
@@ -2589,6 +2598,84 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+  const [sideChats, setSideChats] = useState<
+    Record<
+      string,
+      {
+        source: NonNullable<typeof activeThread>;
+        cwd: string | undefined;
+        request: SideChatRequest | null;
+      }
+    >
+  >({});
+  const [sideChatSlot, setSideChatSlot] = useState<HTMLDivElement | null>(null);
+  // Selecting the surface never starts a provider turn or creates a duplicate chat.
+  useEffect(() => {
+    if (
+      !activeThreadKey ||
+      !activeThread ||
+      !isServerThread ||
+      activeRightPanelKind !== "side-chat"
+    )
+      return;
+    setSideChats((current) =>
+      current[activeThreadKey]
+        ? current
+        : {
+            ...current,
+            [activeThreadKey]: {
+              source: activeThread,
+              cwd: activeThread.worktreePath ?? activeProject?.workspaceRoot,
+              request: null,
+            },
+          },
+    );
+  }, [
+    activeThreadKey,
+    activeThread,
+    isServerThread,
+    activeRightPanelKind,
+    activeProject?.workspaceRoot,
+  ]);
+  const openSideChat = (prompt = "") => {
+    if (
+      !activeThreadKey ||
+      !activeThread ||
+      !isServerThread ||
+      !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
+    setSideChats((current) => ({
+      ...current,
+      [activeThreadKey]: {
+        source: activeThread,
+        cwd: activeThread.worktreePath ?? activeProject?.workspaceRoot,
+        request: { serial: (current[activeThreadKey]?.request?.serial ?? 0) + 1, prompt },
+      },
+    }));
+    const ref = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    useRightPanelStore.getState().showThreadTools(ref);
+    useRightPanelStore.getState().open(ref, "side-chat");
+  };
+  const openSideChatStable = useStableCallback(openSideChat);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.ctrlKey &&
+        event.altKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "s" &&
+        !event.repeat
+      ) {
+        event.preventDefault();
+        openSideChatStable();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [openSideChatStable]);
+
   // Environment settings with the active project's overrides applied.
   const activeProjectSettings = useMemo(
     () => resolveProjectSettings(settings, activeProject?.id ?? null, activeProject ?? undefined),
@@ -5371,6 +5458,17 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
+
+  const addSideChatSurface = () => {
+    if (!activeThreadRef || !isServerThread) return;
+    useRightPanelStore.getState().open(activeThreadRef, "side-chat");
+  };
+  const addSideChatSurfaceStable = useStableCallback(addSideChatSurface);
+  const addAgentsSurface = () => {
+    if (!activeThreadRef || !isServerThread) return;
+    useRightPanelStore.getState().open(activeThreadRef, "agents");
+  };
+  const addAgentsSurfaceStable = useStableCallback(addAgentsSurface);
   const addDiffSurface = () => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
@@ -5952,7 +6050,8 @@ export default function ChatView(props: ChatViewProps) {
       closePreviewPanel();
       return;
     }
-    useRightPanelStore.getState().toggleVisibility(activeThreadRef);
+    if (isServerThread) useRightPanelStore.getState().showThreadTools(activeThreadRef);
+    else useRightPanelStore.getState().toggleVisibility(activeThreadRef);
   };
   const toggleRightPanelStable = useStableCallback(toggleRightPanel);
   const toggleThreadPanel = () => {
@@ -7903,6 +8002,7 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
 
+      if (event.target instanceof Element && event.target.closest("[data-side-chat]")) return;
       const command = resolveChatShortcutCommand(event, keybindings, scriptKeybindings, {
         context: shortcutContext,
       });
@@ -10833,7 +10933,17 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   const rightPanelContent = activeThreadRef ? (
-    renderedRightPanelSurface?.kind === "preview" ? (
+    renderedRightPanelSurface?.kind === "side-chat" ? (
+      <div ref={setSideChatSlot} className="flex min-h-0 flex-1 flex-col" />
+    ) : renderedRightPanelSurface?.kind === "agents" ? (
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <ThreadRelationshipsPanel
+          environmentId={activeThreadRef.environmentId}
+          threadId={activeThreadRef.threadId}
+          agentsOnly
+        />
+      </div>
+    ) : renderedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
@@ -11062,9 +11172,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const threadPanelHeaderControl = (
     <div
-      // Inset from the chat header's edge, not the window's: --workspace-controls-right also
-      // clears the native window buttons, which sit over the right panel, not this header.
-      className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
+      className="flex shrink-0 items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
       <PanelLayoutControls
@@ -11174,7 +11282,6 @@ export default function ChatView(props: ChatViewProps) {
             />
           ) : null}
           {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
-          {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
           <ChatHeader
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
@@ -11184,6 +11291,7 @@ export default function ChatView(props: ChatViewProps) {
             parentThreadLink={parentThreadLink}
             onOpenThread={onOpenRelatedThreadStable}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
+            trailingControls={inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
             onNewThreadInProject={handleNewThreadInActiveProjectStable}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
@@ -11620,6 +11728,7 @@ export default function ChatView(props: ChatViewProps) {
                               onInterrupt={onInterruptStable}
                               onImplementPlanInNewThread={onImplementPlanInNewThreadStable}
                               onRespondToApproval={onRespondToApprovalStable}
+                              onSideChat={isServerThread ? openSideChatStable : undefined}
                               onSelectActivePendingUserInputOption={
                                 onSelectActivePendingUserInputOptionStable
                               }
@@ -11772,7 +11881,7 @@ export default function ChatView(props: ChatViewProps) {
               </AlertDialogPopup>
             </AlertDialog>
 
-            <ThreadDetailsPanel {...threadDetailsPanelProps} />
+            <ThreadDetailsPanel {...threadDetailsPanelProps} popoverOnly={sideChatPanelActive} />
 
             {pullRequestDialogState ? (
               <PullRequestThreadDialog
@@ -11815,6 +11924,26 @@ export default function ChatView(props: ChatViewProps) {
         ))}
       </div>
 
+      {Object.entries(sideChats).map(([key, entry]) => (
+        <SideChatPortal
+          key={key}
+          target={
+            key === activeThreadKey && activeRightPanelKind === "side-chat" && rightPanelOpen
+              ? sideChatSlot
+              : null
+          }
+          source={key === activeThreadKey ? activeThread : entry.source}
+          cwd={entry.cwd}
+          request={entry.request}
+          settings={settings}
+          instanceEntries={providerInstanceEntries}
+          onClose={() =>
+            useRightPanelStore
+              .getState()
+              .close(scopeThreadRef(entry.source.environmentId, entry.source.id))
+          }
+        />
+      ))}
       {rightPanelPresent && !shouldUsePlanSidebarSheet && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
@@ -11842,6 +11971,8 @@ export default function ChatView(props: ChatViewProps) {
           onCloseAllSurfaces={closeAllRightPanelSurfacesStable}
           onMoveSurface={moveRightPanelSurfaceStable}
           onCopyFilePath={copyRightPanelFilePathStable}
+          onAddSideChat={isServerThread ? addSideChatSurfaceStable : undefined}
+          onAddAgents={isServerThread ? addAgentsSurfaceStable : undefined}
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurfaceStable}
           onAddTerminal={addTerminalSurfaceStable}
@@ -11901,6 +12032,8 @@ export default function ChatView(props: ChatViewProps) {
             onCloseAllSurfaces={closeAllRightPanelSurfacesStable}
             onMoveSurface={moveRightPanelSurfaceStable}
             onCopyFilePath={copyRightPanelFilePathStable}
+            onAddSideChat={isServerThread ? addSideChatSurfaceStable : undefined}
+            onAddAgents={isServerThread ? addAgentsSurfaceStable : undefined}
             onAddBrowser={() => createBrowserSurface()}
             onAddBrowserInProfile={createBrowserSurfaceStable}
             onAddTerminal={addTerminalSurfaceStable}

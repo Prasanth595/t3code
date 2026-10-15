@@ -22,6 +22,8 @@ import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
 
 const RIGHT_PANEL_KINDS = [
+  "side-chat",
+  "agents",
   "diff",
   "files",
   "file",
@@ -41,6 +43,8 @@ export interface DeviceTabTarget {
 }
 
 export type RightPanelSurface =
+  | { id: "side-chat"; kind: "side-chat" }
+  | { id: "agents"; kind: "agents" }
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
@@ -93,7 +97,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds the device surface.
 // v14 removes the agents surface; lineage lives in the thread title bar.
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+// v15 restores Agents and adds Side chat as thread surfaces.
+const RIGHT_PANEL_STORAGE_VERSION = 15;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -185,6 +190,7 @@ interface RightPanelStoreState {
     hiddenTabIds?: ReadonlySet<string>,
   ) => void;
   reconcileFileSurfaces: (ref: ScopedThreadRef, workspaceAvailable: boolean) => void;
+  showThreadTools: (ref: ScopedThreadRef) => void;
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   setMaximized: (ref: ScopedThreadRef, maximized: boolean) => void;
@@ -217,6 +223,10 @@ const singletonSurface = (
   kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
 ): RightPanelSurface => {
   switch (kind) {
+    case "side-chat":
+      return { id: "side-chat", kind };
+    case "agents":
+      return { id: "agents", kind };
     case "diff":
       return { id: "diff", kind };
     case "files":
@@ -468,9 +478,10 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 threadState && typeof threadState === "object" ? threadState : null;
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
-                    // Removed surfaces: plans render inline, agents in thread lineage.
+                    // Plans render inline; normalize the thread-tool singletons.
                     const kind = (surface as { kind?: string }).kind;
-                    if (kind === "plan" || kind === "agents") return [];
+                    if (kind === "plan") return [];
+                    if (kind === "agents" || kind === "side-chat") return [singletonSurface(kind)];
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
@@ -958,6 +969,26 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               activeSurfaceId: activeStillExists
                 ? current.activeSurfaceId
                 : (surfaces.at(-1)?.id ?? null),
+            };
+          }),
+        ),
+      showThreadTools: (ref) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const tools: RightPanelSurface[] = [
+              singletonSurface("side-chat"),
+              singletonSurface("agents"),
+            ];
+            return {
+              ...current,
+              isOpen: true,
+              surfaces: [
+                ...tools.filter(
+                  (tool) => !current.surfaces.some((surface) => surface.id === tool.id),
+                ),
+                ...current.surfaces,
+              ],
+              activeSurfaceId: current.activeSurfaceId ?? "side-chat",
             };
           }),
         ),
