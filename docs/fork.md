@@ -29,6 +29,7 @@ Fork main only moves forward. Nothing rebases or force-pushes it.
 - To see all fork changes, run `git diff upstream/main...main`.
 - The top of `README.md` lists the fork features and fixes, up to the first `---` line. A pull request that adds, removes or changes a fork feature or fix updates its line in that list.
 - Settings > Fork shows every fork setting and each upstream setting that the fork changed, with the same rows as their usual pages. A pull request that adds a fork setting adds it to `FORK_SETTING_GROUPS` in `apps/web/src/components/settings/forkSettingsCatalog.ts` and its row component to `FORK_SETTING_ROWS` in `ForkSettings.tsx`. The catalog imports no components, because the settings search on every route reads it.
+- "Restore device defaults" in Settings resets every fork preference, the list in `apps/web/src/components/settings/forkSettingsRestore.ts`. Like upstream, it keeps user data and access: global scripts and pins, sidebar groups, thread card layouts, the machine map, client access and tunnel pairing. A pull request that adds a fork preference adds it to that list.
 - If a Fork Sync merge conflicts in `README.md`, keep the fork section on top and take the upstream text below the `---` line.
 - A merge without conflicts can still break a fork feature. Each fork feature that changes upstream behaviour needs a test of that behaviour, so that the fork tests catch the break.
 
@@ -285,6 +286,7 @@ The client setting `pullRequestFilterChips` shows the active pull request filter
 The client setting `snoozeQuickOptions` holds the choices of the snooze menus. It is empty by default, and the menus then show the built-in choices. Edit it in Settings > General > Snooze quick options.
 
 - The list starts from the built-in choices. The first change saves the whole list. The reset button brings back the built-in choices.
+- The list keeps at least one choice. To go back to the built-in choices, use the reset button.
 - A choice snoozes for a number of minutes, hours or days, or until a time today, tomorrow or on the next given weekday.
 - A choice for today shows while its time is more than an hour away. A choice that lands on the same time as an earlier one does not show.
 - A blank label shows a label that names the choice, such as "In 3 hours" or "Tomorrow".

@@ -1,9 +1,10 @@
 import { useMemo } from "react";
-import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
+import { AuthEnvironmentMaintainScope, type ClientSettings } from "@t3tools/contracts";
 
 import { usePrimaryCloudLinkState } from "~/cloud/primaryCloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
+import { useClientSettings } from "~/hooks/useSettings";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
@@ -16,6 +17,8 @@ import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
 } from "./settingsSearch";
+
+const selectSidebarGroupsEnabled = (settings: ClientSettings) => settings.sidebarGroupsEnabled;
 
 export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
   const { environments } = useEnvironments();
@@ -31,46 +34,50 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
   const managedTunnelActive =
     cloudLinkState?.linkRevoked !== true &&
     (cloudLinkState?.managedTunnelActive ?? cloudLinkState?.linked ?? false);
+  const sidebarGroupsEnabled = useClientSettings(selectSidebarGroupsEnabled);
 
-  return useMemo(
-    () =>
-      filterAvailableSettingsSearchItems({
-        localEnvironmentDisabled,
-        hasCloudPublicConfig: hasCloudPublicConfig(),
-        hasEnvironment: environments.some((environment) => environment.serverConfig !== null),
-        hasProviderSettingsEnvironment: environments.some((environment) =>
+  return useMemo(() => {
+    const items = filterAvailableSettingsSearchItems({
+      localEnvironmentDisabled,
+      hasCloudPublicConfig: hasCloudPublicConfig(),
+      hasEnvironment: environments.some((environment) => environment.serverConfig !== null),
+      hasProviderSettingsEnvironment: environments.some((environment) =>
+        isProviderSettingsEnvironmentAvailable({
+          connectionPhase: environment.connection.phase,
+          hasServerConfig: environment.serverConfig !== null,
+        }),
+      ),
+      hasMacProviderSettingsEnvironment: environments.some(
+        (environment) =>
+          (scopeSearch.machine === undefined ||
+            environment.environmentId === scopeSearch.machine) &&
+          environment.serverConfig?.environment.platform.os === "darwin" &&
           isProviderSettingsEnvironmentAvailable({
             connectionPhase: environment.connection.phase,
-            hasServerConfig: environment.serverConfig !== null,
+            hasServerConfig: true,
           }),
-        ),
-        hasMacProviderSettingsEnvironment: environments.some(
-          (environment) =>
-            (scopeSearch.machine === undefined ||
-              environment.environmentId === scopeSearch.machine) &&
-            environment.serverConfig?.environment.platform.os === "darwin" &&
-            isProviderSettingsEnvironmentAvailable({
-              connectionPhase: environment.connection.phase,
-              hasServerConfig: true,
-            }),
-        ),
-        canManageLocalBackend,
-        isWslSettingsRowVisible: isWslSettingsRowVisible({
-          state: desktopWsl.data,
-          error: desktopWsl.error,
-        }),
-        hasThreadAutoSettlement:
-          getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
-        managedTunnelActive,
-      }),
-    [
-      managedTunnelActive,
+      ),
       canManageLocalBackend,
-      desktopWsl.data,
-      desktopWsl.error,
-      environments,
-      localEnvironmentDisabled,
-      scopeSearch.machine,
-    ],
-  );
+      isWslSettingsRowVisible: isWslSettingsRowVisible({
+        state: desktopWsl.data,
+        error: desktopWsl.error,
+      }),
+      hasThreadAutoSettlement:
+        getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
+      managedTunnelActive,
+    });
+    // Fork: the "Single-thread tabs" row renders only while sidebar groups are on.
+    return sidebarGroupsEnabled
+      ? items
+      : items.filter((item) => item.id !== "sidebar-group-single-thread");
+  }, [
+    managedTunnelActive,
+    sidebarGroupsEnabled,
+    canManageLocalBackend,
+    desktopWsl.data,
+    desktopWsl.error,
+    environments,
+    localEnvironmentDisabled,
+    scopeSearch.machine,
+  ]);
 }
