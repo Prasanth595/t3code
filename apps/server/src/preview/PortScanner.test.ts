@@ -9,6 +9,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -115,6 +116,39 @@ const layerLsofScanner = (input: {
     ),
   );
 
+/** A Windows host whose listener scan prints `stdout` and counts each PowerShell run. */
+const layerWindowsScanner = (input: {
+  readonly stdout?: () => string;
+  readonly onRun?: () => void;
+  readonly fetch?: typeof globalThis.fetch;
+}) =>
+  PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: () => {
+            input.onRun?.();
+            return Effect.succeed({
+              stdout: input.stdout?.() ?? "",
+              stderr: "",
+              code: null,
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            });
+          },
+        }),
+        Layer.succeed(HostProcess.Platform, "win32"),
+        FetchHttpClient.layer.pipe(
+          Layer.provide(Layer.succeed(FetchHttpClient.Fetch, input.fetch ?? globalThis.fetch)),
+        ),
+      ),
+    ),
+  );
+
 const openServer = (
   port: number,
   onConnection: (socket: NodeNet.Socket) => void,
@@ -194,20 +228,21 @@ effectIt.layer(layerTestPortDiscovery)("PortDiscovery integration (configured UR
   );
 
   it.effect(
-    "retain drives an immediate broadcast to subscribers",
-    Effect.fn("PortScannerTest.retainBroadcastsImmediately")(function* () {
+    "retain lets the next poll tick broadcast a new server to subscribers",
+    Effect.fn("PortScannerTest.retainBroadcastsOnPollTick")(function* () {
       const { port } = yield* commonDevServer;
-      const received: number[] = [];
+      const broadcast = yield* Deferred.make<void>();
       const scanner = yield* PortScanner.PortDiscovery;
       yield* scanner.subscribe(
         { configuredUrls: [`http://localhost:${port}`], initialSnapshot: [] },
         (servers) =>
-          Effect.sync(() => {
-            for (const server of servers) received.push(server.port);
-          }),
+          servers.some((server) => server.port === port)
+            ? Deferred.succeed(broadcast, undefined).pipe(Effect.asVoid)
+            : Effect.void,
       );
       yield* scanner.retain;
-      expect(received).toContain(port);
+      yield* TestClock.adjust(Duration.seconds(6));
+      yield* Deferred.await(broadcast);
     }),
   );
 });
@@ -327,13 +362,24 @@ effectIt.effect("projects configured paths independently for simultaneous subscr
     const scanner = yield* PortScanner.PortDiscovery;
     const docsSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
     const adminSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
+    const docsBroadcast = yield* Deferred.make<void>();
+    const adminBroadcast = yield* Deferred.make<void>();
     yield* scanner.subscribe({ configuredUrls: [docsUrl], initialSnapshot: [] }, (servers) =>
-      Effect.sync(() => docsSnapshots.push(servers)),
+      Effect.sync(() => docsSnapshots.push(servers)).pipe(
+        Effect.andThen(Deferred.succeed(docsBroadcast, undefined)),
+        Effect.asVoid,
+      ),
     );
     yield* scanner.subscribe({ configuredUrls: [adminUrl], initialSnapshot: [] }, (servers) =>
-      Effect.sync(() => adminSnapshots.push(servers)),
+      Effect.sync(() => adminSnapshots.push(servers)).pipe(
+        Effect.andThen(Deferred.succeed(adminBroadcast, undefined)),
+        Effect.asVoid,
+      ),
     );
     yield* scanner.retain;
+    yield* TestClock.adjust(Duration.seconds(3));
+    yield* Deferred.await(docsBroadcast);
+    yield* Deferred.await(adminBroadcast);
 
     expect(docsSnapshots.at(-1)?.[0]?.url).toBe(docsUrl);
     expect(adminSnapshots.at(-1)?.[0]?.url).toBe(adminUrl);
@@ -359,15 +405,22 @@ effectIt.effect(
     return Effect.gen(function* () {
       const scanner = yield* PortScanner.PortDiscovery;
       const secondSnapshots: ReadonlyArray<DiscoveredLocalServer>[] = [];
+      const secondBroadcast = yield* Deferred.make<void>();
       yield* scanner.subscribe(
         { configuredUrls: firstSubscriberUrls, initialSnapshot: [] },
         () => Effect.void,
       );
       yield* scanner.subscribe(
         { configuredUrls: [secondSubscriberUrl], initialSnapshot: [] },
-        (servers) => Effect.sync(() => secondSnapshots.push(servers)),
+        (servers) =>
+          Effect.sync(() => secondSnapshots.push(servers)).pipe(
+            Effect.andThen(Deferred.succeed(secondBroadcast, undefined)),
+            Effect.asVoid,
+          ),
       );
       yield* scanner.retain;
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* Deferred.await(secondBroadcast);
 
       expect(secondSnapshots.at(-1)?.[0]?.url).toBe(secondSubscriberUrl);
     }).pipe(Effect.scoped, Effect.provide(layer));
@@ -425,8 +478,63 @@ effectIt.effect("writes no poll span while no client retains the scanner", () =>
     expect(pollSpans).toBe(0);
 
     yield* scanner.retain;
+    expect(pollSpans).toBe(0);
+    yield* TestClock.adjust(Duration.seconds(3));
     expect(pollSpans).toBe(1);
   }).pipe(Effect.scoped, Effect.provide(layer), Effect.withTracer(tracer));
+});
+
+effectIt.effect("retain does not scan; the first scan() is the only process probe", () => {
+  let probes = 0;
+  const layer = layerWindowsScanner({ onRun: () => (probes += 1) });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.retain;
+    expect(probes).toBe(0);
+    yield* scanner.scan();
+    expect(probes).toBe(1);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+effectIt.effect("polls Windows listeners every 6 seconds, not every 3", () => {
+  let probes = 0;
+  const layer = layerWindowsScanner({ onRun: () => (probes += 1) });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    // Let the poll fiber's first tick run unretained at t=0, so the next tick is due at t=6.
+    yield* TestClock.adjust(Duration.seconds(1));
+    yield* scanner.retain;
+    yield* TestClock.adjust(Duration.seconds(4));
+    expect(probes).toBe(0);
+    yield* TestClock.adjust(Duration.seconds(1));
+    expect(probes).toBe(1);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+effectIt.effect("reads process names from Windows listener rows", () => {
+  const requests: string[] = [];
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+    requests.push(String(input));
+    return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+  }) as typeof globalThis.fetch;
+  const stdout = [
+    `127.0.0.1|${LSOF_TEST_PORT}|1234|node`,
+    `::|${LSOF_TEST_PORT}|1234|node`,
+    "0.0.0.0|43124|5678|python",
+    "",
+  ].join("\n");
+  const layer = layerWindowsScanner({ stdout: () => stdout, fetch: fetchFn });
+
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner();
+    const servers = yield* scanner.scan();
+    expect(servers.map((server) => [server.port, server.pid, server.processName])).toEqual([
+      [LSOF_TEST_PORT, 1234, "node"],
+    ]);
+    expect(requests).toEqual([`http://localhost:${LSOF_TEST_PORT}/`]);
+  }).pipe(Effect.provide(layer));
 });
 
 effectIt.effect("uses the current configured fragment when readiness comes from cache", () => {

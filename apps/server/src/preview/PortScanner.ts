@@ -71,12 +71,29 @@ export class PortDiscovery extends Context.Service<
 >()("t3/preview/PortScanner/PortDiscovery") {}
 
 const POLL_INTERVAL = Duration.seconds(3);
+/**
+ * Each Windows tick cold-starts powershell.exe (~0.5s) and runs
+ * Get-NetTCPConnection (~1.3s with ~60 listeners). With the ~1.6s scan, 3s
+ * spent about a third of the time in PowerShell; 6s spends about a fifth and
+ * ~40% fewer spawns. A new server still appears within ~8s.
+ */
+const WINDOWS_POLL_INTERVAL = Duration.seconds(6);
 const LSOF_TIMEOUT_MS = 5_000;
 /** File descriptors one `/proc` walk may read before it stops looking for socket owners. */
 const PROC_FD_WALK_LIMIT = 50_000;
 /** Scans that retry the fd walk for a listening socket whose owner was not found. */
 const SOCKET_OWNER_ATTEMPTS = 3;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
+/**
+ * One unfiltered `Get-Process` builds the PID→name table. Per-listener
+ * `Get-Process -Id` (6-10s for ~60 listeners) and `-Id <list>` (~5s) both
+ * cost a process query each, so neither fits the listener timeout.
+ */
+const WINDOWS_LISTENER_COMMAND = [
+  "$names = @{}",
+  "Get-Process -ErrorAction SilentlyContinue | ForEach-Object { $names[[int]$_.Id] = $_.ProcessName }",
+  'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$($names[[int]$_.OwningProcess])" }',
+].join("; ");
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
 const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 const WEB_PROBE_CONCURRENCY = 16;
@@ -350,6 +367,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
+  const pollInterval = hostPlatform === "win32" ? WINDOWS_POLL_INTERVAL : POLL_INTERVAL;
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
     terminalProcesses: new Map(),
@@ -624,12 +642,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
     if (hostPlatform === "win32") {
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
-      const command =
-        'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $processName = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$processName" }';
       const listeners = yield* processRunner
         .run({
           command: "powershell.exe",
-          args: ["-NoProfile", "-NonInteractive", "-Command", command],
+          args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_LISTENER_COMMAND],
           timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
           maxOutputBytes: 1024 * 1024,
         })
@@ -721,25 +737,20 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   );
 
   // Single layer-scoped polling fiber. Ticks skip the scan and its span when no
-  // client is currently retained, so the cost is one Ref.get every POLL_INTERVAL.
+  // client is currently retained, so the cost is one Ref.get every poll interval.
   const pollIfRetained = Ref.get(stateRef).pipe(
     Effect.flatMap((state) => (state.retainCount > 0 ? pollTick() : Effect.void)),
   );
-  yield* Effect.forkScoped(pollIfRetained.pipe(Effect.repeat(Schedule.spaced(POLL_INTERVAL))));
+  yield* Effect.forkScoped(pollIfRetained.pipe(Effect.repeat(Schedule.spaced(pollInterval))));
 
-  const acquireRetention = Effect.fn("PortDiscovery.retain")(function* () {
-    const wasIdle = yield* Ref.modify(stateRef, (state) => [
-      state.retainCount === 0,
-      { ...state, retainCount: state.retainCount + 1 },
-    ]);
-    if (wasIdle) {
-      // Run an immediate scan + broadcast so the new retainer doesn't have
-      // to wait up to POLL_INTERVAL for the first emission.
-      yield* pollTick();
-    }
-  });
+  // No scan on acquire: the retainer's own first `scan()` is its initial
+  // snapshot. Scanning here as well spawned the process probe twice per open.
+  const acquireRetention = Ref.update(stateRef, (state) => ({
+    ...state,
+    retainCount: state.retainCount + 1,
+  }));
 
-  const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(acquireRetention(), () =>
+  const retain: PortDiscovery["Service"]["retain"] = Effect.acquireRelease(acquireRetention, () =>
     Ref.update(stateRef, (state) => ({
       ...state,
       retainCount: Math.max(0, state.retainCount - 1),
