@@ -26,6 +26,7 @@ describe("machineQueue (MM-602)", () => {
     { _tag: "setArrow" as const, arrow: { ...findArrow(map, MAC, VPS), level: "read" as const } },
   ];
   const snapshot = (presence: MachinePresence): PortalSnapshot => ({
+    placeUnits: "fractions",
     map,
     presence: { [MAC]: presence },
     reportedSettings: {},
@@ -116,7 +117,15 @@ describe("arrowEnds (MM-602, MM-604)", () => {
     presence: Record<string, MachinePresence>,
   ): PortalSnapshot => {
     const { map, history } = commit(start, steps);
-    return { map, presence, reportedSettings: {}, commands: [], history, proposals: [] };
+    return {
+      placeUnits: "fractions",
+      map,
+      presence,
+      reportedSettings: {},
+      commands: [],
+      history,
+      proposals: [],
+    };
   };
 
   it("does not queue an arrow or a machine for moves after the applied revision", () => {
@@ -161,6 +170,7 @@ describe("pauseReach (MM-708 to MM-710)", () => {
     { _tag: "putMachine", machine: { ...findMachine(start, WIN)!, mapRole: "edit" } },
   ];
   const snapshot = (map: MachineMapDocument): PortalSnapshot => ({
+    placeUnits: "fractions",
     map,
     // Windows never connected.
     presence: { [MAC]: online, [VPS]: { ...online, online: false } },

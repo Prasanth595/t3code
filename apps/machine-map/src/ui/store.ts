@@ -170,6 +170,26 @@ async function sessionEnded(): Promise<boolean> {
   }
 }
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null;
+
+/** How long a reload for a new portal waits before it may run again. */
+const RELOAD_GAP_MS = 60_000;
+const RELOAD_KEY = "machine-map:reloaded-for-portal";
+
+/**
+ * A snapshot that does not decode comes from a newer portal than this page, for example after a
+ * deploy changed the map format. The page loads again to get the new bundle, instead of keeping
+ * an old map and sending changes in the old format. It reloads at most once a minute, so a real
+ * bug in the snapshot does not loop.
+ */
+function reloadForNewPortal(): void {
+  const last = Number(sessionStorage.getItem(RELOAD_KEY) ?? 0);
+  if (Date.now() - last < RELOAD_GAP_MS) return;
+  sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
+  location.reload();
+}
+
 /** Connects, reconnects with backoff, and pings so idle proxies keep the socket open. */
 export function usePortal(): { state: PortalState; connection: Connection } {
   const [state, setState] = useState(INITIAL_STATE);
@@ -194,11 +214,14 @@ export function usePortal(): { state: PortalState; connection: Connection } {
       });
       current.addEventListener("message", (message: MessageEvent<unknown>) => {
         if (typeof message.data !== "string" || message.data === "pong") return;
+        let raw: unknown;
         try {
-          const event = decodeEvent(JSON.parse(message.data));
+          raw = JSON.parse(message.data);
+          const event = decodeEvent(raw);
           setState((state) => reduce(state, event));
         } catch (error) {
           console.error("Bad portal event", error);
+          if (isRecord(raw) && raw._tag === "snapshot") reloadForNewPortal();
         }
       });
       current.addEventListener("close", () => {
