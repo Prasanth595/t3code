@@ -5,6 +5,7 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
+import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
@@ -38,7 +39,6 @@ import {
   shell,
   webContents,
 } from "electron";
-import * as NodeZlib from "node:zlib";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -319,16 +319,9 @@ const cropAnnotationScreenshot = (
   return { dataUrl: cropped.toDataURL(), width: size.width, height: size.height, cropRect };
 };
 
-/**
- * Cheap identity for a captured frame, used to skip encoding an unchanged page.
- * Copying and checksumming the raw bitmap takes a small fraction of the
- * synchronous JPEG encode it replaces; the size is part of the key so a resize
- * with equal checksums still counts as a new frame.
- */
-const fingerprintCapturedFrame = (
-  image: Electron.NativeImage,
-  size: { readonly width: number; readonly height: number },
-) => `${size.width}x${size.height}:${NodeZlib.crc32(image.toBitmap())}`;
+/** Identity of a captured frame: cheap enough to compute every tick, unlike a JPEG encode. */
+const fingerprintCapturedFrame = (image: Electron.NativeImage, size: Electron.Size) =>
+  `${size.width}x${size.height}:${NodeZlib.crc32(image.toBitmap())}`;
 
 const findZoomStep = (current: number): number => {
   const index = ZOOM_LEVELS.findIndex(
@@ -2598,8 +2591,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) {
       return;
     }
-    // Fingerprint the raw pixels before encoding: an unchanged page then skips
-    // the synchronous JPEG encode, the base64 string and the IPC send.
+    const frameSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
+    if (frameSession?.scope !== captureSession.scope) return;
+    // Fingerprint the raw pixels before encoding so an unchanged page skips the
+    // synchronous JPEG encode, the base64 copy and the IPC send.
     const fingerprint = yield* attempt(
       {
         operation: "frameCapture.fingerprintFrame",
@@ -2608,8 +2603,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       },
       () => fingerprintCapturedFrame(image, size),
     );
-    const frameSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
-    if (frameSession?.scope !== captureSession.scope) return;
     const pictureInPicture =
       frameSession.consumers.has("picture-in-picture") &&
       frameSession.lastPictureInPictureFingerprint !== fingerprint;
