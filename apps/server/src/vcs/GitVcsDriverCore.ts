@@ -185,6 +185,7 @@ interface ExecuteGitOptions {
   env?: NodeJS.ProcessEnv | undefined;
   maxOutputBytes?: number | undefined;
   appendTruncationMarker?: boolean | undefined;
+  keepLineCallbacksAfterTruncation?: boolean | undefined;
   progress?: GitVcsDriver.ExecuteGitProgress | undefined;
 }
 
@@ -1144,6 +1145,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...(options.appendTruncationMarker !== undefined
         ? { appendTruncationMarker: options.appendTruncationMarker }
         : {}),
+      ...(options.keepLineCallbacksAfterTruncation && { keepLineCallbacksAfterTruncation: true }),
       ...(options.progress ? { progress: options.progress } : {}),
     }).pipe(
       Effect.flatMap((result) => {
@@ -3746,6 +3748,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...(verboseSsh && {
           env: { ...STATUS_UPSTREAM_REFRESH_ENV, GIT_SSH_COMMAND: "ssh -o LogLevel=DEBUG3" },
           appendTruncationMarker: true,
+          keepLineCallbacksAfterTruncation: true,
           progress: {
             onStderrLine: (line: string) =>
               Effect.flatMap(Clock.currentTimeMillis, (now) =>

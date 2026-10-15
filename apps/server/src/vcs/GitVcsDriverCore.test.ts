@@ -3874,6 +3874,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       "debug3: sign_and_send_pubkey: using publickey with ED25519 SHA256:test",
       "debug3: sign_and_send_pubkey: signing using ssh-ed25519 SHA256:test",
     ];
+    // Signing fills the 1,000,000-byte stderr cap exactly, so the signed request comes past it.
+    const pastCap = [sshSigning.join("\n").padStart(999_999, "\n"), "debug3: send packet: type 50"];
     it.effect.each([
       { name: "an unanswered key approval", stderr: sshSigning, watched: true, stalled: true },
       {
@@ -3893,6 +3895,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         watched: true,
         stalled: false,
       },
+      { name: "a signed request past the cap", stderr: pastCap, watched: true, stalled: false },
       {
         name: "a configured verbose SSH command",
         sshConfig: "core.sshcommand ssh -v\n",
