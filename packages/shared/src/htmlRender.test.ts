@@ -273,7 +273,7 @@ describe("htmlRenderOutlineBoxes", () => {
   const outline = encodeHtmlRenderOutline([
     { kind: "text", x: 0, y: 0, width: 300, height: 40, lines: 2 },
     { kind: "media", x: 0, y: 48, width: 728, height: 300, lines: 1 },
-    { kind: "panel", x: 2, y: 2, width: 0, height: 10, lines: 1 },
+    { kind: "media", x: 2, y: 2, width: 0, height: 10, lines: 1 },
   ]);
   const outlined = readHtmlRenderReference({
     ...reference,
@@ -285,7 +285,7 @@ describe("htmlRenderOutlineBoxes", () => {
   })!;
 
   it("round-trips through a tool result and stretches to the client's width and height", () => {
-    // The empty panel is dropped when encoded.
+    // The empty box is dropped when encoded.
     expect(outline).toBe("t0,0,75,10,2;m0,12,182,75,1");
     expect(htmlRenderOutlineBoxes(outlined, 728)).toEqual([
       { kind: "text", x: 0, y: 0, width: 300, height: 40, lines: 2 },

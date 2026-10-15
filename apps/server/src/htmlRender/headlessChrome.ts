@@ -163,8 +163,8 @@ const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
 
 // The page's main blocks in document order, for a client's loading skeleton:
-// media and solid shapes, text with its line count, tables with their row
-// count, and boxes with their own background or border, whose contents follow.
+// media and solid shapes, text with its line count, and tables with their row
+// count. Boxes that only wrap other blocks are walked through, not drawn.
 // Past the detail budget, remaining blocks are kept whole, and once the outline
 // is full, one block of text lines stands in for the rest of the page, so the
 // skeleton still reaches the bottom.
@@ -219,14 +219,12 @@ const OUTLINE_EXPRESSION = `(() => {
       if (boxes.length >= detail) { if (el.querySelector(media) || (!text && !el.firstElementChild)) add("media", r, 1); else addText(el, s, r); continue; }
       if (text) { addText(el, s, r); continue; }
       if (el.children.length === 0) { if (filled(s)) add("media", r, 1); continue; }
-      if (filled(s) && r.height >= 24) add("panel", r, 1);
       walk(el, s);
     }
   };
   walk(document.body, getComputedStyle(document.body));
   if (full) {
-    // Panels enclose later blocks, so their bottoms say nothing about what was left out.
-    const top = Math.max(0, ...boxes.filter((b) => b[0] !== "panel").map((b) => b[2] + b[4]));
+    const top = Math.max(0, ...boxes.map((b) => b[2] + b[4]));
     const root = document.documentElement;
     const rest = (root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height) - top;
     if (rest >= 8) boxes.push(["text", 0, top, document.documentElement.clientWidth, rest, Math.max(1, Math.round(rest / 28))]);
@@ -237,7 +235,7 @@ const Outlined = Schema.Struct({
   result: Schema.Struct({
     value: Schema.Array(
       Schema.Tuple([
-        Schema.Literals(["text", "media", "table", "panel"]),
+        Schema.Literals(["text", "media", "table"]),
         Schema.Finite,
         Schema.Finite,
         Schema.Finite,

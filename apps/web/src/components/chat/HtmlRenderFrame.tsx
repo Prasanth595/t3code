@@ -189,7 +189,6 @@ const SKELETON_SECTION_HEIGHT = 264;
 
 const OUTLINE_BOX_CLASS = {
   media: "rounded-lg bg-muted-foreground/15",
-  panel: "rounded-lg border border-muted-foreground/15",
   text: "",
   table: "",
 } as const;

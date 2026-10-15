@@ -144,11 +144,10 @@ export function htmlRenderFrameHeight(
 
 /**
  * One block of a page's outline: `text` with its line count, a `media` element
- * or solid shape, a `table` with its row count, or a `panel` (a box with its
- * own background or border) that later blocks may sit inside.
+ * or solid shape, or a `table` with its row count.
  */
 export interface HtmlRenderOutlineBox {
-  readonly kind: "text" | "media" | "table" | "panel";
+  readonly kind: "text" | "media" | "table";
   readonly x: number;
   readonly y: number;
   readonly width: number;
@@ -156,13 +155,13 @@ export interface HtmlRenderOutlineBox {
   readonly lines: number;
 }
 
-const OUTLINE_KINDS = { t: "text", m: "media", g: "table", p: "panel" } as const;
-const OUTLINE_LETTERS = { text: "t", media: "m", table: "g", panel: "p" } as const;
+const OUTLINE_KINDS = { t: "text", m: "media", g: "table" } as const;
+const OUTLINE_LETTERS = { text: "t", media: "m", table: "g" } as const;
 // Coordinates travel in 4px units, which keeps the tool result an agent reads short.
 const OUTLINE_UNIT = 4;
 export const HTML_RENDER_OUTLINE_MAX_BOXES = 48;
 // Sizes and line counts are never zero, so a client never divides by one.
-const OUTLINE_BOX = "[tmgp]\\d{1,4},\\d{1,4},[1-9]\\d{0,3},[1-9]\\d{0,3},[1-9]\\d{0,2}";
+const OUTLINE_BOX = "[tmg]\\d{1,4},\\d{1,4},[1-9]\\d{0,3},[1-9]\\d{0,3},[1-9]\\d{0,2}";
 const OUTLINE_PATTERN = new RegExp(
   `^${OUTLINE_BOX}(?:;${OUTLINE_BOX}){0,${HTML_RENDER_OUTLINE_MAX_BOXES - 1}}$`,
 );
