@@ -1102,7 +1102,9 @@ export default function FilePreviewPanel({
   const breadcrumbTrail = folderTrail ?? breadcrumbPath;
   // The trail only continues below folders, so a surface with one is a folder
   // before its read settles, and walking up never flashes a file preview.
-  const isFolder = attachment === undefined && (file.isNotFile || folderTrail !== undefined);
+  const isFolder =
+    attachment === undefined &&
+    (file.isNotFile || (folderTrail !== undefined && file.data === null && file.error === null));
   const hostFolderPath = isFolder && isHostFile ? relativePath : null;
   // Everything preview-related keys off previewPath; a folder has no preview.
   const previewPath = isFolder ? null : relativePath;
