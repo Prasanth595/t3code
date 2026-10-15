@@ -45,7 +45,7 @@ import {
   WrapTextIcon,
   type LucideIcon,
 } from "lucide-react";
-import { Check, Copy } from "lucide";
+import { Check, Copy, Maximize2, Minimize2 } from "lucide";
 import {
   AuthPreviewOperateScope,
   type AssetResource,
@@ -593,49 +593,25 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
   const [hasClippedCells, setHasClippedCells] = useState(false);
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wrapButtonRef = useRef<HTMLButtonElement | null>(null);
-  const copyButtonRef = useRef<HTMLButtonElement | null>(null);
-  const wrapLabel = expanded ? "Disable cell wrap" : "Wrap long cells";
+  const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
   const copyLabel = copied ? "Copied" : "Copy table";
 
   const measureClippedCells = useCallback(() => {
     const container = containerRef.current;
     const table = tableRef.current;
     if (!container || !table) return;
-    const clipped = tableHasClippedCells(container, table);
-    // Hiding the focused wrap button would drop keyboard focus to the page.
-    if (!clipped && wrapButtonRef.current === document.activeElement) {
-      copyButtonRef.current?.focus();
-    }
-    setHasClippedCells(clipped);
+    setHasClippedCells(tableHasClippedCells(container, table));
   }, []);
 
   // A streamed cell can grow until it clips while the table keeps its size,
   // so remeasure after every render, not only on resize.
   useLayoutEffect(measureClippedCells);
 
-  // Column width changes, late fonts, and images settling inside cells can
-  // clip a cell without rendering this table.
+  // Column width changes can clip a cell without rendering this table.
   useLayoutEffect(() => {
     const table = tableRef.current;
     if (!table) return;
-    let frame = 0;
-    const measureNextFrame = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(measureClippedCells);
-    };
-    // Media load and error events don't bubble, so listen in the capture phase.
-    table.addEventListener("load", measureNextFrame, true);
-    table.addEventListener("error", measureNextFrame, true);
-    document.fonts?.addEventListener("loadingdone", measureNextFrame);
-    const stopObserving = observeResize(table, measureClippedCells);
-    return () => {
-      cancelAnimationFrame(frame);
-      table.removeEventListener("load", measureNextFrame, true);
-      table.removeEventListener("error", measureNextFrame, true);
-      document.fonts?.removeEventListener("loadingdone", measureNextFrame);
-      stopObserving();
-    };
+    return observeResize(table, measureClippedCells);
   }, [measureClippedCells]);
 
   function toggleExpanded() {
@@ -715,19 +691,18 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
             <TooltipTrigger
               render={
                 <Button
-                  ref={wrapButtonRef}
                   type="button"
                   variant={expanded ? "secondary" : "ghost-muted"}
                   size="icon-xs"
                   aria-pressed={expanded}
                   onClick={toggleExpanded}
-                  aria-label={wrapLabel}
+                  aria-label={expandLabel}
                 />
               }
             >
-              <WrapTextIcon className="size-3" />
+              <MorphIcon className="size-3" icon={expanded ? Minimize2 : Maximize2} />
             </TooltipTrigger>
-            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+            <TooltipPopup side="top">{expandLabel}</TooltipPopup>
           </Tooltip>
         ) : (
           <span />
@@ -739,7 +714,6 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
                 <MenuTrigger
                   render={
                     <Button
-                      ref={copyButtonRef}
                       type="button"
                       variant="ghost-muted"
                       size="icon-xs"
