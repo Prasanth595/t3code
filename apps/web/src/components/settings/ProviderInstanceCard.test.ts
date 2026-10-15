@@ -257,7 +257,7 @@ describe("Claude fork subagents switch", () => {
     for (const value of ["0", "false", ""]) {
       expect(isProviderEnvironmentSwitchOn(variable(value))).toBe(false);
     }
-    // A value saved as sensitive comes back hidden; it was set to turn the feature on.
+    // A hidden value could be 0 as easily as 1, so the switch does not guess.
     expect(
       isProviderEnvironmentSwitchOn({
         name: "CLAUDE_CODE_FORK_SUBAGENT",
@@ -265,25 +265,25 @@ describe("Claude fork subagents switch", () => {
         sensitive: true,
         valueRedacted: true,
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("a generic row naming the variable replaces the switch value instead of duplicating it", () => {
+  it("a generic row naming the variable replaces the switch value and stays readable", () => {
     expect(
       nextProviderEnvironmentWithGenericRows(
         [
           { name: "CLAUDE_CODE_FORK_SUBAGENT", value: "", sensitive: true },
           { name: "EXTRA_FLAG", value: "1", sensitive: false },
         ],
-        [{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: true }],
-        new Set(["CLAUDE_CODE_FORK_SUBAGENT"]),
+        [{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "0", sensitive: true }],
+        [forkSubagentsField!],
       ),
-    ).toEqual([{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: true }]);
+    ).toEqual([{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "0", sensitive: false }]);
     expect(
       nextProviderEnvironmentWithGenericRows(
         [{ name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: false }],
         [{ name: "EXTRA_FLAG", value: "1", sensitive: false }],
-        new Set(["CLAUDE_CODE_FORK_SUBAGENT"]),
+        [forkSubagentsField!],
       ),
     ).toEqual([
       { name: "CLAUDE_CODE_FORK_SUBAGENT", value: "1", sensitive: false },

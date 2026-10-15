@@ -67,14 +67,16 @@ the background. See Claude Code's
 
 The switch is the instance's `CLAUDE_CODE_FORK_SUBAGENT` environment variable: on
 sets it to `1` for that instance's threads and provider terminals, and off removes
-it. A value you already added under **Environment variables** moves to this switch,
-so the switch always shows the instance's setting.
+it. A value you already added under **Environment variables** moves to this switch.
+If you saved it as a sensitive value, T3 Code cannot read it back, so the switch
+shows off and notes the hidden value; turning the switch on replaces it.
 
 With the switch off, Claude Code's own default applies: off in threads, and on in
 provider terminals from Claude Code v2.1.232. A `CLAUDE_CODE_FORK_SUBAGENT` exported
 in the environment T3 Code starts in also still applies; with the switch on, the
-switch wins. To turn fork mode off everywhere, add `CLAUDE_CODE_FORK_SUBAGENT` with
-the value `0` under **Environment variables**.
+switch wins. The switch never saves `0`, so to keep fork mode off everywhere,
+including provider terminals, export `CLAUDE_CODE_FORK_SUBAGENT=0` in the
+environment T3 Code starts in and leave the switch off.
 
 ## Usage limits
 

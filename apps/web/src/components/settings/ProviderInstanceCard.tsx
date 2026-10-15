@@ -232,18 +232,23 @@ export function providerEnvironmentWithoutNames(
 /**
  * Saves the generic editor's rows alongside the dedicated fields it hides. A
  * row that names a dedicated variable replaces that field's value rather than
- * duplicating it.
+ * duplicating it, and takes the field's sensitivity so a switch stays readable.
  */
 export function nextProviderEnvironmentWithGenericRows(
   environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
   genericRows: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
-  dedicatedNames: ReadonlySet<string>,
+  fields: ReadonlyArray<ProviderEnvironmentField>,
 ): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  const fieldsByName = new Map(fields.map((field) => [field.name, field] as const));
   const rowNames = new Set(genericRows.map((variable) => variable.name));
   const dedicated = (environment ?? []).filter(
-    (variable) => dedicatedNames.has(variable.name) && !rowNames.has(variable.name),
+    (variable) => fieldsByName.has(variable.name) && !rowNames.has(variable.name),
   );
-  return [...dedicated, ...genericRows];
+  const rows = genericRows.map((variable) => {
+    const field = fieldsByName.get(variable.name);
+    return field === undefined ? variable : { ...variable, sensitive: field.sensitive ?? true };
+  });
+  return [...dedicated, ...rows];
 }
 
 export function nextProviderEnvironmentWithFieldValue(
@@ -285,14 +290,12 @@ const TRUTHY_ENVIRONMENT_VALUES = new Set(["1", "true", "yes", "on"]);
 
 /**
  * Whether a `switch` environment field reads as on. A hidden value cannot be
- * read back, so a variable saved as sensitive counts as on, since setting one
- * is how it was enabled before the switch existed.
+ * read back, so it reads as off and the row says a hidden value is set.
  */
 export function isProviderEnvironmentSwitchOn(
   variable: ProviderInstanceEnvironmentVariable | undefined,
 ): boolean {
-  if (variable === undefined) return false;
-  if (variable.valueRedacted) return true;
+  if (variable === undefined || variable.valueRedacted) return false;
   return TRUTHY_ENVIRONMENT_VALUES.has(variable.value.trim().toLowerCase());
 }
 
@@ -310,7 +313,11 @@ function ProviderEnvironmentFieldRow(props: {
     return (
       <SettingsRow
         title={props.field.label}
-        description={props.field.description}
+        description={
+          props.variable?.valueRedacted
+            ? `${props.field.description ?? ""} ${props.field.name} has a hidden value; turning this on replaces it.`.trim()
+            : props.field.description
+        }
         control={
           <Switch
             checked={isProviderEnvironmentSwitchOn(props.variable)}
@@ -903,11 +910,7 @@ export function ProviderInstanceCard({
     environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
   ) => {
     updateEnvironment(
-      nextProviderEnvironmentWithGenericRows(
-        instance.environment,
-        environment,
-        environmentFieldNames,
-      ),
+      nextProviderEnvironmentWithGenericRows(instance.environment, environment, environmentFields),
     );
   };
   const updateEnvironmentField = (field: ProviderEnvironmentField, value: string) => {
