@@ -8,9 +8,11 @@
  * closure count grew with the number of updates. A bounded app ends near
  * where it started; a leak grows by about one copy per update.
  *
- *   node scripts/find-render-scope-leaks.ts --url <pairing URL> [--rounds 20]
- *     [--base-dir <dev home>] [--thread <sidebar title>] [--stream]
+ *   node scripts/find-render-scope-leaks.ts --url <pairing URL> [--rounds 30]
+ *     [--warmup 5] [--base-dir <dev home>] [--thread <sidebar title>] [--stream]
  *
+ * --warmup     Rounds run before the first snapshot, so lazily mounted rows
+ *              and first-update allocations do not count as growth.
  * --url        The dev runner's pairing URL on the first run; the bare origin
  *              after that, since the browser profile keeps the session.
  * --base-dir   The dev server's home (a worktree's .t3). Toggles a harmless
@@ -30,7 +32,8 @@ import { chromium, type Page } from "playwright-core";
 const { values: args } = NodeUtil.parseArgs({
   options: {
     url: { type: "string" },
-    rounds: { type: "string", default: "20" },
+    rounds: { type: "string", default: "30" },
+    warmup: { type: "string", default: "5" },
     "base-dir": { type: "string" },
     thread: { type: "string" },
     stream: { type: "boolean", default: false },
@@ -38,6 +41,15 @@ const { values: args } = NodeUtil.parseArgs({
 });
 if (!args.url) throw new Error("--url is required (the dev runner's pairing URL)");
 const rounds = Number(args.rounds);
+const baseDir = args["base-dir"];
+if (baseDir) {
+  // The live install's settings must never be rewritten, even through a symlink.
+  const real = (path: string) => (NodeFS.existsSync(path) ? NodeFS.realpathSync(path) : path);
+  const live = real(NodePath.join(NodeOS.homedir(), ".t3", "userdata"));
+  const target = NodePath.join(baseDir, "userdata");
+  if (real(target) === live || real(NodePath.join(target, "settings.json")).startsWith(`${live}/`))
+    throw new Error("--base-dir points at the live ~/.t3; use a dev server's own state");
+}
 const workDir = NodePath.join(NodeOS.tmpdir(), "t3-render-scope-leaks");
 NodeFS.mkdirSync(workDir, { recursive: true });
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,8 +82,8 @@ const takeSnapshot = async (name: string) => {
 
 /** One round of updates: server config, composer input, thread state, agent turn. */
 const update = async (page: Page, round: number) => {
-  if (args["base-dir"]) {
-    const settingsPath = NodePath.join(args["base-dir"], "userdata", "settings.json");
+  if (baseDir) {
+    const settingsPath = NodePath.join(baseDir, "userdata", "settings.json");
     const settings = NodeFS.existsSync(settingsPath)
       ? JSON.parse(NodeFS.readFileSync(settingsPath, "utf8"))
       : {};
@@ -95,8 +107,10 @@ const update = async (page: Page, round: number) => {
   }
 };
 
+const warmup = Number(args.warmup);
+for (let round = 0; round < warmup; round++) await update(page, round);
 const before = await takeSnapshot("before");
-for (let round = 0; round < rounds; round++) await update(page, round);
+for (let round = warmup; round < warmup + rounds; round++) await update(page, round);
 await sleep(3000);
 const after = await takeSnapshot("after");
 await browser.close();

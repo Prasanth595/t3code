@@ -1616,9 +1616,8 @@ export default function ChatView(props: ChatViewProps) {
   } = props;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const hasTerminalWriteAccess = useStableCallback(() =>
-    readEnvironmentScope(environmentId, AuthTerminalOperateScope),
-  );
+  const hasTerminalWriteAccess = () =>
+    readEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const canReadTerminal = useEnvironmentScope(environmentId, AuthTerminalReadScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
@@ -2029,14 +2028,15 @@ export default function ChatView(props: ChatViewProps) {
   const isResuming = resumingThreadKeys.has(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
   const multipleModelSelections = fanoutState.selections;
-  const setMultipleModelSelections = useStableCallback(
-    (selections: SetStateAction<ReadonlyArray<ModelSelection> | null>) => {
-      appAtomRegistry.update(fanoutStateAtom, (current) => ({
-        ...current,
-        selections: typeof selections === "function" ? selections(current.selections) : selections,
-      }));
-    },
-  );
+  const setMultipleModelSelections = (
+    selections: SetStateAction<ReadonlyArray<ModelSelection> | null>,
+  ) => {
+    appAtomRegistry.update(fanoutStateAtom, (current) => ({
+      ...current,
+      selections: typeof selections === "function" ? selections(current.selections) : selections,
+    }));
+  };
+  const setMultipleModelSelectionsStable = useStableCallback(setMultipleModelSelections);
   const multipleModelSelectionsRef = useRef(multipleModelSelections);
   multipleModelSelectionsRef.current = multipleModelSelections;
   const uncertainMultipleSubmissionsRef = fanoutState.uncertainSubmissions;
@@ -2627,9 +2627,10 @@ export default function ChatView(props: ChatViewProps) {
     runProjectCloneAction,
   ]);
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
-  const handleNewThreadInActiveProject = useStableCallback(() => {
+  const handleNewThreadInActiveProject = () => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
-  });
+  };
+  const handleNewThreadInActiveProjectStable = useStableCallback(handleNewThreadInActiveProject);
   const projectGroupingSettings = selectProjectGroupingSettings(settings);
   const activeDraftLogicalProjectKey =
     !isServerThread && activeProject
@@ -4521,40 +4522,39 @@ export default function ChatView(props: ChatViewProps) {
     null;
   const hasReachedSplitLimit =
     (activeTerminalGroup?.terminalIds.length ?? 0) >= MAX_TERMINALS_PER_GROUP;
-  const setThreadError = useStableCallback(
-    (targetThreadId: ThreadId | null, error: string | null) => {
-      if (!targetThreadId) return;
-      const nextError = sanitizeThreadErrorMessage(error);
-      const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
-      if (
-        serverThread &&
-        targetThreadId === routeThreadRef.threadId &&
-        serverThread.environmentId === routeThreadRef.environmentId &&
-        serverThread.id === targetThreadId
-      ) {
-        setLocalServerErrorsByThreadKey((existing) => {
-          if ((existing[routeThreadKey]?.message ?? null) === nextError) {
-            return existing;
-          }
-          return {
-            ...existing,
-            [routeThreadKey]: nextEntry,
-          };
-        });
-        return;
-      }
-      const localDraftErrorKey = draftId ?? targetThreadId;
-      setLocalDraftErrorsByDraftId((existing) => {
-        if ((existing[localDraftErrorKey]?.message ?? null) === nextError) {
+  const setThreadError = (targetThreadId: ThreadId | null, error: string | null) => {
+    if (!targetThreadId) return;
+    const nextError = sanitizeThreadErrorMessage(error);
+    const nextEntry: LocalThreadErrorEntry = { message: nextError, at: Date.now() };
+    if (
+      serverThread &&
+      targetThreadId === routeThreadRef.threadId &&
+      serverThread.environmentId === routeThreadRef.environmentId &&
+      serverThread.id === targetThreadId
+    ) {
+      setLocalServerErrorsByThreadKey((existing) => {
+        if ((existing[routeThreadKey]?.message ?? null) === nextError) {
           return existing;
         }
         return {
           ...existing,
-          [localDraftErrorKey]: nextEntry,
+          [routeThreadKey]: nextEntry,
         };
       });
-    },
-  );
+      return;
+    }
+    const localDraftErrorKey = draftId ?? targetThreadId;
+    setLocalDraftErrorsByDraftId((existing) => {
+      if ((existing[localDraftErrorKey]?.message ?? null) === nextError) {
+        return existing;
+      }
+      return {
+        ...existing,
+        [localDraftErrorKey]: nextEntry,
+      };
+    });
+  };
+  const setThreadErrorStable = useStableCallback(setThreadError);
 
   const focusComposer = useStableCallback(() => {
     composerRef.current?.focusAtEnd();
@@ -4840,7 +4840,7 @@ export default function ChatView(props: ChatViewProps) {
       },
     });
   });
-  const closeTerminal = useStableCallback((terminalId: string) => {
+  const closeTerminal = (terminalId: string) => {
     if (!hasTerminalWriteAccess() || !activeThreadId || !activeThreadRef) return;
     const fallbackExitWrite = () =>
       writeTerminal({
@@ -4866,7 +4866,7 @@ export default function ChatView(props: ChatViewProps) {
     })();
     storeCloseTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
-  });
+  };
   const runProjectScript = useStableCallback(
     async (
       script: ProjectScript,
@@ -5237,7 +5237,7 @@ export default function ChatView(props: ChatViewProps) {
     scheduleComposerFocus();
   });
 
-  const handleInteractionModeChange = useStableCallback((mode: ProviderInteractionMode) => {
+  const handleInteractionModeChange = (mode: ProviderInteractionMode) => {
     if (mode === "plan" && !interactionModeEnabled) return;
     if (mode === interactionMode) return;
     setComposerDraftInteractionMode(composerDraftTarget, mode);
@@ -5245,7 +5245,8 @@ export default function ChatView(props: ChatViewProps) {
       setDraftThreadContext(composerDraftTarget, { interactionMode: mode });
     }
     scheduleComposerFocus();
-  });
+  };
+  const handleInteractionModeChangeStable = useStableCallback(handleInteractionModeChange);
   const toggleInteractionMode = useStableCallback(() => {
     if (!interactionModeEnabled) return;
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
@@ -5793,7 +5794,7 @@ export default function ChatView(props: ChatViewProps) {
       .activateTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   });
-  const closePanelTerminal = useStableCallback((terminalId: string) => {
+  const closePanelTerminal = (terminalId: string) => {
     if (
       !hasTerminalWriteAccess() ||
       !activeThreadRef ||
@@ -5809,7 +5810,8 @@ export default function ChatView(props: ChatViewProps) {
       .getState()
       .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
-  });
+  };
+  const closePanelTerminalStable = useStableCallback(closePanelTerminal);
   const requestCloseTerminal = useStableCallback((terminalId: string) => {
     if (!hasTerminalWriteAccess()) return;
     const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
@@ -6029,73 +6031,71 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [togglePreviewPanel],
   );
-  const persistThreadSettingsForNextTurn = useStableCallback(
-    async (input: {
-      threadId: ThreadId;
-      createdAt: string;
-      branch?: string;
-      runtimeMode: RuntimeMode;
-      interactionMode: ProviderInteractionMode;
-    }): Promise<AtomCommandResult<void, unknown>> => {
-      if (!serverThread) {
-        return AsyncResult.success(undefined);
-      }
+  const persistThreadSettingsForNextTurn = async (input: {
+    threadId: ThreadId;
+    createdAt: string;
+    branch?: string;
+    runtimeMode: RuntimeMode;
+    interactionMode: ProviderInteractionMode;
+  }): Promise<AtomCommandResult<void, unknown>> => {
+    if (!serverThread) {
+      return AsyncResult.success(undefined);
+    }
 
-      let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
-      const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
-        currentModelSelection: serverThread.modelSelection,
-        currentBranch: serverThread.branch,
-        ...(input.branch ? { nextBranch: input.branch } : {}),
-      });
-      if (metadataUpdate) {
-        result = mapAtomCommandResult(
-          await updateThreadMetadata({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              ...metadataUpdate,
-            },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          return result;
-        }
+    let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
+    const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
+      currentModelSelection: serverThread.modelSelection,
+      currentBranch: serverThread.branch,
+      ...(input.branch ? { nextBranch: input.branch } : {}),
+    });
+    if (metadataUpdate) {
+      result = mapAtomCommandResult(
+        await updateThreadMetadata({
+          environmentId,
+          input: {
+            threadId: input.threadId,
+            ...metadataUpdate,
+          },
+        }),
+        () => undefined,
+      );
+      if (result._tag === "Failure") {
+        return result;
       }
+    }
 
-      if (input.runtimeMode !== serverThread.runtimeMode) {
-        result = mapAtomCommandResult(
-          await setThreadRuntimeMode({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              runtimeMode: input.runtimeMode,
-              createdAt: input.createdAt,
-            },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          return result;
-        }
+    if (input.runtimeMode !== serverThread.runtimeMode) {
+      result = mapAtomCommandResult(
+        await setThreadRuntimeMode({
+          environmentId,
+          input: {
+            threadId: input.threadId,
+            runtimeMode: input.runtimeMode,
+            createdAt: input.createdAt,
+          },
+        }),
+        () => undefined,
+      );
+      if (result._tag === "Failure") {
+        return result;
       }
+    }
 
-      if (input.interactionMode !== serverThread.interactionMode) {
-        result = mapAtomCommandResult(
-          await setThreadInteractionMode({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              interactionMode: input.interactionMode,
-              createdAt: input.createdAt,
-            },
-          }),
-          () => undefined,
-        );
-      }
-      return result;
-    },
-  );
+    if (input.interactionMode !== serverThread.interactionMode) {
+      result = mapAtomCommandResult(
+        await setThreadInteractionMode({
+          environmentId,
+          input: {
+            threadId: input.threadId,
+            interactionMode: input.interactionMode,
+            createdAt: input.createdAt,
+          },
+        }),
+        () => undefined,
+      );
+    }
+    return result;
+  };
 
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches. LegendList fires scroll events with isAtEnd=false while
@@ -6894,10 +6894,11 @@ export default function ChatView(props: ChatViewProps) {
       ? threadWokeAt(activeThreadShell, { now: new Date().toISOString() })
       : null;
   const acknowledgeThreadWoke = useAcknowledgeThreadWoke();
-  const acknowledgeActiveThreadWoke = useStableCallback(() => {
+  const acknowledgeActiveThreadWoke = () => {
     if (activeThreadRef === null || activeThreadWokeAt === null) return;
     acknowledgeThreadWoke(activeThreadRef, activeThreadWokeAt);
-  });
+  };
+  const acknowledgeActiveThreadWokeStable = useStableCallback(acknowledgeActiveThreadWoke);
   // Mirror of the sidebar's Woke pill for the open thread. Same watermark as
   // the sidebar, so an acknowledgement from any device hides it.
   const activeThreadLocalVisitedAt = useUiStateStore((store) =>
@@ -7399,11 +7400,11 @@ export default function ChatView(props: ChatViewProps) {
         icon={<AlarmClockIcon />}
         label="Woke from snooze"
         actionLabel="Dismiss"
-        onAction={acknowledgeActiveThreadWoke}
+        onAction={acknowledgeActiveThreadWokeStable}
       />
     ) : null;
   }, [
-    acknowledgeActiveThreadWoke,
+    acknowledgeActiveThreadWokeStable,
     activeThreadSettled,
     activeThreadShell?.settledAt,
     activeThreadShell?.snoozedUntil,
@@ -10711,7 +10712,7 @@ export default function ChatView(props: ChatViewProps) {
         onSplitTerminalVertical={splitPanelTerminalVertical}
         onNewTerminal={addTerminalSurface}
         onActiveTerminalChange={activatePanelTerminal}
-        onCloseTerminal={closePanelTerminal}
+        onCloseTerminal={closePanelTerminalStable}
         splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
         splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
         newShortcutLabel={newTerminalShortcutLabel ?? undefined}
@@ -11036,7 +11037,7 @@ export default function ChatView(props: ChatViewProps) {
             parentThreadLink={parentThreadLink}
             onOpenThread={onOpenRelatedThread}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
-            onNewThreadInProject={handleNewThreadInActiveProject}
+            onNewThreadInProject={handleNewThreadInActiveProjectStable}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
               : {})}
@@ -11327,7 +11328,7 @@ export default function ChatView(props: ChatViewProps) {
                                 serverConfig?.environment.capabilities.requiredWorktreeBootstrap ===
                                 true
                               }
-                              onMultipleModelSelectionsChange={setMultipleModelSelections}
+                              onMultipleModelSelectionsChange={setMultipleModelSelectionsStable}
                               composerRef={composerRef}
                               composerDraftTarget={composerDraftTarget}
                               environmentId={environmentId}
@@ -11476,10 +11477,10 @@ export default function ChatView(props: ChatViewProps) {
                               getModelDisabledReason={getModelDisabledReason}
                               toggleInteractionMode={toggleInteractionMode}
                               handleRuntimeModeChange={handleRuntimeModeChange}
-                              handleInteractionModeChange={handleInteractionModeChange}
+                              handleInteractionModeChange={handleInteractionModeChangeStable}
                               focusComposer={focusComposer}
                               scheduleComposerFocus={scheduleComposerFocus}
-                              setThreadError={setThreadError}
+                              setThreadError={setThreadErrorStable}
                               onExpandImage={onExpandTimelineImage}
                               onFileOpen={openFileAttachment}
                               editingQueuedAttachments={composerEditingQueuedAttachments}

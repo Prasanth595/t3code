@@ -3107,25 +3107,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
   });
 
-  const addComposerImage = useStableCallback((image: ComposerImageAttachment) =>
-    addComposerDraftImages(attachmentDraftTarget, [image]),
-  );
+  const addComposerImage = (image: ComposerImageAttachment) =>
+    addComposerDraftImages(attachmentDraftTarget, [image]);
 
-  const addComposerImagesToDraft = useStableCallback((images: ComposerImageAttachment[]) =>
-    addComposerDraftImages(attachmentDraftTarget, images),
-  );
+  const addComposerImagesToDraft = (images: ComposerImageAttachment[]) =>
+    addComposerDraftImages(attachmentDraftTarget, images);
 
-  const addComposerFilesToDraft = useStableCallback((files: ComposerFileAttachment[]) =>
+  const addComposerFilesToDraft = (files: ComposerFileAttachment[]) =>
     addComposerDraftFiles(attachmentDraftTarget, files, {
       appendReference: questionAttachmentTarget === null,
-    }),
-  );
+    });
 
-  const removeComposerImageFromDraft = useStableCallback((imageId: string) => {
+  const removeComposerImageFromDraft = (imageId: string) => {
     if (questionAttachmentTarget && activePendingIsResponding) return;
     releaseAttachmentUpload(imageId);
     removeComposerDraftImage(attachmentDraftTarget, imageId);
-  });
+  };
 
   const removeComposerFileFromDraft = useStableCallback((fileId: string) => {
     if (questionAttachmentTarget && activePendingIsResponding) return;
@@ -3203,7 +3200,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const loadThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
   });
-  const countReservedAttachments = useStableCallback(() => {
+  const countReservedAttachments = () => {
     const questionRequest = pendingUserInputs[0];
     const otherQuestionKeys =
       questionAttachmentTarget && questionRequest && activeThreadId
@@ -3226,7 +3223,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       (pendingThreadImportsRef.current.get(attachmentTargetKey) ?? 0) +
       countQuestionAttachments(otherQuestionKeys)
     );
-  });
+  };
+  const countReservedAttachmentsStable = useStableCallback(countReservedAttachments);
   /**
    * Bytes for a pasted image or file come back through the source environment's asset URL
    * (the client is the only party that can reach both) and re-enter this draft as a normal
@@ -3346,118 +3344,116 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * Brings records into this draft (paste, stash restore). Binaries are transferred only
    * when `sourceEnvironmentId` is given; the stash restores its own images and files.
    */
-  const importContextRecords = useStableCallback(
-    (
-      records: ReadonlyArray<ComposerContextRecord>,
-      sourceEnvironmentId: EnvironmentId | null,
-    ): ReadonlyMap<string, string> => {
-      const rewritten = new Map<string, string>();
-      const dependentAttachmentLocalIds = new Map<string, string>();
-      const skippedDependentAttachmentIds = new Set<string>();
-      // Resolve annotations before their dependent screenshot records even if a foreign
-      // clipboard producer emitted the records in a different order.
-      const orderedRecords = records.toSorted((left, right) =>
-        left.kind === "preview-annotation" && right.kind !== "preview-annotation"
-          ? -1
-          : right.kind === "preview-annotation" && left.kind !== "preview-annotation"
-            ? 1
-            : 0,
-      );
-      for (const candidate of orderedRecords) {
-        // Producer ids fold into context ids, so two different excerpts can collide. Only skip
-        // when the draft already holds the same payload; a colliding but different record is
-        // re-minted under a fresh id so both survive the paste.
-        const record = asKnownContextRecord(candidate);
-        if (!record) continue;
-        const existing = composerContextImportLookupIds(record).flatMap((contextId) => {
-          const found = composerContextRecords.get(contextId);
-          return found ? [found] : [];
-        })[0];
-        const existingRecord =
-          existing?.kind === "terminal"
-            ? terminalContextRecord(existing.record)
-            : existing?.kind === "review-comment"
-              ? reviewCommentContextRecord(existing.record)
-              : existing?.kind === "preview-annotation"
-                ? previewAnnotationContextRecord(existing.record)
-                : existing?.kind === "thread"
-                  ? existing.record
-                  : existing
-                    ? (uploadedContextRecordFromDraft(existing) ?? undefined)
-                    : undefined;
-        if (existingRecord && isSameComposerContextPayload(existingRecord, record)) {
-          if (record.kind === "preview-annotation" && record.screenshotContextId) {
-            skippedDependentAttachmentIds.add(record.screenshotContextId);
-          }
-          continue;
+  const importContextRecords = (
+    records: ReadonlyArray<ComposerContextRecord>,
+    sourceEnvironmentId: EnvironmentId | null,
+  ): ReadonlyMap<string, string> => {
+    const rewritten = new Map<string, string>();
+    const dependentAttachmentLocalIds = new Map<string, string>();
+    const skippedDependentAttachmentIds = new Set<string>();
+    // Resolve annotations before their dependent screenshot records even if a foreign
+    // clipboard producer emitted the records in a different order.
+    const orderedRecords = records.toSorted((left, right) =>
+      left.kind === "preview-annotation" && right.kind !== "preview-annotation"
+        ? -1
+        : right.kind === "preview-annotation" && left.kind !== "preview-annotation"
+          ? 1
+          : 0,
+    );
+    for (const candidate of orderedRecords) {
+      // Producer ids fold into context ids, so two different excerpts can collide. Only skip
+      // when the draft already holds the same payload; a colliding but different record is
+      // re-minted under a fresh id so both survive the paste.
+      const record = asKnownContextRecord(candidate);
+      if (!record) continue;
+      const existing = composerContextImportLookupIds(record).flatMap((contextId) => {
+        const found = composerContextRecords.get(contextId);
+        return found ? [found] : [];
+      })[0];
+      const existingRecord =
+        existing?.kind === "terminal"
+          ? terminalContextRecord(existing.record)
+          : existing?.kind === "review-comment"
+            ? reviewCommentContextRecord(existing.record)
+            : existing?.kind === "preview-annotation"
+              ? previewAnnotationContextRecord(existing.record)
+              : existing?.kind === "thread"
+                ? existing.record
+                : existing
+                  ? (uploadedContextRecordFromDraft(existing) ?? undefined)
+                  : undefined;
+      if (existingRecord && isSameComposerContextPayload(existingRecord, record)) {
+        if (record.kind === "preview-annotation" && record.screenshotContextId) {
+          skippedDependentAttachmentIds.add(record.screenshotContextId);
         }
-        const conflicts = existing !== undefined;
-        switch (record.kind) {
-          case "terminal": {
-            const threadId = activeThread?.id ?? activeThreadId;
-            if (!threadId) break;
-            const imported = terminalContextDraftFromRecord(record, threadId);
-            const draft = conflicts ? { ...imported, id: randomUUID() } : imported;
-            addComposerDraftTerminalContexts(composerDraftTarget, [draft], {
-              appendReference: false,
-            });
-            rewritten.set(record.contextId, terminalContextReference(draft).contextId);
-            break;
+        continue;
+      }
+      const conflicts = existing !== undefined;
+      switch (record.kind) {
+        case "terminal": {
+          const threadId = activeThread?.id ?? activeThreadId;
+          if (!threadId) break;
+          const imported = terminalContextDraftFromRecord(record, threadId);
+          const draft = conflicts ? { ...imported, id: randomUUID() } : imported;
+          addComposerDraftTerminalContexts(composerDraftTarget, [draft], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, terminalContextReference(draft).contextId);
+          break;
+        }
+        case "review-comment": {
+          const imported = reviewCommentFromRecord(record);
+          const comment = conflicts ? { ...imported, id: randomUUID() } : imported;
+          addComposerDraftReviewComment(composerDraftTarget, comment, {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, reviewCommentContextId(comment.id));
+          break;
+        }
+        case "element":
+        case "preview-annotation": {
+          const imported =
+            record.kind === "element"
+              ? elementContextToPreviewAnnotation(record, randomUUID(), new Date().toISOString())
+              : previewAnnotationFromRecord(record);
+          const annotation = conflicts ? { ...imported, id: randomUUID() } : imported;
+          if (record.kind === "preview-annotation" && record.screenshotContextId) {
+            dependentAttachmentLocalIds.set(record.screenshotContextId, annotation.id);
           }
-          case "review-comment": {
-            const imported = reviewCommentFromRecord(record);
-            const comment = conflicts ? { ...imported, id: randomUUID() } : imported;
-            addComposerDraftReviewComment(composerDraftTarget, comment, {
-              appendReference: false,
-            });
-            rewritten.set(record.contextId, reviewCommentContextId(comment.id));
-            break;
-          }
-          case "element":
-          case "preview-annotation": {
-            const imported =
-              record.kind === "element"
-                ? elementContextToPreviewAnnotation(record, randomUUID(), new Date().toISOString())
-                : previewAnnotationFromRecord(record);
-            const annotation = conflicts ? { ...imported, id: randomUUID() } : imported;
-            if (record.kind === "preview-annotation" && record.screenshotContextId) {
-              dependentAttachmentLocalIds.set(record.screenshotContextId, annotation.id);
-            }
-            addComposerDraftPreviewAnnotation(composerDraftTarget, annotation, {
-              appendReference: false,
-            });
-            rewritten.set(record.contextId, previewAnnotationContextId(annotation.id));
-            break;
-          }
-          case "thread": {
-            // The agent can only read threads on its own server; a pasted foreign one is dropped.
-            if (record.environmentId !== environmentId) break;
-            addComposerDraftThreadContexts(attachmentDraftTarget, [record], {
-              appendReference: false,
-            });
+          addComposerDraftPreviewAnnotation(composerDraftTarget, annotation, {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, previewAnnotationContextId(annotation.id));
+          break;
+        }
+        case "thread": {
+          // The agent can only read threads on its own server; a pasted foreign one is dropped.
+          if (record.environmentId !== environmentId) break;
+          addComposerDraftThreadContexts(attachmentDraftTarget, [record], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, record.contextId);
+          break;
+        }
+        case "image":
+        case "file": {
+          if (skippedDependentAttachmentIds.has(record.contextId)) break;
+          if (sourceEnvironmentId === null && !conflicts) {
             rewritten.set(record.contextId, record.contextId);
             break;
           }
-          case "image":
-          case "file": {
-            if (skippedDependentAttachmentIds.has(record.contextId)) break;
-            if (sourceEnvironmentId === null && !conflicts) {
-              rewritten.set(record.contextId, record.contextId);
-              break;
-            }
-            if (sourceEnvironmentId === null) break;
-            const localId = dependentAttachmentLocalIds.get(record.contextId) ?? randomUUID();
-            rewritten.set(record.contextId, toKindScopedComposerContextId(record.kind, localId));
-            void importAttachmentRecord(record, localId, sourceEnvironmentId);
-            break;
-          }
-          default:
-            break;
+          if (sourceEnvironmentId === null) break;
+          const localId = dependentAttachmentLocalIds.get(record.contextId) ?? randomUUID();
+          rewritten.set(record.contextId, toKindScopedComposerContextId(record.kind, localId));
+          void importAttachmentRecord(record, localId, sourceEnvironmentId);
+          break;
         }
+        default:
+          break;
       }
-      return rewritten;
-    },
-  );
+    }
+    return rewritten;
+  };
   const importContextFragment = useStableCallback(
     (fragment: ComposerContextClipboardFragment): ReadonlyMap<string, string> =>
       importContextRecords(fragment.records, fragment.source.environmentId),
@@ -6133,7 +6129,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         await importComposerThreadAttachment({
           targetKey,
           pendingImports: pendingThreadImportsRef.current,
-          countReservedAttachments,
+          countReservedAttachments: countReservedAttachmentsStable,
           load: async () => {
             const result = await loadThreadTranscript({
               environmentId: ref.environmentId,
