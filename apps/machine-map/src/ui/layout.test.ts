@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  anyInView,
+  fitView,
+  MAX_ZOOM,
   offsetPoint,
   pairCurve,
   pairPath,
   placePairs,
   pointOffset,
   separate,
+  toMapPoint,
+  toScreenPoint,
+  zoomAt,
   type Box,
   type Point,
 } from "./layout.ts";
@@ -150,6 +156,20 @@ describe("pair placement (MM-1108)", () => {
       800,
     );
     expect(overlaps({ ...(fixed ?? { x: 0, y: 0 }), ...size }, machine)).toBe(false);
+  });
+});
+
+describe("zoom and pan (MM-1116)", () => {
+  it("keeps the point under the pointer, stops at the limits, and fits every card", () => {
+    const view = zoomAt({ x: 40, y: 10, k: 1 }, { x: 300, y: 200 }, 1.5);
+    expect(toScreenPoint(view, toMapPoint({ x: 40, y: 10, k: 1 }, { x: 300, y: 200 }))).toEqual({
+      x: 300,
+      y: 200,
+    });
+    expect(zoomAt(view, { x: 0, y: 0 }, 100).k).toBe(MAX_ZOOM);
+    const fitted = fitView([card(100, 100), card(2000, 900)], 800, 600);
+    expect(fitted && anyInView(fitted, [card(2000, 900)], 800, 600)).toBe(true);
+    expect(fitView([], 800, 600)).toBeNull();
   });
 });
 

@@ -991,8 +991,9 @@ details.more[open] summary {
   position: relative;
   height: clamp(560px, calc(100vh - 290px), 980px);
   overflow: hidden;
-  /* A finger on empty map scrolls and zooms the page. Cards take their own drags. */
-  touch-action: pan-y pinch-zoom;
+  /* MM-1116: the map pans and zooms itself, also under fingers. */
+  touch-action: none;
+  cursor: grab;
   /* A double click on the map opens the add menu (MM-1110); it selects no text. */
   user-select: none;
   -webkit-user-select: none;
@@ -1000,12 +1001,37 @@ details.more[open] summary {
   background-image: radial-gradient(var(--dots) 1.4px, transparent 1.4px);
   background-size: 22px 22px;
 }
-.map > svg {
+.map.panning,
+.map.space-pan,
+.map.space-pan * {
+  cursor: grabbing;
+}
+/* MM-1116: the one layer that pans and zooms. The script writes its transform. */
+.map-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+.map-world > svg {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+  overflow: visible;
   pointer-events: none;
+}
+.map-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 8;
+  display: flex;
+  gap: 6px;
+  cursor: auto;
+}
+.map-zoom .btn {
+  min-width: 44px;
 }
 .map path {
   fill: none;
