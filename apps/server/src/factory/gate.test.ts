@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 import {
   FactoryGate,
   GateCommandSpawnError,
+  GateRecordError,
   WorkspaceCleanupError,
   WorkspaceFailedError,
   WorkspaceIoError,
@@ -29,6 +30,8 @@ import {
   type GateInput,
   type GateOptions,
 } from "./gate.ts";
+import type { AppendIo } from "./ledger/appendFile.ts";
+import { LedgerIoError } from "./ledger/errors.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { readRun } from "./ledger/read.ts";
 import { newRunId, runIdToString } from "./ledger/runId.ts";
@@ -311,6 +314,10 @@ it("a workspace error says what failed", () => {
   assert.strictEqual(
     new GateCommandSpawnError({ command: "cargo test", cause: new Error("no shell") }).message,
     "could not start `cargo test`: no shell",
+  );
+  assert.strictEqual(
+    new GateRecordError({ attempt: 2, cause: new Error("disk full") }).message,
+    "attempt 2 is used: the ledger failed while its gate_command lines were written: disk full",
   );
 });
 
@@ -1605,6 +1612,105 @@ it("the gate's paths are built from the validated run id", () => {
 });
 
 // ---- gate: the head merged with the current base ------------------------------------------
+
+/**
+ * The ledger's write and sync on the real file, except that the `write`th write fails having
+ * written nothing and the `sync`th sync fails after its write landed (counting from one).
+ */
+const failingLedgerIo = (fail: { readonly write?: number; readonly sync?: number }): AppendIo => {
+  let writes = 0;
+  let syncs = 0;
+  return {
+    writeSync: (fd, buffer) => {
+      writes += 1;
+      if (writes === fail.write) throw new Error("injected disk error");
+      return NodeFS.writeSync(fd, buffer);
+    },
+    fsyncSync: (fd) => {
+      syncs += 1;
+      if (syncs === fail.sync) throw new Error("injected disk error");
+      NodeFS.fsyncSync(fd);
+    },
+  };
+};
+
+/** Runs `gate` commands on a fresh head with the ledger's io replaced; returns the error and the ledger's events. */
+const gateWithLedgerIo = (name: string, gate: ReadonlyArray<string>, io: AppendIo) =>
+  Effect.gen(function* () {
+    const remote = makeRemote(name);
+    const dataDir = tempDir(`${name}-data`);
+    const run = newRunId(REPO, "10", 1);
+    const sha = remote.push([["README", "pushed\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const input = baseInput(remote, dataDir, run, sha, sha);
+    const error = yield* (yield* FactoryGate)
+      .run({ ...input, gate, options: { ...input.options, ledgerIo: io } })
+      .pipe(Effect.flip);
+    assert.strictEqual(gateLocksHeld(dataDir), 0);
+    return { error, events: entries(dataDir, run).map((l) => l.event) };
+  });
+
+it.live(
+  "a ledger failure after a command line went in is a GateRecordError: the attempt is used",
+  () =>
+    Effect.gen(function* () {
+      // Write 1 is gate_checkout, 2 the first command's line, 3 the second's.
+      const { error, events } = yield* gateWithLedgerIo(
+        "gate-record-partial",
+        ["true", "true", "true"],
+        failingLedgerIo({ write: 3 }),
+      );
+      assert.strictEqual(error._tag, "GateRecordError");
+      if (error._tag !== "GateRecordError") return;
+      assert.strictEqual(error.attempt, 1);
+      assert.instanceOf(error.cause, LedgerIoError);
+      assert.deepStrictEqual(events, ["gate_checkout", "gate_command"]);
+    }).pipe(provided),
+);
+
+it.live("a command line whose sync fails is in the ledger, so the attempt is used", () =>
+  Effect.gen(function* () {
+    const { error, events } = yield* gateWithLedgerIo(
+      "gate-record-sync",
+      ["true"],
+      failingLedgerIo({ sync: 2 }),
+    );
+    assert.instanceOf(error, GateRecordError);
+    assert.deepStrictEqual(events, ["gate_checkout", "gate_command"]);
+  }).pipe(provided),
+);
+
+it.live("a ledger failure before any command line went in uses no attempt", () =>
+  Effect.gen(function* () {
+    const { error, events } = yield* gateWithLedgerIo(
+      "gate-record-none",
+      ["true"],
+      failingLedgerIo({ write: 2 }),
+    );
+    assert.instanceOf(error, LedgerIoError);
+    assert.deepStrictEqual(events, ["gate_checkout"]);
+  }).pipe(provided),
+);
+
+it.live("a conflict line whose sync fails is in the ledger, so the attempt is used", () =>
+  Effect.gen(function* () {
+    const remote = makeRemote("gate-record-conflict");
+    const dataDir = tempDir("gate-record-conflict-data");
+    const run = newRunId(REPO, "10", 1);
+    const pr = remote.pushOn("pr", "main", [["README", "pr\n"]]);
+    const base = remote.pushOn("main", "main", [["README", "base\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const input = baseInput(remote, dataDir, run, pr, base);
+    const error = yield* (yield* FactoryGate)
+      .run({ ...input, options: { ...input.options, ledgerIo: failingLedgerIo({ sync: 2 }) } })
+      .pipe(Effect.flip);
+    assert.instanceOf(error, GateRecordError);
+    assert.deepStrictEqual(
+      entries(dataDir, run).map((l) => l.event),
+      ["gate_checkout", "gate_command"],
+    );
+  }).pipe(provided),
+);
 
 it.live("a conflict with the base is a failed attempt with no command run", () =>
   Effect.gen(function* () {
