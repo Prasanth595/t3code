@@ -327,15 +327,42 @@ describe("sync.sh", () => {
     expect(originFile("main", "factory/UPSTREAM")).toBe(`${NEWEST} ${newestSha}`);
   });
 
-  it("regenerates the route tree when only that file conflicts", () => {
+  it("regenerates a conflicting route tree but leaves landing it to a person", () => {
     makeFork(`${OLD} ${oldSha}`, { [ROUTE_TREE]: "routes, fork edit\n" });
-    const { status, calls, tokens } = run();
-    expect(status).toBe(0);
+    const mainBefore = git(origin, "rev-parse", "main");
+    const { status, stderr, calls, tokens, body } = run();
+    expect(status).toBe(1);
     expect(calls.slice(0, 3)).toEqual(["vp i", "regenerate-routes.sh", "check.sh"]);
     expect(tokens[1]).toBe("regenerate-routes.sh unset");
     const branch = `sync/${NEWEST}`;
     expect(originFile(branch, ROUTE_TREE)).toBe("regenerated route tree");
     expect(originFile(branch, "factory/UPSTREAM")).toBe(`${NEWEST} ${newestSha}`);
+    // The regenerated file is the first job's word, so main does not move.
+    expect(git(origin, "rev-parse", "main")).toBe(mainBefore);
+    expect(stderr).toContain(
+      `sync: ${NEWEST} regenerated ${ROUTE_TREE}; https://example.test/pr/1 waits for a person`,
+    );
+    expect(calls.slice(3)).toEqual([
+      expect.stringMatching(
+        new RegExp(
+          `^gh pr create --base main --head ${branch} --title sync: ${NEWEST} --body-file `,
+        ),
+      ),
+      expect.stringMatching(/^gh issue list /),
+      expect.stringMatching(
+        new RegExp(
+          `^gh issue create --title Sync to ${NEWEST} needs a route-tree review --body-file `,
+        ),
+      ),
+    ]);
+    expect(body).toContain("Pull request: https://example.test/pr/1");
+    expect(body).toContain(`\`${ROUTE_TREE}\``);
+
+    // The next run waits on that pull request instead of filing again.
+    const second = run({ SYNC_TEST_PR_URL: "https://example.test/pr/1" });
+    expect(second.status).toBe(0);
+    expect(second.stdout).toContain(`sync: ${NEWEST} waits on https://example.test/pr/1`);
+    expect(git(origin, "rev-parse", "main")).toBe(mainBefore);
   });
 
   it("aborts on any other conflict, pushes nothing and opens an issue naming the paths", () => {

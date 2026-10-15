@@ -22,14 +22,16 @@
 # conflicted route tree differing from what git merges itself. Two things stay
 # prepare's word, since checking them means running upstream's code: whether the
 # checks passed, and the content of a regenerated route tree. A compromised
-# prepare can land upstream's merge unchecked, with any route tree it writes
-# when that file conflicts. Green: push sync/<tag>, open `sync: <tag>`
-# and fast-forward main to the checked merge commit, which merges it; when main
-# moved meanwhile, the pull request waits for a person. Red: push, open it as a
+# prepare can land upstream's merge unchecked, but a regenerated route tree
+# never lands without a person. Green: push sync/<tag>, open `sync: <tag>` and
+# fast-forward main to the checked merge commit, which merges it; when main
+# moved meanwhile, or the route tree was regenerated, the pull request waits for
+# a person. Red: push, open it as a
 # draft, and file `Sync to <tag> fails checks` with the failing step and the
 # last 200 lines of its output. A conflict in any other file, a failing `vp i`
-# or generator, a refused push and a refused fast-forward each file their own
-# issue (`conflicts`, `fails checks`, `cannot be pushed`, `cannot land`) and
+# or generator, a refused push, a refused fast-forward and a regenerated route
+# tree each file their own issue (`conflicts`, `fails checks`, `cannot be
+# pushed`, `cannot land`, `needs a route-tree review`) and
 # exit 1; an open issue of the same kind gets a comment and the new tag in its
 # title instead, so a lasting problem keeps one issue. A sync branch already on
 # origin waits on its open pull request, or files `is stuck` when it has none.
@@ -191,7 +193,8 @@ fails_checks() {
 # Fails publish when the bundled branch is anything but what prepare should
 # have built: the merge of a commit on main and the tag, where only
 # factory/UPSTREAM (naming the tag) and a conflicted route tree differ from the
-# tree git merges itself. Sets $candidate.
+# tree git merges itself. Sets $candidate, and $route_tree_regenerated to 1
+# when the route tree conflicted, so its content is prepare's alone.
 verify_candidate() {
   local refuse="sync: the prepared $branch is not the merge of $base and $tag; not publishing it"
   local first second extra merged merge_status=0 tree conflicted allowed path
@@ -213,8 +216,10 @@ verify_candidate() {
   tree=$(head -n 1 <<< "$merged")
   conflicted=$(tail -n +2 <<< "$merged" | sed '/^$/d')
   allowed=factory/UPSTREAM
+  route_tree_regenerated=0
   if [[ $conflicted == "$route_tree" ]]; then
     allowed+=$'\n'$route_tree
+    route_tree_regenerated=1
   elif [[ -n $conflicted ]]; then
     echo "$refuse" >&2
     exit 1
@@ -330,9 +335,29 @@ publish() {
     {
       echo "Merges upstream \`$tag\` ($sha) into \`$base\`."
       echo
-      echo "\`factory/scripts/check.sh\` passed, so this merges on its own."
+      if [[ $route_tree_regenerated == 1 ]]; then
+        echo "\`factory/scripts/check.sh\` passed. \`$route_tree\` was regenerated after a"
+        echo "conflict, so a person reviews it and merges this."
+      else
+        echo "\`factory/scripts/check.sh\` passed, so this merges on its own."
+      fi
     } > "$scratch/pr.md"
     pr_url=$(gh pr create --base "$base" --head "$branch" --title "sync: $tag" --body-file "$scratch/pr.md")
+    # A regenerated route tree is code publish cannot check without running
+    # upstream's generator, so a person reviews it and merges.
+    if [[ $route_tree_regenerated == 1 ]]; then
+      echo "sync: $tag regenerated $route_tree; $pr_url waits for a person" >&2
+      {
+        echo "\`$branch\` merges \`$tag\` ($sha) and passed the checks, but \`$route_tree\`"
+        echo "conflicted, so the branch carries a route tree the unprivileged job regenerated."
+        echo "Nothing checks that file without running upstream's generator, so this does not"
+        echo "land on its own: review the file in the pull request, then merge it. Until then"
+        echo "each run waits on it."
+        echo "Pull request: $pr_url"
+      } > "$scratch/route-tree.md"
+      file_issue "needs a route-tree review" "$scratch/route-tree.md"
+      exit 1
+    fi
     # Fast-forwarding main to the checked merge commit lands exactly what the
     # checks ran on, and GitHub marks the pull request merged. When main moved
     # meanwhile, the push is refused and the pull request waits for a person.
