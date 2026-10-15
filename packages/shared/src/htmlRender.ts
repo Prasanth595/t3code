@@ -252,10 +252,12 @@ export const HTML_RENDER_THEME_GUIDE = [
   "T3 injects its active theme as CSS custom properties on :root, and they follow the user's theme and light/dark mode live:",
   "--background (page background, identical to the thread around the frame), --foreground, --muted, --muted-foreground,",
   "--card, --card-foreground, --popover, --popover-foreground, --secondary, --secondary-foreground, --border, --input, --ring,",
-  "--primary, --primary-foreground (solid buttons), --accent, --accent-foreground (brand accent), --accent-surface, --accent-surface-foreground,",
+  "--primary, --primary-foreground (solid buttons), --accent, --accent-foreground (text on the brand accent background), --accent-surface, --accent-surface-foreground,",
   "--destructive, --destructive-foreground, --destructive-surface, --warning, --warning-foreground, --warning-surface,",
   "--success, --success-foreground, --info, --info-foreground, --code-background, --code-foreground,",
   "--chart-1 … --chart-6 (categorical series for charts), --radius, --font-sans, --font-mono.",
+  "Use --foreground for text on --background. Use --accent-foreground only on --accent, not for links on the page background: it can be dark in dark themes and white in light themes. For page links, use a { color: var(--foreground); text-decoration: underline; }.",
+  "Preview in both light and dark appearances before publishing; a readable default-theme preview does not establish contrast in every theme.",
   "The base stylesheet sets html background/color/font from these, body margin to 0, and hides the page's scrollbar; your own CSS overrides it.",
 ].join(" ");
 
