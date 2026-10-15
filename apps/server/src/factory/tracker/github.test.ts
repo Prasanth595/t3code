@@ -1884,6 +1884,23 @@ it.effect("several runs of one name fail before they pend and pend before they p
         return (yield* t.ok(t.github.checks(BASE_SHA, ["gate"])))[0]!.state;
       });
     assert.strictEqual(yield* state(["completed", "success"], ["completed", "failure"]), "failed");
+    // The conclusion and the link are the deciding run's, whichever came first.
+    const mixed = setup(
+      reply(
+        page([
+          run("gate", "completed", "success"),
+          { ...run("gate", "completed", "failure"), html_url: "https://github.com/x/y/runs/2" },
+        ]),
+      ),
+    );
+    assert.deepStrictEqual(yield* mixed.ok(mixed.github.checks(BASE_SHA, ["gate"])), [
+      {
+        name: "gate",
+        state: "failed",
+        conclusion: "failure",
+        url: "https://github.com/x/y/runs/2",
+      },
+    ]);
     assert.strictEqual(yield* state(["in_progress", null], ["completed", "success"]), "pending");
     assert.strictEqual(yield* state(["completed", "success"], ["completed", "neutral"]), "passed");
     // A failure is not hidden by a run that is going again, in either order.
