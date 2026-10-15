@@ -502,7 +502,8 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         ? { status: "unauthenticated" }
         : { status: "unknown" };
 
-  const skills = yield* discoverGrokSkills(grokSettings, probeEnvironment, cwd).pipe(
+  // Skill discovery applies the probe environment itself.
+  const skills = yield* discoverGrokSkills(grokSettings, environment, cwd).pipe(
     Effect.tapError((cause) => Effect.logDebug("Grok skill discovery failed.", { cause })),
     Effect.orElseSucceed(() => []),
   );
