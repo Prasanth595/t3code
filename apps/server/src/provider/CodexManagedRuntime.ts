@@ -7,7 +7,8 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
-import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
+import { materializeCodexShadowHome, withCodexSqliteHome } from "./Drivers/CodexHomeLayout.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
@@ -90,11 +91,15 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       ),
     );
     // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
-    const environment: NodeJS.ProcessEnv = {
-      ...options.environment,
-      ACCESS_TOKEN: credentials.accessToken,
-      CODEX_HOME: homePath,
-    };
+    const environment = withCodexSqliteHome(
+      homeLayout,
+      {
+        ...options.environment,
+        ACCESS_TOKEN: credentials.accessToken,
+        CODEX_HOME: homePath,
+      },
+      yield* HostProcess.Platform,
+    );
     delete environment.T3CODE_CODEX_LAUNCH_ARGS;
     delete environment.OPENAI_API_KEY;
     delete environment.OPENAI_BASE_URL;

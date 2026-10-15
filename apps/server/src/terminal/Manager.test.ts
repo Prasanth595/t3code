@@ -13,6 +13,7 @@ import {
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Data from "effect/Data";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -2223,6 +2224,190 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    {
+      platform: "linux" as const,
+      inheritedKey: "CODEX_SQLITE_HOME",
+      request: undefined,
+      provider: undefined,
+      expected: "/inherited/sqlite",
+    },
+    {
+      platform: "win32" as const,
+      inheritedKey: "codex_sqlite_home",
+      request: undefined,
+      provider: undefined,
+      expected: "/inherited/sqlite",
+    },
+    {
+      platform: "win32" as const,
+      inheritedKey: "codex_sqlite_home",
+      request: "/request/sqlite",
+      provider: undefined,
+      expected: "/request/sqlite",
+    },
+    {
+      platform: "win32" as const,
+      inheritedKey: "codex_sqlite_home",
+      request: "/request/sqlite",
+      provider: "/provider/sqlite",
+      expected: "/provider/sqlite",
+    },
+    {
+      platform: "win32" as const,
+      inheritedKey: "CODEX_SQLITE_HOME",
+      requestKey: "codex_sqlite_home",
+      request: "/request/sqlite",
+      providerKey: "CODEX_SQLITE_HOME",
+      provider: "/provider/sqlite",
+      expected: "/provider/sqlite",
+    },
+    {
+      platform: "win32" as const,
+      inheritedKey: "codex_sqlite_home",
+      requestKey: "CODEX_SQLITE_HOME",
+      request: "/request/sqlite",
+      providerKey: "codex_sqlite_home",
+      provider: "/provider/sqlite",
+      expected: "/provider/sqlite",
+    },
+  ])(
+    "preserves SQLite terminal environment precedence: $expected ($platform)",
+    ({ platform, inheritedKey, requestKey, request, providerKey, provider, expected }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        const providerInstanceId = ProviderInstanceId.make("codex_sqlite");
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: { [inheritedKey]: "/inherited/sqlite", T3CODE_SECRET: "server-only" },
+          resolveProviderInstanceEnvironment: (rawProviderInstanceId, env, inheritedEnvironment) =>
+            TerminalManager.resolveProviderInstanceTerminalEnvironment({
+              serverSettings,
+              path,
+              rawProviderInstanceId,
+              stateDir: "/test/state",
+              env,
+              inheritedEnvironment,
+            }),
+        });
+        yield* manager.open(
+          openInput({
+            providerInstanceId,
+            env:
+              request === undefined ? undefined : { [requestKey ?? "CODEX_SQLITE_HOME"]: request },
+          }),
+        );
+        const environment = ptyAdapter.spawnInputs[0]?.env;
+        expect(environment?.[inheritedKey]).toBe(expected);
+        expect(environment?.CODEX_HOME).toBe(path.resolve("/configured/codex-shadow"));
+        expect(environment?.T3CODE_SECRET).toBeUndefined();
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provide(
+          ServerSettings.layerTest({
+            providerInstances: {
+              [ProviderInstanceId.make("codex_sqlite")]: {
+                driver: ProviderDriverKind.make("codex"),
+                config: {
+                  homePath: "/configured/codex",
+                  shadowHomePath: "/configured/codex-shadow",
+                },
+                environment:
+                  provider === undefined
+                    ? []
+                    : [
+                        {
+                          name: providerKey ?? "CODEX_SQLITE_HOME",
+                          value: provider,
+                          sensitive: false,
+                        },
+                      ],
+              },
+            },
+          }),
+        ),
+      ),
+  );
+
+  for (const shadowMode of ["explicit", "managed"] as const) {
+    for (const orphan of [false, true]) {
+      it.effect.skipIf(!symlinksSupported)(
+        `blocks PTY spawn for a recovery-required ${shadowMode} shadow with ${orphan ? "orphan sidecar" : "database link"}`,
+        () =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-sqlite-" });
+            const sharedHome = path.join(root, "shared");
+            const providerInstanceId = ProviderInstanceId.make("codex_recovery");
+            const shadowHome =
+              shadowMode === "managed"
+                ? path.join(root, "providers", "codex", providerInstanceId, "shadow")
+                : path.join(root, "shadow");
+            yield* fs.makeDirectory(sharedHome);
+            yield* fs.makeDirectory(shadowHome, { recursive: true });
+            const sharedDatabase = path.join(sharedHome, "state_5.sqlite");
+            const shadowDatabase = path.join(shadowHome, "state_5.sqlite");
+            const shadowWal = path.join(shadowHome, "state_5.sqlite-wal");
+            const sharedWal = path.join(sharedHome, "state_5.sqlite-wal");
+            yield* fs.writeFileString(sharedDatabase, "");
+            if (orphan) {
+              yield* fs.writeFileString(sharedWal, "shared WAL");
+              yield* fs.symlink(sharedWal, shadowWal);
+            } else {
+              yield* fs.symlink(sharedDatabase, shadowDatabase);
+              yield* fs.writeFileString(shadowWal, "uncheckpointed writes");
+            }
+            const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+              Effect.provide(
+                ServerSettings.layerTest({
+                  providerInstances: {
+                    [providerInstanceId]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      config: {
+                        homePath: sharedHome,
+                        setupMode: shadowMode === "managed" ? "managed" : "existing",
+                        shadowHomePath: shadowMode === "managed" ? "" : shadowHome,
+                      },
+                    },
+                  },
+                }),
+              ),
+            );
+            const { manager, ptyAdapter } = yield* createManager(5, {
+              env: orphan ? { CODEX_SQLITE_HOME: shadowHome } : {},
+              resolveProviderInstanceEnvironment: (
+                rawProviderInstanceId,
+                env,
+                inheritedEnvironment,
+              ) =>
+                TerminalManager.resolveProviderInstanceTerminalEnvironment({
+                  serverSettings,
+                  path,
+                  rawProviderInstanceId,
+                  stateDir: root,
+                  env,
+                  inheritedEnvironment,
+                }),
+            });
+            const error = yield* manager.open(openInput({ providerInstanceId })).pipe(Effect.flip);
+            expect(error._tag).toBe("TerminalProviderEnvironmentError");
+            expect(error.message).toContain("Codex SQLite recovery is required");
+            expect(error.message).toContain("Stop all Codex processes");
+            expect(ptyAdapter.spawnInputs).toHaveLength(0);
+            if (orphan) {
+              expect(yield* fs.exists(shadowDatabase)).toBe(false);
+              expect(yield* fs.readLink(shadowWal)).toBe(sharedWal);
+              expect(yield* fs.readFileString(sharedWal)).toBe("shared WAL");
+            } else {
+              expect(yield* fs.readLink(shadowDatabase)).toBe(sharedDatabase);
+              expect(yield* fs.readFileString(shadowWal)).toBe("uncheckpointed writes");
+            }
+          }),
+      );
+    }
+  }
+
   it.effect("fails closed when a provider instance is missing", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("deleted_instance");
@@ -2272,6 +2457,7 @@ it.layer(
         serverSettings,
         path,
         rawProviderInstanceId: providerInstanceId,
+        stateDir: "/test/state",
         env: undefined,
       }).pipe(Effect.flip);
 
@@ -2315,10 +2501,16 @@ it.layer(
         serverSettings,
         path,
         rawProviderInstanceId: "configured_home",
+        stateDir: "/test/state",
         env: undefined,
       });
 
       expect(environment[variable]).toBe(path.resolve(expectedHome));
+      if (driver === "codex" && config.shadowHomePath !== undefined) {
+        expect(environment.CODEX_SQLITE_HOME).toBe(path.resolve(config.homePath));
+      } else {
+        expect(environment.CODEX_SQLITE_HOME).toBeUndefined();
+      }
     }).pipe(
       Effect.provide(
         ServerSettings.layerTest({
@@ -2342,6 +2534,7 @@ it.layer(
         serverSettings,
         path,
         rawProviderInstanceId: "codex",
+        stateDir: "/test/state",
         env: undefined,
       });
 
@@ -2368,6 +2561,7 @@ it.layer(
         serverSettings,
         path,
         rawProviderInstanceId: "claudeAgent",
+        stateDir: "/test/state",
         env: undefined,
       });
 
@@ -2394,6 +2588,7 @@ it.layer(
         serverSettings,
         path,
         rawProviderInstanceId: "codex",
+        stateDir: "/test/state",
         env: { CODEX_HOME: "/inherited/codex-home" },
       });
 
@@ -2411,6 +2606,7 @@ it.layer(
         serverSettings,
         path,
         rawProviderInstanceId: "codex_unknown",
+        stateDir: "/test/state",
         env: undefined,
       }).pipe(Effect.flip);
 
@@ -2452,6 +2648,7 @@ it.layer(
             serverSettings,
             path,
             rawProviderInstanceId,
+            stateDir: "/test/state",
             env,
           }),
       });

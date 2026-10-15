@@ -65,7 +65,14 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { resolveManagedCodexHomeLayout } from "../provider/CodexManagedHome.ts";
+import {
+  inspectCodexShadowSqlite,
+  mergeCodexEnvironment,
+  normalizeCodexSqliteEnvironment,
+  resolveCodexHomeLayout,
+  withCodexSqliteHome,
+} from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1396,9 +1403,11 @@ interface TerminalManagerOptions {
   resolveProviderInstanceEnvironment?: (
     providerInstanceId: string,
     env: Record<string, string> | undefined,
+    inheritedEnvironment: NodeJS.ProcessEnv,
   ) => Effect.Effect<
     Record<string, string>,
-    TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
+    TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError,
+    FileSystem.FileSystem
   >;
 }
 
@@ -1408,7 +1417,9 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
   readonly path: Path.Path;
   readonly rawProviderInstanceId: string;
+  readonly stateDir: string;
   readonly env: Record<string, string> | undefined;
+  readonly inheritedEnvironment?: NodeJS.ProcessEnv;
 }) {
   const providerInstanceId = ProviderInstanceId.make(input.rawProviderInstanceId);
   const settings = yield* input.serverSettings.getSettings.pipe(
@@ -1419,13 +1430,50 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
     return yield* new TerminalProviderInstanceNotFoundError({ providerInstanceId });
   }
 
-  let resolved = yield* mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
+  const platform = yield* HostProcess.Platform;
+  const inheritedSqlite = Object.fromEntries(
+    Object.entries(input.inheritedEnvironment ?? {}).filter(([key]) =>
+      platform === "win32"
+        ? key.toUpperCase() === "CODEX_SQLITE_HOME"
+        : key === "CODEX_SQLITE_HOME",
+    ),
+  );
+  let resolved = yield* instance.driver === "codex"
+    ? mergeCodexEnvironment(instance.environment, {
+        ...normalizeCodexSqliteEnvironment(inheritedSqlite, platform),
+        ...normalizeCodexSqliteEnvironment(input.env ?? {}, platform),
+      })
+    : mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
   if (instance.driver === "codex") {
     const config = decodeCodexSettings(instance.config ?? {});
     if (Option.isSome(config)) {
       const layout = yield* resolveCodexHomeLayout(config.value).pipe(
         Effect.provideService(Path.Path, input.path),
       );
+      // Keep terminal CLI authentication unchanged, but inspect the managed
+      // account's actual shadow before allowing another shared SQLite writer.
+      const recoveryLayout =
+        config.value.setupMode === "managed"
+          ? yield* resolveManagedCodexHomeLayout(
+              input.stateDir,
+              providerInstanceId,
+              config.value,
+            ).pipe(Effect.provideService(Path.Path, input.path))
+          : layout;
+      yield* inspectCodexShadowSqlite(recoveryLayout).pipe(
+        Effect.provideService(Path.Path, input.path),
+        Effect.mapError(
+          (cause) =>
+            new TerminalProviderEnvironmentError({
+              providerInstanceId,
+              cause,
+              ...(cause._tag === "CodexShadowHomeSqliteRecoveryRequiredError"
+                ? { detail: cause.message }
+                : {}),
+            }),
+        ),
+      );
+      resolved = withCodexSqliteHome(layout, resolved, platform);
       if (layout.effectiveHomePath)
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
     }
@@ -1445,7 +1493,8 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("TerminalManager.make")(function* () {
-  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir, baseDir, stateDir } =
+    yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -1453,13 +1502,20 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const path = yield* Path.Path;
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
-  )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
-    resolveProviderInstanceTerminalEnvironment({
-      serverSettings,
-      path,
-      rawProviderInstanceId,
-      env,
-    }),
+  )(
+    (
+      rawProviderInstanceId: string,
+      env: Record<string, string> | undefined,
+      inheritedEnvironment: NodeJS.ProcessEnv,
+    ) =>
+      resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId,
+        stateDir,
+        env,
+        inheritedEnvironment,
+      }),
   );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
@@ -1512,7 +1568,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           providerInstanceId: ProviderInstanceId.make(input.providerInstanceId),
         });
       }
-      const env = yield* resolver(input.providerInstanceId, input.env);
+      const env = yield* resolver(input.providerInstanceId, input.env, baseEnv).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
       return { ...input, env };
     },
   );
