@@ -13,10 +13,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ClaudeReplayExhaustedError } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts";
 import * as EffectWorker from "../../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import {
@@ -51,12 +49,12 @@ it.live(
           const events = yield* Events.FactoryEvents;
           const sink = yield* EventSink.EventSinkV2;
 
-          const launch = (name: string) =>
+          const launch = (name: string, ref = baseRef) =>
             sessions.launch({
               commandId: `softfac:factory-events-contract:${name}`,
               projectId,
               title: `Factory events ${name}`,
-              baseRef,
+              baseRef: ref,
               startFromOrigin: false,
               message: SIMPLE_PROMPT,
               model: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
@@ -112,9 +110,10 @@ it.live(
             Effect.forkScoped,
           );
 
-          // The replay transcript serves one turn, so B's run ends failed:
-          // still a status change on a new thread.
-          const launchedB = yield* launch("b");
+          // B starts from a ref the repo does not have, so its worktree cannot
+          // be prepared and its run fails before any provider turn: a status
+          // change on a new thread that needs no second replay transcript.
+          const launchedB = yield* launch("b", "factory-events-contract-no-such-ref");
           const first = yield* Fiber.join(next);
           assert.isTrue(first._tag === "Some");
           if (first._tag !== "Some") return;
@@ -123,15 +122,7 @@ it.live(
 
           // Let B's run end so the harness does not tear down under it.
           yield* untilTerminal(ThreadId.make(launchedB.threadId));
-        }).pipe(
-          Effect.provide(layerRuntime({ repo, worktreesDir })),
-          // The replay transcript serves one turn, so B's launch exhausts it
-          // and the harness rethrows that when its scope closes, after every
-          // assertion above. Nothing else is tolerated.
-          Effect.catchDefect((defect) =>
-            Schema.is(ClaudeReplayExhaustedError)(defect) ? Effect.void : Effect.die(defect),
-          ),
-        );
+        }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir })));
       }),
     ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
   120_000,
