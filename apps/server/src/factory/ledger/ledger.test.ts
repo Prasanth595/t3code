@@ -862,6 +862,21 @@ describe("open", () => {
     expect(openError.kind).toBe("NotFound");
     expect(openError.path).toBe(runFileFor(dataDir));
     expect(readText(target)).toBe(RED);
+    // Nothing was created or truncated through the link.
+    expect(NodeFS.lstatSync(runFileFor(dataDir)).isSymbolicLink()).toBe(true);
+    expect(NodeFS.readdirSync(NodePath.join(dataDir, "runs"))).toEqual([
+      NodePath.basename(runFileFor(dataDir)),
+    ]);
+  });
+
+  it("open a missing run is not found and creates no file", () => {
+    const dataDir = tempDir();
+    expect(catchLedgerError(() => reopen(dataDir)).kind).toBe("NotFound");
+    expect(NodeFS.existsSync(runFileFor(dataDir))).toBe(false);
+    // The same with a runs directory that exists but holds no such run.
+    NodeFS.mkdirSync(NodePath.join(dataDir, "runs"));
+    expect(catchLedgerError(() => reopen(dataDir)).kind).toBe("NotFound");
+    expect(NodeFS.existsSync(runFileFor(dataDir))).toBe(false);
   });
 
   it("read and open refuse a directory named like a run", () => {
