@@ -251,6 +251,15 @@ The server setting `preferOriginRemote` makes a fork checkout count as its fork.
 - With the setting on, `origin` comes first. The pull request list, pull request details, watches and links use the fork. The sidebar groups the checkout under the fork in both cases.
 - Pull request creation and the pull request of the current branch come from the GitHub provider. It follows gh's default repository, then `upstream`. Run `gh repo set-default <owner>/<fork>` in each fork checkout, so that these use the fork too. The setting does not change them. Revisit if a fork checkout without a gh default creates a pull request on upstream.
 
+## Global scripts
+
+The server setting `globalScripts` holds scripts for every project. It is empty by default. Edit it in Settings > General > Global scripts.
+
+- Pin a script to get a button. Global pins (`pinnedGlobalScriptIds`) show in the title bar. Project pins (`pinnedProjectScriptIds`) show next to the thread details toggle. Right-click a button for the pin menu.
+- A global script's preview opens as a floating popup.
+- An action with "Open as an app overlay" (`previewOverlay`) opens its page in a large panel over the app instead. It runs its command only when the page is down. A remote client, such as an HTTPS page or a client of another machine, opens the preview instead, because it cannot frame that page.
+- Scripts can run in the background.
+
 ## App toggle shortcuts
 
 The client setting `appToggleShortcuts` lists global keys that show and hide the desktop app. It is empty by default. Set it in Settings > General > App toggle shortcuts, for example `F17, Alt+Space`.
@@ -410,6 +419,11 @@ The server setting `machineMap` connects this server to the machine map portal. 
   - Pairing links keep working on every machine.
 - Only the desktop app of a machine changes its `clientAccess` and `machineMap` settings, and joins or leaves the map. A headless machine joins with `t3 machine-map join <code>` or the installer.
 - Settings sync (MM-406, MM-411): every setting that a machine reports shows in the portal Settings view, without a shared value. A setting syncs to every machine, also an offline or a new one, once it has a shared value. On a machine with the map role `edit`, a change in T3 Settings with "All environments" selected sets the shared value. A change for one environment of a synced setting becomes the own value of that machine. A synced row shows a sync marker. Paths, secrets, project-keyed maps and the map connection stay on each machine.
+- Portal views: Map, Table, Health, Settings, Queue, Tasks, History, Inbox and Clients (MM-1102). Each view and each selected item has its own link.
+- Emergency pause: the big red button stops all agents and sets every arrow and map role to `none` (MM-708 to MM-713). While paused, each machine locks T3 Code for every client except its own desktop app (MM-718). Only the owner resumes, in the portal.
+- Scheduled tasks: the Tasks view lists the tasks of every machine, with Pause, Resume and "Run now" (MM-1601 to MM-1605).
+- Health: each machine sends resource samples. The portal keeps 30 days of history and raises alerts: HOT, FULL, DISK, SWAP, DOWN and LOW (MM-1501 to MM-1511). The CPU alert means that the machine is starved, from CPU pressure where Linux reports it. A machine with a battery reports it on macOS and Linux. The LOW alert starts below 15% by default, while the machine runs on its battery.
+- Installed portal: the portal installs as an app with an offline page and an app badge. Turn on Web Push per device in Clients > "Notifications on this device". Pushes go out for health alerts, Inbox proposals, sign-ins that wait for approval and the pause (MM-1801 to MM-1809).
 - Deploy the portal: `.github/workflows/fork-machine-map-deploy.yml` tests and deploys it from main when `apps/machine-map` or its contracts change, with the GitHub secret `CLOUDFLARE_DEPLOY_TOKEN` (Workers Scripts and Workers Routes edit). Do not deploy by hand: a deploy from a branch rolls back main. The Worker needs the secrets `SECRET_KEY` and `CF_API_TOKEN`.
 
 ## Secrets and variables
