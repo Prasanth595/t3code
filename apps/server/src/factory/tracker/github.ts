@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { PROJECT_CONFIG_PATH } from "../config.ts";
+import type { Approval, TextCheck } from "../domain/approval.ts";
+import { dependsOn } from "../domain/dependsOn.ts";
 import {
   STATES,
   stateColor,
@@ -11,6 +13,18 @@ import {
   type State,
 } from "../domain/lifecycle.ts";
 import { FactoryProcess } from "../process.ts";
+import {
+  APPROVAL_QUERY,
+  ApprovalAnswer,
+  editedSince,
+  isUtcSecond,
+  judgeApproval,
+  textChangesSince,
+  timelineReaches,
+  type ApprovalIssue,
+} from "./approvalHistory.ts";
+
+export type { Approval, Refusal, TextCheck } from "../domain/approval.ts";
 
 /**
  * GitHub issues, labels, comments and files through the `gh` CLI, ported from
@@ -184,6 +198,18 @@ const CommentRows = Schema.Array(
     body: OptionalText,
   }),
 );
+
+const BlockerRows = Schema.Array(
+  Schema.Struct({
+    number: Schema.Number,
+    state: Schema.String,
+    repository_url: OptionalText,
+  }),
+);
+
+const IssueBody = Schema.Struct({ body: OptionalText });
+/** The REST state is lowercase: `open` or `closed`. Any other state, in any case, still blocks. */
+const IssueRestState = Schema.Struct({ state: Schema.String });
 
 const RepoView = Schema.Struct({ default_branch: OptionalText });
 
@@ -424,6 +450,21 @@ const checkOutcome = (status: string, conclusion: string | null): readonly [Chec
 };
 
 const withMarker = (body: string, marker: string): string => `${body}\n\n${marker}`;
+
+// ---- the Depends on section ----
+
+/**
+ * The most issues a `## Depends on` section may name. Each costs a `gh` call on every check, so
+ * a longer list is refused rather than read: the issue author does not need approval to write it.
+ */
+export const MAX_DEPENDS_ON = 100;
+
+/** An open issue that blocks another one. */
+export interface Blocker {
+  /** `owner/name` of the repo the blocking issue is in. */
+  readonly repo: string;
+  readonly number: number;
+}
 
 // ---- the client ----
 
@@ -899,6 +940,162 @@ export const makeGitHub = (options: GitHubOptions) => {
       });
     });
 
+  // ---- blockers ----
+
+  /**
+   * The issues that GitHub marks as blocking `issue` (Relationships, "Mark as blocked by") and
+   * that are not closed, in the order GitHub lists them. An issue is resolved once it is closed,
+   * for any reason, in any repo. The `## Depends on` text is not read here; see `textBlockers`.
+   */
+  const openBlockers = (issue: number): GitHubEffect<Array<Blocker>> =>
+    Effect.gen(function* () {
+      const args = ["api", `repos/${repo}/issues/${issue}/dependencies/blocked_by`, "--paginate"];
+      const listed = yield* ghPages(args, BlockerRows, "JSON arrays of issues");
+      const open: Array<Blocker> = [];
+      for (const raw of listed.filter((row) => row.state !== "closed")) {
+        // The blocker's repo is named in `repository_url`. Without it the caller would have to
+        // guess, so the answer is an error and the issue is not claimed.
+        const url = raw.repository_url ?? "";
+        const cut = url.indexOf("/repos/");
+        const named = cut < 0 ? "" : url.slice(cut + "/repos/".length);
+        const parts = named.split("/");
+        if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
+          return yield* parseError(
+            args,
+            `issues that each name their repo in repository_url (#${raw.number} did not)`,
+          );
+        }
+        open.push({ repo: named, number: raw.number });
+      }
+      return open;
+    });
+
+  /**
+   * The issues named in the `## Depends on` section of `issue` that are not closed, in the order
+   * the text names them. A reference without a repo is in this repo. It costs one read of the
+   * body and one of each named issue, and is an error when any of them cannot be read: an issue
+   * that cannot be read is not taken as resolved. A section naming more than `MAX_DEPENDS_ON`
+   * issues is an error before any of them is read.
+   */
+  const textBlockers = (issue: number): GitHubEffect<Array<Blocker>> =>
+    Effect.gen(function* () {
+      const bodyArgs = [...repoArgs(["issue", "view", String(issue)]), "--json", "body"];
+      const raw = yield* ghJson(bodyArgs, IssueBody, "an object with the issue's body");
+      const named = dependsOn(raw.body ?? "");
+      if (named.length > MAX_DEPENDS_ON) {
+        return yield* parseError(
+          bodyArgs,
+          `a Depends on section naming at most ${MAX_DEPENDS_ON} issues, got ${named.length}`,
+        );
+      }
+      const open: Array<Blocker> = [];
+      for (const ref of named) {
+        const namedRepo = ref.repo ?? repo;
+        const args = ["api", `repos/${namedRepo}/issues/${ref.number}`];
+        const read = yield* ghJson(args, IssueRestState, "an object with the issue's state");
+        if (read.state !== "closed") {
+          open.push({ repo: namedRepo, number: ref.number });
+        }
+      }
+      return open;
+    });
+
+  // ---- approval ----
+
+  /** `gh api graphql` arguments for a query over one issue; a repo that is not `owner/name` is refused before any call. */
+  const issueQueryArgs = (query: string, issue: number): GitHubEffect<Array<string>> =>
+    Effect.gen(function* () {
+      const slash = repo.indexOf("/");
+      if (slash < 0) {
+        return yield* parseError(
+          ["api", "graphql"],
+          `a repo written as owner/name, got \`${repo}\``,
+        );
+      }
+      return [
+        "api",
+        "graphql",
+        "-f",
+        `query=${query}`,
+        "-f",
+        `owner=${repo.slice(0, slash)}`,
+        "-f",
+        `name=${repo.slice(slash + 1)}`,
+        "-F",
+        `number=${issue}`,
+      ];
+    });
+
+  /** Runs the approval query for the issue and checks every timestamp in the answer. */
+  const readHistory = (issue: number): GitHubEffect<ApprovalIssue> =>
+    Effect.gen(function* () {
+      const args = yield* issueQueryArgs(APPROVAL_QUERY, issue);
+      const answer = yield* ghJson(args, ApprovalAnswer, "a GraphQL response with the issue");
+      const found = answer.data.repository.issue;
+      const times = [
+        ...found.timelineItems.nodes.map((event) => event.createdAt),
+        ...found.userContentEdits.nodes.map((edit) => edit.editedAt),
+        ...(found.lastEditedAt === null || found.lastEditedAt === undefined
+          ? []
+          : [found.lastEditedAt]),
+      ];
+      for (const at of times) {
+        if (!isUtcSecond(at)) {
+          return yield* parseError(args, `a timestamp as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(at)}`);
+        }
+      }
+      return found;
+    });
+
+  /** `since` as the one call's argument check: only GitHub's `YYYY-MM-DDTHH:MM:SSZ`, before any call. */
+  const requireUtcSecond = (since: string): GitHubEffect<void> =>
+    isUtcSecond(since)
+      ? Effect.void
+      : Effect.fail(
+          parseError(["api", "graphql"], `\`since\` as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(since)}`),
+        );
+
+  /**
+   * Whether the factory may build the issue, by `judgeApproval` over the issue's label events and
+   * edit history: an instructor applied the `factory:ready` label in force now, and every edit
+   * and rename since was an instructor's. One GraphQL call.
+   */
+  const approval = (issue: number, instructors: ReadonlyArray<string>): GitHubEffect<Approval> =>
+    Effect.map(readHistory(issue), (found) =>
+      judgeApproval(found, stateLabel("ready"), instructors),
+    );
+
+  /**
+   * Whether the issue text is as an instructor left it: every body edit and every title rename
+   * at or after `since` (a moment in the same second counts) was made by an instructor who is a
+   * `User`, and the histories reach back far enough to tell. Keeps apart a text someone else
+   * changed from one whose histories cannot be judged: a stranger's change that can be read wins
+   * over a history that is also too long. One call, with the approval's own query and rules.
+   * Labels are not text and are not looked at.
+   */
+  const textCheck = (
+    issue: number,
+    since: string,
+    instructors: ReadonlyArray<string>,
+  ): GitHubEffect<TextCheck> =>
+    Effect.gen(function* () {
+      yield* requireUtcSecond(since);
+      const found = yield* readHistory(issue);
+      return textChangesSince(found, since, instructors, timelineReaches(found, since));
+    });
+
+  /**
+   * Whether anyone, an instructor included, edited the body or renamed the title at or after
+   * `since`. For the resume after a time limit: the next session continues the earlier one's
+   * work only on the text that work was approved on. A timeline page that may hide a rename at
+   * or after the moment counts as a change. One call, the approval's own query.
+   */
+  const textEditedSince = (issue: number, since: string): GitHubEffect<boolean> =>
+    Effect.gen(function* () {
+      yield* requireUtcSecond(since);
+      return editedSince(yield* readHistory(issue), since);
+    });
+
   return {
     listIssues,
     issue,
@@ -920,5 +1117,10 @@ export const makeGitHub = (options: GitHubOptions) => {
     commentOnPr,
     compare,
     checks,
+    openBlockers,
+    textBlockers,
+    approval,
+    textCheck,
+    textEditedSince,
   };
 };

@@ -3,7 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { PROJECT_CONFIG_PATH } from "../config.ts";
+import type { Approval, Refusal, TextCheck } from "../domain/approval.ts";
 import { FactoryProcess, type RunInput, type RunResult, RunSpawnError } from "../process.ts";
+import { APPROVAL_QUERY } from "./approvalHistory.ts";
 import {
   GitHubFailed,
   GitHubInvalidArgument,
@@ -14,8 +16,10 @@ import {
   GitHubTimedOut,
   LIST_LIMIT,
   MARKER,
+  MAX_DEPENDS_ON,
   MAX_FILE_BYTES,
   STATUS_MARKER,
+  type Blocker,
   type GitHubError,
   isNotFound,
   makeGitHub,
@@ -2002,5 +2006,1518 @@ it.effect("checks that gh cannot read is the gh failure", () =>
     const t = setup(fail(1, "gh: Not Found (HTTP 404)"));
     const error = yield* t.err(t.github.checks(BASE_SHA, ["gate"]));
     assert.strictEqual(error._tag, "GitHubFailed");
+  }),
+);
+
+// ---- blockers: ported from softfac's github.rs ----
+
+const blockedByCall = (issue: string) => [
+  "api",
+  `repos/rawphp/softfac/issues/${issue}/dependencies/blocked_by`,
+  "--paginate",
+];
+const blockerRow = (number: number, state: string, repo: string) =>
+  `{"id":${number},"number":${number},"state":"${state}","title":"t","repository_url":"https://api.github.com/repos/${repo}","labels":[]}`;
+const openBlocker = (number: number, repo: string): Blocker => ({ repo, number });
+
+it.effect("an issue with no blockers has no open blockers", () =>
+  Effect.gen(function* () {
+    const t = setup(reply("[]"));
+    assert.deepStrictEqual(yield* t.ok(t.github.openBlockers(14)), []);
+    assert.deepStrictEqual(t.calls(), [blockedByCall("14")]);
+  }),
+);
+
+it.effect("a closed blocker is resolved whatever closed it", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(
+        `[${blockerRow(13, "closed", "rawphp/softfac")},${blockerRow(12, "closed", "rawphp/other")}]`,
+      ),
+    );
+    assert.deepStrictEqual(yield* t.ok(t.github.openBlockers(14)), []);
+  }),
+);
+
+it.effect(
+  "only the exact REST state `closed` resolves a blocker; any other state still blocks",
+  () =>
+    Effect.gen(function* () {
+      // The dependency listing's state is REST's lowercase `open` or `closed`. A state the
+      // factory does not know, or one in another case, is not taken as resolved: the issue
+      // waits rather than starting on a guess.
+      const t = setup(
+        reply(
+          `[${blockerRow(13, "unknown", "rawphp/softfac")},${blockerRow(12, "CLOSED", "rawphp/softfac")},${blockerRow(11, "closed", "rawphp/softfac")}]`,
+        ),
+      );
+      assert.deepStrictEqual(yield* t.ok(t.github.openBlockers(14)), [
+        openBlocker(13, "rawphp/softfac"),
+        openBlocker(12, "rawphp/softfac"),
+      ]);
+    }),
+);
+
+it.effect("open blockers keep the repo they are in", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(
+        `[${blockerRow(13, "open", "rawphp/softfac")},${blockerRow(12, "closed", "rawphp/softfac")},${blockerRow(7, "open", "acme/widgets")}]`,
+      ),
+    );
+    assert.deepStrictEqual(yield* t.ok(t.github.openBlockers(14)), [
+      openBlocker(13, "rawphp/softfac"),
+      openBlocker(7, "acme/widgets"),
+    ]);
+  }),
+);
+
+it.effect("blockers on every page are read", () =>
+  Effect.gen(function* () {
+    // `gh api --paginate` may print each page as its own array.
+    const t = setup(
+      reply(
+        `[${blockerRow(1, "closed", "rawphp/softfac")}][${blockerRow(2, "open", "rawphp/softfac")}]`,
+      ),
+    );
+    assert.deepStrictEqual(yield* t.ok(t.github.openBlockers(14)), [
+      openBlocker(2, "rawphp/softfac"),
+    ]);
+  }),
+);
+
+it.effect("blockers that cannot be read are an error", () =>
+  Effect.gen(function* () {
+    const spawn = setup(spawnError());
+    assert.strictEqual((yield* spawn.err(spawn.github.openBlockers(14)))._tag, "GitHubSpawnError");
+
+    const failed = setup(fail(1, "Not Found"));
+    assert.strictEqual((yield* failed.err(failed.github.openBlockers(14)))._tag, "GitHubFailed");
+
+    for (const stdout of ["oops", "", '{"message":"x"}']) {
+      const t = setup(reply(stdout));
+      const error = yield* t.err(t.github.openBlockers(14));
+      assert.strictEqual(error._tag, "GitHubParse", stdout);
+    }
+  }),
+);
+
+it.effect("an open blocker whose repo is unknown is an error, not a guess", () =>
+  Effect.gen(function* () {
+    for (const row of [
+      '{"number":3,"state":"open"}',
+      '{"number":3,"state":"open","repository_url":"x"}',
+    ]) {
+      const t = setup(reply(`[${row}]`));
+      const error = yield* t.err(t.github.openBlockers(14));
+      assert.strictEqual(error._tag, "GitHubParse", row);
+    }
+  }),
+);
+
+// ---- text blockers ----
+
+const bodyCall = (issue: string) => ["issue", "view", issue, "--repo", REPO, "--json", "body"];
+const restCall = (repo: string, issue: string) => ["api", `repos/${repo}/issues/${issue}`];
+const bodyReply = (body: string) => JSON.stringify({ body });
+
+it.effect("text blockers of a body without the section read nothing more", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(bodyReply("## Cause\nSee #5\n")));
+    assert.deepStrictEqual(yield* t.ok(t.github.textBlockers(14)), []);
+    assert.deepStrictEqual(t.calls(), [bodyCall("14")]);
+
+    const empty = setup(reply('{"body":null}'));
+    assert.deepStrictEqual(yield* empty.ok(empty.github.textBlockers(14)), []);
+  }),
+);
+
+it.effect("text blockers are the named issues that are not closed", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(bodyReply("## Depends on\n#13, acme/widgets#7 and #5\n\n## Fix\n#99\n")),
+      reply('{"number":13,"state":"open","title":"t"}'),
+      reply('{"number":7,"state":"closed"}'),
+      reply('{"number":5,"state":"open"}'),
+    );
+    assert.deepStrictEqual(yield* t.ok(t.github.textBlockers(14)), [
+      openBlocker(13, REPO),
+      openBlocker(5, REPO),
+    ]);
+    assert.deepStrictEqual(t.calls(), [
+      bodyCall("14"),
+      restCall(REPO, "13"),
+      restCall("acme/widgets", "7"),
+      restCall(REPO, "5"),
+    ]);
+  }),
+);
+
+it.effect("text blockers resolved once every named issue is closed", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(bodyReply("## Depends on\n#13\n")), reply('{"state":"closed"}'));
+    assert.deepStrictEqual(yield* t.ok(t.github.textBlockers(14)), []);
+  }),
+);
+
+it.effect("only the exact REST state `closed` resolves a named issue; any other still blocks", () =>
+  Effect.gen(function* () {
+    // The same rule as the dependency listing: a state in another case is not taken as resolved.
+    const t = setup(
+      reply(bodyReply("## Depends on\n#13, #12, #11\n")),
+      reply('{"state":"CLOSED"}'),
+      reply('{"state":"unknown"}'),
+      reply('{"state":"closed"}'),
+    );
+    assert.deepStrictEqual(yield* t.ok(t.github.textBlockers(14)), [
+      openBlocker(13, REPO),
+      openBlocker(12, REPO),
+    ]);
+  }),
+);
+
+it.effect("a Depends on section naming more than the cap is an error before any is read", () =>
+  Effect.gen(function* () {
+    const refs = (count: number) =>
+      Array.from({ length: count }, (_, at) => `#${at + 1}`).join(" ");
+
+    const over = setup(reply(bodyReply(`## Depends on\n${refs(MAX_DEPENDS_ON + 1)}\n`)));
+    assert.strictEqual((yield* over.err(over.github.textBlockers(14)))._tag, "GitHubParse");
+    assert.deepStrictEqual(over.calls(), [bodyCall("14")]);
+
+    const atCap = setup(
+      reply(bodyReply(`## Depends on\n${refs(MAX_DEPENDS_ON)}\n`)),
+      ...Array.from({ length: MAX_DEPENDS_ON }, () => reply('{"state":"closed"}')),
+    );
+    assert.deepStrictEqual(yield* atCap.ok(atCap.github.textBlockers(14)), []);
+    assert.strictEqual(atCap.calls().length, MAX_DEPENDS_ON + 1);
+  }),
+);
+
+it.effect("a named issue that cannot be read is an error, not a resolved blocker", () =>
+  Effect.gen(function* () {
+    const body = bodyReply("## Depends on\n#13, #5\n");
+    const missing = setup(
+      reply(body),
+      reply('{"state":"closed"}'),
+      fail(1, "gh: Not Found (HTTP 404)"),
+    );
+    assert.strictEqual((yield* missing.err(missing.github.textBlockers(14)))._tag, "GitHubFailed");
+
+    const oops = setup(reply(body), reply("oops"));
+    assert.strictEqual((yield* oops.err(oops.github.textBlockers(14)))._tag, "GitHubParse");
+
+    const empty = setup(reply(body), reply("{}"));
+    assert.strictEqual((yield* empty.err(empty.github.textBlockers(14)))._tag, "GitHubParse");
+  }),
+);
+
+it.effect("a body that cannot be read is an error", () =>
+  Effect.gen(function* () {
+    const failed = setup(fail(1, "boom"));
+    assert.strictEqual((yield* failed.err(failed.github.textBlockers(14)))._tag, "GitHubFailed");
+    const oops = setup(reply("oops"));
+    assert.strictEqual((yield* oops.err(oops.github.textBlockers(14)))._tag, "GitHubParse");
+  }),
+);
+
+// ---- approval: ported from softfac's github.rs ----
+
+/** When the instructor applied `factory:ready` in most of the approval tests. */
+const LABELED = "2026-10-04T10:00:00Z";
+/** After LABELED, and before LATER. */
+const AFTER = "2026-10-04T10:30:00Z";
+const LATER = "2026-10-04T11:00:00Z";
+/** When the issue was written: the oldest entry of the edit history, by its author. */
+const CREATED = "2026-10-04T08:00:00Z";
+
+type Who = string | null;
+type Edit = readonly [at: string, who: Who];
+type TimelineNode = Record<string, unknown>;
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+const approvalCall = () => [
+  "api",
+  "graphql",
+  "-f",
+  `query=${APPROVAL_QUERY}`,
+  "-f",
+  "owner=rawphp",
+  "-f",
+  "name=softfac",
+  "-F",
+  "number=6",
+];
+
+const actorOf = (who: Who) => (who === null ? null : { __typename: "User", login: who });
+
+const labelEvent = (kind: string, at: string, actor: Who, label: string): TimelineNode => ({
+  __typename: kind,
+  createdAt: at,
+  actor: actorOf(actor),
+  label: { name: label },
+});
+/** A RenamedTitleEvent: only who and when are asked for, never the titles. */
+const renameEvent = (at: string, actor: Who): TimelineNode => ({
+  __typename: "RenamedTitleEvent",
+  createdAt: at,
+  actor: actorOf(actor),
+});
+const readyOn = (at: string, actor: Who) => labelEvent("LabeledEvent", at, actor, "factory:ready");
+const readyOff = (at: string, actor: Who) =>
+  labelEvent("UnlabeledEvent", at, actor, "factory:ready");
+
+/** `userContentEdits` as GitHub answers `first: 100`: newest first, with the real total. */
+const editsJson = (newestFirst: ReadonlyArray<Edit>, total: number) => ({
+  totalCount: total,
+  nodes: newestFirst.map(([editedAt, who]) => ({ editedAt, editor: actorOf(who) })),
+});
+
+/** A history written oldest first, as the tests think of it, in GitHub's order. */
+const newestFirst = (oldestFirst: ReadonlyArray<Edit>): Array<Edit> => oldestFirst.toReversed();
+
+/** The approval answer with exactly these history nodes (newest first) and this total. */
+const approvalReplyRaw = (
+  events: ReadonlyArray<TimelineNode>,
+  totalEvents: number,
+  last: Edit | null,
+  editNodes: ReadonlyArray<Edit>,
+  totalEdits: number,
+) =>
+  JSON.stringify({
+    data: {
+      repository: {
+        issue: {
+          timelineItems: { totalCount: totalEvents, nodes: events },
+          lastEditedAt: last === null ? null : last[0],
+          editor: last === null ? null : actorOf(last[1]),
+          userContentEdits: editsJson(editNodes, totalEdits),
+        },
+      },
+    },
+  });
+
+/** `events` are oldest first, as GitHub lists them. `edits` is the history oldest first. */
+const approvalReply = (
+  events: ReadonlyArray<TimelineNode>,
+  totalEvents: number,
+  last: Edit | null,
+  edits: ReadonlyArray<Edit>,
+) => approvalReplyRaw(events, totalEvents, last, newestFirst(edits), edits.length);
+
+/** The events as the tests think of them, with the real total. */
+const eventsReply = (
+  events: ReadonlyArray<TimelineNode>,
+  last: Edit | null,
+  edits: ReadonlyArray<Edit>,
+) => approvalReply(events, events.length, last, edits);
+
+const creationOnly = (author: string): Array<Edit> => [[CREATED, author]];
+
+const approvalOf = (answer: string, who: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const t = setup(reply(answer));
+    const found = yield* t.ok(t.github.approval(6, who));
+    assert.deepStrictEqual(t.calls(), [approvalCall()]);
+    return found;
+  });
+
+const approved = (labeledAt: string, labeledBy: string): Approval => ({
+  kind: "approved",
+  labeledAt,
+  labeledBy,
+});
+const refused = (refusal: Refusal): Approval => ({ kind: "refused", refusal });
+const editedAfter = (labeledAt: string): Refusal => ({ kind: "edited-after-label", labeledAt });
+const historyCut = (labeledAt: string): Refusal => ({
+  kind: "edit-history-incomplete",
+  labeledAt,
+});
+const byNonInstructor = (by: Who, labeledAt: string): Refusal => ({
+  kind: "labeled-by-non-instructor",
+  by,
+  labeledAt,
+});
+const NOT_FOUND: Refusal = { kind: "label-not-found" };
+const LABEL_CUT: Refusal = { kind: "label-history-incomplete" };
+
+it.effect("approval reads the real shapes and sends one call", () =>
+  Effect.gen(function* () {
+    const real =
+      '{"data":{"repository":{"issue":{"timelineItems":{"totalCount":3,"nodes":[{"__typename":"UnlabeledEvent","createdAt":"2026-10-04T11:36:21Z","actor":{"__typename":"User","login":"rawphp"},"label":{"name":"factory:building"}},{"__typename":"LabeledEvent","createdAt":"2026-10-04T11:36:21Z","actor":{"__typename":"User","login":"rawphp"},"label":{"name":"factory:ready"}},{"__typename":"RenamedTitleEvent","createdAt":"2026-10-04T11:48:55Z","actor":{"__typename":"User","login":"rawphp"}}]},"lastEditedAt":null,"editor":null,"userContentEdits":{"totalCount":1,"nodes":[{"editedAt":"2026-10-04T09:50:06Z","editor":{"__typename":"User","login":"outside-user"}}]}}}}}';
+    assert.deepStrictEqual(
+      yield* approvalOf(real, ["rawphp"]),
+      approved("2026-10-04T11:36:21Z", "rawphp"),
+    );
+  }),
+);
+
+it.effect("an outside author's unedited report labelled by an instructor is approved", () =>
+  Effect.gen(function* () {
+    // The creation entry is by the author, before the label, and is ignored.
+    const answer = eventsReply([readyOn(LABELED, "tom")], null, creationOnly("outsider"));
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect("an issue with no history at all is approved when an instructor labelled it", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply([readyOn(LABELED, "tom")], null, []);
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect("the instructor comparison ignores case", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "TomK")],
+      [AFTER, "TOMK"],
+      [
+        [CREATED, "outsider"],
+        [AFTER, "TOMK"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tomk"]), approved(LABELED, "TomK"));
+  }),
+);
+
+it.effect("other labels in the events are ignored", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [
+        labelEvent("LabeledEvent", "2026-10-04T09:00:00Z", "eve", "bug"),
+        readyOn(LABELED, "tom"),
+        labelEvent("UnlabeledEvent", AFTER, "eve", "bug"),
+        labelEvent("LabeledEvent", AFTER, "eve", "factory:readyish"),
+      ],
+      null,
+      creationOnly("eve"),
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect(
+  "a label applied, removed and applied again by an instructor counts the later event",
+  () =>
+    Effect.gen(function* () {
+      // A non-instructor applied it first and an instructor reviewed and re-applied it.
+      const answer = eventsReply(
+        [
+          readyOn("2026-10-04T09:00:00Z", "eve"),
+          readyOff("2026-10-04T09:30:00Z", "tom"),
+          readyOn(LABELED, "tom"),
+        ],
+        null,
+        creationOnly("eve"),
+      );
+      assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+    }),
+);
+
+it.effect("a label applied by an instructor then reapplied by a non-instructor is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [
+        readyOn("2026-10-04T09:00:00Z", "tom"),
+        readyOff("2026-10-04T09:30:00Z", "tom"),
+        readyOn(LABELED, "eve"),
+      ],
+      null,
+      creationOnly("eve"),
+    );
+    assert.deepStrictEqual(
+      yield* approvalOf(answer, ["tom"]),
+      refused(byNonInstructor("eve", LABELED)),
+    );
+  }),
+);
+
+it.effect("a label applied by a non-instructor is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply([readyOn(LABELED, "eve")], null, creationOnly("eve"));
+    assert.deepStrictEqual(
+      yield* approvalOf(answer, ["tom"]),
+      refused(byNonInstructor("eve", LABELED)),
+    );
+  }),
+);
+
+it.effect("a label applied by a deleted account is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply([readyOn(LABELED, null)], null, creationOnly("tom"));
+    assert.deepStrictEqual(
+      yield* approvalOf(answer, ["tom"]),
+      refused(byNonInstructor(null, LABELED)),
+    );
+  }),
+);
+
+it.effect("a label that was removed and not applied again is not found", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn("2026-10-04T09:00:00Z", "tom"), readyOff(LABELED, "tom")],
+      null,
+      creationOnly("tom"),
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(NOT_FOUND));
+  }),
+);
+
+it.effect("no label events at all is not found", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply([], null, creationOnly("tom"));
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(NOT_FOUND));
+  }),
+);
+
+/** `n` events about another label, oldest first. */
+const noise = (n: number): Array<TimelineNode> =>
+  Array.from({ length: n }, (_, i) =>
+    labelEvent(
+      i % 2 === 0 ? "LabeledEvent" : "UnlabeledEvent",
+      "2026-10-04T09:00:00Z",
+      "tom",
+      "bug",
+    ),
+  );
+
+it.effect("a hundred events of a longer history without the label is incomplete", () =>
+  Effect.gen(function* () {
+    const answer = approvalReply(noise(100), 150, null, creationOnly("tom"));
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(LABEL_CUT));
+  }),
+);
+
+it.effect("a label found among the newest hundred is enough whatever the total", () =>
+  Effect.gen(function* () {
+    const events = [...noise(99), readyOn(LABELED, "tom")];
+    const answer = approvalReply(events, 400, null, creationOnly("tom"));
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect("a removal among the newest hundred is not a missing history", () =>
+  Effect.gen(function* () {
+    // The label was taken off in view: the history is not why it is missing.
+    const events = [readyOn("2026-10-04T08:30:00Z", "tom"), ...noise(98), readyOff(LABELED, "tom")];
+    const answer = approvalReply(events, 100, null, creationOnly("tom"));
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(NOT_FOUND));
+  }),
+);
+
+it.effect("a complete hundred or a short page without the label is only not found", () =>
+  Effect.gen(function* () {
+    // Exactly 100 in all: nothing is hidden.
+    const whole = approvalReply(noise(100), 100, null, creationOnly("tom"));
+    assert.deepStrictEqual(yield* approvalOf(whole, ["tom"]), refused(NOT_FOUND));
+    // A page short of 100 is not the cut-off that rule is about.
+    const short = approvalReply(noise(99), 120, null, creationOnly("tom"));
+    assert.deepStrictEqual(yield* approvalOf(short, ["tom"]), refused(NOT_FOUND));
+  }),
+);
+
+it.effect("an instructor edit after the label is approved", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom")],
+      [AFTER, "amy"],
+      [
+        [CREATED, "eve"],
+        [AFTER, "amy"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom", "amy"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect("a non-instructor edit after the label is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom")],
+      [AFTER, "eve"],
+      [
+        [CREATED, "eve"],
+        [AFTER, "eve"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect("a non-instructor edit followed by an instructor edit is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom")],
+      [LATER, "tom"],
+      [
+        [CREATED, "eve"],
+        [AFTER, "eve"],
+        [LATER, "tom"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect("an edit by a deleted account after the label is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom")],
+      [AFTER, null],
+      [
+        [CREATED, "eve"],
+        [AFTER, null],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect("edits before the label are ignored whoever made them", () =>
+  Effect.gen(function* () {
+    // The instructor approved the text as it stood when they applied the label.
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom")],
+      ["2026-10-04T09:30:00Z", "eve"],
+      [
+        [CREATED, "eve"],
+        ["2026-10-04T09:00:00Z", null],
+        ["2026-10-04T09:30:00Z", "eve"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect("an edit in the same second as the label counts as after it", () =>
+  Effect.gen(function* () {
+    const stranger = eventsReply(
+      [readyOn(LABELED, "tom")],
+      [LABELED, "eve"],
+      [
+        [CREATED, "eve"],
+        [LABELED, "eve"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(stranger, ["tom"]), refused(editedAfter(LABELED)));
+    // An instructor's edit in that second is fine, and one second earlier is before it.
+    const instructor = eventsReply(
+      [readyOn(LABELED, "tom")],
+      [LABELED, "tom"],
+      [
+        [CREATED, "eve"],
+        [LABELED, "tom"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(instructor, ["tom"]), approved(LABELED, "tom"));
+    const before = eventsReply(
+      [readyOn(LABELED, "tom")],
+      ["2026-10-04T09:59:59Z", "eve"],
+      [
+        [CREATED, "eve"],
+        ["2026-10-04T09:59:59Z", "eve"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(before, ["tom"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect("only the label that is in force sets the cut off for edits", () =>
+  Effect.gen(function* () {
+    // An edit between an old, removed label and the label now in force is before it.
+    const answer = eventsReply(
+      [
+        readyOn("2026-10-04T09:00:00Z", "tom"),
+        readyOff("2026-10-04T09:10:00Z", "tom"),
+        readyOn(LABELED, "tom"),
+      ],
+      ["2026-10-04T09:30:00Z", "eve"],
+      [
+        [CREATED, "eve"],
+        ["2026-10-04T09:30:00Z", "eve"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+  }),
+);
+
+/** `n` seconds, one apart, from 10:01:00. */
+const secondsAfterLabel = (n: number): Array<string> =>
+  Array.from(
+    { length: n },
+    (_, i) => `2026-10-04T10:${pad(1 + Math.floor(i / 60))}:${pad(i % 60)}Z`,
+  );
+
+it.effect("a full page of edits is an incomplete history", () =>
+  Effect.gen(function* () {
+    const times = secondsAfterLabel(100);
+    const history = (n: number): Array<Edit> => times.slice(0, n).map((t) => [t, "tom"]);
+    const last = (n: number): Edit => [times[n - 1]!, "tom"];
+    const events = () => [readyOn(LABELED, "tom")];
+    assert.deepStrictEqual(
+      yield* approvalOf(eventsReply(events(), last(99), history(99)), ["tom"]),
+      approved(LABELED, "tom"),
+    );
+    assert.deepStrictEqual(
+      yield* approvalOf(eventsReply(events(), last(100), history(100)), ["tom"]),
+      refused(historyCut(LABELED)),
+    );
+  }),
+);
+
+it.effect(
+  "an edit total above the page is an incomplete history when the label may be hidden",
+  () =>
+    Effect.gen(function* () {
+      // Both shown entries are after the label, so older ones could be too.
+      const nodes: Array<Edit> = [
+        [LATER, "tom"],
+        [AFTER, "tom"],
+      ];
+      const last: Edit = [LATER, "tom"];
+      const run = (total: number) =>
+        approvalOf(approvalReplyRaw([readyOn(LABELED, "tom")], 1, last, nodes, total), ["tom"]);
+      assert.deepStrictEqual(yield* run(2), approved(LABELED, "tom"));
+      assert.deepStrictEqual(yield* run(5), refused(historyCut(LABELED)));
+    }),
+);
+
+it.effect("the newest edit entry must be the last edit", () =>
+  Effect.gen(function* () {
+    const create: Edit = [CREATED, "tom"];
+    const last: Edit = [AFTER, "tom"];
+    const run = (nodes: ReadonlyArray<Edit>) =>
+      approvalOf(approvalReplyRaw([readyOn(LABELED, "tom")], 1, last, nodes, nodes.length), [
+        "tom",
+        "amy",
+      ]);
+    assert.deepStrictEqual(yield* run([[AFTER, "tom"], create]), approved(LABELED, "tom"));
+    // Another time, another editor (both instructors), or no entry for it.
+    const wrong: ReadonlyArray<ReadonlyArray<Edit>> = [
+      [["2026-10-04T10:20:00Z", "tom"], create],
+      [[AFTER, "amy"], create],
+      [create],
+      [],
+    ];
+    for (const nodes of wrong) {
+      assert.deepStrictEqual(yield* run(nodes), refused(historyCut(LABELED)));
+    }
+  }),
+);
+
+it.effect("a visible stranger edit is named even when the history is also cut off", () =>
+  Effect.gen(function* () {
+    const nodes: Array<Edit> = [
+      [AFTER, "eve"],
+      [CREATED, "tom"],
+    ];
+    const answer = approvalReplyRaw([readyOn(LABELED, "tom")], 1, [AFTER, "eve"], nodes, 9);
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect("the label is judged before the edits", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "eve")],
+      [AFTER, "eve"],
+      [
+        [CREATED, "eve"],
+        [AFTER, "eve"],
+      ],
+    );
+    assert.deepStrictEqual(
+      yield* approvalOf(answer, ["tom"]),
+      refused(byNonInstructor("eve", LABELED)),
+    );
+  }),
+);
+
+it.effect("approval with no instructors approves nothing", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply([readyOn(LABELED, "tom")], null, creationOnly("tom"));
+    assert.deepStrictEqual(yield* approvalOf(answer, []), refused(byNonInstructor("tom", LABELED)));
+  }),
+);
+
+/** The error `approval` gives for this answer, or null when it reads it. */
+const approvalError = (answer: string) =>
+  Effect.gen(function* () {
+    const t = setup(reply(answer));
+    return yield* t.ok(
+      t.github
+        .approval(6, ["tom"])
+        .pipe(Effect.match({ onFailure: (e) => e, onSuccess: () => null })),
+    );
+  });
+
+/** Whether `answer` is a parse error that names the approval call. */
+const isApprovalParseError = (answer: string) =>
+  approvalError(answer).pipe(
+    Effect.map(
+      (error) =>
+        error !== null &&
+        error._tag === "GitHubParse" &&
+        JSON.stringify(error.args) === JSON.stringify(approvalCall()),
+    ),
+  );
+
+it.effect("approval answers that cannot be read are parse errors", () =>
+  Effect.gen(function* () {
+    const good = (events: unknown, edits: unknown) =>
+      JSON.stringify({
+        data: {
+          repository: {
+            issue: {
+              timelineItems: { totalCount: 1, nodes: events },
+              lastEditedAt: null,
+              editor: null,
+              userContentEdits: edits,
+            },
+          },
+        },
+      });
+    const edits = editsJson([[CREATED, "tom"]], 1);
+    // The control: this one is fine.
+    assert.isFalse(yield* isApprovalParseError(good([readyOn(LABELED, "tom")], edits)));
+
+    for (const bad of [
+      "not json",
+      "",
+      "{}",
+      '{"data":{"repository":null}}',
+      '{"errors":[{"message":"x"}]}',
+      // No label events, no edit history, no total counts.
+      '{"data":{"repository":{"issue":{"lastEditedAt":null,"editor":null,"userContentEdits":{"totalCount":0,"nodes":[]}}}}}',
+      '{"data":{"repository":{"issue":{"timelineItems":{"totalCount":0,"nodes":[]},"lastEditedAt":null,"editor":null}}}}',
+      '{"data":{"repository":{"issue":{"timelineItems":{"nodes":[]},"lastEditedAt":null,"editor":null,"userContentEdits":{"totalCount":0,"nodes":[]}}}}}',
+    ]) {
+      assert.isTrue(yield* isApprovalParseError(bad), bad);
+    }
+    // A node missing its time, its label, or its type, or of a type we did not ask for.
+    for (const broken of [
+      { __typename: "LabeledEvent", actor: { login: "tom" }, label: { name: "factory:ready" } },
+      { __typename: "LabeledEvent", createdAt: LABELED, actor: { login: "tom" } },
+      { createdAt: LABELED, actor: { login: "tom" }, label: { name: "factory:ready" } },
+      { __typename: "ClosedEvent", createdAt: LABELED },
+    ]) {
+      assert.isTrue(yield* isApprovalParseError(good([broken], edits)), JSON.stringify(broken));
+    }
+  }),
+);
+
+it.effect("a malformed timestamp is a parse error", () =>
+  Effect.gen(function* () {
+    for (const at of ["2026-10-04 10:00:00Z", "2026-10-04T10:00:00", "", "yesterday"]) {
+      // In the label event.
+      const inLabel = eventsReply([readyOn(at, "tom")], null, creationOnly("tom"));
+      assert.isTrue(yield* isApprovalParseError(inLabel), `label at ${at}`);
+      // In the edit history.
+      const inEdit = eventsReply(
+        [readyOn(LABELED, "tom")],
+        [AFTER, "tom"],
+        [
+          [CREATED, "tom"],
+          [at, "tom"],
+        ],
+      );
+      assert.isTrue(yield* isApprovalParseError(inEdit), `edit at ${at}`);
+      // In lastEditedAt.
+      const inLast = eventsReply(
+        [readyOn(LABELED, "tom")],
+        [at, "tom"],
+        [
+          [CREATED, "tom"],
+          [at, "tom"],
+        ],
+      );
+      assert.isTrue(yield* isApprovalParseError(inLast), `last edit at ${at}`);
+      // In a rename.
+      const inRename = eventsReply(
+        [readyOn(LABELED, "tom"), renameEvent(at, "tom")],
+        null,
+        creationOnly("tom"),
+      );
+      assert.isTrue(yield* isApprovalParseError(inRename), `rename at ${at}`);
+    }
+  }),
+);
+
+it.effect("approval failures from gh are errors with the call", () =>
+  Effect.gen(function* () {
+    const failed = setup(fail(1, "HTTP 502"));
+    const error = yield* failed.err(failed.github.approval(6, ["tom"]));
+    assert.strictEqual(error._tag, "GitHubFailed");
+    assert.deepStrictEqual(error._tag === "GitHubFailed" && error.args, approvalCall());
+    assert.strictEqual(error._tag === "GitHubFailed" && error.status, 1);
+
+    const spawn = setup(spawnError());
+    assert.strictEqual(
+      (yield* spawn.err(spawn.github.approval(6, ["tom"])))._tag,
+      "GitHubSpawnError",
+    );
+  }),
+);
+
+// ---- approval: titles, same second, long histories, non-human actors ----
+
+/** `n` instructor renames after the label, oldest first, one second apart. */
+const renamesAfterLabel = (n: number): Array<TimelineNode> =>
+  secondsAfterLabel(n).map((at) => renameEvent(at, "tom"));
+
+it.effect("a title renamed by a non-instructor after the label is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom"), renameEvent(AFTER, "eve")],
+      null,
+      creationOnly("eve"),
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect("a title renamed by an instructor after the label is approved", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom"), renameEvent(AFTER, "AMY")],
+      null,
+      creationOnly("eve"),
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom", "amy"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect("a rename by a deleted account after the label is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom"), renameEvent(AFTER, null)],
+      null,
+      creationOnly("eve"),
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect("a stranger rename followed by an instructor rename is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom"), renameEvent(AFTER, "eve"), renameEvent(LATER, "tom")],
+      null,
+      creationOnly("eve"),
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect("a stranger rename is refused even when every body edit is an instructor's", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom"), renameEvent(LATER, "eve")],
+      [AFTER, "tom"],
+      [
+        [CREATED, "eve"],
+        [AFTER, "tom"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect("renames before the label in force are ignored", () =>
+  Effect.gen(function* () {
+    // Before the label, and between a removed label and the one in force.
+    const answer = eventsReply(
+      [
+        renameEvent("2026-10-04T08:30:00Z", "eve"),
+        readyOn("2026-10-04T09:00:00Z", "tom"),
+        readyOff("2026-10-04T09:10:00Z", "tom"),
+        renameEvent("2026-10-04T09:30:00Z", null),
+        readyOn(LABELED, "tom"),
+      ],
+      null,
+      creationOnly("eve"),
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect("a rename in the same second as the label counts as after it", () =>
+  Effect.gen(function* () {
+    const stranger = eventsReply(
+      [readyOn(LABELED, "tom"), renameEvent(LABELED, "eve")],
+      null,
+      creationOnly("eve"),
+    );
+    assert.deepStrictEqual(yield* approvalOf(stranger, ["tom"]), refused(editedAfter(LABELED)));
+    const instructor = eventsReply(
+      [
+        renameEvent("2026-10-04T09:59:59Z", "eve"),
+        readyOn(LABELED, "tom"),
+        renameEvent(LABELED, "tom"),
+      ],
+      null,
+      creationOnly("eve"),
+    );
+    assert.deepStrictEqual(yield* approvalOf(instructor, ["tom"]), approved(LABELED, "tom"));
+  }),
+);
+
+it.effect("labels and renames share the page and the label in force is enough", () =>
+  Effect.gen(function* () {
+    // The label is the oldest event shown, so every later event, the renames included, is on
+    // the page: events come oldest first and the page is the newest 100. Nothing before the
+    // label matters, whatever the total.
+    const events = [readyOn(LABELED, "tom"), ...renamesAfterLabel(99)];
+    const answer = approvalReply(events, 400, null, creationOnly("eve"));
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+
+    // A stranger's rename on that page is seen.
+    const withStranger = [...events];
+    withStranger[50] = renameEvent("2026-10-04T10:20:00Z", "eve");
+    const seen = approvalReply(withStranger, 400, null, creationOnly("eve"));
+    assert.deepStrictEqual(yield* approvalOf(seen, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect(
+  "a page of renames without the label is a missing label history, not a stranger edit",
+  () =>
+    Effect.gen(function* () {
+      // The label is older than all 100 shown events. Nothing shown can be told to be after it.
+      const events = Array.from({ length: 100 }, () => renameEvent(AFTER, "eve"));
+      const answer = approvalReply(events, 150, null, creationOnly("eve"));
+      assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(LABEL_CUT));
+    }),
+);
+
+/** `n` seconds, one apart, from `hour`:00:00. */
+const editTimes = (hour: number, n: number): Array<string> =>
+  Array.from(
+    { length: n },
+    (_, i) => `2026-10-04T${pad(hour)}:${pad(Math.floor(i / 60))}:${pad(i % 60)}Z`,
+  );
+
+it.effect(
+  "a hundred edits with the oldest shown before the label are judged by the visible ones",
+  () =>
+    Effect.gen(function* () {
+      // 99 entries before the label (09:xx) and the newest, an instructor's, after it.
+      const history: Array<Edit> = [
+        ...editTimes(9, 99).map((t): Edit => [t, "tom"]),
+        [AFTER, "tom"],
+      ];
+      const events = () => [readyOn(LABELED, "tom")];
+      const answer = eventsReply(events(), [AFTER, "tom"], history);
+      assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+
+      // The same page with the newest edit by a stranger.
+      const withStranger: Array<Edit> = [...history.slice(0, -1), [AFTER, "eve"]];
+      const refusedAnswer = eventsReply(events(), [AFTER, "eve"], withStranger);
+      assert.deepStrictEqual(
+        yield* approvalOf(refusedAnswer, ["tom"]),
+        refused(editedAfter(LABELED)),
+      );
+    }),
+);
+
+it.effect("a hundred edits all after the label cannot be judged", () =>
+  Effect.gen(function* () {
+    const times = secondsAfterLabel(100);
+    const history = times.map((t): Edit => [t, "tom"]);
+    const answer = eventsReply([readyOn(LABELED, "tom")], [times[99]!, "tom"], history);
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), refused(historyCut(LABELED)));
+  }),
+);
+
+it.effect("a total above the page is judged when the oldest shown entry is before the label", () =>
+  Effect.gen(function* () {
+    const last: Edit = [LATER, "tom"];
+    const run = (nodes: ReadonlyArray<Edit>) =>
+      approvalOf(approvalReplyRaw([readyOn(LABELED, "tom")], 1, last, nodes, 150), ["tom"]);
+    assert.deepStrictEqual(
+      yield* run([
+        [LATER, "tom"],
+        [AFTER, "tom"],
+        ["2026-10-04T09:30:00Z", "tom"],
+      ]),
+      approved(LABELED, "tom"),
+    );
+    // The oldest shown entry must be strictly before the label.
+    assert.deepStrictEqual(
+      yield* run([
+        [LATER, "tom"],
+        [LABELED, "tom"],
+      ]),
+      refused(historyCut(LABELED)),
+    );
+    assert.deepStrictEqual(
+      yield* run([
+        [LATER, "tom"],
+        [AFTER, "tom"],
+      ]),
+      refused(historyCut(LABELED)),
+    );
+  }),
+);
+
+it.effect("a cut page still needs its newest entry to be the last edit", () =>
+  Effect.gen(function* () {
+    const nodes: Array<Edit> = [
+      [LATER, "tom"],
+      ...editTimes(9, 99)
+        .toReversed()
+        .map((t): Edit => [t, "tom"]),
+    ];
+    assert.strictEqual(nodes.length, 100);
+    const run = (last: Edit) =>
+      approvalOf(approvalReplyRaw([readyOn(LABELED, "tom")], 1, last, nodes, 100), ["tom"]);
+    assert.deepStrictEqual(yield* run([LATER, "tom"]), approved(LABELED, "tom"));
+    // GitHub says the last edit was another one.
+    assert.deepStrictEqual(yield* run([AFTER, "tom"]), refused(historyCut(LABELED)));
+    assert.deepStrictEqual(yield* run([LATER, "amy"]), refused(historyCut(LABELED)));
+  }),
+);
+
+it.effect("a label applied by an actor that is not a user is refused whatever its login", () =>
+  Effect.gen(function* () {
+    for (const typename of ["Bot", "Organization", "Mannequin", "EnterpriseUserAccount", ""]) {
+      const event = { ...readyOn(LABELED, "tom"), actor: { __typename: typename, login: "tom" } };
+      const answer = eventsReply([event], null, creationOnly("eve"));
+      assert.deepStrictEqual(
+        yield* approvalOf(answer, ["tom"]),
+        refused(byNonInstructor("tom", LABELED)),
+        typename,
+      );
+    }
+  }),
+);
+
+it.effect("an actor without a typename is not an instructor", () =>
+  Effect.gen(function* () {
+    const event = { ...readyOn(LABELED, "tom"), actor: { login: "tom" } };
+    const answer = eventsReply([event], null, creationOnly("eve"));
+    assert.deepStrictEqual(
+      yield* approvalOf(answer, ["tom"]),
+      refused(byNonInstructor("tom", LABELED)),
+    );
+  }),
+);
+
+/** `answer` with the type of the newest history entry's editor replaced. */
+const withEditorTypename = (answer: string, typename: string): string => {
+  const json = JSON.parse(answer) as {
+    data: {
+      repository: {
+        issue: { userContentEdits: { nodes: Array<{ editor: { __typename: string } }> } };
+      };
+    };
+  };
+  json.data.repository.issue.userContentEdits.nodes[0]!.editor.__typename = typename;
+  return JSON.stringify(json);
+};
+
+it.effect("a body edit or rename by something that is not a user after the label is refused", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply(
+      [readyOn(LABELED, "tom")],
+      [AFTER, "tom"],
+      [
+        [CREATED, "eve"],
+        [AFTER, "tom"],
+      ],
+    );
+    assert.deepStrictEqual(yield* approvalOf(answer, ["tom"]), approved(LABELED, "tom"));
+    for (const typename of ["Bot", "Mannequin", ""]) {
+      assert.deepStrictEqual(
+        yield* approvalOf(withEditorTypename(answer, typename), ["tom"]),
+        refused(editedAfter(LABELED)),
+        `edit by ${typename}`,
+      );
+    }
+
+    const rename = { ...renameEvent(AFTER, "tom"), actor: { __typename: "Bot", login: "tom" } };
+    const renamed = eventsReply([readyOn(LABELED, "tom"), rename], null, creationOnly("eve"));
+    assert.deepStrictEqual(yield* approvalOf(renamed, ["tom"]), refused(editedAfter(LABELED)));
+  }),
+);
+
+it.effect("a creation entry by something that is not a user before the label is ignored", () =>
+  Effect.gen(function* () {
+    const answer = eventsReply([readyOn(LABELED, "tom")], null, creationOnly("dependabot"));
+    assert.deepStrictEqual(
+      yield* approvalOf(withEditorTypename(answer, "Bot"), ["tom"]),
+      approved(LABELED, "tom"),
+    );
+  }),
+);
+
+it.effect("approval for a repo that is not owner/name makes no call", () =>
+  Effect.gen(function* () {
+    const t = setup();
+    const error = yield* t.err(
+      makeGitHub({ repo: "softfac", ghConfigDir: GH_CONFIG_DIR }).approval(6, ["tom"]),
+    );
+    assert.strictEqual(error._tag, "GitHubParse");
+    assert.deepStrictEqual(t.calls(), []);
+  }),
+);
+
+// ---- text check ----
+
+const textCheckOf = (answer: string, since: string, who: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const t = setup(reply(answer));
+    const found: TextCheck = yield* t.ok(t.github.textCheck(6, since, who));
+    assert.deepStrictEqual(t.calls(), [approvalCall()]);
+    return found;
+  });
+
+it.effect("text check tells unchanged from changed from unjudged", () =>
+  Effect.gen(function* () {
+    // Unchanged: instructors only.
+    const instructors = eventsReply(
+      [readyOn(LABELED, "tom"), renameEvent(AFTER, "tom")],
+      [AFTER, "tom"],
+      [
+        [CREATED, "eve"],
+        [AFTER, "tom"],
+      ],
+    );
+    assert.strictEqual(yield* textCheckOf(instructors, LABELED, ["tom"]), "unchanged");
+    // Changed: a stranger's rename, a deleted account's edit.
+    const renamed = eventsReply(
+      [readyOn(LABELED, "tom"), renameEvent(AFTER, "eve")],
+      null,
+      creationOnly("eve"),
+    );
+    assert.strictEqual(yield* textCheckOf(renamed, LABELED, ["tom"]), "changed");
+    const edited = eventsReply(
+      [readyOn(LABELED, "tom")],
+      [AFTER, null],
+      [
+        [CREATED, "eve"],
+        [AFTER, null],
+      ],
+    );
+    assert.strictEqual(yield* textCheckOf(edited, LABELED, ["tom"]), "changed");
+  }),
+);
+
+it.effect("text check says unjudged when the histories cannot be read whole", () =>
+  Effect.gen(function* () {
+    // A full page of body edits after the label, all by instructors, with more behind it.
+    const times = secondsAfterLabel(100);
+    const oldestFirst = times.map((t): Edit => [t, "tom"]);
+    const last: Edit = [times[99]!, "tom"];
+    const full = eventsReply([readyOn(LABELED, "tom")], last, oldestFirst);
+    assert.strictEqual(yield* textCheckOf(full, LABELED, ["tom"]), "unjudged");
+    // A stranger shown on that page is still a change: it wins.
+    const withStranger = [...oldestFirst];
+    withStranger[50] = [times[50]!, "eve"];
+    const stranger = eventsReply([readyOn(LABELED, "tom")], last, withStranger);
+    assert.strictEqual(yield* textCheckOf(stranger, LABELED, ["tom"]), "changed");
+  }),
+);
+
+it.effect("text check ignores who applied labels but not bots", () =>
+  Effect.gen(function* () {
+    // Labels are not text: a stranger's label event is not a change.
+    const labelled = eventsReply(
+      [readyOn(LABELED, "tom"), labelEvent("LabeledEvent", AFTER, "eve", "bug")],
+      null,
+      creationOnly("eve"),
+    );
+    assert.strictEqual(yield* textCheckOf(labelled, LABELED, ["tom"]), "unchanged");
+    // A bot with an instructor's login is not an instructor.
+    const rename = { ...renameEvent(AFTER, "tom"), actor: { __typename: "Bot", login: "tom" } };
+    const bot = eventsReply([readyOn(LABELED, "tom"), rename], null, creationOnly("eve"));
+    assert.strictEqual(yield* textCheckOf(bot, LABELED, ["tom"]), "changed");
+  }),
+);
+
+it.effect("text check cannot judge histories that may hide something", () =>
+  Effect.gen(function* () {
+    // A full page of body edits all at or after the moment.
+    const times = secondsAfterLabel(100);
+    const history = times.map((t): Edit => [t, "tom"]);
+    const edits = eventsReply([readyOn(LABELED, "tom")], [times[99]!, "tom"], history);
+    assert.strictEqual(yield* textCheckOf(edits, LABELED, ["tom"]), "unjudged");
+
+    // A full timeline page whose oldest event is at or after the moment may hide renames.
+    const events = Array.from({ length: 100 }, () => renameEvent(AFTER, "tom"));
+    const full = approvalReply(events, 150, null, creationOnly("eve"));
+    assert.strictEqual(yield* textCheckOf(full, LABELED, ["tom"]), "unjudged");
+    // The same page with its oldest event before the moment shows everything after it.
+    const reaching = [renameEvent("2026-10-04T09:00:00Z", "eve"), ...events.slice(1)];
+    const reachingAnswer = approvalReply(reaching, 150, null, creationOnly("eve"));
+    assert.strictEqual(yield* textCheckOf(reachingAnswer, LABELED, ["tom"]), "unchanged");
+
+    // The newest body entry must be the last edit.
+    const stale = approvalReplyRaw(
+      [readyOn(LABELED, "tom")],
+      1,
+      [AFTER, "tom"],
+      [[CREATED, "eve"]],
+      1,
+    );
+    assert.strictEqual(yield* textCheckOf(stale, LABELED, ["tom"]), "unjudged");
+  }),
+);
+
+it.effect("a cut off timeline page whose oldest event is exactly at since cannot be judged", () =>
+  Effect.gen(function* () {
+    // Events before `since` could still be hidden at the same second, so the page must reach
+    // strictly before it.
+    const page = (oldest: string) =>
+      approvalReply(
+        [
+          renameEvent(oldest, "tom"),
+          ...Array.from({ length: 99 }, () => renameEvent(AFTER, "tom")),
+        ],
+        150,
+        null,
+        creationOnly("eve"),
+      );
+    assert.strictEqual(yield* textCheckOf(page(LABELED), LABELED, ["tom"]), "unjudged");
+    assert.strictEqual(yield* textCheckOf(page(AFTER), LABELED, ["tom"]), "unjudged");
+    assert.strictEqual(
+      yield* textCheckOf(page("2026-10-04T09:59:59Z"), LABELED, ["tom"]),
+      "unchanged",
+    );
+  }),
+);
+
+it.effect("each half of the timeline cut off rule alone stops the judgement", () =>
+  Effect.gen(function* () {
+    const renames = (n: number) => Array.from({ length: n }, () => renameEvent(AFTER, "tom"));
+    // A full page of 100 with nothing more: still a page that may have been cut.
+    const full = approvalReply(renames(100), 100, null, creationOnly("eve"));
+    assert.strictEqual(yield* textCheckOf(full, LABELED, ["tom"]), "unjudged");
+    // Fewer than 100 shown with a larger total: something is hidden.
+    const short = approvalReply(renames(99), 120, null, creationOnly("eve"));
+    assert.strictEqual(yield* textCheckOf(short, LABELED, ["tom"]), "unjudged");
+    // The control: 99 shown of a total of 99 is the whole timeline.
+    const whole = approvalReply(renames(99), 99, null, creationOnly("eve"));
+    assert.strictEqual(yield* textCheckOf(whole, LABELED, ["tom"]), "unchanged");
+  }),
+);
+
+it.effect("text check is changed for a stranger edit or rename at or after the moment", () =>
+  Effect.gen(function* () {
+    const edited = (at: string, who: Who) =>
+      eventsReply(
+        [readyOn(LABELED, "tom")],
+        [at, who],
+        [
+          [CREATED, "eve"],
+          [at, who],
+        ],
+      );
+    const renamed = (at: string, who: Who) =>
+      eventsReply([readyOn(LABELED, "tom"), renameEvent(at, who)], null, creationOnly("eve"));
+    for (const at of [LABELED, AFTER]) {
+      for (const who of ["eve", null]) {
+        assert.strictEqual(yield* textCheckOf(edited(at, who), LABELED, ["tom"]), "changed");
+        assert.strictEqual(yield* textCheckOf(renamed(at, who), LABELED, ["tom"]), "changed");
+      }
+    }
+    // One second before the moment is before it.
+    assert.strictEqual(
+      yield* textCheckOf(edited("2026-10-04T09:59:59Z", "eve"), LABELED, ["tom"]),
+      "unchanged",
+    );
+    assert.strictEqual(
+      yield* textCheckOf(renamed("2026-10-04T09:59:59Z", "eve"), LABELED, ["tom"]),
+      "unchanged",
+    );
+  }),
+);
+
+it.effect("text check with a timestamp that is not GitHub's form makes no call", () =>
+  Effect.gen(function* () {
+    for (const since of ["", "2026-10-04 10:00:00Z", "2026-10-04T10:00:00", "now"]) {
+      const t = setup();
+      const error = yield* t.err(t.github.textCheck(6, since, ["tom"]));
+      assert.strictEqual(error._tag, "GitHubParse", since);
+      assert.deepStrictEqual(error._tag === "GitHubParse" && error.args, ["api", "graphql"]);
+      assert.deepStrictEqual(t.calls(), [], since);
+    }
+  }),
+);
+
+it.effect("text check errors are typed", () =>
+  Effect.gen(function* () {
+    const bad = setup(reply("not json"));
+    const parse = yield* bad.err(bad.github.textCheck(6, LABELED, ["tom"]));
+    assert.strictEqual(parse._tag, "GitHubParse");
+    assert.deepStrictEqual(parse._tag === "GitHubParse" && parse.args, approvalCall());
+
+    const failed = setup(fail(1, "HTTP 502"));
+    const error = yield* failed.err(failed.github.textCheck(6, LABELED, ["tom"]));
+    assert.strictEqual(error._tag, "GitHubFailed");
+    assert.strictEqual(error._tag === "GitHubFailed" && error.status, 1);
+
+    const answer = eventsReply([readyOn(LABELED, "tom")], ["later", "tom"], creationOnly("tom"));
+    const malformed = setup(reply(answer));
+    assert.strictEqual(
+      (yield* malformed.err(malformed.github.textCheck(6, LABELED, ["tom"])))._tag,
+      "GitHubParse",
+    );
+  }),
+);
+
+// ---- text edited since ----
+
+const editedSinceOf = (answer: string, since: string) =>
+  Effect.gen(function* () {
+    const t = setup(reply(answer));
+    const found = yield* t.ok(t.github.textEditedSince(6, since));
+    assert.deepStrictEqual(t.calls(), [approvalCall()]);
+    return found;
+  });
+
+it.effect("text edited since is false when nothing touched the text at or after the moment", () =>
+  Effect.gen(function* () {
+    // An edit and a rename before the moment, by anyone, and a label event after it.
+    const answer = eventsReply(
+      [
+        renameEvent("2026-10-04T09:00:00Z", "eve"),
+        readyOn(LABELED, "tom"),
+        labelEvent("LabeledEvent", AFTER, "eve", "bug"),
+      ],
+      ["2026-10-04T09:59:59Z", "tom"],
+      [
+        [CREATED, "eve"],
+        ["2026-10-04T09:59:59Z", "tom"],
+      ],
+    );
+    assert.isFalse(yield* editedSinceOf(answer, LABELED));
+  }),
+);
+
+it.effect(
+  "text edited since is true for any edit or rename at or after the moment, even an instructor's",
+  () =>
+    Effect.gen(function* () {
+      for (const at of [LABELED, AFTER]) {
+        const edited = eventsReply(
+          [readyOn(LABELED, "tom")],
+          [at, "tom"],
+          [
+            [CREATED, "eve"],
+            [at, "tom"],
+          ],
+        );
+        assert.isTrue(yield* editedSinceOf(edited, LABELED), `edit at ${at}`);
+        const renamed = eventsReply(
+          [readyOn(LABELED, "tom"), renameEvent(at, "tom")],
+          null,
+          creationOnly("eve"),
+        );
+        assert.isTrue(yield* editedSinceOf(renamed, LABELED), `rename at ${at}`);
+      }
+    }),
+);
+
+it.effect("text edited since is true when the timeline may hide a rename", () =>
+  Effect.gen(function* () {
+    // A full page of newer label events with more behind it: a rename at the moment could be
+    // among the hidden ones.
+    const events = Array.from({ length: 100 }, (_, i) =>
+      labelEvent(
+        "LabeledEvent",
+        `2026-10-04T11:${pad(Math.floor(i / 60))}:${pad(i % 60)}Z`,
+        "eve",
+        "bug",
+      ),
+    );
+    const answer = approvalReply(events, 150, null, creationOnly("eve"));
+    assert.isTrue(yield* editedSinceOf(answer, LABELED));
+  }),
+);
+
+it.effect("text edited since refuses a moment that is not a GitHub timestamp", () =>
+  Effect.gen(function* () {
+    const t = setup();
+    const error = yield* t.err(t.github.textEditedSince(6, "yesterday"));
+    assert.strictEqual(error._tag, "GitHubParse");
+    assert.deepStrictEqual(t.calls(), []);
+  }),
+);
+
+// ---- the GitHub tracker delegates (from softfac's runner tests) ----
+
+it.effect(
+  "approval sends one graphql call for the issue and uses the instructors it is given",
+  () =>
+    Effect.gen(function* () {
+      const answer = JSON.stringify({
+        data: {
+          repository: {
+            issue: {
+              timelineItems: {
+                totalCount: 1,
+                nodes: [readyOn("2026-10-04T11:36:21Z", "rawphp")],
+              },
+              lastEditedAt: null,
+              editor: null,
+              userContentEdits: editsJson([["2026-10-04T09:50:06Z", "outsider"]], 1),
+            },
+          },
+        },
+      });
+      const t = setup(reply(answer));
+      const found = yield* t.ok(t.github.approval(10, ["rawphp"]));
+      assert.deepStrictEqual(found, approved("2026-10-04T11:36:21Z", "rawphp"));
+      const calls = t.calls();
+      assert.strictEqual(calls.length, 1);
+      assert.deepStrictEqual(calls[0]!.slice(0, 2), ["api", "graphql"]);
+      assert.include(calls[0]!, "number=10");
+    }),
+);
+
+/** A recorded answer of the approval query: the label at 10:00 and an outsider's rename at 10:30. */
+const RENAMED_BY_OUTSIDER =
+  '{"data":{"repository":{"issue":{"timelineItems":{"totalCount":2,"nodes":[{"__typename":"LabeledEvent","createdAt":"2026-10-04T10:00:00Z","actor":{"__typename":"User","login":"rawphp"},"label":{"name":"factory:ready"}},{"__typename":"RenamedTitleEvent","createdAt":"2026-10-04T10:30:00Z","actor":{"__typename":"User","login":"outsider"}}]},"lastEditedAt":null,"editor":null,"userContentEdits":{"totalCount":1,"nodes":[{"editedAt":"2026-10-04T09:50:06Z","editor":{"__typename":"User","login":"outsider"}}]}}}}}';
+
+it.effect("text check sends one graphql call per check and uses the instructors it is given", () =>
+  Effect.gen(function* () {
+    const t = setup(
+      reply(RENAMED_BY_OUTSIDER),
+      reply(RENAMED_BY_OUTSIDER),
+      reply(RENAMED_BY_OUTSIDER),
+    );
+    // The rename is at or after the first moment and before the second.
+    assert.strictEqual(
+      yield* t.ok(t.github.textCheck(10, "2026-10-04T10:00:00Z", ["rawphp"])),
+      "changed",
+    );
+    assert.strictEqual(
+      yield* t.ok(t.github.textCheck(10, "2026-10-04T10:30:01Z", ["rawphp"])),
+      "unchanged",
+    );
+    // The list passed is the one used: with the outsider as an instructor it is unchanged.
+    assert.strictEqual(
+      yield* t.ok(t.github.textCheck(10, "2026-10-04T10:00:00Z", ["outsider"])),
+      "unchanged",
+    );
+    const calls = t.calls();
+    assert.strictEqual(calls.length, 3);
+    for (const call of calls) {
+      assert.strictEqual(call.length, 10);
+      assert.deepStrictEqual(call.slice(0, 3), ["api", "graphql", "-f"]);
+      assert.isTrue(call[3]!.startsWith("query=query($owner: String!, $name: String!"));
+      assert.include(call[3]!, "RENAMED_TITLE_EVENT");
+      assert.deepStrictEqual(call.slice(4), [
+        "-f",
+        "owner=rawphp",
+        "-f",
+        "name=softfac",
+        "-F",
+        "number=10",
+      ]);
+    }
   }),
 );
