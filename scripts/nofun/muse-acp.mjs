@@ -24,7 +24,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
-import { fileURLToPath } from "node:url";
+import * as NodeURL from "node:url";
 import { sanitizeUsage } from "./muse-msp-run.mjs";
 import {
   buildPromptFile,
@@ -36,6 +36,8 @@ import {
   resolveRequiredReferences,
   splitPrompt,
 } from "./muse-acp.logic.mjs";
+
+const { fileURLToPath } = NodeURL;
 
 // The first model is the default. Ids must match the worker launcher's allowlist
 // (nofun-skills scripts/muse-worker.sh); Wonder runs on the same subscriptions.

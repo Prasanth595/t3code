@@ -5,11 +5,89 @@
  * backend. MSP runs the useful prompt once; usage/read never submits a turn.
  * Install beside muse-acp.mjs. Never invoke this as a quota probe.
  */
-import { spawn } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeReadline from "node:readline";
+import * as NodeURL from "node:url";
+import { museAccountBinding } from "./muse-acp.logic.mjs";
+
+/** Read sanitized useful-work observations without starting a host or model. */
+export function readUsageStatus(accountsPath, now = Date.now()) {
+  const registry = JSON.parse(readFileSync(accountsPath, "utf8"));
+  const expandHome = (p) => (p === "~" || p?.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
+  const directory = join(dirname(accountsPath), "muse-usage-observations");
+  return (registry.accounts ?? []).map((account) => {
+    const result = { accountId: account.id, headroom: "unknown", usage: null };
+    try {
+      const prefix = `${account.id.replace(/[^a-zA-Z0-9_-]/g, "_")}.`;
+      const names = readdirSync(directory)
+        .filter(
+          (name) =>
+            name.startsWith(prefix) && /^\d+\.[a-f0-9-]{36}\.json$/.test(name.slice(prefix.length)),
+        )
+        .sort(
+          (a, b) =>
+            Number(b.slice(prefix.length).split(".")[0]) -
+            Number(a.slice(prefix.length).split(".")[0]),
+        )
+        .slice(0, 8);
+      for (const name of names) {
+        let stored;
+        try {
+          const path = join(directory, name);
+          if (statSync(path).size > 16_384) continue;
+          stored = JSON.parse(readFileSync(path, "utf8"));
+        } catch {
+          continue;
+        }
+        const usage = sanitizeUsage(stored.usage, now);
+        if (
+          !usage ||
+          stored.version !== 1 ||
+          stored.cost !== "passive" ||
+          stored.accountId !== account.id ||
+          stored.sourceId !== `muse:${account.id}` ||
+          stored.accountBinding !== museAccountBinding(account, expandHome) ||
+          !account.expectedEmail?.trim() ||
+          stored.signedInAs?.trim().toLowerCase() !== account.expectedEmail.trim().toLowerCase() ||
+          !Number.isSafeInteger(stored.recordedAtMs) ||
+          stored.recordedAtMs > now ||
+          stored.recordedAtMs < usage.observedAtMs
+        )
+          continue;
+        if (!result.usage || usage.observedAtMs > result.usage.observedAtMs) result.usage = usage;
+      }
+      if (result.usage) {
+        const usage = result.usage;
+        const stale =
+          now - usage.observedAtMs > 30 * 60_000 ||
+          [usage.window, usage.weekly].some(
+            (w) => w.resetsAtMs <= now && usage.observedAtMs <= w.resetsAtMs,
+          );
+        if (!stale)
+          result.headroom = [usage.window, usage.weekly].some((w) => w.usedPercent >= 100)
+            ? "exhausted"
+            : [usage.window, usage.weekly].some((w) => w.usedPercent > 85)
+              ? "low"
+              : "ok";
+      }
+    } catch {
+      /* Missing observations remain unknown, never replenished. */
+    }
+    return result;
+  });
+}
+
+const { spawn } = NodeChildProcess;
+const { randomBytes, randomUUID } = NodeCrypto;
+const { readFileSync, readdirSync, statSync } = NodeFS;
+const { dirname, join } = NodePath;
+const { homedir } = NodeOS;
+const { createInterface } = NodeReadline;
+const { fileURLToPath } = NodeURL;
 
 const models = new Set([
   "muse-spark-1.3-contributor",
@@ -379,14 +457,24 @@ export async function runMsp({ executable, argv, env, expectedLogin, emit }) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const code = await runMsp({
-    executable: process.env.NOFUN_MUSE_NATIVE_CLI,
-    expectedLogin: process.env.NOFUN_MUSE_EXPECTED_LOGIN,
-    argv: process.argv.slice(2),
-    env: process.env,
-    emit: (event) => process.stdout.write(JSON.stringify({ id: randomUUID(), ...event }) + "\n"),
-  });
-  if (code)
-    process.stderr.write("Muse native useful-run failed; no raw protocol details retained.\n");
-  process.exitCode = code;
+  if (process.argv[2] === "--usage-status") {
+    try {
+      const path = process.argv[3] ?? join(homedir(), ".nofun-t3", "muse-accounts.json");
+      process.stdout.write(JSON.stringify(readUsageStatus(path)) + "\n");
+    } catch {
+      process.stderr.write("Muse usage registry unavailable.\n");
+      process.exitCode = 1;
+    }
+  } else {
+    const code = await runMsp({
+      executable: process.env.NOFUN_MUSE_NATIVE_CLI,
+      expectedLogin: process.env.NOFUN_MUSE_EXPECTED_LOGIN,
+      argv: process.argv.slice(2),
+      env: process.env,
+      emit: (event) => process.stdout.write(JSON.stringify({ id: randomUUID(), ...event }) + "\n"),
+    });
+    if (code)
+      process.stderr.write("Muse native useful-run failed; no raw protocol details retained.\n");
+    process.exitCode = code;
+  }
 }

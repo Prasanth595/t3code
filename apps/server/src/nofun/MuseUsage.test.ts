@@ -11,6 +11,7 @@ import { museAccountBinding, MuseAccountsFile, MuseStoredObservation } from "./m
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeStoredJson = Schema.decodeUnknownSync(Schema.fromJsonString(MuseStoredObservation));
+const decodeAccountsJson = Schema.decodeUnknownSync(Schema.fromJsonString(MuseAccountsFile));
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -557,8 +558,7 @@ describe("MuseUsage passive observations", () => {
 });
 
 describe("native useful-work observations", () => {
-  const account = Schema.decodeUnknownSync(Schema.fromJsonString(MuseAccountsFile))(accountsJson)
-    .accounts[0]!;
+  const account = decodeAccountsJson(accountsJson).accounts[0]!;
   const keptPath =
     "/mem/muse-usage-observations/personal.900000.00000000-0000-4000-8000-000000000000.json";
   const kept = (overrides: Record<string, unknown> = {}) =>

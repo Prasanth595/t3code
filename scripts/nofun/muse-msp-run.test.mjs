@@ -1,12 +1,23 @@
-import { test } from "node:test";
-import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
-import { runMsp } from "./muse-msp-run.mjs";
+import * as NodeTest from "node:test";
+import * as NodeAssert from "node:assert/strict";
+const assert = NodeAssert;
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeReadline from "node:readline";
+import * as NodeURL from "node:url";
+import { runMsp, readUsageStatus } from "./muse-msp-run.mjs";
+import { museAccountBinding } from "./muse-acp.logic.mjs";
+
+const { test } = NodeTest;
+const { mkdtempSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } = NodeFS;
+const { tmpdir } = NodeOS;
+const { join } = NodePath;
+const { spawn } = NodeChildProcess;
+const { createInterface } = NodeReadline;
+const { fileURLToPath } = NodeURL;
+const { mkdirSync } = NodeFS;
 
 // Protocol fixture derived from the owner's offline CLI schema export. No
 // inference, account, network, or credentials are used by these subprocesses.
@@ -273,4 +284,51 @@ test("an unknown launcher constraint refuses the run instead of dropping the fla
   const { result, calls } = await fixture({ extraArgs: ["--disable-sandbox"] });
   assert.equal(result, 1);
   assert.deepEqual(calls, []);
+});
+
+test("agent status reads only bound persisted observations and never treats a reset as replenished", () => {
+  const dir = mkdtempSync(join(tmpdir(), "muse-status-"));
+  try {
+    const account = {
+      id: "personal",
+      expectedEmail: "owner@example.test",
+      cliExecutable: "/tools/muse",
+    };
+    const registry = join(dir, "accounts.json");
+    writeFileSync(registry, JSON.stringify({ accounts: [account] }));
+    assert.equal(readUsageStatus(registry, 1000)[0].headroom, "unknown");
+    mkdirSync(join(dir, "muse-usage-observations"));
+    const path = join(
+      dir,
+      "muse-usage-observations",
+      "personal.900.00000000-0000-4000-8000-000000000000.json",
+    );
+    const stored = {
+      version: 1,
+      accountId: "personal",
+      sourceId: "muse:personal",
+      cost: "passive",
+      accountBinding: museAccountBinding(account),
+      signedInAs: account.expectedEmail,
+      recordedAtMs: 950,
+      usage: {
+        observedAtMs: 900,
+        tier: "pro",
+        window: { usedPercent: 0, resetsAtMs: 1100, windowDurationMins: 300 },
+        weekly: { usedPercent: 100, resetsAtMs: 3000 },
+      },
+    };
+    writeFileSync(path, JSON.stringify(stored));
+    assert.equal(readUsageStatus(registry, 1000)[0].headroom, "exhausted");
+    assert.equal(readUsageStatus(registry, 1200)[0].headroom, "unknown");
+    assert.equal(readUsageStatus(registry, 1200)[0].usage.observedAtMs, 900);
+    writeFileSync(path, JSON.stringify({ ...stored, signedInAs: "other@example.test" }));
+    assert.equal(readUsageStatus(registry, 1000)[0].usage, null);
+    writeFileSync(path, JSON.stringify({ ...stored, accountBinding: "wrong-roots" }));
+    assert.equal(readUsageStatus(registry, 1000)[0].usage, null);
+    writeFileSync(path, JSON.stringify({ ...stored, recordedAtMs: 1100 }));
+    assert.equal(readUsageStatus(registry, 1000)[0].usage, null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

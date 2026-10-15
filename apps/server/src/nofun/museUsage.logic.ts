@@ -5,6 +5,7 @@
  * observation here arrived passively (seen during useful work or delivered by
  * a passive reader) and every failure stays sanitized metadata.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous registry binding must match the standalone ACP reader byte for byte.
 import * as NodeCrypto from "node:crypto";
 
 import {
