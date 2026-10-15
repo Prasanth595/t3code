@@ -22,6 +22,8 @@ likely to be accepted. Unsolicited features, opinionated rewrites, and unrelated
 Report bugs in issues. Feature requests and proposals belong in
 [Ideas discussions](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
 Search existing reports, discussions, and documented workflows before starting work.
+With the GitHub CLI, search by words: `gh issue list -R pingdotgg/t3code --state all --search "<words>"`
+matches each word, while `gh search issues "<words>"` matches only the exact phrase.
 
 <a id="prior-approval"></a>
 

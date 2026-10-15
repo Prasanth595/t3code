@@ -95,9 +95,12 @@ comes from this repo's `main` branch.
 ## 6. Check upstream
 
 Search existing issues in pingdotgg/t3code (use `gh`, or the public GitHub search
-API if `gh` is missing or not logged in). Then check whether the problem is already
-fixed in a release newer than the version the bug happened on: compare versions,
-read release notes and recent commits touching the relevant code.
+API if `gh` is missing or not logged in). With `gh`, search by words:
+`gh issue list -R pingdotgg/t3code --state all --search "<words>"` matches each
+word, while `gh search issues "<words>"` matches only the exact phrase. Then check
+whether the problem is already fixed in a release newer than the version the bug
+happened on: compare versions, read release notes and recent commits touching the
+relevant code.
 
 If the user is behind and the fix likely shipped, say so plainly and give them the
 exact update command for how they run the CLI (the context file records how it was
