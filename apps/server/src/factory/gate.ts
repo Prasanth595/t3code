@@ -763,6 +763,29 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
           }
         });
 
+        // The lines go in once the commands have ended in a pass or a fail, never on an error path:
+        // an attempt that errors (a command that cannot start, a ledger failure) used none.
+        const record = <R extends { readonly commands: ReadonlyArray<CommandResult> }>(
+          outcome: R,
+        ) =>
+          Effect.gen(function* () {
+            for (const result of outcome.commands) {
+              yield* append(
+                {
+                  event: "gate_command",
+                  data: {
+                    attempt,
+                    command: result.command,
+                    exit_code: result.exitCode,
+                    duration_ms: result.durationMs,
+                  },
+                },
+                makeCause("gate", "gate-command-ran", { command: result.command, attempt }),
+              );
+            }
+            return outcome;
+          });
+
         const runCommands = Effect.gen(function* () {
           const commands: Array<CommandResult> = [];
           const all = [
@@ -794,24 +817,11 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
             };
             commands.push(result);
             if (!provision) gateCount += 1;
-            // As soon as it finishes, so a server that dies in the next command leaves this one.
-            yield* append(
-              {
-                event: "gate_command",
-                data: {
-                  attempt,
-                  command,
-                  exit_code: result.exitCode,
-                  duration_ms: result.durationMs,
-                },
-              },
-              makeCause("gate", "gate-command-ran", { command, attempt }),
-            );
             if (result.exitCode !== 0 || result.timedOut) {
-              return { _tag: "fail", dir, commands, failure: result, gateCount } as const;
+              return yield* record({ _tag: "fail", dir, commands, failure: result, gateCount });
             }
           }
-          return { _tag: "pass", dir, commands, gateCount } as const;
+          return yield* record({ _tag: "pass", dir, commands, gateCount });
         });
 
         const attemptInDir = Effect.gen(function* () {
