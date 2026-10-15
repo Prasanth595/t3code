@@ -183,7 +183,7 @@ export type ApprovalsApp = ReturnType<typeof decodeApprovalsApp>;
 export const tunnelTarget = (tunnelId: string): string => `${tunnelId}.cfargotunnel.com`;
 
 /** The app policy that holds every machine token. */
-export const MACHINE_POLICY_NAME = "t3 machine map tokens";
+const MACHINE_POLICY_NAME = "t3 machine map tokens";
 /**
  * MM-911: the policy of the machine hostnames app that holds the app tokens of native clients.
  * It is never on the `/connect` app, so a client token cannot connect as a machine. The portal
@@ -209,6 +209,9 @@ const isoFromSeconds = (seconds: number | undefined): string | null =>
   seconds === undefined ? null : new Date(seconds * 1000).toISOString();
 
 /** A refused Cloudflare API call, with its HTTP status. */
+/** An address under the reserved `.invalid` domain: no Access user can have it. */
+const REVOKE_PROBE_EMAIL = "permission-check@t3-machine-map.invalid";
+
 export class CloudflareApiError extends Error {
   override readonly name = "CloudflareApiError";
   readonly status: number;
@@ -396,6 +399,23 @@ export class CloudflareApi {
   /** MM-903: ends every Access session of the owner. */
   async revokeOwner(email: string): Promise<void> {
     await this.#call("POST", "/access/organizations/revoke_user", ignoreResult, { email });
+  }
+
+  /**
+   * MM-1208: whether the token may end Access sessions ("Access: Organizations Revoke"). It ends the
+   * sessions of an address that no one can own (`.invalid`), so it signs out no one. Only a refusal
+   * counts as missing; any other answer counts as allowed.
+   */
+  async canRevokeSessions(): Promise<boolean> {
+    try {
+      await this.revokeOwner(REVOKE_PROBE_EMAIL);
+      return true;
+    } catch (error) {
+      return !(
+        error instanceof CloudflareApiError &&
+        (error.status === 401 || error.status === 403)
+      );
+    }
   }
 
   // ---------------------------------------------------------------- MM-213: machine tunnels

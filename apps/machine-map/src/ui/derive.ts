@@ -27,7 +27,7 @@ import {
   hasJoined,
   settingKeys,
 } from "../rules/map.ts";
-import { lockdownChanges } from "../rules/presets.ts";
+import { pauseChanges } from "../rules/presets.ts";
 import { pendingRevisions } from "../rules/queue.ts";
 import type { Portal } from "./context.ts";
 import type { Route } from "./route.ts";
@@ -247,12 +247,12 @@ export interface PauseReach {
   readonly mapRoles: number;
 }
 
-/** Uses the lockdown rule of the pause on the live map without the draft, like the server. */
+/** Uses the rule of the pause on the live map without the draft, like the server. */
 export function pauseReach(snapshot: PortalSnapshot): PauseReach {
   const joined = snapshot.map.machines.filter((machine) =>
     hasJoined(snapshot.presence[machine.id]),
   );
-  const changes = lockdownChanges(snapshot.map);
+  const changes = pauseChanges(snapshot.map);
   return {
     machines: joined.length,
     offline: joined.filter((machine) => snapshot.presence[machine.id]?.online !== true).length,

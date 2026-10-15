@@ -150,6 +150,8 @@ export interface SignOutEverywhereResponse {
   /** Null when Cloudflare Access sessions ended. Otherwise the reason they did not. */
   readonly accessMessage: string | null;
   readonly revokeCommands: number;
+  /** Push subscriptions that the sign-out deleted. */
+  readonly pushRemoved: number;
 }
 
 /** DELETE /api/machines/:id (MM-208). Without the Cloudflare API token, the token stays in Cloudflare. */
@@ -182,7 +184,7 @@ export interface RotationsEvent {
 
 /**
  * MM-713: the emergency pause as every page shows it. Only the owner pauses, so `by` is always
- * an owner. `revision` is null when the map was already locked down.
+ * an owner. `revision` is null when every arrow, client arrow and map role was `none` already.
  */
 export const PauseState = Schema.Struct({
   pausedAt: Text,
@@ -192,8 +194,8 @@ export const PauseState = Schema.Struct({
 export type PauseState = typeof PauseState.Type;
 
 /** MM-717: an arrow that the pause set to `none`, with its level from before the pause. */
-export const CutArrow = Schema.Struct({ from: MachineId, to: MachineId, level: MachineLevel });
-export type CutArrow = typeof CutArrow.Type;
+const CutArrow = Schema.Struct({ from: MachineId, to: MachineId, level: MachineLevel });
+type CutArrow = typeof CutArrow.Type;
 
 /** MM-717: a client arrow that the pause set to `none`. */
 const CutClientArrow = Schema.Struct({
@@ -305,7 +307,8 @@ export interface InviteResponse {
 
 /** GET /api/clients/approvals (MM-1208): whether approvals work, and why not. */
 export type ApprovalsStatus =
-  | { readonly _tag: "ready" }
+  /** `warning` names a token permission that another owner action needs, for example MM-903. */
+  | { readonly _tag: "ready"; readonly warning: string | null }
   | { readonly _tag: "missing"; readonly reason: string };
 
 /** POST /api/machines/:id/thresholds (MM-1504). Null returns the machine to the defaults. */

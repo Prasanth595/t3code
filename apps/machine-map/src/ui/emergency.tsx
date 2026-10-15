@@ -127,7 +127,7 @@ function pauseEffects(reach: PauseReach | null) {
       tone: "warn",
       text:
         reach && cut.length === 0
-          ? "Nothing. The map is already locked down."
+          ? "Nothing. Every arrow and map role is none already."
           : `To none: ${reach ? cut.join(" and ") : "every arrow and map role"}. Sessions between machines end.`,
     },
     { label: "freeze", tone: "info", text: "Agent tools and any raise of access are refused." },

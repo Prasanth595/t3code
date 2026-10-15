@@ -30,6 +30,7 @@ import {
   sameArrow,
   settingKeys,
   sameClientArrow,
+  sameValue,
 } from "./map.ts";
 
 /** Summaries that the portal writes itself. The history reads them to tell what a revision did. */
@@ -104,7 +105,7 @@ export function applyPresetChanges(map: MachineMapDocument, preset: MapPreset): 
  * MM-710: every machine arrow, every client arrow and every map role becomes `none`. Owner
  * access through Cloudflare Access stays (MM-308).
  */
-export function lockdownChanges(map: MachineMapDocument): Array<MapChange> {
+export function pauseChanges(map: MachineMapDocument): Array<MapChange> {
   const changes = [
     ...arrowChanges(map, defaultArrow),
     ...clientArrowChanges(map, defaultClientArrow),
@@ -116,8 +117,6 @@ export function lockdownChanges(map: MachineMapDocument): Array<MapChange> {
   }
   return changes;
 }
-
-const sameValue = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 /**
  * MM-704: the changes that return `current` to `target`. Machines are not added or removed,

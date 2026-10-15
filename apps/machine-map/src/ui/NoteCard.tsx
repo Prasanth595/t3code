@@ -3,7 +3,7 @@ import type { MapNote, NoteColor } from "@t3tools/contracts/machineMap";
 
 import type { Point } from "./layout.ts";
 
-export const NOTE_COLORS: ReadonlyArray<NoteColor> = ["yellow", "pink", "blue", "green"];
+const NOTE_COLORS: ReadonlyArray<NoteColor> = ["yellow", "pink", "blue", "green"];
 const MAX_TEXT = 500;
 
 /** One of four tilts per note (CSS `tilt-0` to `tilt-3`), the same on every page. */

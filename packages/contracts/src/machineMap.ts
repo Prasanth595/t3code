@@ -351,7 +351,7 @@ export const MachineCommandInput = Schema.Union([
     }),
   }).annotate({
     description:
-      "Install what the desktop update button offers: an app update or a ready live build. Desktop machines only, while the app runs.",
+      "Install an update. A desktop app installs what its update button offers, while the app runs. A server that runs as the T3 Code background service installs the newest fork release (MM-505).",
   }),
   Schema.TaggedStruct("stopAllAgents", {}).annotate({
     description: "Interrupt every running agent turn on the machine.",

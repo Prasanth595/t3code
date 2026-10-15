@@ -20,7 +20,7 @@ export interface Point {
 }
 
 /** The space between two cards. */
-export const GAP = 14;
+const GAP = 14;
 /** Rounds of pushing. A few machines settle in fewer; more rounds only cost time. */
 const ROUNDS = 60;
 
@@ -245,7 +245,7 @@ export interface MapViewport {
 }
 
 /** MM-1116: the zoom limits. */
-export const MIN_ZOOM = 0.25;
+const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 2;
 export const clampZoom = (k: number) => clamp(k, MIN_ZOOM, MAX_ZOOM);
 

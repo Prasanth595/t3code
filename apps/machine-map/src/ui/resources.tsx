@@ -51,7 +51,7 @@ const RANGE_START: Record<ResourceRange, string> = {
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const machinePath = (id: string) => `/api/machines/${encodeURIComponent(id)}`;
 
-export const activeAlerts = (
+const activeAlerts = (
   alerts: ReadonlyArray<HealthAlert>,
   machineId: string,
 ): ReadonlyArray<HealthAlert> =>

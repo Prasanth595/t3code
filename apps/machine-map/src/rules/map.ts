@@ -3,6 +3,7 @@
  * one machine (MM-603, MM-1202), and which machines a revision touches (MM-602).
  * The Durable Object and the page share this module.
  */
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import {
   isMachineLocalSetting,
   type ArrowRecord,
@@ -305,6 +306,13 @@ function putMachine(map: MachineMapDocument, machine: MachineRecord): Step {
   );
   if (clash) throw new MapRuleError(`${clash.name} already uses this machine token.`);
   const previous = findMachine(map, machine.id);
+  // MM-206: a new name must be free. An old duplicate stays, so a move of it still works.
+  if (previous?.name !== machine.name) {
+    const named = map.machines.find(
+      (other) => other.id !== machine.id && other.name.toLowerCase() === machine.name.toLowerCase(),
+    );
+    if (named) throw new MapRuleError(`A machine named ${named.name} is already on the map.`);
+  }
   const machines = previous
     ? map.machines.map((m) => (m.id === machine.id ? machine : m))
     : [...map.machines, machine];
@@ -428,7 +436,7 @@ function putClient(map: MachineMapDocument, client: ClientRecord): Step {
   if (clash) throw new MapRuleError(`${clash.name} already holds this browser key.`);
   const previous = findClient(map, client.id);
   // MM-907, MM-909: keys of an existing client change only with addClientKey and removeClientKey.
-  if (previous && !sameJson(previous.keys, client.keys))
+  if (previous && !sameValue(previous.keys, client.keys))
     throw new MapRuleError(`The keys of ${previous.name} change only by approval or removal.`);
   const clients = previous
     ? map.clients.map((c) => (c.id === client.id ? client : c))
@@ -534,7 +542,7 @@ export function checkEditableChanges(
         throw new MapRuleError(`The email of ${previous.name} comes from its approval.`);
       }
       // MM-911: only the portal sets the token, because the token lives in Cloudflare too.
-      if (!sameJson(next.serviceToken, previous.serviceToken)) {
+      if (!sameValue(next.serviceToken, previous.serviceToken)) {
         throw new MapRuleError(`The app token of ${previous.name} comes from its invite.`);
       }
     }
@@ -600,7 +608,12 @@ export const undoChanges = (
     inverse.filter((c) => c._tag !== "setClientArrow" || findClient(map, c.arrow.client)),
   );
 
-const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+/**
+ * Equal values, whatever the order of object keys. A setting that a machine reports with its keys
+ * in another order is the same value, not an override.
+ */
+export const sameValue = (a: unknown, b: unknown): boolean =>
+  stableStringify(a) === stableStringify(b);
 
 type RevisionChanges = {
   readonly changes: ReadonlyArray<MapChange>;
@@ -659,7 +672,7 @@ export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineI
         if (
           !previous ||
           previous.name !== change.client.name ||
-          !sameJson(previous.serviceToken, change.client.serviceToken)
+          !sameValue(previous.serviceToken, change.client.serviceToken)
         )
           return "all";
         break;

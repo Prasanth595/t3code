@@ -292,7 +292,7 @@ export function actorLabel(actor: MapActor, map: MachineMapDocument): string {
 }
 
 /** The machines that an entry names. A shared setting names none. */
-export function entryMachines(entry: HistoryEntry): ReadonlySet<string> {
+function entryMachines(entry: HistoryEntry): ReadonlySet<string> {
   if (entry._tag === "alert") return new Set([entry.alert.machineId]);
   if (entry._tag === "command") {
     const { input, machineId } = entry.command;

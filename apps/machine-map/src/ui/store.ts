@@ -45,7 +45,7 @@ export type PageEvent =
   | PendingClientsEvent
   | ClientInvitesEvent;
 
-export const EMPTY_HEALTH: ResourcesOverview = { latest: {}, alerts: [], thresholds: {} };
+const EMPTY_HEALTH: ResourcesOverview = { latest: {}, alerts: [], thresholds: {} };
 
 export const INITIAL_STATE: PortalState = {
   snapshot: null,

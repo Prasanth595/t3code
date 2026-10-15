@@ -179,7 +179,7 @@ export function raisesAnyAccess(
 }
 
 /** MM-802. Commands are not map changes, so a proposal cannot hold them: they need `edit`. */
-export const requiredRole = (tool: MapToolName): "read" | "propose" | "edit" => {
+const requiredRole = (tool: MapToolName): "read" | "propose" | "edit" => {
   switch (tool) {
     case "machines_read":
     case "machines_resources":

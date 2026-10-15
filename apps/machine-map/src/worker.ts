@@ -149,8 +149,6 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
   if (crossOrigin(request, url)) return fail(403, "Wrong origin.");
 
   switch (route) {
-    case "GET /snapshot":
-      return toResponse(await stub.snapshot(owner));
     case "POST /changes": {
       const body = await readBody(request, ChangesRequest);
       return body instanceof Response ? body : toResponse(await stub.changes(owner, body));

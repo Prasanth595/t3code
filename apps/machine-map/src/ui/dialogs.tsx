@@ -706,6 +706,7 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
           <p className="small muted">
             The app gets its own token. Remove the client to end the token at once.
           </p>
+          {status?._tag === "ready" && status.warning && <p className="hint">{status.warning}</p>}
           {status?._tag === "missing" && (
             <div className="row callout">
               <div className="v">{status.reason}</div>

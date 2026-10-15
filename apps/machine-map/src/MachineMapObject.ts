@@ -12,6 +12,7 @@ import {
   type ClientEnrollResponse,
   type ClientMachine,
   MACHINE_MAP_PROTOCOL,
+  clientSessionSubject,
   machineSessionSubject,
   MachineCommand,
   MachineId,
@@ -89,6 +90,7 @@ import {
   approvalsAppProblem,
   CLIENT_POLICY_NAME,
   CloudflareApi,
+  CloudflareApiError,
   goneIsDone,
   tunnelTarget,
   type ApprovalsApp,
@@ -137,7 +139,7 @@ import {
   applyPresetChanges,
   cutArrows,
   cutClientArrows,
-  lockdownChanges,
+  pauseChanges,
   PAUSE_SUMMARY,
   PausedAccess,
   pausedAccess,
@@ -392,7 +394,7 @@ export class MachineMapObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS proposals (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS presence (machine_id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS reported_settings (machine_id TEXT PRIMARY KEY, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS join_codes (code_hash TEXT PRIMARY KEY, machine_id TEXT NOT NULL, sealed_secret TEXT NOT NULL, expires_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS join_codes (code_hash TEXT PRIMARY KEY, machine_id TEXT NOT NULL, sealed_secret TEXT NOT NULL, expires_at TEXT NOT NULL, sealed_tunnel TEXT);
       CREATE TABLE IF NOT EXISTS rotations (machine_id TEXT PRIMARY KEY, token_client_id TEXT NOT NULL, sealed_secret TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS machine_tokens (machine_id TEXT PRIMARY KEY, token_id TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS enroll_attempts (ip TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
@@ -403,11 +405,6 @@ export class MachineMapObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS pending_clients (thumbprint TEXT PRIMARY KEY, described_as TEXT NOT NULL, email TEXT, seen_on TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, state TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, sign_in_id TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
-    // MM-213: the sealed tunnel grant of a join code. Null for a code without a tunnel.
-    const joinColumns = this.#sql<{ name: string }>("PRAGMA table_info(join_codes)");
-    if (!joinColumns.some((column) => column.name === "sealed_tunnel")) {
-      this.ctx.storage.sql.exec("ALTER TABLE join_codes ADD COLUMN sealed_tunnel TEXT");
-    }
     this.ctx.storage.sql.exec(HEALTH_TABLES);
     this.#dropManageSetting();
   }
@@ -1726,6 +1723,7 @@ export class MachineMapObject extends DurableObject<Env> {
         new Date(Date.parse(r.last_seen) + PENDING_KEEP_MS).toISOString(),
       ),
       ...this.#commandsWithStatus("queued").map((command) => command.expiresAt),
+      ...this.#commandsWithStatus("delivered").map((command) => command.expiresAt),
       ...this.#proposals().map((proposal) => proposal.expiresAt),
       ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM join_codes").map(
         (r) => r.expires_at,
@@ -1817,6 +1815,17 @@ export class MachineMapObject extends DurableObject<Env> {
         error: "Expired before the machine could take it.",
       });
     }
+    // MM-605: a machine that took a command and never reported, for example because it restarted
+    // or lost its connection, leaves it delivered. It expires at the same time.
+    for (const command of this.#commandsWithStatus("delivered")) {
+      if (!isDue(command.expiresAt, now)) continue;
+      this.#saveCommand({
+        ...command,
+        status: "expired",
+        updatedAt: new Date(now).toISOString(),
+        error: "The machine took it but reported no result before it expired.",
+      });
+    }
     const expiredProposals = this.#proposals().filter((p) => isDue(p.expiresAt, now));
     for (const proposal of expiredProposals)
       this.#sql("DELETE FROM proposals WHERE id = ?", proposal.id);
@@ -1856,6 +1865,14 @@ export class MachineMapObject extends DurableObject<Env> {
       if (error instanceof PortalError)
         return { ok: false, status: error.status, error: error.message };
       if (error instanceof MapRuleError) return { ok: false, status: 409, error: error.message };
+      // A refusal of Cloudflare keeps its status, so the page shows why. A Cloudflare outage is
+      // a bad gateway of the portal.
+      if (error instanceof CloudflareApiError)
+        return {
+          ok: false,
+          status: error.status >= 400 && error.status < 500 ? error.status : 502,
+          error: error.message,
+        };
       throw error;
     }
   }
@@ -1879,10 +1896,6 @@ export class MachineMapObject extends DurableObject<Env> {
       at,
       at,
     );
-  }
-
-  snapshot(owner: OwnerContext) {
-    return this.#run(owner, () => this.#snapshot());
   }
 
   /** POST /api/changes: owner changes apply at once (MM-701). */
@@ -2204,7 +2217,7 @@ export class MachineMapObject extends DurableObject<Env> {
   }
 
   /**
-   * MM-708 to MM-710: lock down every arrow and map role, remember them, and stop every agent.
+   * MM-708 to MM-710: set every arrow and map role to `none`, remember them, and stop every agent.
    * Owner access through Cloudflare Access stays (MM-308).
    */
   pause(owner: OwnerContext) {
@@ -2212,7 +2225,7 @@ export class MachineMapObject extends DurableObject<Env> {
       if (this.#pause) throw new PortalError(409, "Everything is already paused.");
       const actor = ownerActor(owner);
       const before = pausedAccess(this.#map);
-      const changes = lockdownChanges(this.#map);
+      const changes = pauseChanges(this.#map);
       const revision =
         changes.length > 0 ? this.#commit(actor, PAUSE_SUMMARY, changes, "pause").revision : null;
       const record: PauseRecord = { state: { pausedAt: nowIso(), by: actor, revision }, before };
@@ -2358,24 +2371,35 @@ export class MachineMapObject extends DurableObject<Env> {
     });
   }
 
-  /** MM-903: ends owner Access sessions and revokes owner T3 sessions on every machine. */
+  /**
+   * MM-903: ends owner Access sessions and revokes owner T3 sessions on every machine. The machine
+   * part runs also when Cloudflare refuses, and the answer says what Cloudflare did.
+   */
   signOutEverywhere(owner: OwnerContext) {
     return this.#run(owner, async (): Promise<SignOutEverywhereResponse> => {
       const api = this.#cloudflare();
       let accessMessage: string | null =
         "Cloudflare Access sessions need the CF_API_TOKEN secret. End them in the Zero Trust dashboard.";
       if (api) {
-        await api.revokeOwner(owner.email);
-        accessMessage = null;
+        try {
+          await api.revokeOwner(owner.email);
+          accessMessage = null;
+        } catch (error) {
+          accessMessage = `Cloudflare did not end the Access sessions: ${errorMessage(error)} The CF_API_TOKEN needs "Access: Organizations Revoke" (MM-1205).`;
+        }
       }
       let revokeCommands = 0;
-      // Sessions of machines through their arrows are not owner sessions (MM-1305).
-      const machineSubjects = new Set(this.#map.machines.map((m) => machineSessionSubject(m.id)));
+      // Sessions of machines through their arrows are not owner sessions (MM-1305). Sessions of
+      // approved clients stay too: the owner ends each client in the Clients view (MM-903).
+      const keptSubjects = new Set([
+        ...this.#map.machines.map((m) => machineSessionSubject(m.id)),
+        ...this.#map.clients.map((c) => clientSessionSubject(c.id)),
+      ]);
       for (const machine of this.#map.machines) {
         const status = this.#presence(machine.id).status;
         if (!supportsCommand(status, "revokeClient")) continue;
         for (const client of status?.clients ?? []) {
-          if (machineSubjects.has(client.subject)) continue;
+          if (keptSubjects.has(client.subject)) continue;
           this.#createCommand(
             ownerActor(owner),
             machine.id,
@@ -2387,7 +2411,9 @@ export class MachineMapObject extends DurableObject<Env> {
         }
       }
       this.#sql("DELETE FROM sign_ins");
-      return { accessMessage, revokeCommands };
+      // A signed-out device gets no more alerts. Each device turns notifications on again.
+      const pushRemoved = this.#sql("DELETE FROM push_subscriptions RETURNING endpoint").length;
+      return { accessMessage, revokeCommands, pushRemoved };
     });
   }
 
@@ -2395,8 +2421,26 @@ export class MachineMapObject extends DurableObject<Env> {
   approvalsStatus(owner: OwnerContext, host: string) {
     return this.#run(owner, async (): Promise<ApprovalsStatus> => {
       const problem = await this.#approvalsProblem(host);
-      return problem === null ? { _tag: "ready" } : { _tag: "missing", reason: problem };
+      return problem === null ? this.#approvalsReady() : { _tag: "missing", reason: problem };
     });
+  }
+
+  /** The time of the last check of the revoke permission, and its warning. */
+  #revokeCheck: { readonly atMs: number; readonly warning: string | null } | null = null;
+
+  /**
+   * MM-1208: approvals work. It also names a missing "Access: Organizations Revoke", which "Sign
+   * out everywhere" needs (MM-903). The check runs at most once an hour.
+   */
+  async #approvalsReady(): Promise<ApprovalsStatus> {
+    const api = this.#cloudflare();
+    if (api && (this.#revokeCheck === null || Date.now() - this.#revokeCheck.atMs > HOUR_MS)) {
+      const warning = (await api.canRevokeSessions())
+        ? null
+        : 'The CF_API_TOKEN cannot end Access sessions, so "Sign out everywhere" signs out only T3 sessions. Add "Access: Organizations Revoke" to the token (MM-1205).';
+      this.#revokeCheck = { atMs: Date.now(), warning };
+    }
+    return { _tag: "ready", warning: this.#revokeCheck?.warning ?? null };
   }
 
   /** MM-1208: creates the approvals app, or makes it again when it drifted. */
@@ -2415,7 +2459,7 @@ export class MachineMapObject extends DurableObject<Env> {
         await api.ensureClientTokensApp(host),
       );
       const problem = await this.#approvalsProblem(host);
-      return problem === null ? { _tag: "ready" } : { _tag: "missing", reason: problem };
+      return problem === null ? this.#approvalsReady() : { _tag: "missing", reason: problem };
     });
   }
 
