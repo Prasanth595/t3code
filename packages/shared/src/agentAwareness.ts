@@ -28,6 +28,7 @@ export interface AgentAwarenessState {
   readonly modelTitle: string;
   readonly updatedAt: string;
   readonly deepLink: string;
+  readonly visited?: true;
 }
 
 function buildAgentAwarenessDeepLink(input: {
@@ -44,6 +45,8 @@ export interface ProjectThreadAwarenessV2Input {
     OrchestrationV2ThreadShell,
     | "activityRunStatus"
     | "id"
+    | "lastVisitedAt"
+    | "latestRunCompletedAt"
     | "lineage"
     | "modelSelection"
     | "pendingBackgroundTasks"
@@ -81,7 +84,23 @@ export function projectThreadAwarenessV2(
     modelTitle: thread.modelSelection.model,
     updatedAt: DateTime.formatIso(thread.updatedAt),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
+    ...(isTerminalCompletionVisited(phase, thread) ? { visited: true as const } : {}),
   };
+}
+
+// Same rule as the clients' unseen-completion check. Running states never carry
+// the flag, so watermark updates while a turn streams cannot change the state.
+function isTerminalCompletionVisited(
+  phase: AgentAwarenessPhase,
+  thread: ProjectThreadAwarenessV2Input["thread"],
+): boolean {
+  return (
+    (phase === "completed" || phase === "failed") &&
+    thread.lastVisitedAt != null &&
+    thread.latestRunCompletedAt != null &&
+    DateTime.toEpochMillis(thread.lastVisitedAt) >=
+      DateTime.toEpochMillis(thread.latestRunCompletedAt)
+  );
 }
 
 function resolveThreadAwarenessPhaseV2(

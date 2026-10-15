@@ -130,6 +130,11 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  /**
+   * Present (true) only on a terminal state whose completion a client has
+   * already seen. The relay dismisses that thread's delivered alerts.
+   */
+  visited: Schema.optional(Schema.Literal(true)),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 

@@ -28,6 +28,8 @@ describe("projectThreadAwarenessV2", () => {
         | "pendingBackgroundTasks"
         | "pendingRuntimeRequest"
         | "lineage"
+        | "lastVisitedAt"
+        | "latestRunCompletedAt"
       >
     > = {},
   ) => ({
@@ -136,5 +138,36 @@ describe("projectThreadAwarenessV2", () => {
         }),
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
+
+  it("marks a terminal state visited once its completion has been seen", () => {
+    const completedAt = DateTime.makeUnsafe("2026-05-22T11:59:00.000Z");
+    const awareness = (overrides: Parameters<typeof v2Thread>[0]) =>
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread(overrides),
+      });
+    expect(
+      awareness({ status: "completed", latestRunCompletedAt: completedAt, lastVisitedAt: null }),
+    ).not.toHaveProperty("visited");
+    expect(
+      awareness({
+        status: "completed",
+        latestRunCompletedAt: completedAt,
+        lastVisitedAt: DateTime.makeUnsafe("2026-05-22T11:58:00.000Z"),
+      }),
+    ).not.toHaveProperty("visited");
+    expect(
+      awareness({
+        status: "failed",
+        latestRunCompletedAt: completedAt,
+        lastVisitedAt: completedAt,
+      }),
+    ).toMatchObject({ phase: "failed", visited: true });
+    // Running states never carry the flag, so streaming watermarks cannot churn publishes.
+    expect(
+      awareness({ status: "running", latestRunCompletedAt: completedAt, lastVisitedAt: updatedAt }),
+    ).not.toHaveProperty("visited");
   });
 });

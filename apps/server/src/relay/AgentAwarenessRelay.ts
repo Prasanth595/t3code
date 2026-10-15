@@ -89,8 +89,9 @@ export function shouldPublishAgentAwarenessEvent(
   }
   // projectThreadAwarenessV2 reads thread metadata, run status, pending requests,
   // and pending background work (a finished subagent, a cleared roster, or an
-  // ended background item can release a held completion). Message bodies and
-  // tool progress cannot change the published activity.
+  // ended background item can release a held completion), and read state
+  // (a seen completion dismisses its alerts). Message bodies and tool progress
+  // cannot change the published activity.
   switch (event.type) {
     case "thread.created":
     case "thread.archived":
@@ -106,6 +107,8 @@ export function shouldPublishAgentAwarenessEvent(
     case "runtime-request.updated":
     case "subagent.updated":
     case "provider-thread.updated":
+    case "thread.visited":
+    case "thread.marked-unread":
       return true;
     case "thread.settled":
     case "thread.unsettled":
@@ -116,8 +119,6 @@ export function shouldPublishAgentAwarenessEvent(
     case "thread.unpinned":
     case "thread.pin-reordered":
     case "thread.active-reordered":
-    case "thread.visited":
-    case "thread.marked-unread":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
     case "run.background-work-cancelled":

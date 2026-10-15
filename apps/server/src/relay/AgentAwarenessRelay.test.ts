@@ -295,7 +295,6 @@ describe("AgentAwarenessRelay", () => {
       "message.updated",
       "turn-item.updated",
       "provider-turn.updated",
-      "thread.visited",
       "thread.pinned",
     ] as const) {
       assert.isFalse(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type }));
@@ -313,6 +312,9 @@ describe("AgentAwarenessRelay", () => {
       "thread.archived",
       "thread.unarchived",
       "thread.deleted",
+      // A seen completion publishes `visited`, which dismisses its alerts.
+      "thread.visited",
+      "thread.marked-unread",
     ] as const) {
       assert.isTrue(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type }));
     }
@@ -775,6 +777,48 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 1);
     }),
   );
+  it.effect("republishes a completion once it is visited and again when marked unread", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      const completedAt = DateTime.add(yield* DateTime.now, { seconds: 1 });
+      const completed = shell({ status: "completed", latestRunCompletedAt: completedAt });
+      yield* Ref.set(currentShell, completed);
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 1);
+      assert.isUndefined(publications[0]?.state?.visited);
+
+      // A watermark before the completion is not a read of it.
+      yield* Ref.set(
+        currentShell,
+        shell({ ...completed, lastVisitedAt: DateTime.add(completedAt, { seconds: -1 }) }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+
+      yield* Ref.set(currentShell, shell({ ...completed, lastVisitedAt: completedAt }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.isTrue(publications[1]?.state?.visited);
+
+      yield* Ref.set(currentShell, completed);
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 3);
+      assert.isUndefined(publications[2]?.state?.visited);
+    }),
+  );
+
+  it.effect("does not republish a running thread for visit watermarks", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, shell({ lastVisitedAt: DateTime.makeUnsafe(NOW) }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+    }),
+  );
+
   it.effect("publishes a held completion when its background item ends, not on tool output", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
