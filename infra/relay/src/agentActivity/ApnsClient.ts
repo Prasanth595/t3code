@@ -42,7 +42,8 @@ interface ApnsLiveActivityRequest {
 
 interface ApnsPushNotificationRequest {
   readonly token: string;
-  readonly priority: "10";
+  readonly pushType: "alert" | "background";
+  readonly priority: "5" | "10";
   readonly payload: unknown;
 }
 
@@ -178,8 +179,23 @@ function makePushNotificationRequest(input: {
   readonly token: string;
   readonly notification: ApnsNotificationPayload;
 }): ApnsPushNotificationRequest {
+  if (input.notification.dismiss) {
+    // APNs requires priority 5 for background pushes and may throttle or
+    // coalesce them; a force-quit app does not receive them at all.
+    return {
+      token: input.token,
+      pushType: "background",
+      priority: "5",
+      payload: {
+        aps: { "content-available": 1 },
+        // Matches the thread-id its alerts were delivered with.
+        dismissThreadId: notificationThreadId(input.notification),
+      },
+    };
+  }
   return {
     token: input.token,
+    pushType: "alert",
     priority: "10",
     payload: {
       aps: {
@@ -309,7 +325,7 @@ export const make = Effect.gen(function* () {
         HttpClientRequest.setHeaders({
           authorization: `bearer ${jwt}`,
           "apns-priority": input.request.priority,
-          "apns-push-type": "alert",
+          "apns-push-type": input.request.pushType,
           "apns-topic": input.credentials.bundleId,
         }),
         HttpClientRequest.bodyJson(input.request.payload),

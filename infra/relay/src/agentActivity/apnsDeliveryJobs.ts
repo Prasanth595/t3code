@@ -48,6 +48,9 @@ export const ApnsNotificationPayload = Schema.Struct({
   // notification after the thread has moved to another phase.
   phase: Schema.optional(RelayAgentAwarenessPhase),
   updatedAt: Schema.optional(Schema.String),
+  // A silent background push that removes the thread's delivered alerts
+  // after it was read on another client. Title and body are unused.
+  dismiss: Schema.optional(Schema.Literal(true)),
 });
 export type ApnsNotificationPayload = typeof ApnsNotificationPayload.Type;
 

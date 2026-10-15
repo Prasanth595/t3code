@@ -1,5 +1,6 @@
 import type {
   RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
   RelayDeliveryKind,
   RelayDeliveryResult,
@@ -529,6 +530,11 @@ export class ApnsDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
+    /** Removes a read thread's delivered alerts from the device. */
+    readonly sendDismissForTarget: (input: {
+      readonly target: LiveActivities.TargetRow;
+      readonly state: RelayAgentActivityState;
+    }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendLiveActivity: (
       input: SendLiveActivityDeliveryInput,
     ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
@@ -949,7 +955,7 @@ export const make = Effect.gen(function* () {
               nowMs: now.epochMilliseconds,
             })
           : preferences?.notificationsEnabled === true;
-      if (!alertAllowed) {
+      if (!notification.dismiss && !alertAllowed) {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
           apnsReason: "Notification is disabled or no longer fresh.",
@@ -1119,6 +1125,28 @@ export const make = Effect.gen(function* () {
             notification,
           })
         : Effect.succeed(null);
+    }),
+    sendDismissForTarget: Effect.fnUntraced(function* (input) {
+      const token = input.target.push_token;
+      if (!config.apns || !token) return null;
+      return yield* deliveryQueue.enqueuePushNotification({
+        userId: input.target.user_id,
+        deviceId: input.target.device_id,
+        token,
+        bundleId: input.target.bundle_id,
+        apsEnvironment: input.target.aps_environment,
+        // The state identity skips a dismiss queued before the thread ran again.
+        notification: {
+          title: "",
+          body: "",
+          environmentId: input.state.environmentId,
+          threadId: input.state.threadId,
+          deepLink: input.state.deepLink,
+          phase: input.state.phase,
+          updatedAt: input.state.updatedAt,
+          dismiss: true,
+        },
+      });
     }),
     sendForTarget: Effect.fnUntraced(function* (input) {
       if (!config.apns) return null;

@@ -79,6 +79,9 @@ export const make = Effect.gen(function* () {
             nowMs: input.nowMs,
           })
         : null;
+    // A thread read on another client updates the card silently and dismisses
+    // its delivered alerts instead of alerting.
+    const visited = input.state?.visited === true ? input.state : null;
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
     const deliveriesByTarget = yield* Effect.forEach(
       targets,
@@ -92,15 +95,19 @@ export const make = Effect.gen(function* () {
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
+              replay: visited !== null,
             }),
-            notificationOnlyAggregate === null
+            notificationOnlyAggregate === null || visited !== null
               ? Effect.succeed(null)
               : apnsDeliveries.sendPushNotificationForTarget({
                   target,
                   aggregate: notificationOnlyAggregate,
                 }),
+            visited === null
+              ? Effect.succeed(null)
+              : apnsDeliveries.sendDismissForTarget({ target, state: visited }),
           ],
-          { concurrency: 2 },
+          { concurrency: 3 },
         );
       }),
       { concurrency: 4 },

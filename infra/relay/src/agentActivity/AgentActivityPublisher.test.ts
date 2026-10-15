@@ -107,6 +107,7 @@ function makeApnsDeliveries(
   return {
     sendForTarget: () => Effect.succeed(null),
     sendPushNotificationForTarget: () => Effect.succeed(null),
+    sendDismissForTarget: () => Effect.succeed(null),
     sendLiveActivity: () =>
       Effect.succeed({
         deviceId: "device",
@@ -582,6 +583,64 @@ describe("AgentActivityPublisher", () => {
         },
       ]);
     });
+  });
+
+  it.effect("dismisses a read thread's iOS alerts instead of alerting again", () => {
+    const visitedState: RelayAgentActivityState = { ...state, phase: "completed", visited: true };
+    const calls: string[] = [];
+    const record = (name: string) =>
+      Effect.sync(() => {
+        calls.push(name);
+        return null;
+      });
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.publish({
+        environmentId: "env",
+        environmentPublicKey: "environment-public-key",
+        threadId: "thread",
+        state: visitedState,
+      });
+      expect(calls.toSorted()).toEqual(["dismiss:completed", "silent-card"]);
+    }).pipe(
+      Effect.provide(
+        layerPublisher.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(
+                EnvironmentLinks.EnvironmentLinks,
+                makeEnvironmentLinks({
+                  listDeliveryUsersForEnvironment: () =>
+                    Effect.succeed([
+                      {
+                        userId: "dev:julius",
+                        notificationsEnabled: true,
+                        liveActivitiesEnabled: false,
+                      },
+                    ]),
+                }),
+              ),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({
+                  listTargets: () =>
+                    Effect.succeed([{ ...target("device-1"), push_token: "apns-device-token" }]),
+                }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) => record(input.replay ? "silent-card" : "alerting-card"),
+                  sendPushNotificationForTarget: () => record("alert"),
+                  sendDismissForTarget: (input) => record(`dismiss:${input.state.phase}`),
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   });
 
   it.effect(

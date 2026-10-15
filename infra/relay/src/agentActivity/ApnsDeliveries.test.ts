@@ -1154,6 +1154,70 @@ describe("ApnsDeliveries", () => {
     );
   });
 
+  it.effect("sends a dismiss job as a background push even with alerts disabled", () => {
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const completedAt = "1970-01-01T00:00:01.000Z";
+    const payload = makeApnsDeliveryJobPayload({
+      kind: "push_notification",
+      userId: target.user_id,
+      deviceId: target.device_id,
+      token: "apns-device-token",
+      aggregate: null,
+      notification: {
+        title: "",
+        body: "",
+        environmentId: "env",
+        threadId: "thread",
+        deepLink: "/",
+        phase: "completed",
+        updatedAt: completedAt,
+        dismiss: true,
+      },
+      createdAt: completedAt,
+      expiresAt: "1970-01-01T00:10:00.000Z",
+      jobId: "job-dismiss-1",
+    });
+    const signed = signApnsDeliveryJob({ secret: config.apnsDeliveryJobSigningSecret, payload });
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        requests.push(request);
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(signed);
+
+      expect(result.ok).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.headers["apns-push-type"]).toBe("background");
+      expect(requests[0]?.headers["apns-priority"]).toBe("5");
+      const body = requests[0]?.body;
+      expect(body?._tag).toBe("Uint8Array");
+      expect(
+        JSON.parse(new TextDecoder().decode(body?._tag === "Uint8Array" ? body.body : undefined)),
+      ).toEqual({ aps: { "content-available": 1 }, dismissThreadId: "env/thread" });
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          currentTargets: [
+            {
+              ...target,
+              push_token: "apns-device-token",
+              preferences_json: notificationsDisabledPreferences,
+            },
+          ],
+          currentActivityStates: [
+            { ...state, phase: "completed", updatedAt: completedAt, visited: true },
+          ],
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
   it.effect("skips duplicate signed queue jobs before calling APNs", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     let executeCount = 0;
