@@ -113,8 +113,14 @@ export class Ledger {
     let content: Uint8Array = readRunBytes(path);
     let fd: number;
     try {
-      fd = NodeFS.openSync(path, "a");
+      // No O_CREAT: a run file removed since the read is gone, not made again empty. O_NOFOLLOW
+      // refuses a link swapped in since the read.
+      fd = NodeFS.openSync(
+        path,
+        NodeFS.constants.O_WRONLY | NodeFS.constants.O_APPEND | NodeFS.constants.O_NOFOLLOW,
+      );
     } catch (error) {
+      if (errnoCode(error) === "ENOENT") throw new LedgerError({ kind: "NotFound", path });
       throw ioError(path, error);
     }
     if (content.length > 0 && content[content.length - 1] !== 0x0a) {
