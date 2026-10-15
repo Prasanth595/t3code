@@ -67,8 +67,9 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
   it.effect("shares one scoped prune loop across cache layer consumers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
-      const directory = `${providerStatusCacheDir}/pull-requests`;
+      const directory = path.join(providerStatusCacheDir, "pull-requests");
       const activation = yield* Deferred.make<void>();
       let scans = 0;
       const observedFs = FileSystem.FileSystem.of({
@@ -123,8 +124,9 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
   it.effect("uses memory without starting cleanup when the cache directory is unavailable", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
-      const directory = `${providerStatusCacheDir}/pull-requests`;
+      const directory = path.join(providerStatusCacheDir, "pull-requests");
       yield* fs.remove(providerStatusCacheDir, { recursive: true });
       yield* fs.writeFileString(providerStatusCacheDir, "blocks the cache directory");
       let scans = 0;
