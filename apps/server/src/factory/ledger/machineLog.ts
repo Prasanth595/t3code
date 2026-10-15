@@ -7,7 +7,9 @@ import {
   AppendFile,
   ensureDir,
   nodeIo,
+  openForAppend,
   parentOf,
+  syncAt,
   syncDir,
   type AppendIo,
   type SyncDir,
@@ -58,13 +60,15 @@ export class MachineLog {
     } catch (error) {
       throw ioError(dataDir, error);
     }
-    const existed = existingRegularFile(path);
+    const io = options.io ?? nodeIo;
+    const clock = options.clock ?? Date.now;
+    if (existingRegularFile(path)) return new MachineLog(openForAppend(path, io).file, clock);
     let fd: number;
     try {
       // The check above and the open are two calls, so the open refuses a symlink itself.
       fd = NodeFS.openSync(
         path,
-        NodeFS.constants.O_RDWR |
+        NodeFS.constants.O_WRONLY |
           NodeFS.constants.O_APPEND |
           NodeFS.constants.O_CREAT |
           NodeFS.constants.O_NOFOLLOW,
@@ -74,30 +78,13 @@ export class MachineLog {
       throw ioError(path, error);
     }
     try {
-      if (existed) {
-        // A last line with no newline is a write that was cut off: end it, so the next event
-        // starts on its own line. The fragment stays in the file.
-        const size = NodeFS.fstatSync(fd).size;
-        if (size > 0) {
-          const last = Buffer.alloc(1);
-          NodeFS.readSync(fd, last, 0, 1, size - 1);
-          if (last[0] !== NEWLINE) {
-            NodeFS.writeSync(fd, "\n");
-            NodeFS.fsyncSync(fd);
-          }
-        }
-      } else {
-        syncAt(sync, dataDir);
-        if (dataDirCreated) syncAt(sync, parentOf(dataDir));
-      }
+      syncAt(sync, dataDir);
+      if (dataDirCreated) syncAt(sync, parentOf(dataDir));
     } catch (error) {
       NodeFS.closeSync(fd);
-      throw error instanceof LedgerError ? error : ioError(path, error);
+      throw error;
     }
-    return new MachineLog(
-      new AppendFile(path, fd, options.io ?? nodeIo),
-      options.clock ?? Date.now,
-    );
+    return new MachineLog(new AppendFile(path, fd, io), clock);
   }
 
   /**
@@ -138,14 +125,6 @@ const existingRegularFile = (path: string): boolean => {
   }
   if (!isFile) throw ioError(path, new Error(NOT_REGULAR));
   return true;
-};
-
-const syncAt = (sync: SyncDir, dir: string): void => {
-  try {
-    sync(dir);
-  } catch (error) {
-    throw ioError(dir, error);
-  }
 };
 
 /** One line of the machine log as read back. The event and its data are as written. */

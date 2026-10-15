@@ -2,7 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { errnoCode, ioError } from "./errors.ts";
+import { LedgerError, errnoCode, ioError } from "./errors.ts";
 
 /**
  * The two file operations an append performs. A seam so a test can make them fail the way a full
@@ -52,6 +52,57 @@ export const ensureDir = (path: string): boolean => {
     if (errnoCode(error) === "EEXIST") return false;
     throw error;
   }
+};
+
+/** `sync` of `dir` with its failure reported as an `Io` error for `dir`. */
+export const syncAt = (sync: SyncDir, dir: string): void => {
+  try {
+    sync(dir);
+  } catch (error) {
+    throw ioError(dir, error);
+  }
+};
+
+const NEWLINE = 0x0a;
+
+/**
+ * Open an existing regular file for append, never creating it and never following a symlink
+ * (`O_WRONLY | O_APPEND | O_NOFOLLOW`, plus read access to look at the last byte). A last line with
+ * no newline is a write that was cut off: it is ended with one `\n` write and an fsync, so the
+ * next event starts on its own line, and `repaired` is true. The fragment stays in the file.
+ * A missing file is `NotFound`; anything else that goes wrong is `Io`.
+ */
+export const openForAppend = (
+  path: string,
+  io: AppendIo = nodeIo,
+): { readonly file: AppendFile; readonly repaired: boolean } => {
+  let fd: number;
+  try {
+    fd = NodeFS.openSync(
+      path,
+      NodeFS.constants.O_RDWR | NodeFS.constants.O_APPEND | NodeFS.constants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") throw new LedgerError({ kind: "NotFound", path });
+    throw ioError(path, error);
+  }
+  let repaired = false;
+  try {
+    const size = NodeFS.fstatSync(fd).size;
+    if (size > 0) {
+      const last = Buffer.alloc(1);
+      NodeFS.readSync(fd, last, 0, 1, size - 1);
+      if (last[0] !== NEWLINE) {
+        NodeFS.writeSync(fd, "\n");
+        NodeFS.fsyncSync(fd);
+        repaired = true;
+      }
+    }
+  } catch (error) {
+    NodeFS.closeSync(fd);
+    throw ioError(path, error);
+  }
+  return { file: new AppendFile(path, fd, io), repaired };
 };
 
 /** The directory that holds `dir`, which the sync after making `dir` has to reach. */

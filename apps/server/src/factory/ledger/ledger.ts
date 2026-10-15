@@ -6,7 +6,9 @@ import {
   AppendFile,
   ensureDir,
   nodeIo,
+  openForAppend,
   parentOf,
+  syncAt,
   syncDir,
   type AppendIo,
   type SyncDir,
@@ -111,32 +113,9 @@ export class Ledger {
   static open(dataDir: string, id: RunId, options: LedgerOptions = {}): Ledger {
     const path = runPath(dataDir, id);
     let content: Uint8Array = readRunBytes(path);
-    let fd: number;
-    try {
-      // No O_CREAT: a run file removed since the read is gone, not made again empty. O_NOFOLLOW
-      // refuses a link swapped in since the read.
-      fd = NodeFS.openSync(
-        path,
-        NodeFS.constants.O_WRONLY | NodeFS.constants.O_APPEND | NodeFS.constants.O_NOFOLLOW,
-      );
-    } catch (error) {
-      if (errnoCode(error) === "ENOENT") throw new LedgerError({ kind: "NotFound", path });
-      throw ioError(path, error);
-    }
-    if (content.length > 0 && content[content.length - 1] !== 0x0a) {
-      try {
-        NodeFS.writeSync(fd, "\n");
-        NodeFS.fsyncSync(fd);
-      } catch (error) {
-        NodeFS.closeSync(fd);
-        throw ioError(path, error);
-      }
-      content = Buffer.concat([content, Buffer.from("\n")]);
-    }
-    const ledger = new Ledger(
-      new AppendFile(path, fd, options.io ?? nodeIo),
-      options.clock ?? Date.now,
-    );
+    const { file, repaired } = openForAppend(path, options.io);
+    if (repaired) content = Buffer.concat([content, Buffer.from("\n")]);
+    const ledger = new Ledger(file, options.clock ?? Date.now);
     for (const entry of parseLines(content).entries) {
       ledger.observe(entry.ms, entry.event, entry.data);
     }
@@ -234,14 +213,6 @@ export class Ledger {
 const ensureDirAt = (dir: string): boolean => {
   try {
     return ensureDir(dir);
-  } catch (error) {
-    throw ioError(dir, error);
-  }
-};
-
-const syncAt = (sync: SyncDir, dir: string): void => {
-  try {
-    sync(dir);
   } catch (error) {
     throw ioError(dir, error);
   }
