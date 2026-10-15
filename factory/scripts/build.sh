@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds the fork into release/t3fac-<version>-darwin-arm64.tar.gz with upstream's own
-# build scripts, then smoke-tests the archive. `build.sh --print-version` only prints the version.
+# Builds the fork with upstream's own build scripts, smoke-tests the archive and only then
+# moves it to release/t3fac-<version>-darwin-arm64.tar.gz. `build.sh --print-version` only
+# prints the version. T3FAC_SMOKE_TIMEOUT sets the smoke test's deadline in seconds (60).
 set -euo pipefail
 
 root=${T3FAC_REPO_ROOT:-$(git rev-parse --show-toplevel)}
@@ -13,6 +14,11 @@ else
   upstream=$(node -p 'require("./apps/server/package.json").version')
 fi
 version="${upstream}+fac.$(git rev-parse --short HEAD)"
+# Uncommitted changes to tracked files mark the build, so it never takes the name (and on
+# install, the place) of the clean build of the same commit.
+if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
+  version="$version.dirty"
+fi
 
 if [[ ${1:-} == --print-version ]]; then
   echo "$version"
@@ -63,14 +69,13 @@ VP_NODE_VERSION="$sea_node" vp node scripts/build-cli-archive.ts \
   --platform mac --arch arm64 --version "$version" \
   --resource-monitor-dir "$stage/monitor" --output-dir "$stage/out"
 
-mkdir -p release
-archive="release/t3fac-${version}-darwin-arm64.tar.gz"
-mv "$stage/out/t3-${version}-darwin-arm64.tar.gz" "$archive"
+built="$stage/out/t3-${version}-darwin-arm64.tar.gz"
 
 # Smoke test: start the built server on a free port with a throwaway HOME and base dir.
+smoke_timeout=${T3FAC_SMOKE_TIMEOUT:-60}
 smoke=$(mktemp -d)
 mkdir -p "$smoke/pkg" "$smoke/home"
-tar -xzf "$archive" -C "$smoke/pkg"
+tar -xzf "$built" -C "$smoke/pkg"
 pkg=$(find "$smoke/pkg" -mindepth 1 -maxdepth 1 -type d | head -n 1)
 port=$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')
 
@@ -87,21 +92,25 @@ server_pid=$!
 
 ok=""
 start=$SECONDS
-for _ in $(seq 1 120); do
+while :; do
   kill -0 "$server_pid" 2>/dev/null || fail "server exited early"
   code=$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/.well-known/t3/environment" || true)
   if [[ $code == 200 ]]; then
     ok=1
     break
   fi
-  (( SECONDS - start >= 60 )) && break
+  (( SECONDS - start >= smoke_timeout )) && break
   sleep 0.5
 done
-[[ -n $ok ]] || fail "/.well-known/t3/environment did not answer 200 within 60s"
+[[ -n $ok ]] || fail "/.well-known/t3/environment did not answer 200 within ${smoke_timeout}s"
 echo "smoke: /.well-known/t3/environment -> 200 after $((SECONDS - start))s"
 
 grep -q 'factory started' "$smoke/server.log" || fail 'server log does not hold "factory started"'
 echo 'smoke: log holds "factory started"'
+
+mkdir -p release
+archive="release/t3fac-${version}-darwin-arm64.tar.gz"
+mv "$built" "$archive"
 
 cleanup
 smoke=""

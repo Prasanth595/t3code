@@ -3,7 +3,8 @@
 # writes the LaunchAgent plist and restarts the job. Usage: install.sh <archive>
 set -euo pipefail
 
-label=io.github.rawphp.t3fac
+source "$(dirname "$0")/lib/t3fac.sh"
+
 archive=${1:-}
 if [[ -z $archive || ! -f $archive ]]; then
   echo "usage: install.sh <t3fac-<version>-darwin-arm64.tar.gz>" >&2
@@ -22,10 +23,7 @@ if [[ -z $version || $version == */* || $version == . || $version == .. ]]; then
   exit 1
 fi
 
-root="$HOME/.local/share/t3fac"
 dest="$root/versions/$version"
-template="$(cd "$(dirname "$0")" && pwd)/../launchd/$label.plist"
-plist="$HOME/Library/LaunchAgents/$label.plist"
 
 mkdir -p "$root/versions"
 # Unpack beside the destination and swap in only a good archive, so a bad one never
@@ -50,24 +48,7 @@ if [[ -L $root/current ]]; then
 fi
 ln -sfn "versions/$version" "$root/current"
 
-mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/t3fac" "$HOME/.config/t3fac"
-sed "s|@HOME@|$HOME|g" "$template" > "$plist"
-
-uid=$(id -u)
-wait_unloaded() {
-  local i
-  for ((i = 0; i < 50; i++)); do
-    launchctl print "gui/$uid/$label" > /dev/null 2>&1 || return 0
-    sleep 0.2
-  done
-  echo "job $label is still loaded 10s after bootout" >&2
-  return 1
-}
-if launchctl print "gui/$uid/$label" > /dev/null 2>&1; then
-  launchctl bootout "gui/$uid/$label"
-  wait_unloaded
-fi
-launchctl bootstrap "gui/$uid" "$plist"
+restart_job
 
 echo "installed $version"
 echo "current -> versions/$version"

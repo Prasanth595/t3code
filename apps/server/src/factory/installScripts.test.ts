@@ -69,8 +69,9 @@ const makeArchive = (version: string, options: { binary?: boolean; label?: strin
   return archive;
 };
 
-// A little launchd-like: bootout leaves the job loaded for two more `print` polls, and
-// bootstrap fails with EIO while it is still loaded (or when LAUNCHCTL_BOOTSTRAP_FAIL is set).
+// A little launchd-like: bootout leaves the job loaded for two more `print` polls (or
+// LAUNCHCTL_BOOTOUT_DRAIN), and bootstrap fails with EIO while it is still loaded (or when
+// LAUNCHCTL_BOOTSTRAP_FAIL is set).
 const setupSandbox = () => {
   tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-install-")));
   home = NodePath.join(tmp, "home");
@@ -101,13 +102,22 @@ const setupSandbox = () => {
       "      exit 5",
       "    fi",
       '    touch "$LAUNCHCTL_LOADED" ;;',
-      '  bootout) echo 2 > "$LAUNCHCTL_DRAIN" ;;',
+      '  bootout) echo "${LAUNCHCTL_BOOTOUT_DRAIN:-2}" > "$LAUNCHCTL_DRAIN" ;;',
       "esac",
       "exit 0",
       "",
     ].join("\n"),
     { mode: 0o755 },
   );
+};
+
+// A sandbox with v1 then v2 installed: the job is loaded, `current` is v2, `previous` is v1.
+const setupInstalledSandbox = () => {
+  setupSandbox();
+  archives[v1] = makeArchive(v1);
+  archives[v2] = makeArchive(v2);
+  expect(run("install.sh", archives[v1]!).status).toBe(0);
+  expect(run("install.sh", archives[v2]!).status).toBe(0);
 };
 
 // bootout, then at least one print poll, then bootstrap.
@@ -199,11 +209,7 @@ describe("install.sh and rollback.sh failure cases", () => {
   let v2Dir: string;
 
   beforeAll(() => {
-    setupSandbox();
-    archives[v1] = makeArchive(v1);
-    archives[v2] = makeArchive(v2);
-    expect(run("install.sh", archives[v1]!).status).toBe(0);
-    expect(run("install.sh", archives[v2]!).status).toBe(0);
+    setupInstalledSandbox();
     v2Dir = NodePath.join(root(), "versions", v2);
   });
 
@@ -251,11 +257,7 @@ describe("install.sh and rollback.sh failure cases", () => {
 
 describe("install.sh reinstalling the current version", () => {
   beforeAll(() => {
-    setupSandbox();
-    archives[v1] = makeArchive(v1);
-    archives[v2] = makeArchive(v2);
-    expect(run("install.sh", archives[v1]!).status).toBe(0);
-    expect(run("install.sh", archives[v2]!).status).toBe(0);
+    setupInstalledSandbox();
   });
 
   afterAll(() => {
@@ -271,6 +273,50 @@ describe("install.sh reinstalling the current version", () => {
     const rollback = run("rollback.sh");
     expect(rollback.status).toBe(0);
     expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+  });
+});
+
+describe("rollback.sh when the previous version is gone from disk", () => {
+  beforeAll(() => {
+    setupInstalledSandbox();
+  });
+
+  afterAll(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("exits 1 and leaves current and the job alone", () => {
+    NodeFS.rmSync(NodePath.join(root(), "versions", v1), { recursive: true });
+    const result = run("rollback.sh");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("no earlier version");
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
+    expect(result.calls).toEqual([]);
+  });
+});
+
+describe("install.sh and rollback.sh when the job never unloads", () => {
+  const stuck = { LAUNCHCTL_BOOTOUT_DRAIN: "1000", T3FAC_UNLOAD_WAIT: "1" };
+
+  beforeAll(() => {
+    setupInstalledSandbox();
+  });
+
+  afterAll(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["install.sh", () => [archives[v1]!]],
+    ["rollback.sh", () => []],
+  ])("%s fails without bootstrapping", (script, args) => {
+    const result = runWith(stuck, script, ...args());
+    NodeFS.rmSync(launchctlDrain, { force: true });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`job ${label} is still loaded 1s after bootout`);
+    expect(result.calls[1]).toBe(`bootout gui/${uid}/${label}`);
+    expect(result.calls.length).toBeGreaterThan(3);
+    expect(result.calls.some((call) => call.startsWith("bootstrap"))).toBe(false);
   });
 });
 
@@ -337,4 +383,202 @@ describe("build.sh --print-version", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe(`9.9.9+fac.${git("rev-parse", "--short", "HEAD")}`);
   });
+
+  it("marks a build with uncommitted changes to tracked files as dirty", () => {
+    write("apps/server/package.json", '{ "name": "t3", "version": "9.9.9", "private": true }\n');
+    const result = printVersion();
+    git("checkout", "--", "apps/server/package.json");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(`9.9.9+fac.${git("rev-parse", "--short", "HEAD")}.dirty`);
+  });
+});
+
+// The whole of build.sh in a throwaway repo, with `vp` and `cargo` stubbed so the archive
+// holds a fake `t3`. FAKE_T3_MODE picks how that server behaves in the smoke test.
+describe("build.sh smoke test", () => {
+  const version = "1.2.3-nightly.20260101.1";
+  let sandbox: string;
+  let repo: string;
+  let tmpdir: string;
+  let pidFile: string;
+
+  const write = (file: string, content: string, mode = 0o644) => {
+    NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+    NodeFS.writeFileSync(file, content, { mode });
+  };
+
+  const git = (...args: Array<string>) => {
+    const result = NodeChildProcess.spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+
+  const build = (mode: string, extraEnv: Record<string, string> = {}) => {
+    NodeFS.rmSync(tmpdir, { recursive: true, force: true });
+    NodeFS.mkdirSync(tmpdir);
+    NodeFS.rmSync(pidFile, { force: true });
+    const result = NodeChildProcess.spawnSync("bash", [NodePath.join(scripts, "build.sh")], {
+      cwd: repo,
+      env: {
+        ...process.env,
+        PATH: `${NodePath.join(sandbox, "bin")}:${process.env.PATH}`,
+        TMPDIR: tmpdir,
+        T3FAC_REPO_ROOT: repo,
+        FAKE_WORK: NodePath.join(sandbox, "work"),
+        FAKE_T3: NodePath.join(sandbox, "t3"),
+        FAKE_T3_MODE: mode,
+        FAKE_T3_PID: pidFile,
+        ...extraEnv,
+      },
+      encoding: "utf8",
+    });
+    const release = NodePath.join(repo, "release");
+    return {
+      status: result.status,
+      stdout: result.stdout.trim(),
+      stderr: result.stderr,
+      released: NodeFS.existsSync(release) ? NodeFS.readdirSync(release) : [],
+      tmpLeft: NodeFS.readdirSync(tmpdir),
+    };
+  };
+
+  const serverAlive = () => {
+    const pid = Number(NodeFS.readFileSync(pidFile, "utf8"));
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  beforeAll(() => {
+    sandbox = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-build-")),
+    );
+    repo = NodePath.join(sandbox, "repo");
+    tmpdir = NodePath.join(sandbox, "tmp");
+    pidFile = NodePath.join(sandbox, "t3.pid");
+    NodeFS.mkdirSync(NodePath.join(sandbox, "work"));
+
+    write(
+      NodePath.join(repo, "factory/UPSTREAM"),
+      `v${version} 0123456789abcdef0123456789abcdef01234567\n`,
+    );
+    write(
+      NodePath.join(repo, "apps/server/package.json"),
+      '{ "name": "t3", "version": "9.9.9" }\n',
+    );
+    write(
+      NodePath.join(repo, "apps/server/vite.config.ts"),
+      'const SEA_NODE_VERSION = "24.0.0";\n',
+    );
+    write(NodePath.join(repo, "native/resource-monitor/Cargo.toml"), "");
+    git("init", "-q");
+    git("config", "user.name", "Test");
+    git("config", "user.email", "test@example.com");
+    git("config", "commit.gpgsign", "false");
+    git("add", "-A");
+    git("commit", "-q", "-m", "fake repo");
+
+    // build-cli-archive.ts writes t3-<version>-darwin-arm64.tar.gz holding the fake t3.
+    write(
+      NodePath.join(sandbox, "bin/vp"),
+      [
+        "#!/bin/sh",
+        'if [ "$1 $2" = "node scripts/build-cli-archive.ts" ]; then',
+        "  shift 2",
+        "  while [ $# -gt 0 ]; do",
+        '    case "$1" in',
+        "      --version) v=$2; shift 2 ;;",
+        "      --output-dir) out=$2; shift 2 ;;",
+        "      *) shift ;;",
+        "    esac",
+        "  done",
+        '  d="$FAKE_WORK/t3-$v-darwin-arm64"',
+        '  rm -rf "$d"; mkdir -p "$d/client"; cp "$FAKE_T3" "$d/t3"',
+        '  tar -czf "$out/t3-$v-darwin-arm64.tar.gz" -C "$FAKE_WORK" "t3-$v-darwin-arm64"',
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+      0o755,
+    );
+    write(
+      NodePath.join(sandbox, "bin/cargo"),
+      [
+        "#!/bin/sh",
+        "for arg; do manifest=$arg; done",
+        'out="$(dirname "$manifest")/target/release"',
+        'mkdir -p "$out" && : > "$out/t3-resource-monitor"',
+        "",
+      ].join("\n"),
+      0o755,
+    );
+    write(
+      NodePath.join(sandbox, "t3"),
+      [
+        "#!/usr/bin/env node",
+        'require("node:fs").writeFileSync(process.env.FAKE_T3_PID, String(process.pid));',
+        "const mode = process.env.FAKE_T3_MODE;",
+        'if (mode === "exit") process.exit(1);',
+        'if (mode === "deaf") setInterval(() => {}, 1000);',
+        "else {",
+        '  const port = Number(process.argv[process.argv.indexOf("--port") + 1]);',
+        '  require("node:http")',
+        "    .createServer((req, res) => {",
+        '      res.statusCode = req.url === "/.well-known/t3/environment" ? 200 : 404;',
+        "      res.end();",
+        "    })",
+        '    .listen(port, "127.0.0.1", () => {',
+        '      if (mode === "ok") console.log("factory started");',
+        "    });",
+        "}",
+        "",
+      ].join("\n"),
+      0o755,
+    );
+  });
+
+  afterAll(() => {
+    NodeFS.rmSync(sandbox, { recursive: true, force: true });
+  });
+
+  it("moves a smoked archive into release/ and cleans up after itself", () => {
+    const result = build("ok");
+    const archive = `t3fac-${version}+fac.${git("rev-parse", "--short", "HEAD")}-darwin-arm64.tar.gz`;
+    expect(result.status).toBe(0);
+    expect(result.released).toEqual([archive]);
+    expect(result.stdout.split("\n").at(-1)).toBe(NodePath.join(repo, "release", archive));
+    expect(result.tmpLeft).toEqual([]);
+    expect(serverAlive()).toBe(false);
+  }, 20_000);
+
+  it.each([
+    ["exits at startup", "exit", {}, "server exited early"],
+    [
+      "never answers",
+      "deaf",
+      { T3FAC_SMOKE_TIMEOUT: "1" },
+      "/.well-known/t3/environment did not answer 200 within 1s",
+    ],
+    [
+      "never logs that the factory started",
+      "quiet",
+      {},
+      'server log does not hold "factory started"',
+    ],
+  ])(
+    "fails and releases nothing when the server %s",
+    (_name, mode, env: Record<string, string>, message) => {
+      NodeFS.rmSync(NodePath.join(repo, "release"), { recursive: true, force: true });
+      const result = build(mode, env);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`smoke: FAILED: ${message}`);
+      expect(result.released).toEqual([]);
+      expect(result.tmpLeft).toEqual([]);
+      expect(serverAlive()).toBe(false);
+    },
+    20_000,
+  );
 });
