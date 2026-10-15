@@ -338,6 +338,13 @@ const make = Effect.gen(function* () {
         pathKey(yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved))),
       );
     }
+    const referencedAncestors = new Set<string>();
+    for (let ancestor of referenced) {
+      while (roots.some((root) => inside(root, ancestor))) {
+        ancestor = pathKey(path.dirname(ancestor));
+        referencedAncestors.add(ancestor);
+      }
+    }
     const projectRoots = (yield* Effect.forEach(
       yield* Effect.filter(projects, (project) =>
         fs.exists(path.resolve(project.workspaceRoot)).pipe(Effect.orElseSucceed(() => true)),
@@ -380,7 +387,7 @@ const make = Effect.gen(function* () {
         if (
           reported.has(key) ||
           referenced.has(key) ||
-          [...referenced].some((reference) => inside(worktreePath, reference)) ||
+          referencedAncestors.has(key) ||
           projectRoots.some((root) => pathKey(root) === key || inside(worktreePath, root))
         )
           return;
@@ -391,13 +398,10 @@ const make = Effect.gen(function* () {
         reported.add(key);
         const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
         if (!orphanSizes.has(key) && remaining > 0) {
-          orphanSizes.set(
-            key,
-            yield* measureWorktree(worktreePath).pipe(
-              Effect.timeout(remaining),
-              Effect.orElseSucceed(() => null),
-            ),
+          const measured = yield* measureWorktree(worktreePath).pipe(
+            Effect.timeoutOption(remaining),
           );
+          if (Option.isSome(measured)) orphanSizes.set(key, measured.value);
         }
         const bytes = orphanSizes.get(key) ?? null;
         entries.push({

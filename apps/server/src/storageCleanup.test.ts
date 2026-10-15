@@ -782,19 +782,30 @@ describe("orphan worktree reports", () => {
     ),
   );
 
-  it.live("reuses measured orphan sizes until the folder is no longer an orphan", () =>
+  it.effect("retries budget-cut orphan sizes and reuses completed measurements", () =>
     runCleanupTest(
       Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
         const fs = yield* FileSystem.FileSystem;
+        const measuring = yield* Deferred.make<void>();
         let orphan = "";
         let walks = 0;
         const fixture = yield* cleanupFixture().pipe(
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
-            readDirectory: (directory, options) => {
-              if (directory === orphan) walks++;
-              return fs.readDirectory(directory, options);
-            },
+            readDirectory: (directory, options) =>
+              Effect.gen(function* () {
+                if (directory.endsWith("/repository") && walks === 0)
+                  yield* TestClock.adjust("1 second");
+                if (directory === orphan) {
+                  walks++;
+                  if (walks === 1) {
+                    yield* Deferred.succeed(measuring, undefined);
+                    return yield* Effect.never;
+                  }
+                }
+                return yield* fs.readDirectory(directory, options);
+              }),
           }),
         );
         fixture.setThreads([]);
@@ -802,15 +813,19 @@ describe("orphan worktree reports", () => {
         yield* fs.makeDirectory(orphan, { recursive: true });
         yield* fs.writeFileString(`${orphan}/file`, "x");
         yield* fs.utimes(orphan, 1, 1);
+        const sweep = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(measuring);
+        yield* TestClock.adjust("29 seconds");
+        expect((yield* Fiber.join(sweep)).entries[0]?.bytes).toBeNull();
         expect((yield* fixture.service.runNow).entries[0]?.bytes).toBe(1);
         yield* fs.writeFileString(`${orphan}/file`, "changed");
         expect((yield* fixture.service.runNow).entries[0]?.bytes).toBe(1);
-        expect(walks).toBe(1);
+        expect(walks).toBe(2);
         fixture.setStoredWorktreePaths([orphan]);
         expect((yield* fixture.service.runNow).entries).toEqual([]);
         fixture.setStoredWorktreePaths([]);
         expect((yield* fixture.service.runNow).entries[0]?.bytes).toBe(7);
-        expect(walks).toBe(2);
+        expect(walks).toBe(3);
       }),
     ),
   );
