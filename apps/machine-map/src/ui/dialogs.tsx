@@ -10,6 +10,7 @@ import type {
 import {
   FORK_RELEASES_PAGE,
   type AddMachineRequest,
+  type ApprovalsStatus,
   type ForkRelease,
   type InviteRequest,
   type InviteResponse,
@@ -611,7 +612,26 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
   const [arrows, setArrows] = useState<Record<string, MachineLevel>>({});
   const [needsPasskey, setNeedsPasskey] = useState(false);
   const [invite, setInvite] = useState<InviteResponse | null>(null);
+  const [status, setStatus] = useState<ApprovalsStatus | null>(null);
   const { pending, error, run } = useAction();
+
+  // MM-1208: an invite needs the approvals app, so a fresh portal offers to set it up here too.
+  useEffect(() => {
+    let current = true;
+    callApi<ApprovalsStatus>("GET", "/api/clients/approvals")
+      .then((next) => current && setStatus(next))
+      .catch(
+        (reason: unknown) =>
+          current &&
+          setStatus({
+            _tag: "missing",
+            reason: reason instanceof Error ? reason.message : String(reason),
+          }),
+      );
+    return () => {
+      current = false;
+    };
+  }, []);
 
   const create = () =>
     run(async () => {
@@ -672,6 +692,23 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
           <p className="small muted">
             The app gets its own token. Remove the client to end the token at once.
           </p>
+          {status?._tag === "missing" && (
+            <div className="row callout">
+              <div className="v">{status.reason}</div>
+              <button
+                type="button"
+                className="btn small"
+                disabled={pending}
+                onClick={() =>
+                  run(async () => {
+                    setStatus(await callApi<ApprovalsStatus>("POST", "/api/clients/approvals"));
+                  })
+                }
+              >
+                Set up approvals
+              </button>
+            </div>
+          )}
           {!existing && (
             <>
               <label className="field">
@@ -726,7 +763,11 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
                 Confirm with passkey
               </button>
             ) : (
-              <button type="submit" className="btn primary" disabled={pending}>
+              <button
+                type="submit"
+                className="btn primary"
+                disabled={pending || status?._tag !== "ready"}
+              >
                 Create invite
               </button>
             )}
