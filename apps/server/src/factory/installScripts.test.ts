@@ -223,10 +223,14 @@ describe("install.sh and rollback.sh failure cases", () => {
     expect(result.calls).toEqual([]);
   });
 
-  it("rejects an archive name with an empty version before touching disk", () => {
+  it.each([
+    ["empty", ""],
+    ["dotdot", ".."],
+  ])("rejects an archive name with a %s version before touching disk", (label, version) => {
     const versionsBefore = NodeFS.readdirSync(NodePath.join(root(), "versions")).sort();
-    const result = run("install.sh", makeArchive("", { label: "empty" }));
+    const result = run("install.sh", makeArchive(version, { label }));
     expect(result.status).toBe(1);
+    expect(result.stderr).toContain("invalid version in archive name");
     expect(NodeFS.readdirSync(NodePath.join(root(), "versions")).sort()).toEqual(versionsBefore);
     expect(NodeFS.existsSync(NodePath.join(v2Dir, "t3"))).toBe(true);
     expect(result.calls).toEqual([]);
@@ -240,8 +244,33 @@ describe("install.sh and rollback.sh failure cases", () => {
 
     const retry = run("rollback.sh");
     expect(retry.status).toBe(0);
-    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+    expect(retry.calls.at(-1)).toBe(`bootstrap gui/${uid} ${plistPath()}`);
     expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
+  });
+});
+
+describe("install.sh reinstalling the current version", () => {
+  beforeAll(() => {
+    setupSandbox();
+    archives[v1] = makeArchive(v1);
+    archives[v2] = makeArchive(v2);
+    expect(run("install.sh", archives[v1]!).status).toBe(0);
+    expect(run("install.sh", archives[v2]!).status).toBe(0);
+  });
+
+  afterAll(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("keeps previous unchanged, so rollback still lands on the older version", () => {
+    const reinstall = run("install.sh", archives[v2]!);
+    expect(reinstall.status).toBe(0);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "previous"))).toBe(`versions/${v1}`);
+
+    const rollback = run("rollback.sh");
+    expect(rollback.status).toBe(0);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
   });
 });
 
