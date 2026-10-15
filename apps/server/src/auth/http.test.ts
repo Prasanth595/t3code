@@ -13,11 +13,12 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
-import { HttpServerRequest } from "effect/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
@@ -236,4 +237,118 @@ it.effect("exports only verified T3 Connect requests", () =>
     expect(productSpans).toEqual([]);
     expect(localSpans).toEqual(["EnvironmentAuth.authenticateHttpRequest", "environment.handler"]);
   }).pipe(Effect.scoped),
+);
+
+it.effect("retains safe request attribution after request spans are discarded", () =>
+  Effect.gen(function* () {
+    const messages: Array<unknown> = [];
+    const spans: Array<Tracer.NativeSpan> = [];
+    const expected: Array<{ traceId: string; spanId: string }> = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(message);
+    });
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
+    const secret = "fixture-secret-never-in-diagnostics";
+    const request = HttpServerRequest.fromWeb(
+      new Request(`https://example.invalid/api/threads/${secret}?token=${secret}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${secret}` },
+        body: secret,
+      }),
+    );
+    const route = HttpRouter.route("POST", "/api/threads/:threadId", HttpServerResponse.empty());
+    for (const interrupted of [false, true]) {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const span = yield* Effect.currentParentSpan;
+          expected.push({ traceId: span.traceId, spanId: span.spanId });
+          yield* AuthHttp.annotateEnvironmentRequest("HttpApiEndpoint");
+          // The final record must stand alone after the trace sink evicts spans.
+          spans.length = 0;
+          return yield* interrupted
+            ? Effect.interrupt
+            : Effect.fail({ _tag: "SyntheticFailure", message: secret, body: secret });
+        }),
+      ).pipe(
+        Effect.withSpan("request"),
+        Effect.exit,
+        Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+        Effect.provideService(HttpRouter.RouteContext, { route, params: { threadId: secret } }),
+        Effect.withTracer(tracer),
+        Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+      );
+    }
+    expect(spans).toHaveLength(0);
+    expect(messages).toHaveLength(2);
+    for (let i = 0; i < messages.length; i++) {
+      expect(messages[i]).toEqual([
+        "environment api request failed",
+        expect.objectContaining({
+          endpoint: "HttpApiEndpoint",
+          method: "POST",
+          route: "/api/threads/:threadId",
+          ...expected[i],
+          errorTag: i === 0 ? "SyntheticFailure" : "Interrupt",
+        }),
+      ]);
+    }
+    expect(JSON.stringify(messages)).not.toContain(secret);
+    expect(JSON.stringify(messages)).not.toContain("example.invalid");
+  }),
+);
+
+it.effect("uses a fixed unmatched route when route context is unavailable", () =>
+  Effect.gen(function* () {
+    const messages: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(message);
+    });
+    yield* Effect.scoped(
+      AuthHttp.annotateEnvironmentRequest("HttpApiEndpoint").pipe(
+        Effect.andThen(Effect.fail({ _tag: "SyntheticFailure" })),
+      ),
+    ).pipe(
+      Effect.exit,
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(
+          new Request("https://example.invalid/private-secret?token=secret"),
+        ),
+      ),
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+    );
+    expect(messages).toEqual([
+      [
+        "environment api request failed",
+        expect.objectContaining({
+          method: "GET",
+          route: "unmatched",
+        }),
+      ],
+    ]);
+    expect(JSON.stringify(messages)).not.toContain("secret");
+  }),
+);
+
+it.effect("does not emit request failure records for successful requests", () =>
+  Effect.gen(function* () {
+    const messages: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(message);
+    });
+    yield* Effect.scoped(AuthHttp.annotateEnvironmentRequest("HttpApiEndpoint")).pipe(
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(new Request("https://example.invalid/")),
+      ),
+      Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+    );
+    expect(messages).toEqual([]);
+  }),
 );

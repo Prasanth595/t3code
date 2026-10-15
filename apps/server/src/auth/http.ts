@@ -29,6 +29,7 @@ import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
+import * as HttpRouter from "effect/http/HttpRouter";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -71,16 +72,27 @@ const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
 export function annotateEnvironmentRequest(endpoint: string) {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
-    const traceId = yield* currentEnvironmentTraceId;
+    const { traceId, spanId } = yield* Effect.currentParentSpan.pipe(
+      Effect.map((span) => ({ traceId: span.traceId, spanId: span.spanId })),
+      Effect.orElseSucceed(() => ({ traceId: "unavailable", spanId: "unavailable" })),
+    );
+    const route = yield* Effect.serviceOption(HttpRouter.RouteContext).pipe(
+      Effect.map((context) =>
+        context._tag === "Some" && typeof context.value.route.path === "string"
+          ? context.value.route.path
+          : "unmatched",
+      ),
+    );
 
     yield* Effect.addFinalizer((exit) =>
       exit._tag === "Failure"
         ? Effect.logWarning("environment api request failed", {
             endpoint,
+            method: request.method,
+            route,
             traceId,
+            spanId,
             errorTag: causeErrorTag(exit.cause),
-            cause: exit.cause,
           })
         : Effect.void,
     );
@@ -88,7 +100,7 @@ export function annotateEnvironmentRequest(endpoint: string) {
     yield* Effect.annotateCurrentSpan({
       "environment.endpoint": endpoint,
       "http.request.method": request.method,
-      "url.path": url._tag === "Some" ? url.value.pathname : "unknown",
+      "http.route": route,
     });
   });
 }
