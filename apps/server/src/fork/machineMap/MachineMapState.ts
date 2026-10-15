@@ -147,11 +147,18 @@ export class MachineMapState extends Context.Service<
     readonly peerOrigins: () => ReadonlyArray<string>;
     /** MM-1305: the grant for a service token that is another machine with an arrow into this one. */
     readonly machineGrant: (tokenClientId: string) => Effect.Effect<MachineGrant | undefined>;
-    /** MM-916: whether the map is on with `clientAccess` `observe`. Read before any key proof. */
-    readonly observesBrowserKeys: Effect.Effect<boolean>;
     /**
-     * MM-917: the grant for an owner browser sign-in with a proven key, or undefined for the owner
-     * access of today. An unknown key goes to the portal as waiting, at most once a minute.
+     * MM-916: the `clientAccess` mode that applies, `off` while the map is off, and the portal
+     * URL for a waiting browser (MM-920). Read before any key proof.
+     */
+    readonly browserKeyPolicy: Effect.Effect<{
+      readonly mode: ClientAccessMode;
+      readonly portalUrl: string;
+    }>;
+    /**
+     * MM-917, MM-918: the grant for an owner browser sign-in with a proven key, or undefined. Under
+     * `observe`, undefined keeps the owner login; under `enforce`, it means no session. An unknown
+     * key goes to the portal as waiting, at most once a minute.
      */
     readonly browserGrant: (input: {
       readonly thumbprint: string;
@@ -321,14 +328,17 @@ const make = Effect.gen(function* () {
   const clientSeen = yield* Queue.sliding<Extract<MachineToPortal, { _tag: "clientSeen" }>>(50);
   // Only owner sign-ins with a valid key proof add entries, so the cap is a safety net.
   const lastReported = new Map<string, number>();
-  const observes = (local: LocalState) => local.enabled && local.clientAccess === "observe";
+  const modeOf = (local: LocalState): ClientAccessMode =>
+    local.enabled ? local.clientAccess : "off";
   const browserGrant: MachineMapState["Service"]["browserGrant"] = (input) =>
     Effect.gen(function* () {
       const local = yield* SubscriptionRef.get(state);
+      const mode = modeOf(local);
       const desired = local.saved.desired;
-      if (!observes(local) || desired === null) return undefined;
+      // Without a readable desired state, `enforce` lets no browser in (MM-918).
+      if (mode === "off" || desired === null) return undefined;
       const nowMs = yield* Clock.currentTimeMillis;
-      const grant = browserGrantFor(desired, input.thumbprint, nowMs);
+      const grant = browserGrantFor(desired, input.thumbprint, nowMs, mode);
       if (grant !== undefined) return grant;
       if (nowMs - (lastReported.get(input.thumbprint) ?? 0) >= 60_000) {
         if (lastReported.size >= 1000) lastReported.clear();
@@ -361,7 +371,9 @@ const make = Effect.gen(function* () {
     setToken,
     trustsPeerOrigin: (origin) => peerOrigins.has(origin),
     peerOrigins: () => [...peerOrigins].toSorted(),
-    observesBrowserKeys: SubscriptionRef.get(state).pipe(Effect.map(observes)),
+    browserKeyPolicy: SubscriptionRef.get(state).pipe(
+      Effect.map((local) => ({ mode: modeOf(local), portalUrl: local.portalUrl })),
+    ),
     browserGrant,
     clientSeen,
     machineGrant: (tokenClientId) =>

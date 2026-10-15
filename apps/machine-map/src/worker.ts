@@ -108,6 +108,11 @@ async function grant(request: Request, env: Env, url: URL): Promise<Response> {
         ? body
         : toResponse(await stub.createInvite(owner, url.host, body));
     }
+    // MM-919: a change of an owner-only setting, such as clientAccess.
+    case "POST /changes": {
+      const body = await readBody(request, ChangesRequest);
+      return body instanceof Response ? body : toResponse(await stub.changes(owner, body, true));
+    }
     default:
       return fail(404, `No route ${request.method} ${url.pathname}.`);
   }

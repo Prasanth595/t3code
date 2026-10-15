@@ -16,6 +16,7 @@ import {
   type PeerMachine,
   machineSessionSubject,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 
 /** What a pairing credential for a machine holds (MM-1305). */
 export interface MachineGrant {
@@ -104,13 +105,15 @@ export const clientsWithChangedLevel = (
 };
 
 /**
- * MM-917: the grant for a browser that proved a key that an approved client holds, at most
- * `standard`, or undefined for an unknown key, `none` or an expired arrow.
+ * MM-917, MM-918: the grant for a browser that proved a key that an approved client holds, or
+ * undefined for an unknown key, `none` or an expired arrow. `observe` caps it at `standard`, so it
+ * never gives more than the owner login; `enforce` gives the full level.
  */
 export const browserGrantFor = (
   desired: MachineDesiredState,
   thumbprint: string,
   nowMs: number,
+  mode: "observe" | "enforce",
 ): MachineGrant | undefined => {
   const client = desired.browserClients?.find((candidate) =>
     candidate.thumbprints.includes(thumbprint),
@@ -120,8 +123,7 @@ export const browserGrantFor = (
   if (level === "none") return undefined;
   return {
     subject: clientSessionSubject(client.id),
-    // `observe` never gives more than the owner login of today. Revisit when machines enforce.
-    scopes: MACHINE_LEVEL_SCOPES[level === "admin" ? "standard" : level],
+    scopes: MACHINE_LEVEL_SCOPES[mode === "observe" && level === "admin" ? "standard" : level],
     label: `client ${client.name}`,
   };
 };
@@ -144,6 +146,13 @@ const peerOfSubject = (desired: MachineDesiredState, subject: string): PeerMachi
     : undefined;
 
 export const isMachineSubject = (subject: string) => subject.startsWith(MACHINE_SUBJECT_PREFIX);
+
+/**
+ * MM-922: the life of a browser cookie session of a client. The cookie is not bound to the browser
+ * key, so it lasts 1 day, and the browser signs in again with its key without user action.
+ */
+export const clientBrowserSessionTtl = (subject: string): Duration.Duration | undefined =>
+  subject.startsWith(CLIENT_SUBJECT_PREFIX) ? Duration.days(1) : undefined;
 
 /** A session that exists only through the map: a machine (MM-1305) or a client (MM-912). */
 export const isMapSubject = (subject: string) =>

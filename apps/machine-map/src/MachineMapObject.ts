@@ -11,6 +11,7 @@ import {
   type ClientEnrollRequest,
   type ClientEnrollResponse,
   type ClientMachine,
+  isOwnerOnlySetting,
   MACHINE_MAP_PROTOCOL,
   clientSessionSubject,
   machineSessionSubject,
@@ -103,6 +104,7 @@ import {
   gateTool,
   raisesAnyAccess,
   touchesClients,
+  touchesOwnerOnlySettings,
   usesText,
 } from "./rules/access.ts";
 import {
@@ -131,6 +133,7 @@ import {
   keepClientKeys,
   undoChanges,
   freePosition,
+  effectiveSettings,
   hasJoined,
   machinesTouched,
   MapRuleError,
@@ -911,16 +914,38 @@ export class MachineMapObject extends DurableObject<Env> {
           [message.scope]: { ...reported[message.scope], ...message.values },
         });
         // MM-411: a machine with the map role `edit` may set shared values, like its agents.
+        // MM-919: an owner-only setting stays an override of this machine.
         const shared = message.shared === true && machine.mapRole === "edit";
+        const ownerOnly = Object.fromEntries(
+          Object.entries(message.values).filter(([key]) => isOwnerOnlySetting(message.scope, key)),
+        );
+        const desiredClientAccess =
+          effectiveSettings(this.#map, id)[message.scope].clientAccess ?? "off";
         const changes = shared
-          ? sharedSettingChanges(this.#map, message.scope, message.values)
+          ? [
+              ...sharedSettingChanges(this.#map, message.scope, message.values),
+              ...localSettingChanges(this.#map, id, message.scope, ownerOnly),
+            ]
           : localSettingChanges(this.#map, id, message.scope, message.values);
         if (changes.length > 0) {
           this.#commit(
             { _tag: "agent", machineId: id, threadId: null, threadTitle: null },
             shared ? `shared from ${machine.name}` : `changed on ${machine.name}`,
             changes,
+            "change",
+            "allow",
           );
+        }
+        // MM-919: only the local desktop app changes clientAccess on a machine, as the way back
+        // in. A report of the value that the map wants is no change.
+        const reportedClientAccess = ownerOnly.clientAccess;
+        if (reportedClientAccess !== undefined && reportedClientAccess !== desiredClientAccess) {
+          this.#notify({
+            title: `clientAccess changed on ${machine.name}`,
+            body: `Set to ${String(reportedClientAccess)} outside the portal.`,
+            url: "/#/settings",
+            tag: `client-access:${id}`,
+          });
         }
         return;
       }
@@ -1208,8 +1233,16 @@ export class MachineMapObject extends DurableObject<Env> {
     summary: string,
     changes: ReadonlyArray<MapChange>,
     purpose: "change" | "pause" | "resume" = "change",
+    /** MM-919: the approval path, or the local report of a machine (MM-404). */
+    ownerOnlySettings: "refuse" | "allow" = "refuse",
   ): MapRevision {
     if (changes.length === 0) throw new PortalError(409, "Nothing changes.");
+    if (ownerOnlySettings === "refuse" && touchesOwnerOnlySettings(changes)) {
+      throw new PortalError(
+        403,
+        "clientAccess changes only on the approval path. Change it in the Settings view.",
+      );
+    }
     if (this.#pause && purpose !== "resume" && raisesAnyAccess(this.#map, changes)) {
       throw new PortalError(
         423,
@@ -1288,6 +1321,9 @@ export class MachineMapObject extends DurableObject<Env> {
     // MM-807: only the owner changes clients, never through a proposal either.
     if (touchesClients(changes))
       throw new PortalError(403, "Only the owner changes clients, in the portal.");
+    // MM-919: the same for clientAccess.
+    if (touchesOwnerOnlySettings(changes))
+      throw new PortalError(403, "Only the owner changes clientAccess, in the portal.");
     checkEditableChanges(this.#map, changes);
     const decision = decideAgentWrite(this.#map, actor.machineId, changes);
     if (decision._tag === "apply") {
@@ -1899,14 +1935,17 @@ export class MachineMapObject extends DurableObject<Env> {
   }
 
   /** POST /api/changes: owner changes apply at once (MM-701). */
-  changes(owner: OwnerContext, request: ChangesRequest) {
+  /** `approved`: the request came on the approval path of MM-1207, so it may change MM-919. */
+  changes(owner: OwnerContext, request: ChangesRequest, approved = false) {
     return this.#run(owner, (): WriteResult => {
       // MM-909: a held draft or an open panel can send an older client record. It keeps the keys.
       const changes = keepClientKeys(this.#map, request.changes);
       checkEditableChanges(this.#map, changes);
+      const ownerOnly = approved ? "allow" : "refuse";
       return {
         _tag: "applied",
-        revision: this.#commit(ownerActor(owner), request.summary, changes).revision,
+        revision: this.#commit(ownerActor(owner), request.summary, changes, "change", ownerOnly)
+          .revision,
       };
     });
   }

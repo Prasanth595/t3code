@@ -93,7 +93,7 @@ describe("clientGrantFor (MM-912)", () => {
   });
 });
 
-describe("browserGrantFor (MM-917)", () => {
+describe("browserGrantFor (MM-917, MM-918)", () => {
   it("gives a known browser key its client level, and ends with the key or at expiry", () => {
     const LAPTOP = ClientId.make("client-laptop");
     const withLaptop = (expiresAt: string | null = null) => ({
@@ -110,14 +110,18 @@ describe("browserGrantFor (MM-917)", () => {
       ],
     });
     // An admin arrow gives a browser no more than the owner login while machines observe.
-    expect(browserGrantFor(withLaptop(), "laptop-key", NOW)).toEqual({
+    expect(browserGrantFor(withLaptop(), "laptop-key", NOW, "observe")).toEqual({
       subject: "client:client-laptop",
       scopes: MACHINE_LEVEL_SCOPES.standard,
       label: "client Laptop",
     });
-    expect(browserGrantFor(withLaptop(), "unknown-key", NOW)).toBeUndefined();
+    // MM-918: enforce gives the full level of the arrow.
+    expect(browserGrantFor(withLaptop(), "laptop-key", NOW, "enforce")?.scopes).toEqual(
+      MACHINE_LEVEL_SCOPES.admin,
+    );
+    expect(browserGrantFor(withLaptop(), "unknown-key", NOW, "observe")).toBeUndefined();
     expect(
-      browserGrantFor(withLaptop("2026-10-13T11:00:00.000Z"), "laptop-key", NOW),
+      browserGrantFor(withLaptop("2026-10-13T11:00:00.000Z"), "laptop-key", NOW, "observe"),
     ).toBeUndefined();
     expect(clientsWithChangedLevel(withLaptop(), null, desiredState({}), NOW)).toEqual([LAPTOP]);
     // MM-909: a removed key ends the sessions of its client; the other keys sign in again.

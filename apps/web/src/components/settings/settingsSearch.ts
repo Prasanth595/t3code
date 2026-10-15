@@ -1177,6 +1177,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["portal join code leave connection status cloudflare access token tunnel"],
   },
   {
+    id: "machine-map-client-access",
+    title: "Client access",
+    to: "/settings/machines",
+    searchTerms: ["browser clients enforce observe approval cloudflare access lockout way back in"],
+  },
+  {
     id: "machine-map-reachable",
     title: "Machines this machine can use",
     to: "/settings/machines",

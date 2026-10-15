@@ -768,26 +768,43 @@ const make = Effect.gen(function* () {
   // --- MM-304, MM-912: an arrow that expires ends its sessions at its expiry -----------------
 
   /**
-   * MM-916: when `clientAccess` leaves `observe`, the sessions of browser clients end, so `off`
-   * is the owner login of MM-308 again. A client that also holds an app token pairs again with it.
+   * MM-916, MM-921: a change of `clientAccess` ends the sessions that the old mode gave. Browser
+   * clients sign in again with the level of the new mode; a client that also holds an app token
+   * pairs again with it. Entering `enforce` also ends the owner sessions of Cloudflare Access.
+   * Known limit: those match on the label `cloudflare-access <subject>`. Revisit if it changes.
    */
   const watchClientAccess = state.changes.pipe(
     Stream.map((local) => local.clientAccess),
     Stream.changes,
     Stream.mapAccum(
       (): MachineMapState.LocalState["clientAccess"] | undefined => undefined,
-      (previous, next) => [next, previous === "observe" && next !== "observe" ? [next] : []],
+      (previous, next) => [next, previous === undefined ? [] : [{ previous, next }]],
     ),
-    Stream.runForEach(() =>
+    Stream.runForEach(({ previous, next }) =>
       Effect.gen(function* () {
-        const desired = (yield* state.snapshot).saved.desired;
-        const subjects = new Set(
-          (desired?.browserClients ?? []).map((client) => clientSessionSubject(client.id)),
-        );
-        yield* endSessionsOf([...subjects]);
+        if (previous !== "off") {
+          const desired = (yield* state.snapshot).saved.desired;
+          yield* endSessionsOf(
+            (desired?.browserClients ?? []).map((client) => clientSessionSubject(client.id)),
+          );
+        }
+        if (next === "enforce") {
+          // By session, not by subject: pairing-link sessions share the subject `one-time-token`,
+          // and they keep working under `enforce` (MM-918).
+          const sessions = yield* auth.listSessions();
+          yield* Effect.forEach(
+            sessions.filter(
+              (session) =>
+                session.subject === "one-time-token" &&
+                session.client.label?.startsWith("cloudflare-access ") === true,
+            ),
+            (session) => auth.revokeSession(session.sessionId),
+            { discard: true },
+          );
+        }
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("Machine map could not end browser client sessions.", {
+          Effect.logWarning("Machine map could not end sessions after a clientAccess change.", {
             cause: Cause.pretty(cause),
           }),
         ),

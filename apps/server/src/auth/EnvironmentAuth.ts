@@ -45,9 +45,10 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
-import { deriveAuthClientMetadata } from "./utils.ts";
 import { makeCloudflareAccessVerifier } from "./CloudflareAccess.ts";
 import * as MachineMapState from "../fork/machineMap/MachineMapState.ts";
+import { clientBrowserSessionTtl } from "../fork/machineMap/machineAccess.ts";
+import { type ClientPending, ownerBrowserAccess } from "../fork/machineMap/browserAccess.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
@@ -542,10 +543,11 @@ export class EnvironmentAuth extends Context.Service<
     // Fork: a one-use pairing credential for a request that carries a valid
     // Cloudflare Access JWT, or undefined when the login is off or the JWT fails.
     // It fails while the machine map pause locks every Access subject (MM-718).
+    // `ClientPending` (MM-918): `enforce` refuses this browser until the owner approves its key.
     readonly issueCloudflareAccessPairingCredential: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
-      AuthPairingCredentialResult | undefined,
+      AuthPairingCredentialResult | ClientPending | undefined,
       ServerAuthInternalError | ServerAuthMachinePausedError
     >;
     readonly issueStartupPairingCredential: () => Effect.Effect<
@@ -979,11 +981,14 @@ export const make = Effect.gen(function* () {
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
     yield* rejectTunnelDesktopBootstrap(grant.method, forwarded);
+    // Fork (MM-922): a client cookie session lasts 1 day.
+    const clientTtl = clientBrowserSessionTtl(grant.subject);
     const session = yield* sessions
       .issue({
         method: "browser-session-cookie",
         subject: grant.subject,
         scopes: grant.scopes,
+        ...(clientTtl === undefined ? {} : { ttl: clientTtl }),
         ...(previousSession?.method === "browser-session-cookie"
           ? { replaceSessionId: previousSession.sessionId }
           : {}),
@@ -1246,48 +1251,12 @@ export const make = Effect.gen(function* () {
       ? undefined
       : makeCloudflareAccessVerifier(config.cloudflareAccess);
 
-  /**
-   * Fork (MM-917): an owner browser that proves its key may get the arrow of its client instead of
-   * the owner access. The proof is read only while `clientAccess` observes, so `off` stays the
-   * path of today. A missing or bad proof keeps the owner access.
-   */
-  const loggedProofFailures = new Set<string>();
-  const ownerBrowserGrant = (request: HttpServerRequest.HttpServerRequest, subject: string) => {
-    const dpop = request.headers.dpop;
-    if (Option.isNone(machineMap) || dpop === undefined) return Effect.succeed(undefined);
-    const map = machineMap.value;
-    return map.observesBrowserKeys.pipe(
-      Effect.flatMap((observes) =>
-        !observes
-          ? Effect.succeed(undefined)
-          : verifyRequestDpopProof({ request }).pipe(
-              Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
-              Effect.provideService(Crypto.Crypto, crypto),
-              Effect.flatMap((thumbprint) => {
-                const client = deriveAuthClientMetadata({ request });
-                return map.browserGrant({
-                  thumbprint,
-                  subject,
-                  describedAs: [client.browser, client.os].filter(Boolean).join(" on "),
-                });
-              }),
-              // Once per reason, so a proof that never verifies, for example a URL that the
-              // tunnel rewrites, shows in the log without a line per sign-in.
-              Effect.catch((error) => {
-                const reason =
-                  error._tag === "ServerAuthInvalidCredentialError"
-                    ? (error.dpopFailureReason ?? error.diagnostic ?? "invalid")
-                    : error._tag;
-                if (loggedProofFailures.has(reason)) return Effect.succeed(undefined);
-                loggedProofFailures.add(reason);
-                return Effect.logWarning("Machine map could not verify a browser key proof.", {
-                  reason,
-                }).pipe(Effect.as(undefined));
-              }),
-            ),
-      ),
+  // Fork (MM-917, MM-918): see `ownerBrowserAccess`.
+  const ownerBrowserAccessFor = (request: HttpServerRequest.HttpServerRequest, subject: string) =>
+    ownerBrowserAccess(machineMap, request, subject).pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+      Effect.provideService(Crypto.Crypto, crypto),
     );
-  };
 
   const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
     (request) =>
@@ -1311,16 +1280,20 @@ export const make = Effect.gen(function* () {
               identity === undefined
                 ? Effect.succeed(undefined)
                 : identity.kind === "owner"
-                  ? ownerBrowserGrant(request, identity.subject).pipe(
-                      Effect.flatMap((grant) =>
-                        issuePairingCredentialForSubject({
-                          ...(grant ?? {
-                            scopes: AuthStandardClientScopes,
-                            subject: "one-time-token",
-                            label: `cloudflare-access ${identity.subject}`,
-                          }),
-                          ttl: Duration.minutes(2),
-                        }),
+                  ? ownerBrowserAccessFor(request, identity.subject).pipe(
+                      Effect.flatMap((access) =>
+                        access._tag === "ClientPending"
+                          ? Effect.succeed<ClientPending | AuthPairingCredentialResult>(access)
+                          : issuePairingCredentialForSubject({
+                              ...(access._tag === "client"
+                                ? access.grant
+                                : {
+                                    scopes: AuthStandardClientScopes,
+                                    subject: "one-time-token",
+                                    label: `cloudflare-access ${identity.subject}`,
+                                  }),
+                              ttl: Duration.minutes(2),
+                            }),
                       ),
                     )
                   : Option.isNone(machineMap)

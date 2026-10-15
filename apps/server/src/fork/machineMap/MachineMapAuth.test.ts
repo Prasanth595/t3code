@@ -11,6 +11,7 @@ import {
   AuthSettingsWriteScope,
   AuthStandardClientScopes,
   type ClientAccessMode,
+  clientKeyCode,
   ClientId,
   EnvironmentId,
   MACHINE_LEVEL_SCOPES,
@@ -37,6 +38,7 @@ import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as SessionStore from "../../auth/SessionStore.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { guardClientAccessPatch } from "./browserAccess.ts";
 import { isLocalDesktopSubject } from "./machineAccess.ts";
 import { PEER, PEER_TOKEN, SELF, arrow, desiredState } from "./MachineMap.testkit.ts";
 import * as MachineMapState from "./MachineMapState.ts";
@@ -78,6 +80,7 @@ const layerConfig = Layer.effect(
     return {
       ...config,
       cloudflareAccess: { teamDomain: ACCESS_TEAM, aud: "aud-tag", subjects: ["dev@example.com"] },
+      desktopBootstrapToken: "desktop-token",
     } satisfies ServerConfig.ServerConfig["Service"];
   }),
 ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-machine-map-auth-" })));
@@ -158,6 +161,25 @@ const saveDesired = (desired: MachineDesiredState) =>
     yield* state.updateSaved((saved) => ({ ...saved, desired }));
   });
 
+/** What the Access hook gives the owner browser: a credential, a waiting state or nothing. */
+const ownerAccess = (dpop?: string) =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    return yield* auth.issueCloudflareAccessPairingCredential(
+      accessRequest(yield* signAccessJwt({ email: "dev@example.com" }), dpop),
+    );
+  });
+
+/** Exchanges a credential for a bearer session and authenticates with it. */
+const sessionFor = (credential: string) =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const token = yield* auth.exchangeBootstrapCredentialForAccessToken(credential, undefined, {
+      deviceType: "bot",
+    });
+    return yield* auth.authenticateHttpRequest(bearerRequest(token.access_token));
+  });
+
 /** Pairs through Cloudflare Access like a peer, then exchanges the credential for a session. */
 const pairAs = (claims: Record<string, unknown>, dpop?: string) =>
   Effect.gen(function* () {
@@ -165,7 +187,7 @@ const pairAs = (claims: Record<string, unknown>, dpop?: string) =>
     const issued = yield* auth.issueCloudflareAccessPairingCredential(
       accessRequest(yield* signAccessJwt(claims), dpop),
     );
-    if (issued === undefined) return undefined;
+    if (issued === undefined || "_tag" in issued) return undefined;
     const token = yield* auth.exchangeBootstrapCredentialForAccessToken(
       issued.credential,
       undefined,
@@ -243,6 +265,55 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
       expect(session?.subject).toBe("one-time-token");
       expect(session?.scopes).toEqual(AuthStandardClientScopes);
     }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "off"))),
+  );
+
+  it.effect(
+    "under enforce, an unknown or unproven browser gets no session and waits (MM-918)",
+    () =>
+      Effect.gen(function* () {
+        yield* saveDesired(desiredState({}));
+        const unknown = yield* ownerAccess(yield* browserProof());
+        expect(unknown).toEqual({
+          _tag: "ClientPending",
+          pending: {
+            code: clientKeyCode(computeDpopJwkThumbprint(browserJwk)),
+            portalUrl: expect.any(String),
+          },
+        });
+        expect(yield* ownerAccess()).toMatchObject({
+          _tag: "ClientPending",
+          pending: { code: null },
+        });
+      }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "enforce"))),
+  );
+
+  it.effect("under enforce, the desktop app and pairing links still get in (MM-918)", () =>
+    Effect.gen(function* () {
+      yield* saveDesired(desiredState({}));
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const desktop = yield* sessionFor("desktop-token");
+      expect(desktop.subject).toBe("desktop-bootstrap");
+      const link = yield* auth.createPairingLink({ label: "phone" });
+      const paired = yield* sessionFor(link.credential);
+      expect(paired.scopes).toEqual(AuthStandardClientScopes);
+    }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "enforce"))),
+  );
+
+  it.effect(
+    "only the local desktop app changes clientAccess through the settings RPC (MM-919)",
+    () =>
+      Effect.gen(function* () {
+        const patch = { clientAccess: "off" };
+        expect(
+          Exit.isFailure(yield* Effect.exit(guardClientAccessPatch(patch, "one-time-token"))),
+        ).toBe(true);
+        expect(
+          Exit.isSuccess(yield* Effect.exit(guardClientAccessPatch(patch, "desktop-bootstrap"))),
+        ).toBe(true);
+        expect(
+          Exit.isSuccess(yield* Effect.exit(guardClientAccessPatch({}, "one-time-token"))),
+        ).toBe(true);
+      }),
   );
 
   it.effect("/mcp admits a machine session only while its arrow has agent tools (MM-1307)", () =>

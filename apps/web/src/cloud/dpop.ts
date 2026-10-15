@@ -61,7 +61,7 @@ function openDpopDatabase(): Effect.Effect<IDBDatabase, BrowserDpopError> {
   });
 }
 
-export function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null, BrowserDpopError> {
+function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null, BrowserDpopError> {
   if (typeof indexedDB === "undefined") {
     return Effect.succeed(null);
   }
@@ -84,7 +84,7 @@ export function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null,
   );
 }
 
-export function writeStoredBrowserDpopKey(
+function writeStoredBrowserDpopKey(
   key: BrowserDpopKey,
 ): Effect.Effect<void, BrowserDpopError> {
   if (typeof indexedDB === "undefined") {
@@ -141,6 +141,35 @@ export const generateBrowserDpopKey = Effect.gen(function* () {
     thumbprint: computeDpopJwkThumbprint(publicJwk),
   };
 });
+
+let loadingKey: Promise<BrowserDpopKey> | null = null;
+
+/**
+ * The browser key of this page, made on first use. The relay and the machine map key proof
+ * (MM-917) both use it, so a page never makes two keys. A failed load is not kept: the next use
+ * tries again.
+ */
+export const loadOrCreateBrowserDpopKey: Effect.Effect<BrowserDpopKey, BrowserDpopError> =
+  Effect.suspend(() => {
+    const loading = (loadingKey ??= Effect.runPromise(
+      Effect.gen(function* () {
+        const stored = yield* readStoredBrowserDpopKey();
+        if (stored) return stored;
+        const generated = yield* generateBrowserDpopKey;
+        yield* writeStoredBrowserDpopKey(generated);
+        return generated;
+      }),
+    ));
+    return Effect.tryPromise({
+      try: () => loading,
+      catch: (cause) => {
+        if (loadingKey === loading) loadingKey = null;
+        return cause instanceof BrowserDpopError
+          ? cause
+          : dpopError("Could not load DPoP key.", cause);
+      },
+    });
+  });
 
 export function createBrowserDpopProof(input: {
   readonly method: string;

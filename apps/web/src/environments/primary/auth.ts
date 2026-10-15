@@ -137,6 +137,8 @@ type ServerAuthGateState =
   | { status: "authenticated" }
   // Fork: MM-718. The machine map pause locks this client; pairing cannot help.
   | { status: "machine-paused" }
+  // Fork: MM-920. The browser key of this browser waits for approval in the portal.
+  | { status: "client-pending"; pending: NonNullable<AuthSessionState["clientPending"]> }
   | {
       status: "requires-auth";
       auth: AuthSessionState["auth"];
@@ -331,6 +333,10 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
   }
 
   const bootstrapCredential = urlCredential ?? getDesktopBootstrapCredential();
+  // A pairing link still works while the key waits (MM-920).
+  if (!bootstrapCredential && currentSession.clientPending !== undefined) {
+    return { status: "client-pending", pending: currentSession.clientPending };
+  }
   if (!bootstrapCredential) {
     return {
       status: "requires-auth",

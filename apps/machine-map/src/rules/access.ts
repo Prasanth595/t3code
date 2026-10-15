@@ -2,15 +2,16 @@
  * Pure rules for arrows and for agent writes: build an arrow change (MM-304), the map role that a
  * tool needs (MM-802) and the self-escalation check (MM-803).
  */
-import type {
-  ArrowRecord,
-  ClientArrowRecord,
-  ClientId,
-  MachineId,
-  MachineLevel,
-  MachineMapDocument,
-  MapChange,
-  MapToolName,
+import {
+  type ArrowRecord,
+  type ClientArrowRecord,
+  type ClientId,
+  isOwnerOnlySetting,
+  type MachineId,
+  type MachineLevel,
+  type MachineMapDocument,
+  type MapChange,
+  type MapToolName,
 } from "@t3tools/contracts/machineMap";
 
 import {
@@ -132,6 +133,18 @@ export const touchesClients = (changes: ReadonlyArray<MapChange>): boolean =>
       change._tag === "setClientArrow",
   );
 
+/** MM-919: changes of settings that only the owner makes, on the approval path. */
+export const touchesOwnerOnlySettings = (changes: ReadonlyArray<MapChange>): boolean =>
+  changes.some(
+    (change) => change._tag === "setSetting" && isOwnerOnlySetting(change.scope, change.key),
+  );
+
+/** MM-711, MM-919: leaving `enforce` lets browsers in again, so only `enforce` is not a raise. */
+const leavesEnforce = (change: MapChange): boolean =>
+  change._tag === "setSetting" &&
+  isOwnerOnlySetting(change.scope, change.key) &&
+  !(change.present && change.value === "enforce");
+
 /**
  * True when the changes raise access for a machine that `concerns` picks: a higher level or agent
  * tools on an arrow from it, or a higher map role for it.
@@ -164,12 +177,16 @@ export const raisesOwnAccess = (
   changes: ReadonlyArray<MapChange>,
 ): boolean => raises(map, changes, (id) => id === machineId);
 
-/** MM-711: true when the changes raise an arrow or a map role of any machine, or any client. */
+/**
+ * MM-711: true when the changes raise an arrow or a map role of any machine, or any client, or
+ * set `clientAccess` to anything but `enforce`.
+ */
 export function raisesAnyAccess(
   map: MachineMapDocument,
   changes: ReadonlyArray<MapChange>,
 ): boolean {
   if (raises(map, changes, () => true)) return true;
+  if (changes.some(leavesEnforce)) return true;
   let current = map;
   for (const change of changes) {
     if (clientRaises(current, change)) return true;

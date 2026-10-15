@@ -201,6 +201,13 @@ const MACHINE_LOCAL_SETTINGS: Readonly<Record<SettingScope, ReadonlySet<string>>
 export const isMachineLocalSetting = (scope: SettingScope, key: string): boolean =>
   MACHINE_LOCAL_SETTINGS[scope].has(key);
 
+/**
+ * MM-919: settings that only the owner changes, in the portal on the approval path (MM-1207) or
+ * in the local desktop app. Agents, the "All environments" path (MM-411) and other clients cannot.
+ */
+export const isOwnerOnlySetting = (scope: SettingScope, key: string): boolean =>
+  scope === "server" && key === "clientAccess";
+
 export const withoutMachineLocalSettings = (
   scope: SettingScope,
   values: Readonly<Record<string, unknown>>,
