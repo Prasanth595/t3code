@@ -296,15 +296,12 @@ export interface DesktopUpdateReleaseNote {
   version: string;
   items: ReadonlyArray<string>;
   totalItems: number;
-  /** Fork: the build time of the offered version, from its update manifest. Other versions have none. */
-  releasedAt?: string;
 }
 
 export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   version: Schema.String,
   items: Schema.Array(Schema.String),
   totalItems: Schema.Number,
-  releasedAt: Schema.optionalKey(Schema.String),
 });
 
 export const DesktopUpdateStateSchema = Schema.Struct({

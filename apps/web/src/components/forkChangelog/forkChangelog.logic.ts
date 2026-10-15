@@ -7,6 +7,7 @@ import {
   type EnvironmentId,
   repositoryGroupingKeyOf,
 } from "@t3tools/contracts";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
@@ -205,4 +206,20 @@ export function buildForkChangelogAgentTask(
       diff: "",
     },
   };
+}
+
+/** The update popup lists at most this many commits. The changelog shows the rest. */
+export const UPDATE_CHANGES_LIMIT = 8;
+
+/** The releases an update brings: newer than the installed version, up to the offered one. */
+export function releasesInUpdate<Release extends Pick<ForkRelease, "version">>(
+  releases: ReadonlyArray<Release>,
+  installedVersion: string,
+  updateVersion: string,
+): Release[] {
+  return releases.filter(
+    (release) =>
+      compareSemverVersions(release.version, installedVersion) > 0 &&
+      compareSemverVersions(release.version, updateVersion) <= 0,
+  );
 }

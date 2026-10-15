@@ -69,7 +69,6 @@ const UpdateInfo = Schema.Struct({
   // fail the decode and block the update state transition. The shape is
   // validated defensively in normalizeDesktopUpdateReleaseNotes.
   releaseNotes: Schema.optional(Schema.Unknown),
-  releaseDate: Schema.optional(Schema.Unknown),
 });
 
 const DownloadProgressInfo = Schema.Struct({
@@ -892,18 +891,10 @@ export const make = Effect.gen(function* () {
           }
 
           const checkedAt = yield* currentIsoTimestamp;
-          const normalized = normalizeDesktopUpdateReleaseNotes(
+          const { releaseNotes, omittedReleaseCount } = normalizeDesktopUpdateReleaseNotes(
             info.releaseNotes,
             info.version,
             state.channel,
-          );
-          const { omittedReleaseCount } = normalized;
-          // Fork: the manifest dates only the offered version.
-          const { releaseDate } = info;
-          const releaseNotes = normalized.releaseNotes.map((note) =>
-            note.version === info.version && typeof releaseDate === "string"
-              ? { ...note, releasedAt: releaseDate }
-              : note,
           );
           yield* setState(
             reduceDesktopUpdateStateOnUpdateAvailable(

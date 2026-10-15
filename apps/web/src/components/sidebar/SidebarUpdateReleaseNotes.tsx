@@ -6,8 +6,6 @@ import {
   getDesktopUpdateReleaseUrl,
 } from "../desktopUpdate.logic";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
-import { useClientSettings } from "../../hooks/useSettings";
-import { formatChatTimestampTooltip } from "../../timestampFormat";
 import { Separator } from "../ui/separator";
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
@@ -42,16 +40,6 @@ function ReleaseLink({
       {children}
       <ExternalLinkIcon aria-hidden className="size-3 shrink-0" strokeWidth={2.25} />
     </a>
-  );
-}
-
-/** Fork: the build time of a release in the viewer's time zone. */
-function ReleaseTime({ iso }: { readonly iso: string }) {
-  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
-  return (
-    <time className="mt-0.5 block text-muted-foreground text-xs leading-4" dateTime={iso}>
-      Built {formatChatTimestampTooltip(iso, timestampFormat)}
-    </time>
   );
 }
 
@@ -102,7 +90,6 @@ export function SidebarUpdateReleaseNotes({
                 <h3 className="text-foreground text-xs leading-4 font-semibold">
                   {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
                 </h3>
-                {releaseNote.releasedAt ? <ReleaseTime iso={releaseNote.releasedAt} /> : null}
                 <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
                   {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => (
                     <li className="list-disc break-words" key={key}>

@@ -139,6 +139,7 @@ scripts/fork-deploy-local.sh <ssh-host>
 The client setting `forkChangelogEnabled` turns on a changelog of the fork. It is off by default. Turn it on in Settings > General > About > Fork changelog.
 
 - Open it from the Fork changelog row in Settings, or from "Open changelog" in the update button popover on the desktop app. It opens also when no update is available.
+- With the setting on, the update button popover shows the changelog rows of the releases between the installed version and the offered one, up to 8 commits. "And N more" opens the changelog. It reads only the newest 8 of those releases, to limit GitHub requests. When GitHub does not answer, for example offline, the popover shows the release notes instead.
 - The Releases tab is one timeline of commits, newest first. A thin divider shows each release, its time and an "Installed" mark. The commits that the release adds to the release before it follow the divider.
 - The timeline shows 10 releases first. "Show older releases" adds 10 more, because each release costs GitHub requests.
 - Each commit shows as its own row. A fork commit has a "Fork" mark, and an upstream commit has no mark. A range of more than 500 commits stops at 500 with a note.

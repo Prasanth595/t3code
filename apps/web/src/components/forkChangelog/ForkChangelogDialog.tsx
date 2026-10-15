@@ -54,7 +54,7 @@ interface ChangelogClock {
 /** One minute tick for every time label, so the list itself does not re-render. */
 const ChangelogClockContext = createContext<ChangelogClock | null>(null);
 
-function ChangelogClockProvider({ children }: { readonly children: ReactNode }) {
+export function ChangelogClockProvider({ children }: { readonly children: ReactNode }) {
   const nowMs = useRelativeTimeTick(60_000);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const clock = useMemo(() => ({ nowMs, timestampFormat }), [nowMs, timestampFormat]);
@@ -358,7 +358,7 @@ function SyncRun({ run }: { readonly run: ForkWorkflowRun }) {
   );
 }
 
-function CommitList({ commits }: { readonly commits: ReadonlyArray<ForkCommit> }) {
+export function CommitList({ commits }: { readonly commits: ReadonlyArray<ForkCommit> }) {
   return (
     <ul className="flex flex-col">
       {commits.map((commit) => (
