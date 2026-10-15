@@ -52,11 +52,14 @@ export const MACHINE_LEVEL_SCOPES: Readonly<Record<MachineLevel, ReadonlyArray<A
 /** The session subject of a machine on the server of another machine (MM-1305). */
 export const machineSessionSubject = (machineId: MachineId): string => `machine:${machineId}`;
 
-/** A place on the map, as fractions of the map area. */
-export const MapPosition = Schema.Struct({
-  x: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
-  y: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
-});
+const MapCoordinate = Schema.Number.check(Schema.isFinite());
+
+/**
+ * A place on the map. The portal writes fractions of the map area today. Any finite number
+ * decodes, so a later portal can write map pixels without breaking machines on this build
+ * (MM-1114): each machine decodes `self` in its desired state.
+ */
+export const MapPosition = Schema.Struct({ x: MapCoordinate, y: MapCoordinate });
 export type MapPosition = typeof MapPosition.Type;
 
 export const MachineRecord = Schema.Struct({
@@ -170,8 +173,8 @@ export type MapPreset = typeof MapPreset.Type;
 export const PairOffset = Schema.Struct({
   /** 0 is the center of `a`, 1 the center of `b`. */
   along: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
-  /** Distance beside the line, as a fraction of the shorter side of the map. */
-  aside: Schema.Number.check(Schema.isBetween({ minimum: -1, maximum: 1 })),
+  /** Distance beside the line, as a fraction of the shorter side of the map. Any finite number decodes, see `MapPosition`. */
+  aside: MapCoordinate,
 });
 export type PairOffset = typeof PairOffset.Type;
 
@@ -550,6 +553,11 @@ export type PortalToMachine = typeof PortalToMachine.Type;
 
 /** Everything a portal page shows (MM-1102). */
 export const PortalSnapshot = Schema.Struct({
+  /**
+   * MM-1120: the unit of map places. A page decodes only the unit of its own bundle, so a
+   * snapshot in a newer unit fails to decode and the page loads the new bundle.
+   */
+  placeUnits: Schema.Literal("fractions"),
   map: MachineMapDocument,
   presence: Schema.Record(Schema.String, MachinePresence),
   /** Current values that each machine reported, by machine id. */

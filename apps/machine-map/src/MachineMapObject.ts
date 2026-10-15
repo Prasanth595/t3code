@@ -571,6 +571,7 @@ export class MachineMapObject extends DurableObject<Env> {
       SNAPSHOT_FINISHED_COMMANDS,
     ).map((row) => decodeCommand(row.data));
     return {
+      placeUnits: "fractions",
       map: this.#map,
       presence: Object.fromEntries(this.#map.machines.map((m) => [m.id, this.#presence(m.id)])),
       reportedSettings: Object.fromEntries(

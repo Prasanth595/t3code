@@ -5,6 +5,7 @@ import { emptyMap } from "../rules/map.ts";
 import { INITIAL_STATE, reduce, settleHeld, type Held } from "./store.ts";
 
 const snapshot: PortalSnapshot = {
+  placeUnits: "fractions",
   map: emptyMap(),
   presence: {},
   reportedSettings: {},

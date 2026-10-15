@@ -212,6 +212,14 @@ describe("freePosition (MM-206)", () => {
 const decodeMap = Schema.decodeUnknownSync(MachineMapDocument);
 
 describe("display data (MM-1108, MM-1109)", () => {
+  it("decodes places outside 0..1, so a later portal can write map pixels (MM-1114)", () => {
+    const map = {
+      ...threeMachines(),
+      machines: [{ ...machine(MAC), position: { x: 350, y: -20 } }],
+    };
+    expect(decodeMap(map).machines[0]?.position).toEqual({ x: 350, y: -20 });
+  });
+
   const note: MapNote = {
     id: "n1",
     text: "Mac is the main box",
