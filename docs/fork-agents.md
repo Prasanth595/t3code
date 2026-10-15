@@ -46,13 +46,10 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 | See the scheduled tasks of a machine    | `machines_read`. `presence.<machineId>.status.tasks` lists them. A machine without `tasks` runs an older T3.                                                                                          |
 | Pause, resume or run one scheduled task | `machines_command` with `{"_tag":"setScheduledTaskEnabled","taskId":...,"enabled":false}` (`true` resumes), or `{"_tag":"runScheduledTask","taskId":...}`. An offline machine gets it from its queue. |
 | Stop everything                         | Ask the owner to press the emergency pause in the portal. It stops all agents and sets all access to none. Agents cannot press it.                                                                    |
-
-                                                                                |
-
-| Revert a map change | `machines_undo` with the revision number from `history`. Commands cannot be undone. |
-| Cancel a queued command | `machines_queue_cancel` with the command id. |
-| Join a new machine | Ask the owner for a join code from Add machine. Then call `machines_join`, or run `t3 machine-map join <code>` on that machine. |
-| Install the fork on a new machine | Run the step 0 command of the join dialog there: `install.sh --join <code>` or `install.ps1 -Join <code>` from `scripts/fork-install`. See fork.md "Install the fork". |
+| Revert a map change                     | `machines_undo` with the revision number from `history`. Commands cannot be undone.                                                                                                                   |
+| Cancel a queued command                 | `machines_queue_cancel` with the command id.                                                                                                                                                          |
+| Join a new machine                      | Ask the owner for a join code from Add machine. Then call `machines_join`, or run `t3 machine-map join <code>` on that machine.                                                                       |
+| Install the fork on a new machine       | Run the step 0 command of the join dialog there: `install.sh --join <code>` or `install.ps1 -Join <code>` from `scripts/fork-install`. See fork.md "Install the fork".                                |
 
 ## Updates and deploys
 

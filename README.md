@@ -1,6 +1,6 @@
 # Yarden-zamir fork of T3 Code
 
-This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Each fork behavior is a setting that starts on when it only adds something, and off when it changes behavior, installs or restarts anything, changes access or needs setup. Details and setup: [docs/fork.md](docs/fork.md).
+This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Each fork behavior is a setting that starts on when it only adds something, and off when it changes behavior, installs or restarts anything, changes access or needs setup. Settings > Fork shows every fork setting. Details and setup: [docs/fork.md](docs/fork.md).
 
 ## Fork features
 
@@ -9,45 +9,68 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Cloudflare Access login:** the server accepts the Cloudflare Access JWT as the owner login (`cloudflareAccessTeamDomain`, `cloudflareAccessAud`, `cloudflareAccessSubjects`).
 - **Request headers per environment:** a saved environment sends its own headers, for example a Cloudflare Access service token. Edit them in Settings > Connections.
 - **Tunnel pairing:** a desktop server that listens on loopback makes pairing links with its tunnel URL (`tunnelPairingEnabled`, `tunnelPairingUrl`).
-- **Trusted sibling environments:** trusted browser origins get credentialed CORS, and the server accepts its session cookie from them. One browser page pairs and reaches the other hosts (`trustedBrowserOrigins`).
+- **Trusted sibling environments:** trusted browser origins get credentialed CORS and session cookies. One browser page pairs and reaches the other hosts (`trustedBrowserOrigins`).
+
+**Machine map** (all lines need `machineMap`, which a join to a map turns on)
+
+- **Portal:** one portal at `t3.yarden-zamir.com` (Cloudflare Worker) maps every T3 machine and sets what each machine can do on the others. Requirements: `apps/machine-map/SPEC.md`.
+- **Portal views:** Map, Table, Health, Settings, Queue, Tasks, History, Inbox and Clients. Every portal action is also an agent tool: `machines_*` and `machine_tool_call`.
+- **Join and install:** "Add machine" shows one command per system that installs the fork and joins with a one-time code. The portal makes the tunnel of the machine.
+- **Join feedback:** the open join dialog shows when a machine uses the code, and if it connected.
+- **Emergency pause:** a big red button stops all agents and sets all access to none. While paused, each machine locks T3 Code for every client except its own desktop app.
+- **Scheduled tasks:** the Tasks view lists the scheduled tasks of every machine, with pause, resume and run now.
+- **Health alerts:** each machine sends CPU, memory, disk, swap and battery samples. The CPU alert starts when a machine is starved for CPU, not when it is only busy. The battery alert starts below 15% on battery, by default.
+- **Installable portal:** the portal installs as an app, with an offline page, an app badge and Web Push for alerts, proposals, waiting sign-ins and the pause.
+- **Settings and theme sync:** a setting with a shared value syncs to every machine. A change with "All environments" in T3 Settings sets the shared value. Custom themes (the `themes/` folder) and `defaultTheme` sync too.
+- **Settings > Machines:** join or leave the map with a code, and see the machines that this machine can reach.
+- **Desktop app on the map:** the desktop app adds each reachable machine as an environment and applies the shared client settings.
+- **Zoom and pan:** the map zooms, pans and fits all cards, also on phones and small windows.
+- **Approved clients:** a new browser waits in the Clients view until the owner approves it with a fresh MFA. Each client gets a card and a level per machine.
+- **Observe browser keys:** each browser proves its browser key at sign-in. The machine reports unknown keys to the portal and gives an approved client the level of its arrow, at most `standard` (`clientAccess`: `observe`).
+- **App invites and app tokens:** "Invite an app" shows a QR code that a native app, such as the T3 Android app, uses once. The app gets its own Cloudflare Access token, and each machine gives it the level of its arrow.
+- **Machines panel:** a read-only map in the right panel of a thread. Open it with "Show machines" in the command palette.
 
 **Updates and releases**
 
-- **Fork releases:** nightly desktop builds for macOS (signed with a self-made certificate), Windows and Linux, plus Linux server archives and `SHA256SUMS` for machines without a display. A release builds on each push to main that changes more than docs or the portal. The upstream server updaters (`t3 update`, "Update everything", `scripts/install.sh`) install from the fork releases.
-- **Fork installers:** one command installs the fork on macOS, Windows or Linux and joins the machine map. On Linux it installs the AppImage, or the server archive with a systemd user service on a machine without a display.
-- **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now", also at the end of "update everything".
-- **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`). The machine map Install update works on it too, now or when idle.
-- **Local deploy:** `scripts/fork-deploy-local.sh <ssh-host>` builds this checkout for a headless Linux server and switches its background service to it, without a release.
-- **Changelog:** a timeline of fork releases with every fork and upstream commit, the pending upstream commits, a "Start Fork Sync" button, and an "Ask agent" menu (`forkChangelogEnabled`, on by default).
+- **Fork releases:** nightly desktop builds for macOS (signed with a self-made certificate), Windows and Linux, plus Linux server archives and `SHA256SUMS`. A release builds on each push to main that changes more than docs or the portal. `t3 update`, "Update everything" and `scripts/install.sh` install from the fork releases.
+- **Fork installers:** one command installs the fork on macOS, Windows or Linux and joins the machine map.
+- **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now".
+- **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`).
+- **Local deploy:** `scripts/fork-deploy-local.sh <ssh-host>` builds this checkout for a headless Linux server and switches its service to it.
+- **Changelog:** a timeline of fork releases and commits, also in the update popover for the offered update, the pending upstream commits, a "Start Fork Sync" button and an "Ask agent" menu (`forkChangelogEnabled`, on by default).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
-- **Repair agent:** a failed sync or release calls a webhook that starts a repair agent.
+- **Repair agent:** a failed sync, release or Fork CI run calls a webhook that starts a repair agent.
 
 **Agents**
 
-- **Recover interrupted agents:** after a restart, each cut-off thread gets a "Recover and continue" message. Subagents get their own message. Snoozed and settled threads stay asleep (`recoverInterruptedTurns`).
-- **Background work details:** background work notifications name their tasks and output files, and a popover shows the details with links (`backgroundWorkDetails`, on by default).
+- **Recover interrupted agents:** after a restart, each cut-off thread gets a "Recover and continue" message (`recoverInterruptedTurns`).
+- **Background work details:** background work notifications name their tasks and output files, with a details popover (`backgroundWorkDetails`, on by default).
 - **Pull requests from origin:** a fork checkout lists, reads and watches the pull requests of its fork, not of upstream (`preferOriginRemote`).
-- **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request, by author role, login and agent marker (`pullRequestWatchRemarkFilter`).
+- **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request (`pullRequestWatchRemarkFilter`).
 - **Agent session import limits:** set the import window and the message limit for imported agent sessions (`agentSessionImportWindowDays`, `agentSessionImportMaxMessages`).
+- **Scheduled task model:** a scheduled task runs on any provider instance, or on the project default model.
 
 **Threads**
 
-- **Sidebar groups:** thread groups as tabs above the sidebar list. Drag threads into groups, or let rules on project, owner, status, provider, creator, background work and title sort them. Views such as "All" show other groups. The machine map syncs the groups to every machine (`sidebarGroupsEnabled`; `sidebarGroupSingleThreadOpens`; `sidebarGroups`).
-- **Snooze quick options:** edit the choices of the snooze menus. Each choice snoozes for a time, or until a time of day, with an optional label (`snoozeQuickOptions`).
+- **Sidebar groups:** thread groups as tabs above the sidebar list, filled by drag or by rules. The machine map syncs the groups to every machine (`sidebarGroupsEnabled`; `sidebarGroupSingleThreadOpens`; `sidebarGroups`).
+- **Snooze quick options:** edit the choices of the snooze menus (`snoozeQuickOptions`).
+- **Worktree path template:** a template decides where new worktrees go, for example next to `main/` in a `.bare` container (`worktreePathTemplate`).
 
 **Filters**
 
-- **Repository owner filters:** filter the pull request page and the sidebar by the account or organization that owns each repository. Show only some owners, or hide them. Type `org:` or `-org:` in the pull request search (`repositoryOwnerFilters`, on by default).
-- **Pull request filter chips:** the active pull request filters show as chips above the list. Flip a chip between "is" and "is not", or remove it. An empty list names the filters that emptied it (`pullRequestFilterChips`, on by default).
+- **Repository owner filters:** filter the pull request page and the sidebar by repository owner. Type `org:` or `-org:` in the pull request search (`repositoryOwnerFilters`, on by default).
+- **Pull request filter chips:** the active pull request filters show as chips that flip between "is" and "is not" (`pullRequestFilterChips`, on by default).
 
 **Scripts and terminal**
 
-- **Global scripts:** scripts for every project and pinned script buttons. Global pins show in the title bar; project pins show next to the thread details toggle. Right-click opens the in-app pin menu. A global script's preview opens as a floating popup. An action with "Open as an app overlay" opens its page in a large panel over the app instead, and runs its command only when the page is down (`previewOverlay`). A remote client, such as an HTTPS page or a client of another machine, opens the preview instead, because it cannot frame that page. Scripts can run in the background (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`).
-- **App toggle shortcuts:** global keys that show and hide the desktop app at once, like a Raycast hotkey (`appToggleShortcuts`).
+- **Global scripts:** scripts for every project, pinned script buttons, floating previews and app overlays (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`).
+- **App toggle shortcuts:** global keys that show and hide the desktop app (`appToggleShortcuts`).
 - **Terminal settings:** app shortcuts first in the terminal, and a confirmation before a terminal closes (`terminalAppShortcutsFirst`; `confirmTerminalClose`, on by default).
 
-**Themes and look**
+**Web app and look**
 
+- **Installed web app:** each server web app installs as an app, with an offline page, worker notifications and an app badge (`installedAppEnabled`, on by default).
+- **Thread card layouts:** build the thread card from its elements, for desktop and for mobile (`threadCardLayouts`).
 - **Theme style:** published themes can set shape, fonts, a canvas pattern and user CSS.
 - **Lightning icon:** the fork app uses its own icon on every nightly icon file.
 
@@ -55,13 +78,13 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 - **`t3 tool`:** `t3 tool list`, `describe` and `call` run T3 MCP tools from the command line.
 - **Open workspace with a checkout:** the desktop open-workspace request accepts a checkout.
-- **Machine map:** one portal at `t3.yarden-zamir.com` (Cloudflare Worker) maps every T3 machine. It sets what each machine can do on the others, shares settings, queues changes for offline machines, and has an emergency pause. Every portal action is also an agent tool (`machineMap`, see `apps/machine-map/SPEC.md`).
 
 ## Fork fixes
 
 - Themes: border width and radius flow through Tailwind tokens. Composer backdrop, outline and banners follow the theme radius. One theme shadow for nested surfaces and for split buttons.
 - MCP: `schedule_task`, `t3_project_create` and `t3_project_update` read and write the project model, environment mode, auto-pull and actions through project settings.
 - Desktop updates: the updater never downgrades, so a local build stays installed. The server recovers when quit-and-install does not quit.
+- Worktree launch: a worktree request in Scratch runs in a thread folder. A worktree request outside a Git repository runs in the project folder and says so in the thread. A launch refuses a new worktree branch that already exists.
 
 ---
 
