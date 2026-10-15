@@ -2480,7 +2480,7 @@ describe("deriveMessagesTimelineRows", () => {
       turnDiffSummaries: [],
       supportsConversationRollback: false,
     });
-    expect(rows.map((row) => row.kind)).toEqual(["message", "working", "message", "thinking"]);
+    expect(rows.map((row) => row.kind)).toEqual(["message", "working", "thinking", "message"]);
   });
 
   it("keeps the live tool row above a message queued behind the running turn", () => {

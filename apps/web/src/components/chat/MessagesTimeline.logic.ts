@@ -1910,11 +1910,27 @@ export function deriveMessagesTimelineRows(input: {
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
+    // The active run's rows end before any pending queued prompt, which
+    // belongs to the next turn.
+    const pendingQueuedMessageIds = new Set<string>();
+    for (let index = activeTurnHeaderIndex; index < timelineEntries.length; index += 1) {
+      const entry = timelineEntries[index];
+      if (
+        entry?.kind === "message" &&
+        isPendingQueuedPrompt(timelineEntries, index, unsettledRunId)
+      ) {
+        pendingQueuedMessageIds.add(entry.message.id);
+      }
+    }
+    const pendingQueuedRowIndex = nextRows.findIndex(
+      (row) => row.kind === "message" && pendingQueuedMessageIds.has(row.message.id),
+    );
+    const insertAt = pendingQueuedRowIndex === -1 ? nextRows.length : pendingQueuedRowIndex;
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
       const groupId = workGroupId(failedGroupAnchor.id);
       const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-      nextRows.push({
+      nextRows.splice(insertAt, 0, {
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
@@ -1922,7 +1938,9 @@ export function deriveMessagesTimelineRows(input: {
         expanded,
       });
       if (expanded) {
-        nextRows.push(
+        nextRows.splice(
+          insertAt + 1,
+          0,
           expandedWorkGroupRow(
             groupId,
             failedGroupAnchor.createdAt,
@@ -1931,7 +1949,7 @@ export function deriveMessagesTimelineRows(input: {
         );
       }
     } else {
-      nextRows.push({
+      nextRows.splice(insertAt, 0, {
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
