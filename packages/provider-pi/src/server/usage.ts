@@ -16,12 +16,13 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { PiSettings } from "../settings.ts";
 
-// The scan cache drops entries whose saved state no longer decodes, so bumping
-// `version` re-parses files cached before a change to what a file parses to.
-// v2: faux records are dropped.
 const PiScanState = Schema.Struct({
   sessionId: Schema.mutableKey(Schema.String),
-  version: Schema.Literal(2),
+  /**
+   * Whether the session's current model is faux. Optional so states saved
+   * before faux was skipped still resume.
+   */
+  faux: Schema.mutableKey(Schema.optionalKey(Schema.Boolean)),
 });
 /** pi-ai's in-memory test provider. Its usage is scripted, never billed. */
 const FAUX_PROVIDER = "faux";
@@ -65,12 +66,21 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
   const entry = decoded.value;
   if (entry.type === "session") {
     state.sessionId = entry.id;
+    delete state.faux;
+    return [];
+  }
+  const source = entry.type === "message" ? entry.message : entry;
+  if ("role" in source && source.role === "assistant") {
+    state.faux = source.provider === FAUX_PROVIDER;
+  }
+  if ("provider" in source && source.provider === FAUX_PROVIDER) return [];
+  // Summaries carry no provider but run on the session's model, so a faux
+  // session's are just as synthetic. Tool usage may come from any model.
+  if ((entry.type === "compaction" || entry.type === "branch_summary") && state.faux === true) {
     return [];
   }
   const timestampMs = parseTimestampMs(entry.timestamp);
   if (timestampMs === null) return [];
-  const source = entry.type === "message" ? entry.message : entry;
-  if ("provider" in source && source.provider === FAUX_PROVIDER) return [];
   const usage = source.usage;
   // Pi's auxiliary tool and summary records carry no model attribution. Match
   // Pi's own breakdown rather than assigning them to the conversation model.
@@ -135,7 +145,10 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
     return parseRecord(parsed, state);
   },
   parseProjected: parseRecord,
-  state: { initial: () => ({ sessionId: "", version: 2 }), schema: PiScanState },
+  state: { initial: () => ({ sessionId: "" }), schema: PiScanState },
+  // Files cached before faux was skipped re-parse, which also drops their
+  // faux sessions' summaries.
+  isStaleCachedRecord: (record) => record.model.startsWith(`${FAUX_PROVIDER}/`),
 };
 
 export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {

@@ -113,6 +113,12 @@ export interface TranscriptUsageFormat<State> {
    * records for cross-file de-duplication.
    */
   readonly sharedSessionsAcrossFiles?: true;
+  /**
+   * Matches records an older parser saved that this one no longer emits. The
+   * scan cache discards an entry holding any, so its file re-parses; usage
+   * saved for a deleted file goes with it.
+   */
+  readonly isStaleCachedRecord?: (record: UsageRecord) => boolean;
 }
 
 /** A configured instance of the driver, its config already decoded by `driver.configSchema`. */

@@ -154,6 +154,31 @@ describe("scan cache round trip", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["current", 5, { sessionId: "pi-session" }],
+    ["legacy", 4, null],
+  ] as const)("re-parses a %s Pi entry that saved faux records", (_, version, state) => {
+    const pi = (model: string) =>
+      record({ provider: "pi", model, dedupeKey: JSON.stringify(["pi", model]) });
+    const entry = (records: readonly UsageRecord[]): CachedFile => ({
+      size: 40,
+      mtimeMs: 100,
+      provider: "pi",
+      records,
+      tailRecords: [],
+      position: position({ state }),
+    });
+    const cache: ScanCache = new Map([
+      ["/faux.jsonl", entry([pi("faux/faux-1"), pi("Tools/summaries")])],
+      ["/real.jsonl", entry([pi("anthropic/claude-fable-5"), pi("Tools/summaries")])],
+    ]);
+    const encoded = { ...encodeScanCache(cache), version };
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encoded)), TEST_FORMAT_MAP);
+
+    expect([...restored.keys()]).toEqual(["/real.jsonl"]);
+  });
+
   it("rejects a document from before records carried a speed", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
     const previous = { ...encoded, version: 3 };

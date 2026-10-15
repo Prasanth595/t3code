@@ -1,5 +1,4 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Schema from "effect/Schema";
 
 import { piUsageFormat } from "./usage.ts";
 
@@ -11,32 +10,46 @@ function parse(lines: readonly unknown[]) {
   return lines.flatMap((line) => piUsageFormat.parseLine(JSON.stringify(line), state));
 }
 
+const assistant = (id: string, provider: string, model: string) => ({
+  type: "message",
+  id,
+  timestamp,
+  message: { role: "assistant", provider, model, usage },
+});
+const compaction = (id: string) => ({ type: "compaction", id, timestamp, usage });
+const toolResult = (id: string) => ({
+  type: "message",
+  id,
+  timestamp,
+  message: { role: "toolResult", usage },
+});
+
 describe("piUsageFormat", () => {
   it("skips pi-ai's faux test provider and keeps real providers", () => {
     const records = parse([
       { type: "session", id: "s1" },
-      {
-        type: "message",
-        id: "a1",
-        timestamp,
-        message: { role: "assistant", provider: "faux", model: "faux-1", usage },
-      },
+      assistant("a1", "faux", "faux-1"),
       { type: "usage", id: "u1", timestamp, provider: "faux", model: "faux-1", usage },
-      {
-        type: "message",
-        id: "a2",
-        timestamp,
-        message: { role: "assistant", provider: "anthropic", model: "claude-fable-5", usage },
-      },
+      assistant("a2", "anthropic", "claude-fable-5"),
     ]);
     expect(records.map((record) => record.model)).toEqual(["anthropic/claude-fable-5"]);
   });
 
-  it("rejects scan state saved before faux records were skipped", () => {
-    // The scan cache drops entries whose state fails this check, so files
-    // cached with faux records re-parse instead of keeping them.
-    const isState = Schema.is(piUsageFormat.state!.schema);
-    expect(isState({ sessionId: "s1" })).toBe(false);
-    expect(isState(piUsageFormat.state!.initial())).toBe(true);
+  it("skips summaries a faux model wrote but keeps tool usage", () => {
+    const records = parse([
+      { type: "session", id: "s1" },
+      assistant("a1", "faux", "faux-1"),
+      compaction("c1"),
+      toolResult("t1"),
+      // A new session starts on a real model, so its summaries count again.
+      { type: "session", id: "s2" },
+      assistant("a2", "anthropic", "claude-fable-5"),
+      compaction("c2"),
+    ]);
+    expect(records.map((record) => [record.sessionId, record.model])).toEqual([
+      ["s1", "Tools/summaries"],
+      ["s2", "anthropic/claude-fable-5"],
+      ["s2", "Tools/summaries"],
+    ]);
   });
 });
