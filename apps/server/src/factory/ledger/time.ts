@@ -74,3 +74,17 @@ export const parseTs = (text: string): number | null => {
   const ms = (days * 86_400 + hour * 3_600 + minute * 60 + second) * 1000 + millis;
   return ms >= 0 ? ms : null;
 };
+
+/**
+ * A length of time as softfac prints it: `12s`, `5m`, `2h05m` or `1d01h`, by the largest unit
+ * that fits.
+ */
+export const duration = (ms: number): string => {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3_600) return `${Math.floor(secs / 60)}m`;
+  if (secs < 86_400) {
+    return `${Math.floor(secs / 3_600)}h${pad(Math.floor((secs % 3_600) / 60), 2)}m`;
+  }
+  return `${Math.floor(secs / 86_400)}d${pad(Math.floor((secs % 86_400) / 3_600), 2)}h`;
+};
