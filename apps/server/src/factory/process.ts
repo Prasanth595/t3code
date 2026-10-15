@@ -133,58 +133,95 @@ export const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
     >();
     const closed = Deferred.makeUnsafe<void>();
 
-    const child = NodeChildProcess.spawn("/bin/sh", script, {
-      cwd: input.cwd,
-      env: buildEnv(input.env),
-      stdio: ["ignore", "pipe", "ignore"],
-      detached: true,
+    // Acquire is uninterruptible, so an interrupt can never land between the
+    // spawn and the cleanup that kills the group.
+    const acquire = Effect.sync(() => {
+      const child = NodeChildProcess.spawn("/bin/sh", script, {
+        cwd: input.cwd,
+        env: buildEnv(input.env),
+        stdio: ["ignore", "pipe", "ignore"],
+        detached: true,
+      });
+      child.once("error", (cause) =>
+        Deferred.doneUnsafe(
+          exited,
+          Exit.fail(new RunSpawnError({ command: input.command, cause })),
+        ),
+      );
+      child.once("exit", (code, signal) =>
+        Deferred.doneUnsafe(exited, Exit.succeed([code, signal] as const)),
+      );
+      child.stdout?.on("data", (chunk: Buffer) => tail.push(chunk));
+      child.stdout?.once("close", () => Deferred.doneUnsafe(closed, Exit.void));
+      // No stdout (spawn failed): nothing to drain.
+      if (!child.stdout) Deferred.doneUnsafe(closed, Exit.void);
+      return child;
     });
-    child.once("error", (cause) =>
-      Deferred.doneUnsafe(exited, Exit.fail(new RunSpawnError({ command: input.command, cause }))),
-    );
-    child.once("exit", (code, signal) =>
-      Deferred.doneUnsafe(exited, Exit.succeed([code, signal] as const)),
-    );
-    child.stdout?.on("data", (chunk: Buffer) => tail.push(chunk));
-    child.stdout?.once("close", () => Deferred.doneUnsafe(closed, Exit.void));
-    // No stdout (spawn failed): nothing to drain.
-    if (!child.stdout) Deferred.doneUnsafe(closed, Exit.void);
 
-    const pid = child.pid;
-    const killGroup = (signal: NodeJS.Signals): void => {
+    // Signals the group, and the leader too in case it left the group (softfac's kill_all).
+    const killGroup = (child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals): void => {
+      const pid = child.pid;
       if (pid === undefined) return;
       try {
         globalThis.process.kill(-pid, signal);
       } catch {
         // ESRCH: the group is already gone.
       }
+      try {
+        child.kill(signal);
+      } catch {
+        // The leader is already gone.
+      }
     };
 
-    const body = Effect.gen(function* () {
-      let timedOut = false;
-      let outcome = yield* Deferred.await(exited).pipe(
-        Effect.timeoutOption(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-      );
-      if (outcome._tag === "None") {
-        timedOut = true;
-        killGroup("SIGTERM");
-        outcome = yield* Deferred.await(exited).pipe(
-          Effect.timeoutOption(input.termGraceMs ?? DEFAULT_TERM_GRACE_MS),
+    // Runs on every exit path; after a normal run both calls are no-ops.
+    const release = (child: NodeChildProcess.ChildProcess) =>
+      Effect.sync(() => {
+        killGroup(child, "SIGKILL");
+        child.stdout?.destroy();
+      });
+
+    const use = (child: NodeChildProcess.ChildProcess) =>
+      Effect.gen(function* () {
+        const pid = child.pid;
+        // Like softfac's group_exists: signal 0 throws ESRCH once the group is empty.
+        const groupExists = (): boolean => {
+          if (pid === undefined) return false;
+          try {
+            globalThis.process.kill(-pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        // In shell mode the leader is the wrapper sh, which dies on SIGTERM
+        // before the real command; the grace lasts until the group is empty.
+        const groupGone = Effect.gen(function* () {
+          while (!(yield* Deferred.isDone(exited)) || groupExists()) {
+            yield* Effect.sleep("50 millis");
+          }
+        });
+
+        let timedOut = false;
+        const outcome = yield* Deferred.await(exited).pipe(
+          Effect.timeoutOption(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
         );
         if (outcome._tag === "None") {
-          killGroup("SIGKILL");
+          timedOut = true;
+          killGroup(child, "SIGTERM");
+          yield* groupGone.pipe(Effect.timeoutOption(input.termGraceMs ?? DEFAULT_TERM_GRACE_MS));
+          killGroup(child, "SIGKILL");
         }
-      }
-      const [exitCode] = outcome._tag === "Some" ? outcome.value : yield* Deferred.await(exited);
+        const [exitCode] = yield* Deferred.await(exited);
 
-      // Nothing the command started may outlive it. This also closes pipe ends
-      // a stray background process still held.
-      killGroup("SIGKILL");
-      const drained = yield* Deferred.await(closed).pipe(Effect.timeoutOption(DRAIN_WAIT_MS));
-      if (drained._tag === "None") child.stdout?.destroy();
+        // Nothing the command started may outlive it. This also closes pipe ends
+        // a stray background process still held.
+        killGroup(child, "SIGKILL");
+        const drained = yield* Deferred.await(closed).pipe(Effect.timeoutOption(DRAIN_WAIT_MS));
+        if (drained._tag === "None") child.stdout?.destroy();
 
-      return { exitCode, timedOut, tail: tail.finish() } satisfies RunResult;
-    });
+        return { exitCode, timedOut, tail: tail.finish() } satisfies RunResult;
+      });
 
-    return yield* body.pipe(Effect.onInterrupt(() => Effect.sync(() => killGroup("SIGKILL"))));
+    return yield* Effect.acquireUseRelease(acquire, use, release);
   });
