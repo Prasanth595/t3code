@@ -92,11 +92,17 @@ jobs:
             --github-output
 
       # The commits after the previous release tag, from git. See scripts/fork-release-notes.ts.
+      # A failed builder never stops the release: it warns and falls back to a one-line note.
       - id: notes
         name: Write release notes
         run: |
           set -euo pipefail
-          node scripts/fork-release-notes.ts "${{ steps.commit.outputs.sha }}" > "$RUNNER_TEMP/notes.md"
+          sha="${{ steps.commit.outputs.sha }}"
+          if ! node scripts/fork-release-notes.ts "$sha" > "$RUNNER_TEMP/notes.md" 2> "$RUNNER_TEMP/notes-error.log"; then
+            cat "$RUNNER_TEMP/notes-error.log" >&2
+            echo "::warning title=Release notes failed::$(tail -n 1 "$RUNNER_TEMP/notes-error.log")"
+            echo "Fork build of pingdotgg/t3code main plus fork commits, from ${sha}. (Release notes failed; see the workflow log.)" > "$RUNNER_TEMP/notes.md"
+          fi
           cat "$RUNNER_TEMP/notes.md"
           {
             echo "notes<<FORK_RELEASE_NOTES_EOF"

@@ -247,8 +247,7 @@ function readFlag(args: ReadonlyArray<string>, name: string): string | undefined
   return value;
 }
 
-if (import.meta.main) {
-  const args = process.argv.slice(2);
+function main(args: ReadonlyArray<string>): void {
   const [releaseRef] = args;
   if (releaseRef === undefined || releaseRef.startsWith("--")) {
     throw new Error(
@@ -263,4 +262,14 @@ if (import.meta.main) {
       builtAt: readFlag(args, "--built-at") ?? new Date().toISOString(),
     }),
   );
+}
+
+if (import.meta.main) {
+  try {
+    main(process.argv.slice(2));
+  } catch (error) {
+    // The message only, without a stack: the workflow shows its last line as the warning.
+    process.stderr.write(`${error instanceof Error ? error.message.trimEnd() : String(error)}\n`);
+    process.exitCode = 1;
+  }
 }
