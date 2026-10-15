@@ -165,8 +165,9 @@ const MEASURE_EXPRESSION =
 // The page's main blocks in document order, for a client's loading skeleton:
 // media and solid shapes, text with its line count, tables with their row
 // count, and boxes with their own background or border, whose contents follow.
-// Past the detail budget, remaining blocks are kept whole so the outline still
-// reaches the bottom of the page.
+// Past the detail budget, remaining blocks are kept whole, and once the outline
+// is full, one block of text lines stands in for the rest of the page, so the
+// skeleton still reaches the bottom.
 const OUTLINE_EXPRESSION = `(() => {
   const boxes = [], detail = ${HTML_RENDER_OUTLINE_MAX_BOXES - 12}, max = ${HTML_RENDER_OUTLINE_MAX_BOXES};
   const media = "canvas,svg,img,video,picture,iframe,object,embed,input,select,textarea,button";
@@ -182,9 +183,11 @@ const OUTLINE_EXPRESSION = `(() => {
     const box = t.width >= 2 && t.height >= 2 ? t : r;
     add("text", box, lineCount(s, box));
   };
+  let full = false;
   const walk = (parent) => {
     for (const el of parent.children) {
-      if (boxes.length >= max) return;
+      // The last slot is kept for whatever the outline has no room left for.
+      if (boxes.length >= max - 1) { full = true; return; }
       const s = getComputedStyle(el);
       if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") continue;
       if (s.display === "contents") { walk(el); continue; }
@@ -202,6 +205,11 @@ const OUTLINE_EXPRESSION = `(() => {
     }
   };
   walk(document.body);
+  if (full) {
+    const top = Math.max(...boxes.map((b) => b[2] + b[4]));
+    const rest = document.documentElement.scrollHeight - top;
+    if (rest >= 8) boxes.push(["text", 0, top, document.documentElement.clientWidth, rest, Math.max(1, Math.round(rest / 28))]);
+  }
   return boxes;
 })()`;
 const Outlined = Schema.Struct({
