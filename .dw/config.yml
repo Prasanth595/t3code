@@ -1,0 +1,11 @@
+# softfac (the Rust factory) reads this block from the default branch on every pass.
+# Design and plan: factory/docs/design.md once issue #1 lands; issues #1 to #21.
+factory:
+  instructors: [tomkaczocha, rawphp]
+  base: main
+  provision: [vp i]
+  gate:
+    - vp test run apps/server/src/factory
+    - vp run --filter t3 typecheck
+  limits: { gate_retries: 2 }
+  autonomy: pr
