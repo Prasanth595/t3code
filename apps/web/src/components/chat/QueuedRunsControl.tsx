@@ -13,6 +13,7 @@ import {
   CornerUpRightIcon,
   GripVerticalIcon,
   ListOrderedIcon,
+  PauseIcon,
   PencilIcon,
 } from "lucide-react";
 import { useId, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
@@ -70,6 +71,8 @@ export function QueuedRunsControl({
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const resumeQueue = useAtomCommand(threadEnvironment.resumeThreadQueue);
+  const [resuming, setResuming] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -243,6 +246,19 @@ export function QueuedRunsControl({
     }
   };
 
+  const resume = async () => {
+    if (resuming) return;
+    setResuming(true);
+    try {
+      await resumeQueue({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId },
+      });
+    } finally {
+      setResuming(false);
+    }
+  };
+
   return (
     <ComposerBanner.Attachment>
       <ComposerBanner.Root
@@ -269,6 +285,27 @@ export function QueuedRunsControl({
             <ComposerBanner.ToggleIcon expanded={expanded} />
           </ComposerBanner.Actions>
         </ComposerBanner.Row>
+        {/* A held queue waits for the user even after the active run ends. */}
+        {workflow?.isHeld && queued.length > 0 ? (
+          <ComposerBanner.Row>
+            <ComposerBanner.Icon>
+              <PauseIcon />
+            </ComposerBanner.Icon>
+            <ComposerBanner.Content className="text-muted-foreground">
+              Queue paused
+            </ComposerBanner.Content>
+            <ComposerBanner.Actions>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={resuming || busyRunId !== null}
+                onClick={() => void resume()}
+              >
+                Resume queue
+              </Button>
+            </ComposerBanner.Actions>
+          </ComposerBanner.Row>
+        ) : null}
         <ComposerBanner.Scroll className={cn("max-h-32", !expanded && "hidden")}>
           <ComposerBanner.Children render={<ol />} id={queueListId}>
             {items.map((item) => {
