@@ -29,10 +29,10 @@ runs:
       continue-on-error: true
       uses: useblacksmith/stickydisk@v1
       with:
-        key: ${{ github.repository }}-ci-pnpm-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'patches/**') }}
+        key: ${{ github.repository }}-ci-pnpm-bench1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'patches/**') }}
         path: ${{ runner.temp }}/t3-ci-pnpm-store
         # Each job gets a private clone. PRs must not publish into main's snapshot.
-        commit: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        commit: true
 
     - name: Check pnpm store mount
       id: store
@@ -40,7 +40,7 @@ runs:
       env:
         STICKY_OUTCOME: ${{ steps.sticky.outcome }}
         STICKY_STORE_PATH: ${{ runner.temp }}/t3-ci-pnpm-store
-        PUBLISHES: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        PUBLISHES: true
       run: |
         # stickydisk can return success after falling back to an ordinary directory.
         # An empty disk (no pnpm `v*` store from a main snapshot yet) only helps the
