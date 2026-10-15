@@ -384,12 +384,24 @@ describe("build.sh --print-version", () => {
     expect(result.stdout).toBe(`9.9.9+fac.${git("rev-parse", "--short", "HEAD")}`);
   });
 
-  it("marks a build with uncommitted changes to tracked files as dirty", () => {
-    write("apps/server/package.json", '{ "name": "t3", "version": "9.9.9", "private": true }\n');
-    const result = printVersion();
-    git("checkout", "--", "apps/server/package.json");
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe(`9.9.9+fac.${git("rev-parse", "--short", "HEAD")}.dirty`);
+  it("names a build with uncommitted changes to tracked files after those changes", () => {
+    const versionWith = (content: string) => {
+      write("apps/server/package.json", content);
+      const result = printVersion();
+      git("checkout", "--", "apps/server/package.json");
+      expect(result.status).toBe(0);
+      return result.stdout;
+    };
+    const a = versionWith('{ "name": "t3", "version": "9.9.9", "private": true }\n');
+    const b = versionWith('{ "name": "t3", "version": "9.9.9", "private": false }\n');
+
+    const clean = `9.9.9+fac.${git("rev-parse", "--short", "HEAD")}`;
+    for (const version of [a, b]) {
+      expect(version.slice(0, clean.length)).toBe(clean);
+      expect(version.slice(clean.length)).toMatch(/^\.dirty\.[0-9a-f]{8}$/);
+    }
+    expect(b).not.toBe(a);
+    expect(versionWith('{ "name": "t3", "version": "9.9.9", "private": true }\n')).toBe(a);
   });
 });
 

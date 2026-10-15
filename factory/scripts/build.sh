@@ -14,10 +14,10 @@ else
   upstream=$(node -p 'require("./apps/server/package.json").version')
 fi
 version="${upstream}+fac.$(git rev-parse --short HEAD)"
-# Uncommitted changes to tracked files mark the build, so it never takes the name (and on
-# install, the place) of the clean build of the same commit.
+# Uncommitted changes to tracked files add a hash of those changes, so a build never takes
+# the name (and on install, the place) of a build with other contents.
 if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
-  version="$version.dirty"
+  version="$version.dirty.$(git diff HEAD --binary | git hash-object --stdin | cut -c1-8)"
 fi
 
 if [[ ${1:-} == --print-version ]]; then
