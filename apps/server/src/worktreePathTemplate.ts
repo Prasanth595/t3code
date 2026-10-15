@@ -40,7 +40,9 @@ const claimedPaths = new Set<string>();
 const REFS_HEADS = "refs/heads/";
 
 /**
- * The folder and branch for a new worktree. With `pickFreeName`, a taken
+ * The folder and branch for a new worktree. A template path inside the
+ * checkout, as `{repoDir}/{branchLeaf}` gives in a normal clone, uses
+ * `defaultPath` instead, so one template fits both layouts. With `pickFreeName`, a taken
  * branch or folder gets a `-1`, `-2` suffix on the branch, as `renameBranch`
  * does, so that the folder still follows the branch. When a branch blocks
  * the namespace, the name is flattened, as `t3/x` becomes `t3-x`. Run
@@ -53,6 +55,8 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
   readonly gitCommonDir: string;
   readonly checkoutRoot: string;
   readonly branch: string;
+  /** Where the worktree goes without a template. */
+  readonly defaultPath: (branch: string) => string;
   readonly pickFreeName: boolean;
   /** `git for-each-ref --format=%(refname) refs/heads/` output. Full names stay unambiguous next to tags. */
   readonly listBranchRefs: Effect.Effect<string, GitCommandError>;
@@ -76,16 +80,11 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
     if (!input.path.isAbsolute(expanded))
       return templateError(input.cwd, `"${expanded}" is not an absolute path.`);
     const resolved = input.path.resolve(expanded);
-    // A normal clone with {repoDir}/{branchLeaf} would nest the worktree in the checkout.
-    for (const parent of [input.checkoutRoot, input.gitCommonDir]) {
+    const insideCheckout = [input.checkoutRoot, input.gitCommonDir].some((parent) => {
       const relative = input.path.relative(parent, resolved);
-      if (!relative.startsWith("..") && !input.path.isAbsolute(relative))
-        return templateError(
-          input.cwd,
-          `"${resolved}" is inside "${parent}". For a normal clone, use {worktrees} or {repoDir}/.. in the template.`,
-        );
-    }
-    return resolved;
+      return !relative.startsWith("..") && !input.path.isAbsolute(relative);
+    });
+    return insideCheckout ? input.defaultPath(branch) : resolved;
   };
 
   if (!input.pickFreeName) {
