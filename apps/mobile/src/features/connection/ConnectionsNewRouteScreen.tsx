@@ -10,6 +10,7 @@ import {
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import { requestHeaderOrigin } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -29,7 +30,15 @@ import {
 } from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { isCloudflareAccessChallenged } from "../../connection/requestHeaders";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
+import {
+  CloudflareAccessFields,
+  type CloudflareAccessForm,
+  EMPTY_CLOUDFLARE_ACCESS_FORM,
+  cloudflareAccessTokenFromForm,
+  useSaveCloudflareAccessToken,
+} from "./CloudflareAccessFields";
 import { splitEnvironmentSections } from "./environmentSections";
 
 type ConnectionsNewRouteParams = {
@@ -68,6 +77,14 @@ export function ConnectionsNewRouteScreen({
   // A good scan parks the camera so it can't re-read the code over later edits.
   const [scanComplete, setScanComplete] = useState(false);
   const attemptedAutoConnectRef = useRef<string | null>(null);
+  const [accessForm, setAccessForm] = useState<CloudflareAccessForm>(EMPTY_CLOUDFLARE_ACCESS_FORM);
+  const [accessOpen, setAccessOpen] = useState(false);
+  const saveAccessToken = useSaveCloudflareAccessToken();
+  // A Cloudflare Access login page during pairing explains the failure and opens the token fields.
+  const accessChallenged =
+    pairingConnectionError !== null &&
+    isCloudflareAccessChallenged(buildPairingUrl(hostInput, codeInput));
+  const showAccess = accessOpen || accessChallenged;
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
 
@@ -180,8 +197,22 @@ export function ConnectionsNewRouteScreen({
   );
 
   const handleSubmit = useCallback(async () => {
-    await connectAndClose(buildPairingUrl(hostInput, codeInput), false);
-  }, [codeInput, connectAndClose, hostInput]);
+    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+    const parsed = cloudflareAccessTokenFromForm(accessForm);
+    if ("error" in parsed) {
+      setPendingConnectionError(parsed.error);
+      return;
+    }
+    const origin = requestHeaderOrigin(pairingUrl);
+    if (parsed.token !== null && origin !== null) {
+      const error = await saveAccessToken(origin, parsed.token);
+      if (error !== null) {
+        setPendingConnectionError(error);
+        return;
+      }
+    }
+    await connectAndClose(pairingUrl, false);
+  }, [accessForm, codeInput, connectAndClose, hostInput, saveAccessToken]);
 
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
@@ -265,9 +296,41 @@ export function ConnectionsNewRouteScreen({
                 pairingConnectionError ? "text-danger-foreground" : "text-foreground-muted",
               )}
             >
-              {pairingConnectionError ??
-                "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
+              {accessChallenged
+                ? "This server is behind Cloudflare Access. Enter its service token below."
+                : (pairingConnectionError ??
+                  "For machines on your local network or tailnet. The machine keeps its own provider credentials.")}
             </Text>
+          </View>
+
+          <View collapsable={false} className="gap-2">
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showAccess }}
+              onPress={() => setAccessOpen((open) => !open)}
+              className="flex-row items-center justify-between px-4 active:opacity-70"
+            >
+              <Text className="text-sm font-t3-medium text-foreground-muted">
+                Cloudflare Access service token
+              </Text>
+              <SymbolView
+                name={showAccess ? "chevron.up" : "chevron.down"}
+                size={12}
+                tintColorClassName="accent-chevron"
+                type="monochrome"
+                weight="semibold"
+              />
+            </Pressable>
+            {showAccess ? (
+              <CloudflareAccessFields
+                form={accessForm}
+                onChange={(form) => {
+                  setAccessForm(form);
+                  setPendingConnectionError(null);
+                }}
+                disabled={isSubmitting}
+              />
+            ) : null}
           </View>
 
           {hasCloudPublicConfig() ? <T3ConnectSection /> : null}

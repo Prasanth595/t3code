@@ -12,6 +12,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as MobileSecureStorage from "../persistence/mobile-secure-storage";
 import { migrateLegacyConnectionCatalog } from "./migration";
+import { setRequestHeaderRules } from "./requestHeaders";
 
 export const CONNECTION_CATALOG_KEY = "t3code.connection-catalog.v1";
 export const LEGACY_CONNECTIONS_KEY = "t3code.connections";
@@ -100,6 +101,7 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
       catalog = yield* loadLegacyCatalog();
     }
     yield* Ref.set(state, Option.some(catalog));
+    setRequestHeaderRules(catalog.requestHeaders);
     return catalog;
   });
 
@@ -112,6 +114,7 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
           const encoded = yield* encodeCatalog(next);
           yield* setItem(CONNECTION_CATALOG_KEY, encoded);
           yield* Ref.set(state, Option.some(next));
+          setRequestHeaderRules(next.requestHeaders);
         }),
       );
     },

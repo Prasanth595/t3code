@@ -1,4 +1,8 @@
-import { ConnectionOnboarding } from "@t3tools/client-runtime/connection";
+import {
+  ConnectionOnboarding,
+  type RequestHeader,
+  RequestHeaderStore,
+} from "@t3tools/client-runtime/connection";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
@@ -44,4 +48,20 @@ export const updateBearerConnection = createRuntimeCommand(connectionAtomRuntime
     ConnectionOnboarding.ConnectionOnboarding.pipe(
       Effect.flatMap((onboarding) => onboarding.updateBearer(input)),
     ),
+});
+
+export const readRequestHeaders = createRuntimeCommand(connectionAtomRuntime, {
+  label: "mobile:connection:read-request-headers",
+  execute: (origin: string) =>
+    RequestHeaderStore.pipe(Effect.flatMap((store) => store.get(origin))),
+});
+
+export const saveRequestHeaders = createRuntimeCommand(connectionAtomRuntime, {
+  label: "mobile:connection:save-request-headers",
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly origin: string }) => input.origin,
+  },
+  execute: (input: { readonly origin: string; readonly headers: ReadonlyArray<RequestHeader> }) =>
+    RequestHeaderStore.pipe(Effect.flatMap((store) => store.set(input.origin, input.headers))),
 });

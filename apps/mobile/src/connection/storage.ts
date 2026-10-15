@@ -3,6 +3,7 @@ import {
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
+  setRequestHeadersInCatalog,
   setRoutesInCatalog,
   removeCatalogValue,
   replaceCatalogValue,
@@ -15,6 +16,7 @@ import {
   ProfileStore,
   GitHubRoutingPermissions,
   makeGitHubRoutingPermissions,
+  RequestHeaderStore,
 } from "@t3tools/client-runtime/connection";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -155,6 +157,20 @@ export const layer = Layer.effectContext(
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
+      Context.add(
+        RequestHeaderStore,
+        RequestHeaderStore.of({
+          get: (origin) =>
+            catalog.read.pipe(
+              Effect.map(
+                (document) =>
+                  document.requestHeaders.find((value) => value.origin === origin)?.headers ?? [],
+              ),
+            ),
+          set: (origin, headers) =>
+            catalog.update((document) => setRequestHeadersInCatalog(document, origin, headers)),
+        }),
+      ),
     );
   }),
 );

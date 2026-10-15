@@ -17,6 +17,7 @@ import {
   type FilePreviewSource,
   type FilePreviewItem,
 } from "../../components/FilePreviewModal";
+import { withRequestHeaders } from "../../connection/requestHeaders";
 
 export const PullRequestMediaContext = createContext<{
   readonly environmentId: EnvironmentId;
@@ -125,7 +126,7 @@ export function PullRequestImageAttachment(props: {
       >
         <View className="overflow-hidden rounded-2xl border border-border-subtle bg-grouped-card">
           <Image
-            source={media.uri ? { uri: media.uri } : null}
+            source={media.uri ? withRequestHeaders({ uri: media.uri }) : null}
             style={{ width: 174, height: 112 }}
             contentFit="contain"
             cachePolicy="memory-disk"

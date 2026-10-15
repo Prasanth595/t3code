@@ -1,0 +1,110 @@
+/**
+ * Fork: per-origin request headers on mobile, for example a Cloudflare Access
+ * service token. The connection catalog stores them (`requestHeaders`), and the
+ * catalog store pushes each loaded or saved list here, so the transports read
+ * them without a round trip through the storage layer.
+ */
+import {
+  isCloudflareAccessChallenge,
+  type OriginRequestHeaders,
+  requestHeaderOrigin,
+  requestHeadersForUrl,
+} from "@t3tools/client-runtime/connection";
+import * as Layer from "effect/Layer";
+import * as Socket from "effect/socket/Socket";
+
+let rules: ReadonlyArray<OriginRequestHeaders> = [];
+
+export function setRequestHeaderRules(next: ReadonlyArray<OriginRequestHeaders>): void {
+  rules = next;
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
+function isCloudflareAccessResponse(response: Response): boolean {
+  // fetch follows the login redirect, so the challenge shows as the final URL.
+  // React Native does not set `response.redirected`, so only the URL counts.
+  try {
+    if (new URL(response.url).hostname.endsWith(".cloudflareaccess.com")) return true;
+  } catch {
+    // An empty or unparsable final URL is not a Cloudflare login.
+  }
+  return isCloudflareAccessChallenge(response.status, Object.fromEntries(response.headers));
+}
+
+/**
+ * An image source with the headers of its origin. Native image loaders bypass
+ * fetch, so they need the headers in the source itself.
+ */
+export function withRequestHeaders<Source extends { readonly uri: string }>(
+  source: Source,
+): Source | (Source & { readonly headers: Record<string, string> }) {
+  const extra = requestHeadersForUrl(rules, source.uri);
+  if (extra.length === 0) return source;
+  return {
+    ...source,
+    headers: Object.fromEntries(extra.map((header) => [header.name, header.value])),
+  };
+}
+
+// Origins whose last response was a Cloudflare Access login. The request still
+// fails as before; screens read this to say why and to offer the token fields.
+const challengedOrigins = new Set<string>();
+
+/** True when the last response from the origin of `url` was a Cloudflare Access login. */
+export function isCloudflareAccessChallenged(url: string): boolean {
+  const origin = requestHeaderOrigin(url);
+  return origin !== null && challengedOrigins.has(origin);
+}
+
+/** `fetch` that adds the headers of the request origin and records Access logins. */
+export const fetchWithRequestHeaders: typeof fetch = async (input, init) => {
+  const url = requestUrl(input);
+  const extra = requestHeadersForUrl(rules, url);
+  let response: Response;
+  if (extra.length === 0) {
+    response = await fetch(input, init);
+  } else {
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    for (const header of extra) headers.set(header.name, header.value);
+    response = await fetch(input, { ...init, headers });
+  }
+  const origin = requestHeaderOrigin(url);
+  if (origin !== null) {
+    if (isCloudflareAccessResponse(response)) challengedOrigins.add(origin);
+    else challengedOrigins.delete(origin);
+  }
+  return response;
+};
+
+// React Native's WebSocket takes handshake headers as a third argument. The DOM
+// type this project compiles against does not declare it.
+const NativeWebSocket = WebSocket as unknown as new (
+  url: string,
+  protocols: string | Array<string> | null,
+  options: { readonly headers: Record<string, string> },
+) => WebSocket;
+
+/**
+ * Effect WebSocket constructor that adds the headers of the URL origin. React
+ * Native takes handshake headers as a third argument. Like Effect's global
+ * constructor, it rejects platform client options.
+ */
+export const layerWebSocketConstructor = Layer.succeed(Socket.WebSocketConstructor)((
+  url,
+  options,
+) => {
+  if (options !== undefined && typeof options !== "string" && !Array.isArray(options)) {
+    throw new TypeError("WebSocket client options are not supported on mobile.");
+  }
+  const extra = requestHeadersForUrl(rules, url);
+  if (extra.length === 0) return new WebSocket(url, options);
+  const headers = Object.fromEntries(extra.map((header) => [header.name, header.value]));
+  return new NativeWebSocket(url, options ?? null, { headers });
+});

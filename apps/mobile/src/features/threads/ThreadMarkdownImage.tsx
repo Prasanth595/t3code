@@ -21,6 +21,7 @@ import {
   resolveMarkdownImageDisplaySize,
   resolveSvgImageSize,
 } from "./markdownImageSize";
+import { withRequestHeaders } from "../../connection/requestHeaders";
 
 /**
  * Width the feed lays markdown out in. The feed already knows this from its
@@ -170,7 +171,7 @@ function ThreadMarkdownImageRequest(props: {
         />
       ) : (
         <Image
-          source={{ uri: props.uri }}
+          source={withRequestHeaders({ uri: props.uri })}
           contentFit="contain"
           cachePolicy="memory-disk"
           accessible={false}

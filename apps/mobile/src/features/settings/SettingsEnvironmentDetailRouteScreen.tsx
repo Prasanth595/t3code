@@ -21,6 +21,8 @@ import { serverEnvironment } from "../../state/server";
 import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { requestHeaderOrigin } from "@t3tools/client-runtime/connection";
+import { CloudflareAccessSection } from "../connection/CloudflareAccessFields";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
 import { EnvironmentRoutesSection } from "./EnvironmentRoutesSection";
 import { SettingsActionRow } from "./components/SettingsActionRow";
@@ -89,6 +91,11 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
   const version = config?.environment.serverVersion;
   const checkedRelease = release?.fromVersion === version ? release : null;
   const capabilities = config?.environment.capabilities;
+  // Fork: the origin whose Cloudflare Access service token this screen edits.
+  const accessOrigin =
+    environment === undefined || environment.isRelayManaged
+      ? null
+      : requestHeaderOrigin(environment.displayUrl);
 
   async function run(label: string, action: () => Promise<void>) {
     if (pendingRef.current) return;
@@ -194,6 +201,12 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 onUpdate={connections.onUpdateEnvironment}
               />
             </SettingsSection>
+            {accessOrigin !== null ? (
+              <CloudflareAccessSection
+                origin={accessOrigin}
+                onSaved={() => connections.onReconnectEnvironment(environmentId)}
+              />
+            ) : null}
             <EnvironmentRoutesSection
               environmentId={environmentId}
               connected={connected}
