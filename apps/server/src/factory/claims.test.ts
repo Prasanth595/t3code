@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off - one test sets a file's mtime with the wall clock type node wants.
 // @effect-diagnostics nodeBuiltinImport:off - the tests read and lay out real files.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
