@@ -109,14 +109,20 @@ function storeView(view: MapViewport): void {
   }
 }
 
-/** A key press in a text field or a select types; it never pans or zooms the map. */
+/** A key press or a wheel in a text field or a select types or scrolls it; it never pans or zooms the map. */
 const isTyping = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 
+/** Space on a button, a link, a card or in a dialog presses or types; it never pans the map. */
+const keepsSpace = (target: EventTarget | null) =>
+  document.querySelector("dialog[open]") !== null ||
+  (target instanceof Element &&
+    target.closest("button, a[href], [role='button'], summary, dialog") !== null);
+
 /**
- * Cards cover at most this share of the map, so they fit apart. A narrow map with many cards grows
- * taller than the screen, and the page scrolls through it.
+ * Cards cover at most this share of the map layer, so they fit apart. A narrow map with many cards
+ * gets a layer taller than the map, and zoom and pan reach the rest (MM-1114).
  */
 const CARD_SHARE = 0.3;
 
@@ -216,6 +222,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const pinch = useRef<{ distance: number; middle: Point; from: MapViewport } | null>(null);
   const spaceHeld = useRef(false);
   const hovered = useRef(false);
+  /**
+   * MM-1117: a plain wheel pans the live map only after a click, a drag or keyboard focus on it.
+   * Before that, and after the pointer leaves or Esc, the wheel scrolls the page.
+   */
+  const engaged = useRef(false);
+  /** False until the user zooms or pans, so the first "Fit" follows cards that grow (MM-1118). */
+  const userMoved = useRef(false);
+  const fittedFor = useRef("");
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [sizes, setSizes] = useState<Record<string, Size>>({});
   const drag = useRef<Drag | null>(null);
@@ -269,7 +283,6 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     () => () => {
       if (frame.current !== null) cancelAnimationFrame(frame.current);
       if (longPress.current) clearTimeout(longPress.current.timer);
-      if (storeTimer.current !== null) clearTimeout(storeTimer.current);
     },
     [],
   );
@@ -555,9 +568,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const keepView = () => {
     if (readOnly) return;
     if (storeTimer.current !== null) clearTimeout(storeTimer.current);
-    storeTimer.current = setTimeout(() => storeView(view.current), 250);
+    storeTimer.current = setTimeout(() => {
+      storeTimer.current = null;
+      storeView(view.current);
+    }, 250);
   };
+  /** A user change of the view. Fit and the first view set `view` directly instead. */
   const setView = (next: MapViewport) => {
+    userMoved.current = true;
     view.current = { ...next, k: clampZoom(next.k) };
     applyView();
     // The add menu sits at a screen point, so a pan or zoom closes it.
@@ -589,17 +607,48 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
 
   // The first view: the one this device kept, or "Fit" on a first visit and when the kept view
   // shows no card. It waits for the measured card sizes, which come before the first paint.
-  // React never writes the transform, so each render puts it back.
+  // Until the user zooms or pans, "Fit" runs again when a card, the layer or the map changes size,
+  // for example when a machine comes online and its card grows. A drop of a card keeps the view. React never writes the transform, so each render puts it back.
   const measured = machines.length + map.notes.length === 0 || Object.keys(sizes).length > 0;
   useLayoutEffect(() => {
-    if (!viewReady.current && size.width > 0 && measured) {
-      viewReady.current = true;
-      const kept = readOnly ? null : loadView();
-      view.current =
-        kept && anyInView(kept, cardBoxes(), size.width, size.height) ? kept : fitted();
+    if (size.width > 0 && measured) {
+      const boxes = cardBoxes();
+      // Card area changes when a card grows, never on a drop.
+      const layout = [size.width, size.height, width, height, boxes.length, cardArea / 100]
+        .map(Math.round)
+        .join(",");
+      if (!viewReady.current) {
+        viewReady.current = true;
+        const kept = readOnly ? null : loadView();
+        if (kept && anyInView(kept, boxes, size.width, size.height)) {
+          view.current = kept;
+          userMoved.current = true;
+        } else view.current = fitted();
+        fittedFor.current = layout;
+      } else if (!userMoved.current && fittedFor.current !== layout) {
+        view.current = fitted();
+        fittedFor.current = layout;
+      }
     }
     applyView();
   });
+
+  /** Saves a waiting view at once: on unmount and when the page hides (MM-1118). */
+  const flushView = () => {
+    if (storeTimer.current === null) return;
+    clearTimeout(storeTimer.current);
+    storeTimer.current = null;
+    storeView(view.current);
+  };
+  const latestFlush = useRef(flushView);
+  useEffect(() => {
+    const listener = () => latestFlush.current();
+    addEventListener("pagehide", listener);
+    return () => {
+      removeEventListener("pagehide", listener);
+      latestFlush.current();
+    };
+  }, []);
 
   const startPan = (event: PointerEvent<HTMLDivElement>) => {
     pan.current = {
@@ -631,6 +680,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
    * first. Space and a drag pan from anywhere, also over a card.
    */
   const onMapPointerDownCapture = (event: PointerEvent<HTMLDivElement>) => {
+    engaged.current = true;
     if (event.pointerType === "touch") {
       touches.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (touches.current.size === 2) {
@@ -889,13 +939,17 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   };
 
   /**
-   * MM-1116: Ctrl or Cmd and the wheel, or a trackpad pinch (the browser sends it with Ctrl),
-   * zoom at the pointer. A plain wheel or a two-finger scroll pans.
+   * MM-1116, MM-1117: Ctrl or Cmd and the wheel, or a trackpad pinch (the browser sends it with
+   * Ctrl), zoom at the pointer. A plain wheel or a two-finger scroll pans the live map once it is
+   * engaged; otherwise, and on the History map, it scrolls the page. A note in edit mode scrolls.
    */
   const onWheel = (event: WheelEvent) => {
+    if (isTyping(event.target)) return;
+    const zoom = event.ctrlKey || event.metaKey;
+    if (!zoom && (readOnly || !engaged.current)) return;
     event.preventDefault();
     const unit = event.deltaMode === 1 ? LINE_PIXELS : 1;
-    if (event.ctrlKey || event.metaKey) {
+    if (zoom) {
       const delta = clamp(event.deltaY * unit, -WHEEL_ZOOM_MAX_DELTA, WHEEL_ZOOM_MAX_DELTA);
       setView(
         zoomAt(
@@ -929,6 +983,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     const forget = (event: globalThis.PointerEvent) => {
       touches.current.delete(event.pointerId);
       if (touches.current.size < 2) pinch.current = null;
+      // A fast flick can leave the map before the pan takes the pointer. End that pan here, so
+      // hovering later does not pan the map.
+      if (pan.current?.pointerId === event.pointerId) {
+        pan.current = null;
+        ref.current?.classList.remove("panning");
+      }
     };
     addEventListener("pointerup", forget);
     addEventListener("pointercancel", forget);
@@ -941,21 +1001,38 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   /** MM-1116: Space held over the map pans with a drag. "0" fits every card. */
   const onKey = (event: globalThis.KeyboardEvent) => {
     if (isTyping(event.target)) return;
+    if (event.key === "Escape") engaged.current = false;
     if (event.key === " ") {
-      const down = event.type === "keydown";
-      if (down && !hovered.current && !spaceHeld.current) return;
+      // A button presses on key up, so only a Space that the map took ends with the map.
+      if (event.type === "keyup") {
+        if (!spaceHeld.current) return;
+        event.preventDefault();
+        spaceHeld.current = false;
+        ref.current?.classList.remove("space-pan");
+        return;
+      }
+      if (keepsSpace(event.target)) {
+        // A modal over the map gets no pointer leave, so the map forgets the hover here.
+        if (document.querySelector("dialog[open]")) hovered.current = false;
+        return;
+      }
+      if (!hovered.current && !spaceHeld.current) return;
       event.preventDefault();
-      spaceHeld.current = down;
-      ref.current?.classList.toggle("space-pan", down);
+      spaceHeld.current = true;
+      ref.current?.classList.add("space-pan");
       return;
     }
     const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
-    if (event.type === "keydown" && event.key === "0" && plain) fit();
+    if (event.type === "keydown" && event.key === "0" && plain) {
+      fit();
+      keepView();
+    }
   };
   const latestKey = useRef(onKey);
   useLayoutEffect(() => {
     latestWheel.current = onWheel;
     latestKey.current = onKey;
+    latestFlush.current = flushView;
   });
   useEffect(() => {
     const listener = (event: globalThis.KeyboardEvent) => latestKey.current(event);
@@ -1081,7 +1158,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
         </div>
       )}
       <div
-        className={`card map${compact ? " compact" : ""}${focus ? " focused" : ""}`}
+        className={`card map${compact ? " compact" : ""}${focus ? " focused" : ""}${readOnly ? " map-readonly" : ""}`}
         ref={ref}
         onClick={onMapClick}
         onClickCapture={(event) => {
@@ -1097,6 +1174,13 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
         }}
         onPointerLeave={() => {
           hovered.current = false;
+          engaged.current = false;
+        }}
+        onFocus={() => {
+          engaged.current = true;
+        }}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) engaged.current = false;
         }}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

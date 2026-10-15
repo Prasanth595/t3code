@@ -989,7 +989,9 @@ details.more[open] summary {
 /* Map (MM-1103) */
 .map {
   position: relative;
-  height: clamp(560px, calc(100vh - 290px), 980px);
+  /* Some page always shows above or below the map, also on a phone in landscape. */
+  height: min(clamp(560px, calc(100vh - 290px), 980px), calc(100svh - 120px));
+  min-height: 280px;
   overflow: hidden;
   /* MM-1116: the map pans and zooms itself, also under fingers. */
   touch-action: none;
@@ -1420,7 +1422,11 @@ details.more[open] summary {
 }
 /* Compact map (phone): smaller cards. Pair rows show the arrow and the level; the panel says more. */
 .map.compact {
-  height: max(560px, calc(100svh - 200px));
+  height: min(max(560px, calc(100svh - 200px)), calc(100svh - 120px));
+}
+/* A finger on the History map scrolls the page to the list below it. */
+.map.map-readonly {
+  touch-action: pan-y;
 }
 .map.compact .node {
   width: 156px;
