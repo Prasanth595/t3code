@@ -7,10 +7,16 @@ import * as NodeURL from "node:url";
 
 import { assert, describe, it } from "vite-plus/test";
 
+// oxlint-disable-next-line t3code/no-global-process-runtime -- Real host process table.
+const hostPlatform = NodeOS.platform();
 const modulePath = NodeURL.fileURLToPath(new URL("./dev-electron-parent.mjs", import.meta.url));
 
 function isAlive(pid) {
   try {
+    if (hostPlatform === "linux") {
+      const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, "utf8");
+      if (stat[stat.lastIndexOf(")") + 2] === "Z") return false;
+    }
     process.kill(pid, 0);
     return true;
   } catch (error) {
@@ -36,7 +42,7 @@ async function waitFor(read, timeoutMs = 4_000) {
   throw new Error(`timed out after ${timeoutMs}ms`);
 }
 
-describe("dev electron supervising parent", () => {
+describe.skipIf(hostPlatform === "win32")("dev electron supervising parent", () => {
   it("exits after vp is killed even though the onSuccess shell stays alive", async () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-dev-electron-parent-"));
     const statePath = NodePath.join(directory, "state.json");
