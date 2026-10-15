@@ -26,7 +26,7 @@ interface AppOverlayStore {
   readonly hide: () => void;
 }
 
-export const useAppOverlayStore = create<AppOverlayStore>()((set, get) => ({
+const useAppOverlayStore = create<AppOverlayStore>()((set, get) => ({
   url: null,
   title: "",
   open: false,
