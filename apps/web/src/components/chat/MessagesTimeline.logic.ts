@@ -897,18 +897,27 @@ function lastResponseBoundaryIndex(
   timelineEntries: ReadonlyArray<TimelineEntry>,
   runningRunId: RunId | null = null,
 ): number {
-  return timelineEntries.findLastIndex(
-    (entry) =>
-      timelineEntryStartsResponse(entry) &&
-      // A queued message waits behind the running turn; the active turn's
-      // header must stay above it until its own run starts.
-      !(
-        runningRunId !== null &&
-        entry.kind === "message" &&
-        entry.message.inputIntent === "queued_turn" &&
-        entry.message.runId !== runningRunId
-      ),
-  );
+  return timelineEntries.findLastIndex((entry, index) => {
+    if (!timelineEntryStartsResponse(entry)) return false;
+    // A queued message waits behind the running turn; the active turn's
+    // header must stay above it until its own run produces output. A started
+    // queued run that a promptless run later replaced keeps its boundary.
+    if (
+      runningRunId !== null &&
+      entry.kind === "message" &&
+      entry.message.inputIntent === "queued_turn" &&
+      entry.message.runId !== runningRunId
+    ) {
+      const queuedRunId = entry.message.runId;
+      return (
+        queuedRunId !== null &&
+        timelineEntries.some(
+          (later, laterIndex) => laterIndex > index && timelineEntryRunId(later) === queuedRunId,
+        )
+      );
+    }
+    return true;
+  });
 }
 
 function deriveActiveVisualResponseRunIds(input: {

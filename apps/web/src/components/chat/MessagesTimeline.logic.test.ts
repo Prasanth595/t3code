@@ -2483,6 +2483,56 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.kind)).toEqual(["message", "working", "message", "thinking"]);
   });
 
+  it("keeps a started queued prompt as the boundary after a promptless run replaces its run", () => {
+    const user = (id: string, createdAt: string, runId: string, inputIntent: string) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt,
+      message: {
+        id: id as never,
+        role: "user" as const,
+        text: id,
+        runId: runId as never,
+        inputIntent: inputIntent as never,
+        createdAt,
+        updatedAt: createdAt,
+        streaming: false,
+      },
+    });
+    const work = (id: string, createdAt: string, runId: string) => ({
+      id: `${id}-entry`,
+      kind: "work" as const,
+      createdAt,
+      entry: {
+        id,
+        createdAt,
+        runId: runId as never,
+        label: "Running git",
+        requestKind: "command" as const,
+        tone: "tool" as const,
+        toolLifecycleStatus: "completed" as const,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        user("a", "2026-01-01T00:00:00Z", "run-1", "turn_start"),
+        user("b", "2026-01-01T00:00:05Z", "run-2", "queued_turn"),
+        work("b-tool", "2026-01-01T00:00:06Z", "run-2"),
+      ],
+      latestRun: null,
+      runningRunId: "run-3" as never,
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:10Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    const kinds = rows.map((row) => row.kind);
+    const workingIndex = kinds.indexOf("working");
+    expect(workingIndex).toBeGreaterThan(
+      rows.findIndex((row) => row.kind === "message" && row.message.id === ("b" as never)),
+    );
+  });
+
   it("shows a provider-native subagent's runless tools as live work while it works", () => {
     const entries = (commandStatus: "inProgress" | "completed") => [
       {
