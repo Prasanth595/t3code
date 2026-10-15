@@ -112,6 +112,24 @@ class AgentNotificationsTest {
   }
 
   @Test
+  fun dismissClearsAlertsEvenAfterNotificationsAreDisabled() {
+    AgentNotifications.receive(context, update("before-disable", false))
+    shadowOf(manager).setNotificationsEnabled(false)
+
+    AgentNotifications.receive(
+      context,
+      mapOf(
+        "device_id" to "device",
+        "user_id" to "user",
+        "updated_at" to System.currentTimeMillis().toString(),
+        "dismiss_group" to "environment/thread",
+      )
+    )
+
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-alert" })
+  }
+
+  @Test
   fun missingLauncherDoesNotDiscardTheAlert() {
     shadowOf(context.packageManager).removeActivity(ComponentName(context, Activity::class.java))
     AgentNotifications.receive(context, update("no-launcher", false))
