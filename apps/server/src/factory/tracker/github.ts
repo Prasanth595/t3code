@@ -191,6 +191,25 @@ const RefView = Schema.Struct({
   object: Schema.Struct({ sha: Schema.String, type: Schema.String }),
 });
 
+const PullRequestView = Schema.Struct({
+  number: Schema.Number,
+  isDraft: Schema.Boolean,
+  state: Schema.String,
+  headRefName: Schema.String,
+  isCrossRepository: Schema.Boolean,
+  baseRefName: Schema.String,
+  headRefOid: Schema.String,
+});
+
+const CheckRunRows = Schema.Array(
+  Schema.Struct({
+    name: Schema.String,
+    status: Schema.String,
+    conclusion: OptionalText,
+    html_url: OptionalText,
+  }),
+);
+
 const FileView = Schema.Struct({
   type: Schema.String,
   encoding: OptionalText,
@@ -229,6 +248,54 @@ export interface BaseConfig {
   readonly branch: string;
   readonly tip: string;
   readonly text: string;
+}
+
+/** One pull request, as read by `gh pr view`. */
+export interface PullRequest {
+  readonly number: number;
+  readonly isDraft: boolean;
+  /** Neither merged nor closed. */
+  readonly open: boolean;
+  /** Merged into its base. */
+  readonly merged: boolean;
+  /** The branch the pull request comes from. */
+  readonly headRef: string;
+  /** The head is in a fork, not in this repo. */
+  readonly crossRepository: boolean;
+  /** The branch the pull request merges into. */
+  readonly baseRef: string;
+  /** The commit the pull request's head branch points at, as GitHub reports it. */
+  readonly headSha: string;
+}
+
+/**
+ * How one ref stands against another, in GitHub's words: `ahead` when the second
+ * holds everything of the first and more, `behind` when the second is inside the
+ * first one's history, `identical`, or `diverged` when each has commits the other lacks.
+ */
+export type Relation = "ahead" | "behind" | "identical" | "diverged";
+
+/**
+ * How one required check stands on a commit, in the words the ledger records:
+ * `passed` when every run completed as `success` or `neutral`, `failed` when a run
+ * completed as anything else, `pending` when a run exists and has not completed, and
+ * `missing` when no run of that name has a result (none exists, or every one was
+ * skipped, which means nothing ran).
+ */
+export type CheckState = "passed" | "failed" | "pending" | "missing";
+
+/** One required check as read for a commit, see `checks`. */
+export interface CheckStatus {
+  /** The name that was asked for. */
+  readonly name: string;
+  readonly state: CheckState;
+  /**
+   * What GitHub says about the run that decided `state`: its conclusion when it
+   * completed, its status when it did not, and empty for a missing check.
+   */
+  readonly conclusion: string;
+  /** The run's page on GitHub, when it has one. */
+  readonly url: string | null;
 }
 
 // ---- parsing helpers ----
@@ -338,6 +405,22 @@ const isPlainSegment = (part: string): boolean =>
   part !== "." && part !== ".." && /^[A-Za-z0-9._-]+$/.test(part);
 
 const isCommitId = (text: string): boolean => /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(text);
+
+/** gh's stderr for a pull request number the repo does not have. */
+const PULL_REQUEST_GONE = /could not resolve to a pullrequest/i;
+
+/** Failed beats pending beats missing beats passed: a check passes only when every run passed. */
+const CHECK_RANK: Record<CheckState, number> = { failed: 3, pending: 2, missing: 1, passed: 0 };
+
+/** The state one check run decides, and the word GitHub gave for it. */
+const checkOutcome = (status: string, conclusion: string | null): readonly [CheckState, string] => {
+  if (status !== "completed") return ["pending", status];
+  if (conclusion === "success" || conclusion === "neutral") return ["passed", conclusion];
+  // Nothing ran. The factory's pull request is a draft until the checks pass, and a job
+  // guarded by "not a draft" is skipped on it.
+  if (conclusion === "skipped") return ["missing", conclusion];
+  return ["failed", conclusion ?? "completed"];
+};
 
 const withMarker = (body: string, marker: string): string => `${body}\n\n${marker}`;
 
@@ -659,6 +742,159 @@ export const makeGitHub = (options: GitHubOptions) => {
       return { branch, tip, text };
     });
 
+  /** The pull request as `gh pr view` reads it; null for a number the repo does not have. */
+  const pullRequest = (number: number): GitHubEffect<PullRequest | null> =>
+    Effect.gen(function* () {
+      const args = [
+        ...repoArgs(["pr", "view", String(number)]),
+        "--json",
+        "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid",
+      ];
+      const stdout = yield* gh(args).pipe(
+        Effect.catchTags({
+          GitHubFailed: (error) =>
+            PULL_REQUEST_GONE.test(error.stderr) ? Effect.succeed(null) : Effect.fail(error),
+        }),
+      );
+      if (stdout === null) return null;
+      const raw = yield* decode(
+        PullRequestView,
+        args,
+        "an object describing a pull request",
+        stdout,
+      );
+      return {
+        number: raw.number,
+        isDraft: raw.isDraft,
+        open: raw.state === "OPEN",
+        merged: raw.state === "MERGED",
+        headRef: raw.headRefName,
+        crossRepository: raw.isCrossRepository,
+        baseRef: raw.baseRefName,
+        headSha: raw.headRefOid,
+      };
+    });
+
+  /**
+   * Takes the pull request out of draft. One that is already ready counts as done: `gh`
+   * warns `Pull request <repo>#<n> is already "ready for review"` on stderr and exits 0,
+   * and an answer that was lost on the way back leaves a caller asking again.
+   */
+  const markPrReady = (pr: number): GitHubEffect<void> =>
+    gh(repoArgs(["pr", "ready", String(pr)])).pipe(
+      Effect.asVoid,
+      Effect.catchTags({
+        GitHubFailed: (error) =>
+          error.stderr.includes('is already "ready for review"') ? Effect.void : Effect.fail(error),
+      }),
+    );
+
+  /**
+   * Puts the pull request back to draft (`gh pr ready --undo`). One that is a draft already
+   * counts as done: `gh` warns `Pull request <repo>#<n> is already "in draft"` on stderr and
+   * exits 0, and an answer that was lost on the way back leaves a caller asking again. So
+   * does one that is no longer open, merged or closed in the meantime: there is nothing to
+   * draft, and a caller that resumes a decision would otherwise fail on it every time. When
+   * the call fails for another reason the pull request is read, and its state decides, not
+   * the words of the error; a read that fails or finds it open leaves the original error.
+   */
+  const markPrDraft = (pr: number): GitHubEffect<void> =>
+    gh([...repoArgs(["pr", "ready", String(pr)]), "--undo"]).pipe(
+      Effect.asVoid,
+      Effect.catchTags({
+        GitHubFailed: (original) =>
+          original.stderr.includes('is already "in draft"')
+            ? Effect.void
+            : pullRequest(pr).pipe(
+                Effect.orElseSucceed(() => null),
+                Effect.flatMap((pull) =>
+                  pull !== null && !pull.open ? Effect.void : Effect.fail(original),
+                ),
+              ),
+      }),
+    );
+
+  /** Comments on the pull request, ending with the factory marker. */
+  const commentOnPr = (pr: number, body: string): GitHubEffect<void> =>
+    gh([...repoArgs(["pr", "comment", String(pr)]), "--body", withMarker(body, MARKER)]).pipe(
+      Effect.asVoid,
+    );
+
+  /**
+   * How `head` stands against `base`, by GitHub's compare API (`status` of `base...head`).
+   * A ref that GitHub does not know (a 404) is null. Only the status is read, so a long
+   * history costs one small answer. Each ref goes into the API path the way `branchTip`
+   * places a branch, and a ref with an empty or dot segment, or `..` anywhere, is refused
+   * before the call so that it cannot leave the compare path or name a second range.
+   */
+  const compare = (base: string, head: string): GitHubEffect<Relation | null> =>
+    Effect.gen(function* () {
+      const encoded: Array<string> = [];
+      for (const name of [base, head]) {
+        const part = name.includes("..") ? null : encodeBranch(name);
+        if (part === null) {
+          return yield* new GitHubInvalidArgument({
+            argument: name,
+            expected: "a ref without `..`, empty or dot segments",
+          });
+        }
+        encoded.push(part);
+      }
+      const args = [
+        "api",
+        `repos/${repo}/compare/${encoded[0]}...${encoded[1]}?per_page=1`,
+        "--jq",
+        ".status",
+      ];
+      const stdout = yield* gh(args).pipe(Effect.catchIf(isNotFound, () => Effect.succeed(null)));
+      if (stdout === null) return null;
+      switch (stdout.trim()) {
+        case "ahead":
+        case "behind":
+        case "identical":
+        case "diverged":
+          return stdout.trim() as Relation;
+        default:
+          return yield* parseError(args, "ahead, behind, identical or diverged");
+      }
+    });
+
+  /**
+   * How each of the check `names` stands on the commit `sha` (a full 40 or 64 digit id,
+   * refused before the call otherwise): one answer for every name, in the order asked,
+   * whatever else ran. Only check runs count (what GitHub Actions and other GitHub apps
+   * report), and only the latest run of each. A name is matched exactly. A skipped run is
+   * no result. When one name has several runs, a failed one decides, then a pending one,
+   * then a skipped one, and it passes only when all passed.
+   */
+  const checks = (sha: string, names: ReadonlyArray<string>): GitHubEffect<Array<CheckStatus>> =>
+    Effect.gen(function* () {
+      if (!isCommitId(sha)) {
+        return yield* new GitHubInvalidArgument({ argument: sha, expected: "a full commit id" });
+      }
+      const args = [
+        "api",
+        `repos/${repo}/commits/${sha}/check-runs?per_page=100&filter=latest`,
+        "--paginate",
+        "--jq",
+        "[.check_runs[] | {name, status, conclusion, html_url}]",
+      ];
+      const runs = yield* ghPages(args, CheckRunRows, "JSON arrays of check runs");
+      return names.map((name) => {
+        let found: CheckStatus | null = null;
+        for (const run of runs) {
+          if (run.name !== name) continue;
+          const [state, conclusion] = checkOutcome(run.status, run.conclusion ?? null);
+          if (found === null || CHECK_RANK[state] > CHECK_RANK[found.state]) {
+            // A link that does not point at GitHub is not passed on.
+            const url = run.html_url?.startsWith("https://github.com/") ? run.html_url : null;
+            found = { name, state, conclusion, url };
+          }
+        }
+        return found ?? { name, state: "missing", conclusion: "", url: null };
+      });
+    });
+
   return {
     listIssues,
     issue,
@@ -674,5 +910,11 @@ export const makeGitHub = (options: GitHubOptions) => {
     branchTip,
     fileAt,
     baseConfig,
+    pullRequest,
+    markPrReady,
+    markPrDraft,
+    commentOnPr,
+    compare,
+    checks,
   };
 };
