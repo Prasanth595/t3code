@@ -2,6 +2,14 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { PROJECT_CONFIG_PATH } from "../config.ts";
+import {
+  STATES,
+  stateColor,
+  stateDescription,
+  stateFromLabel,
+  stateLabel,
+  type State,
+} from "../domain/lifecycle.ts";
 import { FactoryProcess } from "../process.ts";
 
 /**
@@ -21,39 +29,6 @@ export const MAX_FILE_BYTES = 64 * 1024;
 
 const GH_TIMEOUT_MS = 60_000;
 const GH_OUTPUT_LIMIT = 8 * 1024 * 1024;
-
-/** The seven lifecycle labels, in lifecycle order, as GitHub shows them. */
-export const FACTORY_LABELS = [
-  {
-    name: "factory:proposed",
-    color: "c5def5",
-    description: "A bot filed it. The factory ignores it until a person sets `factory:ready`.",
-  },
-  { name: "factory:ready", color: "0e8a16", description: "Approved for the factory." },
-  {
-    name: "factory:triage",
-    color: "fbca04",
-    description: "Claimed. The session is being launched.",
-  },
-  {
-    name: "factory:needs-info",
-    color: "d93f0b",
-    description: "The factory asked questions on the issue. Answer them, then set `factory:ready`.",
-  },
-  { name: "factory:building", color: "1d76db", description: "A session is building it." },
-  {
-    name: "factory:pr-open",
-    color: "5319e7",
-    description: "The PR is open and has passed the gate.",
-  },
-  {
-    name: "factory:stuck",
-    color: "b60205",
-    description: "The factory gave up and said why in a comment.",
-  },
-] as const;
-
-export type FactoryLabel = (typeof FACTORY_LABELS)[number]["name"];
 
 // ---- errors ----
 
@@ -220,10 +195,10 @@ export interface IssueDetail {
   readonly assignees: ReadonlyArray<string>;
   /** The author's login; null when GitHub gives none (a deleted account). */
   readonly author: string | null;
-  readonly state: "OPEN" | "CLOSED";
+  /** The lifecycle state of the one `factory:*` label; null for none, several or an unknown one. */
+  readonly state: State | null;
+  /** GitHub has the issue closed. */
   readonly closed: boolean;
-  /** The one `factory:*` label, when it is one of ours; null for none, several or an unknown one. */
-  readonly factoryLabel: FactoryLabel | null;
 }
 
 export interface BaseConfig {
@@ -345,10 +320,6 @@ const quoted = (text: string): string => `"${text}"`;
 
 const withMarker = (body: string, marker: string): string => `${body}\n\n${marker}`;
 
-const FACTORY_LABEL_NAMES: ReadonlySet<string> = new Set(FACTORY_LABELS.map((label) => label.name));
-const asFactoryLabel = (name: string): FactoryLabel | null =>
-  FACTORY_LABEL_NAMES.has(name) ? (name as FactoryLabel) : null;
-
 // ---- the client ----
 
 export interface GitHubOptions {
@@ -366,6 +337,13 @@ export const makeGitHub = (options: GitHubOptions) => {
   /** Runs `gh` and returns stdout, or the typed error. */
   const gh = (args: ReadonlyArray<string>): GitHubEffect<string> =>
     Effect.gen(function* () {
+      // Node's own spawn error quotes the offending argument, which could be a hidden comment body.
+      if (args.some((arg) => arg.includes("\u0000"))) {
+        return yield* new GitHubSpawnError({
+          args,
+          cause: new Error("argument contains a NUL byte"),
+        });
+      }
       const factoryProcess = yield* FactoryProcess;
       const result = yield* factoryProcess
         .run({
@@ -441,14 +419,14 @@ export const makeGitHub = (options: GitHubOptions) => {
 
   const repoArgs = (parts: ReadonlyArray<string>): Array<string> => [...parts, "--repo", repo];
 
-  const listIssues = (label: string): GitHubEffect<Listing<IssueSummary>> =>
+  const listIssues = (state: State): GitHubEffect<Listing<IssueSummary>> =>
     Effect.gen(function* () {
       const args = [
         ...repoArgs(["issue", "list"]),
         "--state",
         "open",
         "--label",
-        label,
+        stateLabel(state),
         "--limit",
         String(LIST_LIMIT + 1),
         "--json",
@@ -482,15 +460,15 @@ export const makeGitHub = (options: GitHubOptions) => {
         labels,
         assignees: raw.assignees.map((assignee) => assignee.login),
         author: raw.author?.login ?? null,
-        state: raw.state,
+        state: factory.length === 1 ? (stateFromLabel(factory[0]!) ?? null) : null,
         closed: raw.state === "CLOSED",
-        factoryLabel: factory.length === 1 ? asFactoryLabel(factory[0]!) : null,
       };
     });
 
-  /** Moves the issue to `label`: adds it, removes every other `factory:*` label, touches nothing else. */
-  const setState = (number: number, label: FactoryLabel): GitHubEffect<void> =>
+  /** Moves the issue to `state`: adds its label, removes every other `factory:*` label, touches nothing else. */
+  const setState = (number: number, state: State): GitHubEffect<void> =>
     Effect.gen(function* () {
+      const label = stateLabel(state);
       const view = [...repoArgs(["issue", "view", String(number)]), "--json", "labels"];
       const current = yield* ghJson(view, LabelsView, "an object with `labels`");
       const names = current.labels.map((l) => l.name);
@@ -568,15 +546,15 @@ export const makeGitHub = (options: GitHubOptions) => {
       description,
     ]).pipe(Effect.asVoid);
 
-  /** Creates the factory labels the repo lacks, in table order; returns their names. */
-  const ensureLabels = (): GitHubEffect<Array<FactoryLabel>> =>
+  /** Creates the factory labels the repo lacks, in lifecycle order; returns their states. */
+  const ensureLabels = (): GitHubEffect<Array<State>> =>
     Effect.gen(function* () {
       const existing = new Set(yield* labelNames());
-      const created: Array<FactoryLabel> = [];
-      for (const label of FACTORY_LABELS) {
-        if (existing.has(label.name)) continue;
-        yield* createLabel(label.name, label.color, label.description);
-        created.push(label.name);
+      const created: Array<State> = [];
+      for (const state of STATES) {
+        if (existing.has(stateLabel(state))) continue;
+        yield* createLabel(stateLabel(state), stateColor(state), stateDescription(state));
+        created.push(state);
       }
       return created;
     });
