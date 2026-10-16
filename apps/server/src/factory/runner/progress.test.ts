@@ -330,3 +330,28 @@ describe("readProgress: the last wait marker", () => {
     }
   });
 });
+
+describe("readProgress: the checks read", () => {
+  const sha = "0123456789ABCDEF0123456789abcdef01234567";
+  const checksRead = (ms: number, checks: ReadonlyArray<{ name: string; state: string }>) =>
+    line(ms, "checks_read", { sha, checks });
+
+  it("checksPassed is the newest all-passed checks_read's lower-case sha and null for any other read", () => {
+    const mixed = checksRead(1, [
+      { name: "gate", state: "passed" },
+      { name: "lint", state: "failed" },
+    ]);
+    const allPassed = checksRead(2, [
+      { name: "gate", state: "passed" },
+      { name: "lint", state: "passed" },
+    ]);
+    const laterMixed = checksRead(3, [
+      { name: "gate", state: "passed" },
+      { name: "lint", state: "pending" },
+    ]);
+    assert.strictEqual(readProgress([mixed]).checksPassed, null);
+    assert.strictEqual(readProgress([mixed, allPassed]).checksPassed, sha.toLowerCase());
+    assert.strictEqual(readProgress([mixed, allPassed, laterMixed]).checksPassed, null);
+    assert.strictEqual(readProgress([allPassed, checksRead(4, [])]).checksPassed, null);
+  });
+});
