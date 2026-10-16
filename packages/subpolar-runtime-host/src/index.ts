@@ -4,6 +4,7 @@ import type {
   RunEventSink,
   StatelessRunResult,
 } from "@subpolar/shared";
+import path from "node:path";
 import { createStatelessSubpolarRuntime, type ToolGateway } from "@subpolar/runtime";
 import {
   createPiStatelessExecutor,
@@ -84,7 +85,12 @@ export class SubpolarRuntimeHost {
 
   constructor(private readonly options: SubpolarRuntimeHostOptions<unknown>) {
     const config = options.piConfig as { runtimeDataDir?: unknown } | undefined;
-    const persistent = typeof config?.runtimeDataDir === "string" || Boolean(process.env.SUBPOLAR_RUNTIME_DATA_DIR);
+    const runtimeDataDir = typeof config?.runtimeDataDir === "string"
+      ? config.runtimeDataDir
+      : process.env.SUBPOLAR_RUNTIME_DATA_DIR;
+    const persistent = options.piFactory.supportsPersistentSessions === true
+      && typeof runtimeDataDir === "string"
+      && path.isAbsolute(runtimeDataDir);
     this.capabilities = Object.freeze({
       scope: "process",
       durability: persistent ? "persistent" : "ephemeral",

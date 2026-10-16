@@ -109,11 +109,14 @@ export async function loadPiSdk(): Promise<PiSdkModule> {
 
 /** Prompt-only SDK composition. No built-ins or discovered extensions bypass policy. */
 export function createPiSdkExecutorFactory(load: () => Promise<PiSdkModule> = loadPiSdk): PiExecutorFactory<PiSdkConfig | undefined> {
-  return async (config, request) => {
+  const factory: PiExecutorFactory<PiSdkConfig | undefined> = async (config, request) => {
     if (!request) throw new PiRuntimeError("Pi execution request is required");
     const sdk = await load();
     const cwd = request.context.cwd ?? config?.cwd ?? process.cwd();
     const runtimeDataDir = config?.runtimeDataDir ?? process.env.SUBPOLAR_RUNTIME_DATA_DIR;
+    if (runtimeDataDir !== undefined && !path.isAbsolute(runtimeDataDir)) {
+      throw new PiRuntimeError("Pi runtime data directory must be an absolute path");
+    }
     const agentDir = config?.agentDir ?? (runtimeDataDir ? path.join(runtimeDataDir, "pi-agent") : sdk.getAgentDir());
     const sessionId = request.context.sessionId;
     const persistent = runtimeDataDir !== undefined && sessionId !== undefined;
@@ -205,4 +208,5 @@ export function createPiSdkExecutorFactory(load: () => Promise<PiSdkModule> = lo
       dispose: () => session.dispose(),
     };
   };
+  return Object.assign(factory, { supportsPersistentSessions: true as const });
 }

@@ -186,6 +186,27 @@ test("persists Pi sessions under runtime data and reopens them by the T3 ACP ses
   })).rejects.toThrow("Persisted Pi session was not found");
 });
 
+test("rejects relative Pi runtime data directories before creating a session file", async () => {
+  const sdk: PiSdkModule = {
+    getAgentDir: () => "/test/agent",
+    SessionManager: sessionManagerApi(),
+    SettingsManager: { inMemory: () => ({}) },
+    DefaultResourceLoader: class { async reload() {} },
+    async createAgentSession() { throw new Error("must reject before creating an agent session"); },
+  };
+  const execution: PiExecutionRequest = {
+    runId: "run-relative-dir",
+    requestId: "request-relative-dir",
+    prompt: "hello",
+    context: { principal: { id: "owner", kind: "local" }, sessionId: "session", cwd: "/workspace/project" },
+    transcript: { entries: [] },
+    emit: () => undefined,
+  };
+
+  await expect(createPiSdkExecutorFactory(async () => sdk)({ runtimeDataDir: "relative/path" }, execution))
+    .rejects.toThrow("runtime data directory must be an absolute path");
+});
+
 test("SDK exposes only policy-gateway tools and routes calls through the run invoker", async () => {
   const observedCalls: unknown[] = [];
   let optionsSeen: Record<string, unknown> | undefined;

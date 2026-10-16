@@ -62,10 +62,13 @@ export interface PiExecutionSession extends PiExecutor {
   readonly disposed: boolean;
 }
 
-export type PiExecutorFactory<Config = unknown> = (
+export type PiExecutorFactory<Config = unknown> = ((
   config: Config,
   request?: PiExecutionRequest,
-) => PiExecutor | Promise<PiExecutor>;
+) => PiExecutor | Promise<PiExecutor>) & {
+  /** Set only when this factory can reopen its own persisted native sessions. */
+  readonly supportsPersistentSessions?: boolean;
+};
 export type PiExecutorModule =
   | PiExecutorFactory
   | { default?: PiExecutorFactory; createPiExecutor?: PiExecutorFactory };

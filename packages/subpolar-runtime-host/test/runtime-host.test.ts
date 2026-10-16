@@ -47,6 +47,21 @@ describe("SubpolarRuntimeHost", () => {
     expect(seen[2]).toEqual([]);
   });
 
+  test("reports session persistence only when the selected executor supports it", () => {
+    const context: RuntimeContextPort = { async load(request) {
+      return { requestId: request.requestId, runId: request.runId, sessionId: request.sessionId, principal: request.principal ?? { id: "local-user", kind: "local" } };
+    } };
+    const gateway = createPolicyGateway({ execute: async () => ({ ok: false, status: "denied" }) });
+    const executor = Object.assign(() => ({ async execute() { return "ok"; } }), { supportsPersistentSessions: true as const });
+    const persistent = createSubpolarRuntimeHost({ context, gateway, piConfig: { runtimeDataDir: "/var/lib/subpolar" }, piFactory: executor });
+    const customExecutor = createSubpolarRuntimeHost({ context, gateway, piConfig: { runtimeDataDir: "/var/lib/subpolar" }, piFactory: () => ({ async execute() { return "ok"; } }) });
+    const relativeStorage = createSubpolarRuntimeHost({ context, gateway, piConfig: { runtimeDataDir: "relative/path" }, piFactory: executor });
+
+    expect(persistent.createSession().capabilities.supports).toMatchObject({ "session.resume": true, "session.persistence": true });
+    expect(customExecutor.createSession().capabilities.supports).toMatchObject({ "session.resume": false, "session.persistence": false });
+    expect(relativeStorage.createSession().capabilities.supports).toMatchObject({ "session.resume": false, "session.persistence": false });
+  });
+
   test("cancels the active Pi turn and releases the session for the next turn", async () => {
     let started!: () => void;
     const didStart = new Promise<void>((resolve) => { started = resolve; });
