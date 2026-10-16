@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -65,6 +66,7 @@ it.effect("does not announce a background service that is still switching over",
 
   return reportServiceOnboarding("pending").pipe(
     Effect.provideService(Console.Console, testConsole),
+    Effect.provide(NodeServices.layer),
     Effect.tap(() =>
       Effect.sync(() => {
         const output = lines.join("\n");
