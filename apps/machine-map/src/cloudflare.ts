@@ -418,7 +418,7 @@ export class CloudflareApi {
     }
   }
 
-  // ---------------------------------------------------------------- MM-213: machine tunnels
+  // MM-213: machine tunnels
 
   async findTunnelByName(name: string): Promise<Tunnel | null> {
     const tunnels = await this.#call(

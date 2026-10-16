@@ -12,7 +12,7 @@ The portal is one Cloudflare Worker with one Durable Object, at `t3.yarden-zamir
 - `src/api.ts`: request and response shapes of the HTTP API, shared by the Worker and the page.
 - `src/ui/`: the React page.
 - `src/sw/sw.ts`: the service worker of the installed app (MM-1801 to MM-1808). `vite.config.ts` builds it to `dist/sw.js` and writes the file list of the build into it.
-- `src/push.ts`: Web Push with Web Crypto: the VAPID JWT and the `aes128gcm` encryption (MM-1807).
+- `packages/shared/src/webPush.ts`: Web Push with Web Crypto: the VAPID JWT and the `aes128gcm` encryption (MM-1807). The T3 server uses it too.
 - `public/`: the favicon, the app icons, the web app manifest and the offline page. The PNG icons are `favicon.svg` rendered at each size; the full-bleed ones (`apple-touch-icon.png`, `icon-maskable-512.png`) put it on the canvas colour with a margin.
 
 ## Set up Cloudflare Access
