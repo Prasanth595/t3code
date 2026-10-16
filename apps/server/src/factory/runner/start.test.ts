@@ -105,6 +105,10 @@ const fakeTracker = (script: {
   pulls?: Record<number, PullRequest | null | GitHubError>;
   /** Who GitHub says closed the issue: a login, nobody, or a failed read. */
   closedBy?: string | null | GitHubError;
+  /** What the tip of a branch reads as: found (the default), a 404, or a failed read. Read at each call. */
+  branchTip?: "found" | "missing" | GitHubError;
+  /** Whether the issue text was edited since the approval (false by default), or a failed read. Read at each call. */
+  editedSince?: boolean | GitHubError;
 }) => {
   const calls: Array<string> = [];
   const issues = [...(script.issues ?? [detail("ready")])];
@@ -171,6 +175,21 @@ const fakeTracker = (script: {
       const by = script.closedBy ?? null;
       return typeof by === "object" && by !== null ? Effect.fail(by) : Effect.succeed(by);
     },
+    branchTip: (branch) => {
+      calls.push(`branchTip ${branch}`);
+      const tip = script.branchTip ?? "found";
+      if (tip === "missing") {
+        return Effect.fail(
+          new GitHubFailed({ args: ["api", "ref"], status: 1, stderr: "gh: Not Found (HTTP 404)" }),
+        );
+      }
+      return tip === "found" ? Effect.succeed("a".repeat(40)) : Effect.fail(tip);
+    },
+    textEditedSince: (n, since) => {
+      calls.push(`textEditedSince ${n} ${since}`);
+      const edited = script.editedSince ?? false;
+      return typeof edited === "boolean" ? Effect.succeed(edited) : Effect.fail(edited);
+    },
     // The gate's actions: the claim never performs them.
     markPrReady: () => Effect.die("not the claim's"),
     markPrDraft: () => Effect.die("not the claim's"),
@@ -223,7 +242,7 @@ const fakeSessions = (
         dataDir,
         parseRunId(request.commandId.slice("softfac:".length, -":launch".length)),
       );
-      if (!NodeFS.readFileSync(ledgerFile, "utf8").includes('"step":"launch-sending"')) {
+      if (!/"step":"launch-sending[" ]/.test(NodeFS.readFileSync(ledgerFile, "utf8"))) {
         return Effect.die(new Error("launch was called before the launch-sending step"));
       }
       return result(popped(launches), {
@@ -1661,6 +1680,408 @@ describe("start: a closed issue", () => {
       assert.strictEqual(outcome.error?._tag, "FactorySessionsError");
       assert.strictEqual(isFinished(dataDir, sent), true);
       assert.deepStrictEqual(entriesOf(dataDir, two), before);
+    }),
+  );
+});
+
+// ---- the resume after a time limit ------------------------------------------------------------
+
+const run7n = (attempt: number): RunId => ({ ...run7, attempt });
+const TIME_LIMIT_TEXT = "the run passed its time limit";
+const RESUME_WORDS =
+  "A previous attempt of this issue (rawphp__softfac__7__1) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over.";
+const INTERRUPTED_WORDS =
+  "A previous attempt of this issue (rawphp__softfac__7__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.";
+
+/** `startedLines()` with `branch` on the `session_launched` line. */
+const startedLinesOn = (branch: string | null) =>
+  startedLines().map((entry) =>
+    entry.line.event === "session_launched"
+      ? {
+          ...entry,
+          line: {
+            event: "session_launched",
+            data: {
+              thread_id: "thread-1",
+              worktree: WORKTREE,
+              branch,
+              model_instance: "claudeAgent",
+              model: "claude-opus-5-5",
+              resumed_from: null,
+            },
+          } satisfies RunEvent,
+        }
+      : entry,
+  );
+
+/** Run 1 of issue 7: started, then stuck for the reason code `code` and finished. */
+const seedStuckRun = (
+  dataDir: string,
+  code: string,
+  branches: { launched: string | null; recorded: string | null },
+) => {
+  const ledger = Ledger.create(dataDir, run7, { clock: () => T0 - 1000 });
+  try {
+    for (const { line, cause: why } of startedLinesOn(branches.launched)) ledger.append(line, why);
+    const why = makeCause("pass", code);
+    ledger.append(
+      {
+        event: "stuck",
+        data: {
+          reason: TIME_LIMIT_TEXT,
+          ...(branches.recorded !== null && { branch: branches.recorded, commits_ahead: 2 }),
+        },
+      },
+      why,
+    );
+    ledger.append({ event: "state_changed", data: { from: "building", to: "stuck" } }, why);
+    ledger.finish("stuck", null, null, why);
+  } finally {
+    ledger.close();
+  }
+};
+
+/** Run 2 of issue 7 holding `lines`, as a pass cut short left it. */
+const seedSecondRun = (dataDir: string, lines: ReadonlyArray<{ line: RunEvent; cause: Cause }>) => {
+  const ledger = Ledger.create(dataDir, run7n(2), { clock: () => T0 - 500 });
+  try {
+    for (const { line, cause: why } of lines) ledger.append(line, why);
+  } finally {
+    ledger.close();
+  }
+};
+
+const GH_CALLS = /^(branchTip|textEditedSince) /;
+const lookups = (calls: ReadonlyArray<string>) => calls.filter((c) => GH_CALLS.test(c));
+
+const launchLineOf = (dataDir: string) => {
+  const found = entriesOf(dataDir, run7n(2)).find((e) => e.event === "session_launched");
+  if (found === undefined) return assert.fail("run 2 launched no session");
+  return found;
+};
+
+/** The last launch was a plain start from `main`, and its line says so. */
+const assertPlainStart = (dataDir: string, t3: ReturnType<typeof fakeSessions>) => {
+  const request = t3.launchRequests.at(-1)!;
+  assert.strictEqual(request.baseRef, "main");
+  assert.strictEqual(request.startFromOrigin, false);
+  assert.strictEqual(request.message, launchMessage(REPO, 7, USER, "/gh/rawphp"));
+  const line = launchLineOf(dataDir);
+  assert.strictEqual((line.data as { resumed_from: unknown }).resumed_from, null);
+  assert.strictEqual(line.cause?.reason, "session-launched");
+};
+
+describe("start: the resume after a time limit", () => {
+  it.effect("continues from the branch an earlier time-limited run left on origin", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      const { tracker, calls } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      const request = t3.launchRequests[0]!;
+      assert.strictEqual(request.commandId, "softfac:rawphp__softfac__7__2:launch");
+      assert.strictEqual(request.baseRef, "t3code/abc");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.strictEqual(
+        request.message,
+        launchMessage(REPO, 7, USER, "/gh/rawphp", {
+          run: run7,
+          branch: "t3code/abc",
+          after: "time-limit",
+        }),
+      );
+      assert.ok(request.message.includes(RESUME_WORDS), request.message);
+      assert.ok(request.message.startsWith("/factory rawphp/softfac#7\n\n"), request.message);
+      // The ledger shows the choice, on the launch line and as its reason.
+      const line = launchLineOf(dataDir);
+      assert.deepStrictEqual((line.data as { resumed_from: unknown }).resumed_from, {
+        run: "rawphp__softfac__7__1",
+        branch: "t3code/abc",
+      });
+      assert.strictEqual(line.cause?.reason, "resumed-from-branch");
+      // The text was checked against the earlier approval, and the branch against origin.
+      assert.deepStrictEqual(lookups(calls), [
+        `textEditedSince 7 ${LABELED}`,
+        "branchTip t3code/abc",
+      ]);
+    }),
+  );
+
+  it.effect("continues from the branch a relaunch after an interruption left", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const ledger = Ledger.create(dataDir, run7, { clock: () => T0 - 1000 });
+      try {
+        for (const { line, cause: why } of startedLinesOn(null)) ledger.append(line, why);
+        const why = makeCause("advance", "session-interrupted");
+        ledger.append(
+          {
+            event: "session_interrupted",
+            data: {
+              resumes: 1,
+              relaunch: true,
+              run_ordinal: null,
+              branch: "t3code/abc",
+              t3_error: null,
+              ended_in_pass: 2,
+            },
+          },
+          why,
+        );
+        ledger.finish("stuck", null, null, why);
+      } finally {
+        ledger.close();
+      }
+      const { tracker } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      const request = t3.launchRequests[0]!;
+      assert.strictEqual(request.baseRef, "t3code/abc");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.ok(request.message.includes(INTERRUPTED_WORDS), request.message);
+      assert.strictEqual(launchLineOf(dataDir).cause?.reason, "resumed-from-branch");
+    }),
+  );
+
+  it.effect("is not made after an interruption's relaunch that then asked questions", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const ledger = Ledger.create(dataDir, run7, { clock: () => T0 - 1000 });
+      try {
+        for (const { line, cause: why } of startedLinesOn(null)) ledger.append(line, why);
+        const why = makeCause("advance", "session-interrupted");
+        ledger.append(
+          {
+            event: "session_interrupted",
+            data: {
+              resumes: 1,
+              relaunch: true,
+              run_ordinal: null,
+              branch: "t3code/abc",
+              t3_error: null,
+              ended_in_pass: 2,
+            },
+          },
+          why,
+        );
+        ledger.append({ event: "questions_posted", data: { questions: "1. Which?" } }, why);
+        ledger.append(
+          { event: "state_changed", data: { from: "building", to: "needs-info" } },
+          why,
+        );
+        ledger.finish("needs-info", null, null, why);
+      } finally {
+        ledger.close();
+      }
+      const { tracker, calls } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(lookups(calls), []);
+      assertPlainStart(dataDir, t3);
+    }),
+  );
+
+  it.effect("reads the branch from the stuck line when the launch line has none", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: null, recorded: "t3code/abc" });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, fakeTracker({}).tracker, t3.sessions);
+      assert.strictEqual(t3.launchRequests[0]!.baseRef, "t3code/abc");
+      assert.strictEqual(t3.launchRequests[0]!.startFromOrigin, true);
+    }),
+  );
+
+  it.effect("prefers the branch on the launch line", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/launched", recorded: "t3code/abc" });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, fakeTracker({}).tracker, t3.sessions);
+      assert.strictEqual(t3.launchRequests[0]!.baseRef, "t3code/launched");
+    }),
+  );
+
+  it.effect("starts from base when the branch is not on origin", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      const { tracker, calls } = fakeTracker({ branchTip: "missing" });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.ok(calls.includes("branchTip t3code/abc"), calls.join("\n"));
+      assertPlainStart(dataDir, t3);
+    }),
+  );
+
+  it.effect("is an error that leaves the issue in triage when the branch cannot be looked up", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      const script = {
+        issues: [detail("ready"), detail("triage", [USER])],
+        branchTip: ghFailure(),
+      };
+      const { tracker, calls } = fakeTracker(script);
+      const t3 = fakeSessions(dataDir, {});
+      const error = yield* Effect.flip(startIn(dataDir, tracker, t3.sessions));
+      assert.strictEqual(error._tag, "GitHubFailed");
+      assert.deepStrictEqual(
+        t3.calls.filter((c) => c.startsWith("launch ")),
+        [],
+      );
+      assert.ok(!calls.includes("setState 7 building"), calls.join("\n"));
+      assert.ok(
+        !stepsOf(dataDir, run7n(2)).includes("session_launched"),
+        stepsOf(dataDir, run7n(2)).join(","),
+      );
+      // The next pass picks the run up again, and launches once GitHub answers.
+      delete (script as { branchTip?: unknown }).branchTip;
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.strictEqual(t3.launchRequests.at(-1)!.baseRef, "t3code/abc");
+    }),
+  );
+
+  it.effect("writes no launch-sending step when GitHub fails while deciding", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      const { tracker } = fakeTracker({ branchTip: ghFailure() });
+      yield* Effect.flip(startIn(dataDir, tracker));
+      const sending = entriesOf(dataDir, run7n(2)).filter(
+        (e) =>
+          e.event === "step_changed" &&
+          String((e.data as { step: string }).step).startsWith("launch-sending"),
+      );
+      assert.deepStrictEqual(sending, []);
+    }),
+  );
+
+  it.effect("is not made when the earlier run stopped for another reason", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "session-stuck", { launched: "t3code/abc", recorded: "t3code/abc" });
+      const { tracker, calls } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(lookups(calls), []);
+      assertPlainStart(dataDir, t3);
+    }),
+  );
+
+  it.effect("is not made when the issue text changed since the earlier approval", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      const { tracker, calls } = fakeTracker({ editedSince: true });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(lookups(calls), [`textEditedSince 7 ${LABELED}`]);
+      assertPlainStart(dataDir, t3);
+    }),
+  );
+
+  it.effect("is not made when the earlier run recorded no branch", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: null, recorded: null });
+      const { tracker, calls } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(lookups(calls), []);
+      assertPlainStart(dataDir, t3);
+    }),
+  );
+
+  it.effect("is not made from a branch name that could be taken for a git option", () =>
+    Effect.gen(function* () {
+      for (const branch of ["-upload-pack=x", "--force", "a b", "a..b", "a\u0001b", ""]) {
+        const dataDir = tempDir();
+        seedStuckRun(dataDir, "time-limit", { launched: null, recorded: branch });
+        const { tracker, calls } = fakeTracker({});
+        const t3 = fakeSessions(dataDir, {});
+        yield* startIn(dataDir, tracker, t3.sessions);
+        assert.deepStrictEqual(lookups(calls), [], JSON.stringify(branch));
+        assertPlainStart(dataDir, t3);
+      }
+    }),
+  );
+
+  it.effect("records the decision in the launch-sending step, before the launch is sent", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      yield* startIn(dataDir, fakeTracker({}).tracker);
+      const events = entriesOf(dataDir, run7n(2));
+      const sending = events.findIndex(
+        (e) =>
+          e.event === "step_changed" &&
+          String((e.data as { step: string }).step).startsWith("launch-sending"),
+      );
+      assert.deepStrictEqual(events[sending]!.data, {
+        step: "launch-sending resumed-from t3code/abc",
+      });
+      assert.strictEqual(events[sending + 1]!.event, "session_launched");
+    }),
+  );
+
+  it.effect("sent again, reuses the recorded decision and asks GitHub nothing", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      seedSecondRun(dataDir, [
+        ...startedLines().slice(0, 3),
+        {
+          line: { event: "step_changed", data: { step: "launch-sending resumed-from t3code/abc" } },
+          cause: cause("launch-sending"),
+        },
+      ]);
+      // The branch is gone and the text edited since the first send: the retry sends the same request.
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("triage", [USER])],
+        branchTip: "missing",
+        editedSince: true,
+      });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      const request = t3.launchRequests[0]!;
+      assert.strictEqual(request.baseRef, "t3code/abc");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.ok(request.message.includes(RESUME_WORDS), request.message);
+      assert.deepStrictEqual(lookups(calls), []);
+      const line = launchLineOf(dataDir);
+      assert.deepStrictEqual((line.data as { resumed_from: unknown }).resumed_from, {
+        run: "rawphp__softfac__7__1",
+        branch: "t3code/abc",
+      });
+      assert.strictEqual(line.cause?.reason, "resumed-from-branch");
+    }),
+  );
+
+  it.effect("sent again after a plain start, stays plain though a resume is now possible", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      seedSecondRun(dataDir, startedLines().slice(0, 4));
+      const { tracker, calls } = fakeTracker({ issues: [detail("triage", [USER])] });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(lookups(calls), []);
+      assertPlainStart(dataDir, t3);
+    }),
+  );
+
+  it.effect("a first attempt is a plain start", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(lookups(calls), []);
+      const request = t3.launchRequests[0]!;
+      assert.strictEqual(request.baseRef, "main");
+      assert.strictEqual(request.startFromOrigin, false);
     }),
   );
 });

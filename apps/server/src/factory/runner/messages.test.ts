@@ -22,6 +22,7 @@ import {
   questionsComment,
   sessionMayExistNote,
   stuckComment,
+  type ResumeFrom,
 } from "./messages.ts";
 
 /** The paragraph that names the GitHub identity, for the login `rawphp` and the `gh` directory `/gh/rawphp`. */
@@ -68,6 +69,61 @@ describe("launchMessage", () => {
     );
     // The variable's name with a value appears only in the clause for the server.
     assert.strictEqual(paragraph.split("GH_CONFIG_DIR=").length - 1, 1);
+  });
+});
+
+describe("launchMessage: a resumed run", () => {
+  const resumed = (after: ResumeFrom["after"]): ResumeFrom => ({
+    run: { repo: "acme/widgets", issue: "42", attempt: 1 },
+    branch: "t3code/abc",
+    after,
+  });
+
+  it("adds the time-limit paragraph, without the branch", () => {
+    const message = launchMessage(
+      "acme/widgets",
+      42,
+      "rawphp",
+      "/gh/rawphp",
+      resumed("time-limit"),
+    );
+    assert.ok(
+      message.includes(
+        "\n\nA previous attempt of this issue (acme__widgets__42__1) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over.",
+      ),
+      message,
+    );
+    assert.ok(!message.includes("t3code/abc"), message);
+  });
+
+  it("adds the interruption paragraph for a relaunch", () => {
+    const message = launchMessage(
+      "acme/widgets",
+      42,
+      "rawphp",
+      "/gh/rawphp",
+      resumed("interrupted"),
+    );
+    assert.ok(
+      message.includes(
+        "\n\nA previous attempt of this issue (acme__widgets__42__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.",
+      ),
+      message,
+    );
+  });
+
+  it("puts the identity paragraph after a resume paragraph", () => {
+    const message = launchMessage(
+      "acme/widgets",
+      42,
+      "rawphp",
+      "/gh/rawphp",
+      resumed("time-limit"),
+    );
+    const resume = message.indexOf("stopped at its time limit");
+    const identity = message.indexOf("You act on GitHub as rawphp.");
+    assert.ok(resume !== -1 && identity !== -1 && resume < identity, message);
+    assert.ok(message.endsWith(`\n\n${IDENTITY_WORDS}`), message);
   });
 });
 

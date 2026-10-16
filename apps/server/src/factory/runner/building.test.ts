@@ -906,6 +906,57 @@ describe("advance: done", () => {
   );
 });
 
+/** The started run of a session that continued the branch `t3code/old` of the run before it. */
+const RESUMED: ReadonlyArray<RunEvent> = STARTED.map((event) =>
+  event.event === "session_launched"
+    ? {
+        event: "session_launched",
+        data: {
+          ...event.data,
+          resumed_from: { run: "rawphp__softfac__10__1", branch: "t3code/old" },
+        },
+      }
+    : event,
+);
+
+describe("advance: a resumed run's pull request", () => {
+  it.effect("is accepted from the branch the run resumed from", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(RESUMED);
+      rig.world.pr = { ...defaultPr(), headRef: "t3code/old" };
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
+      assert.deepStrictEqual(linesOf(rig), [...RESUMED, PR_OPENED]);
+    }),
+  );
+
+  it.effect("is still accepted from the run's own branch", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(RESUMED);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      assert.deepStrictEqual(linesOf(rig), [...RESUMED, PR_OPENED]);
+    }),
+  );
+
+  it.effect("is refused from a third branch", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(RESUMED);
+      rig.world.pr = { ...defaultPr(), headRef: "someone/else" };
+      const outcome = yield* advanceIn(rig);
+      assert.ok(
+        outcome.kind === "stuck" &&
+          outcome.reason.startsWith(
+            "the session reported PR #12 but its branch someone/else is not this session's branch",
+          ),
+        JSON.stringify(outcome),
+      );
+    }),
+  );
+});
+
 describe("advance: questions", () => {
   it.effect("posts them, releases the issue and ends the run", () =>
     Effect.gen(function* () {
