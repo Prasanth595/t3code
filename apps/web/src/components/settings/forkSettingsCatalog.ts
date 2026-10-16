@@ -93,7 +93,11 @@ const FORK_SETTING_GROUPS = [
   },
   {
     title: "Web app and look",
-    entries: [{ ids: ["installed-app"] }, { ids: ["thread-card-layout"] }],
+    entries: [
+      { ids: ["installed-app"] },
+      { ids: ["thread-card-layout"] },
+      { ids: ["thread-link-chips"] },
+    ],
   },
 ] as const satisfies ReadonlyArray<{
   readonly title: string;

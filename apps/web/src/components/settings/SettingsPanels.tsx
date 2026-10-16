@@ -190,6 +190,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ThreadCardLayoutSettingsSection } from "./ThreadCardLayoutSettings";
+import { ThreadLinkChipsSettingsSection } from "./ThreadLinkChipsSettings";
 import { FORK_SETTINGS_RESTORE_PATCH, forkChangedSettingLabels } from "./forkSettingsRestore";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
@@ -1487,6 +1488,7 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <ThreadCardLayoutSettingsSection />
+      <ThreadLinkChipsSettingsSection />
 
       <SettingsSection id="motion" title="Motion">
         <SettingsRow

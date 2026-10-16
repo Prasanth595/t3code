@@ -339,6 +339,16 @@ The server setting `threadCardLayouts` holds a custom thread card layout for des
 - The layout schema and its edit operations are generic (`packages/contracts/src/slotLayout.ts`, `packages/shared/src/slotLayout.ts`). Another surface can reuse them with its own element list.
 - Search results in the sidebar and the hosted app (app.t3.codes, which has no primary server) keep the built-in card.
 
+## Thread link chips
+
+The server setting `threadLinkChips` shows thread links in chat as the chip of an attached thread. It is off by default. Turn it on in Settings > Appearance > Thread links. The machine map syncs it like other settings.
+
+- A `t3-thread://v1/<threadId>` link becomes the chip. It opens the thread in the app and shows its current title.
+- A web address of a thread, `https://<host>/<environmentId>/<threadId>`, becomes the chip when this client knows the environment: the server of the page or a connected environment. It then opens the thread in the app, not in a browser. The host does not matter, because the environment id names the machine. An address with a query, such as a prompt link, stays a normal link. So does an address of an unknown environment.
+- Copy keeps the link as written, so a copied web address still works outside T3 Code.
+- Desktop and web read the setting of the server of the message. The mobile app reads it from the server of the thread, and has no switch of its own. With the setting off, links look and open as before.
+- Agents get one rule for links, with or without the setting: `t3-thread://` for a thread on the same machine, and the web address for a thread on another machine and for text that leaves T3 Code. The data of an attached thread has a ready `link` line. The rule is in `packages/provider-core/src/server/forkThreadLinkInstructions.ts`.
+
 ## Pull request watch remark filter
 
 The server setting `pullRequestWatchRemarkFilter` selects which comments and reviews wake an agent that watches a pull request. It is off by default. Turn it on in Settings > Source control > Pull request watch.

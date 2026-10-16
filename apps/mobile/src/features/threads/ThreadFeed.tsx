@@ -210,6 +210,7 @@ import {
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { usePreparedConnection } from "../../state/session";
 import { useLiveThreadLinkLabels } from "../../state/entities";
+import { useForkThreadLinks } from "./forkThreadLinks";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
@@ -1785,8 +1786,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const iconSubtleColor = theme["--color-icon-subtle"];
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
+  const forkThreadLinks = useForkThreadLinks(props.environmentId);
   const onMarkdownLinkPress = useCallback(
     (href: string, imageEmbed = false) => {
+      if (forkThreadLinks.openKnownThread(href)) return;
       const linkedThreadId = parseThreadLinkHref(href);
       if (linkedThreadId) {
         navigation.navigate("Thread", {
@@ -1850,7 +1853,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         void openPullRequest(presentation.href);
       }
     },
-    [props.environmentId, props.threadId, props.workspaceRoot, navigation, openPullRequest],
+    [
+      props.environmentId,
+      props.threadId,
+      props.workspaceRoot,
+      navigation,
+      openPullRequest,
+      forkThreadLinks,
+    ],
   );
   const resolveImageSource = useMarkdownImageSource({
     environmentId: props.environmentId,
@@ -1862,6 +1872,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onLinkPress: onMarkdownLinkPress,
       onImagePress: (href) => onMarkdownLinkPress(href, true),
       resolveImageSource,
+      linkCustomization: forkThreadLinks.linkCustomization,
       fileContextMenu: (href) => {
         const target = resolveFileChipTarget(href, props.workspaceRoot);
         return target ? fileChipMenu(target) : undefined;
@@ -1885,7 +1896,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         }
       },
     }),
-    [onMarkdownLinkPress, props.workspaceRoot, shareFileChip, resolveImageSource],
+    [onMarkdownLinkPress, props.workspaceRoot, shareFileChip, resolveImageSource, forkThreadLinks],
   );
   const renderMarkdownImage = useCallback<MarkdownImageRenderer>(
     (image) => {
