@@ -55,6 +55,14 @@ const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   command: OrchestrationV2Command,
 ) {
+  if (command.type === "message.dispatch" && command.senderThreadId !== undefined) {
+    return yield* new Orchestrator.OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause:
+        "Public chat messages cannot impersonate another thread. Use project Activity for coordination.",
+    });
+  }
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;

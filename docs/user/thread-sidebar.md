@@ -192,6 +192,16 @@ for custom configuration.
 
 ## Inspect agent work
 
+Open **Activity** in a project thread to follow coordination without mixing it
+into your conversation. Updates consolidate by topic and recipient. Requests
+and replies stay in the same discussion; resolve or decline them when finished.
+Unanswered requests expire after 24 hours. Activity never starts a finished
+thread on its own.
+
+Choose **Handle now** or **After current work** when you want the thread to act
+on a post. You can mute a topic, pause coordination context, or return the agent
+to your original task. Unmute or resume coordination when you want updates again.
+
 **Limited** means the provider stopped on a usage or rate limit. The conversation
 keeps the provider's explanation. Retry after the limit resets, or switch to
 another provider instance.

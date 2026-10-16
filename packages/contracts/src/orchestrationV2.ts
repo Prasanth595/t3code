@@ -2538,6 +2538,45 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 });
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
+export const OrchestrationV2MessageDispatch = Schema.Struct({
+  type: Schema.Literal("message.dispatch"),
+  notification: Schema.optional(OrchestrationV2Notification),
+  ...OrchestrationV2CreationFields,
+  scheduledTaskId: Schema.optional(ScheduledTaskId),
+  senderThreadId: Schema.optional(ThreadId),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: Schema.String,
+  context: Schema.optional(OrchestrationMessageContext),
+  attachments: Schema.Array(ChatAttachment),
+  titleSeed: Schema.optional(TrimmedNonEmptyString),
+  modelSelection: Schema.optional(ModelSelection),
+  sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
+  restartContinuationOfRunId: Schema.optional(RunId),
+  usageLimitContinuationOfRunId: Schema.optional(RunId),
+  manualContinuationOfRunId: Schema.optional(RunId),
+  usageLimitRecoveryRequestId: Schema.optional(CommandId),
+  deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
+  delegatedCompletion: Schema.optional(
+    Schema.Struct({
+      parentRunId: RunId,
+      generation: PositiveInt,
+      taskIds: Schema.Array(NodeId),
+    }),
+  ),
+  dispatchMode: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("defer_start"),
+      workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    }),
+    Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
+    Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
+    Schema.Struct({ type: Schema.Literal("queue_after_active") }),
+    Schema.Struct({ type: Schema.Literal("start_immediately") }),
+  ]),
+});
+
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.create"),
@@ -2749,44 +2788,7 @@ export const OrchestrationV2Command = Schema.Union([
     providerSessionId: ProviderSessionId,
     reason: Schema.optional(Schema.String),
   }),
-  Schema.Struct({
-    type: Schema.Literal("message.dispatch"),
-    notification: Schema.optional(OrchestrationV2Notification),
-    ...OrchestrationV2CreationFields,
-    scheduledTaskId: Schema.optional(ScheduledTaskId),
-    senderThreadId: Schema.optional(ThreadId),
-    commandId: CommandId,
-    threadId: ThreadId,
-    messageId: MessageId,
-    text: Schema.String,
-    context: Schema.optional(OrchestrationMessageContext),
-    attachments: Schema.Array(ChatAttachment),
-    titleSeed: Schema.optional(TrimmedNonEmptyString),
-    modelSelection: Schema.optional(ModelSelection),
-    sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
-    restartContinuationOfRunId: Schema.optional(RunId),
-    usageLimitContinuationOfRunId: Schema.optional(RunId),
-    manualContinuationOfRunId: Schema.optional(RunId),
-    usageLimitRecoveryRequestId: Schema.optional(CommandId),
-    deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
-    delegatedCompletion: Schema.optional(
-      Schema.Struct({
-        parentRunId: RunId,
-        generation: PositiveInt,
-        taskIds: Schema.Array(NodeId),
-      }),
-    ),
-    dispatchMode: Schema.Union([
-      Schema.Struct({
-        type: Schema.Literal("defer_start"),
-        workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
-      }),
-      Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
-      Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
-      Schema.Struct({ type: Schema.Literal("queue_after_active") }),
-      Schema.Struct({ type: Schema.Literal("start_immediately") }),
-    ]),
-  }),
+  OrchestrationV2MessageDispatch,
   Schema.Struct({
     type: Schema.Literal("prepared-run.release"),
     commandId: CommandId,
@@ -2975,6 +2977,10 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2MessageDispatch.fields,
+    type: Schema.Literal("task.message.dispatch"),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,

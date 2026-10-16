@@ -1,3 +1,5 @@
+import * as Option from "effect/Option";
+import * as Coordination from "../coordination/CoordinationService.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -573,6 +575,7 @@ export const layer: Layer.Layer<
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
+    const coordination = yield* Effect.serviceOption(Coordination.CoordinationService);
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
     const writeFinalRunEvents = (input: {
@@ -1376,6 +1379,12 @@ export const layer: Layer.Layer<
             key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
             text: entry.text,
           }));
+          const coordinationContext =
+            Option.isSome(coordination) && !input.message.text.trimStart().startsWith("/")
+              ? yield* coordination.value
+                  .context(input.run.threadId)
+                  .pipe(Effect.orElseSucceed(() => ""))
+              : "";
           const turnInput = {
             appThread: input.appThread,
             threadId: input.run.threadId,
@@ -1393,7 +1402,10 @@ export const layer: Layer.Layer<
             attemptId: input.attemptId,
             rootNodeId: input.rootNode.id,
             providerThread: input.providerThread,
-            message: input.message,
+            message:
+              coordinationContext.length === 0
+                ? input.message
+                : { ...input.message, text: `${input.message.text}\n\n${coordinationContext}` },
             modelSelection: input.modelSelection,
             runtimePolicy: input.runtimePolicy,
             ...(appContext.length === 0 ? {} : { appContext }),

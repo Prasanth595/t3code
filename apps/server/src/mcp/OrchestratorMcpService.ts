@@ -44,8 +44,8 @@ import {
   type OrchestratorMcpThreadReadInput,
   type OrchestratorMcpThreadReadResult,
   type OrchestratorMcpThreadRun,
-  type OrchestratorMcpThreadSendInput,
-  type OrchestratorMcpThreadSendResult,
+  type OrchestratorMcpTaskFollowupInput,
+  type OrchestratorMcpTaskFollowupResult,
   type OrchestratorMcpThreadTimelineItem,
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
@@ -175,10 +175,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadReadInput,
   ) => Effect.Effect<OrchestratorMcpThreadReadResult, OrchestratorMcpFailure>;
-  readonly sendToThread: (
+  readonly followUpTask: (
     scope: McpInvocationScope,
-    input: OrchestratorMcpThreadSendInput,
-  ) => Effect.Effect<OrchestratorMcpThreadSendResult, OrchestratorMcpFailure>;
+    input: OrchestratorMcpTaskFollowupInput,
+  ) => Effect.Effect<OrchestratorMcpTaskFollowupResult, OrchestratorMcpFailure>;
   readonly waitForThread: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadWaitInput,
@@ -2289,7 +2289,7 @@ const make = Effect.gen(function* () {
               if (request.prompt !== undefined) {
                 yield* threadManagement
                   .dispatch({
-                    type: "message.dispatch",
+                    type: "task.message.dispatch",
                     createdBy: "agent",
                     creationSource: "mcp",
                     commandId: stableCommandId({
@@ -2500,27 +2500,55 @@ const make = Effect.gen(function* () {
           hasMore: timeline.hasMore,
         } satisfies OrchestratorMcpThreadReadResult;
       }),
-    sendToThread: (scope, input) =>
+    followUpTask: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
         yield* assertLiveCallerForOtherThread(scope, parent, target);
-        yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
-        yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
-
-        const mode = input.mode ?? "auto";
+        if (
+          parent === undefined ||
+          target.thread.lineage.parentThreadId !== parent.thread.id ||
+          target.thread.lineage.relationshipToParent !== "subagent" ||
+          !parent.subagents.some(
+            (task) => task.childThreadId === target.thread.id && task.origin === "app_owned",
+          )
+        )
+          return yield* failure(
+            "invalid_request",
+            "task_followup starts new work only in this thread's own app-owned child. Use coordination_post for peer communication.",
+          );
         const key = yield* requestKey(input.clientRequestId);
         const messageId = stableOperationMessageId({
           scope,
           requestKey: key,
-          operation: "thread-send",
+          operation: "task-followup",
         });
+        const existing = target.messages.find((message) => message.id === messageId);
+        if (existing !== undefined && existing.text !== input.message)
+          return yield* failure(
+            "invalid_request",
+            "This request ID was already used for different work.",
+          );
+        if (
+          existing === undefined &&
+          target.runs.some((run) =>
+            ["preparing", "starting", "running", "waiting", "queued"].includes(run.status),
+          )
+        )
+          return yield* failure(
+            "invalid_request",
+            "This child already has work. Use coordination_post/reply for an in-flight update.",
+          );
+        yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
+        yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
+
+        const mode = "auto" as const;
         const result = yield* threadManagement
-          .sendToThread({
+          .sendTaskFollowup({
             projectId: target.thread.projectId,
             commandId: stableCommandId({
               scope,
               requestKey: key,
-              operation: "thread-send",
+              operation: "task-followup",
             }),
             threadId: input.threadId,
             ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
@@ -2550,7 +2578,7 @@ const make = Effect.gen(function* () {
             : { taskId: result.run.delegatedTaskId }),
           status: result.run.status,
           delivery: result.delivery,
-        } satisfies OrchestratorMcpThreadSendResult;
+        } satisfies OrchestratorMcpTaskFollowupResult;
       }),
     waitForThread: (scope, input) =>
       Effect.gen(function* () {

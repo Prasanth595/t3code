@@ -376,6 +376,9 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
+  readonly sendTaskFollowup: (
+    input: ThreadManagementSendInput,
+  ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
@@ -644,6 +647,7 @@ const make = Effect.gen(function* () {
 
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
+      case "task.message.dispatch":
       case "message.dispatch":
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((projection) =>
@@ -748,7 +752,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const sendToThread: ThreadManagementServiceShape["sendToThread"] = (input) =>
+  const sendToThread = (input: ThreadManagementSendInput, taskPrompt = false) =>
     Effect.gen(function* () {
       const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
       if (target.thread.archivedAt !== null) {
@@ -781,7 +785,7 @@ const make = Effect.gen(function* () {
       }
 
       const dispatched = yield* dispatch({
-        type: "message.dispatch",
+        type: taskPrompt ? "task.message.dispatch" : "message.dispatch",
         commandId: input.commandId,
         threadId: input.threadId,
         messageId: input.messageId,
@@ -1166,6 +1170,7 @@ const make = Effect.gen(function* () {
     getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
     sendToThread,
+    sendTaskFollowup: (input) => sendToThread(input, true),
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,

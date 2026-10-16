@@ -1,3 +1,6 @@
+import * as Coordination from "../coordination/CoordinationService.ts";
+import { CoordinationToolkit } from "./toolkits/coordination/tools.ts";
+import * as CoordinationHandlers from "./toolkits/coordination/handlers.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -189,6 +192,7 @@ const MAX_SNAPSHOT_LOG_ENTRIES = 40;
 const MAX_SNAPSHOT_LOG_TEXT_CHARS = 500;
 const MAX_SNAPSHOT_IDENTIFIER_CHARS = 2_048;
 
+const isCallToolResult = Schema.is(McpSchema.CallToolResult);
 const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const utf8Length = (text: string) => Buffer.byteLength(text, "utf8");
 const cutText = (text: string, max: number) =>
@@ -740,7 +744,54 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) => {
-  const registration = McpServer.toolkit(toolkit);
+  const registration = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const coordination = yield* Effect.serviceOption(Coordination.CoordinationService);
+      return yield* McpServer.registerToolkit(toolkit).pipe(
+        Effect.updateService(McpServer.McpServer, (server) => ({
+          ...server,
+          addTool: (options) =>
+            server.addTool({
+              ...options,
+              handle: (payload) =>
+                Effect.gen(function* () {
+                  const invocation = yield* Effect.serviceOption(
+                    McpInvocationContext.McpInvocationContext,
+                  );
+                  const result = yield* options.handle(payload);
+                  if (!isCallToolResult(result) || options.tool.name.startsWith("coordination_"))
+                    return result;
+                  if (
+                    Option.isNone(coordination) ||
+                    Option.isNone(invocation) ||
+                    invocation.value.thread === undefined
+                  )
+                    return result;
+                  const notice = yield* coordination.value
+                    .toolNotice(invocation.value.thread.threadId)
+                    .pipe(Effect.orElseSucceed(() => ""));
+                  return notice === ""
+                    ? result
+                    : new McpSchema.CallToolResult({
+                        ...result,
+                        content: [...result.content, { type: "text", text: notice }],
+                        ...(typeof result.structuredContent !== "object" ||
+                        result.structuredContent === null ||
+                        Array.isArray(result.structuredContent)
+                          ? {}
+                          : {
+                              structuredContent: {
+                                ...result.structuredContent,
+                                projectCoordination: notice,
+                              },
+                            }),
+                      });
+                }),
+            }),
+        })),
+      );
+    }),
+  ).pipe(Layer.provide(McpServer.McpServer.layer));
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - the auth middleware provides it per request.
   const registered = registration as Layer.Layer<
     never,
@@ -835,6 +886,7 @@ export const layerMcpTransport = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
+  toolkitRegistration(CoordinationToolkit, CoordinationHandlers.layer),
   layerThreadToolkit,
   layerAttachmentToolkit,
   layerProjectRegistration,

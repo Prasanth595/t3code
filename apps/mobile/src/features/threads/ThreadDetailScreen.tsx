@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { CoordinationActivity } from "./CoordinationActivity";
 import { useAtomValue } from "@effect/atom-react";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
@@ -1037,6 +1038,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   return (
     <View className="flex-1">
+      {showContent ? (
+        <CoordinationActivity
+          key={`${props.environmentId}:${props.selectedThread.id}`}
+          environmentId={props.environmentId}
+          projectId={props.selectedThread.projectId}
+          threadId={props.selectedThread.id}
+        />
+      ) : null}
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {showContent ? (
         <View

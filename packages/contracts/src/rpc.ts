@@ -1,4 +1,15 @@
 import {
+  CoordinationReadInput,
+  CoordinationSnapshot,
+  CoordinationPostInput,
+  CoordinationEntry,
+  CoordinationResolveInput,
+  CoordinationPreferencesInput,
+  CoordinationPreferences,
+  CoordinationError,
+  CoordinationHandleInput,
+} from "./coordination.ts";
+import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -502,6 +513,13 @@ export const WS_METHODS = {
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
+  // Project Activity
+  coordinationHandle: "coordination.handle",
+  coordinationRead: "coordination.read",
+  coordinationSubscribe: "coordination.subscribe",
+  coordinationPost: "coordination.post",
+  coordinationResolve: "coordination.resolve",
+  coordinationPreferences: "coordination.preferences",
   scheduledTasksList: "scheduledTasks.list",
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -1754,6 +1772,38 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsCoordinationHandleRpc = Rpc.make(WS_METHODS.coordinationHandle, {
+  payload: CoordinationHandleInput,
+  success: Schema.Void,
+  error: Schema.Union([CoordinationError, EnvironmentAuthorizationError]),
+});
+const WsCoordinationReadRpc = Rpc.make(WS_METHODS.coordinationRead, {
+  payload: CoordinationReadInput,
+  success: CoordinationSnapshot,
+  error: Schema.Union([CoordinationError, EnvironmentAuthorizationError]),
+});
+const WsCoordinationSubscribeRpc = Rpc.make(WS_METHODS.coordinationSubscribe, {
+  payload: CoordinationReadInput,
+  success: CoordinationSnapshot,
+  error: Schema.Union([CoordinationError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+const WsCoordinationPostRpc = Rpc.make(WS_METHODS.coordinationPost, {
+  payload: CoordinationPostInput,
+  success: CoordinationEntry,
+  error: Schema.Union([CoordinationError, EnvironmentAuthorizationError]),
+});
+const WsCoordinationResolveRpc = Rpc.make(WS_METHODS.coordinationResolve, {
+  payload: CoordinationResolveInput,
+  success: CoordinationEntry,
+  error: Schema.Union([CoordinationError, EnvironmentAuthorizationError]),
+});
+const WsCoordinationPreferencesRpc = Rpc.make(WS_METHODS.coordinationPreferences, {
+  payload: CoordinationPreferencesInput,
+  success: CoordinationPreferences,
+  error: Schema.Union([CoordinationError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksListRpc = Rpc.make(WS_METHODS.scheduledTasksList, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -1850,6 +1900,12 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
+  WsCoordinationHandleRpc,
+  WsCoordinationReadRpc,
+  WsCoordinationSubscribeRpc,
+  WsCoordinationPostRpc,
+  WsCoordinationResolveRpc,
+  WsCoordinationPreferencesRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

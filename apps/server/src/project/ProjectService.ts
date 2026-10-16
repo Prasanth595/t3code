@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as ResourceCleanup from "../orchestration-v2/ResourceCleanupService.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
@@ -92,6 +93,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "list-projects",
       "list-threads",
       "delete-thread",
+      "cleanup-project-activity",
       "dispatch-project-command",
     ]),
     projectId: Schema.optional(ProjectId),
@@ -142,6 +144,7 @@ export class ProjectService extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const cleanup = yield* ResourceCleanup.ResourceCleanupService;
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
@@ -508,6 +511,16 @@ export const make = Effect.gen(function* () {
       if (isFirstDelete) {
         yield* clearProjectSettingsOverrides(projectId);
       }
+      yield* cleanup.cleanupProjectCoordination(projectId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectOperationError({
+              operation: "cleanup-project-activity",
+              projectId,
+              cause,
+            }),
+        ),
+      );
       yield* projectEnrichment.invalidate([existing.value.workspaceRoot]);
       return yield* readCommitted(projectId);
     },

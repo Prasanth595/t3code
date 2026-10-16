@@ -1,3 +1,6 @@
+import * as CoordinationIntake from "./coordination/CoordinationIntake.ts";
+import * as CoordinationActions from "./coordination/CoordinationActions.ts";
+import * as Coordination from "./coordination/CoordinationService.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -1197,6 +1200,8 @@ const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const coordination = yield* Coordination.CoordinationService;
+      const coordinationIntake = yield* CoordinationIntake.CoordinationIntake;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -2025,6 +2030,14 @@ const layerWsRpc = (
               Effect.as(commandOutputHub.subscribe(input)),
             ),
           ),
+        [WS_METHODS.coordinationHandle]: (input) => CoordinationActions.handle(input),
+        [WS_METHODS.coordinationRead]: (input) => coordination.read(input),
+        [WS_METHODS.coordinationSubscribe]: (input) => coordination.subscribe(input),
+        [WS_METHODS.coordinationPost]: (input) =>
+          coordinationIntake.post({ ...input, createdBy: "user" }),
+        [WS_METHODS.coordinationResolve]: (input) =>
+          coordination.resolve({ ...input, actorThreadId: undefined }),
+        [WS_METHODS.coordinationPreferences]: (input) => coordination.preferences(input),
         [WS_METHODS.scheduledTasksList]: (_input) =>
           scheduledTasks.list().pipe(Effect.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>

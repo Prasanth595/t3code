@@ -1,3 +1,6 @@
+import * as CoordinationIntake from "../coordination/CoordinationIntake.ts";
+import * as LegacyPeerQueue from "../coordination/RetireLegacyPeerQueue.ts";
+import * as Coordination from "../coordination/CoordinationService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -58,6 +61,8 @@ export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
   OrchestrationCommandReceipts.layer,
 );
+
+const layerCoordinationProvided = Coordination.layer.pipe(Layer.provide(layerEventInfrastructure));
 
 const layerRuntimePolicyProvided = RuntimePolicy.layerFromProjectStore.pipe(
   Layer.provide(ProjectStore.layer),
@@ -150,6 +155,7 @@ const layerProviderAuthServiceProvided = ProviderAuthService.layer.pipe(
 const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerCoordinationProvided,
       McpAppModelContext.layer,
       layerCheckpointServiceProvided,
       layerEventSinkProvided,
@@ -357,6 +363,11 @@ export const layer = Layer.mergeAll(
 );
 
 export const layerProduction = Layer.mergeAll(
+  CoordinationIntake.layer.pipe(Layer.provide(layerCoordinationProvided)),
+  LegacyPeerQueue.layer.pipe(
+    Layer.provide(Layer.merge(layerCoordinationProvided, layerOrchestratorProvided)),
+  ),
+  layerCoordinationProvided,
   layer.pipe(Layer.provide(layerProjectService)),
   layerProjectService,
   layerManagedProjectFoldersProvided,

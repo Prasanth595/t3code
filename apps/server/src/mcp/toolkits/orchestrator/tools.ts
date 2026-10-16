@@ -24,8 +24,8 @@ import {
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadInput,
   OrchestratorMcpThreadReadResult,
-  OrchestratorMcpThreadSendInput,
-  OrchestratorMcpThreadSendResult,
+  OrchestratorMcpTaskFollowupInput,
+  OrchestratorMcpTaskFollowupResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
   ThreadMetadataMcpUpdateInput,
@@ -232,11 +232,11 @@ export const ThreadUpdateTool = Tool.make("t3_thread_update", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false);
 
-const ThreadSendTool = Tool.make("t3_thread_send", {
+const TaskFollowupTool = Tool.make("task_followup", {
   description:
-    "Send a message to any T3 thread in this environment. The target cannot have broader permission modes than the caller. Use delegate_task with the full review context and a new clientRequestId for independent review rounds. For a follow-up that needs the same child's conversation, send to its childThreadId. After the original task completes, a requested follow-up creates a fresh task in that child thread and returns taskId; its completion notifies the parent, and the original result stays unchanged. mode='auto' starts an idle thread, steers a fully active turn, or queues behind a turn that is not yet steerable. Use queue for a separate follow-up turn, steer for an in-flight update, or restart to interrupt-and-restart the active turn. clientRequestId makes retries idempotent.",
-  parameters: OrchestratorMcpThreadSendInput,
-  success: OrchestratorMcpThreadSendResult,
+    "Start a new explicit work task in this thread's own app-owned child after its prior work has finished. Preserves the child conversation and returns a fresh taskId whose result notifies the parent. Refuses busy children and unrelated threads. Use delegate_task for independent review rounds; use coordination_post/reply for status, questions, blockers or in-flight updates. clientRequestId makes retries idempotent.",
+  parameters: OrchestratorMcpTaskFollowupInput,
+  success: OrchestratorMcpTaskFollowupResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies,
@@ -286,7 +286,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadListTool,
   ThreadReadTool,
   ThreadUpdateTool,
-  ThreadSendTool,
+  TaskFollowupTool,
   ThreadWaitTool,
   ThreadInterruptTool,
 );

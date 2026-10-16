@@ -8,7 +8,7 @@ import {
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadReadInput,
-  OrchestratorMcpThreadSendInput,
+  OrchestratorMcpTaskFollowupInput,
   OrchestratorMcpThreadWaitInput,
 } from "./orchestratorMcp.ts";
 
@@ -18,7 +18,7 @@ const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegat
 const decodeThreadInterruptInput = Schema.decodeUnknownSync(OrchestratorMcpThreadInterruptInput);
 const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
 const decodeThreadReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
-const decodeThreadSendInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSendInput);
+const decodeThreadSendInput = Schema.decodeUnknownSync(OrchestratorMcpTaskFollowupInput);
 const decodeThreadWaitInput = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitInput);
 
 describe("orchestrator MCP contracts", () => {
@@ -152,10 +152,9 @@ describe("orchestrator MCP contracts", () => {
       decodeThreadSendInput({
         threadId: "thread-loop-1",
         message: "Continue with the next iteration.",
-        mode: "steer",
         clientRequestId: "send-loop-2",
-      }).mode,
-    ).toBe("steer");
+      }).clientRequestId,
+    ).toBe("send-loop-2");
     expect(
       decodeThreadWaitInput({
         threadId: "thread-loop-1",

@@ -362,7 +362,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
-it("readThread and sendToThread reach threads in other projects", async () => {
+it("reads foreign threads but refuses task follow-ups outside owned children", async () => {
   let parentRuns: ReadonlyArray<unknown> = [
     makeRun({ id: RunId.make("run-parent-live"), ordinal: 1, status: "running" }),
   ];
@@ -492,16 +492,18 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     expect(foreign.thread.projectId).toBe(foreignProjectId);
     expect(foreign.items.map((item) => item.text)).toEqual(["Foreign thread said hello"]);
 
-    const sent = yield* service.sendToThread(makeScope(), {
-      threadId: foreignThreadId,
-      message: "hi",
-    });
-    expect(sent.threadId).toBe(foreignThreadId);
+    const sent = yield* service
+      .followUpTask(makeScope(), {
+        threadId: foreignThreadId,
+        message: "hi",
+      })
+      .pipe(Effect.flip);
+    expect(sent.code).toBe("invalid_request");
 
     parentRuns = [];
     yield* service.readThread(makeScope(), { threadId: foreignThreadId });
     const stale = yield* service
-      .sendToThread(makeScope(), { threadId: foreignThreadId, message: "hi again" })
+      .followUpTask(makeScope(), { threadId: foreignThreadId, message: "hi again" })
       .pipe(Effect.flip);
     expect(stale.code).toBe("parent_not_active");
     const staleInterrupt = yield* service

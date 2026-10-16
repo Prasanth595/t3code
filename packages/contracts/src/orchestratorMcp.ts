@@ -422,15 +422,14 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
 
-export const OrchestratorMcpThreadSendInput = Schema.Struct({
+export const OrchestratorMcpTaskFollowupInput = Schema.Struct({
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
-  mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
-export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
+export type OrchestratorMcpTaskFollowupInput = typeof OrchestratorMcpTaskFollowupInput.Type;
 
-export const OrchestratorMcpThreadSendResult = Schema.Struct({
+export const OrchestratorMcpTaskFollowupResult = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   runId: RunId,
@@ -438,7 +437,7 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
 });
-export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
+export type OrchestratorMcpTaskFollowupResult = typeof OrchestratorMcpTaskFollowupResult.Type;
 
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   threadId: ThreadId,

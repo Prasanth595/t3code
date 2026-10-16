@@ -1,3 +1,4 @@
+import { CoordinationActivity } from "./CoordinationActivity";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -409,6 +410,14 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread && activeProject ? (
+        <CoordinationActivity
+          key={`${activeThreadEnvironmentId}:${activeProject.id}:${activeThreadId}`}
+          environmentId={activeThreadEnvironmentId}
+          projectId={activeProject.id}
+          threadId={activeThreadId}
+        />
+      ) : null}
     </div>
   );
 });

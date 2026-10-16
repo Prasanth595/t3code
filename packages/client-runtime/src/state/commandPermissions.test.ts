@@ -59,6 +59,29 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination operate grant for every Activity mutation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        for (const tag of [
+          WS_METHODS.coordinationPost,
+          WS_METHODS.coordinationResolve,
+          WS_METHODS.coordinationPreferences,
+          WS_METHODS.coordinationHandle,
+        ]) {
+          const command = createCommandPermissions(runtime, tag);
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          expect(registry.get(command.permissionAtom(env))).toBe(false);
+          expect((yield* command.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(command.permissionAtom(env))).toBe(true);
+          yield* command.authorize(registry, env);
+        }
+      }),
+    ),
+  );
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

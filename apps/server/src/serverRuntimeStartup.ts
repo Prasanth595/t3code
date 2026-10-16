@@ -1,3 +1,4 @@
+import * as LegacyPeerQueue from "./coordination/RetireLegacyPeerQueue.ts";
 import {
   CommandId,
   DEFAULT_MODEL,
@@ -23,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "./config.ts";
@@ -419,6 +421,7 @@ const make = (options?: StartupOptions) =>
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const retirement = yield* Effect.serviceOption(LegacyPeerQueue.Retirement);
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -517,7 +520,11 @@ const make = (options?: StartupOptions) =>
         recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
         recoverDelegatedTasks: runStartupPhase(
           "orchestration-v2.delegated-tasks.recover",
-          orchestrator.recoverDelegatedTasks,
+          orchestrator.recoverDelegatedTasks.pipe(
+            Effect.andThen(
+              Option.isSome(retirement) ? retirement.value.retire.pipe(Effect.asVoid) : Effect.void,
+            ),
+          ),
         ),
         startEffectWorker: runStartupPhase(
           "orchestration-v2.effect-worker.start",

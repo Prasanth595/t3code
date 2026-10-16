@@ -1,3 +1,4 @@
+import { isLegacyPeerMessage } from "../coordination/LegacyPeerQueue.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -455,6 +456,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.model-selection.set":
     case "provider-session.detach":
     case "message.dispatch":
+    case "task.message.dispatch":
     case "notification.delivery.accept":
     case "prepared-run.release":
     case "prepared-run.progress":
@@ -1296,6 +1298,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (queuedRun === undefined) {
         return;
       }
+      const peerMessage = projection.messages.find(
+        (message) => message.id === queuedRun.userMessageId,
+      );
+      if (
+        peerMessage !== undefined &&
+        isLegacyPeerMessage(peerMessage, queuedRun, projection.thread)
+      )
+        return;
+
       // A message queued behind a worktree that was cancelled or never created
       // would run in the project checkout instead, so it waits for the user.
       const failedRun = latestExecutedRun(projection.runs);
@@ -10745,7 +10756,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
+      case "task.message.dispatch":
       case "message.dispatch": {
+        if (
+          command.type === "message.dispatch" &&
+          command.senderThreadId !== undefined &&
+          command.senderThreadId !== command.threadId
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "Peer messages belong in project Activity. Use coordination_post/reply; use task_followup only for new work in your own child.",
+          });
+        }
+        const messageCommand = { ...command, type: "message.dispatch" as const };
         // The provider owns a native subagent's conversation, so a sent
         // message has nowhere to go. Answers to a subagent's questions never
         // target it either: adapters ask them on the top-level parent thread.
@@ -10762,8 +10787,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
           });
         }
-        yield* dispatchMessage(command, events, effects);
-        yield* recordSubagentFollowup(command, events).pipe(mapDispatchError(command));
+        if (
+          command.type === "task.message.dispatch" &&
+          thread.lineage.relationshipToParent === "subagent"
+        ) {
+          const child = yield* projectionStore
+            .getThreadRecords(command.threadId, ["runs"])
+            .pipe(mapDispatchError(command));
+          if (child.runs.some((run) => isBlockingRun(run) || run.status === "queued"))
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "This child already has work. Use project Activity for an in-flight update.",
+            });
+        }
+        yield* dispatchMessage(messageCommand, events, effects);
+        yield* recordSubagentFollowup(messageCommand, events).pipe(
+          mapDispatchError(messageCommand),
+        );
         break;
       }
       case "notification.delivery.accept":
@@ -11126,7 +11167,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         dispatchWithReceiptEffect(command),
       );
       if (
-        command.type !== "message.dispatch" ||
+        (command.type !== "message.dispatch" && command.type !== "task.message.dispatch") ||
         (command.createdBy !== "user" && command.creationSource !== "mcp")
       )
         return yield* dispatch;

@@ -147,6 +147,10 @@
       "types": "./src/delayedStatus.ts",
       "default": "./src/delayedStatus.ts"
     },
+    "./state/coordination": {
+      "types": "./src/state/coordination.ts",
+      "default": "./src/state/coordination.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"

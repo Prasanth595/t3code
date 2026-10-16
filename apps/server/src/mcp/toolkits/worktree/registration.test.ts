@@ -1,4 +1,6 @@
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as Coordination from "../../../coordination/CoordinationService.ts";
+import * as CoordinationIntake from "../../../coordination/CoordinationIntake.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -36,6 +38,8 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 
 const layerStubServices = Layer.mergeAll(
+  Layer.mock(Coordination.CoordinationService)({}),
+  Layer.mock(CoordinationIntake.CoordinationIntake)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
   Layer.mock(DeviceService.DeviceService)({}),
@@ -141,6 +145,11 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       expect(toolNames).toContain("t3_worktree_status");
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      expect(toolNames).toContain("coordination_post");
+      expect(toolNames).toContain("coordination_reply");
+      expect(toolNames).toContain("task_followup");
+      expect(toolNames).not.toContain("t3_thread_send");
+      expect(toolNames).not.toContain("t3_thread_send_attachments");
 
       const handoff = tools.find((tool) => tool.name === "t3_worktree_handoff");
       expect(handoff?.annotations?.readOnlyHint).toBe(false);

@@ -951,7 +951,7 @@ const make = Effect.gen(function* () {
               .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId))));
           const dispatched = yield* threads
             .dispatch({
-              type: "message.dispatch",
+              type: "task.message.dispatch",
               commandId: messageCommandId,
               threadId,
               messageId,
