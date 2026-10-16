@@ -184,7 +184,10 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
       logs.join("\n"),
     );
     assert.strictEqual(logs.at(-1), "pass done: 0 runs, 0 claimed, 1 errors, 0 need attention");
-    assert.deepStrictEqual(status, { state: "running" });
+    assert.deepStrictEqual(status, {
+      state: "running",
+      settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+    });
     assert.deepStrictEqual(events, ["pass_started", "repo_skipped", "pass_finished"]);
   }),
 );
