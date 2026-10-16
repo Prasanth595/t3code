@@ -8,7 +8,6 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 
 import { buildNpmLauncher } from "./build-npm-launcher.ts";
@@ -64,13 +63,10 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
   });
   assert.equal(tar.exitCode, 0, tar.stderr);
   const archive = yield* fs.readFile(path.join(root, "release", archiveName));
-  let checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
   const requests: Array<string> = [];
   const server = NodeHttp.createServer((request, response) => {
     requests.push(request.url ?? "");
-    if (request.url === `/v${VERSION}/SHA256SUMS`) {
-      response.end(`${checksum}  ${archiveName}\n`);
-    } else if (request.url === `/v${VERSION}/${archiveName}`) {
+    if (request.url === `/v${VERSION}/${archiveName}`) {
       response.writeHead(200, { "Content-Length": archive.length }).end(archive);
     } else {
       response.writeHead(404).end();
@@ -87,18 +83,12 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
   );
   const address = server.address();
   if (address === null || typeof address === "string") return yield* Effect.die("no TCP address");
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    requests,
-    corruptChecksum: () => {
-      checksum = "0".repeat(64);
-    },
-  };
+  return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
 });
 
 it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "publishes a launcher that downloads, verifies, caches, and runs the release executable",
+    "publishes a launcher that downloads, caches, and runs the release executable",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -155,50 +145,11 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           [VERSION],
         );
 
-        // A second run, and the entry point older service launchers run,
-        // reuse the download instead of fetching it again.
+        // A second run reuses the download.
         const requestsAfterFirst = release.requests.length;
-        const legacy = yield* run(
-          process.execPath,
-          [
-            path.join(packageDir, "dist/bin.mjs"),
-            "__service-preflight",
-            "--launcher-protocol",
-            "2",
-          ],
-          { cwd: root, env },
-        );
-        assert.equal(
-          legacy.stdout.trim(),
-          "stub __service-preflight --launcher-protocol 2 launcher=",
-        );
-        assert.equal(legacy.exitCode, 7);
+        const second = yield* run(process.execPath, [launcher, "--version"], { cwd: root, env });
+        assert.equal(second.exitCode, 7);
         assert.equal(release.requests.length, requestsAfterFirst);
-
-        // A download that does not match the release checksums is never run.
-        release.corruptChecksum();
-        const corrupt = yield* run(process.execPath, [launcher, "--version"], {
-          cwd: root,
-          env: { ...env, T3CODE_HOME: path.join(root, "other-home") },
-        });
-        assert.equal(corrupt.exitCode, 1);
-        assert.include(corrupt.stderr, "checksum mismatch");
-        assert.deepStrictEqual(
-          yield* fs.readDirectory(path.join(root, "other-home/runtime/versions")),
-          [],
-        );
-
-        // A version the release does not have yet says so instead of a stack.
-        const missing = yield* run(process.execPath, [launcher, "--version"], {
-          cwd: root,
-          env: {
-            ...env,
-            T3CODE_HOME: path.join(root, "third-home"),
-            T3CODE_RELEASE_BASE_URL: `${release.baseUrl}/nowhere`,
-          },
-        });
-        assert.equal(missing.exitCode, 1);
-        assert.include(missing.stderr, `t3 ${VERSION} has no release archive`);
       }),
   );
 });

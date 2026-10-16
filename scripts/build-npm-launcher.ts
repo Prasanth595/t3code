@@ -2,7 +2,7 @@
 /**
  * Builds the `t3` npm package behind `npx t3` / `npm i -g t3`: a launcher
  * with no dependencies that downloads this exact version's CLI archive from
- * the GitHub Release on first run (see scripts/npm-launcher/runtime.cjs).
+ * the GitHub Release on first run (scripts/npm-launcher/t3.js).
  * The executables are not published to npm. npm's publish-time scanning held
  * 250 MB platform packages back for up to an hour after the launcher went
  * live, and every install in that window ran a launcher with nothing to
@@ -41,10 +41,7 @@ export class NpmLauncherCommandFailedError extends Schema.TaggedError<NpmLaunche
   }
 }
 
-/**
- * package.json for the launcher. `engines` asks for a Node with global
- * `fetch` and async-iterable response bodies; npm only warns on a mismatch.
- */
+/** package.json for the launcher. `engines` asks for a Node with global `fetch`. */
 export function npmLauncherPackageManifest(version: string) {
   return {
     name: NPM_LAUNCHER_PACKAGE_NAME,
@@ -54,7 +51,7 @@ export function npmLauncherPackageManifest(version: string) {
     license: serverPackageJson.license,
     repository: serverPackageJson.repository,
     bin: { t3: "./bin/t3.js" },
-    files: ["bin", "dist"],
+    files: ["bin"],
     engines: { node: ">=18" },
   };
 }
@@ -75,16 +72,12 @@ export const buildNpmLauncher = Effect.fn("buildNpmLauncher")(function* (input: 
   });
   const stageDir = path.join(scratch, "package");
   yield* fs.makeDirectory(path.join(stageDir, "bin"), { recursive: true });
-  yield* fs.makeDirectory(path.join(stageDir, "dist"));
   yield* fs.writeFileString(
     path.join(stageDir, "package.json"),
     `${yield* encodePackageJson(npmLauncherPackageManifest(input.version))}\n`,
   );
-  yield* fs.copyFile(path.join(sourceDir, "runtime.cjs"), path.join(stageDir, "bin/runtime.cjs"));
   yield* fs.copyFile(path.join(sourceDir, "t3.js"), path.join(stageDir, "bin/t3.js"));
   yield* fs.chmod(path.join(stageDir, "bin/t3.js"), 0o755);
-  // Older service updaters and launchers run this exact path with Node.
-  yield* fs.copyFile(path.join(sourceDir, "bin.mjs"), path.join(stageDir, "dist/bin.mjs"));
   const readme = yield* path.fromFileUrl(new URL("../apps/server/README.md", import.meta.url));
   if (yield* fs.exists(readme)) {
     yield* fs.copyFile(readme, path.join(stageDir, "README.md"));
