@@ -56,9 +56,18 @@ export function resolveCustomStageArtworkUrl(
   } catch {
     return null;
   }
-  return url.protocol === "https:" || (url.protocol === "http:" && pageProtocol !== "https:")
-    ? trimmed
-    : null;
+  if (url.protocol === "https:") return trimmed;
+  if (url.protocol !== "http:") return null;
+
+  const requiresSecureArtwork =
+    pageProtocol === "https:" || pageProtocol === "t3code:" || pageProtocol === "t3code-dev:";
+  const hostname = url.hostname.replace(/\.$/, "");
+  const isLoopback =
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    /^127(?:\.\d{1,3}){3}$/.test(hostname) ||
+    hostname === "[::1]";
+  return !requiresSecureArtwork || isLoopback ? trimmed : null;
 }
 
 export function SidebarStageBackdrop({

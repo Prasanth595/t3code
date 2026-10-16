@@ -74,13 +74,47 @@ describe("resolveCustomStageArtworkUrl", () => {
     );
   });
 
-  it("requires HTTPS images on secure web pages, while desktop can load HTTP", () => {
-    expect(resolveCustomStageArtworkUrl("http://example.com/a.png", "https:")).toBeNull();
-    expect(resolveCustomStageArtworkUrl("https://example.com/a.png", "https:")).toBe(
-      "https://example.com/a.png",
-    );
-    expect(resolveCustomStageArtworkUrl("http://localhost/a.png", "t3code:")).toBe(
-      "http://localhost/a.png",
+  it.each(["https:", "t3code:", "t3code-dev:"])(
+    "rejects non-loopback HTTP artwork on %s pages",
+    (pageProtocol) => {
+      for (const host of [
+        "example.com",
+        "192.168.1.10",
+        "0.0.0.0",
+        "localhost.example.com",
+        "127.0.0.1.example.com",
+        "[::2]",
+      ]) {
+        expect(resolveCustomStageArtworkUrl(`http://${host}/a.png`, pageProtocol)).toBeNull();
+      }
+      expect(resolveCustomStageArtworkUrl("https://example.com/a.png", pageProtocol)).toBe(
+        "https://example.com/a.png",
+      );
+    },
+  );
+
+  it.each(["https:", "t3code:", "t3code-dev:"])(
+    "allows trustworthy loopback HTTP artwork on %s pages",
+    (pageProtocol) => {
+      for (const host of [
+        "localhost",
+        "localhost.",
+        "art.localhost",
+        "art.localhost.",
+        "127.0.0.1",
+        "127.10.20.30",
+        "127.1",
+        "[::1]",
+      ]) {
+        const value = `http://${host}:8080/a.png`;
+        expect(resolveCustomStageArtworkUrl(value, pageProtocol)).toBe(value);
+      }
+    },
+  );
+
+  it("allows remote HTTP artwork on local HTTP web pages", () => {
+    expect(resolveCustomStageArtworkUrl("http://example.com/a.png", "http:")).toBe(
+      "http://example.com/a.png",
     );
   });
 

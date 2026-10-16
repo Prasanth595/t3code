@@ -1362,8 +1362,8 @@ export function AppearanceSettingsPanel() {
             description={
               settings.environmentArtworkImageUrl !== "" &&
               resolveCustomStageArtworkUrl(settings.environmentArtworkImageUrl) === null
-                ? "Use an http(s) image URL; HTTPS pages require HTTPS images. Built-in artwork is shown."
-                : "Show a still frame from an http(s) image URL. HTTPS pages require HTTPS images. Built-in artwork returns if loading fails."
+                ? "Use an http(s) image URL. HTTPS and desktop apps require HTTPS except for loopback URLs. Built-in artwork is shown."
+                : "Show a still frame from an http(s) image URL. HTTPS and desktop apps require HTTPS except for loopback URLs. Built-in artwork returns if loading fails."
             }
             resetAction={
               settings.environmentArtworkImageUrl !==
