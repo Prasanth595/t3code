@@ -3,7 +3,6 @@ import {
   type AuthEnvironmentScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
-  AuthStandardClientScopes,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -89,9 +88,13 @@ const serving = <A>(
 const idle: FactoryStatus = { state: "idle", reason: "no factory config at /x/config.yml" };
 
 describe("GET /api/factory/status", () => {
+  it("is served at the path the Factory page and the build smoke test call", () => {
+    assert.strictEqual(STATUS_PATH, "/api/factory/status");
+  });
+
   it.effect("answers 401 without credentials", () =>
     serving(idle, async (get) => {
-      const response = await get(STATUS_PATH);
+      const response = await get("/api/factory/status");
       assert.strictEqual(response.status, 401);
       assert.strictEqual(((await response.json()) as { code: string }).code, "auth_invalid");
     }),
@@ -104,9 +107,17 @@ describe("GET /api/factory/status", () => {
     }),
   );
 
+  it.effect("needs orchestration:read, the scope every reading client holds", () =>
+    serving(idle, async (get, issue) => {
+      const response = await get(STATUS_PATH, await issue([AuthSettingsWriteScope]));
+      assert.strictEqual(response.status, 403);
+      assert.strictEqual(((await response.json()) as { code: string }).code, "insufficient_scope");
+    }),
+  );
+
   it.effect("reports an idle factory and why", () =>
     serving(idle, async (get, issue) => {
-      const response = await get(STATUS_PATH, await issue(AuthStandardClientScopes));
+      const response = await get("/api/factory/status", await issue([AuthOrchestrationReadScope]));
       assert.strictEqual(response.status, 200);
       assert.deepStrictEqual(await response.json(), idle);
     }),
@@ -114,7 +125,7 @@ describe("GET /api/factory/status", () => {
 
   it.effect("reports a running factory with no reason", () =>
     serving({ state: "running" }, async (get, issue) => {
-      const response = await get(STATUS_PATH, await issue(AuthStandardClientScopes));
+      const response = await get(STATUS_PATH, await issue([AuthOrchestrationReadScope]));
       assert.strictEqual(response.status, 200);
       assert.deepStrictEqual(await response.json(), { state: "running" });
     }),
