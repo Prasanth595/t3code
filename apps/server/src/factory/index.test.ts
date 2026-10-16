@@ -13,7 +13,9 @@ import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
 import { FactoryRuntime, liveWorld } from "./index.ts";
 import { scanMachineLog } from "./ledger/machineLog.ts";
 import type { Repo } from "./pass.ts";
+import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { utcSecond } from "./runner/start.ts";
+import { MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
 import * as Paths from "./t3/paths.ts";
 
@@ -274,6 +276,50 @@ describe("liveWorld", () => {
     Effect.gen(function* () {
       const { historyRead } = yield* unassignedUpdated(16 * MINUTE);
       assert.isTrue(historyRead);
+    }),
+  );
+
+  /** gh for a release: the issue's comments (its newest factory comment is `newest`), and labels that move unless `labelFails`. */
+  const releaseGh = (newest: string | null, labelFails: boolean) =>
+    ghWith((args) => {
+      if (args[0] === "api" && args[1] === `repos/${REPO}/issues/9/comments`) {
+        return JSON.stringify(
+          newest === null
+            ? []
+            : [{ id: 1, body: `${newest}\n\n${MARKER}`, created_at: "2026-10-08T01:00:00Z" }],
+        );
+      }
+      if (args[0] === "issue" && args[1] === "comment") return "https://github.com/x/1";
+      if (args[0] === "issue" && args[1] === "view") {
+        return '{"labels":[{"name":"factory:triage"}]}';
+      }
+      if (args[0] === "issue" && args[1] === "edit") return labelFails ? null : "";
+      return null;
+    });
+
+  const steps = (calls: ReadonlyArray<ReadonlyArray<string>>) =>
+    calls.map((args) =>
+      args[0] === "api" ? "comments" : args[1] === "comment" ? "comment" : `${args[1]}`,
+    );
+
+  it.effect("a cut-short claim is commented on, then moved to proposed", () =>
+    Effect.gen(function* () {
+      const { process, calls } = releaseGh(null, false);
+      yield* worldOf(process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(calls), ["comments", "comment", "view", "edit"]);
+    }),
+  );
+
+  it.effect("a release whose label fails is tried again without a second comment", () =>
+    Effect.gen(function* () {
+      const first = releaseGh(null, true);
+      const error = yield* Effect.flip(worldOf(first.process).releaseClaim(repo, 9, "triage"));
+      assert.strictEqual(error.kind, "tracker");
+      assert.deepStrictEqual(steps(first.calls), ["comments", "comment", "view", "edit"]);
+      // The next pass finds the issue where it was, with the comment already its newest.
+      const again = releaseGh(CUT_SHORT_COMMENT, false);
+      yield* worldOf(again.process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(again.calls), ["comments", "view", "edit"]);
     }),
   );
 

@@ -143,12 +143,17 @@ export const liveWorld = (
           repo.trackerUser,
         ),
       ).pipe(Effect.mapError(asPassError("tracker"))),
+    // The comment first, then the label, as a refusal does: a label call that fails leaves the
+    // issue where a later pass finds it again, and the comment is not posted twice while it is
+    // still the issue's newest factory comment.
     releaseClaim: (repo: Repo, issue: number) => {
       const gh = githubFor(repo.watched);
       return tracker(
-        gh
-          .setState(issue, "proposed")
-          .pipe(Effect.andThen(gh.postComment(issue, CUT_SHORT_COMMENT))),
+        Effect.gen(function* () {
+          const newest = yield* gh.newestFactoryComment(issue);
+          if (newest?.body !== CUT_SHORT_COMMENT) yield* gh.postComment(issue, CUT_SHORT_COMMENT);
+          yield* gh.setState(issue, "proposed");
+        }),
       ).pipe(Effect.asVoid);
     },
     openBlockers: (repo: Repo, issue: number) =>
