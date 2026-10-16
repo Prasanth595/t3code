@@ -84,7 +84,6 @@ import {
   endOwnMerge,
   endRun,
   goStuck,
-  movedOnByClosing,
   progressFrom,
   recordedReason,
   stopSession,
@@ -1208,10 +1207,10 @@ export const lastPass = (
  * last and is the commit marker, the comment is at-least-once, and a re-gate that was cut short
  * is resumed from the ledger without being counted twice, and its pass sets the ready state again,
  * as a stuck decision the earlier call did not finish may have put the pull request back to
- * draft. An issue closed while a re-gate was under way ends the run as merged when the run's own
- * pull request closed it, and abandons it when a person did. The answer also says what moved
- * since the last pass, for the run's line; a re-gate that an earlier call began says what that
- * call's line recorded.
+ * draft. A pull request merged or closed while a re-gate was under way ends the run, as one found
+ * before a re-gate does; an issue a person closed meanwhile abandons it. The answer also says
+ * what moved since the last pass, for the run's line; a re-gate that an earlier call began says
+ * what that call's line recorded.
  */
 export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, GateStepError> =>
   withLedger(ctx, run, (out) =>
@@ -1273,16 +1272,15 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
           );
           return { step, moved: seen.regateMoved };
         }
-        // A re-gate under way for an issue that was closed is not run again. A close by the
-        // run's own merged pull request is its normal end, as before a re-gate (the pull request
-        // read below); a person's close abandons it.
-        const closed = (yield* ctx.tracker.issue(issue)).closed;
-        const closing = yield* movedOnByClosing(ctx, seen, closed);
-        if (closing.kind === "own-merge") {
-          yield* endOwnMerge(ctx, yield* out.open, run, seen, "gate", closing.pull);
+        // The pull request first, as before a re-gate: one merged or closed while the re-gate
+        // ran ends the run, whoever closed the issue. Then a re-gate under way for an issue a
+        // person closed is not run again.
+        const pull = yield* ctx.tracker.pullRequest(last.pr);
+        if (pull === null || !pull.open) {
+          yield* endRun(ctx, yield* out.open, at, last.url, pull, "gate");
           return { step: { kind: "ended" }, moved: null };
         }
-        if (closing.kind === "persons-move") {
+        if ((yield* ctx.tracker.issue(issue)).closed) {
           yield* abandon(ctx, yield* out.open, run, seen, "gate");
           return { step: { kind: "abandoned" }, moved: null };
         }
