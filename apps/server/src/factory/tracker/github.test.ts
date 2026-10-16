@@ -14,6 +14,7 @@ import {
   GitHubRateLimited,
   GitHubSpawnError,
   GitHubTimedOut,
+  ClaimMemo,
   LIST_LIMIT,
   MARKER,
   MAX_DEPENDS_ON,
@@ -3558,6 +3559,12 @@ const claimedListCall = (label: string) => [
 const labelledBy = (by: string, label: string) =>
   eventsReply([labelEvent("LabeledEvent", LABELED, by, label)], null, []);
 
+const scan = (
+  t: ReturnType<typeof setup>,
+  known: ReadonlySet<number> = new Set<number>(),
+  memo: ClaimMemo = new ClaimMemo(),
+) => t.github.unassignedClaims(BEFORE, "rawphp", known, memo);
+
 it.effect("login asks the api who is logged in with the exact call", () =>
   Effect.gen(function* () {
     const t = setup(reply('{"login":"Rawphp","id":1,"type":"User"}'));
@@ -3615,7 +3622,7 @@ it.effect("claim passes on a failing edit", () =>
 it.effect("unassignedClaims lists triage then building with the exact calls", () =>
   Effect.gen(function* () {
     const t = setup(reply("[]"), reply("[]"));
-    assert.deepStrictEqual(yield* t.ok(t.github.unassignedClaims(BEFORE, "rawphp")), []);
+    assert.deepStrictEqual((yield* t.ok(scan(t))).claims, []);
     assert.deepStrictEqual(t.calls(), [
       claimedListCall("factory:triage"),
       claimedListCall("factory:building"),
@@ -3644,7 +3651,7 @@ it.effect("unassignedClaims keeps only unassigned issues that are old enough, by
       reply(labelledBy("rawphp", "factory:building")),
       reply(labelledBy("rawphp", "factory:building")),
     );
-    assert.deepStrictEqual(yield* t.ok(t.github.unassignedClaims(BEFORE, "rawphp")), [
+    assert.deepStrictEqual((yield* t.ok(scan(t))).claims, [
       { issue: 6, state: "triage" },
       { issue: 9, state: "triage" },
       { issue: 3, state: "building" },
@@ -3674,9 +3681,7 @@ it.effect("unassignedClaims drops an issue whose label someone else added", () =
       reply(labelledBy("RawPhp", "factory:triage")),
       reply("[]"),
     );
-    assert.deepStrictEqual(yield* t.ok(t.github.unassignedClaims(BEFORE, "rawphp")), [
-      { issue: 2, state: "triage" },
-    ]);
+    assert.deepStrictEqual((yield* t.ok(scan(t))).claims, [{ issue: 2, state: "triage" }]);
   }),
 );
 
@@ -3691,7 +3696,7 @@ it.effect("unassignedClaims judges the newest event of the label in its state", 
       [],
     );
     const t = setup(reply("[]"), reply(building), reply(thenAPerson));
-    assert.deepStrictEqual(yield* t.ok(t.github.unassignedClaims(BEFORE, "rawphp")), []);
+    assert.deepStrictEqual((yield* t.ok(scan(t))).claims, []);
     // Labels of other names after ours do not count.
     const thenAnotherLabel = eventsReply(
       [on(LABELED, "rawphp", "factory:building"), on(AFTER, "eve", "bug")],
@@ -3699,9 +3704,7 @@ it.effect("unassignedClaims judges the newest event of the label in its state", 
       [],
     );
     const t2 = setup(reply("[]"), reply(building), reply(thenAnotherLabel));
-    assert.deepStrictEqual(yield* t2.ok(t2.github.unassignedClaims(BEFORE, "rawphp")), [
-      { issue: 5, state: "building" },
-    ]);
+    assert.deepStrictEqual((yield* t2.ok(scan(t2))).claims, [{ issue: 5, state: "building" }]);
   }),
 );
 
@@ -3709,17 +3712,93 @@ it.effect("unassignedClaims drops an issue with no label event in its history", 
   Effect.gen(function* () {
     const triage = '[{"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}]';
     const t = setup(reply(triage), reply(eventsReply([], null, [])), reply("[]"));
-    assert.deepStrictEqual(yield* t.ok(t.github.unassignedClaims(BEFORE, "rawphp")), []);
+    assert.deepStrictEqual((yield* t.ok(scan(t))).claims, []);
   }),
 );
 
-it.effect("unassignedClaims fails when the history cannot be read", () =>
+it.effect("unassignedClaims reads no history for an issue the pass knows a run for", () =>
   Effect.gen(function* () {
-    const triage = '[{"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}]';
-    const t = setup(reply(triage), fail(1, "boom"));
-    const error = yield* t.err(t.github.unassignedClaims(BEFORE, "rawphp"));
-    assert.strictEqual(error._tag, "GitHubFailed");
-    assert.deepStrictEqual(error._tag === "GitHubFailed" ? error.args : [], historyCallFor(1));
+    const triage = `[
+      {"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"},
+      {"number":2,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}
+    ]`;
+    const t = setup(reply(triage), reply(labelledBy("rawphp", "factory:triage")), reply("[]"));
+    const found = yield* t.ok(scan(t, new Set([1])));
+    assert.deepStrictEqual(found.claims, [{ issue: 2, state: "triage" }]);
+    assert.deepStrictEqual(t.calls(), [
+      claimedListCall("factory:triage"),
+      historyCallFor(2),
+      claimedListCall("factory:building"),
+    ]);
+  }),
+);
+
+it.effect(
+  "unassignedClaims remembers an issue judged not the factory's while updatedAt is unchanged",
+  () =>
+    Effect.gen(function* () {
+      const listing = (updatedAt1: string) => `[
+        {"number":1,"assignees":[],"updatedAt":"${updatedAt1}"},
+        {"number":2,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}
+      ]`;
+      const other = labelledBy("another-machine", "factory:triage");
+      const ours = labelledBy("rawphp", "factory:triage");
+      const memo = new ClaimMemo();
+      const histories = (t: ReturnType<typeof setup>) =>
+        t.calls().filter((args) => args[0] === "api" && args[1] === "graphql");
+      const t1 = setup(
+        reply(listing("2026-10-07T00:00:00Z")),
+        reply(other),
+        reply(ours),
+        reply("[]"),
+      );
+      yield* t1.ok(scan(t1, new Set<number>(), memo));
+      assert.deepStrictEqual(histories(t1), [historyCallFor(1), historyCallFor(2)]);
+      // Issue 1 was not ours and has not changed; issue 2 was ours, so it is read again.
+      const t2 = setup(reply(listing("2026-10-07T00:00:00Z")), reply(ours), reply("[]"));
+      const second = yield* t2.ok(scan(t2, new Set<number>(), memo));
+      assert.deepStrictEqual(histories(t2), [historyCallFor(2)]);
+      assert.deepStrictEqual(second.claims, [{ issue: 2, state: "triage" }]);
+      // Issue 1 changed, so its judgement no longer stands.
+      const t3 = setup(
+        reply(listing("2026-10-07T01:00:00Z")),
+        reply(other),
+        reply(ours),
+        reply("[]"),
+      );
+      yield* t3.ok(scan(t3, new Set<number>(), memo));
+      assert.deepStrictEqual(histories(t3), [historyCallFor(1), historyCallFor(2)]);
+    }),
+);
+
+it.effect("unassignedClaims: a history read that fails is an error for that issue only", () =>
+  Effect.gen(function* () {
+    const triage = `[
+      {"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"},
+      {"number":2,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}
+    ]`;
+    const t = setup(
+      reply(triage),
+      fail(1, "boom"),
+      reply(labelledBy("rawphp", "factory:triage")),
+      reply("[]"),
+    );
+    const found = yield* t.ok(scan(t));
+    assert.deepStrictEqual(found.claims, [{ issue: 2, state: "triage" }]);
+    assert.strictEqual(found.unread.length, 1);
+    const unread = found.unread[0]!;
+    assert.strictEqual(unread.issue, 1);
+    assert.strictEqual(unread.error._tag, "GitHubFailed");
+    assert.deepStrictEqual(
+      unread.error._tag === "GitHubFailed" ? unread.error.args : [],
+      historyCallFor(1),
+    );
+    assert.deepStrictEqual(t.calls(), [
+      claimedListCall("factory:triage"),
+      historyCallFor(1),
+      historyCallFor(2),
+      claimedListCall("factory:building"),
+    ]);
   }),
 );
 
@@ -3730,9 +3809,7 @@ it.effect("unassignedClaims skips an issue whose time is not GitHub's form", () 
       {"number":2,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}
     ]`;
     const t = setup(reply(triage), reply(labelledBy("rawphp", "factory:triage")), reply("[]"));
-    assert.deepStrictEqual(yield* t.ok(t.github.unassignedClaims(BEFORE, "rawphp")), [
-      { issue: 2, state: "triage" },
-    ]);
+    assert.deepStrictEqual((yield* t.ok(scan(t))).claims, [{ issue: 2, state: "triage" }]);
     assert.deepStrictEqual(t.calls()[1], historyCallFor(2));
   }),
 );
@@ -3740,7 +3817,14 @@ it.effect("unassignedClaims skips an issue whose time is not GitHub's form", () 
 it.effect("unassignedClaims refuses a before that is not GitHub's form, with no call", () =>
   Effect.gen(function* () {
     const t = setup();
-    const error = yield* t.err(t.github.unassignedClaims("2026-10-08T02:00:00.000Z", "rawphp"));
+    const error = yield* t.err(
+      t.github.unassignedClaims(
+        "2026-10-08T02:00:00.000Z",
+        "rawphp",
+        new Set<number>(),
+        new ClaimMemo(),
+      ),
+    );
     assert.strictEqual(error._tag, "GitHubParse");
     assert.deepStrictEqual(t.calls(), []);
   }),

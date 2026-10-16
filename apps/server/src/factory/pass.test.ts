@@ -155,10 +155,17 @@ class Fake implements PassWorld {
     return this.listing(this.triage, this.triageCut, repo);
   }
 
-  unassignedClaims(repo: Repo) {
+  /** Issues whose label history cannot be read, by repo. */
+  unreadHistory: Record<string, Array<{ issue: number; message: string }>> = {};
+
+  unassignedClaims(repo: Repo, known: ReadonlySet<number>) {
+    this.calls.push(`unassigned ${repo.watched.repo} known=${[...known].sort().join(",")}`);
     const found = this.unassigned[repo.watched.repo];
     if (found === "error") return Effect.fail(trackerFailure());
-    return Effect.succeed(found ?? []);
+    return Effect.succeed({
+      claims: found ?? [],
+      unread: this.unreadHistory[repo.watched.repo] ?? [],
+    });
   }
 
   releaseClaim(repo: Repo, issue: number, from: State) {
@@ -1104,6 +1111,35 @@ describe("claims with no run and no assignee", () => {
         [reconciled(8)],
       );
     }),
+  );
+
+  it.effect("the issues with runs are handed to the scan so their history is not read", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(7, "triage");
+      yield* pass(fake, machine([REPO], 1));
+      assert.ok(fake.calls.includes(`unassigned ${REPO} known=7`), fake.calls.join("\n"));
+    }),
+  );
+
+  it.effect(
+    "an issue whose label history cannot be read is one error line and the others are still moved",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.unreadHistory[REPO] = [{ issue: 5, message: "boom" }];
+        fake.unassigned[REPO] = [{ issue: 7, state: "triage" }];
+        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        assert.equal(report.errors, 1);
+        const errors = lines.filter((l) => l.startsWith("error: "));
+        assert.equal(errors.length, 1, lines.join("\n"));
+        assert.ok(
+          errors[0]!.startsWith("error: rawphp/softfac#5: cannot read its label history: boom"),
+          errors[0],
+        );
+        assert.deepEqual(releases(fake), [`release ${REPO}#7 triage`]);
+        assert.deepEqual(recordedErrorKinds(fake), ["tracker"]);
+      }),
   );
 
   it.effect("a repo whose config is broken has its unassigned issues left alone", () =>

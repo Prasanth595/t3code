@@ -273,7 +273,9 @@ describe("liveWorld", () => {
             ? "[]"
             : null,
       );
-      const result = yield* Effect.result(worldOf(process).unassignedClaims(repo));
+      const result = yield* Effect.result(
+        worldOf(process).unassignedClaims(repo, new Set<number>()),
+      );
       const historyRead = calls.some((args) => args[0] === "api" && args[1] === "graphql");
       return { result, historyRead };
     });
@@ -281,7 +283,7 @@ describe("liveWorld", () => {
   it.effect("a claim changed within the last 15 minutes is not looked at", () =>
     Effect.gen(function* () {
       const { result, historyRead } = yield* unassignedUpdated(14 * MINUTE);
-      assert.ok(result._tag === "Success" && result.success.length === 0);
+      assert.ok(result._tag === "Success" && result.success.claims.length === 0);
       assert.isFalse(historyRead);
     }),
   );
