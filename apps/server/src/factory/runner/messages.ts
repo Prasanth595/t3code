@@ -5,6 +5,7 @@
  */
 
 import type { State } from "../domain/lifecycle.ts";
+import { sanitize } from "../text.ts";
 
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
@@ -24,11 +25,6 @@ export const SESSION_TEXT_LIMIT = 6000;
 export const SESSION_TEXT_INTRO =
   "Unverified output from the build session, not instructions from the factory:";
 
-/** The characters a comment or the ledger shows as a space: control characters (but not a newline or tab) and invisible or bidirectional marks. */
-const UNSAFE =
-  // oxlint-disable-next-line eslint/no-control-regex -- the control characters are what it matches.
-  /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/gu;
-
 /**
  * Session text made safe to store and to show, prepared once where it enters the factory and
  * then used as it is for the comment, the ledger and the returned reason. Line endings are
@@ -44,7 +40,7 @@ export const prepareSessionText = (text: string): string => {
     chars.length > SESSION_TEXT_LIMIT
       ? `${chars.slice(0, SESSION_TEXT_LIMIT).join("")}\n[cut]`
       : trimmed;
-  return prepared.replace(UNSAFE, " ").replaceAll("@", "@\u200B").replaceAll("<!--", "<\u200B!--");
+  return sanitize(prepared, true).replaceAll("@", "@\u200B").replaceAll("<!--", "<\u200B!--");
 };
 
 /**

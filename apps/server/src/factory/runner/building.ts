@@ -55,11 +55,13 @@ import {
   type Seen,
 } from "./progress.ts";
 import {
+  applyActions,
   describe,
+  finishBuilding,
   goStuck,
+  progressFrom,
   recordedReason,
   stopSession,
-  finishBuilding,
   type Progress,
   type RunContext,
   type RunError,
@@ -172,17 +174,6 @@ const readSeen = (ctx: BuildingContext, run: RunId) =>
   ledger(() => readRun(ctx.dataDir, run)).pipe(
     Effect.map((record) => readProgress(record.entries)),
   );
-
-/** Where the issue stands, from what the ledger says. */
-const progressFrom = (step: CauseStep, seen: Seen, fallback: State): Progress => ({
-  step,
-  state: seen.state ?? fallback,
-  threadId: seen.threadId,
-  worktree: seen.worktree,
-  worktreeDone: seen.worktreeDone,
-  pr: seen.lastPr?.pr ?? null,
-  seen,
-});
 
 /** The run file, opened for append the first time a step writes to it and closed when the step ends. */
 interface Out {
@@ -389,7 +380,7 @@ export const advance = (
         // `start` looks at the issue text again after the launch. A launch it has not done that
         // for is left to it, so this cannot give the run its `building` label around the check.
         if (!seen.rechecked) return { kind: "running" } as const;
-        yield* finishBuilding(ctx, issue, yield* out.open, at, threadId);
+        yield* finishBuilding(ctx, issue, yield* out.open, at);
       }
 
       // A thread T3 no longer has is a stop.
@@ -511,51 +502,14 @@ export const advance = (
           const raised = yield* Effect.fromResult(
             transition(at.state, { kind: "questions-raised", questions: prepared }),
           );
-          let questionsPosted = seen.questionsPosted;
-          let movedTo: State | null = null;
-          for (const action of raised.actions) {
-            switch (action.kind) {
-              case "post-questions":
-                if (!questionsPosted) {
-                  yield* ctx.tracker.postComment(issue, questionsComment(action.questions));
-                  yield* append(
-                    out,
-                    { event: "questions_posted", data: { questions: action.questions } },
-                    "advance",
-                    "questions-asked",
-                  );
-                  questionsPosted = true;
-                }
-                break;
-              case "set-label":
-                yield* ctx.tracker.setState(issue, action.state);
-                movedTo = action.state;
-                break;
-              case "unassign":
-                yield* ctx.tracker.unassign(issue, ctx.trackerUser);
-                break;
-              case "update-status-comment":
-                yield* ctx.tracker.upsertStatusComment(
-                  issue,
-                  ctx.trackerUser,
-                  statusBody(movedTo ?? at.state, ctx.machine, threadId, at.pr ?? null),
-                );
-                break;
-              default:
-                return yield* Effect.die(
-                  new Error(`unexpected action ${action.kind} for questions-raised`),
-                );
-            }
-          }
-          if (movedTo !== null && movedTo !== at.state) {
-            yield* append(
-              out,
-              { event: "state_changed", data: { from: at.state, to: movedTo } },
-              "advance",
-              "questions-asked",
-            );
-            at.state = movedTo;
-          }
+          yield* applyActions(
+            ctx,
+            issue,
+            yield* out.open,
+            at,
+            raised.actions,
+            makeCause("advance", "questions-asked"),
+          );
           yield* endNeedsInfo(ctx, out, at);
           return { kind: "needs-info" } as const;
         }

@@ -166,14 +166,6 @@ const errorKind = (error: StartError | BuildingError): ErrorKind => {
   }
 };
 
-/** The ledger step an error line is recorded under, by the step's name in the pass line. */
-const STEP_OF: Readonly<Record<string, CauseStep>> = {
-  start: "start",
-  watch: "watch",
-  advance: "advance",
-  "time limit": "pass",
-};
-
 /** Repos match as run ids do: `owner/name` folded with `asciiLower`. */
 const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
@@ -276,11 +268,11 @@ class Pass {
     return { label: plain(label), state: state ?? "starting", parts: [], errors: [] };
   }
 
-  /** The step `name` failed for this issue. */
-  failed(notes: Notes, name: string, error: StartError | BuildingError): void {
+  /** The step called `label` in the pass line failed for this issue; the ledger records it under `step`. */
+  failed(notes: Notes, label: string, step: CauseStep, error: StartError | BuildingError): void {
     notes.errors.push({
-      line: `${notes.label} ${name}: ${plain(error.message)}`,
-      step: STEP_OF[name] ?? "pass",
+      line: `${notes.label} ${label}: ${plain(error.message)}`,
+      step,
       kind: errorKind(error),
       message: error.message,
     });
@@ -472,7 +464,7 @@ const withinLimit = (
   Effect.gen(function* () {
     const outcome = yield* Effect.result(world.timeLimit(repo, info.id));
     if (outcome._tag === "Failure") {
-      pass.failed(notes, "time limit", outcome.failure);
+      pass.failed(notes, "time limit", "pass", outcome.failure);
       return false;
     }
     if (outcome.success.kind === "stopped") {
@@ -495,7 +487,7 @@ const resumeRun = (
     const outcome = yield* Effect.result(world.resume(repo, issue));
     if (outcome._tag === "Failure") {
       if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
-      else pass.failed(notes, "start", outcome.failure);
+      else pass.failed(notes, "start", "start", outcome.failure);
       return;
     }
     switch (outcome.success.kind) {
@@ -528,7 +520,7 @@ const followBuilding = (
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const watched = yield* Effect.result(world.watch(repo, info.id));
-    if (watched._tag === "Failure") return pass.failed(notes, "watch", watched.failure);
+    if (watched._tag === "Failure") return pass.failed(notes, "watch", "watch", watched.failure);
     if (watched.success.kind === "stopped") return pass.stuck(notes, runIdToString(info.id));
     yield* advanceRun(world, repo, info, notes, pass);
   });
@@ -545,7 +537,8 @@ const advanceRun = (
     const run = runIdToString(info.id);
     const advanced = yield* Effect.result(world.advance(repo, info.id));
     // A `NotBuildingError` is a run that finished meanwhile: softfac prints it as an error too.
-    if (advanced._tag === "Failure") return pass.failed(notes, "advance", advanced.failure);
+    if (advanced._tag === "Failure")
+      return pass.failed(notes, "advance", "advance", advanced.failure);
     switch (advanced.success.kind) {
       case "running":
         notes.parts.push("session still running");
@@ -786,7 +779,7 @@ const noteStart = (
     }
     yield* known.refresh(world, pass, name, issue);
     if (outcome._tag === "Failure") {
-      pass.failed(notes, "start", outcome.failure);
+      pass.failed(notes, "start", "start", outcome.failure);
       return madeSince(newestRun(known.of(name, issue)), before);
     }
     switch (outcome.success.kind) {

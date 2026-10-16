@@ -6,14 +6,14 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { InvalidTransition, transition, type State } from "../domain/lifecycle.ts";
+import { InvalidTransition, transition, type Action, type State } from "../domain/lifecycle.ts";
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
-import { makeCause, type CauseStep } from "../ledger/events.ts";
+import { makeCause, type Cause, type CauseStep } from "../ledger/events.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import type { BoundGitHub, GitHubError } from "../tracker/github.ts";
 import { ThreadNotFoundError } from "../t3/sessions.ts";
 import type { FactorySessions, SessionsError } from "../t3/sessions.ts";
-import { statusBody, stuckComment, type WorkLeft } from "./messages.ts";
+import { questionsComment, statusBody, stuckComment, type WorkLeft } from "./messages.ts";
 import type { Seen } from "./progress.ts";
 
 /** What the stop and finish paths can fail with. */
@@ -44,9 +44,24 @@ export interface Progress {
   worktree: string | null;
   worktreeDone: boolean;
   /** The run's newest pull request, for the status comment; none when absent. */
-  pr?: number | null;
+  readonly pr: number | null;
+  /** Why the run is stopping, set by `goStuck` for the stuck comment; none otherwise. */
+  stop: Stop | null;
+  /** What the ledger said when the step began: the comment-once guards read it. */
   readonly seen: Seen;
 }
+
+/** Where the issue stands, from what the ledger says. `fallback` is the state of a run that has none yet. */
+export const progressFrom = (step: CauseStep, seen: Seen, fallback: State): Progress => ({
+  step,
+  state: seen.state ?? fallback,
+  threadId: seen.threadId,
+  worktree: seen.worktree,
+  worktreeDone: seen.worktreeDone,
+  pr: seen.lastPr?.pr ?? null,
+  stop: null,
+  seen,
+});
 
 /** The words for what a failed call said: its message when it has one. */
 export const describe = (cause: unknown): string =>
@@ -63,36 +78,112 @@ export const finishBuilding = (
   issue: number,
   out: Ledger,
   at: Progress,
-  threadId: string,
 ): Effect.Effect<void, RunError> =>
   Effect.gen(function* () {
     const building = yield* Effect.fromResult(transition(at.state, { kind: "session-starting" }));
-    for (const action of building.actions) {
+    yield* applyActions(
+      ctx,
+      issue,
+      out,
+      at,
+      building.actions,
+      makeCause(at.step, "session-started"),
+    );
+  });
+
+/**
+ * Carries out the actions a transition asks for, in order, as softfac's `apply` does. The label,
+ * the release and the status comment are repeated safely; the two comments are posted once, as
+ * `at.seen` says (the questions, and the stuck decision, which `at.stop` words). The
+ * `state_changed` line is written last, after every action, so a ledger that still shows the old
+ * state means the transition may be unfinished and is run again. `cause` is the cause of every
+ * line written. Actions that belong to later steps are an `InvalidTransition`.
+ */
+export const applyActions = (
+  ctx: RunContext,
+  issue: number,
+  out: Ledger,
+  at: Progress,
+  actions: ReadonlyArray<Action>,
+  cause: Cause,
+): Effect.Effect<void, RunError> =>
+  Effect.gen(function* () {
+    let movedTo: State | undefined;
+    for (const action of actions) {
       switch (action.kind) {
-        case "set-label":
-          yield* ctx.tracker.setState(issue, action.state);
-          break;
         case "launch-session":
           // Launched already.
+          break;
+        case "post-questions":
+          if (!at.seen.questionsPosted) {
+            yield* ctx.tracker.postComment(issue, questionsComment(action.questions));
+            yield* ledger(() =>
+              out.append(
+                { event: "questions_posted", data: { questions: action.questions } },
+                cause,
+              ),
+            );
+          }
+          break;
+        case "post-stuck-comment":
+          if (at.seen.stuck === null) {
+            // The lifecycle's reason is the recorded one and may hold detail the public must not
+            // read, so without a stop the comment says only this.
+            const stop = at.stop;
+            const work: WorkLeft | undefined =
+              stop?.branch === undefined
+                ? undefined
+                : {
+                    branch: stop.branch,
+                    commitsAhead: stop.commitsAhead ?? null,
+                    base: ctx.project.base,
+                  };
+            yield* ctx.tracker.postComment(
+              issue,
+              stop === null
+                ? stuckComment("the factory stopped this run")
+                : stuckComment(stop.reason, stop.sessionText, work),
+            );
+            yield* ledger(() =>
+              out.append(
+                {
+                  event: "stuck",
+                  data: {
+                    reason: action.reason,
+                    ...(work !== undefined && { branch: work.branch }),
+                    ...(work?.commitsAhead != null && { commits_ahead: work.commitsAhead }),
+                  },
+                },
+                cause,
+              ),
+            );
+          }
+          break;
+        case "set-label":
+          yield* ctx.tracker.setState(issue, action.state);
+          movedTo = action.state;
+          break;
+        case "unassign":
+          yield* ctx.tracker.unassign(issue, ctx.trackerUser);
           break;
         case "update-status-comment":
           yield* ctx.tracker.upsertStatusComment(
             issue,
             ctx.trackerUser,
-            statusBody("building", ctx.machine, threadId, null),
+            statusBody(movedTo ?? at.state, ctx.machine, at.threadId, at.pr),
           );
           break;
         default:
-          return yield* new InvalidTransition({ state: at.state, event: "session-starting" });
+          return yield* new InvalidTransition({ state: at.state, event: action.kind });
       }
     }
-    yield* ledger(() =>
-      out.append(
-        { event: "state_changed", data: { from: at.state, to: building.next } },
-        makeCause(at.step, "session-started"),
-      ),
-    );
-    at.state = building.next;
+    if (movedTo !== undefined && movedTo !== at.state) {
+      const from = at.state;
+      yield* ledger(() =>
+        out.append({ event: "state_changed", data: { from, to: movedTo } }, cause),
+      );
+      at.state = movedTo;
+    }
   });
 
 /**
@@ -184,60 +275,10 @@ export const goStuck = (
       return;
     }
     yield* stopSession(ctx, out, at);
-    const recorded = recordedReason(stop);
-    const work: WorkLeft | undefined =
-      stop.branch === undefined
-        ? undefined
-        : { branch: stop.branch, commitsAhead: stop.commitsAhead ?? null, base: ctx.project.base };
     const failed = yield* Effect.fromResult(
-      transition(at.state, { kind: "failed", reason: recorded }),
+      transition(at.state, { kind: "failed", reason: recordedReason(stop) }),
     );
-    let movedTo: State | null = null;
-    let stuckPosted = at.seen.stuck !== null;
-    for (const action of failed.actions) {
-      switch (action.kind) {
-        case "post-stuck-comment":
-          if (!stuckPosted) {
-            yield* ctx.tracker.postComment(
-              issue,
-              stuckComment(stop.reason, stop.sessionText, work),
-            );
-            yield* ledger(() =>
-              out.append(
-                {
-                  event: "stuck",
-                  data: {
-                    reason: recorded,
-                    ...(work !== undefined && { branch: work.branch }),
-                    ...(work?.commitsAhead != null && { commits_ahead: work.commitsAhead }),
-                  },
-                },
-                cause,
-              ),
-            );
-            stuckPosted = true;
-          }
-          break;
-        case "set-label":
-          yield* ctx.tracker.setState(issue, action.state);
-          movedTo = action.state;
-          break;
-        case "unassign":
-          yield* ctx.tracker.unassign(issue, ctx.trackerUser);
-          break;
-        case "update-status-comment":
-          yield* ctx.tracker.upsertStatusComment(
-            issue,
-            ctx.trackerUser,
-            statusBody(movedTo ?? at.state, ctx.machine, at.threadId, at.pr ?? null),
-          );
-          break;
-        default:
-          return yield* new InvalidTransition({ state: at.state, event: "failed" });
-      }
-    }
-    yield* ledger(() =>
-      out.append({ event: "state_changed", data: { from: at.state, to: failed.next } }, cause),
-    );
+    at.stop = stop;
+    yield* applyActions(ctx, issue, out, at, failed.actions, cause);
     yield* ledger(() => out.finish("stuck", null, null, cause));
   });
