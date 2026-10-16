@@ -112,6 +112,13 @@ function stacksEqual(
   );
 }
 
+function sameLayerNumbers(left: ThreadPullRequestStack, right: ThreadPullRequestStack): boolean {
+  return (
+    left.layers.length === right.layers.length &&
+    left.layers.every((layer, index) => layer.number === right.layers[index]!.number)
+  );
+}
+
 function skipReason(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   return error instanceof Error ? error.message : String(error);
@@ -199,6 +206,7 @@ export const make = Effect.gen(function* () {
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     const linkedThisSweep = new Set<string>();
+    const stacksReadThisSweep = new Map<string, ThreadPullRequestStack | null>();
     const persistence = yield* Semaphore.make(1);
 
     const syncEntry = Effect.fn("PullRequestSyncReactor.syncEntry")(function* (
@@ -312,6 +320,22 @@ export const make = Effect.gen(function* () {
           return;
         }
         retryStacks.delete(key);
+        const fetched = fetchedStack.stack;
+        stacksReadThisSweep.set(key, fetched);
+        // A layer pushed above an older member changes none of that member's own fields, so it
+        // would keep its shorter layer list. Members of this stack whose layer list differs read
+        // their stack once, in this sweep if still pending or the next; agreeing ones read none.
+        if (fetched !== null) {
+          for (const [siblingKey, siblingEntries] of groups) {
+            if (siblingKey === key) continue;
+            const readThisSweep = stacksReadThisSweep.get(siblingKey);
+            const stale = siblingEntries.some(({ link }) => {
+              const stack = readThisSweep === undefined ? link.stack : readThisSweep;
+              return stack?.id === fetched.id && !sameLayerNumbers(stack, fetched);
+            });
+            if (stale) retryStacks.add(siblingKey);
+          }
+        }
       }
       // The host answered, so the cadence clock ticks even if a dispatch below is rejected.
       lastSyncedAt.set(key, nowMs);

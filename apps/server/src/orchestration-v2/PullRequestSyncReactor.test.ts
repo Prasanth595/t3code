@@ -946,6 +946,88 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect("re-reads every member's layers once a new layer joins the stack", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const layer = (number: number) => ({
+          number,
+          headBranch: `layer-${number}`,
+          state: "open" as const,
+        });
+        let layers = [layer(18), layer(20)];
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("one", { pullRequests: [makeLink(18), makeLink(20)] }),
+          ]),
+          stack: () =>
+            Effect.succeed({
+              id: "stack-80",
+              number: 80,
+              url: "https://github.com/owner/repository/stack/80",
+              base: "main",
+              layers,
+            }),
+        });
+        const storedLayers = Ref.get(fixture.snapshots).pipe(
+          Effect.map((snapshot) =>
+            snapshot.threads[0]!.pullRequests.map((link) => [
+              link.number,
+              link.stack?.layers.map((entry) => entry.number),
+            ]),
+          ),
+        );
+        const sweepAndApply = (reactor: PullRequestSyncReactor.PullRequestSyncReactor["Service"]) =>
+          Effect.gen(function* () {
+            yield* sweepAgain(fixture, reactor);
+            const commands = yield* Ref.get(fixture.syncCommands);
+            yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
+          });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const firstSweep = yield* Ref.get(fixture.syncCommands);
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));
+          assert.deepStrictEqual(yield* storedLayers, [
+            [18, [18, 20]],
+            [20, [18, 20]],
+          ]);
+          const readsBeforeGrowth = (yield* Ref.get(fixture.stackCalls)).length;
+
+          // #83 is pushed on top and linked; only its own link starts without a snapshot.
+          layers = [layer(18), layer(20), layer(83)];
+          yield* Ref.update(fixture.snapshots, (snapshot) => ({
+            ...snapshot,
+            threads: snapshot.threads.map((thread) => ({
+              ...thread,
+              pullRequests: [...thread.pullRequests, makeLink(83)],
+            })),
+          }));
+          yield* sweepAndApply(reactor);
+          yield* sweepAndApply(reactor);
+
+          assert.deepStrictEqual(yield* storedLayers, [
+            [18, [18, 20, 83]],
+            [20, [18, 20, 83]],
+            [83, [18, 20, 83]],
+          ]);
+          const readsAfterGrowth = (yield* Ref.get(fixture.stackCalls)).slice(readsBeforeGrowth);
+          assert.deepStrictEqual(
+            readsAfterGrowth.map((ref) => ref.number).toSorted(),
+            [18, 20, 83],
+          );
+
+          // Every member agrees now, so a further sweep reads no stack.
+          yield* sweepAndApply(reactor);
+          assert.strictEqual(
+            (yield* Ref.get(fixture.stackCalls)).length,
+            readsBeforeGrowth + readsAfterGrowth.length,
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("keeps existing snapshots and continues when the host fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
