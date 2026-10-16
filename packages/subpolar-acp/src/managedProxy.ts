@@ -136,17 +136,20 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
       };
     }));
 
-    yield* agent.handleCreateSession((request) => Effect.tryPromise({
-      try: async () => {
-        if (!initializeRequest) throw new Error("ACP initialize must be called before session/new");
-        const target = environmentFor(request.cwd, environment);
-        const started = await manager.startManagedSession(target, command, {
-          cwd: ".",
-          environment: workerEnvironment(environment),
-          clientSessionId: `t3-acp-${randomUUID()}`,
-        });
-        let workerScope: Scope.CloseableScope | undefined;
-        try {
+    const startManagedWorker = async (
+      request: AcpSchema.NewSessionRequest,
+      nativeSessionId: string,
+      resume: boolean,
+    ) => {
+      if (!initializeRequest) throw new Error("ACP initialize must be called before session setup");
+      const target = environmentFor(request.cwd, environment);
+      const started = await manager.startManagedSession(target, command, {
+        cwd: ".",
+        environment: workerEnvironment(environment),
+        clientSessionId: `t3-acp-${createHash("sha256").update(nativeSessionId).digest("hex").slice(0, 32)}`,
+      });
+      let workerScope: Scope.CloseableScope | undefined;
+      try {
         const scope = workerScope = await Effect.runPromise(Scope.make());
         const input = await Effect.runPromise(Queue.unbounded<Uint8Array, Cause.Done<void>>());
         const stdioForWorker = Stdio.make({
@@ -230,24 +233,37 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
         if (initialized.protocolVersion !== initializeRequest.protocolVersion) {
           throw new Error("Managed ACP worker negotiated an incompatible protocol version");
         }
-        const created = await Effect.runPromise(workerClient.agent.createSession({
-          ...request,
-          mcpServers: request.mcpServers ?? [],
-        }));
+        const response = resume
+          ? await Effect.runPromise(workerClient.agent.loadSession({
+              sessionId: nativeSessionId,
+              cwd: request.cwd,
+              mcpServers: request.mcpServers ?? [],
+            }))
+          : await Effect.runPromise(workerClient.agent.createSession({
+              ...request,
+              _meta: { ...(request._meta ?? {}), "subpolar.sessionId": nativeSessionId },
+              mcpServers: request.mcpServers ?? [],
+            }));
         const session: WorkerSession = {
           environment: target,
           sessionId: started.sessionId,
           scope,
           client: workerClient,
-          remoteSessionId: created.sessionId,
+          remoteSessionId: nativeSessionId,
         };
-        workers.set(created.sessionId, session);
-        return created;
-        } catch (error) {
-          await manager.terminateManagedSession(target, started.sessionId).catch(() => undefined);
-          if (workerScope) await Effect.runPromise(Scope.close(workerScope, Exit.void)).catch(() => undefined);
-          throw error;
-        }
+        workers.set(nativeSessionId, session);
+        return response;
+      } catch (error) {
+        await manager.terminateManagedSession(target, started.sessionId).catch(() => undefined);
+        if (workerScope) await Effect.runPromise(Scope.close(workerScope, Exit.void)).catch(() => undefined);
+        throw error;
+      }
+    };
+
+    yield* agent.handleCreateSession((request) => Effect.tryPromise({
+      try: async () => {
+        const nativeSessionId = `t3-acp-${randomUUID()}`;
+        return await startManagedWorker(request, nativeSessionId, false);
       },
       catch: requestError,
     }));
@@ -255,8 +271,31 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
     yield* agent.handlePrompt((request) => forward("session/prompt", request));
     yield* agent.handleAuthenticate((request) => forwardAny("auth/login", request));
     yield* agent.handleLogout((request) => forwardAny("auth/logout", request));
-    yield* agent.handleLoadSession((request) => forwardAny("session/resume", request));
-    yield* agent.handleResumeSession((request) => forwardAny("session/resume", request));
+    const resumeManagedSession = (request: AcpSchema.LoadSessionRequest | AcpSchema.ResumeSessionRequest) => {
+      const existing = workers.get(request.sessionId);
+      const loadRequest: AcpSchema.LoadSessionRequest = {
+        sessionId: request.sessionId,
+        cwd: request.cwd,
+        mcpServers: request.mcpServers ?? [],
+      };
+      if (existing) {
+        return existing.client.agent.loadSession(loadRequest).pipe(
+          Effect.map((value) => value as AcpSchema.LoadSessionResponse | AcpSchema.ResumeSessionResponse),
+          Effect.mapError(requestError),
+        );
+      }
+      const syntheticRequest = {
+        cwd: request.cwd,
+        mcpServers: request.mcpServers ?? [],
+        _meta: { "subpolar.sessionId": request.sessionId },
+      } as AcpSchema.NewSessionRequest;
+      return Effect.tryPromise({
+        try: () => startManagedWorker(syntheticRequest, request.sessionId, true),
+        catch: requestError,
+      });
+    };
+    yield* agent.handleLoadSession(resumeManagedSession);
+    yield* agent.handleResumeSession(resumeManagedSession);
     yield* agent.handleListSessions((request) => forwardAny("session/list", request));
     yield* agent.handleForkSession((request) => forwardAny("session/fork", request));
     yield* agent.handleDeleteSession((request) => forwardAny("session/delete", request));

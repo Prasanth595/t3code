@@ -334,8 +334,8 @@ export function createInMemoryPiExecutor(
   return new InMemoryPiExecutor(handler);
 }
 
-export { createPiSdkExecutorFactory, loadPiSdk, PI_SDK_MODULE } from "./sdk.ts";
-export type { PiSdkModule, PiSdkConfig } from "./sdk.ts";
+export { createPiSdkExecutorFactory, loadPiSdk, PI_SDK_MODULE, validatePiSession } from "./sdk.ts";
+export type { PiSdkModule, PiSdkConfig, PiSessionManager, PiSessionManagerApi } from "./sdk.ts";
 
 /** Share request/context, gateway tools, cancellation and events with any host. */
 export function createPiStatelessExecutor<Config>(

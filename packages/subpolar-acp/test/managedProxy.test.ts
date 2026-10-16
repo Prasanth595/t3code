@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -53,23 +54,28 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
             capabilities: { session: {} },
           } }));
         } else if (message.method === "session/new") {
-          output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { sessionId: `worker-${sessionId}` } }));
+          const params = message.params as { _meta?: Record<string, unknown> } | undefined;
+          const workerSessionId = String(params?._meta?.["subpolar.sessionId"] ?? `worker-${sessionId}`);
+          output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { sessionId: workerSessionId } }));
+        } else if (message.method === "session/resume" || message.method === "session/load") {
+          output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }));
         } else if (message.method === "session/prompt") {
+          const promptSessionId = String((message.params as { sessionId?: string }).sessionId);
           output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }));
           if (options.requestPermission) {
             output.push(JSON.stringify({ jsonrpc: "2.0", id: 77, method: "session/request_permission", params: {
-              sessionId: `worker-${sessionId}`,
+              sessionId: promptSessionId,
               title: "test",
               subject: { type: "command", command: "pwd", cwd: "/workspaces/project-a" },
               options: [{ optionId: "allow-once", name: "Allow", kind: "allow_once" }],
             } }));
           }
           output.push(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: {
-            sessionId: `worker-${sessionId}`,
+            sessionId: promptSessionId,
             update: { sessionUpdate: "agent_message_chunk", messageId: "run-1", content: { type: "text", text: "from worker" } },
           } }));
           output.push(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: {
-            sessionId: `worker-${sessionId}`,
+            sessionId: promptSessionId,
             update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
           } }));
         }
@@ -154,7 +160,9 @@ test("managed proxy starts a worker for the requested worktree and forwards ACP 
   await readMessage(output, (message) => message.id === 1);
   await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/workspaces/project-a" } }));
   const created = await readMessage(output, (message) => message.id === 2);
-  expect(created.result).toEqual({ sessionId: "worker-managed-1" });
+  const nativeSessionId = (created.result as { sessionId: string }).sessionId;
+  expect(typeof nativeSessionId).toBe("string");
+  expect(nativeSessionId).toMatch(/^t3-acp-/);
   expect(fake.calls[0]).toMatchObject({
     method: "start",
     command: ["/usr/local/bin/subpolar-acp-worker"],
@@ -169,19 +177,73 @@ test("managed proxy starts a worker for the requested worktree and forwards ACP 
         SUBPOLAR_ACP_EXECUTION: "local",
         SUBPOLAR_ACP_WORKER_MODE: "1",
       },
+      clientSessionId: `t3-acp-${createHash("sha256").update(nativeSessionId).digest("hex").slice(0, 32)}`,
     },
   });
   expect(fake.calls[0]?.process?.environment).not.toHaveProperty("SUBPOLAR_MANAGER_TOKEN");
   expect(fake.calls[0]?.process?.environment).not.toHaveProperty("SUBPOLAR_MANAGER_URL");
   expect(fake.calls[0]?.process?.environment).not.toHaveProperty("SUBPOLAR_STORAGE_ROOT");
 
-  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-managed-1", prompt: [{ type: "text", text: "hello" }] } }));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: nativeSessionId, prompt: [{ type: "text", text: "hello" }] } }));
   const update = await readMessage(output, (message) => message.method === "session/update" && JSON.stringify(message.params).includes("from worker"));
   await readMessage(output, (message) => message.id === 3);
-  expect(update.params).toMatchObject({ sessionId: "worker-managed-1", update: { content: { text: "from worker" } } });
+  expect(update.params).toMatchObject({ sessionId: nativeSessionId, update: { content: { text: "from worker" } } });
 
   await Effect.runPromise(Scope.close(scope, Exit.void));
   expect(fake.calls.some((call) => call.method === "terminate")).toBe(true);
+});
+
+test("cold ACP resume starts a worker with the persisted native session key", async () => {
+  const { stdio, input, output } = await Effect.runPromise(makeInMemoryStdio());
+  const scope = await Effect.runPromise(Scope.make());
+  const fake = fakeManager();
+  await Effect.runPromise(Layer.buildWithScope(layerManagedAcpProxy(stdio, {
+    environment: baseEnvironment,
+    manager: fake.manager,
+  }), scope));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2, info: { name: "t3", version: "1" }, capabilities: {} } }));
+  await readMessage(output, (message) => message.id === 1);
+
+  const nativeSessionId = "t3-acp-existing-native-session";
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/resume", params: {
+    sessionId: nativeSessionId,
+    cwd: "/workspaces/project-a",
+    mcpServers: [],
+  } }));
+  const loaded = await readMessage(output, (message) => message.id === 2);
+  expect(loaded.error).toBeUndefined();
+  expect(fake.calls.filter((call) => call.method === "start")).toHaveLength(1);
+  expect(fake.calls[0]?.process?.clientSessionId).toBe(
+    `t3-acp-${createHash("sha256").update(nativeSessionId).digest("hex").slice(0, 32)}`,
+  );
+  expect(fake.calls.some((call) => call.method === "write" && call.data?.includes('"method":"session/resume"') && call.data.includes(nativeSessionId) && call.data.includes('"replayFrom":{"type":"start"}'))).toBe(true);
+  await Scope.close(scope, Exit.void);
+});
+
+test("warm ACP resume rehydrates Pi state through load semantics", async () => {
+  const { stdio, input, output } = await Effect.runPromise(makeInMemoryStdio());
+  const scope = await Effect.runPromise(Scope.make());
+  const fake = fakeManager();
+  await Effect.runPromise(Layer.buildWithScope(layerManagedAcpProxy(stdio, {
+    environment: baseEnvironment,
+    manager: fake.manager,
+  }), scope));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2, info: { name: "t3", version: "1" }, capabilities: {} } }));
+  await readMessage(output, (message) => message.id === 1);
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/workspaces/project-a" } }));
+  const created = await readMessage(output, (message) => message.id === 2);
+  const nativeSessionId = (created.result as { sessionId: string }).sessionId;
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/resume", params: {
+    sessionId: nativeSessionId,
+    cwd: "/workspaces/project-a",
+    mcpServers: [],
+  } }));
+  const resumed = await readMessage(output, (message) => message.id === 3);
+  expect(resumed.error).toBeUndefined();
+  expect(fake.calls.filter((call) => call.method === "start")).toHaveLength(1);
+  expect(fake.calls.some((call) => call.method === "write" && call.data?.includes('"method":"session/resume"') && call.data.includes(nativeSessionId) && call.data.includes('"replayFrom":{"type":"start"}'))).toBe(true);
+  await Scope.close(scope, Exit.void);
 });
 
 test("managed proxy returns startup errors without falling back to a local runtime", async () => {
@@ -212,10 +274,11 @@ test("managed proxy sends worker permission requests to the T3 ACP client and fo
   await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2, info: { name: "t3", version: "1" }, capabilities: {} } }));
   await readMessage(output, (message) => message.id === 1);
   await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/workspaces/project-a" } }));
-  await readMessage(output, (message) => message.id === 2);
-  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-managed-1", prompt: [{ type: "text", text: "run a command" }] } }));
+  const created = await readMessage(output, (message) => message.id === 2);
+  const nativeSessionId = (created.result as { sessionId: string }).sessionId;
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: nativeSessionId, prompt: [{ type: "text", text: "run a command" }] } }));
   const permission = await readMessage(output, (message) => message.method === "session/request_permission");
-  expect(permission.params).toMatchObject({ sessionId: "worker-managed-1", title: "test", subject: { type: "command" } });
+  expect(permission.params).toMatchObject({ sessionId: nativeSessionId, title: "test", subject: { type: "command" } });
   await Effect.runPromise(send(input, {
     jsonrpc: "2.0",
     id: permission.id,
@@ -225,7 +288,7 @@ test("managed proxy sends worker permission requests to the T3 ACP client and fo
   await fake.permissionResponse;
   expect(fake.calls.some((call) => call.method === "permission-response" && call.data?.includes("allow-once"))).toBe(true);
 
-  await Effect.runPromise(send(input, { jsonrpc: "2.0", method: "session/cancel", params: { sessionId: "worker-managed-1" } }));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", method: "session/cancel", params: { sessionId: nativeSessionId } }));
   await fake.cancelled;
   expect(fake.calls.some((call) => call.method === "write" && call.data?.includes('"method":"session/cancel"'))).toBe(true);
   await Effect.runPromise(Scope.close(scope, Exit.void));

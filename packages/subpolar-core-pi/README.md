@@ -13,9 +13,9 @@ The hoisted workspace shares compatible dependencies, but incompatible versions
 may still require nested copies. Do not install separately in this package.
 See [Bun and multi-user operations](../../docs/bun-and-multi-user.md).
 
-## No-persistence invariant
+## Core port persistence boundary
 
-The adapter is intentionally transient. It does **not**:
+`createPiRunPort` is intentionally transient. It does **not**:
 
 - load the Pi SDK on package import (the explicit SDK factory loads it lazily);
 - create, read, search, or write Pi JSONL session files or session directories;
@@ -23,11 +23,11 @@ The adapter is intentionally transient. It does **not**:
 - persist transcripts, run outcomes, or replay events; or
 - decide tool policy, approvals, permissions, or audit outcomes.
 
-A `sessionId` is only descriptive runtime context. Any prior conversation must
-be supplied explicitly as the in-memory `transcript` projection on the run
-request. Durable session and policy services belong to the composition layer,
-not this adapter. `piAdapterCapabilities` advertises these limits as
-`ephemeral` with persistence, replay, and durable-approval support disabled.
+A `sessionId` is only descriptive runtime context for the core port. Any prior
+conversation must be supplied explicitly as the in-memory `transcript`
+projection on the run request. `piAdapterCapabilities` advertises these core
+port limits as `ephemeral` with persistence, replay, and durable-approval
+support disabled.
 
 The adapter calls the injected executor exactly for the current run and
 supports an optional async `dispose()` hook. It does not assume a particular
@@ -39,6 +39,6 @@ not installed; they retain the supplied projection only until disposal.
 
 `createPiStatelessExecutor(factory, config, transcriptLoader?)` adapts the Pi port directly to `StatelessExecutor`, forwarding request/context, normalized events, abort signal, and `execution.tools`. A tool-enabled factory must route tool calls through this invoker; factories are trusted integration code, not a sandbox.
 
-`createPiSdkExecutorFactory()` lazily loads the optional `@earendil-works/pi-coding-agent` SDK. The host owns its installation/version and credentials; there is no fallback to the in-memory echo fixture. A loader can be injected for tests. The default SDK factory uses `SessionManager.inMemory` and `SettingsManager.inMemory`, disables tools and discovered resources, forwards cancellation to `session.abort()`, extracts assistant text, and disposes the session on completion/failure. Canonical text history is projected as custom context messages rather than fabricated provider-native assistant/tool records; full SDK branch restoration is not claimed.
+`createPiSdkExecutorFactory()` lazily loads the optional `@earendil-works/pi-coding-agent` SDK. The host owns its installation/version and credentials; there is no fallback to the in-memory echo fixture. A loader can be injected for tests. With `SUBPOLAR_RUNTIME_DATA_DIR` configured, the factory uses Pi's file-backed `SessionManager` under that private directory, keyed by a hash of the T3 ACP native session ID and checked against the session cwd on resume. Without that directory it remains in-memory. Both modes use `SettingsManager.inMemory`, disable tools and discovered resources, forward cancellation to `session.abort()`, extract assistant text, and dispose the session on completion/failure. The persisted Pi branch is runtime continuation state; T3 remains the thread/history authority.
 
 Provider/model configuration may use the SDK's normal local credential/model files; session and outcome persistence still belong solely to host ports. Multi-user hosts must inject an owner-isolated `modelRuntime`, without ambient credential fallback. This adapter is not an OS sandbox. Subpolar Agent uses owned provider accounts and fails closed for unknown/custom inference; custom-provider CRUD does not imply inference support. Live authenticated execution is not covered by the deterministic adapter tests. Subpolar Agent still owns its richer SDK/tool/branch adapter; see `docs/progress-runtime-cli.md` for migration callsites.

@@ -5,10 +5,25 @@ import { PiRuntimeError, type PiExecutorFactory, type PiExecutionRequest } from 
 
 export const PI_SDK_MODULE = "@earendil-works/pi-coding-agent";
 
+export interface PiSessionManager {
+  appendMessage(message: unknown): unknown;
+  getCwd(): string;
+  getSessionId(): string;
+  getSessionFile(): string | undefined;
+  isPersisted(): boolean;
+}
+
+export interface PiSessionManagerApi {
+  inMemory(cwd?: string): PiSessionManager;
+  create(cwd: string, sessionDir?: string, options?: { id?: string }): PiSessionManager;
+  findById(cwd: string, id: string, sessionDir?: string): string | undefined;
+  open(path: string, sessionDir?: string, cwdOverride?: string): PiSessionManager;
+}
+
 /** Structural SDK boundary: the host owns SDK installation and credentials. */
 export interface PiSdkModule {
   getAgentDir(): string;
-  SessionManager: { inMemory(cwd?: string): { appendMessage(message: unknown): unknown } };
+  SessionManager: PiSessionManagerApi;
   SettingsManager: { inMemory(): unknown };
   DefaultResourceLoader: new (options: Record<string, unknown>) => { reload(): Promise<void> };
   ModelRuntime?: { create(options?: Record<string, unknown>): Promise<unknown> };
@@ -39,6 +54,49 @@ export interface PiSdkConfig {
   model?: unknown;
   modelRuntime?: unknown;
   modelRuntimeFactory?: (sdk: PiSdkModule, sessionId: string) => Promise<unknown>;
+  /** ACP-loaded sessions must never silently become a new empty Pi session. */
+  resumeSessionIds?: Set<string>;
+  runtimeDataDir?: string;
+}
+
+function piSessionId(sessionId: string): string {
+  return createHash("sha256").update(sessionId).digest("hex");
+}
+
+function persistentSessionManager(
+  sdk: PiSdkModule,
+  cwd: string,
+  sessionId: string,
+  runtimeDataDir: string,
+  requireExisting: boolean,
+): PiSessionManager {
+  const sessionDir = path.join(runtimeDataDir, "sessions");
+  const persistedId = piSessionId(sessionId);
+  const file = sdk.SessionManager.findById(cwd, persistedId, sessionDir);
+  const manager = file
+    ? sdk.SessionManager.open(file, sessionDir)
+    : requireExisting
+      ? undefined
+      : sdk.SessionManager.create(cwd, sessionDir, { id: persistedId });
+  if (!manager) throw new PiRuntimeError("Persisted Pi session was not found for this T3 session");
+  if (manager.getSessionId() !== persistedId || path.resolve(manager.getCwd()) !== path.resolve(cwd) || !manager.isPersisted()) {
+    throw new PiRuntimeError("Persisted Pi session identity does not match this T3 session and environment");
+  }
+  return manager;
+}
+
+/** Validate that a persisted Pi session exists and is bound to this T3 session and cwd. */
+export async function validatePiSession(
+  load: () => Promise<PiSdkModule>,
+  cwd: string,
+  sessionId: string,
+  runtimeDataDir = process.env.SUBPOLAR_RUNTIME_DATA_DIR,
+): Promise<void> {
+  if (!runtimeDataDir || !path.isAbsolute(runtimeDataDir) || !sessionId) {
+    throw new PiRuntimeError("Persistent Pi session storage is unavailable");
+  }
+  const sdk = await load();
+  persistentSessionManager(sdk, cwd, sessionId, runtimeDataDir, true);
 }
 
 export async function loadPiSdk(): Promise<PiSdkModule> {
@@ -55,13 +113,19 @@ export function createPiSdkExecutorFactory(load: () => Promise<PiSdkModule> = lo
     if (!request) throw new PiRuntimeError("Pi execution request is required");
     const sdk = await load();
     const cwd = request.context.cwd ?? config?.cwd ?? process.cwd();
-    const runtimeDataDir = process.env.SUBPOLAR_RUNTIME_DATA_DIR;
+    const runtimeDataDir = config?.runtimeDataDir ?? process.env.SUBPOLAR_RUNTIME_DATA_DIR;
     const agentDir = config?.agentDir ?? (runtimeDataDir ? path.join(runtimeDataDir, "pi-agent") : sdk.getAgentDir());
-    const manager = sdk.SessionManager.inMemory(cwd);
-    for (const entry of request.transcript.entries) {
-      // Canonical text history is projected as user/custom context, not fabricated
-      // provider assistant records (which require model/usage/tool-call metadata).
-      manager.appendMessage({ role: "custom", customType: `subpolar.${entry.role}`, content: typeof entry.content === "string" ? entry.content : JSON.stringify(entry.content), display: false, timestamp: Date.parse(entry.occurredAt ?? "") || Date.now() });
+    const sessionId = request.context.sessionId;
+    const persistent = runtimeDataDir !== undefined && sessionId !== undefined;
+    const manager = persistent
+      ? persistentSessionManager(sdk, cwd, sessionId, runtimeDataDir, config?.resumeSessionIds?.has(sessionId) ?? false)
+      : sdk.SessionManager.inMemory(cwd);
+    if (!persistent) {
+      for (const entry of request.transcript.entries) {
+        // Canonical text history is projected only in transient mode. Persistent
+        // Pi sessions already contain their native branch and must not duplicate it.
+        manager.appendMessage({ role: "custom", customType: `subpolar.${entry.role}`, content: typeof entry.content === "string" ? entry.content : JSON.stringify(entry.content), display: false, timestamp: Date.parse(entry.occurredAt ?? "") || Date.now() });
+      }
     }
     const settingsManager = sdk.SettingsManager.inMemory();
     const modelRuntime = request.context.sessionId && config?.modelRuntimeFactory

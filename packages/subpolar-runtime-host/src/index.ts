@@ -23,11 +23,11 @@ export interface SubpolarRuntimeHostOptions<Config> {
 
 export interface RuntimeHostCapabilities {
   scope: "process";
-  durability: "ephemeral";
+  durability: "ephemeral" | "persistent";
   supports: {
     "session.create": true;
-    "session.resume": false;
-    "session.persistence": false;
+    "session.resume": boolean;
+    "session.persistence": boolean;
     "run.outcome.persistence": false;
     "event.replay": false;
     "multi-process-concurrency": false;
@@ -53,21 +53,6 @@ interface SessionState {
   activeRun?: Promise<StatelessRunResult>;
 }
 
-const capabilities: RuntimeHostCapabilities = Object.freeze({
-  scope: "process",
-  durability: "ephemeral",
-  supports: {
-    "session.create": true,
-    "session.resume": false,
-    "session.persistence": false,
-    "run.outcome.persistence": false,
-    "event.replay": false,
-    "multi-process-concurrency": false,
-    "container-isolation": false,
-    "filesystem-tools": false,
-  },
-});
-
 function jsonValue(value: unknown): PiTranscriptEntry["content"] {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : String(value);
@@ -91,13 +76,29 @@ function linkAbort(signal: AbortSignal | undefined, controller: AbortController)
  * stateless runtime remains responsible for execution, event emission, and tool policy.
  */
 export class SubpolarRuntimeHost {
-  readonly capabilities = capabilities;
+  readonly capabilities: RuntimeHostCapabilities;
   private readonly sessions = new Map<string, SessionState>();
   private readonly runtime;
   private readonly now: () => Date;
   private readonly createId: () => string;
 
   constructor(private readonly options: SubpolarRuntimeHostOptions<unknown>) {
+    const config = options.piConfig as { runtimeDataDir?: unknown } | undefined;
+    const persistent = typeof config?.runtimeDataDir === "string" || Boolean(process.env.SUBPOLAR_RUNTIME_DATA_DIR);
+    this.capabilities = Object.freeze({
+      scope: "process",
+      durability: persistent ? "persistent" : "ephemeral",
+      supports: {
+        "session.create": true,
+        "session.resume": persistent,
+        "session.persistence": persistent,
+        "run.outcome.persistence": false,
+        "event.replay": false,
+        "multi-process-concurrency": false,
+        "container-isolation": false,
+        "filesystem-tools": false,
+      },
+    });
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? (() => crypto.randomUUID());
     const executor = createPiStatelessExecutor(
@@ -119,11 +120,26 @@ export class SubpolarRuntimeHost {
     });
   }
 
-  createSession(principal?: Principal): RuntimeHostSession {
+  createSession(principal?: Principal, requestedId?: string): RuntimeHostSession {
+    if (requestedId) {
+      const existing = this.sessions.get(requestedId);
+      if (existing) return { sessionId: requestedId, capabilities: this.capabilities };
+      this.sessions.set(requestedId, { id: requestedId, principal, transcript: [] });
+      return { sessionId: requestedId, capabilities: this.capabilities };
+    }
     let id = this.createId();
     while (this.sessions.has(id)) id = this.createId();
     this.sessions.set(id, { id, principal, transcript: [] });
     return { sessionId: id, capabilities: this.capabilities };
+  }
+
+  /** Restore a native session key after the ACP layer has validated durable Pi state. */
+  restoreSession(sessionId: string, principal?: Principal): RuntimeHostSession {
+    if (!sessionId) throw new Error("Runtime session ID is required");
+    const existing = this.sessions.get(sessionId);
+    if (existing) return { sessionId, capabilities: this.capabilities };
+    this.sessions.set(sessionId, { id: sessionId, principal, transcript: [] });
+    return { sessionId, capabilities: this.capabilities };
   }
 
   async prompt(sessionId: string, prompt: string, options: RuntimeHostPromptOptions = {}): Promise<StatelessRunResult> {

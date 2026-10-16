@@ -16,6 +16,7 @@ import { createSubpolarRuntimeHost } from "@subpolar/runtime-host";
 import {
   createPiSdkExecutorFactory,
   loadPiSdk,
+  validatePiSession,
   type PiExecutorFactory,
   type PiSdkConfig,
   type PiSdkModule,
@@ -192,10 +193,12 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
       }
     };
     const workerMode = process.env.SUBPOLAR_ACP_WORKER_MODE === "1";
-    const piConfig = workerMode
-      ? {
-          ...options.piConfig,
-          modelRuntimeFactory: async (sdk: PiSdkModule, sessionId: string) => {
+    const resumeSessionIds = new Set<string>();
+    const piConfig: PiSdkConfig = {
+      ...options.piConfig,
+      resumeSessionIds,
+      ...(workerMode ? {
+        modelRuntimeFactory: async (sdk: PiSdkModule, sessionId: string) => {
             if (!sdk.ModelRuntime) throw new Error("Pi credential runtime is unavailable");
             return sdk.ModelRuntime.create({
               credentials: createAcpCredentialStore(agent.client, sessionId),
@@ -204,8 +207,8 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
               allowModelNetwork: false,
             });
           },
-        }
-      : options.piConfig;
+      } : {}),
+    };
     const runtime = createRuntimeHost({ ...options, piConfig }, sessions, requestPermission, (sessionId, runId, event) => {
       activeRunIds.set(sessionId, runId);
       const candidate = event as { type?: unknown; data?: unknown };
@@ -268,11 +271,29 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
 
     yield* agent.handleCreateSession((request) =>
       Effect.sync(() => {
-        const session = runtime.createSession({ id: options.principalId ?? "local", kind: "local" });
+        const meta = request._meta as Record<string, unknown> | undefined;
+        const requestedSessionId = workerMode && typeof meta?.["subpolar.sessionId"] === "string"
+          ? meta["subpolar.sessionId"] as string
+          : undefined;
+        const session = runtime.createSession({ id: options.principalId ?? "local", kind: "local" }, requestedSessionId);
         sessions.set(session.sessionId, { cwd: options.sessionCwd?.(request.cwd) ?? request.cwd });
         return { sessionId: session.sessionId };
       }),
     );
+
+    const restoreSession = (request: AcpSchema.LoadSessionRequest | AcpSchema.ResumeSessionRequest) => Effect.tryPromise({
+      try: async () => {
+        const cwd = options.sessionCwd?.(request.cwd) ?? request.cwd;
+        await validatePiSession(options.loadPiSdk ?? loadPiSdk, cwd, request.sessionId, options.piConfig?.runtimeDataDir);
+        resumeSessionIds.add(request.sessionId);
+        runtime.restoreSession(request.sessionId, { id: options.principalId ?? "local", kind: "local" });
+        sessions.set(request.sessionId, { cwd });
+        return {};
+      },
+      catch: (error) => AcpError.AcpRequestError.resourceNotFound(errorMessage(error)),
+    });
+    yield* agent.handleLoadSession(restoreSession);
+    yield* agent.handleResumeSession(restoreSession);
 
     yield* agent.handleCancel((notification) =>
       Effect.sync(() => {

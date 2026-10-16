@@ -1,6 +1,35 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { createPolicyGateway, createStatelessSubpolarRuntime } from "../../subpolar-core/src/index.ts";
-import { createPiStatelessExecutor, createPiSdkExecutorFactory, type PiExecutionRequest, type PiSdkModule } from "../src/index.ts";
+import { createPiStatelessExecutor, createPiSdkExecutorFactory, type PiExecutionRequest, type PiSdkModule, type PiSessionManager } from "../src/index.ts";
+
+function sessionManagerApi() {
+  const files = new Map<string, PiSessionManager>();
+  const make = (cwd: string, id: string, file?: string): PiSessionManager => ({
+    appendMessage() {},
+    getCwd: () => cwd,
+    getSessionId: () => id,
+    getSessionFile: () => file,
+    isPersisted: () => file !== undefined,
+  });
+  return {
+    inMemory: (cwd = process.cwd()) => make(cwd, "memory"),
+    create: (cwd: string, dir = "/sessions", options?: { id?: string }) => {
+      const id = options?.id ?? "new-session";
+      const file = `${dir}/${id}.jsonl`;
+      const manager = make(cwd, id, file);
+      files.set(file, manager);
+      return manager;
+    },
+    findById: (cwd: string, id: string, dir = "/sessions") =>
+      [...files].find(([, manager]) => manager.getCwd() === cwd && manager.getSessionId() === id)?.[0],
+    open: (file: string) => {
+      const manager = files.get(file);
+      if (!manager) throw new Error("session file missing");
+      return manager;
+    },
+  };
+}
 
 const request = { runId: "run", requestId: "request", prompt: "hello" };
 
@@ -40,7 +69,7 @@ test("SDK execution aborts, unsubscribes, and disposes without loading tools or 
   let rejectPrompt: ((reason: Error) => void) | undefined;
   const sdk: PiSdkModule = {
     getAgentDir: () => "/test/agent",
-    SessionManager: { inMemory: () => ({ appendMessage() {} }) },
+    SessionManager: sessionManagerApi(),
     SettingsManager: { inMemory: () => ({}) },
     DefaultResourceLoader: class {
       constructor(options: Record<string, unknown>) {
@@ -76,7 +105,7 @@ test("uses the environment runtime data directory for Pi agent files", async () 
   let loaderOptions: Record<string, unknown> | undefined;
   const sdk: PiSdkModule = {
     getAgentDir: () => "/test/agent",
-    SessionManager: { inMemory: () => ({ appendMessage() {} }) },
+    SessionManager: sessionManagerApi(),
     SettingsManager: { inMemory: () => ({}) },
     DefaultResourceLoader: class {
       constructor(options: Record<string, unknown>) { loaderOptions = options; }
@@ -112,13 +141,58 @@ test("uses the environment runtime data directory for Pi agent files", async () 
   }
 });
 
+test("persists Pi sessions under runtime data and reopens them by the T3 ACP session key", async () => {
+  const SessionManager = sessionManagerApi();
+  let managerSeen: PiSessionManager | undefined;
+  const sdk: PiSdkModule = {
+    getAgentDir: () => "/test/agent",
+    SessionManager,
+    SettingsManager: { inMemory: () => ({}) },
+    DefaultResourceLoader: class { async reload() {} },
+    async createAgentSession(options) {
+      managerSeen = options.sessionManager as PiSessionManager;
+      return { session: {
+        subscribe: () => () => undefined,
+        async prompt() {},
+        async abort() {},
+        dispose() {},
+        messages: [{ role: "assistant", content: "ok", stopReason: "stop" }],
+      } };
+    },
+  };
+  const nativeId = "native-session-id";
+  const execution: PiExecutionRequest = {
+    runId: "run-persistent-session",
+    requestId: "request-persistent-session",
+    prompt: "hello",
+    context: { principal: { id: "owner", kind: "local" }, sessionId: nativeId, cwd: "/workspace/project" },
+    transcript: { entries: [{ role: "user", content: "T3 owns this history" }] },
+    emit: () => undefined,
+  };
+  const factory = createPiSdkExecutorFactory(async () => sdk);
+
+  const first = await factory({ runtimeDataDir: "/var/lib/subpolar" }, execution);
+  expect(managerSeen?.getSessionFile()).toBe(`/var/lib/subpolar/sessions/${createHash("sha256").update(nativeId).digest("hex")}.jsonl`);
+  await first.execute(execution);
+  await first.dispose?.();
+
+  const resumed = await factory({ runtimeDataDir: "/var/lib/subpolar", resumeSessionIds: new Set([nativeId]) }, execution);
+  expect(managerSeen?.getSessionId()).toBe(createHash("sha256").update(nativeId).digest("hex"));
+  await resumed.dispose?.();
+
+  await expect(factory({ runtimeDataDir: "/var/lib/subpolar", resumeSessionIds: new Set(["missing"]) }, {
+    ...execution,
+    context: { ...execution.context, sessionId: "missing" },
+  })).rejects.toThrow("Persisted Pi session was not found");
+});
+
 test("SDK exposes only policy-gateway tools and routes calls through the run invoker", async () => {
   const observedCalls: unknown[] = [];
   let optionsSeen: Record<string, unknown> | undefined;
   const messages: Array<{ role: string; content: unknown; stopReason?: string }> = [];
   const sdk: PiSdkModule = {
     getAgentDir: () => "/test/agent",
-    SessionManager: { inMemory: () => ({ appendMessage() {} }) },
+    SessionManager: sessionManagerApi(),
     SettingsManager: { inMemory: () => ({}) },
     DefaultResourceLoader: class { async reload() {} },
     async createAgentSession(options) {
