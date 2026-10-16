@@ -49,6 +49,11 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
+// Start-from-origin catch-up fetches a branch over the network. The 30s default
+// kills that transfer mid-pack, so the remote-tracking ref never moves and the
+// next attempt downloads the same pack again. Ten minutes covers a slow remote
+// and still ends a fetch that never returns.
+export const FETCH_REMOTE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(10));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -3665,6 +3670,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const options = {
         env: STATUS_UPSTREAM_REFRESH_ENV,
         fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
+        timeoutMs: FETCH_REMOTE_TIMEOUT_MS,
       };
       // Another fetch in the same repository, such as the background status
       // poll, can win the race for a remote-tracking ref. The loser fails, but

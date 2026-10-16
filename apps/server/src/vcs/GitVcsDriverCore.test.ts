@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -32,6 +33,7 @@ import {
 import * as ServerConfig from "../config.ts";
 import { gitCommandDuration } from "../observability/Metrics.ts";
 import {
+  FETCH_REMOTE_TIMEOUT_MS,
   makeGitVcsDriverCore,
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
@@ -3811,8 +3813,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(started);
           if (failure === "timeout") {
-            yield* TestClock.adjust("31 seconds");
-            yield* TestClock.adjust("31 seconds");
+            // One second past the fetch budget, twice, so a retried fetch would
+            // also hit the deadline and show up in `attempts`.
+            const pastBudget = Duration.millis(FETCH_REMOTE_TIMEOUT_MS + 1_000);
+            yield* TestClock.adjust(pastBudget);
+            yield* TestClock.adjust(pastBudget);
           }
           const result = yield* Fiber.join(fetching);
           assert.isTrue(Result.isFailure(result));
@@ -3828,6 +3833,60 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             );
           }
         }),
+    );
+
+    it.effect("finishes a scoped fetch that outlasts the default git timeout", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const peer = yield* makeTmpDir("git-peer-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        const beforeFetch = yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]);
+
+        yield* git(peer, ["clone", remote, "."]);
+        yield* git(peer, ["config", "user.email", "test@test.com"]);
+        yield* git(peer, ["config", "user.name", "Test"]);
+        yield* writeTextFile(peer, "remote-change.txt", "remote\n");
+        yield* git(peer, ["add", "remote-change.txt"]);
+        yield* git(peer, ["commit", "-m", "remote change"]);
+        yield* git(peer, ["push", "origin", initialBranch]);
+        const remoteHead = yield* git(peer, ["rev-parse", "HEAD"]);
+        assert.notEqual(beforeFetch, remoteHead);
+
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fetchStarted = yield* Deferred.make<void>();
+        const fetchCount = yield* Ref.make(0);
+        const delayedFetchSpawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (ChildProcess.isStandardCommand(command) && command.args[0] === "fetch") {
+              yield* Ref.update(fetchCount, (count) => count + 1);
+              yield* Deferred.succeed(fetchStarted, undefined);
+              yield* Effect.sleep("31 seconds");
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, delayedFetchSpawner),
+          Effect.provide(layerServerConfig),
+        );
+
+        const fetching = yield* driver
+          .fetchRemote({ cwd, remoteName: "origin", refName: initialBranch })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(fetchStarted);
+        yield* TestClock.adjust("31 seconds");
+        yield* Fiber.join(fetching);
+
+        assert.equal(yield* Ref.get(fetchCount), 1);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+          remoteHead,
+        );
+      }),
     );
 
     it.effect("creates a worktree from the latest fetched remote commit", () =>
