@@ -1,16 +1,6 @@
-import { useAtomValue } from "@effect/atom-react";
 import type { ClientSettings, DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
 import { TriangleAlertIcon } from "lucide-react";
-import {
-  type ComponentProps,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -18,7 +8,6 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
-import { serverEnvironment } from "../../state/server";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   canCheckForUpdate,
@@ -51,13 +40,14 @@ import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
 import { ForkChangelogDialog } from "../forkChangelog/ForkChangelogDialog";
 import { ForkUpdateChanges } from "../forkChangelog/ForkUpdateChanges";
 import { Button } from "../ui/button";
+import { SidebarUpdateCapsule } from "./SidebarUpdateCapsule";
 import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
+import type { UpdateEverythingRun, UpdateRunLocalState } from "./updateEverything.logic";
 import {
-  describeUpdateRun,
-  resolveUpdateRunMachineStatus,
-  type UpdateEverythingRun,
-} from "./updateEverything.logic";
-import { useUpdateEverythingRun } from "./updateEverythingRun";
+  clearSavedUpdateEverythingResult,
+  saveUpdateEverythingResult,
+  useUpdateEverythingRun,
+} from "./updateEverythingRun";
 import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
@@ -78,7 +68,6 @@ export function handleSidebarUpdateReleaseNotesPopoverOpenChange(
   _open: boolean,
   details: Pick<SidebarUpdatePopoverChangeDetails, "reason" | "cancel">,
 ): void {
-  // The trigger is the update action, so its presses must not also toggle the Popover.
   if (details.reason === "trigger-press") details.cancel();
 }
 
@@ -100,9 +89,7 @@ function resolveSidebarUpdatePresentation({
   showCheckIcon,
 }: {
   readonly action: ReturnType<typeof resolveDesktopUpdateButtonAction>;
-  /** Remote work is waiting, and this app is not downloading. */
   readonly showsEverything: boolean;
-  /** The running "update everything" pass. Its state sets the icon. */
   readonly run: UpdateEverythingRun | null;
   readonly isDownloading: boolean;
   readonly showCheckIcon: boolean;
@@ -155,8 +142,6 @@ const toastUpdateError: ReportLocalUpdateError = (title, description) => {
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 };
 
-/** Downloads this app's update. Resolves true when it is ready to install;
-    failures go to `reportError` (a toast by default) and resolve false. */
 async function downloadLocalUpdate(
   bridge: DesktopBridge,
   {
@@ -212,49 +197,6 @@ export async function installLocalUpdate(
   }
 }
 
-/** Tooltip lines for a running pass: this app first, then one per machine. */
-function useUpdateRunTooltip(
-  run: UpdateEverythingRun | null,
-  state: DesktopUpdateState | null,
-  localReady: boolean,
-): string | null {
-  const statusesAtom = useMemo(
-    () =>
-      Atom.make((get) =>
-        run === null
-          ? []
-          : run.machines.map((machine) => ({
-              label: machine.label,
-              status: resolveUpdateRunMachineStatus(
-                machine,
-                run.phase,
-                get(serverEnvironment.updateStateAtom(machine.environmentId)),
-              ),
-            })),
-      ),
-    [run],
-  );
-  const statuses = useAtomValue(statusesAtom);
-  if (run === null) return null;
-  const local =
-    run.localVersion === null
-      ? null
-      : state?.status === "downloading"
-        ? `downloading${state.downloadPercent === null ? "" : ` ${Math.floor(state.downloadPercent)}%`}`
-        : run.phase === "installing"
-          ? "restarting"
-          : localReady
-            ? "restarts last"
-            : "waiting";
-  return describeUpdateRun(statuses, local).join("\n");
-}
-
-/**
- * The sidebar update button. With only a local app update it downloads, then
- * installs. When other machines' servers or any providers are behind, one
- * click updates everything: providers, then servers, then this app last. On
- * web there is no local app, so the button shows only for remote updates.
- */
 export function SidebarUpdatePill() {
   return <SidebarUpdateControl />;
 }
@@ -285,15 +227,12 @@ function SidebarUpdateControl() {
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
   const isDownloading = state?.status === "downloading";
   const idleInstallArmed = useIdleInstallArmed() && action === "install";
-  // Remote servers follow this app to the version it is about to install.
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   const everything = useUpdateEverything(localUpdateVersion);
   const runsEverything = everything.hasUpdates && !isDownloading;
-  // Providers leave the list once queued, so the run keeps its own state.
   const run = useUpdateEverythingRun();
   const isRunningEverything = run !== null;
-  const runTooltip = useUpdateRunTooltip(run, state, action === "install");
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
     isChecking: state?.status === "checking",
@@ -306,20 +245,17 @@ function SidebarUpdateControl() {
     isDownloading,
     showCheckIcon,
   });
-  const tooltip =
-    runTooltip !== null
-      ? runTooltip
-      : runsEverything
-        ? everything.summary
-        : idleInstallArmed
-          ? "Installs when the running agents finish. Click to change."
-          : showUpdateDetails
-            ? state
-              ? getDesktopUpdateButtonTooltip(state)
-              : "Update available"
-            : showCheckIcon
-              ? "Checking for updates…"
-              : "Check for updates";
+  const tooltip = runsEverything
+    ? everything.summary
+    : idleInstallArmed
+      ? "Installs when the running agents finish. Click to change."
+      : showUpdateDetails
+        ? state
+          ? getDesktopUpdateButtonTooltip(state)
+          : "Update available"
+        : showCheckIcon
+          ? "Checking for updates…"
+          : "Check for updates";
   const disabled = showCheckIcon
     ? true
     : runsEverything
@@ -328,7 +264,6 @@ function SidebarUpdateControl() {
         ? isDesktopUpdateButtonDisabled(state)
         : !canCheckForUpdate(state);
   const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
-  // During a run the tooltip shows its progress instead of release notes.
   const showReleaseNotesPopover =
     !isRunningEverything &&
     (shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state) ||
@@ -468,8 +403,65 @@ function SidebarUpdateControl() {
     );
   }, [prefersReducedMotion, state?.status]);
 
-  // Web has no local app to check, so it only shows the button for remote work.
   if (!isElectron && !runsEverything && !isRunningEverything) return null;
+
+  const statusIcon = (
+    <DesktopUpdateStatusIcon
+      key={showCheckIcon ? checkAnimationKey : iconStatus}
+      downloadPercent={state?.downloadPercent ?? null}
+      isCheckAnimating={showCheckIcon && !prefersReducedMotion}
+      onCheckAnimationIteration={handleCheckAnimationIteration}
+      status={iconStatus}
+    />
+  );
+  const confirmDialog = (
+    <UpdateEverythingDialog
+      open={isConfirmingEverything}
+      onOpenChange={setIsConfirmingEverything}
+      summary={everything.summary}
+      lines={everything.lines}
+      restarts={everything.restarts}
+      skipped={everything.skipped}
+      onConfirm={() => void runEverything()}
+    />
+  );
+
+  if (run !== null) {
+    const local: UpdateRunLocalState =
+      run.localVersion === null
+        ? null
+        : state?.status === "downloading"
+          ? { status: "downloading", percent: state.downloadPercent }
+          : { status: "waiting" };
+    return (
+      <SidebarMenuItem className="ml-auto flex min-w-0 flex-1">
+        <SidebarUpdateCapsule
+          run={run}
+          local={local}
+          icon={statusIcon}
+          {...(run.localVersion === null && action === "install" && window.desktopBridge
+            ? {
+                onRestart: async () => {
+                  // Fork: while agents run, the restart offers "Install when idle".
+                  if (openIdleInstallPromptIfAgentsRun()) return;
+                  saveUpdateEverythingResult({
+                    localVersion: localUpdateVersion,
+                    updatedServers: 0,
+                    updatedProviders: 0,
+                    failures: [],
+                    restarting: [],
+                  });
+                  if (!(await installLocalUpdate(window.desktopBridge!))) {
+                    clearSavedUpdateEverythingResult();
+                  }
+                },
+              }
+            : {})}
+        />
+        {confirmDialog}
+      </SidebarMenuItem>
+    );
+  }
 
   const updateButton = (
     <button
@@ -511,13 +503,7 @@ function SidebarUpdateControl() {
         );
       }}
     >
-      <DesktopUpdateStatusIcon
-        key={showCheckIcon ? checkAnimationKey : iconStatus}
-        downloadPercent={state?.downloadPercent ?? null}
-        isCheckAnimating={showCheckIcon && !prefersReducedMotion}
-        onCheckAnimationIteration={handleCheckAnimationIteration}
-        status={iconStatus}
-      />
+      {statusIcon}
     </button>
   );
 
@@ -609,15 +595,7 @@ function SidebarUpdateControl() {
       {forkChangelogEnabled ? (
         <ForkChangelogDialog open={isForkChangelogOpen} onOpenChange={setIsForkChangelogOpen} />
       ) : null}
-      <UpdateEverythingDialog
-        open={isConfirmingEverything}
-        onOpenChange={setIsConfirmingEverything}
-        summary={everything.summary}
-        lines={everything.lines}
-        restarts={everything.restarts}
-        skipped={everything.skipped}
-        onConfirm={() => void runEverything()}
-      />
+      {confirmDialog}
     </SidebarMenuItem>
   );
 }
