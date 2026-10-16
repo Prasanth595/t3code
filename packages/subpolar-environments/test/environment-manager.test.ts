@@ -110,6 +110,54 @@ describe("environment lifecycle coordinator", () => {
     expect(backend.calls.filter((call) => call === "start")).toHaveLength(1);
   });
 
+  test("rebuild replaces the environment while preserving its worktree identity", async () => {
+    const { request } = await fixture();
+    const backend = new FakeBackend();
+    const manager = createEnvironmentManager(backend);
+    await manager.ensure(request);
+    backend.calls.length = 0;
+
+    const rebuilt = await manager.rebuild!(request);
+
+    expect(rebuilt.status).toBe("ready");
+    expect(rebuilt.worktreePath).toBe((await manager.identity(request)).worktreePath);
+    expect(backend.calls).toEqual(["inspect", "remove", "create", "start"]);
+  });
+
+  test("restart stops and starts the same environment under one lifecycle operation", async () => {
+    const { request } = await fixture();
+    const backend = new FakeBackend();
+    const manager = createEnvironmentManager(backend);
+    await manager.ensure(request);
+    backend.calls.length = 0;
+
+    const restarted = await manager.restart!(request);
+
+    expect(restarted.status).toBe("ready");
+    expect(restarted.id).toBe((await manager.identity(request)).id);
+    expect(backend.calls).toEqual(["inspect", "stop", "start"]);
+  });
+
+  test("restart records the stopped state when startup fails", async () => {
+    const { request } = await fixture();
+    const backend = new FakeBackend();
+    const registrations = {
+      records: new Map<string, { environment: ManagedEnvironment; createdAt: string; updatedAt: string }>(),
+      async loadAll() { return [...this.records.values()]; },
+      async save(environment: ManagedEnvironment, createdAt: string, updatedAt: string) {
+        this.records.set(environment.id, { environment, createdAt, updatedAt });
+      },
+      async remove(id: string) { this.records.delete(id); },
+    };
+    const manager = createEnvironmentManager(backend, registrations);
+    await manager.ensure(request);
+    backend.failStart = true;
+
+    await expect(manager.restart!(request)).rejects.toMatchObject({ code: "BACKEND_FAILURE" });
+    const saved = [...registrations.records.values()][0]?.environment;
+    expect(saved?.status).toBe("stopped");
+  });
+
   test("rejects backend records owned by another principal", async () => {
     const { request } = await fixture();
     const backend = new FakeBackend();

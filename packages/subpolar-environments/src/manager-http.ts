@@ -151,10 +151,33 @@ export function createEnvironmentManagerHttpHandler(manager: EnvironmentManager,
     const pathname = new URL(request.url).pathname;
     const interactiveRoute = pathname.match(/^\/v1\/environments\/pty\/(start|input|resize|output|terminate)$/)?.[1];
     const managedSessionRoute = pathname.match(/^\/v1\/environments\/stdio\/(start|input|output|terminate)$/)?.[1];
-    const route = pathname.match(/^\/v1\/environments\/(identity|ensure|start|stop|remove|execute|reconcile)$/)?.[1];
-    if (!route && !interactiveRoute && !managedSessionRoute) return jsonResponse({ error: "NOT_FOUND" }, 404);
+    const adminRoute = pathname.match(/^\/v1\/environments\/admin\/(status|list|inspect|rebuild)$/)?.[1];
+    const route = pathname.match(/^\/v1\/environments\/(identity|ensure|start|stop|restart|remove|execute|reconcile)$/)?.[1];
+    if (!route && !adminRoute && !interactiveRoute && !managedSessionRoute) return jsonResponse({ error: "NOT_FOUND" }, 404);
 
     try {
+      if (adminRoute === "status") {
+        if (!manager.list) return jsonResponse({ error: "ADMIN_UNAVAILABLE" }, 501);
+        const registrations = await manager.list();
+        return jsonResponse({ ok: true, registeredEnvironmentCount: registrations.length });
+      }
+      if (adminRoute === "list") {
+        if (!manager.list) return jsonResponse({ error: "ADMIN_UNAVAILABLE" }, 501);
+        const body = await readJson(request);
+        if (!isRecord(body) || (body.ownerId !== undefined && (typeof body.ownerId !== "string" || !body.ownerId.trim()))) {
+          throw new EnvironmentManagerError("INVALID_REQUEST", "ownerId must be a non-empty string when provided");
+        }
+        return jsonResponse({ environments: await manager.list(body.ownerId as string | undefined) });
+      }
+      if (adminRoute === "inspect" || adminRoute === "rebuild") {
+        const operation = adminRoute === "inspect" ? manager.inspect : manager.rebuild;
+        if (!operation) return jsonResponse({ error: "ADMIN_UNAVAILABLE" }, 501);
+        const body = await readJson(request);
+        if (!isRecord(body)) throw new EnvironmentManagerError("INVALID_REQUEST", "Request body must be a JSON object");
+        const environment = environmentRequest(body.environment);
+        const result = await operation.call(manager, environment);
+        return adminRoute === "inspect" ? jsonResponse({ environment: result }) : jsonResponse(result);
+      }
       if (route === "reconcile") return jsonResponse({ results: await manager.reconcile() });
       const body = await readJson(request);
       if (!isRecord(body)) throw new EnvironmentManagerError("INVALID_REQUEST", "Request body must be a JSON object");
@@ -326,6 +349,10 @@ export function createEnvironmentManagerHttpHandler(manager: EnvironmentManager,
       if (route === "ensure") return jsonResponse(await manager.ensure(environment));
       if (route === "start") return jsonResponse(await manager.start(environment));
       if (route === "stop") return jsonResponse(await manager.stop(environment));
+      if (route === "restart") {
+        if (!manager.restart) return jsonResponse({ error: "ADMIN_UNAVAILABLE" }, 501);
+        return jsonResponse(await manager.restart(environment));
+      }
       if (route === "remove") {
         await manager.remove(environment);
         return jsonResponse({ removed: true });

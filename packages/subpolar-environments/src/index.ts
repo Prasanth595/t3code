@@ -135,6 +135,7 @@ export interface EnvironmentManager {
   ensure(request: EnvironmentRequest): Promise<ManagedEnvironment>;
   start(request: EnvironmentRequest): Promise<ManagedEnvironment>;
   stop(request: EnvironmentRequest): Promise<ManagedEnvironment>;
+  restart?(request: EnvironmentRequest): Promise<ManagedEnvironment>;
   remove(request: EnvironmentRequest): Promise<void>;
   execute(request: EnvironmentRequest, command: readonly string[], process?: EnvironmentProcessRequest): Promise<EnvironmentProcessResult>;
   startInteractive(request: EnvironmentRequest, command: readonly string[], process?: EnvironmentInteractiveProcessRequest): Promise<EnvironmentInteractiveStartResult>;
@@ -149,6 +150,11 @@ export interface EnvironmentManager {
   terminateManagedSession(request: EnvironmentRequest, sessionId: string): Promise<void>;
   closeManagedSessions?(): Promise<void>;
   reconcile(): Promise<readonly EnvironmentReconciliationResult[]>;
+  /** Authenticated operator operations; absent on older or embedded managers. */
+  list?(ownerId?: string): Promise<readonly EnvironmentRegistration[]>;
+  status?(): Promise<{ readonly ok: true; readonly registeredEnvironmentCount: number }>;
+  inspect?(request: EnvironmentRequest): Promise<ManagedEnvironment | null>;
+  rebuild?(request: EnvironmentRequest): Promise<ManagedEnvironment>;
 }
 
 export interface EnvironmentRegistration {
@@ -380,6 +386,19 @@ export function createEnvironmentManager(
     });
   };
 
+  const restart: NonNullable<EnvironmentManager["restart"]> = async (request) => {
+    const expected = await identity(request);
+    return withIdentityLock(expected.id, async () => {
+      let current = await inspect(expected);
+      if (current === null) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Environment has not been created");
+      await terminateSessionsForEnvironment(current.id);
+      if (current.status !== "stopped") {
+        current = await persist(validateRecord(expected, await backendCall("stop", () => backend.stop(current!))));
+      }
+      return persist(validateRecord(expected, await backendCall("restart", () => backend.start(current!))));
+    });
+  };
+
   const remove: EnvironmentManager["remove"] = async (request) => {
     const expected = await identity(request);
     return withIdentityLock(expected.id, async () => {
@@ -392,6 +411,36 @@ export function createEnvironmentManager(
       await terminateSessionsForEnvironment(current.id);
       await backendCall("remove", () => backend.remove(current));
       await registrations?.remove(expected.id);
+    });
+  };
+
+  const list: NonNullable<EnvironmentManager["list"]> = async (ownerId) => {
+    if (!registrations) return [];
+    const normalizedOwnerId = ownerId === undefined ? undefined : requiredId(ownerId, "ownerId");
+    const entries = await registrations.loadAll();
+    return entries
+      .filter((entry) => normalizedOwnerId === undefined || entry.environment.ownerId === normalizedOwnerId)
+      .sort((left, right) => left.environment.worktreePath.localeCompare(right.environment.worktreePath));
+  };
+
+  const inspectRegistered: NonNullable<EnvironmentManager["inspect"]> = async (request) => {
+    const expected = await identity(request);
+    return withIdentityLock(expected.id, () => inspect(expected));
+  };
+
+  const rebuild: NonNullable<EnvironmentManager["rebuild"]> = async (request) => {
+    const expected = await identity(request);
+    return withIdentityLock(expected.id, async () => {
+      const current = await inspect(expected);
+      if (current) {
+        await terminateSessionsForEnvironment(current.id);
+        await backendCall("remove for rebuild", () => backend.remove(current));
+      }
+      await registrations?.remove(expected.id);
+      const created = validateRecord(expected, await backendCall("recreate", () => backend.create(expected)));
+      await persist(created);
+      if (created.status === "ready") return created;
+      return persist(validateRecord(expected, await backendCall("start rebuilt environment", () => backend.start(created))));
     });
   };
 
@@ -729,5 +778,5 @@ export function createEnvironmentManager(
     }));
   };
 
-  return { identity, ensure, start, stop, remove, execute, startInteractive, writeInteractive, resizeInteractive, attachInteractiveOutput, terminateInteractive, closeInteractiveSessions, startManagedSession, writeManagedSession, attachManagedSessionOutput, terminateManagedSession, closeManagedSessions, reconcile };
+  return { identity, ensure, start, stop, restart, remove, execute, startInteractive, writeInteractive, resizeInteractive, attachInteractiveOutput, terminateInteractive, closeInteractiveSessions, startManagedSession, writeManagedSession, attachManagedSessionOutput, terminateManagedSession, closeManagedSessions, reconcile, list, inspect: inspectRegistered, rebuild };
 }

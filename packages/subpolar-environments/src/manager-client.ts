@@ -13,6 +13,7 @@ import {
   type EnvironmentReconciliationResult,
   type EnvironmentRequest,
   type ManagedEnvironment,
+  type EnvironmentRegistration,
 } from "./index.ts";
 
 export interface EnvironmentManagerHttpClientOptions {
@@ -78,6 +79,34 @@ export function createEnvironmentManagerHttpClient(options: EnvironmentManagerHt
   const environmentBody = (request: EnvironmentRequest) => ({ environment: request });
 
   return {
+    async list(ownerId?: string): Promise<readonly EnvironmentRegistration[]> {
+      const response = await post("admin/list", ownerId === undefined ? {} : { ownerId });
+      const value: unknown = await response.json();
+      if (!isRecord(value) || !Array.isArray(value.environments)) {
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an invalid environment list");
+      }
+      return value.environments as EnvironmentRegistration[];
+    },
+    async status(): Promise<{ readonly ok: true; readonly registeredEnvironmentCount: number }> {
+      const response = await post("admin/status", {});
+      const value: unknown = await response.json();
+      if (!isRecord(value) || value.ok !== true || !Number.isSafeInteger(value.registeredEnvironmentCount) || (value.registeredEnvironmentCount as number) < 0) {
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned invalid status");
+      }
+      return { ok: true, registeredEnvironmentCount: value.registeredEnvironmentCount as number };
+    },
+    async inspect(request: EnvironmentRequest): Promise<ManagedEnvironment | null> {
+      const response = await post("admin/inspect", environmentBody(request));
+      const value: unknown = await response.json();
+      if (!isRecord(value) || !(value.environment === null || isRecord(value.environment))) {
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an invalid inspection result");
+      }
+      return value.environment as ManagedEnvironment | null;
+    },
+    async rebuild(request: EnvironmentRequest): Promise<ManagedEnvironment> {
+      const response = await post("admin/rebuild", environmentBody(request));
+      return await response.json() as ManagedEnvironment;
+    },
     async identity(request) {
       const response = await post("identity", environmentBody(request));
       const value: unknown = await response.json();
@@ -97,6 +126,10 @@ export function createEnvironmentManagerHttpClient(options: EnvironmentManagerHt
     },
     async stop(request) {
       const response = await post("stop", environmentBody(request));
+      return await response.json() as ManagedEnvironment;
+    },
+    async restart(request) {
+      const response = await post("restart", environmentBody(request));
       return await response.json() as ManagedEnvironment;
     },
     async remove(request) {

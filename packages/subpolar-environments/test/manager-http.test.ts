@@ -24,6 +24,7 @@ function managerFixture() {
     ensure: async (request: EnvironmentRequest) => { calls.push({ method: "ensure", request }); return environment; },
     start: async (request: EnvironmentRequest) => { calls.push({ method: "start", request }); return environment; },
     stop: async (request: EnvironmentRequest) => { calls.push({ method: "stop", request }); return { ...environment, status: "stopped" as const }; },
+    restart: async (request: EnvironmentRequest) => { calls.push({ method: "restart", request }); return environment; },
     remove: async (request: EnvironmentRequest) => { calls.push({ method: "remove", request }); },
     execute: async (request: EnvironmentRequest, command: readonly string[], process: { onOutput?: (output: { stream: "stdout" | "stderr"; data: Uint8Array }) => void | Promise<void> }) => {
       calls.push({ method: "execute", request, command });
@@ -54,6 +55,9 @@ function managerFixture() {
     },
     terminateManagedSession: async (request: EnvironmentRequest, sessionId: string) => { calls.push({ method: "terminateManagedSession", request, sessionId }); },
     reconcile: async () => [],
+    list: async () => [{ environment, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-02T00:00:00.000Z" }],
+    inspect: async () => environment,
+    rebuild: async () => environment,
   } satisfies EnvironmentManager;
   return { manager, calls };
 }
@@ -88,6 +92,30 @@ test("manager API rejects missing or invalid bearer credentials before dispatch"
   expect(invalid.status).toBe(401);
   expect(multibyte.status).toBe(401);
   expect(calls).toEqual([]);
+});
+
+test("manager admin routes require authentication and expose list, inspect, status, and rebuild", async () => {
+  const { manager } = managerFixture();
+  const handle = createEnvironmentManagerHttpHandler(manager, TOKEN);
+
+  const denied = await handle(makeRequest("/v1/environments/admin/list", {}, null));
+  expect(denied.status).toBe(401);
+
+  const status = await handle(makeRequest("/v1/environments/admin/status", {}));
+  expect(status.status).toBe(200);
+  expect(await status.json()).toEqual({ ok: true, registeredEnvironmentCount: 1 });
+
+  const list = await handle(makeRequest("/v1/environments/admin/list", { ownerId: "user-a" }));
+  expect(await list.json()).toMatchObject({ environments: [{ environment: { id: "environment-a" } }] });
+
+  const inspect = await handle(makeRequest("/v1/environments/admin/inspect", { environment: requestInput }));
+  expect(await inspect.json()).toEqual({ environment });
+
+  const rebuild = await handle(makeRequest("/v1/environments/admin/rebuild", { environment: requestInput }));
+  expect(await rebuild.json()).toEqual(environment);
+
+  const restart = await handle(makeRequest("/v1/environments/restart", { environment: requestInput }));
+  expect(await restart.json()).toEqual(environment);
 });
 
 test("manager API validates the route body and dispatches lifecycle operations", async () => {

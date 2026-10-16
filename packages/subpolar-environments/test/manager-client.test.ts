@@ -38,6 +38,30 @@ test("manager client authenticates lifecycle calls and reads responses", async (
   ]);
 });
 
+test("manager client authenticates and validates environment administration calls", async () => {
+  const calls: Array<{ url: string; authorization: string | null }> = [];
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+    if (url.endsWith("/admin/status")) return Response.json({ ok: true, registeredEnvironmentCount: 1 });
+    if (url.endsWith("/admin/list")) return Response.json({ environments: [{ environment, createdAt: "created", updatedAt: "updated" }] });
+    if (url.endsWith("/admin/inspect")) return Response.json({ environment });
+    return Response.json(environment);
+  }) as typeof fetch;
+  const manager = createEnvironmentManagerHttpClient({ baseUrl: "http://manager:8080", token: TOKEN, fetch: fetcher });
+  const request = { ownerId: identity.ownerId, workspaceId: identity.workspaceId, storageRoot: identity.storageRoot, worktreePath: identity.worktreePath };
+
+  await expect(manager.status()).resolves.toEqual({ ok: true, registeredEnvironmentCount: 1 });
+  await expect(manager.list(identity.ownerId)).resolves.toEqual([{ environment, createdAt: "created", updatedAt: "updated" }]);
+  await expect(manager.inspect(request)).resolves.toEqual(environment);
+  await expect(manager.restart(request)).resolves.toEqual(environment);
+  await expect(manager.rebuild(request)).resolves.toEqual(environment);
+  expect(calls.map(({ url, authorization }) => [url.split("/").at(-1), authorization])).toEqual([
+    ["status", `Bearer ${TOKEN}`], ["list", `Bearer ${TOKEN}`], ["inspect", `Bearer ${TOKEN}`],
+    ["restart", `Bearer ${TOKEN}`], ["rebuild", `Bearer ${TOKEN}`],
+  ]);
+});
+
 test("manager client decodes streamed process output and results", async () => {
   const body = [
     JSON.stringify({ type: "output", stream: "stderr", data: "bm90aWNl" }),
