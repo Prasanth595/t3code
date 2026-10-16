@@ -70,6 +70,7 @@ it.effect.each(["transcript", "sdk"] as const)(
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(messages),
