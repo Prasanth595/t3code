@@ -134,7 +134,7 @@ index 08055b2..8718847 100644
          hidesSharedBackground: headerLeftBackgroundVisible === false,
          children: headerLeftElement
 -      }) : null, headerTitleElement != null ? /*#__PURE__*/_jsx(ScreenStackHeaderCenterView, {
-+      }) : null, centerItems ? centerItems.map((item, index) => {
++      }) : null, centerItems?.length ? centerItems.map((item, index) => {
 +        if (item.type === 'custom') {
 +          return /*#__PURE__*/_jsx(ScreenStackHeaderCenterView, {
 +            hidesSharedBackground: item.hidesSharedBackground,
