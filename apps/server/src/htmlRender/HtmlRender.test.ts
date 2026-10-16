@@ -36,6 +36,7 @@ const layerHtmlRender = (
   installed: Effect.Effect<Option.Option<string>> = Effect.succeed(
     Option.fromUndefinedOr(executable),
   ),
+  mcpSessions: Layer.Layer<McpProviderSessions.McpProviderSessions> = McpProviderSessions.layer,
 ) =>
   HtmlRender.layer.pipe(
     Layer.provide(
@@ -50,7 +51,7 @@ const layerHtmlRender = (
         }),
       ),
     ),
-    Layer.provideMerge(McpProviderSessions.layer),
+    Layer.provideMerge(mcpSessions),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-html-render-" })),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -218,35 +219,24 @@ describe("HtmlRender", () => {
 
   it.effect("removes the page when publishing is interrupted", () =>
     Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-html-cancel");
+      const page = { html: "<p>x</p>", title: "X", height: 200 };
       const measuring = yield* Deferred.make<void>();
       yield* Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const config = yield* ServerConfig.ServerConfig;
         const htmlRender = yield* HtmlRender.HtmlRender;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const storedPages = fileSystem
           .readDirectory(config.attachmentsDir, { recursive: true })
           .pipe(Effect.map((names) => names.filter((name) => name.endsWith(".html"))));
 
-        const publishing = yield* htmlRender
-          .publish({
-            threadId: ThreadId.make("thread-html-cancel"),
-            html: "<p>x</p>",
-            title: "X",
-            height: 200,
-          })
-          .pipe(Effect.forkChild);
+        const publishing = yield* htmlRender.publish({ threadId, ...page }).pipe(Effect.forkChild);
         yield* Deferred.await(measuring);
         expect(yield* storedPages).toHaveLength(1);
         yield* Fiber.interrupt(publishing);
         expect(yield* storedPages).toEqual([]);
-        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-        expect(
-          yield* mcpSessions.takeHtmlRender(ThreadId.make("thread-html-cancel"), {
-            html: "<p>x</p>",
-            title: "X",
-            height: 200,
-          }),
-        ).toBe(undefined);
+        expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
       }).pipe(
         Effect.provide(
           layerHtmlRender(
@@ -255,6 +245,41 @@ describe("HtmlRender", () => {
           ),
         ),
       );
+
+      const recorded = yield* Deferred.make<void>();
+      const stalledRecordSessions = Layer.effect(
+        McpProviderSessions.McpProviderSessions,
+        Effect.gen(function* () {
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
+          return McpProviderSessions.McpProviderSessions.of({
+            ...sessions,
+            recordHtmlRender: (recordedThreadId, input, reference) =>
+              sessions
+                .recordHtmlRender(recordedThreadId, input, reference)
+                .pipe(
+                  Effect.andThen(Deferred.succeed(recorded, undefined)),
+                  Effect.andThen(Effect.never),
+                ),
+          });
+        }),
+      ).pipe(Layer.provide(McpProviderSessions.layer));
+
+      yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const storedPages = fileSystem
+          .readDirectory(config.attachmentsDir, { recursive: true })
+          .pipe(Effect.map((names) => names.filter((name) => name.endsWith(".html"))));
+
+        const publishing = yield* htmlRender.publish({ threadId, ...page }).pipe(Effect.forkChild);
+        yield* Deferred.await(recorded);
+        expect(yield* storedPages).toHaveLength(1);
+        yield* Fiber.interrupt(publishing);
+        expect(yield* storedPages).toEqual([]);
+        expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
+      }).pipe(Effect.provide(layerHtmlRender(undefined, undefined, stalledRecordSessions)));
     }),
   );
 

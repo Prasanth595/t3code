@@ -435,22 +435,38 @@ const make = Effect.gen(function* () {
     if (attachmentId === null || filePath === null) {
       return yield* new HtmlRenderStoreError({ cause: new Error("Invalid thread id.") });
     }
-    const measured = yield* fileSystem.writeFileString(filePath, html).pipe(
-      Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
-      Effect.andThen(measure(html)),
-      // Only the returned reference lets thread deletion find the page, so a
-      // publish that fails or is interrupted before returning removes it.
-      Effect.onError(() => fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore)),
-    );
-    const reference: HtmlRenderReference = {
+    const baseReference: HtmlRenderReference = {
       attachmentId,
       title: input.title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
       height: clampHtmlRenderHeight(input.height),
-      ...(measured === undefined ? {} : { heights: measured.heights }),
-      ...(measured?.outline === undefined ? {} : { outline: measured.outline }),
     };
-    yield* mcpSessions.recordHtmlRender(input.threadId, input, reference);
-    return reference;
+    return yield* fileSystem.writeFileString(filePath, html).pipe(
+      Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
+      Effect.uninterruptible,
+      Effect.andThen(measure(html)),
+      Effect.andThen((measured) => {
+        const reference: HtmlRenderReference = {
+          ...baseReference,
+          ...(measured === undefined ? {} : { heights: measured.heights }),
+          ...(measured?.outline === undefined ? {} : { outline: measured.outline }),
+        };
+        return mcpSessions
+          .recordHtmlRender(input.threadId, input, reference)
+          .pipe(Effect.as(reference));
+      }),
+      // Only the returned reference lets thread deletion find the page, so a
+      // publish that fails or is interrupted before returning removes it and
+      // any session entry recorded for it.
+      Effect.onError(() =>
+        Effect.all(
+          [
+            fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore),
+            mcpSessions.takeHtmlRender(input.threadId, input, baseReference).pipe(Effect.ignore),
+          ],
+          { discard: true },
+        ),
+      ),
+    );
   });
 
   const preview = Effect.fn("HtmlRender.preview")(function* (input: {
