@@ -17,11 +17,6 @@ import {
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
 
-/**
- * Each member's decoded t3.json, so file-backed settings show the file as a
- * layer in the inheritance chain. A member is only present once its read has
- * settled; the query atom caches per (environment, cwd).
- */
 function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
   const members = scope.kind === "project" || scope.kind === "checkout" ? scope.members : [];
   return useAtomValue(
@@ -38,7 +33,6 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
               ),
             );
             if (result.waiting) continue;
-            // A pending in-app save overlays the query, like useProjectFileQuery.
             const data =
               get(
                 optimisticFileAtom(
@@ -106,8 +100,6 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
       selected.connectedEnvironments,
       projectFiles,
     );
-    // The representative target supplies display values; project scopes
-    // prefer the member on the primary environment, like environments do.
     const target =
       targets.find(
         (candidate) => candidate.environmentId === selected.environment?.environmentId,
