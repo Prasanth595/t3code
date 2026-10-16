@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 
 import { type State } from "../domain/lifecycle.ts";
 import { readProgress, type Seen } from "../runner/progress.ts";
-import { errnoCode, LedgerIoError } from "./errors.ts";
+import { errnoCode, LedgerIoError, LedgerNotFoundError } from "./errors.ts";
 import { lastLineIsFinished, readRun, type RunRecord } from "./read.ts";
 import { asciiLower, RUNS_DIR, runIdFromFileName, runPath, type RunId } from "./runId.ts";
 
@@ -140,8 +140,9 @@ const scanRuns = (
         seen: readProgress(record.entries),
       });
     } catch (error) {
-      // Gone between the listing and the read: not a run any more.
-      if (errnoCode(error) === "ENOENT") continue;
+      // Gone between the listing and the read (the lstat's ENOENT, or the read's not-found): not
+      // a run any more.
+      if (errnoCode(error) === "ENOENT" || error instanceof LedgerNotFoundError) continue;
       runs.push({ id, firstMs: null, record: null, seen: null });
     }
   }
