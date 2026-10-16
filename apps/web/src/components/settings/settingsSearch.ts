@@ -651,6 +651,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["changelog release notes versions upstream fork sync workflow"],
   },
   {
+    id: "check-newer-before-update-install",
+    title: "Check for a newer update before install",
+    to: "/settings/general",
+    searchTerms: ["desktop update install newer release download restart"],
+  },
+  {
     id: "fork-auto-update",
     title: "Server auto-update",
     to: "/settings/general",

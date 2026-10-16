@@ -148,6 +148,13 @@ export const ForkClientSettingsFields = {
   /** Fork: a changelog of fork releases, upstream changes and Fork Sync runs from the update UI. */
   forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
+   * Fork: an install of a downloaded desktop update checks for a newer release first, and offers
+   * to download that one instead. Unattended installs take the newer release.
+   */
+  checkNewerBeforeUpdateInstall: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  /**
    * Fork: the web app registers a service worker for the installed app (`apps/web/public/sw.js`):
    * an offline page, notifications on Android and iOS, and the badge on the app icon.
    */
@@ -196,6 +203,7 @@ export const ForkClientSettingsPatchFields = {
   appToggleShortcuts: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   backgroundWorkDetails: Schema.optionalKey(Schema.Boolean),
   forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
+  checkNewerBeforeUpdateInstall: Schema.optionalKey(Schema.Boolean),
   installedAppEnabled: Schema.optionalKey(Schema.Boolean),
   webPushEnabled: Schema.optionalKey(Schema.Boolean),
   repositoryOwnerFilters: Schema.optionalKey(Schema.Boolean),

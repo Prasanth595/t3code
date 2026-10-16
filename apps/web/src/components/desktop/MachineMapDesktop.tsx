@@ -328,7 +328,7 @@ function MachineDesktopReports({
           ok: true,
           result: { version, whenIdle: false },
           error: null,
-          after: () => void installLocalUpdate(bridge),
+          after: () => void installLocalUpdate(bridge, undefined, { unattended: true }),
         };
       }
       default:

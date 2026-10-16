@@ -42,6 +42,7 @@ const FORK_SETTING_GROUPS = [
       },
       { ids: ["fork-auto-update"] },
       { ids: ["fork-changelog"] },
+      { ids: ["check-newer-before-update-install"] },
     ],
   },
   {
