@@ -8,6 +8,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { describe } from "vite-plus/test";
 
+import type { Attention, AttentionItem } from "./attention.ts";
 import type { HandPause } from "./claims.ts";
 import { timeLimitOnlyProjectConfig, type MachineConfig, type ProjectConfig } from "./config.ts";
 import type { State } from "./domain/lifecycle.ts";
@@ -51,6 +52,7 @@ const machine = (repos: ReadonlyArray<string>, max: number): MachineConfig => ({
   maxConcurrentGates: 2,
   modelInstance: "claudeAgent",
   model: "claude-sonnet-5-5",
+  notify: true,
   repos: repos.map((repo) => ({ repo, path: `/p/${repo.replace("/", "-")}` })),
 });
 
@@ -111,6 +113,21 @@ class Fake implements PassWorld {
   now = T0;
   calls: Array<string> = [];
   events: Array<MachineEvent> = [];
+
+  /** The open attention items, as the service keeps them: one per id. */
+  items: Array<AttentionItem> = [];
+  attention: Pick<Attention["Service"], "raise" | "clear"> = {
+    raise: (item) =>
+      Effect.sync(() => {
+        if (!this.items.some((open) => open.id === item.id)) {
+          this.items.push({ ...item, firstSeenMs: this.now });
+        }
+      }),
+    clear: (matches) =>
+      Effect.sync(() => {
+        this.items = this.items.filter((item) => !matches(item));
+      }),
+  };
 
   runIn(issue: number, state: State | null, repo = REPO, session = false) {
     this.runs.push({
@@ -2275,6 +2292,172 @@ describe("following a building run", () => {
       fake.runIn(40, BUILDING, "acme/other", true);
       yield* pass(fake, machine([REPO], 3));
       assert.deepEqual(callsOf(fake), []);
+    }),
+  );
+});
+
+// ---- attention items ----
+
+describe("attention items", () => {
+  const open = (overrides: Partial<AttentionItem>): AttentionItem => ({
+    id: "seed",
+    kind: "attention",
+    repo: REPO,
+    issue: 12,
+    run: null,
+    message: "seeded",
+    firstSeenMs: T0,
+    ...overrides,
+  });
+  const ids = (fake: Fake) => fake.items.map((item) => item.id);
+  const RUN_40 = runIdToString(rid(40));
+
+  it.effect("a run that goes stuck raises a stuck item", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.advances[`${REPO}#40`] = [{ kind: "stuck", reason: "r" }];
+      yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(
+        fake.items.map(({ firstSeenMs: _, ...item }) => item),
+        [
+          {
+            id: `run:${RUN_40}:stuck`,
+            kind: "stuck",
+            repo: REPO,
+            issue: 40,
+            run: RUN_40,
+            message: `${REPO}#40 stuck, the reason is in the ledger of run ${RUN_40}`,
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("a run that needs info raises a needs-info item", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(42, "needs-info", REPO, true);
+      fake.advances[`${REPO}#42`] = [{ kind: "needs-info" }];
+      yield* pass(fake, machine([REPO], 5));
+      const run = runIdToString(rid(42));
+      assert.deepEqual(
+        fake.items.map(({ firstSeenMs: _, ...item }) => item),
+        [
+          {
+            id: `run:${run}:needs-info`,
+            kind: "needs-info",
+            repo: REPO,
+            issue: 42,
+            run,
+            message: `${REPO}#42 needs-info, the session asked questions on the issue`,
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("an ATTENTION line raises an attention item with the line's text", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage", REPO, true);
+      fake.ready[REPO] = [12];
+      fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
+      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const line = runLine(lines, "ATTENTION: ");
+      const run = runIdToString(rid(12));
+      assert.deepEqual(
+        fake.items.map(({ firstSeenMs: _, ...item }) => item),
+        [
+          {
+            id: `attention:${run}:not-progressing`,
+            kind: "attention",
+            repo: REPO,
+            issue: 12,
+            run,
+            message: line.slice("ATTENTION: ".length),
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect(
+    "a claim whose launch fails clears the issue's earlier items and keeps the new one",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        const oldRun = runIdToString(newRunId(REPO, "12", 1));
+        const newRun = newRunId(REPO, "12", 2);
+        fake.items = [
+          open({ id: `run:${oldRun}:stuck`, kind: "stuck", issue: 12, run: oldRun }),
+          open({ id: "other", kind: "needs-info", issue: 13 }),
+        ];
+        fake.ready[REPO] = [12];
+        fake.pushStart(`${REPO}#12`, { kind: "stuck", run: newRun, reason: "launch failed" });
+        yield* pass(fake, machine([REPO], 1));
+        assert.deepEqual(ids(fake), ["other", `run:${runIdToString(newRun)}:stuck`]);
+      }),
+  );
+
+  it.effect("claiming an issue again clears every item of that issue and no other", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.items = [
+        open({ id: "a", kind: "attention", run: "r" }),
+        open({ id: "b", kind: "stuck" }),
+        open({ id: "c", kind: "needs-info" }),
+        open({ id: "d", kind: "config" }),
+        open({ id: "e", kind: "pass-errors" }),
+        open({ id: "other", issue: 13 }),
+        open({ id: "elsewhere", repo: OTHER }),
+      ];
+      fake.ready[REPO] = [12];
+      fake.pushStart(`${REPO}#12`, started(12));
+      yield* pass(fake, machine([REPO, OTHER], 5));
+      assert.deepEqual(ids(fake), ["other", "elsewhere"]);
+    }),
+  );
+
+  it.effect(
+    "an item of a repo that left the config is cleared at the pass start, a machine item stays",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.items = [
+          open({ id: "gone", repo: "rawphp/gone" }),
+          open({ id: "kept", repo: REPO, issue: 99 }),
+          open({ id: "machine", kind: "config", repo: null, issue: null }),
+        ];
+        yield* pass(fake, machine([REPO], 5));
+        assert.deepEqual(ids(fake), ["kept", "machine"]);
+      }),
+  );
+
+  it.effect(
+    "an attention item of a run the ledger no longer lists is cleared at the pass end, a stuck item stays",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.runIn(40, BUILDING, REPO, true);
+        fake.items = [
+          open({ id: "live", kind: "attention", issue: 40, run: RUN_40 }),
+          open({ id: "finished", kind: "attention", issue: 41, run: runIdToString(rid(41)) }),
+          open({ id: "stuck", kind: "stuck", issue: 41, run: runIdToString(rid(41)) }),
+          open({ id: "needs-info", kind: "needs-info", issue: 41, run: runIdToString(rid(41)) }),
+        ];
+        yield* pass(fake, machine([REPO], 5));
+        assert.deepEqual(ids(fake), ["live", "stuck", "needs-info"]);
+      }),
+  );
+
+  it.effect("no item is cleared at the pass end when the ledger cannot be read", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runsError = true;
+      fake.items = [open({ id: "a", kind: "attention", run: RUN_40 })];
+      yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(ids(fake), ["a"]);
     }),
   );
 });

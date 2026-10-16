@@ -3,16 +3,20 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
+import * as AttentionService from "./attention.ts";
+import { Attention, CONFIG_ITEM_ID, type PassOutcome } from "./attention.ts";
 import { loadHandPause } from "./claims.ts";
 import {
   formatConfigError,
@@ -45,6 +49,7 @@ import {
   type PassError,
   type PassWorld,
   type Repo,
+  type Report,
 } from "./pass.ts";
 import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
@@ -64,11 +69,31 @@ import {
   type IssueSummary,
 } from "./tracker/github.ts";
 
-/** The running factory, for the code that wakes it (a thread's run changing, a person's request). */
-export class FactoryLoop extends Context.Service<FactoryLoop, Loop>()("t3/factory/FactoryLoop") {}
+/**
+ * What the factory is doing: running, or idle for a reason (no config, or one it cannot read).
+ * `running` means the pass loop started; it says nothing about whether passes succeed, which the
+ * server log records. The reason names no path and no error, as every reading client gets it;
+ * the log has the detail.
+ */
+export type FactoryStatus =
+  | { readonly state: "running" }
+  | { readonly state: "idle"; readonly reason: string };
+
+/**
+ * The running factory, for the code that wakes it (a thread's run changing, a person's request).
+ * Its `status` is what `GET /api/factory/status` reports.
+ */
+export class FactoryLoop extends Context.Service<
+  FactoryLoop,
+  Loop & { readonly status: FactoryStatus }
+>()("t3/factory/FactoryLoop") {}
 
 /** A loop that does nothing: the factory has no config, or one it cannot read. */
-const idle: Loop = { wake: Effect.void, awaitPass: Effect.never };
+const idle = (reason: string): FactoryLoop["Service"] => ({
+  wake: Effect.void,
+  awaitPass: Effect.never,
+  status: { state: "idle", reason },
+});
 
 /**
  * How long an issue must have sat in `factory:triage` or `factory:building` with no assignee
@@ -179,6 +204,7 @@ export const liveWorld = (
   sessions: T3Sessions.FactorySessions["Service"],
   clock: () => number,
   host: string,
+  attention: Pick<Attention["Service"], "raise" | "clear">,
   live: LiveGate,
 ): PassWorld => {
   // Built once per process, so judgements last as long as the factory runs.
@@ -250,7 +276,23 @@ export const liveWorld = (
       yield* gateStep(gateContext(repo), run).pipe(
         Effect.matchEffect({
           onSuccess: (step) =>
-            Effect.logInfo(`${label} building: ${gateWords(id, step)}`).pipe(Effect.as(step)),
+            Effect.logInfo(`${label} building: ${gateWords(id, step)}`).pipe(
+              // The run is finished, so no later pass sees it go stuck: the gate raises the item
+              // the pass would have.
+              Effect.andThen(
+                step.kind === "stuck"
+                  ? attention.raise({
+                      id: `run:${id}:stuck`,
+                      kind: "stuck",
+                      repo: repo.watched.repo,
+                      issue: Number(run.issue),
+                      run: id,
+                      message: `${label} ${stuckLine(id)}`,
+                    })
+                  : Effect.void,
+              ),
+              Effect.as(step),
+            ),
           onFailure: (error) =>
             Effect.logError(`error: ${label} gate: ${plain(error.message)}`).pipe(
               Effect.andThen(
@@ -347,6 +389,7 @@ export const liveWorld = (
     recordError,
     handPause: () => loadHandPause(dataDir),
     nowMs: clock,
+    attention,
     record: (event: MachineEvent) =>
       ledger(() => {
         const log = MachineLog.open(dataDir, { clock });
@@ -431,6 +474,22 @@ const wakeOnOwnedThreads = (
     );
   });
 
+/** How a pass ended, for the count of passes that error in a row. */
+const outcomeOf = (exit: Exit.Exit<Report>, lastError: () => string | null): PassOutcome => {
+  if (Exit.isSuccess(exit)) {
+    const errors = exit.value.errors;
+    return errors === 0
+      ? { ok: true }
+      : { ok: false, message: lastError() ?? `${errors} error lines` };
+  }
+  return {
+    ok: false,
+    message: Cause.hasInterruptsOnly(exit.cause)
+      ? "the pass was stopped before it finished"
+      : `the pass died: ${String(Cause.squash(exit.cause))}`,
+  };
+};
+
 /** What the factory's runtime can be told, for a test that cannot wait. */
 export interface RuntimeOptions {
   /** How long to wait before the events stream is run again. Default 5 seconds. */
@@ -440,6 +499,7 @@ export interface RuntimeOptions {
 const startFactory = (options: RuntimeOptions) =>
   Effect.gen(function* () {
     const { factoryDir, machineConfigPath } = yield* Paths.FactoryPaths;
+    const attention = yield* Attention;
     // Gates run inside this server, so a lock file left from an earlier run belongs to a dead gate.
     const cleared = yield* clearGateLocks(factoryDir);
     if (cleared > 0) yield* Effect.logInfo(`cleared ${cleared} gate lock(s)`);
@@ -448,24 +508,43 @@ const startFactory = (options: RuntimeOptions) =>
       for (const error of loaded.failure.errors) {
         yield* Effect.logError(formatConfigError(error));
       }
-      return idle;
+      yield* attention.raise({
+        id: CONFIG_ITEM_ID,
+        kind: "config",
+        repo: null,
+        issue: null,
+        run: null,
+        message: `machine config not loaded: ${loaded.failure.errors.map(formatConfigError).join("; ")}`,
+      });
+      return idle("factory config failed to load");
     }
+    yield* attention.clear((item) => item.id === CONFIG_ITEM_ID);
     if (Option.isNone(loaded.success)) {
       yield* Effect.logInfo(`no factory config at ${machineConfigPath}`);
-      return idle;
+      return idle("no factory config");
     }
     const machine = loaded.success.value;
+    yield* attention.setNotify(machine.notify);
     yield* Effect.logInfo("factory started");
     const process = yield* FactoryProcess;
     const sessions = yield* T3Sessions.FactorySessions;
     const gate = yield* FactoryGate;
     // The loop is made after the world, so a gate that ends wakes whatever loop there is then.
     let running: Loop | null = null;
-    const world = liveWorld(machine, factoryDir, process, sessions, () => Date.now(), hostName(), {
-      gate,
-      wake: Effect.suspend(() => running?.wake ?? Effect.void),
-      scope: yield* Effect.scope,
-    });
+    const world = liveWorld(
+      machine,
+      factoryDir,
+      process,
+      sessions,
+      () => Date.now(),
+      hostName(),
+      attention,
+      {
+        gate,
+        wake: Effect.suspend(() => running?.wake ?? Effect.void),
+        scope: yield* Effect.scope,
+      },
+    );
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.
     const owned = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -474,21 +553,28 @@ const startFactory = (options: RuntimeOptions) =>
       // Each line is logged as it is decided, so a pass that hangs or dies has said what it did.
       const context = yield* Effect.context<never>();
       const log = Effect.runSyncWith(context);
-      return yield* runPass(world, machine, (line) => log(Effect.logInfo(line)));
+      let lastError: string | null = null;
+      return yield* runPass(world, machine, (line) => {
+        if (line.startsWith("error: ")) lastError = line;
+        log(Effect.logInfo(line));
+      }).pipe(Effect.onExit((exit) => attention.passEnded(outcomeOf(exit, () => lastError))));
     }).pipe(Effect.ensuring(refreshOwned(factoryDir, owned)));
     const loop = yield* runLoop(onePass, machine.pollSeconds);
     running = loop;
     yield* Effect.forkScoped(wakeOnOwnedThreads(owned, loop, options.restartDelay ?? "5 seconds"));
-    return loop;
+    return { ...loop, status: { state: "running" } } satisfies FactoryLoop["Service"];
   });
 
 /**
- * Needs FactoryPaths, FactoryProcess, FactorySessions, FactoryEvents, FactoryGate and FileSystem;
- * what index.test.ts builds with a test FactoryPaths, a fake FactoryProcess, a stub
- * FactorySessions, a FactoryEvents it feeds by hand and a gate that never runs.
+ * Gives FactoryLoop and Attention. Needs FactoryPaths, FactoryProcess, FactorySessions,
+ * FactoryEvents, FactoryGate and FileSystem; what index.test.ts builds with a test FactoryPaths,
+ * a fake FactoryProcess, a stub FactorySessions, a FactoryEvents it feeds by hand and a gate that
+ * never runs.
  */
 export const factoryRuntime = (options: RuntimeOptions = {}) =>
-  Layer.effect(FactoryLoop, startFactory(options));
+  Layer.effect(FactoryLoop, startFactory(options)).pipe(
+    Layer.provideMerge(AttentionService.layer()),
+  );
 
 export const FactoryRuntime = factoryRuntime();
 

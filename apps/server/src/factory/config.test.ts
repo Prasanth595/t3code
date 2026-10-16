@@ -427,8 +427,19 @@ describe("machine config", () => {
       maxConcurrentGates: 2,
       modelInstance: "claudeAgent",
       model: "claude-sonnet-5-5",
+      notify: true,
       repos: [{ repo: "rawphp/softfac", path: "/Users/me/EA/projects/softfac" }],
     });
+  });
+
+  it("machine notify can be turned off", () => {
+    expect(machine(edit(MACHINE, (t) => set(t, "notify", "false"))).notify).toBe(false);
+  });
+
+  it("machine notify that is not a boolean is rejected", () => {
+    const errs = machineErr(edit(MACHINE, (t) => set(t, "notify", '"no"')));
+    assertOne(errs, "notify", MFILE);
+    expect(errs[0]!.message).toBe("must be true or false");
   });
 
   it("machine every key can be set", () => {
