@@ -99,7 +99,7 @@ function CapsuleSurface({
     : dark
       ? ["#131313", "#161616"]
       : ["#f2f2f2", "#f6f6f6"];
-  const edge = selected
+  const edge: [string, string] = selected
     ? dark
       ? ["#ffffff38", "#ffffff05"]
       : ["#00000022", "#00000003"]
