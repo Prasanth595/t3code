@@ -393,14 +393,14 @@ function normalizedWorkbookArchive(
   parts: Map<string, Uint8Array>,
   encodings: Map<string, XmlEncoding>,
 ): Uint8Array {
-  const output = new Uint8Array(OFFICE_INPUT_MAX_BYTES);
+  const chunks: Uint8Array[] = [];
   let size = 0;
   let expanded = 0;
   const zip = new Zip((error, chunk) => {
     if (error) throw error;
-    if (size + chunk.length > output.length)
-      fail("The normalized workbook exceeds the 5 MiB preview limit.");
-    output.set(chunk, size);
+    if (size + chunk.length > ARCHIVE_MAX_BYTES)
+      fail("The normalized workbook exceeds preview limits.");
+    if (chunk.length) chunks.push(chunk);
     size += chunk.length;
   });
   for (const [name, original] of parts) {
@@ -422,7 +422,13 @@ function normalizedWorkbookArchive(
       entry.push(content.subarray(offset, offset + 512), offset + 512 >= content.length);
   }
   zip.end();
-  return output.subarray(0, size);
+  const output = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
 }
 
 function attribute(tag: SaxesTagNS, local: string, uri = ""): string | undefined {

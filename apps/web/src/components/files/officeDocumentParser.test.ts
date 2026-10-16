@@ -129,6 +129,58 @@ function strictPresentationParts() {
 }
 
 describe("normal OOXML namespace and encoding compatibility", () => {
+  it("displays a valid input workbook when its normalized ZIP exceeds the input upload limit", () => {
+    let seed = 0x1937cafe;
+    const rows = Array.from({ length: 90 }, () => {
+      const characters: string[] = [];
+      for (let index = 0; index < 30000; index++) {
+        seed ^= seed << 13;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5;
+        characters.push(String.fromCharCode(0x4e00 + ((seed >>> 0) % 20992)));
+      }
+      return [characters.join("")];
+    });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "Unicode notes");
+    const parts = unzipSync(
+      new Uint8Array(XLSX.write(workbook, { type: "array", bookType: "xlsx", bookSST: true })),
+    );
+    const encoded = utf16Parts(parts, xmlEncodings[0]);
+    const input = zipSync(encoded, { level: 9 });
+    // Ordinary Excel text cells fit below 32,767 characters. UTF-16 compresses
+    // these CJK notes better than UTF-8, without approaching the XML budgets.
+    expect(rows.every(([text]) => text!.length <= 32767)).toBe(true);
+    expect(input.length).toBeLessThanOrEqual(OFFICE_INPUT_MAX_BYTES);
+    expect(zipSync(parts, { level: 1 }).length).toBeGreaterThan(OFFICE_INPUT_MAX_BYTES);
+    for (const contents of [Object.values(encoded), Object.values(parts)]) {
+      expect(Math.max(...contents.map((bytes) => bytes.length))).toBeLessThanOrEqual(
+        8 * 1024 * 1024,
+      );
+      expect(contents.reduce((sum, bytes) => sum + bytes.length, 0)).toBeLessThanOrEqual(
+        32 * 1024 * 1024,
+      );
+    }
+    const document = parseOfficeDocument(input, "xlsx");
+    if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+    expect(document.sheets).toHaveLength(1);
+    expect(document.sheets[0]).toMatchObject({
+      name: "Unicode notes",
+      totalRows: 90,
+      totalColumns: 1,
+      truncated: true,
+    });
+    const visibleRows = document.sheets[0]?.rows ?? [];
+    expect(visibleRows).toHaveLength(90);
+    for (const [index, row] of visibleRows.entries()) {
+      expect(row).toHaveLength(1);
+      // Compare compact facts first so a failure cannot dump 90 long cells.
+      expect(row[0]?.length).toBe(2000);
+      expect(row[0]?.slice(0, 32)).toBe(rows[index]?.[0]?.slice(0, 32));
+      expect(row[0] === `${rows[index]?.[0]?.slice(0, 1999)}…`).toBe(true);
+    }
+  });
+
   it("preserves Strict slide relationship order, inherited geometry, formatted text and embedded images", () => {
     const document = parseOfficeDocument(zipSync(strictPresentationParts()), "pptx");
     expect(document).toEqual(parseOfficeDocument(zipSync(visualPresentationParts()), "pptx"));
