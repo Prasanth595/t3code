@@ -25,6 +25,7 @@ import {
   FactoryLoop,
   FactoryRuntime,
   gateDecided,
+  gateItem,
   liveWorld,
   ownedThreads,
   wakeOn,
@@ -54,9 +55,6 @@ const noGh = Layer.succeed(
 );
 
 /** A FactorySessions that finds no T3 project and dies on anything else. */
-/** Attention for a world built by hand: items are raised and cleared into nothing. */
-const NO_ATTENTION = { raise: () => Effect.void, clear: () => Effect.void };
-
 const stubSessions = Sessions.FactorySessions.of({
   findProject: () => Effect.succeed(null),
   launch: () => Effect.die("not launched"),
@@ -73,6 +71,12 @@ const noGate = Layer.succeed(
   FactoryGate,
   FactoryGate.of({ run: () => Effect.succeed({ _tag: "running" as const }) }),
 );
+
+/** Attention that keeps nothing: a world whose items are not under test. */
+const noAttention: Pick<Attention["Service"], "raise" | "clear"> = {
+  raise: () => Effect.void,
+  clear: () => Effect.void,
+};
 
 /** FactoryEvents that never says anything. */
 const quietEvents = Layer.succeed(
@@ -631,7 +635,7 @@ describe("liveWorld", () => {
       stubSessions,
       () => NOW,
       "mac-mini",
-      NO_ATTENTION,
+      noAttention,
       {
         gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
         wake: Effect.void,
@@ -1028,7 +1032,7 @@ describe("the gate in the background", () => {
         stubSessions,
         () => 1_000,
         "mac-mini",
-        NO_ATTENTION,
+        noAttention,
         {
           gate: { run: () => Effect.die("no gate runs for a recorded pass") },
           wake: Deferred.succeed(woken, undefined).pipe(Effect.asVoid),
@@ -1119,7 +1123,7 @@ describe("the gate in the background", () => {
           sessions,
           () => 1_000,
           "mac-mini",
-          NO_ATTENTION,
+          noAttention,
           {
             gate: { run: () => Effect.die("the thread read fails first") },
             wake: Ref.update(woken, (n) => n + 1),
@@ -1223,7 +1227,7 @@ describe("the gate in the background", () => {
         sessions,
         () => 1_000,
         "mac-mini",
-        NO_ATTENTION,
+        noAttention,
         {
           gate: { run: () => Effect.die("the thread read never ends") },
           wake: Effect.void,
@@ -1252,5 +1256,20 @@ describe("the gate in the background", () => {
     assert.strictEqual(gateDecided({ kind: "running" }), false);
     assert.strictEqual(gateDecided({ kind: "queued", running: 2, max: 2 }), false);
     assert.strictEqual(gateDecided(null), false);
+  });
+
+  it("raises a stuck item for a gate that ended stuck, as the pass does, and nothing else", () => {
+    assert.deepStrictEqual(gateItem(REPO, 10, "run-1", { kind: "stuck", reason: "r" }), {
+      id: "run:run-1:stuck",
+      kind: "stuck",
+      repo: REPO,
+      issue: 10,
+      run: "run-1",
+      message: `${REPO}#10 stuck, the reason is in the ledger of run run-1`,
+    });
+    assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "passed", pr: 12 }), null);
+    assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "sent-back", attempt: 1 }), null);
+    assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "ended" }), null);
+    assert.strictEqual(gateItem(REPO, 10, "run-1", null), null);
   });
 });

@@ -16,7 +16,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
 import * as AttentionService from "./attention.ts";
-import { Attention, CONFIG_ITEM_ID, type PassOutcome } from "./attention.ts";
+import { Attention, CONFIG_ITEM_ID, type NewItem, type PassOutcome } from "./attention.ts";
 import { loadHandPause } from "./claims.ts";
 import {
   formatConfigError,
@@ -57,7 +57,15 @@ import { readProgress } from "./runner/progress.ts";
 import { advance, timeLimit, watch, type BuildingContext } from "./runner/building.ts";
 import { gate as gateStep, type GateContext, type GateStep } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
-import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
+import {
+  isOurs,
+  mention,
+  newestSays,
+  resume,
+  start,
+  utcSecond,
+  type StartContext,
+} from "./runner/start.ts";
 import * as Events from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
@@ -185,6 +193,27 @@ const gateWords = (run: string, step: GateStep): string => {
 };
 
 /**
+ * The attention item for a gate that ended, or null: a gate that ended `stuck` needs a person,
+ * the same item `pass.ts` raises when `advance` finds a run stuck.
+ */
+export const gateItem = (
+  repo: string,
+  issue: number,
+  run: string,
+  step: GateStep | null,
+): NewItem | null =>
+  step?.kind === "stuck"
+    ? {
+        id: `run:${run}:stuck`,
+        kind: "stuck",
+        repo,
+        issue,
+        run,
+        message: `${plain(repo)}${mention(issue)} ${stuckLine(run)}`,
+      }
+    : null;
+
+/**
  * Whether a gate that ended changed something the next pass should act on at once. A gate that
  * decided nothing (the session still at work, another gate running, an error such as a rate
  * limit) waits for the normal poll, so the loop does not spin on it.
@@ -263,7 +292,8 @@ export const liveWorld = (
     });
   /**
    * The gate as a background fiber: its line is logged when it ends, as the pass's lines are, an
-   * error goes to the run's ledger, and the loop is woken so the next pass carries on at once.
+   * error goes to the run's ledger, a `stuck` end raises its attention item, and the loop is
+   * woken so the next pass carries on at once.
    */
   const startGate = (repo: Repo, run: RunId): Effect.Effect<GateStart> =>
     Effect.gen(function* () {
@@ -276,23 +306,7 @@ export const liveWorld = (
       yield* gateStep(gateContext(repo), run).pipe(
         Effect.matchEffect({
           onSuccess: (step) =>
-            Effect.logInfo(`${label} building: ${gateWords(id, step)}`).pipe(
-              // The run is finished, so no later pass sees it go stuck: the gate raises the item
-              // the pass would have.
-              Effect.andThen(
-                step.kind === "stuck"
-                  ? attention.raise({
-                      id: `run:${id}:stuck`,
-                      kind: "stuck",
-                      repo: repo.watched.repo,
-                      issue: Number(run.issue),
-                      run: id,
-                      message: `${label} ${stuckLine(id)}`,
-                    })
-                  : Effect.void,
-              ),
-              Effect.as(step),
-            ),
+            Effect.logInfo(`${label} building: ${gateWords(id, step)}`).pipe(Effect.as(step)),
           onFailure: (error) =>
             Effect.logError(`error: ${label} gate: ${plain(error.message)}`).pipe(
               Effect.andThen(
@@ -308,6 +322,10 @@ export const liveWorld = (
             ),
         }),
         Effect.ensuring(Effect.sync(() => gating.delete(id))),
+        Effect.tap((step) => {
+          const item = gateItem(repo.watched.repo, Number(run.issue), id, step);
+          return item === null ? Effect.void : attention.raise(item);
+        }),
         Effect.flatMap((step) => (gateDecided(step) ? live.wake : Effect.void)),
         Effect.forkIn(live.scope),
       );
@@ -567,8 +585,8 @@ const startFactory = (options: RuntimeOptions) =>
 
 /**
  * Gives FactoryLoop and Attention. Needs FactoryPaths, FactoryProcess, FactorySessions,
- * FactoryEvents, FactoryGate and FileSystem; what index.test.ts builds with a test FactoryPaths,
- * a fake FactoryProcess, a stub FactorySessions, a FactoryEvents it feeds by hand and a gate that
+ * FactoryEvents, FactoryGate and FileSystem; what index.test.ts builds with a test FactoryPaths, a
+ * fake FactoryProcess, a stub FactorySessions, a FactoryEvents it feeds by hand and a gate that
  * never runs.
  */
 export const factoryRuntime = (options: RuntimeOptions = {}) =>
