@@ -663,4 +663,32 @@ describe("loaders", () => {
       }),
     ),
   );
+
+  // factory/config.example.yml is what the handover runbook tells a person to copy to
+  // ~/.config/t3fac/factory/config.yml, so it must load as it stands.
+  effectIt.effect("the example machine config loads and watches the fork from its own clone", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const file = yield* path.fromFileUrl(
+        new URL("../../../../factory/config.example.yml", import.meta.url),
+      );
+      expect(yield* loadMachineConfig(file)).toEqual(
+        Option.some({
+          ghConfigDir: "/Users/tomkaczocha/.config/t3fac/gh",
+          pollSeconds: 60,
+          maxConcurrentRuns: 1,
+          maxConcurrentGates: 1,
+          modelInstance: "claudeAgent",
+          model: "claude-fable-5-1",
+          notify: true,
+          repos: [
+            {
+              repo: "original-solutions/t3code-factory",
+              path: "/Users/tomkaczocha/EA/projects/t3code-factory-fac",
+            },
+          ],
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
