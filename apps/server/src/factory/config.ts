@@ -87,6 +87,8 @@ export interface MachineConfig {
   readonly maxConcurrentGates: number;
   readonly modelInstance: string;
   readonly model: string;
+  /** Whether a new attention item posts a macOS notification. The list is kept either way. */
+  readonly notify: boolean;
   readonly repos: ReadonlyArray<WatchedRepo>;
 }
 
@@ -160,6 +162,21 @@ const makeChecker = (file: string) => {
     if (parent === undefined) return undefined;
     if (!Object.hasOwn(parent, key)) return fallback;
     return uint(parent[key], join(path, key), min);
+  };
+
+  /** A boolean under `key` of `parent`; an absent key takes `fallback`. */
+  const optionalBoolean = (
+    parent: Mapping | undefined,
+    path: string,
+    key: string,
+    fallback: boolean,
+  ): boolean | undefined => {
+    if (parent === undefined) return undefined;
+    if (!Object.hasOwn(parent, key)) return fallback;
+    const value = parent[key];
+    if (typeof value === "boolean") return value;
+    err(join(path, key), "must be true or false");
+    return undefined;
   };
 
   const optionalNonEmptyString = (
@@ -241,6 +258,7 @@ const makeChecker = (file: string) => {
     uint,
     optionalUint,
     optionalNonEmptyString,
+    optionalBoolean,
     stringList,
     autonomy,
     unknownKeys,
@@ -336,6 +354,7 @@ const MACHINE_KEYS = [
   "max_concurrent_gates",
   "model_instance",
   "model",
+  "notify",
   "repos",
 ] as const;
 
@@ -397,6 +416,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     DEFAULT_MODEL_INSTANCE,
   );
   const model = c.nonEmptyString(c.child(root, "", "model"), "model");
+  const notify = c.optionalBoolean(root, "", "notify", true);
   const repos = reposFrom(c, root);
   checkUnknownKeys(c, root);
 
@@ -407,6 +427,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     maxConcurrentGates === undefined ||
     modelInstance === undefined ||
     model === undefined ||
+    notify === undefined ||
     repos === undefined
   ) {
     return undefined;
@@ -418,6 +439,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     maxConcurrentGates,
     modelInstance,
     model,
+    notify,
     repos,
   };
 };

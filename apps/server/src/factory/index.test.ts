@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 
 import { describe } from "vite-plus/test";
 
+import { Attention } from "./attention.ts";
 import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
 import type { State } from "./domain/lifecycle.ts";
 import {
@@ -163,8 +164,11 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
 
 it.effect("logs each config error and does not start for an invalid machine file", () =>
   Effect.gen(function* () {
+    // The notification for the config item goes to a runner that accepts it, so it logs nothing.
     const { logs, machineConfigPath } = yield* logsFor(
       VALID.replace("model: claude-sonnet-5-5\n", ""),
+      () => Effect.void,
+      Layer.succeed(FactoryProcess, recordingProcess().process),
     );
     assert.deepStrictEqual(logs, [`${machineConfigPath}: model: is missing`]);
   }),
@@ -176,6 +180,175 @@ it.effect("reports itself idle, without the config errors, when the machine file
     assert.deepStrictEqual(status, { state: "idle", reason: "factory config failed to load" });
   }),
 );
+
+// ---- attention ----
+
+/** A process runner that records each call: osascript succeeds and every other command fails to start. */
+const recordingProcess = () => {
+  const calls: Array<RunInput> = [];
+  const process = FactoryProcess.of({
+    run: (input) => {
+      calls.push(input);
+      return input.command === "osascript"
+        ? Effect.succeed({
+            exitCode: 0,
+            timedOut: false,
+            tail: "",
+            stderrTail: "",
+            truncated: false,
+          } satisfies RunResult)
+        : Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") }));
+    },
+  });
+  return { calls, process };
+};
+
+describe("attention", () => {
+  /** A base dir whose factory dir holds `config`, and the paths layer over it. */
+  const dirWith = (config: string, seed?: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-attention-index-" });
+      const factoryDir = join(baseDir, "factory");
+      yield* fs.makeDirectory(factoryDir);
+      const machineConfigPath = join(factoryDir, "config.yml");
+      yield* fs.writeFileString(machineConfigPath, config);
+      if (seed !== undefined) yield* fs.writeFileString(join(factoryDir, "attention.json"), seed);
+      return { baseDir, factoryDir, machineConfigPath, worktreesDir: join(baseDir, "worktrees") };
+    });
+
+  /** Builds the runtime over `dirs`, and reads the open items while it runs. */
+  const itemsAfterStart = (
+    dirs: Effect.Success<ReturnType<typeof dirWith>>,
+    process: FactoryProcess["Service"],
+  ) =>
+    Effect.scoped(
+      Layer.build(
+        FactoryRuntime.pipe(
+          Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
+          Layer.provide(Layer.succeed(FactoryProcess, process)),
+          Layer.provide(noSessions),
+          Layer.provide(quietEvents),
+        ),
+      ).pipe(Effect.flatMap((context) => Context.get(context, Attention).list())),
+    );
+
+  const INVALID = VALID.replace("model: claude-sonnet-5-5\n", "");
+
+  it.effect("a machine config that does not load raises one config item and one notification", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dirs = yield* dirWith(INVALID);
+        const { calls, process } = recordingProcess();
+        const items = yield* itemsAfterStart(dirs, process);
+        assert.deepStrictEqual(
+          items.map((item) => [item.id, item.kind, item.repo]),
+          [["config", "config", null]],
+        );
+        assert.include(items[0]!.message, "model: is missing");
+        assert.strictEqual(calls.length, 1);
+        assert.strictEqual(calls[0]!.command, "osascript");
+        assert.strictEqual(calls[0]!.args![0], "-e");
+        assert.include(calls[0]!.args![1]!, "on run argv");
+        assert.strictEqual(calls[0]!.args![2], "factory");
+        assert.strictEqual(calls[0]!.args![3], items[0]!.message);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a config that loads clears the config item an earlier start left", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const seed = JSON.stringify({
+          items: [
+            {
+              id: "config",
+              kind: "config",
+              repo: null,
+              issue: null,
+              run: null,
+              message: "machine config not loaded: x",
+              first_seen: "2026-10-07T13:33:20.000Z",
+            },
+          ],
+        });
+        const dirs = yield* dirWith(VALID, seed);
+        const { calls, process } = recordingProcess();
+        assert.deepStrictEqual(yield* itemsAfterStart(dirs, process), []);
+        assert.strictEqual(calls.filter((call) => call.command === "osascript").length, 0);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a restart over the same files notifies nothing again and still lists the item", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dirs = yield* dirWith(INVALID);
+        const first = recordingProcess();
+        const second = recordingProcess();
+        yield* itemsAfterStart(dirs, first.process);
+        const items = yield* itemsAfterStart(dirs, second.process);
+        assert.strictEqual(first.calls.length, 1);
+        assert.strictEqual(second.calls.length, 0);
+        assert.deepStrictEqual(
+          items.map((item) => item.id),
+          ["config"],
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  /** Wakes the loop until a `pass-errors` item is open, for a config whose every pass errors (no gh). */
+  const untilPassErrors = (config: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dirs = yield* dirWith(config);
+        const { calls, process } = recordingProcess();
+        const context = yield* Layer.build(
+          FactoryRuntime.pipe(
+            Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
+            Layer.provide(Layer.succeed(FactoryProcess, process)),
+            Layer.provide(noSessions),
+            Layer.provide(quietEvents),
+          ),
+        );
+        const loop = Context.get(context, FactoryLoop);
+        const attention = Context.get(context, Attention);
+        const open = () =>
+          attention
+            .list()
+            .pipe(Effect.map((items) => items.filter((item) => item.id === "pass-errors")));
+        // Each wake is one more pass, and each wait is bounded so a pass that never ends fails
+        // the test instead of hanging it.
+        const reached = yield* Effect.gen(function* () {
+          while ((yield* open()).length === 0) {
+            yield* loop.wake;
+            yield* Effect.timeoutOption(loop.awaitPass, "1 second");
+          }
+        }).pipe(Effect.timeoutOption("30 seconds"), Effect.map(Option.isSome));
+        assert.isTrue(reached, "no pass-errors item was raised");
+        return { items: yield* open(), osascript: calls.filter((c) => c.command === "osascript") };
+      }),
+    ).pipe(Effect.provide(NodeServices.layer));
+
+  it.effect("passes that keep erroring raise a pass-errors item and one notification", () =>
+    Effect.gen(function* () {
+      const { items, osascript } = yield* untilPassErrors(VALID);
+      assert.include(items[0]!.message, "3 times in a row");
+      assert.include(items[0]!.message, "a/b: project config not loaded");
+      assert.strictEqual(osascript.length, 1);
+    }),
+  );
+
+  it.effect("notify: false keeps the item and posts nothing", () =>
+    Effect.gen(function* () {
+      const { items, osascript } = yield* untilPassErrors(`${VALID}notify: false\n`);
+      assert.strictEqual(items.length, 1);
+      assert.strictEqual(osascript.length, 0);
+    }),
+  );
+});
 
 it.effect("clears the gate locks a dead server left and nothing else under gates", () =>
   Effect.gen(function* () {
@@ -425,11 +598,15 @@ describe("liveWorld", () => {
     maxConcurrentGates: 1,
     modelInstance: "claudeAgent",
     model: "claude-sonnet-5-5",
+    notify: true,
     repos: [{ repo: REPO, path: "/p" }],
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
-    liveWorld(machine, "/factory-test/data", process, stubSessions, () => NOW, "mac-mini");
+    liveWorld(machine, "/factory-test/data", process, stubSessions, () => NOW, "mac-mini", {
+      raise: () => Effect.void,
+      clear: () => Effect.void,
+    });
 
   const repo: Repo = {
     watched: machine.repos[0]!,
