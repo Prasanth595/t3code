@@ -561,7 +561,7 @@ const noteStart = (
       return madeSince(newestRun(known.of(name, issue)), before);
     }
     switch (outcome.success.kind) {
-      case "claimed": {
+      case "started": {
         const run = runIdToString(outcome.success.run);
         notes.parts.push(words.claimed(run));
         if (notes.state === "ready") pass.report.claimed += 1;
@@ -716,9 +716,9 @@ const claim = (
         continue;
       }
       const run = yield* noteStart(world, pass, known, notes, repo, issue, {
-        claimed: (run) => `claimed in run ${run}`,
+        claimed: (run) => `claimed, session started in run ${run}`,
         notTaken: "not claimed",
-        stuck: "claimed, then",
+        stuck: "claimed, but the launch failed",
       });
       yield* pass.flush(notes, run);
       if (known.lost) return;
