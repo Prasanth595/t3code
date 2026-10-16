@@ -619,6 +619,8 @@ const make = Effect.gen(function* () {
       const keep = (reason: string) => entries.push({ ...entry, reason: sentence(reason) });
       yield* Effect.gen(function* () {
         if (!(yield* fs.exists(worktreePath))) return;
+        if (yield* fs.exists(path.join(worktreePath, ".rift")))
+          return keep("Rift workspaces keep their own branches and checkpoints");
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (group.length > 1 && worktreeOwner(group) === undefined)
           return keep(`shared by ${group.length} threads`);

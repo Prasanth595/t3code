@@ -111,6 +111,7 @@ interface HarnessOptions {
   readonly removeWorktreeFails?: boolean;
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
+  readonly createsSourceBranch?: boolean;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -227,6 +228,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
                   path: input.path ?? `/worktrees/project/${input.newRefName}`,
                   refName: input.newRefName ?? "detached",
                 },
+                createdSourceBranch:
+                  options.createsSourceBranch === false ? null : (input.newRefName ?? null),
               }),
             ),
           ),
@@ -735,6 +738,20 @@ describe("t3_worktree_handoff", () => {
         force: true,
       });
       expect(harness.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
+  it.effect("backs out a Rift workspace without deleting the project's branch", () => {
+    const harness = makeHarness({ threadAttachedOnRecheck: true, createsSourceBranch: false });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runHandoff(harness, { branch: "feature/rift-raced" }));
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "already_in_worktree" });
+      expect(harness.removeWorktree).toHaveBeenCalledWith({
+        cwd: workspaceRoot,
+        path: "/worktrees/project/feature/rift-raced",
+        force: true,
+      });
+      expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
     });
   });
 

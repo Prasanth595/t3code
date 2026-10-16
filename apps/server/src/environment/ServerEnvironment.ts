@@ -235,6 +235,8 @@ export const make = Effect.gen(function* () {
       settledWorktreeCleanup: true,
       worktreesDirectory: true,
       threadAutoSettlementScope: true,
+      // Rift does not support Windows.
+      riftWorktrees: hostPlatform !== "win32",
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
       projectProviderInstanceOverrides: true,

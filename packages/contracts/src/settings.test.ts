@@ -873,6 +873,19 @@ describe("provider enabled defaults", () => {
 });
 
 describe("ServerSettings worktree defaults", () => {
+  it("defaults unknown worktree backends to Git but rejects them in writes", () => {
+    expect(decodeServerSettings({}).worktreeBackend).toBe("git");
+    expect(decodeServerSettings({ worktreeBackend: "future-backend" }).worktreeBackend).toBe("git");
+    expect(() => decodeServerSettingsPatch({ worktreeBackend: "future-backend" })).toThrow();
+  });
+
+  it.each(["git", "rift"])("round-trips the %s worktree backend", (worktreeBackend) => {
+    expect(encodeServerSettings(decodeServerSettings({ worktreeBackend }))).toMatchObject({
+      worktreeBackend,
+    });
+    expect(decodeServerSettingsPatch({ worktreeBackend })).toEqual({ worktreeBackend });
+  });
+
   it("defaults the thread env mode to inherit and keeps stored values", () => {
     expect(decodeServerSettings({}).defaultThreadEnvMode).toBeNull();
     expect(decodeServerSettings({ defaultThreadEnvMode: "worktree" }).defaultThreadEnvMode).toBe(

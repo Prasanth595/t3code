@@ -27,6 +27,7 @@ import {
   type ReviewDiffFileStat,
   type ReviewDiffPreviewSource,
   type VcsRef,
+  type VcsRemoveWorktreeInput,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -44,8 +45,16 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import * as ServerConfig from "../config.ts";
+import {
+  makeRiftWorktrees,
+  RIFT_REMOVED_WORKSPACE_OPERATION,
+  type RiftChild,
+  type RiftReceipt,
+  type RiftWorktreesOptions,
+} from "./RiftWorktrees.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const isGitCommandError = Schema.is(GitCommandError);
 const gitProcesses = Semaphore.makeUnsafe(8);
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
@@ -281,6 +290,36 @@ function paginateBranches(input: {
     nextCursor,
     totalCount,
   };
+}
+
+function mergeUnambiguousRiftBranches(
+  localBranches: ReadonlyArray<VcsRef>,
+  children: ReadonlyArray<RiftChild>,
+): ReadonlyArray<VcsRef> {
+  const pathsByBranch = new Map<string, Array<string>>();
+  for (const child of children) {
+    if (child.branch === null) continue;
+    pathsByBranch.set(child.branch, [...(pathsByBranch.get(child.branch) ?? []), child.path]);
+  }
+  if (pathsByBranch.size === 0) return localBranches;
+  const merged = localBranches.map((ref) => {
+    const paths = pathsByBranch.get(ref.name);
+    if (paths === undefined) return ref;
+    const holders = ref.worktreePath === null ? paths : [ref.worktreePath, ...paths];
+    return { ...ref, worktreePath: holders.length === 1 ? holders[0]! : null };
+  });
+  const known = new Set(localBranches.map((ref) => ref.name));
+  for (const [name, paths] of pathsByBranch) {
+    if (known.has(name)) continue;
+    merged.push({
+      name,
+      current: false,
+      isRemote: false,
+      isDefault: false,
+      worktreePath: paths.length === 1 ? paths[0]! : null,
+    });
+  }
+  return merged;
 }
 
 function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
@@ -923,13 +962,16 @@ export const windowsLongPathConfigEnv = (
   };
 };
 
-export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
+export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* (
+  options: { readonly rift?: RiftWorktreesOptions } = {},
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const crypto = yield* Crypto.Crypto;
   const hostPlatform = yield* HostProcess.Platform;
+  const rift = yield* makeRiftWorktrees(options.rift);
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -3367,10 +3409,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         repositoryPaths.gitCommonDir,
         input.refresh === true,
       );
+      const sourceRoot =
+        path.basename(repositoryPaths.gitCommonDir) === ".git"
+          ? path.dirname(repositoryPaths.gitCommonDir)
+          : null;
+      const snapshotLocalBranches = mergeUnambiguousRiftBranches(
+        snapshot.localBranches,
+        sourceRoot === null ? [] : yield* rift.ownedChildren(sourceRoot),
+      );
       const hasCurrentWorktreeBranch =
         repositoryPaths.worktreeRoot !== null &&
-        snapshot.localBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);
-      const localBranches = snapshot.localBranches.map((ref) => ({
+        snapshotLocalBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);
+      const localBranches = snapshotLocalBranches.map((ref) => ({
         ...ref,
         current: hasCurrentWorktreeBranch
           ? ref.worktreePath === repositoryPaths.worktreeRoot
@@ -3406,6 +3456,246 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const createRiftWorktree = Effect.fn("createRiftWorktree")(function* (
+    input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0],
+    worktreePath: string,
+    progress: GitVcsDriver.CreateWorktreeProgress | undefined,
+  ) {
+    const operation = "GitVcsDriver.createWorktree.rift";
+    if (hostPlatform === "win32") {
+      return yield* new GitCommandError({
+        operation,
+        command: "rift",
+        cwd: input.cwd,
+        detail:
+          "Rift worktrees are not supported on Windows. Switch Settings → Storage → Worktree backend to Git.",
+      });
+    }
+    const toplevel = (yield* runGitStdout(operation, input.cwd, [
+      "rev-parse",
+      "--show-toplevel",
+    ])).trim();
+    const sourceRoot = yield* fileSystem.realPath(toplevel).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
+            operation,
+            command: "rift",
+            cwd: input.cwd,
+            detail: "Could not resolve the project folder.",
+            cause,
+          }),
+      ),
+    );
+    const gitDir = path.join(sourceRoot, ".git");
+    const gitDirInfo = yield* fileSystem.stat(gitDir).pipe(Effect.orElseSucceed(() => null));
+    const gitDirReal = yield* fileSystem.realPath(gitDir).pipe(Effect.orElseSucceed(() => null));
+    if (gitDirInfo?.type !== "Directory" || gitDirReal !== gitDir) {
+      return yield* new GitCommandError({
+        operation,
+        command: "rift",
+        cwd: input.cwd,
+        detail:
+          "Rift can only snapshot a project's main checkout, not a linked Git worktree. Add the main checkout as the project, or switch the worktree backend to Git.",
+      });
+    }
+    // A copy of these layouts keeps pointers that Git would follow back into the project.
+    const [hasSubmodules, hasModuleMetadata, hasSharedObjects, hasCommonDir, coreWorktree] =
+      yield* Effect.all([
+        fileSystem.exists(path.join(sourceRoot, ".gitmodules")),
+        fileSystem.exists(path.join(gitDir, "modules")),
+        fileSystem.exists(path.join(gitDir, "objects", "info", "alternates")),
+        fileSystem.exists(path.join(gitDir, "commondir")),
+        readConfigValue(sourceRoot, "core.worktree"),
+      ]).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation,
+              command: "rift",
+              cwd: input.cwd,
+              detail: "Could not inspect the project's Git layout.",
+              cause,
+            }),
+        ),
+      );
+    if (
+      hasSubmodules ||
+      hasModuleMetadata ||
+      hasSharedObjects ||
+      hasCommonDir ||
+      coreWorktree !== null
+    ) {
+      return yield* new GitCommandError({
+        operation,
+        command: "rift",
+        cwd: input.cwd,
+        detail:
+          "Rift worktrees do not support projects with submodules, shared object stores, or core.worktree yet. Switch the worktree backend to Git for this project.",
+      });
+    }
+    const commit = yield* runGitStdout(operation, sourceRoot, [
+      "rev-parse",
+      "--verify",
+      "--end-of-options",
+      `${input.refName}^{commit}`,
+    ]).pipe(
+      Effect.map((stdout) => stdout.trim()),
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
+            operation,
+            command: "rift",
+            cwd: input.cwd,
+            detail: `Could not resolve '${input.refName}' to a commit.`,
+            cause,
+          }),
+      ),
+    );
+    const newBranch = input.newRefName ?? null;
+    const existingBranch =
+      newBranch === null && (yield* branchExists(sourceRoot, input.refName)) ? input.refName : null;
+    const children = yield* rift.ownedChildren(sourceRoot);
+    if (newBranch !== null) {
+      if (
+        (yield* branchExists(sourceRoot, newBranch)) ||
+        children.some((child) => child.branch === newBranch)
+      ) {
+        return yield* new GitCommandError({
+          operation,
+          command: "rift",
+          cwd: input.cwd,
+          reason: "branch_already_exists",
+          detail: `A branch named '${newBranch}' already exists.`,
+        });
+      }
+    }
+    if (existingBranch !== null) {
+      const linked = parseWorktreeBranchPaths(
+        yield* runGitStdout(operation, sourceRoot, ["worktree", "list", "--porcelain", "-z"]),
+      );
+      if (linked.has(existingBranch) || children.some((child) => child.branch === existingBranch)) {
+        return yield* new GitCommandError({
+          operation,
+          command: "rift",
+          cwd: input.cwd,
+          reason: "branch_checked_out_in_worktree",
+          detail: `Branch '${existingBranch}' is already checked out in another worktree.`,
+        });
+      }
+    }
+    const name = path.basename(worktreePath);
+    if (name.startsWith(".")) {
+      return yield* new GitCommandError({
+        operation,
+        command: "rift",
+        cwd: input.cwd,
+        detail: "Rift cannot use this worktree path. Folder names cannot start with a dot.",
+      });
+    }
+    const destination = yield* fileSystem
+      .makeDirectory(path.dirname(worktreePath), {
+        recursive: true,
+      })
+      .pipe(
+        Effect.andThen(fileSystem.realPath(path.dirname(worktreePath))),
+        Effect.map((parent) => path.join(parent, name)),
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation,
+              command: "rift",
+              cwd: input.cwd,
+              detail: "Could not create the worktree folder.",
+              cause,
+            }),
+        ),
+      );
+    if (yield* fileSystem.exists(destination).pipe(Effect.orElseSucceed(() => true))) {
+      return yield* new GitCommandError({
+        operation,
+        command: "rift",
+        cwd: input.cwd,
+        reason: "path_already_exists",
+        detail: "A folder already exists at the new worktree's path.",
+      });
+    }
+
+    const gitInCopy = (args: ReadonlyArray<string>) =>
+      runGit(operation, destination, ["-c", "core.hooksPath=/dev/null", ...args], {
+        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+      });
+    const prepareCleanRiftCheckout = Effect.gen(function* () {
+      // The copy inherits the project's linked-worktree records; Git in the copy must not see them.
+      const adminDir = path.join(destination, ".git", "worktrees");
+      if (yield* fileSystem.exists(adminDir)) {
+        if ((yield* fileSystem.realPath(adminDir)) !== adminDir) {
+          return yield* new GitCommandError({
+            operation,
+            command: "rift",
+            cwd: input.cwd,
+            detail: "The new Rift workspace has unexpected Git metadata.",
+          });
+        }
+        yield* fileSystem.remove(adminDir, { recursive: true });
+      }
+      yield* gitInCopy(["reset", "--hard", "--quiet", commit]);
+      yield* gitInCopy(["clean", "-ffdq"]);
+      if (newBranch !== null)
+        yield* gitInCopy(["switch", "--quiet", "--no-guess", "-c", newBranch]);
+      if (existingBranch !== null)
+        yield* gitInCopy(["switch", "--quiet", "--no-guess", existingBranch]);
+      const head = (yield* runGitStdout(operation, destination, ["rev-parse", "HEAD"])).trim();
+      if (head !== commit) {
+        return yield* new GitCommandError({
+          operation,
+          command: "rift",
+          cwd: input.cwd,
+          detail: "The new Rift workspace did not reach the selected commit.",
+        });
+      }
+      if (newBranch !== null && input.baseRefName) {
+        const baseBranch = yield* resolveBranchName(destination, input.baseRefName);
+        if (baseBranch) {
+          yield* runGit(operation, destination, [
+            "config",
+            `branch.${newBranch}.gh-merge-base`,
+            baseBranch,
+          ]);
+        }
+      }
+    }).pipe(
+      Effect.mapError((error) =>
+        isGitCommandError(error)
+          ? error
+          : new GitCommandError({
+              operation,
+              command: "rift",
+              cwd: input.cwd,
+              detail: "Could not prepare the new Rift workspace.",
+              cause: error,
+            }),
+      ),
+    );
+
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const receipt = yield* rift.create({
+          sourceRoot,
+          destination,
+          onClaimed: progress?.onWorktreeClaimed,
+        });
+        yield* restore(prepareCleanRiftCheckout).pipe(
+          Effect.onError(() => rift.trash(receipt).pipe(Effect.ignoreCause({ log: true }))),
+        );
+        return {
+          worktree: { path: destination, refName: newBranch ?? input.refName },
+          createdSourceBranch: null,
+        };
+      }),
+    );
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -3429,6 +3719,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         });
       }
       worktreePath = path.join(parentDir, repoName, sanitizedBranch);
+    }
+    const receipt = yield* rift.receiptAt(worktreePath);
+    if (receipt !== null && (yield* rift.inspect(receipt)) === "missing") {
+      return yield* new GitCommandError({
+        operation: RIFT_REMOVED_WORKSPACE_OPERATION,
+        command: "rift",
+        cwd: input.cwd,
+        detail:
+          "This path belongs to a removed Rift workspace. Its branches and checkpoints lived only there, so T3 Code will not recreate it from the project. Restore the folder from Rift's trash, or start a new thread with a different branch name or worktree location.",
+      });
+    }
+    if (options?.backend === "rift") {
+      return yield* createRiftWorktree(input, worktreePath, options.progress);
     }
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
@@ -3548,6 +3851,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         path: worktreePath,
         refName: targetBranch,
       },
+      createdSourceBranch: input.newRefName ?? null,
     };
   });
 
@@ -3796,9 +4100,70 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       input.branch,
     ]);
 
+  const removeRiftWorktree = Effect.fn("removeRiftWorktree")(function* (
+    input: VcsRemoveWorktreeInput,
+    receipt: RiftReceipt,
+  ) {
+    const operation = "GitVcsDriver.removeWorktree.rift";
+    if (!input.force) {
+      const status = yield* runGitStdout(operation, receipt.destination, [
+        "status",
+        "--porcelain",
+        "--untracked-files=normal",
+      ]);
+      if (status.trim().length > 0) {
+        return yield* new GitCommandError({
+          operation,
+          command: "rift",
+          cwd: input.cwd,
+          detail: "The Rift workspace has uncommitted changes, so it was not removed.",
+        });
+      }
+      const localCommits = (yield* runGitStdout(operation, receipt.destination, [
+        "rev-list",
+        "--max-count=10001",
+        "HEAD",
+        "--all",
+        "--not",
+        "--remotes",
+      ]))
+        .split("\n")
+        .filter((line) => line.length > 0);
+      const retained =
+        localCommits.length === 0 ||
+        (localCommits.length <= 10_000 &&
+          (yield* executeGit(
+            operation,
+            receipt.sourceRoot,
+            ["rev-list", "--max-count=1", "--stdin", "--not", "--all"],
+            { stdin: `${localCommits.join("\n")}\n`, allowNonZeroExit: true },
+          ).pipe(
+            Effect.map(
+              (result) =>
+                result.exitCode === 0 && !result.stdoutTruncated && result.stdout.trim() === "",
+            ),
+          )));
+      if (!retained) {
+        return yield* new GitCommandError({
+          operation,
+          command: "rift",
+          cwd: input.cwd,
+          detail: "The Rift workspace has commits that exist only there, so it was not removed.",
+        });
+      }
+    }
+    yield* rift.trash(receipt);
+  });
+
   const removeWorktree: GitVcsDriver.GitVcsDriver["Service"]["removeWorktree"] = Effect.fn(
     "removeWorktree",
   )(function* (input) {
+    const receipt = yield* rift.receiptAt(input.path);
+    const riftState = receipt === null ? null : yield* rift.inspect(receipt);
+    if (riftState === "missing") return;
+    if (receipt !== null && riftState === "owned") {
+      return yield* removeRiftWorktree(input, receipt);
+    }
     // Git refuses to remove a worktree with untracked files unless forced, but
     // its check honors `status.showUntrackedFiles=no` and would delete them.
     const args = ["-c", "status.showUntrackedFiles=normal", "worktree", "remove"];
@@ -4010,7 +4375,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
 
-  const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = (cwd) =>
+  const listGitWorktreePaths = (cwd: string) =>
     executeWorktreeList("GitVcsDriver.listWorktreePaths", cwd, []).pipe(
       // One record per worktree, each ended by an empty field. A `prunable`
       // record's directory is gone, and another checkout may now sit there.
@@ -4024,6 +4389,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }),
       ),
     );
+
+  const listWorktreePaths: GitVcsDriver.GitVcsDriver["Service"]["listWorktreePaths"] = Effect.fn(
+    "listWorktreePaths",
+  )(function* (cwd) {
+    const paths = yield* listGitWorktreePaths(cwd);
+    const mainCheckout = paths[0];
+    if (mainCheckout === undefined) return paths;
+    const sourceRoot = yield* fileSystem
+      .realPath(mainCheckout)
+      .pipe(Effect.orElseSucceed(() => mainCheckout));
+    const children = yield* rift.ownedChildren(sourceRoot);
+    return [...paths, ...children.map((child) => child.path)];
+  });
 
   const withListRefsInvalidation = <A, E>(
     cwd: string,

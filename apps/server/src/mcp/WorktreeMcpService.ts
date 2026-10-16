@@ -268,15 +268,18 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as({ status: "failed", detail } as const));
           });
 
+        const createdSourceBranch = worktree.createdSourceBranch;
         const removeCreatedWorktree = Effect.suspend(() =>
           gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
             Effect.andThen(
               Effect.suspend(() =>
-                gitWorkflow.deleteLocalBranch({
-                  cwd: projectCwd,
-                  refName: worktree.worktree.refName,
-                  force: true,
-                }),
+                createdSourceBranch === null
+                  ? Effect.void
+                  : gitWorkflow.deleteLocalBranch({
+                      cwd: projectCwd,
+                      refName: createdSourceBranch,
+                      force: true,
+                    }),
               ),
             ),
           ),

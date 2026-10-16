@@ -5352,6 +5352,60 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("creates new worktrees with the environment's worktree backend", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["branch", "feature/pr-rift"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main", "feature/pr-rift"]);
+      yield* runGit(repoDir, ["push", "origin", "feature/pr-rift:refs/pull/66/head"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, ".gitmodules"), "");
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({
+        serverSettings: { worktreeBackend: "rift" },
+        gitCommands,
+        ghScenario: {
+          pullRequest: {
+            number: 66,
+            title: "Rift PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/66",
+            baseRefName: "main",
+            headRefName: "feature/pr-rift",
+            state: "open",
+            isCrossRepository: false,
+          },
+        },
+      });
+
+      const created = yield* Effect.flip(
+        manager.createWorktree({
+          cwd: repoDir,
+          refName: "main",
+          newRefName: "t3/rift",
+          path: null,
+        }),
+      );
+      expect(created).toMatchObject({ command: "rift" });
+      expect(created.detail).toContain("submodules");
+      const pullRequest = yield* Effect.flip(
+        preparePullRequestThread(manager, { cwd: repoDir, reference: "#66", mode: "worktree" }),
+      );
+      expect(pullRequest).toMatchObject({ command: "rift" });
+      expect(gitCommands.some((command) => command.includes("worktree add"))).toBe(false);
+
+      const { manager: gitManager } = yield* makeManager();
+      const linked = yield* gitManager.createWorktree({
+        cwd: repoDir,
+        refName: "main",
+        newRefName: "t3/git",
+        path: null,
+      });
+      expect(linked.createdSourceBranch).toBe("t3/git");
+    }),
+  );
+
   it.effect(
     "restores same-repository upstream tracking after local PR checkout without a remote ref",
     () =>

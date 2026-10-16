@@ -19,7 +19,12 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
-import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
+import {
+  EnvironmentMachineKind,
+  ThreadEnvMode,
+  WorktreeBackend,
+  WorktreeSubmodules,
+} from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
   CustomModelSetting,
@@ -1053,6 +1058,11 @@ export const ServerSettings = Schema.Struct({
   previousWorktreesDirectories: Schema.Array(TrimmedString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /** Creates new worktrees only; existing ones keep the backend that made them. */
+  worktreeBackend: WorktreeBackend.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome("git" as const)),
+    Schema.withDecodingDefault(Effect.succeed("git" as const)),
+  ),
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
@@ -1374,6 +1384,7 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
+  worktreeBackend: Schema.optionalKey(WorktreeBackend),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),

@@ -2,6 +2,7 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
+  type GitCommandError,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
@@ -25,6 +26,7 @@ import * as Schema from "effect/Schema";
 
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { isRemovedRiftWorkspaceError } from "../vcs/RiftWorktrees.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -461,20 +463,23 @@ export const layer: Layer.Layer<
             });
             yield* gitWorkflow.pruneWorktrees({ cwd: project.workspaceRoot }).pipe(
               Effect.andThen(
-                gitWorkflow.createWorktree({
-                  cwd: project.workspaceRoot,
-                  refName: branch,
-                  path: worktreePath,
-                }),
+                gitWorkflow.createWorktree(
+                  { cwd: project.workspaceRoot, refName: branch, path: worktreePath },
+                  { backend: "git" },
+                ),
               ),
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning("provider turn start failed to recreate worktree", {
-                      threadId: projection.thread.id,
-                      worktreePath,
-                      cause: Cause.pretty(cause),
-                    }),
+              Effect.catchCause(
+                (cause): Effect.Effect<void, GitCommandError | ProviderTurnStartError> => {
+                  if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
+                  const error = Cause.squash(cause);
+                  return isRemovedRiftWorkspaceError(error)
+                    ? Effect.fail(new ProviderTurnStartError({ runId, cause: error.detail }))
+                    : Effect.logWarning("provider turn start failed to recreate worktree", {
+                        threadId: projection.thread.id,
+                        worktreePath,
+                        cause: Cause.pretty(cause),
+                      });
+                },
               ),
             );
           }

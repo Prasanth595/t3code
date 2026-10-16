@@ -415,6 +415,53 @@ function CleanupSection() {
   );
 }
 
+function WorktreeBackendRow() {
+  const { connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["worktreeBackend"]);
+  if (
+    connectedEnvironments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.riftWorktrees !== true,
+    )
+  )
+    return null;
+
+  return (
+    <SettingsRow
+      {...searchableSetting("storage-worktree-backend")}
+      description={
+        mixed
+          ? "Choose how new worktrees are created."
+          : settings.worktreeBackend === "rift"
+            ? "Rift creates independent copy-on-write snapshots. Install it on the server first. Automatic cleanup keeps Rift worktrees."
+            : "Git worktrees share the project's repository and branches."
+      }
+      serverScoped
+      settingKeys={["worktreeBackend"]}
+      mixed={mixed}
+      control={
+        <Select
+          value={mixed ? null : settings.worktreeBackend}
+          onValueChange={(next) => {
+            if (next === "git" || next === "rift") updateSettings({ worktreeBackend: next });
+          }}
+        >
+          <SelectTrigger size="sm" aria-label="Worktree backend">
+            <SelectValue>
+              {mixed ? "Mixed" : settings.worktreeBackend === "rift" ? "Rift" : "Git"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem value="git">Git</SelectItem>
+            <SelectItem value="rift">Rift</SelectItem>
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
 export function StorageSettingsPanel() {
   const { scope, environments, connectedEnvironments, targets, target } = useSettingsScope();
   const scopedSettings = useScopedSettings();
@@ -499,6 +546,7 @@ export function StorageSettingsPanel() {
           ))}
       <SettingsSection id="storage-worktrees" title="Worktrees">
         {!isProjectScope && <WorktreesDirectoryRow />}
+        {!isProjectScope && <WorktreeBackendRow />}
         {isProjectScope && (
           <SettingsRow
             title="Automatic worktree cleanup"

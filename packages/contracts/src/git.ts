@@ -282,6 +282,15 @@ export type VcsListRefsResult = typeof VcsListRefsResult.Type;
 
 export const VcsCreateWorktreeResult = Schema.Struct({
   worktree: VcsWorktree,
+  /**
+   * The branch this call created in the project repository, which a rollback
+   * may delete. Null when it created none: an existing branch, a detached
+   * checkout, a Rift workspace whose branch lives only in its own repository,
+   * or an older server that did not report ownership.
+   */
+  createdSourceBranch: Schema.NullOr(TrimmedNonEmptyStringSchema).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
 });
 export type VcsCreateWorktreeResult = typeof VcsCreateWorktreeResult.Type;
 

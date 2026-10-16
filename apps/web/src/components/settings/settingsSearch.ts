@@ -163,6 +163,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["worktree location folder directory path drive external disk"],
   },
   {
+    id: "storage-worktree-backend",
+    title: "Worktree backend",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: ["worktree backend rift copy-on-write snapshot clone git apfs btrfs xfs"],
+  },
+  {
     id: "storage-artifacts",
     title: "Artifacts and logs",
     to: "/settings/storage",

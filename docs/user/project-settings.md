@@ -138,6 +138,30 @@ such as another drive, set **Settings → Storage → Worktree location** to an 
 `D:\worktrees` or `~/worktrees`. The setting is per machine. Existing worktrees stay where they
 are, and cleanup covers both the default folder and the custom one.
 
+## Rift worktrees
+
+[Rift](https://github.com/anomalyco/rift) can create worktrees as copy-on-write snapshots. To use it:
+
+1. Install Rift v0.0.13 on the machine that runs T3 Code, so `rift` is on its `PATH`.
+2. Set **Settings → Storage → Worktree backend** to **Rift** (on mobile, **Settings → New threads**).
+
+T3 Code initializes each project automatically when you create its first Rift worktree.
+
+Each new worktree starts clean at the selected branch, like a Git worktree. Your project's own
+checkout is not changed. Rift needs macOS or Linux, a worktree location on the same copy-on-write
+volume (APFS, Btrfs, or XFS), and a project without submodules. It does not work from a project that
+is itself a linked Git worktree.
+
+A Rift worktree is an independent repository. Push branches and commits you want to keep elsewhere.
+T3 Code's checkpoints stay in that worktree, so:
+
+- Automatic cleanup keeps Rift worktrees. Removing one moves it to Rift's trash; run `rift gc` to
+  reclaim the space.
+- A thread whose Rift worktree was deleted cannot be resumed. T3 Code will not rebuild it from the
+  project's older branch.
+
+Switching the setting only affects new worktrees. Existing worktrees keep working either way.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected

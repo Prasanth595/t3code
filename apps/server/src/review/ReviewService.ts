@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -18,6 +19,7 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { isOwnedRiftWorkspace } from "../vcs/RiftWorktrees.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
@@ -44,6 +46,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const settings = yield* ServerSettings.ServerSettingsService;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const crypto = yield* Crypto.Crypto;
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -93,6 +96,17 @@ export const make = Effect.gen(function* () {
     if (
       isWithinRoot(candidate, workspaceRoot) ||
       worktreesRoots.some((root) => isWithinRoot(candidate, root))
+    ) {
+      return;
+    }
+
+    if (
+      yield* isOwnedRiftWorkspace(candidate).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(ServerConfig.ServerConfig, config),
+      )
     ) {
       return;
     }

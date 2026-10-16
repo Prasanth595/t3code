@@ -726,10 +726,6 @@ export const make = Effect.gen(function* () {
         );
     return { settings: resolveProjectSettings(settings, projectId).settings, projectId };
   });
-  const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
-    Effect.map((settings) => settings.worktreesDirectory),
-    Effect.orElseSucceed(() => ""),
-  );
   const createWorktree: GitManager["Service"]["createWorktree"] = Effect.fn(
     "GitManager.createWorktree",
   )(function* (input, options) {
@@ -740,8 +736,24 @@ export const make = Effect.gen(function* () {
             Effect.map(({ settings }) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),
           );
-    const worktreesDirectory = yield* readWorktreesDirectory;
-    return yield* gitCore.createWorktree(input, { worktreesDirectory, ...options, submodules });
+    const settings = yield* serverSettingsService.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
+            operation: "GitManager.createWorktree",
+            command: "settings",
+            cwd: input.cwd,
+            detail: "Could not read the worktree settings.",
+            cause,
+          }),
+      ),
+    );
+    return yield* gitCore.createWorktree(input, {
+      worktreesDirectory: settings.worktreesDirectory,
+      backend: settings.worktreeBackend,
+      ...options,
+      submodules,
+    });
   });
 
   const readRepositoryInstructions = (cwd: string, fileName: string) =>
@@ -2820,14 +2832,13 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const worktree = yield* gitCore.createWorktree(
+      const worktree = yield* createWorktree(
         {
           cwd: input.cwd,
           refName: localPullRequestBranch,
           path: null,
         },
         {
-          worktreesDirectory: yield* readWorktreesDirectory,
           submodules: yield* projectSettingsFor(input).pipe(
             Effect.map(({ settings }) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),
