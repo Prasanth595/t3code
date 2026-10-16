@@ -4831,6 +4831,52 @@ describe("regate: the relaunched session's pull request", () => {
   );
 });
 
+describe("regate: a checkout left on disk that cannot be removed", () => {
+  const isRoot = globalThis.process.getuid?.() === 0;
+  /** A leftover checkout of attempt 7 with a directory nobody can change, as project code can leave one. */
+  const lockedLeftover = (rig: Rig) => {
+    const dir = NodePath.join(gateRoot(rig.dataDir, rig.run), "7");
+    NodeFS.mkdirSync(NodePath.join(dir, "sub"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(dir, "sub", "f"), "x");
+    NodeFS.chmodSync(NodePath.join(dir, "sub"), 0o500);
+    return dir;
+  };
+  const unlock = (dir: string) => NodeFS.chmodSync(NodePath.join(dir, "sub"), 0o700);
+
+  it.effect("is noted once, however many calls find it", () =>
+    Effect.gen(function* () {
+      if (isRoot) return; // root ignores the permission that makes this fail
+      const rig = yield* prOpenRun();
+      const dir = lockedLeftover(rig);
+      yield* Effect.gen(function* () {
+        for (let call = 0; call < 2; call++) {
+          assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
+          const noted = eventsOf(rig, "gate_cleanup_failed");
+          assert.strictEqual(noted.length, 1, `call ${call}`);
+          const data = noted[0]!.data as { dir: string; error: string };
+          assert.strictEqual(data.dir, dir);
+          assert.ok(data.error.startsWith(`could not remove the checkout: ${dir}: `), data.error);
+        }
+      }).pipe(Effect.ensuring(Effect.sync(() => unlock(dir))));
+    }),
+  );
+
+  it.effect("is not noted for a finished run", () =>
+    Effect.gen(function* () {
+      if (isRoot) return;
+      const rig = yield* prOpenRun();
+      rig.gh.pr = { ...rig.gh.pr!, open: false, isDraft: false };
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "ended" });
+      const dir = lockedLeftover(rig);
+      const bytes = bytesOf(rig);
+      yield* Effect.gen(function* () {
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "not-ready" });
+        assert.strictEqual(bytesOf(rig), bytes);
+      }).pipe(Effect.ensuring(Effect.sync(() => unlock(dir))));
+    }),
+  );
+});
+
 describe("regate: a first relaunch with no T3 project", () => {
   it.effect("goes stuck without saying a session may exist, and launches nothing", () =>
     Effect.gen(function* () {
