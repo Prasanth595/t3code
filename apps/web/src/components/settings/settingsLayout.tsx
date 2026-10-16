@@ -288,6 +288,7 @@ export function SettingsRow({
   const unsupportedTargets =
     context && serverScoped ? scopedSettingsUnsupportedTargets(context.targets, settingKeys) : [];
   const unsupportedLabels = [...new Set(unsupportedTargets.map(({ label }) => label))].join(", ");
+  const unsupportedMessage = `Update T3 Code on ${unsupportedLabels} to use this setting.`;
   const unsupportedEverywhere =
     context !== null &&
     context.targets.length > 0 &&
@@ -387,7 +388,7 @@ export function SettingsRow({
       : environmentWide && control
         ? inertControl("Environment-wide setting. Select an environment to change it.")
         : unsupportedEverywhere && control
-          ? inertControl(`Update T3 Code on ${unsupportedLabels} to use this setting.`)
+          ? inertControl(unsupportedMessage)
           : control;
   const customized =
     context !== null &&
@@ -432,7 +433,15 @@ export function SettingsRow({
           : {})}
       />
     ) : null;
-  const renderedStatus = status;
+  const renderedStatus =
+    unsupportedEverywhere && children ? (
+      <>
+        {status}
+        <div>{unsupportedMessage}</div>
+      </>
+    ) : (
+      status
+    );
 
   return (
     <div
@@ -474,7 +483,7 @@ export function SettingsRow({
           </div>
         ) : null}
       </div>
-      {unavailable && children ? (
+      {(unavailable || unsupportedEverywhere) && children ? (
         <div inert className="opacity-50">
           {children}
         </div>
