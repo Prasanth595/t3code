@@ -45,7 +45,7 @@ launchctl print gui/$(id -u)/io.github.rawphp.t3fac
 tail -n 50 ~/Library/Logs/t3fac/t3fac.log
 ```
 
-A non-zero exit from `launchctl print`, or output with no `pid` line, means the job is not running. A `last exit code` other than 0 together with a changing `runs` count is a crash loop. In the log, look for `factory started` or `no factory config` after the last start. Neither means the server never got as far as the factory.
+A non-zero exit from `launchctl print`, or output with no `pid` line, means the job is not running. A `last exit code` other than 0 together with a changing `runs` count is a crash loop. In the log, look for `factory started` or `no factory config` after the last start. Neither means the server never got as far as the factory, or the factory found an error in `~/.config/t3fac/factory/config.yml`: it logs each error as `<file>: <field>: <message>` and stays idle. A config error fails the health check too, so `install.sh` rolls back a good archive until the config is fixed.
 
 ### Rolling back by hand
 
@@ -60,7 +60,7 @@ It points `current` at `previous`, restarts the job, removes `previous` and runs
 Do this when every installed version has a bug that stops the fork from building its own fix. It is the reverse of the #21 switch.
 
 1. Check that no run of either factory holds an issue for this repo: `softfac runs list` for the Rust factory, `softfac runs list --data-dir ~/.config/t3fac/factory` for the fork, and `gh issue list --repo original-solutions/t3code-factory --label factory:building` and `--label factory:triage` both come back empty.
-2. Remove `original-solutions/t3code-factory` from `repos` in `~/.config/t3fac/factory/config.yml`.
+2. Remove `original-solutions/t3code-factory` from `repos` in `~/.config/t3fac/factory/config.yml`. When it is the only repo there, move `config.yml` aside instead (`mv ~/.config/t3fac/factory/config.yml ~/.config/t3fac/factory/config.yml.off`): an empty `repos` is a config error, which fails every later health check, while a missing config logs `no factory config` and passes.
 3. Add it to `repos` in `~/.config/softfac/config.yml` with `repo`, `path` and `user`.
 4. Restart each factory so it rereads its config.
 
@@ -68,7 +68,7 @@ The Rust factory then builds the fix.
 
 ### Moving it back
 
-Once `install.sh` has installed a fixed archive and it passed its health check, repeat the steps above in reverse: check that no run holds an issue, remove the repo from `~/.config/softfac/config.yml`, add it to `repos` in `~/.config/t3fac/factory/config.yml`, and restart each factory.
+Once `install.sh` has installed a fixed archive and it passed its health check, repeat the steps above in reverse: check that no run holds an issue, remove the repo from `~/.config/softfac/config.yml`, add it to `repos` in `~/.config/t3fac/factory/config.yml` (or move `config.yml.off` back to `config.yml`), and restart each factory.
 
 ## Syncing with upstream
 

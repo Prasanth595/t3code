@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -43,20 +43,22 @@ const logPath = () => NodePath.join(home, "Library/Logs/t3fac/t3fac.log");
 
 const run = (script: string, ...args: Array<string>) => runWith({}, script, ...args);
 
+const scriptEnv = (extraEnv: Record<string, string>) => ({
+  HOME: home,
+  PATH: `${bin}:/usr/bin:/bin`,
+  LAUNCHCTL_LOG: launchctlLog,
+  LAUNCHCTL_LOADED: launchctlLoaded,
+  LAUNCHCTL_DRAIN: launchctlDrain,
+  T3FAC_PORT: String(healthPort),
+  T3FAC_HEALTH_WAIT: "2",
+  LAUNCHCTL_HEALTHY: `versions/${v1} versions/${v2} versions/${v3}`,
+  ...extraEnv,
+});
+
 const runWith = (extraEnv: Record<string, string>, script: string, ...args: Array<string>) => {
   NodeFS.writeFileSync(launchctlLog, "");
   const result = NodeChildProcess.spawnSync("bash", [NodePath.join(scripts, script), ...args], {
-    env: {
-      HOME: home,
-      PATH: `${bin}:/usr/bin:/bin`,
-      LAUNCHCTL_LOG: launchctlLog,
-      LAUNCHCTL_LOADED: launchctlLoaded,
-      LAUNCHCTL_DRAIN: launchctlDrain,
-      T3FAC_PORT: String(healthPort),
-      T3FAC_HEALTH_WAIT: "2",
-      LAUNCHCTL_HEALTHY: `versions/${v1} versions/${v2} versions/${v3}`,
-      ...extraEnv,
-    },
+    env: scriptEnv(extraEnv),
     encoding: "utf8",
   });
   const calls = NodeFS.readFileSync(launchctlLog, "utf8").split("\n").filter(Boolean);
@@ -93,8 +95,9 @@ const makeArchive = (version: string, options: { binary?: boolean; label?: strin
 // LAUNCHCTL_BOOTOUT_DRAIN), and bootstrap fails with EIO while it is still loaded (or when
 // LAUNCHCTL_BOOTSTRAP_FAIL is set). A bootstrap writes "factory started" to the log when
 // LAUNCHCTL_HEALTHY (space-separated `current` targets) lists the version `current` points at
-// (LAUNCHCTL_HEALTHY_LINE writes another line instead); LAUNCHCTL_TRUNCATE_LOG empties the log
-// first, as a rotation would.
+// (LAUNCHCTL_HEALTHY_LINE writes another line instead, LAUNCHCTL_HEALTHY_DELAY writes it that many
+// seconds later, as a server still starting would); LAUNCHCTL_TRUNCATE_LOG empties the log first,
+// as a rotation would.
 const setupSandbox = () => {
   tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-install-")));
   home = NodePath.join(tmp, "home");
@@ -131,7 +134,12 @@ const setupSandbox = () => {
       '        if [ "$entry" = "$target" ]; then',
       '          mkdir -p "$HOME/Library/Logs/t3fac"',
       '          if [ -n "$LAUNCHCTL_TRUNCATE_LOG" ]; then : > "$HOME/Library/Logs/t3fac/t3fac.log"; fi',
-      '          echo "${LAUNCHCTL_HEALTHY_LINE:-factory started}" >> "$HOME/Library/Logs/t3fac/t3fac.log"',
+      '          line="${LAUNCHCTL_HEALTHY_LINE:-factory started}"',
+      '          if [ -n "$LAUNCHCTL_HEALTHY_DELAY" ]; then',
+      '            (sleep "$LAUNCHCTL_HEALTHY_DELAY"; echo "$line" >> "$HOME/Library/Logs/t3fac/t3fac.log") > /dev/null 2>&1 &',
+      "          else",
+      '            echo "$line" >> "$HOME/Library/Logs/t3fac/t3fac.log"',
+      "          fi",
       "        fi",
       "      done",
       "    fi ;;",
@@ -328,6 +336,33 @@ describe("rollback.sh when the previous version is gone from disk", () => {
   });
 });
 
+describe("rollback.sh when current is missing", () => {
+  beforeAll(() => {
+    setupInstalledSandbox();
+  });
+
+  afterAll(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("still restores previous", () => {
+    NodeFS.rmSync(NodePath.join(root(), "current"));
+    const result = run("rollback.sh");
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(`rolled back to ${v1}`);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+    expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
+  });
+
+  it("names only the restored version when its health check fails", () => {
+    setupInstalledSandbox();
+    NodeFS.rmSync(NodePath.join(root(), "current"));
+    const result = runWith({ LAUNCHCTL_HEALTHY: "" }, "rollback.sh");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rollback to ${v1} failed its health check`);
+  });
+});
+
 describe("install.sh and rollback.sh when the job never unloads", () => {
   const stuck = { LAUNCHCTL_BOOTOUT_DRAIN: "1000", T3FAC_UNLOAD_WAIT: "1" };
 
@@ -403,6 +438,49 @@ describe("install.sh and rollback.sh health check", () => {
     expect(link("current")).toBe(`versions/${v1}`);
     expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
     expect(bootstraps(result.calls)).toHaveLength(2);
+  });
+
+  it("keeps an install whose server logs that it started only after the first check", () => {
+    installV1();
+    const result = runWith(
+      { LAUNCHCTL_HEALTHY_DELAY: "1", T3FAC_HEALTH_WAIT: "3" },
+      "install.sh",
+      archives[v2]!,
+    );
+    expect(result.status).toBe(0);
+    expect(link("current")).toBe(`versions/${v2}`);
+    expect(bootstraps(result.calls)).toHaveLength(1);
+  });
+
+  it("keeps an install whose port accepts connections only after the first check", async () => {
+    installV1();
+    const late = NodeNet.createServer((socket) => socket.destroy());
+    await new Promise<void>((resolve) => late.listen(0, "127.0.0.1", resolve));
+    const port = (late.address() as NodeNet.AddressInfo).port;
+    await new Promise<void>((resolve) => late.close(() => resolve()));
+    NodeFS.writeFileSync(launchctlLog, "");
+    const child = NodeChildProcess.spawn(
+      "bash",
+      [NodePath.join(scripts, "install.sh"), archives[v2]!],
+      {
+        env: scriptEnv({ T3FAC_PORT: String(port), T3FAC_HEALTH_WAIT: "5" }),
+        stdio: "ignore",
+      },
+    );
+    const exited = new Promise<number | null>((resolve) => child.on("exit", resolve));
+    // Open the port a poll after the bootstrap, so the first check finds it closed and only a
+    // later one can pass.
+    while (!NodeFS.readFileSync(launchctlLog, "utf8").includes("bootstrap")) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await new Promise<void>((resolve) => late.listen(port, "127.0.0.1", resolve));
+    try {
+      expect(await exited).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => late.close(() => resolve()));
+    }
+    expect(link("current")).toBe(`versions/${v2}`);
   });
 
   it("keeps an install whose server logs that it has no factory config", () => {

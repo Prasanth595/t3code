@@ -6,8 +6,8 @@ label=io.github.rawphp.t3fac
 template="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../launchd" && pwd)/$label.plist"
 plist="$HOME/Library/LaunchAgents/$label.plist"
 log="$HOME/Library/Logs/t3fac/t3fac.log"
-# The port the plist serves on. T3FAC_PORT exists only so tests can point the health check at
-# a stub listener; the plist still says 3876.
+# The log and port the plist template writes to and serves on; change them together. T3FAC_PORT
+# exists only so tests can point the health check at a stub listener; the plist still says 3876.
 port=${T3FAC_PORT:-3876}
 
 # Waits for launchd to report the job unloaded, up to T3FAC_UNLOAD_WAIT seconds (10).

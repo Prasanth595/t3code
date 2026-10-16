@@ -11,7 +11,8 @@ if [[ ! -L $root/previous || ! -e $root/previous ]]; then
 fi
 
 target=$(readlink "$root/previous")
-from=$(readlink "$root/current")
+# `current` can be missing after a hand repair; the rollback still restores `previous`.
+from=$(readlink "$root/current" || true)
 ln -sfn "$target" "$root/current"
 
 restart_job
@@ -20,7 +21,7 @@ restart_job
 rm -f "$root/previous"
 
 if ! wait_healthy "${target#versions/}"; then
-  echo "rollback to ${target#versions/} from ${from#versions/} failed its health check" >&2
+  echo "rollback to ${target#versions/}${from:+ from ${from#versions/}} failed its health check" >&2
   exit 1
 fi
 
