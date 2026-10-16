@@ -13,6 +13,8 @@ import {
   type DockerContainerInspection,
   type DockerContainerProcessRequest,
   type DockerContainerManagedSessionRequest,
+  type DockerVolumeCreateOptions,
+  type DockerVolumeInspection,
 } from "../src/docker.ts";
 import type { EnvironmentManagedProcessSession } from "../src/index.ts";
 
@@ -54,10 +56,13 @@ afterEach(async () => {
 
 class FakeDockerClient implements DockerClient {
   readonly containers = new Map<string, DockerContainerInspection>();
+  readonly volumes = new Map<string, DockerVolumeInspection>();
   readonly createCalls: DockerContainerCreateOptions[] = [];
   readonly startCalls: string[] = [];
   readonly stopCalls: string[] = [];
   readonly removeCalls: string[] = [];
+  readonly createVolumeCalls: DockerVolumeCreateOptions[] = [];
+  readonly removeVolumeCalls: string[] = [];
   readonly processCalls: Array<{ id: string; request: DockerContainerProcessRequest }> = [];
   readonly managedSessionCalls: Array<{ id: string; request: DockerContainerManagedSessionRequest }> = [];
   readonly imageBuildCalls: Array<{ contextPath: string; dockerfilePath: string; image: string }> = [];
@@ -72,7 +77,7 @@ class FakeDockerClient implements DockerClient {
 
   async createContainer(options: DockerContainerCreateOptions) {
     this.createCalls.push(options);
-    const id = `docker-${options.name}`;
+    const id = `docker-${options.name}-${this.createCalls.length}`;
     const inspection: DockerContainerInspection = {
       id,
       name: options.name,
@@ -119,6 +124,22 @@ class FakeDockerClient implements DockerClient {
     for (const [name, container] of this.containers) if (container.id === id) this.containers.delete(name);
   }
 
+  async inspectVolume(name: string) {
+    return this.volumes.get(name) ?? null;
+  }
+
+  async createVolume(options: DockerVolumeCreateOptions) {
+    this.createVolumeCalls.push(options);
+    const volume = { name: options.name, driver: options.driver, labels: options.labels } satisfies DockerVolumeInspection;
+    this.volumes.set(options.name, volume);
+    return volume;
+  }
+
+  async removeVolume(name: string) {
+    this.removeVolumeCalls.push(name);
+    this.volumes.delete(name);
+  }
+
   async executeContainer(id: string, request: DockerContainerProcessRequest) {
     this.processCalls.push({ id, request });
     await request.onOutput?.({ stream: "stdout", data: new TextEncoder().encode("hello") });
@@ -140,6 +161,21 @@ class FakeDockerClient implements DockerClient {
       if (container.id === id) this.containers.set(name, { ...container, ...patch });
     }
   }
+}
+
+function setLegacyContainerState(client: FakeDockerClient): string {
+  const [name, current] = [...client.containers.entries()][0]!;
+  const legacy: DockerContainerInspection = {
+    ...current,
+    config: {
+      ...current.config,
+      mounts: current.config.mounts.filter((mount) => mount.type === "bind"),
+      environment: { HOME: "/tmp/home", TMPDIR: "/tmp" },
+    },
+  };
+  client.containers.set(name, legacy);
+  client.volumes.clear();
+  return legacy.id;
 }
 
 describe("Docker environment backend", () => {
@@ -234,12 +270,15 @@ describe("Docker environment backend", () => {
     const options = client.createCalls[0]!;
 
     expect(created.status).toBe("ready");
-    expect(options.mounts).toEqual([{
-      type: "bind",
-      source: await realpath(path.join(config.hostStorageRoot, "repo", "worktree-a")),
-      target: "/workspaces/repo/worktree-a",
-      readOnly: false,
-    }]);
+    expect(options.mounts).toEqual([
+      {
+        type: "bind",
+        source: await realpath(path.join(config.hostStorageRoot, "repo", "worktree-a")),
+        target: "/workspaces/repo/worktree-a",
+        readOnly: false,
+      },
+      { type: "volume", source: `${options.name}-data`, target: "/var/lib/subpolar", readOnly: false },
+    ]);
     expect(options).toMatchObject({
       user: "1000:1000",
       privileged: false,
@@ -252,7 +291,9 @@ describe("Docker environment backend", () => {
       pidsLimit: 256,
     });
     expect(JSON.stringify(options)).not.toContain("docker.sock");
-    expect(options.mounts).toHaveLength(1);
+    expect(options.environment).toMatchObject({ SUBPOLAR_RUNTIME_DATA_DIR: "/var/lib/subpolar" });
+    expect(options.mounts).toHaveLength(2);
+    expect(client.createVolumeCalls).toHaveLength(1);
   });
 
   test("discovers a JSONC image configuration while keeping manager isolation defaults", async () => {
@@ -271,7 +312,10 @@ describe("Docker environment backend", () => {
       image: "registry.example/project@sha256:abcdef",
       privileged: false,
       networkMode: "none",
-      mounts: [{ source: await realpath(path.join(config.hostStorageRoot, "repo", "worktree-a")) }],
+      mounts: [
+        { source: await realpath(path.join(config.hostStorageRoot, "repo", "worktree-a")) },
+        { type: "volume", target: "/var/lib/subpolar", readOnly: false },
+      ],
     });
   });
 
@@ -445,7 +489,87 @@ describe("Docker environment backend", () => {
         target: await realpath(gatewayCommonDir),
         readOnly: false,
       },
+      { type: "volume", source: `${client.createCalls[0]!.name}-data`, target: "/var/lib/subpolar", readOnly: false },
     ]);
+  });
+
+  test("preserves the private runtime volume through rebuild and deletes it only on explicit removal", async () => {
+    const { manager, request, client } = await fixture();
+    const created = await manager.ensure(request);
+    const volumeName = client.createCalls[0]!.mounts.at(-1)!.source;
+    expect(client.volumes.has(volumeName)).toBe(true);
+
+    await manager.rebuild!(request);
+    expect(client.removeVolumeCalls).toEqual([]);
+    expect(client.volumes.has(volumeName)).toBe(true);
+    expect(client.createVolumeCalls).toHaveLength(1);
+
+    await manager.remove(request);
+    expect(client.removeVolumeCalls).toEqual([volumeName]);
+    expect(client.volumes.has(volumeName)).toBe(false);
+  });
+
+  test("does not adopt or delete a data volume with mismatched ownership labels", async () => {
+    const { backend, identity, client } = await fixture();
+    const name = `subpolar-${identity.id}-data`;
+    client.volumes.set(name, { name, driver: "local", labels: { "io.subpolar.environment-manager": "subpolar" } });
+
+    await expect(backend.create(identity)).rejects.toMatchObject({ code: "DOCKER_IDENTITY_MISMATCH" });
+    await expect(backend.removePersistentData!(identity)).rejects.toMatchObject({ code: "DOCKER_IDENTITY_MISMATCH" });
+    expect(client.createCalls).toEqual([]);
+    expect(client.removeVolumeCalls).toEqual([]);
+  });
+
+  test("keeps exact legacy containers out of normal inspection but supports stop and removal", async () => {
+    const { manager, backend, identity, request, client } = await fixture();
+    await manager.ensure(request);
+    const legacyId = setLegacyContainerState(client);
+
+    await expect(backend.inspect(identity)).resolves.toBeNull();
+    await expect(backend.inspectForLifecycle!(identity)).resolves.toMatchObject({ compatibility: "legacy", environment: { resourceId: legacyId } });
+    const stopped = await manager.stop(request);
+    expect(stopped).toMatchObject({ resourceId: legacyId, status: "stopped" });
+    expect(client.stopCalls).toContain(legacyId);
+    await manager.remove(request);
+    expect(client.removeCalls).toContain(legacyId);
+  });
+
+  test("migrates an exact legacy container during ensure and rebuild", async () => {
+    const first = await fixture();
+    await first.manager.ensure(first.request);
+    const legacyId = setLegacyContainerState(first.client);
+    const migrated = await first.manager.ensure(first.request);
+    expect(migrated.resourceId).not.toBe(legacyId);
+    expect(first.client.removeCalls).toContain(legacyId);
+    expect(first.client.createCalls.at(-1)?.mounts.at(-1)).toMatchObject({ type: "volume", target: "/var/lib/subpolar" });
+
+    const second = await fixture();
+    await second.manager.ensure(second.request);
+    const secondLegacyId = setLegacyContainerState(second.client);
+    const rebuilt = await second.manager.rebuild!(second.request);
+    expect(rebuilt.resourceId).not.toBe(secondLegacyId);
+    expect(second.client.removeCalls).toContain(secondLegacyId);
+    expect(second.client.createCalls.at(-1)?.mounts.at(-1)).toMatchObject({ type: "volume", target: "/var/lib/subpolar" });
+  });
+
+  test("does not recreate a missing runtime volume during inspection and can explicitly rebuild or remove", async () => {
+    const { backend, manager, identity, request, client } = await fixture();
+    await manager.ensure(request);
+    const volumeName = client.createCalls[0]!.mounts.at(-1)!.source;
+    client.volumes.delete(volumeName);
+
+    await expect(backend.inspect(identity)).rejects.toMatchObject({ code: "DOCKER_CONFIGURATION_MISMATCH" });
+    await expect(backend.inspectForLifecycle!(identity)).resolves.toMatchObject({ compatibility: "missing-runtime-data" });
+    expect(client.createVolumeCalls).toHaveLength(1);
+
+    const rebuilt = await manager.rebuild!(request);
+    expect(rebuilt.status).toBe("ready");
+    expect(client.createVolumeCalls).toHaveLength(2);
+
+    client.volumes.delete(volumeName);
+    await manager.remove(request);
+    expect(client.volumes.has(volumeName)).toBe(false);
+    expect(client.createVolumeCalls).toHaveLength(2);
   });
 
   test("revalidates daemon-host paths and rejects symlink escapes", async () => {

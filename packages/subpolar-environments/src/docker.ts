@@ -76,6 +76,27 @@ export interface DockerBindMount {
   readonly readOnly: false;
 }
 
+export interface DockerVolumeMount {
+  readonly type: "volume";
+  readonly source: string;
+  readonly target: string;
+  readonly readOnly: false;
+}
+
+export type DockerMount = DockerBindMount | DockerVolumeMount;
+
+export interface DockerVolumeInspection {
+  readonly name: string;
+  readonly driver: string;
+  readonly labels: Readonly<Record<string, string | undefined>>;
+}
+
+export interface DockerVolumeCreateOptions {
+  readonly name: string;
+  readonly driver: "local";
+  readonly labels: Readonly<Record<string, string>>;
+}
+
 export interface DockerContainerCreateOptions {
   readonly name: string;
   readonly image: string;
@@ -89,7 +110,7 @@ export interface DockerContainerCreateOptions {
   readonly memoryBytes: number;
   readonly nanoCpus: number;
   readonly pidsLimit: number;
-  readonly mounts: readonly DockerBindMount[];
+  readonly mounts: readonly DockerMount[];
   readonly tmpfs: Readonly<Record<string, string>>;
   readonly environment: Readonly<Record<string, string>>;
 }
@@ -143,7 +164,7 @@ export interface DockerContainerInspection {
     readonly memoryBytes: number;
     readonly nanoCpus: number;
     readonly pidsLimit: number;
-    readonly mounts: readonly DockerBindMount[];
+    readonly mounts: readonly DockerMount[];
     readonly tmpfs: Readonly<Record<string, string>>;
     readonly environment: Readonly<Record<string, string>>;
   };
@@ -160,6 +181,9 @@ export interface DockerClient {
   startContainer(id: string): Promise<void>;
   stopContainer(id: string, options: { readonly timeoutSeconds: 10 }): Promise<void>;
   removeContainer(id: string, options: { readonly force: false; readonly removeVolumes: false }): Promise<void>;
+  inspectVolume(name: string): Promise<DockerVolumeInspection | null>;
+  createVolume(options: DockerVolumeCreateOptions): Promise<DockerVolumeInspection>;
+  removeVolume(name: string): Promise<void>;
   /** Must preserve argv boundaries, stream both output channels, and terminate the owned process on abort. */
   executeContainer?(id: string, request: DockerContainerProcessRequest): Promise<EnvironmentProcessResult>;
   startInteractiveContainer?(id: string, request: DockerContainerInteractiveRequest): Promise<EnvironmentInteractiveSession>;
@@ -178,7 +202,8 @@ const TMPFS = Object.freeze({
   "/tmp": "rw,nosuid,nodev,size=64m",
   "/run": "rw,nosuid,nodev,size=16m",
 });
-const ENVIRONMENT = Object.freeze({ HOME: "/tmp/home", TMPDIR: "/tmp" });
+const LEGACY_ENVIRONMENT = Object.freeze({ HOME: "/tmp/home", TMPDIR: "/tmp" });
+const ENVIRONMENT = Object.freeze({ ...LEGACY_ENVIRONMENT, SUBPOLAR_RUNTIME_DATA_DIR: "/var/lib/subpolar" });
 
 interface ResolvedDevContainerConfiguration {
   readonly image: string;
@@ -408,6 +433,10 @@ function containerName(environmentId: string): string {
   return `subpolar-${environmentId.replace(/[^a-zA-Z0-9_.-]/g, "-")}`;
 }
 
+function dataVolumeName(environmentId: string): string {
+  return `${containerName(environmentId)}-data`;
+}
+
 function containerPath(root: string, relative: string): string {
   const resolved = path.posix.resolve(root, relative.split(path.sep).join(path.posix.sep));
   if (resolved !== root && !resolved.startsWith(`${root.replace(/\/$/, "")}/`)) {
@@ -614,12 +643,15 @@ export function createDockerEnvironmentBackend(
     capDrop: ["ALL"],
     securityOpt: ["no-new-privileges:true"],
     ...limits,
-    mounts: await resolveMounts(identity),
+    mounts: [
+      ...(await resolveMounts(identity)),
+      { type: "volume", source: dataVolumeName(identity.id), target: "/var/lib/subpolar", readOnly: false },
+    ],
     tmpfs: TMPFS,
     environment: ENVIRONMENT,
   });
 
-  const recordFor = (identity: EnvironmentIdentity, inspection: DockerContainerInspection, mounts: readonly DockerBindMount[], image: string): ManagedEnvironment => {
+  const recordFor = (identity: EnvironmentIdentity, inspection: DockerContainerInspection, mounts: readonly DockerMount[], image: string): ManagedEnvironment => {
     const expectedLabels = labelsFor(identity);
     if (inspection.name !== containerName(identity.id) || LABELS.some((label) => inspection.labels[label] !== expectedLabels[label])) {
       throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container identity or owner labels do not match the requested environment");
@@ -634,7 +666,7 @@ export function createDockerEnvironmentBackend(
       observed.memoryBytes === limits.memoryBytes && observed.nanoCpus === limits.nanoCpus && observed.pidsLimit === limits.pidsLimit &&
       observedMounts.length === mounts.length && mounts.every((mount, index) => {
         const observedMount = observedMounts[index];
-        return observedMount?.type === "bind" && observedMount.source === mount.source &&
+        return observedMount?.type === mount.type && observedMount.source === mount.source &&
           observedMount.target === mount.target && observedMount.readOnly === false;
       }) &&
       sameRecord(observed.tmpfs, TMPFS) && sameRecord(observed.environment, ENVIRONMENT) && inspection.id.length > 0;
@@ -644,11 +676,105 @@ export function createDockerEnvironmentBackend(
     return { ...identity, backendId, resourceId: inspection.id, status: status(inspection.state) };
   };
 
+  const legacyRecordFor = (
+    identity: EnvironmentIdentity,
+    inspection: DockerContainerInspection,
+    mounts: readonly DockerBindMount[],
+    image: string,
+  ): ManagedEnvironment | null => {
+    const expectedLabels = labelsFor(identity);
+    const actualLabels = Object.fromEntries(Object.entries(inspection.labels).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+    if (inspection.name !== containerName(identity.id) || !sameRecord(actualLabels, expectedLabels)) return null;
+    const observed = inspection.config;
+    const safeLegacyConfiguration =
+      observed.image === image && observed.user === "1000:1000" && observed.privileged === false &&
+      observed.readOnlyRootfs === true && observed.networkMode === "none" &&
+      observed.capDrop.length === 1 && observed.capDrop[0] === "ALL" &&
+      observed.securityOpt.length === 1 && observed.securityOpt[0] === "no-new-privileges:true" &&
+      observed.memoryBytes === limits.memoryBytes && observed.nanoCpus === limits.nanoCpus && observed.pidsLimit === limits.pidsLimit &&
+      observed.mounts.length === mounts.length && mounts.every((mount, index) => {
+        const observedMount = observed.mounts[index];
+        return observedMount?.type === "bind" && observedMount.source === mount.source &&
+          observedMount.target === mount.target && observedMount.readOnly === false;
+      }) && sameRecord(observed.tmpfs, TMPFS) && sameRecord(observed.environment, LEGACY_ENVIRONMENT) && inspection.id.length > 0;
+    return safeLegacyConfiguration
+      ? { ...identity, backendId, resourceId: inspection.id, status: status(inspection.state) }
+      : null;
+  };
+
   const inspectVerified = async (identity: EnvironmentIdentity): Promise<{ record: ManagedEnvironment; inspection: DockerContainerInspection } | null> => {
+    const lifecycle = await inspectLifecycleVerified(identity);
+    if (!lifecycle || lifecycle.compatibility === "legacy") return null;
+    if (lifecycle.compatibility === "missing-runtime-data") {
+      throw new DockerEnvironmentError("DOCKER_CONFIGURATION_MISMATCH", "Docker runtime data volume is missing from an existing environment");
+    }
+    return lifecycle;
+  };
+
+  const inspectLegacyVerified = async (identity: EnvironmentIdentity): Promise<{ record: ManagedEnvironment; inspection: DockerContainerInspection } | null> => {
     const [mounts, resolved] = await Promise.all([resolveMounts(identity), resolveDevContainerConfiguration(identity, config)]);
     const inspection = await client.inspectContainer(containerName(identity.id));
     if (!inspection) return null;
-    return { record: recordFor(identity, inspection, mounts, resolved.image), inspection };
+    const record = legacyRecordFor(identity, inspection, mounts, resolved.image);
+    return record ? { record, inspection } : null;
+  };
+
+  const inspectLifecycleVerified = async (identity: EnvironmentIdentity) => {
+    const [bindMounts, resolved] = await Promise.all([resolveMounts(identity), resolveDevContainerConfiguration(identity, config)]);
+    const inspection = await client.inspectContainer(containerName(identity.id));
+    if (!inspection) return null;
+    const mounts: DockerMount[] = [...bindMounts, { type: "volume", source: dataVolumeName(identity.id), target: "/var/lib/subpolar", readOnly: false }];
+    let current: ManagedEnvironment;
+    try {
+      current = recordFor(identity, inspection, mounts, resolved.image);
+    } catch (cause) {
+      const legacy = legacyRecordFor(identity, inspection, bindMounts, resolved.image);
+      if (legacy) return { record: legacy, inspection, compatibility: "legacy" as const };
+      throw cause;
+    }
+    const volume = await client.inspectVolume(dataVolumeName(identity.id));
+    if (!volume) return { record: current, inspection, compatibility: "missing-runtime-data" as const };
+    verifyDataVolume(identity, volume);
+    return { record: current, inspection, compatibility: "current" as const };
+  };
+
+  const volumeLabelsFor = (identity: EnvironmentIdentity): Readonly<Record<string, string>> => ({
+    ...labelsFor(identity),
+    "io.subpolar.volume-purpose": "runtime-data",
+  });
+
+  const verifyDataVolume = (identity: EnvironmentIdentity, volume: DockerVolumeInspection): void => {
+    const expected = volumeLabelsFor(identity);
+    if (volume.name !== dataVolumeName(identity.id) || volume.driver !== "local" ||
+        Object.entries(expected).some(([key, value]) => volume.labels[key] !== value)) {
+      throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker data volume identity or owner labels do not match the requested environment");
+    }
+  };
+
+  const ensureDataVolume = async (identity: EnvironmentIdentity): Promise<void> => {
+    const name = dataVolumeName(identity.id);
+    const existing = await client.inspectVolume(name);
+    if (existing) {
+      verifyDataVolume(identity, existing);
+      return;
+    }
+    try {
+      const created = await client.createVolume({ name, driver: "local", labels: volumeLabelsFor(identity) });
+      verifyDataVolume(identity, created);
+    } catch (cause) {
+      // Docker's volume create is idempotent by name. If another manager won
+      // the race, adopt only after validating its full ownership metadata.
+      const raced = await client.inspectVolume(name);
+      if (raced) {
+        verifyDataVolume(identity, raced);
+        return;
+      }
+      throw cause;
+    }
+  };
+
+  const inspectLifecycle = async (identity: EnvironmentIdentity) => {
+    return inspectLifecycleVerified(identity);
   };
 
   return {
@@ -656,9 +782,28 @@ export function createDockerEnvironmentBackend(
     async inspect(identity) {
       return (await inspectVerified(identity))?.record ?? null;
     },
+    async inspectForLifecycle(identity) {
+      const found = await inspectLifecycleVerified(identity);
+      return found ? { environment: found.record, compatibility: found.compatibility } : null;
+    },
     async create(identity) {
       const existing = await inspectVerified(identity);
       if (existing) return existing.record;
+      const legacy = await inspectLegacyVerified(identity);
+      if (legacy) {
+        if (legacy.record.status !== "stopped") {
+          await client.stopContainer(legacy.inspection.id, { timeoutSeconds: 10 });
+          const stopped = await inspectLegacyVerified(identity);
+          if (!stopped || stopped.record.resourceId !== legacy.record.resourceId || stopped.record.status !== "stopped") {
+            throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Legacy Docker container could not be verified stopped before migration");
+          }
+        }
+        const stopped = await inspectLegacyVerified(identity);
+        if (!stopped || stopped.record.resourceId !== legacy.record.resourceId || stopped.record.status !== "stopped") {
+          throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Legacy Docker container changed identity before migration");
+        }
+        await client.removeContainer(stopped.inspection.id, { force: false, removeVolumes: false });
+      }
       const resolved = await resolveDevContainerConfiguration(identity, config);
       if (resolved.build) {
         if (!client.buildImage) {
@@ -670,6 +815,7 @@ export function createDockerEnvironmentBackend(
           throw new DockerEnvironmentError("DEV_CONTAINER_BUILD_FAILED", "Dev Container Dockerfile build failed", { cause });
         }
       }
+      await ensureDataVolume(identity);
       const options = await createOptions(identity, resolved);
       let createdId: string;
       try {
@@ -700,30 +846,36 @@ export function createDockerEnvironmentBackend(
       return started.record;
     },
     async stop(environment) {
-      const current = await inspectVerified(environment);
+      const current = await inspectLifecycle(environment);
       if (!current || current.record.resourceId !== environment.resourceId) {
         throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container disappeared or changed identity before stop");
       }
       if (current.record.status !== "stopped") await client.stopContainer(current.inspection.id, { timeoutSeconds: 10 });
-      const stopped = await inspectVerified(environment);
+      const stopped = await inspectLifecycle(environment);
       if (!stopped || stopped.record.resourceId !== environment.resourceId || stopped.record.status !== "stopped") {
         throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container did not reach the verified stopped state");
       }
       return stopped.record;
     },
     async remove(environment) {
-      const current = await inspectVerified(environment);
+      const current = await inspectLifecycle(environment);
       if (!current || current.record.resourceId !== environment.resourceId) {
         throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container disappeared or changed identity before removal");
       }
       if (current.record.status !== "stopped") {
         await client.stopContainer(current.inspection.id, { timeoutSeconds: 10 });
-        const afterStop = await inspectVerified(environment);
+        const afterStop = await inspectLifecycle(environment);
         if (!afterStop || afterStop.record.resourceId !== environment.resourceId || afterStop.record.status !== "stopped") {
           throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container could not be verified stopped before removal");
         }
       }
       await client.removeContainer(current.inspection.id, { force: false, removeVolumes: false });
+    },
+    async removePersistentData(identity) {
+      const volume = await client.inspectVolume(dataVolumeName(identity.id));
+      if (!volume) return;
+      verifyDataVolume(identity, volume);
+      await client.removeVolume(volume.name);
     },
     async execute(environment, command, request) {
       if (!client.executeContainer) {

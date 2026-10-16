@@ -36,9 +36,12 @@ const createOptions: DockerContainerCreateOptions = {
   memoryBytes: 512 * 1024 * 1024,
   nanoCpus: 500_000_000,
   pidsLimit: 100,
-  mounts: [{ type: "bind", source: "/host/worktree", target: "/workspaces/repo", readOnly: false }],
+  mounts: [
+    { type: "bind", source: "/host/worktree", target: "/workspaces/repo", readOnly: false },
+    { type: "volume", source: "subpolar-env_123-data", target: "/var/lib/subpolar", readOnly: false },
+  ],
   tmpfs: { "/tmp": "rw,nosuid,nodev,size=64m" },
-  environment: { HOME: "/tmp/home" },
+  environment: { HOME: "/tmp/home", SUBPOLAR_RUNTIME_DATA_DIR: "/var/lib/subpolar" },
 };
 
 test("maps safe lifecycle operations to the Docker Engine API", async () => {
@@ -55,7 +58,10 @@ test("maps safe lifecycle operations to the Docker Engine API", async () => {
         SecurityOpt: ["no-new-privileges:true"], Memory: 512 * 1024 * 1024, NanoCpus: 500_000_000,
         PidsLimit: 100, Tmpfs: { "/tmp": "rw,nosuid,nodev,size=64m" },
       },
-      Mounts: [{ Type: "bind", Source: "/host/worktree", Destination: "/workspaces/repo", RW: true }],
+      Mounts: [
+        { Type: "bind", Source: "/host/worktree", Destination: "/workspaces/repo", RW: true },
+        { Type: "volume", Name: "subpolar-env_123-data", Source: "/var/lib/docker/volumes/subpolar-env_123-data/_data", Destination: "/var/lib/subpolar", RW: true },
+      ],
     } };
     if (request.url?.includes("/containers/create")) return { status: 201, body: { Id: "container-1" } };
     return { status: 204 };
@@ -66,7 +72,10 @@ test("maps safe lifecycle operations to the Docker Engine API", async () => {
     id: "container-1",
     name: "subpolar-env_123",
     state: "running",
-    config: { image: createOptions.image, networkMode: "none", mounts: [{ source: "/host/worktree", target: "/workspaces/repo", readOnly: false }] },
+    config: { image: createOptions.image, networkMode: "none", mounts: [
+      { type: "bind", source: "/host/worktree", target: "/workspaces/repo", readOnly: false },
+      { type: "volume", source: "subpolar-env_123-data", target: "/var/lib/subpolar", readOnly: false },
+    ] },
   });
   await expect(client.createContainer(createOptions)).resolves.toEqual({ id: "container-1" });
   await client.startContainer("container-1");
@@ -87,7 +96,44 @@ test("maps safe lifecycle operations to the Docker Engine API", async () => {
     NetworkMode: "none",
     CapDrop: ["ALL"],
     PidsLimit: 100,
-    Mounts: [{ Type: "bind", Source: "/host/worktree", Target: "/workspaces/repo", ReadOnly: false }],
+    Mounts: [
+      { Type: "bind", Source: "/host/worktree", Target: "/workspaces/repo", ReadOnly: false },
+      { Type: "volume", Source: "subpolar-env_123-data", Target: "/var/lib/subpolar", ReadOnly: false },
+    ],
+  });
+});
+
+test("manages named runtime data volumes through the Docker Engine API", async () => {
+  const requests: Array<{ method: string; url: string; body: string }> = [];
+  const volume = {
+    Name: "subpolar-env_123-data",
+    Driver: "local",
+    Labels: { "io.subpolar.environment-id": "env_123" },
+  };
+  const client = engineFixture((request) => {
+    requests.push(request);
+    if (request.method === "GET") return { status: 200, body: volume };
+    if (request.method === "POST") return { status: 201, body: volume };
+    return { status: 204 };
+  });
+
+  await expect(client.inspectVolume("subpolar-env_123-data")).resolves.toEqual({
+    name: "subpolar-env_123-data", driver: "local", labels: { "io.subpolar.environment-id": "env_123" },
+  });
+  await expect(client.createVolume({
+    name: "subpolar-env_123-data", driver: "local", labels: { "io.subpolar.environment-id": "env_123" },
+  })).resolves.toEqual({
+    name: "subpolar-env_123-data", driver: "local", labels: { "io.subpolar.environment-id": "env_123" },
+  });
+  await client.removeVolume("subpolar-env_123-data");
+
+  expect(requests.map(({ method, url }) => [method, url])).toEqual([
+    ["GET", "/v1.41/volumes/subpolar-env_123-data"],
+    ["POST", "/v1.41/volumes/create"],
+    ["DELETE", "/v1.41/volumes/subpolar-env_123-data"],
+  ]);
+  expect(JSON.parse(requests[1]!.body)).toEqual({
+    Name: "subpolar-env_123-data", Driver: "local", Labels: { "io.subpolar.environment-id": "env_123" },
   });
 });
 

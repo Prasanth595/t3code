@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
-import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest, DockerContainerManagedSessionRequest, DockerImageBuildRequest } from "./docker.ts";
+import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest, DockerContainerManagedSessionRequest, DockerImageBuildRequest, DockerVolumeCreateOptions, DockerVolumeInspection } from "./docker.ts";
 import type { EnvironmentInteractiveSession, EnvironmentManagedProcessSession, EnvironmentProcessOutput, EnvironmentProcessResult } from "./index.ts";
 
 export interface DockerEngineClientOptions {
@@ -137,9 +137,10 @@ function normalizeInspection(value: unknown): DockerContainerInspection {
   const state = record(container.State);
   const mounts = Array.isArray(container.Mounts) ? container.Mounts.map((mountValue) => {
     const mount = record(mountValue);
+    const type = text(mount.Type);
     return {
-      type: text(mount.Type),
-      source: text(mount.Source),
+      type: type as "bind" | "volume",
+      source: type === "volume" ? text(mount.Name) : text(mount.Source),
       target: text(mount.Destination),
       readOnly: !boolean(mount.RW),
     };
@@ -165,6 +166,19 @@ function normalizeInspection(value: unknown): DockerContainerInspection {
       environment: envRecord(config.Env),
     },
   };
+}
+
+function normalizeVolumeInspection(value: unknown): DockerVolumeInspection {
+  const volume = record(value);
+  return {
+    name: text(volume.Name),
+    driver: text(volume.Driver),
+    labels: stringRecord(volume.Labels),
+  };
+}
+
+function createVolumePayload(options: DockerVolumeCreateOptions): Record<string, unknown> {
+  return { Name: options.name, Driver: options.driver, Labels: options.labels };
 }
 
 function createPayload(options: DockerContainerCreateOptions): Record<string, unknown> {
@@ -629,6 +643,7 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
     }
   };
   const idPath = (id: string): string => `/containers/${encodeURIComponent(id)}`;
+  const volumePath = (name: string): string => `/volumes/${encodeURIComponent(name)}`;
 
   return {
     async inspectContainer(name) {
@@ -662,6 +677,22 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
     },
     async removeContainer(id, removeOptions) {
       await request("DELETE", `${idPath(id)}?force=${removeOptions.force}&v=${removeOptions.removeVolumes}`, undefined, [204]);
+    },
+    async inspectVolume(name) {
+      try {
+        const response = await request("GET", volumePath(name));
+        return normalizeVolumeInspection(decodeJson(response.body));
+      } catch (error) {
+        if (error instanceof DockerEngineClientError && error.statusCode === 404) return null;
+        throw error;
+      }
+    },
+    async createVolume(createOptions) {
+      const response = await request("POST", "/volumes/create", createVolumePayload(createOptions), [201]);
+      return normalizeVolumeInspection(decodeJson(response.body));
+    },
+    async removeVolume(name) {
+      await request("DELETE", volumePath(name), undefined, [204]);
     },
     async executeContainer(id, processRequest) {
       return processRunner(id, processRequest);

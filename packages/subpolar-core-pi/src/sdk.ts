@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 
 import { PiRuntimeError, type PiExecutorFactory, type PiExecutionRequest } from "./index.ts";
 
@@ -54,7 +55,8 @@ export function createPiSdkExecutorFactory(load: () => Promise<PiSdkModule> = lo
     if (!request) throw new PiRuntimeError("Pi execution request is required");
     const sdk = await load();
     const cwd = request.context.cwd ?? config?.cwd ?? process.cwd();
-    const agentDir = config?.agentDir ?? sdk.getAgentDir();
+    const runtimeDataDir = process.env.SUBPOLAR_RUNTIME_DATA_DIR;
+    const agentDir = config?.agentDir ?? (runtimeDataDir ? path.join(runtimeDataDir, "pi-agent") : sdk.getAgentDir());
     const manager = sdk.SessionManager.inMemory(cwd);
     for (const entry of request.transcript.entries) {
       // Canonical text history is projected as user/custom context, not fabricated

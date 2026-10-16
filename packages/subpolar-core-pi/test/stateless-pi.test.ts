@@ -70,6 +70,48 @@ test("SDK execution aborts, unsubscribes, and disposes without loading tools or 
   expect(disposed).toBe(1);
 });
 
+test("uses the environment runtime data directory for Pi agent files", async () => {
+  const previous = process.env.SUBPOLAR_RUNTIME_DATA_DIR;
+  process.env.SUBPOLAR_RUNTIME_DATA_DIR = "/var/lib/subpolar";
+  let loaderOptions: Record<string, unknown> | undefined;
+  const sdk: PiSdkModule = {
+    getAgentDir: () => "/test/agent",
+    SessionManager: { inMemory: () => ({ appendMessage() {} }) },
+    SettingsManager: { inMemory: () => ({}) },
+    DefaultResourceLoader: class {
+      constructor(options: Record<string, unknown>) { loaderOptions = options; }
+      async reload() {}
+    },
+    async createAgentSession() {
+      return { session: {
+        subscribe: () => () => undefined,
+        async prompt() {},
+        async abort() {},
+        dispose() {},
+        messages: [{ role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop" }],
+      } };
+    },
+  };
+  const execution: PiExecutionRequest = {
+    runId: "run-persistent-dir",
+    requestId: "request-persistent-dir",
+    prompt: "hello",
+    context: { principal: { id: "owner", kind: "local" } },
+    transcript: { entries: [] },
+    emit: () => undefined,
+  };
+
+  try {
+    const executor = await createPiSdkExecutorFactory(async () => sdk)(undefined, execution);
+    await executor.execute(execution);
+    await executor.dispose?.();
+    expect(loaderOptions).toMatchObject({ agentDir: "/var/lib/subpolar/pi-agent" });
+  } finally {
+    if (previous === undefined) delete process.env.SUBPOLAR_RUNTIME_DATA_DIR;
+    else process.env.SUBPOLAR_RUNTIME_DATA_DIR = previous;
+  }
+});
+
 test("SDK exposes only policy-gateway tools and routes calls through the run invoker", async () => {
   const observedCalls: unknown[] = [];
   let optionsSeen: Record<string, unknown> | undefined;

@@ -21,4 +21,4 @@ subpolar environments remove /workspaces/project/worktree [--json]
 subpolar environments reconcile [--json]
 ```
 
-`rebuild` replaces the environment container and starts a new one while leaving the worktree files in place. `remove` deletes the environment registration and container, not the T3 worktree. Exit code `2` means invalid command or configuration, `4` means the requested environment was not found, and `1` means the manager request failed or reconciliation reported failures.
+`rebuild` replaces the environment container and starts a new one while preserving the T3 worktree and the manager-owned runtime data volume. `remove` deletes the environment registration, container, and that private runtime data volume; it does not delete the T3 worktree. Pi's configuration files use the persistent volume, but conversation sessions remain in memory and do not resume after a worker restart. Exit code `2` means invalid command or configuration, `4` means the requested environment was not found, and `1` means the manager request failed or reconciliation reported failures.

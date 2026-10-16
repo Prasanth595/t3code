@@ -36,8 +36,8 @@ FROM node:24-bookworm-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates git openssh-client \
   && rm -rf /var/lib/apt/lists/* \
-  && mkdir -p /tmp/home /usr/local/lib/subpolar \
-  && chown 1000:1000 /tmp/home
+  && mkdir -p /tmp/home /var/lib/subpolar /usr/local/lib/subpolar \
+  && chown 1000:1000 /tmp/home /var/lib/subpolar
 
 COPY --from=bun-runtime /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=subpolar-runtime /workspace/node_modules /opt/subpolar/node_modules

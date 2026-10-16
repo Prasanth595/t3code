@@ -26,6 +26,11 @@ export interface ManagedEnvironment extends EnvironmentIdentity {
   readonly status: EnvironmentStatus;
 }
 
+export interface EnvironmentLifecycleInspection {
+  readonly environment: ManagedEnvironment;
+  readonly compatibility: "current" | "legacy" | "missing-runtime-data";
+}
+
 /**
  * Contract for a manager-owned backend. Implementations must treat `identity.id`
  * as an idempotency key and verify the complete identity before every operation.
@@ -34,10 +39,14 @@ export interface ManagedEnvironment extends EnvironmentIdentity {
 export interface EnvironmentBackend {
   readonly id: string;
   inspect(identity: EnvironmentIdentity): Promise<ManagedEnvironment | null>;
+  /** Inspect exact current/legacy container shapes for lifecycle-only cleanup or migration. */
+  inspectForLifecycle?(identity: EnvironmentIdentity): Promise<EnvironmentLifecycleInspection | null>;
   create(identity: EnvironmentIdentity): Promise<ManagedEnvironment>;
   start(environment: ManagedEnvironment): Promise<ManagedEnvironment>;
   stop(environment: ManagedEnvironment): Promise<ManagedEnvironment>;
   remove(environment: ManagedEnvironment): Promise<void>;
+  /** Remove environment-owned state that must survive container rebuilds. */
+  removePersistentData?(identity: EnvironmentIdentity): Promise<void>;
 }
 
 export interface EnvironmentProcessOutput {
@@ -331,6 +340,18 @@ export function createEnvironmentManager(
     return found === null ? null : validateRecord(expected, found);
   };
 
+  const inspectForLifecycle = async (expected: EnvironmentIdentity) => {
+    if (backend.inspectForLifecycle) {
+      const found = await backendCall("inspect environment for lifecycle", () => backend.inspectForLifecycle!(expected));
+      return found === null ? null : {
+        environment: validateRecord(expected, found.environment),
+        compatibility: found.compatibility,
+      };
+    }
+    const current = await inspect(expected);
+    return current === null ? null : { environment: current, compatibility: "current" as const };
+  };
+
   const terminateSessionsForEnvironment = async (environmentId: string) => {
     const owned = [...interactiveSessions.entries()].filter(([, entry]) => entry.identity.id === environmentId);
     await Promise.all(owned.map(async ([sessionId, entry]) => {
@@ -355,7 +376,16 @@ export function createEnvironmentManager(
   const ensure: EnvironmentManager["ensure"] = async (request) => {
     const expected = await identity(request);
     return withIdentityLock(expected.id, async () => {
-      let current = await inspect(expected);
+      const found = await inspectForLifecycle(expected);
+      let current = found?.environment ?? null;
+      if (found?.compatibility === "missing-runtime-data") {
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment runtime data volume is missing; use rebuild or remove to recover it");
+      }
+      if (found?.compatibility === "legacy") {
+        await terminateSessionsForEnvironment(expected.id);
+        await backendCall("remove legacy environment for migration", () => backend.remove(current!));
+        current = null;
+      }
       if (current === null) {
         current = validateRecord(expected, await backendCall("create", () => backend.create(expected)));
         await persist(current);
@@ -368,48 +398,70 @@ export function createEnvironmentManager(
   const start: EnvironmentManager["start"] = async (request) => {
     const expected = await identity(request);
     return withIdentityLock(expected.id, async () => {
-      const current = await inspect(expected);
-      if (current === null) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Environment has not been created");
-      if (current.status === "ready") return persist(current);
-      return persist(validateRecord(expected, await backendCall("start", () => backend.start(current))));
+      const found = await inspectForLifecycle(expected);
+      if (found === null) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Environment has not been created");
+      if (found.compatibility === "missing-runtime-data") {
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment runtime data volume is missing; use rebuild or remove to recover it");
+      }
+      if (found.compatibility === "legacy") {
+        await terminateSessionsForEnvironment(expected.id);
+        await backendCall("remove legacy environment for migration", () => backend.remove(found.environment));
+        const created = validateRecord(expected, await backendCall("create migrated environment", () => backend.create(expected)));
+        await persist(created);
+        return persist(validateRecord(expected, await backendCall("start migrated environment", () => backend.start(created))));
+      }
+      if (found.environment.status === "ready") return persist(found.environment);
+      return persist(validateRecord(expected, await backendCall("start", () => backend.start(found.environment))));
     });
   };
 
   const stop: EnvironmentManager["stop"] = async (request) => {
     const expected = await identity(request);
     return withIdentityLock(expected.id, async () => {
-      const current = await inspect(expected);
-      if (current === null) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Environment has not been created");
-      await terminateSessionsForEnvironment(current.id);
-      if (current.status === "stopped") return persist(current);
-      return persist(validateRecord(expected, await backendCall("stop", () => backend.stop(current))));
+      const found = await inspectForLifecycle(expected);
+      if (found === null) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Environment has not been created");
+      await terminateSessionsForEnvironment(found.environment.id);
+      if (found.environment.status === "stopped") return persist(found.environment);
+      return persist(validateRecord(expected, await backendCall("stop", () => backend.stop(found.environment))));
     });
   };
 
   const restart: NonNullable<EnvironmentManager["restart"]> = async (request) => {
     const expected = await identity(request);
     return withIdentityLock(expected.id, async () => {
-      let current = await inspect(expected);
-      if (current === null) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Environment has not been created");
-      await terminateSessionsForEnvironment(current.id);
-      if (current.status !== "stopped") {
-        current = await persist(validateRecord(expected, await backendCall("stop", () => backend.stop(current!))));
+      const found = await inspectForLifecycle(expected);
+      if (found === null) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Environment has not been created");
+      await terminateSessionsForEnvironment(found.environment.id);
+      if (found.compatibility === "missing-runtime-data") {
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment runtime data volume is missing; use rebuild or remove to recover it");
       }
-      return persist(validateRecord(expected, await backendCall("restart", () => backend.start(current!))));
+      if (found.compatibility === "legacy") {
+        await backendCall("remove legacy environment for restart", () => backend.remove(found.environment));
+        const created = validateRecord(expected, await backendCall("create migrated environment", () => backend.create(expected)));
+        await persist(created);
+        return persist(validateRecord(expected, await backendCall("start migrated environment", () => backend.start(created))));
+      }
+      let current = found.environment;
+      if (current.status !== "stopped") {
+        current = await persist(validateRecord(expected, await backendCall("stop", () => backend.stop(current))));
+      }
+      return persist(validateRecord(expected, await backendCall("restart", () => backend.start(current))));
     });
   };
 
   const remove: EnvironmentManager["remove"] = async (request) => {
     const expected = await identity(request);
     return withIdentityLock(expected.id, async () => {
-      const current = await inspect(expected);
-      if (current === null) {
+      const found = await inspectForLifecycle(expected);
+      if (found === null) {
         await terminateSessionsForEnvironment(expected.id);
+        await backend.removePersistentData?.(expected);
         await registrations?.remove(expected.id);
         return;
       }
-      await terminateSessionsForEnvironment(current.id);
-      await backendCall("remove", () => backend.remove(current));
+      await terminateSessionsForEnvironment(found.environment.id);
+      await backendCall(found.compatibility === "current" ? "remove" : "remove legacy or incomplete environment", () => backend.remove(found.environment));
+      await backend.removePersistentData?.(expected);
       await registrations?.remove(expected.id);
     });
   };
@@ -431,10 +483,10 @@ export function createEnvironmentManager(
   const rebuild: NonNullable<EnvironmentManager["rebuild"]> = async (request) => {
     const expected = await identity(request);
     return withIdentityLock(expected.id, async () => {
-      const current = await inspect(expected);
-      if (current) {
-        await terminateSessionsForEnvironment(current.id);
-        await backendCall("remove for rebuild", () => backend.remove(current));
+      const found = await inspectForLifecycle(expected);
+      if (found) {
+        await terminateSessionsForEnvironment(found.environment.id);
+        await backendCall(found.compatibility === "current" ? "remove for rebuild" : "remove legacy or incomplete environment for rebuild", () => backend.remove(found.environment));
       }
       await registrations?.remove(expected.id);
       const created = validateRecord(expected, await backendCall("recreate", () => backend.create(expected)));

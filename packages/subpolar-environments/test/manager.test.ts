@@ -15,6 +15,9 @@ test("Docker manager composition resolves the configured worktree identity", asy
     startContainer: async () => undefined,
     stopContainer: async () => undefined,
     removeContainer: async () => undefined,
+    inspectVolume: async () => null,
+    createVolume: async (options) => ({ name: options.name, driver: options.driver, labels: options.labels }),
+    removeVolume: async () => undefined,
   };
   try {
     const manager = createDockerEnvironmentManager({
