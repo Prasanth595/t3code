@@ -1117,6 +1117,7 @@ describe("claims with no run and no assignee", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(7, "triage");
+      fake.runIn(8, "triage", OTHER);
       yield* pass(fake, machine([REPO], 1));
       assert.ok(fake.calls.includes(`unassigned ${REPO} known=7`), fake.calls.join("\n"));
     }),

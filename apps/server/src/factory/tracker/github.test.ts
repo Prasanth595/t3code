@@ -3803,6 +3803,34 @@ it.effect("unassignedClaims: a history read that fails is an error for that issu
 );
 
 it.effect(
+  "unassignedClaims: an unparseable history is that issue's error and the next is still read",
+  () =>
+    Effect.gen(function* () {
+      const triage = `[
+      {"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"},
+      {"number":2,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}
+    ]`;
+      const t = setup(
+        reply(triage),
+        reply("not json"),
+        reply(labelledBy("rawphp", "factory:triage")),
+        reply("[]"),
+      );
+      const found = yield* t.ok(scan(t));
+      assert.deepStrictEqual(found.claims, [{ issue: 2, state: "triage" }]);
+      assert.strictEqual(found.unread.length, 1);
+      assert.strictEqual(found.unread[0]!.issue, 1);
+      assert.strictEqual(found.unread[0]!.error._tag, "GitHubParse");
+      assert.deepStrictEqual(t.calls(), [
+        claimedListCall("factory:triage"),
+        historyCallFor(1),
+        historyCallFor(2),
+        claimedListCall("factory:building"),
+      ]);
+    }),
+);
+
+it.effect(
   "unassignedClaims ends the scan on a rate-limited history read, with no further call",
   () =>
     Effect.gen(function* () {
