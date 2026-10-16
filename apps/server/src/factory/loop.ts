@@ -21,8 +21,10 @@ export interface Loop {
 }
 
 /**
- * Longer than any one call a pass makes is allowed (a `gh` call 60 seconds, a worktree removal
- * 10 minutes), so only a pass that is hung is stopped.
+ * Well past what a pass takes, though not a sum of every call's own limit (a `gh` call 60
+ * seconds, a worktree removal 10 minutes): a very slow pass is stopped too. That is safe, as
+ * every step goes on from the ledger on the next pass, and a claim cut short before its run
+ * file is written goes stuck, as it cannot be confirmed.
  */
 export const PASS_TIMEOUT = Duration.minutes(30);
 

@@ -715,8 +715,11 @@ const claim = (
       // the machine's, said once after the loop.
       if (paused !== null) continue;
       // Before the blockers: with no slot free nothing is claimed, so they are not read. Every
-      // issue left is counted as left over, blocked or not.
-      if (active >= machine.maxConcurrentRuns) {
+      // issue left is counted as left over, blocked or not. The issue's own runs do not count: a
+      // claim finishes them first, so a run an instructor retried by labelling the issue
+      // `factory:ready` again does not hold the slot its new attempt needs.
+      const own = known.of(name, issue).filter(holdsSlot).length;
+      if (active - own >= machine.maxConcurrentRuns) {
         left += 1;
         yield* pass.record({
           event: "claim_skipped",

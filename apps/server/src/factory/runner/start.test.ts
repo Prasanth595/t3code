@@ -1288,6 +1288,23 @@ describe("resume", () => {
     }),
   );
 
+  it.effect("leaves alone a stuck issue whose run never went stuck: a person stopped it", () =>
+    Effect.gen(function* () {
+      for (const lines of [startedLines().slice(0, 3), startedLines()]) {
+        const dataDir = tempDir();
+        seedRun(dataDir, lines);
+        const before = entriesOf(dataDir);
+        const { tracker, calls } = fakeTracker({ issues: [detail("stuck", [USER])] });
+        const t3 = fakeSessions(dataDir, {});
+        const outcome = yield* resumeIn(dataDir, tracker, t3.sessions);
+        assert.strictEqual(outcome.kind, "skipped");
+        assert.deepStrictEqual(calls, ["issue 7"]);
+        assert.deepStrictEqual(t3.calls, []);
+        assert.deepStrictEqual(entriesOf(dataDir), before);
+      }
+    }),
+  );
+
   it.effect("leaves a stuck issue alone when its run is finished, or it has none", () =>
     Effect.gen(function* () {
       const none = tempDir();
