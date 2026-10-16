@@ -1052,9 +1052,13 @@ describe("start: the launch", () => {
       const t3 = fakeSessions(dataDir, { project: null });
       const error = yield* Effect.flip(startIn(dataDir, tracker, t3.sessions));
       assert.strictEqual(error._tag, "GitHubFailed");
-      const events = stepsOf(dataDir);
-      assert.strictEqual(events.length, 4);
-      assert.notStrictEqual(events.at(-1), "finished");
+      // The comment and the label went out and are on record; the summary line is not written.
+      assert.deepStrictEqual(stepsOf(dataDir), [
+        "step_changed",
+        "claimed",
+        "state_changed",
+        "stuck",
+      ]);
     }),
   );
 });
@@ -1096,8 +1100,7 @@ describe("start: a launch that an earlier pass may have sent", () => {
       const { tracker } = fakeTracker({});
       const t3 = fakeSessions(dataDir, { project: null });
       const outcome = yield* startIn(dataDir, tracker, t3.sessions);
-      const reason = outcome.kind === "stuck" ? outcome.reason : "";
-      assert.ok(!reason.includes("may have started"), reason);
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: NO_PROJECT });
     }),
   );
 });
