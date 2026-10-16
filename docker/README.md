@@ -86,8 +86,15 @@ Configure the Subpolar provider through T3's existing local ACP command setting,
 using the installed `subpolar-acp` executable or Bun with
 `packages/subpolar-acp/src/cli.ts` as its argument. The manager token is passed
 to the server process so the ACP bridge can authenticate; keep it out of client
-configuration and logs. This deployment path has unit coverage but has not
-been verified against a live Docker daemon.
+configuration and logs. The ACP bridge uses local mode by default; setting
+`SUBPOLAR_ACP_EXECUTION=managed` selects the authenticated worker-process proxy.
+Managed mode also requires `SUBPOLAR_ACP_WORKER_COMMAND` as a JSON argv array.
+The stock worker image does not contain the Subpolar ACP/Pi executable, model
+credentials, or an approved model-network path, so managed mode cannot run a
+real Pi turn until those are supplied in a custom worker image/runtime setup.
+The manager has focused unit coverage; the ACP proxy tests could not run in
+this checkout because workspace dependencies are missing, and no live Docker
+daemon verification has been performed.
 
 ## Backup and restore
 
