@@ -507,6 +507,7 @@ const makeFaviconWebContents = (options?: {
     session: { fetch },
     navigationHistory: { canGoBack: () => false, canGoForward: () => false },
     isFocused: vi.fn(() => true),
+    focusedFrame: {} as object | null,
     setIgnoreMenuShortcuts: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     executeJavaScriptInIsolatedWorld,
@@ -840,7 +841,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("keeps editing and forwarded shortcuts in every tab of a focused window", () =>
+  effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const send = vi.fn();
@@ -873,6 +874,24 @@ describe("PreviewManager", () => {
         beforeInput({ preventDefault } as never, { ...key, key: "T", shift: true } as never);
         expect(preventDefault).toHaveBeenCalledOnce();
         expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "view.reopenClosed");
+
+        // The person types in the older tab, so keys reaching the newer one are an agent's.
+        Object.assign(newer.webContents, { focusedFrame: null });
+        const agentInput = newer.listeners.get("before-input-event")!;
+        const agentPreventDefault = vi.fn();
+        agentInput(
+          { preventDefault: agentPreventDefault } as never,
+          { ...key, key: "v", shift: false } as never,
+        );
+        expect(
+          (newer.webContents as Electron.WebContents).setIgnoreMenuShortcuts,
+        ).toHaveBeenLastCalledWith(true);
+        agentInput(
+          { preventDefault: agentPreventDefault } as never,
+          { ...key, key: "T", shift: true } as never,
+        );
+        expect(agentPreventDefault).not.toHaveBeenCalled();
+        expect(send).toHaveBeenCalledOnce();
       }),
     ),
   );
