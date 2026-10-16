@@ -31,7 +31,7 @@ import {
   type RunEvent,
 } from "./events.ts";
 import { parseLines, requireRegularFile } from "./read.ts";
-import { RUNS_DIR, runPath, type RunId } from "./runId.ts";
+import { RUNS_DIR, feedbackReadFile, runPath, type RunId } from "./runId.ts";
 import { formatTs } from "./time.ts";
 
 // The largest u64 reads as 2^64 once JSON.parse has made it a double.
@@ -60,10 +60,13 @@ export class Ledger {
   /** The distinct `attempt` values among the `gate_command` lines. */
   private readonly gateAttempts = new Set<number>();
   private finished = false;
+  /** The run's feedback read file, which the `finished` line makes useless. */
+  private readonly readFile: string;
 
-  private constructor(out: AppendFile, clock: () => number) {
+  private constructor(out: AppendFile, clock: () => number, readFile: string) {
     this.out = out;
     this.clock = clock;
+    this.readFile = readFile;
   }
 
   /** The run file. */
@@ -115,7 +118,11 @@ export class Ledger {
       }
       throw error;
     }
-    return new Ledger(new AppendFile(path, fd, options.io ?? nodeIo), options.clock ?? Date.now);
+    return new Ledger(
+      new AppendFile(path, fd, options.io ?? nodeIo),
+      options.clock ?? Date.now,
+      feedbackReadFile(dataDir, id),
+    );
   }
 
   /**
@@ -127,7 +134,11 @@ export class Ledger {
   static open(dataDir: string, id: RunId, options: LedgerOptions = {}): Ledger {
     const path = runPath(dataDir, id);
     requireRegularFile(path);
-    return new Ledger(openForAppend(path, options.io), options.clock ?? Date.now);
+    return new Ledger(
+      openForAppend(path, options.io),
+      options.clock ?? Date.now,
+      feedbackReadFile(dataDir, id),
+    );
   }
 
   /**
@@ -194,7 +205,19 @@ export class Ledger {
     }
     // A line whose sync fails is still in the file, so the next append's catch-up counts it: a
     // failed sync on `finished` does not allow a second `finished` line.
-    this.out.writeLine(line);
+    try {
+      this.out.writeLine(line);
+    } finally {
+      // The run has ended: its feedback read time has no use. A file that is not there, or that
+      // cannot be removed, does not fail the finish.
+      if (event.event === "finished") {
+        try {
+          NodeFS.rmSync(this.readFile, { force: true });
+        } catch {
+          // Left behind; the next run id never reuses it.
+        }
+      }
+    }
   }
 
   /**
