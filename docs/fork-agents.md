@@ -69,6 +69,7 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 When Fork CI, Fork Sync or Fork Release fails, `scripts/fork-notify-agent.sh` posts the run to the webhook in the GitHub secret `T3_AGENT_WEBHOOK_URL`. The webhook is the scheduled task "Fork repair" on the VPS, in the project "t3code fork". It starts a repair agent there.
 
 - The repair agent watches the next run of the same workflow.
+- GitHub can start the daily Fork Sync hours after its 03:17 UTC schedule. Before you merge upstream by hand, check `gh run list --workflow fork-sync.yml` and the VPS for a running "Fork repair" thread. If the daily run did not start yet, run the workflow instead of a manual merge. If a repair agent already merges upstream, send it your notes instead of a second merge.
 - On a retry, run the workflow with `notify_agent=false`, so that a second failure does not start another agent.
 - A failure right after a failure of the same workflow does not post, when the notify job of the first failure succeeded.
 - To stop the repair agent, disable the "Fork repair" task on the VPS (`machines_command` with `{"_tag":"setScheduledTaskEnabled","taskId":...,"enabled":false}`). To stop all calls, delete the GitHub secret `T3_AGENT_WEBHOOK_URL`.
