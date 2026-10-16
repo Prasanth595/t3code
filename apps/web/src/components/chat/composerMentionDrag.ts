@@ -15,9 +15,11 @@ export const COMPOSER_MENTION_DRAG_TYPE = "application/x-t3code-composer-mention
  */
 export const COMPOSER_PULL_REQUEST_DRAG_TYPE = "application/x-t3code-pull-request";
 
-const decodePullRequestPayload = Schema.decodeUnknownOption(
-  Schema.fromJsonString(PullRequestContextMetadata),
-);
+const PullRequestDragPayload = Schema.fromJsonString(PullRequestContextMetadata);
+const decodePullRequestPayload = Schema.decodeUnknownOption(PullRequestDragPayload);
+
+/** The `COMPOSER_PULL_REQUEST_DRAG_TYPE` data for a pull request row's drag. */
+export const encodePullRequestDragPayload = Schema.encodeSync(PullRequestDragPayload);
 
 export function composerMentionFromTreePath(treePath: string): string | null {
   const relativePath = treePath.replace(/\/+$/, "");

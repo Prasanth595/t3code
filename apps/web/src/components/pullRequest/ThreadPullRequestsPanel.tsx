@@ -1,9 +1,4 @@
-import type {
-  ProjectId,
-  PullRequestContextMetadata,
-  ScopedThreadRef,
-  ThreadPullRequestLink,
-} from "@t3tools/contracts";
+import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   sourceControlClients,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
@@ -22,7 +17,10 @@ import {
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
-import { COMPOSER_PULL_REQUEST_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
+import {
+  COMPOSER_PULL_REQUEST_DRAG_TYPE,
+  encodePullRequestDragPayload,
+} from "~/components/chat/composerMentionDrag";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { findProjectForChangeRequest, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
@@ -173,7 +171,7 @@ function LinkRow({
             : (event) =>
                 event.dataTransfer.setData(
                   COMPOSER_PULL_REQUEST_DRAG_TYPE,
-                  JSON.stringify({
+                  encodePullRequestDragPayload({
                     number: link.number,
                     title: snapshot.title,
                     url: link.url,
@@ -181,7 +179,7 @@ function LinkRow({
                     baseBranch: snapshot.baseBranch,
                     state: snapshot.state,
                     isDraft: snapshot.isDraft,
-                  } satisfies PullRequestContextMetadata),
+                  }),
                 )
         }
         className="flex min-w-0 flex-1"

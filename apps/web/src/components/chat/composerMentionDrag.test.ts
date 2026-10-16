@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   COMPOSER_MENTION_DRAG_TYPE,
   COMPOSER_PULL_REQUEST_DRAG_TYPE,
+  encodePullRequestDragPayload,
   type ComposerMentionDropHost,
   composerMentionFromTreePath,
   dataTransferHasComposerMention,
@@ -142,11 +143,11 @@ describe("makeComposerMentionDragHandlers", () => {
       baseBranch: "main",
       state: "open",
       isDraft: false,
-    };
+    } as const;
     handlers.onDrop(
       makeDragEvent({
         format: COMPOSER_PULL_REQUEST_DRAG_TYPE,
-        mention: JSON.stringify(pullRequest),
+        mention: encodePullRequestDragPayload(pullRequest),
       }).event,
     );
     expect(log).toEqual(["active:false", "pr:18094"]);
