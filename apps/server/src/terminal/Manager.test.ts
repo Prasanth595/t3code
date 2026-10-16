@@ -243,6 +243,8 @@ interface CreateManagerOptions {
   >[0]["resolveProviderInstanceEnvironment"];
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  managedProviderInstanceIds?: ReadonlySet<string>;
+  managedPtySpawn?: Parameters<typeof TerminalManager.makeWithOptions>[0]["managedPtySpawn"];
 }
 
 interface ManagerFixture {
@@ -290,6 +292,12 @@ const createManager = (
           : {}),
         ...(options.resolveProviderInstanceEnvironment !== undefined
           ? { resolveProviderInstanceEnvironment: options.resolveProviderInstanceEnvironment }
+          : {}),
+        ...(options.managedProviderInstanceIds !== undefined
+          ? { managedProviderInstanceIds: options.managedProviderInstanceIds }
+          : {}),
+        ...(options.managedPtySpawn !== undefined
+          ? { managedPtySpawn: options.managedPtySpawn }
           : {}),
         ...(options.managedBinaryCacheDir === undefined
           ? {}
@@ -2188,6 +2196,64 @@ it.layer(
       expect(ptyAdapter.spawnInputs[0]?.env.T3CODE_SECRET).toBeUndefined();
       expect(snapshot).not.toHaveProperty("env");
       expect(snapshot).not.toHaveProperty("providerInstanceId");
+    }),
+  );
+
+  it.effect("routes only allowlisted provider instances to the managed terminal and hides its pid", () =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("codex_managed");
+      const managedProcess = new FakePtyProcess(-1);
+      const managedCalls: Array<{ shell: string; cwd: string }> = [];
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        managedProviderInstanceIds: new Set([providerInstanceId]),
+        managedPtySpawn: (input) => {
+          managedCalls.push({ shell: input.shell, cwd: input.cwd });
+          return Effect.succeed(managedProcess);
+        },
+        resolveProviderInstanceEnvironment: (_requestedId, env) => Effect.succeed(env ?? {}),
+      });
+
+      const managed = yield* manager.open(
+        openInput({
+          providerInstanceId,
+          worktreePath: process.cwd(),
+          cwd: process.cwd(),
+        }),
+      );
+      expect(managedCalls).toEqual([{ shell: "/bin/bash", cwd: process.cwd() }]);
+      expect(managed.pid).toBeNull();
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+
+      const local = yield* manager.open(
+        openInput({
+          threadId: "thread-local",
+          providerInstanceId: ProviderInstanceId.make("codex_local"),
+        }),
+      );
+      expect(local.pid).toBe(9000);
+      expect(managedCalls).toHaveLength(1);
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("fails closed for an allowlisted provider when Subpolar is not configured", () =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("codex_managed");
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        managedProviderInstanceIds: new Set([providerInstanceId]),
+        resolveProviderInstanceEnvironment: (_requestedId, env) => Effect.succeed(env ?? {}),
+      });
+
+      const snapshot = yield* manager.open(
+        openInput({
+          providerInstanceId,
+          worktreePath: process.cwd(),
+          cwd: process.cwd(),
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
     }),
   );
 

@@ -37,6 +37,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergePathEntries } from "@t3tools/shared/shell";
+import { makeSubpolarTerminalSpawner, type ManagedTerminalSpawn } from "./SubpolarPtyAdapter.ts";
 
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -234,6 +235,8 @@ interface TerminalSessionState {
   terminalId: string;
   cwd: string;
   worktreePath: string | null;
+  providerInstanceId: string | null;
+  managedExecution: boolean;
   status: TerminalSessionStatus;
   pid: number | null;
   history: BoundedTerminalHistory;
@@ -330,7 +333,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     cwd: session.cwd,
     worktreePath: session.worktreePath,
     status: session.status,
-    pid: session.pid,
+    pid: session.pid !== null && session.pid > 0 ? session.pid : null,
     history: session.history.value(),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
@@ -347,7 +350,7 @@ function summary(session: TerminalSessionState): TerminalSummary {
     cwd: session.cwd,
     worktreePath: session.worktreePath,
     status: session.status,
-    pid: session.pid,
+    pid: session.pid !== null && session.pid > 0 ? session.pid : null,
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     hasRunningSubprocess: session.hasRunningSubprocess,
@@ -1295,6 +1298,8 @@ interface TerminalManagerOptions {
   historyLineLimit?: number;
   historyByteLimit?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
+  managedPtySpawn?: ManagedTerminalSpawn;
+  managedProviderInstanceIds?: ReadonlySet<string>;
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
   managedBinaryCacheDir?: string;
@@ -1374,6 +1379,13 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const path = yield* Path.Path;
+  const managedProviderInstanceIds = new Set(
+    (process.env.SUBPOLAR_MANAGED_PROVIDER_INSTANCE_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  const managedPtySpawn = makeSubpolarTerminalSpawner();
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
   )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
@@ -1387,6 +1399,8 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
+    ...(managedPtySpawn !== undefined ? { managedPtySpawn } : {}),
+    managedProviderInstanceIds,
     processTable: nativeTelemetry.processTable.pipe(
       Effect.mapError(
         (cause) => new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
@@ -2108,6 +2122,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    if (session.managedExecution) {
+      if (options.managedPtySpawn === undefined) {
+        return yield* new PtyAdapter.PtySpawnError({
+          adapter: "terminal-manager",
+          attemptedShells: shellCandidates.map((entry) => formatShellCandidate(entry)),
+          cause: new Error("Managed terminal execution is selected but Subpolar is not configured"),
+        });
+      }
+      const managed = yield* options.managedPtySpawn({
+        threadId: session.threadId,
+        terminalId: session.terminalId,
+        worktreePath: session.worktreePath,
+        cwd: session.cwd,
+        shell: candidate.shell,
+        args: candidate.args ?? [],
+        cols: session.cols,
+        rows: session.rows,
+        env: spawnEnv,
+      });
+      return { process: managed, shellLabel: formatShellCandidate(candidate) };
+    }
+
     const launch = yield* agentScope.wrap({
       command: candidate.shell,
       args: candidate.args ?? [],
@@ -2179,7 +2215,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+            const shellCandidates = session.managedExecution
+              ? [{ shell: "/bin/bash" }, { shell: "/bin/sh" }]
+              : resolveShellCandidates(shellResolver, platform, baseEnv);
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
               session.runtimeEnv,
@@ -2358,7 +2396,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const state = yield* readManagerState;
     const runningSessions = [...state.sessions.values()].filter(
       (session): session is TerminalSessionState & { pid: number } =>
-        session.status === "running" && Number.isInteger(session.pid),
+        session.status === "running" && session.pid !== null && session.pid > 0,
     );
 
     if (runningSessions.length === 0) {
@@ -2534,6 +2572,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
         cwd: input.cwd,
         worktreePath: input.worktreePath ?? null,
+        providerInstanceId: input.providerInstanceId ?? null,
+        managedExecution:
+          input.providerInstanceId !== undefined &&
+          (options.managedProviderInstanceIds?.has(input.providerInstanceId) ?? false),
         status: "starting",
         pid: null,
         history,
@@ -2588,15 +2630,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const runtimeEnvChanged = !Equal.equals(currentRuntimeEnv, nextRuntimeEnv);
     const nextWorktreePath =
       input.worktreePath !== undefined ? (input.worktreePath ?? null) : liveSession.worktreePath;
+    const nextProviderInstanceId = input.providerInstanceId ?? null;
+    const nextManagedExecution =
+      nextProviderInstanceId !== null &&
+      (options.managedProviderInstanceIds?.has(nextProviderInstanceId) ?? false);
     const launchContextChanged =
       liveSession.cwd !== input.cwd ||
       runtimeEnvChanged ||
-      liveSession.worktreePath !== nextWorktreePath;
+      liveSession.worktreePath !== nextWorktreePath ||
+      liveSession.providerInstanceId !== nextProviderInstanceId ||
+      liveSession.managedExecution !== nextManagedExecution;
 
     if (launchContextChanged) {
       yield* stopProcess(liveSession);
       liveSession.cwd = input.cwd;
       liveSession.worktreePath = nextWorktreePath;
+      liveSession.providerInstanceId = nextProviderInstanceId;
+      liveSession.managedExecution = nextManagedExecution;
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.history.clear();
       liveSession.pendingHistoryControlSequence = "";
@@ -2607,6 +2657,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     } else if (liveSession.status === "exited" || liveSession.status === "error") {
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.worktreePath = nextWorktreePath;
+      liveSession.providerInstanceId = nextProviderInstanceId;
+      liveSession.managedExecution = nextManagedExecution;
       liveSession.history.clear();
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
@@ -2973,6 +3025,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           terminalId,
           cwd: input.cwd,
           worktreePath: input.worktreePath ?? null,
+          providerInstanceId: input.providerInstanceId ?? null,
+          managedExecution:
+            input.providerInstanceId !== undefined &&
+            (options.managedProviderInstanceIds?.has(input.providerInstanceId) ?? false),
           status: "starting",
           pid: null,
           history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
@@ -3006,6 +3062,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* stopProcess(session);
         session.cwd = input.cwd;
         session.worktreePath = input.worktreePath ?? null;
+        session.providerInstanceId = input.providerInstanceId ?? null;
+        session.managedExecution =
+          input.providerInstanceId !== undefined &&
+          (options.managedProviderInstanceIds?.has(input.providerInstanceId) ?? false);
         session.runtimeEnv = normalizedRuntimeEnv(input.env);
       }
 
@@ -3076,7 +3136,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const running = (yield* sessionsForThread(input.threadId)).filter(
           (session): session is TerminalSessionState & { pid: number } =>
             session.status === "running" &&
-            Number.isInteger(session.pid) &&
+            session.pid !== null &&
+            session.pid > 0 &&
             (input.terminalId === undefined || session.terminalId === input.terminalId),
         );
         if (running.length === 0) return;

@@ -32,6 +32,7 @@ services:
       SUBPOLAR_MANAGER_URL: ${SUBPOLAR_MANAGER_URL:-}
       SUBPOLAR_MANAGER_TOKEN: ${SUBPOLAR_MANAGER_TOKEN:-}
       SUBPOLAR_STORAGE_ROOT: ${SUBPOLAR_STORAGE_ROOT:-}
+      SUBPOLAR_MANAGED_PROVIDER_INSTANCE_IDS: ${SUBPOLAR_MANAGED_PROVIDER_INSTANCE_IDS:-}
     volumes:
       - codewise-state:/var/lib/codewise
       - codewise-workspaces:/workspaces
