@@ -56,7 +56,7 @@ import {
 import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
 import { readProgress } from "./runner/progress.ts";
-import { advance, timeLimit, watch, type BuildingContext } from "./runner/building.ts";
+import { advance, forward, timeLimit, watch, type BuildingContext } from "./runner/building.ts";
 import { gate as gateStep, type GateContext, type GateStep } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
@@ -403,6 +403,7 @@ export const liveWorld = (
     takeStopRequest: (run) => takeStopRequest(dataDir, run, clock),
     timeLimit: (repo, run) => timeLimit(buildingContext(repo), run),
     watch: (repo, run) => watch(buildingContext(repo), run),
+    forward: (repo, run) => forward(buildingContext(repo), run),
     advance: (repo, run) => advance(buildingContext(repo), run),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),

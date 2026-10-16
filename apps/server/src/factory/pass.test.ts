@@ -2224,14 +2224,17 @@ describe("following a building run", () => {
     Effect.gen(function* () {
       const fake = building();
       fake.forwards[`${REPO}#40`] = [{ comments: 0, bodyEdit: false, skipped: "abandoned" }];
-      const line = yield* forwardLine(fake);
-      assert.equal(line, `${REPO}#40 building: the issue is closed, the run is closed`);
+      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: the issue is closed, the run is closed`,
+      );
       assert.deepEqual(callsOf(fake), [
         `time_limit ${REPO}#40`,
         `watch ${REPO}#40`,
         `forward ${REPO}#40`,
       ]);
-      assert.equal(fake.items.length, 1);
+      assert.equal(report.attention, 1);
     }),
   );
 

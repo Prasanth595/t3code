@@ -22,6 +22,7 @@ import { duration, formatTs } from "./ledger/time.ts";
 import type {
   AdvanceOutcome,
   BuildingError,
+  ForwardOutcome,
   LimitOutcome,
   WatchOutcome,
 } from "./runner/building.ts";
@@ -105,6 +106,8 @@ export interface PassWorld {
   readonly timeLimit: (repo: Repo, run: RunId) => Effect.Effect<LimitOutcome, BuildingError>;
   /** The text watch: `watch`. */
   readonly watch: (repo: Repo, run: RunId) => Effect.Effect<WatchOutcome, BuildingError>;
+  /** The instructors' comments and edits of the issue body, sent to the session: `forward`. */
+  readonly forward: (repo: Repo, run: RunId) => Effect.Effect<ForwardOutcome, BuildingError>;
   /** The session's result: `advance`. */
   readonly advance: (repo: Repo, run: RunId) => Effect.Effect<AdvanceOutcome, BuildingError>;
   /** Whether the run's gate is running now. */
@@ -687,7 +690,16 @@ const resumeRun = (
     }
   });
 
-/** The watch, then `advance`, for a building run: what the session did, in a line. */
+/** The line of a run whose gate was held back because something was sent to its session. */
+const GATE_WAITS = "the gate waits for the next pass because a comment was sent";
+
+/**
+ * The watch, then `forward`, then `advance`, for a building run: what the session did, in a line.
+ * A forward that failed may have sent something before it did, so it counts as having sent; a
+ * pass where something was sent does not start the gate, since the message starts a new run
+ * that the gate would judge too early. A forward that cannot write the ledger leaves the run
+ * alone for the pass.
+ */
 const followBuilding = (
   world: PassWorld,
   repo: Repo,
@@ -699,7 +711,22 @@ const followBuilding = (
     const watched = yield* Effect.result(world.watch(repo, info.id));
     if (watched._tag === "Failure") return pass.failed(notes, "watch", "watch", watched.failure);
     if (watched.success.kind === "stopped") return pass.stuck(notes, runIdToString(info.id));
-    yield* advanceRun(world, repo, info, notes, pass);
+    let sent = false;
+    const forwarded = yield* Effect.result(world.forward(repo, info.id));
+    if (forwarded._tag === "Failure") {
+      pass.failed(notes, "forward", "forward", forwarded.failure);
+      if (errorKind(forwarded.failure) === "ledger") return;
+      sent = true;
+    } else {
+      const { comments, bodyEdit, skipped } = forwarded.success;
+      if (skipped === "abandoned") {
+        return yield* abandoned(pass, notes, runIdToString(info.id), []);
+      }
+      if (comments > 0) notes.parts.push(`forwarded ${comments} ${plural(comments, "comment")}`);
+      if (bodyEdit) notes.parts.push("forwarded the edited issue body");
+      sent = comments > 0 || bodyEdit;
+    }
+    yield* advanceRun(world, repo, info, notes, pass, sent);
   });
 
 /** Starts the run's gate in the background, and says so, or that it is queued. */
@@ -713,13 +740,17 @@ const startGate = (
     notes.parts.push(start.kind === "started" ? GATE_STARTED : gateQueued(start));
   });
 
-/** `advance` for a run, and what it did in a line. */
+/**
+ * `advance` for a run, and what it did in a line. The gate is not started when `sent` says
+ * something was sent into the session this pass.
+ */
 const advanceRun = (
   world: PassWorld,
   repo: Repo,
   info: RunInfo,
   notes: Notes,
   pass: Pass,
+  sent = false,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const run = runIdToString(info.id);
@@ -741,7 +772,8 @@ const advanceRun = (
         break;
       case "ready-for-gate":
         notes.parts.push("session finished");
-        yield* startGate(world, repo, info, notes);
+        if (sent) notes.parts.push(GATE_WAITS);
+        else yield* startGate(world, repo, info, notes);
         break;
       case "passed":
         notes.parts.push(GATE_PASSED_LINE);

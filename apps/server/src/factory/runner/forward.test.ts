@@ -912,7 +912,7 @@ describe("forward: guards and failures", () => {
       };
       const error = yield* Effect.flip(forwardIn(rig));
       assert.strictEqual(error._tag, "FactoryMessageRejectedError");
-      assert.deepStrictEqual(linesOf(rig), STARTED);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED]);
     }),
   );
 

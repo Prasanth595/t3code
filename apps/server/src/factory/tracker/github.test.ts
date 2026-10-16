@@ -25,6 +25,8 @@ import {
   READY_BY_QUERY,
   STATUS_MARKER,
   type Blocker,
+  type DropReason,
+  type Dropped,
   type GitHubError,
   isNotFound,
   makeGitHub,
@@ -4149,6 +4151,9 @@ it.effect("closedBy refuses an answer it cannot read", () =>
 
 // ---- activity during a build (forwarding, from softfac's github.rs) ----
 
+const dropOf = (id: string, reason: DropReason): Dropped => ({ id, reason });
+const argsOf = (error: GitHubError): ReadonlyArray<string> => ("args" in error ? error.args : []);
+
 const ACT_SINCE = "2026-10-04T10:00:00Z";
 const WRITTEN = "2026-10-04T10:01:00Z";
 const EDIT_AT = "2026-10-04T10:20:00Z";
@@ -4213,7 +4218,7 @@ const bodyReplyRaw = (body: string, last: Edit | null, nodes: ReadonlyArray<Edit
     },
   });
 /** The issue's answer: the creation is the oldest entry of its history, the edit the newest. */
-const bodyReply = (body: string, edited: Edit | null) => {
+const activityBodyReply = (body: string, edited: Edit | null) => {
   const history: Array<Edit> = [[CREATED, "tom"]];
   if (edited !== null) history.push(edited);
   return bodyReplyRaw(body, edited, newestFirst(history), history.length);
@@ -4258,7 +4263,7 @@ const keptAfter = (answer: string) =>
     const t = setup(
       reply(restReply([editedRestNode(7, "tom", WRITTEN, EDIT_AT, "x")])),
       reply(answer),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     // `amy` is an instructor too, so a history that names her is not refused for that.
     return (yield* activityOf(t, ["tom", "amy"])).comments.length > 0;
@@ -4269,7 +4274,7 @@ const droppedAfter = (answer: string) =>
     const t = setup(
       reply(restReply([editedRestNode(7, "tom", WRITTEN, EDIT_AT, "x")])),
       reply(answer),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     const activity = yield* activityOf(t, ["tom", "amy"]);
     assert.deepStrictEqual(activity.comments, [], "a dropped comment is not forwardable");
@@ -4352,7 +4357,7 @@ it.effect("activity returns a comment that is only on a later page", () =>
     const page1 = restReply([restNode(1, "tom", "2026-10-04T10:01:00Z", "first")]);
     const page2 = restReply([restNode(2, "tom", "2026-10-04T10:02:00Z", "second")]);
     // One array per page, as `gh api --paginate` may print them.
-    const paged = setup(reply(`${page1}${page2}`), reply(bodyReply("b", null)));
+    const paged = setup(reply(`${page1}${page2}`), reply(activityBodyReply("b", null)));
     assert.deepStrictEqual(idsOf(yield* activityOf(paged, ["tom"])), ["1", "2"]);
     // One merged array.
     const merged = setup(
@@ -4362,7 +4367,7 @@ it.effect("activity returns a comment that is only on a later page", () =>
           restNode(2, "tom", "2026-10-04T10:02:00Z", "second"),
         ]),
       ),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     assert.deepStrictEqual(idsOf(yield* activityOf(merged, ["tom"])), ["1", "2"]);
   }),
@@ -4378,7 +4383,7 @@ it.effect("activity time boundary is exclusive", () =>
           restNode(3, "tom", "2026-10-04T10:00:01Z", "after"),
         ]),
       ),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     assert.deepStrictEqual(idsOf(yield* activityOf(t, ["tom"])), ["3"]);
   }),
@@ -4388,7 +4393,7 @@ it.effect("activity ignores a comment that was only edited after since", () =>
   Effect.gen(function* () {
     // The server filters on updated time; created_at must still be after `since`.
     const old = editedRestNode(1, "tom", "2026-10-04T09:00:00Z", "2026-10-04T10:30:00Z", "later");
-    const t = setup(reply(restReply([old])), reply(bodyReply("b", null)));
+    const t = setup(reply(restReply([old])), reply(activityBodyReply("b", null)));
     assert.deepStrictEqual((yield* activityOf(t, ["tom"])).comments, []);
     assert.strictEqual(t.calls().length, 2);
   }),
@@ -4404,7 +4409,7 @@ it.effect("activity keeps only instructors, case-insensitively", () =>
           restNode(3, "tomkaczocha-bot", "2026-10-04T10:03:00Z", "prefix only"),
         ]),
       ),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     const activity = yield* activityOf(t, ["tomkaczocha"]);
     assert.deepStrictEqual(
@@ -4418,7 +4423,7 @@ it.effect("activity with no instructors returns nothing", () =>
   Effect.gen(function* () {
     const t = setup(
       reply(restReply([restNode(1, "tom", "2026-10-04T10:01:00Z", "hi")])),
-      reply(bodyReply("b", ["2026-10-04T10:05:00Z", "tom"])),
+      reply(activityBodyReply("b", ["2026-10-04T10:05:00Z", "tom"])),
     );
     const activity = yield* activityOf(t, []);
     assert.deepStrictEqual(activity.comments, []);
@@ -4437,7 +4442,7 @@ it.effect("activity leaves out the factory's own comments, whoever wrote them", 
           restNode(3, "tom", "2026-10-04T10:03:00Z", "a real instruction"),
         ]),
       ),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     assert.deepStrictEqual(idsOf(yield* activityOf(t, ["tom"])), ["3"]);
   }),
@@ -4454,7 +4459,7 @@ it.effect("activity ignores deleted authors and lists the comments oldest first"
           restNode(2, "tom", "2026-10-04T10:02:00Z", "second"),
         ]),
       ),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     assert.deepStrictEqual(idsOf(yield* activityOf(t, ["tom"])), ["1", "2", "3"]);
   }),
@@ -4464,7 +4469,7 @@ it.effect("an unedited comment costs no extra call", () =>
   Effect.gen(function* () {
     const t = setup(
       reply(restReply([restNode(1, "tom", WRITTEN, "hi")])),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     assert.deepStrictEqual(idsOf(yield* activityOf(t, ["tom"])), ["1"]);
     assert.deepStrictEqual(t.calls(), [commentsCall, bodyEditCall]);
@@ -4476,7 +4481,7 @@ it.effect("a comment edited by an instructor is kept after one extra call", () =
     const t = setup(
       reply(restReply([editedRestNode(7, "tom", WRITTEN, EDIT_AT, "fixed")])),
       reply(editorReply([EDIT_AT, "Tom"])),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     const activity = yield* activityOf(t, ["tom"]);
     assert.deepStrictEqual(idsOf(activity), ["7"]);
@@ -4492,7 +4497,7 @@ it.effect("the real comment edit history shape is read", () =>
     const t = setup(
       reply(restReply([editedRestNode(7, "rawphp", WRITTEN, EDIT_AT, "x")])),
       reply(real),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     assert.deepStrictEqual(idsOf(yield* activityOf(t, ["rawphp"])), ["7"]);
   }),
@@ -4511,13 +4516,13 @@ it.effect(
           ]),
         ),
         reply(editorReply([EDIT_AT, "stranger"])),
-        reply(bodyReply("b", null)),
+        reply(activityBodyReply("b", null)),
       );
       const activity = yield* activityOf(t, ["tom"]);
       assert.deepStrictEqual(idsOf(activity), ["8"]);
-      assert.deepStrictEqual(activity.dropped, [{ id: "7", reason: "edited-by-other" }]);
+      assert.deepStrictEqual(activity.dropped, [dropOf("7", "edited-by-other")]);
       assert.deepStrictEqual(yield* droppedAfter(editorReply([EDIT_AT, null])), [
-        { id: "7", reason: "edited-by-other" },
+        dropOf("7", "edited-by-other"),
       ]);
     }),
 );
@@ -4527,7 +4532,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       // There is no `since` here: the comment is the instructor's own text from the start.
-      const other = [{ id: "7", reason: "edited-by-other" }];
+      const other = [dropOf("7", "edited-by-other")];
       assert.deepStrictEqual(
         yield* droppedAfter(
           editorReplyHistory(
@@ -4614,7 +4619,7 @@ it.effect("a history too long to check drops the comment as unverifiable", () =>
     assert.isTrue(yield* keptAfter(editorReplyHistory([times[98]!, "tom"], edits(99))));
     assert.deepStrictEqual(
       yield* droppedAfter(editorReplyHistory([times[99]!, "tom"], edits(100))),
-      [{ id: "7", reason: "unverifiable" }],
+      [dropOf("7", "unverifiable")],
     );
     // A total larger than the page.
     const nodes: Array<Edit> = [
@@ -4623,7 +4628,7 @@ it.effect("a history too long to check drops the comment as unverifiable", () =>
     ];
     assert.isTrue(yield* keptAfter(editorReplyRaw([EDIT_AT, "tom"], nodes, 2)));
     assert.deepStrictEqual(yield* droppedAfter(editorReplyRaw([EDIT_AT, "tom"], nodes, 5)), [
-      { id: "7", reason: "unverifiable" },
+      dropOf("7", "unverifiable"),
     ]);
   }),
 );
@@ -4640,7 +4645,7 @@ it.effect("a history whose newest entry is not the latest edit is unverifiable",
     ] as ReadonlyArray<ReadonlyArray<Edit>>) {
       assert.deepStrictEqual(
         yield* droppedAfter(editorReplyRaw(last, nodes, nodes.length)),
-        [{ id: "7", reason: "unverifiable" }],
+        [dropOf("7", "unverifiable")],
         JSON.stringify(nodes),
       );
     }
@@ -4675,7 +4680,7 @@ it.effect("a comment that cannot be looked up, or is gone, is dropped and not re
     // No node id, and no `updated_at`: nothing to look up, so no call.
     const noId = { ...editedRestNode(7, "tom", WRITTEN, EDIT_AT, "x"), node_id: null };
     const noUpdate = { ...restNode(8, "tom", WRITTEN, "y"), updated_at: null, node_id: null };
-    const t = setup(reply(restReply([noId, noUpdate])), reply(bodyReply("b", null)));
+    const t = setup(reply(restReply([noId, noUpdate])), reply(activityBodyReply("b", null)));
     const activity = yield* activityOf(t, ["tom"]);
     assert.deepStrictEqual(activity.comments, []);
     assert.deepStrictEqual(activity.dropped, []);
@@ -4685,7 +4690,7 @@ it.effect("a comment that cannot be looked up, or is gone, is dropped and not re
     const gone = setup(
       reply(restReply([editedRestNode(7, "tom", WRITTEN, EDIT_AT, "x")])),
       reply('{"data":{"nodes":[null]}}'),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     const goneActivity = yield* activityOf(gone, ["tom"]);
     assert.deepStrictEqual(goneActivity.comments, []);
@@ -4706,11 +4711,11 @@ it.effect("only edited comments by instructors are looked up, each once, oldest 
       ),
       reply(editorReply([EDIT_AT, "tom"])),
       reply(editorReply([EDIT_AT, "stranger"], "IC_9")),
-      reply(bodyReply("b", null)),
+      reply(activityBodyReply("b", null)),
     );
     const activity = yield* activityOf(t, ["tom"]);
     assert.deepStrictEqual(idsOf(activity), ["7"]);
-    assert.deepStrictEqual(activity.dropped, [{ id: "9", reason: "edited-by-other" }]);
+    assert.deepStrictEqual(activity.dropped, [dropOf("9", "edited-by-other")]);
     assert.deepStrictEqual(t.calls(), [
       commentsCall,
       editorCall("IC_7"),
@@ -4734,13 +4739,13 @@ it.effect(
         ),
         reply(editorReply([EDIT_AT, "stranger"])),
         reply(editorReplyRaw([EDIT_AT, "tom"], [], 0, "IC_9")),
-        reply(bodyReply("new body", [EDIT_AT, "tom"])),
+        reply(activityBodyReply("new body", [EDIT_AT, "tom"])),
       );
       const activity = yield* activityOf(t, ["tom"]);
       assert.deepStrictEqual(idsOf(activity), ["8"]);
       assert.deepStrictEqual(activity.dropped, [
-        { id: "7", reason: "edited-by-other" },
-        { id: "9", reason: "unverifiable" },
+        dropOf("7", "edited-by-other"),
+        dropOf("9", "unverifiable"),
       ]);
       assert.strictEqual(activity.bodyEdit?.body, "new body");
     }),
@@ -4752,7 +4757,7 @@ it.effect("a failing or unreadable editor lookup is an error", () =>
     const failing = setup(reply(list), fail(1, "boom"));
     const error = yield* failing.err(failing.github.activitySince(6, ACT_SINCE, ["tom"]));
     assert.strictEqual(error._tag, "GitHubFailed");
-    assert.deepStrictEqual(error.args, editorCall("IC_7"));
+    assert.deepStrictEqual(argsOf(error), editorCall("IC_7"));
     const oldShape =
       '{"data":{"nodes":[{"id":"IC_7","lastEditedAt":"2026-10-04T10:20:00Z","editor":{"login":"tom"}}]}}';
     const noTotal =
@@ -4767,7 +4772,10 @@ it.effect("a failing or unreadable editor lookup is an error", () =>
 
 it.effect("a body edit by an instructor after since is the activity's body edit", () =>
   Effect.gen(function* () {
-    const t = setup(reply("[]"), reply(bodyReply("new body", ["2026-10-04T10:30:00Z", "Tom"])));
+    const t = setup(
+      reply("[]"),
+      reply(activityBodyReply("new body", ["2026-10-04T10:30:00Z", "Tom"])),
+    );
     assert.deepStrictEqual((yield* activityOf(t, ["tom"])).bodyEdit, {
       editedAt: "2026-10-04T10:30:00Z",
       editor: "Tom",
@@ -4782,14 +4790,17 @@ it.effect(
     Effect.gen(function* () {
       const stranger = setup(
         reply("[]"),
-        reply(bodyReply("b", ["2026-10-04T10:30:00Z", "stranger"])),
+        reply(activityBodyReply("b", ["2026-10-04T10:30:00Z", "stranger"])),
       );
       assert.strictEqual((yield* activityOf(stranger, ["tom"])).bodyEdit, null);
-      const never = setup(reply("[]"), reply(bodyReply("b", null)));
+      const never = setup(reply("[]"), reply(activityBodyReply("b", null)));
       assert.strictEqual((yield* activityOf(never, ["tom"])).bodyEdit, null);
-      const earlier = setup(reply("[]"), reply(bodyReply("b", ["2026-10-04T09:30:00Z", "tom"])));
+      const earlier = setup(
+        reply("[]"),
+        reply(activityBodyReply("b", ["2026-10-04T09:30:00Z", "tom"])),
+      );
       assert.strictEqual((yield* activityOf(earlier, ["tom"])).bodyEdit, null);
-      const equal = setup(reply("[]"), reply(bodyReply("b", [ACT_SINCE, "tom"])));
+      const equal = setup(reply("[]"), reply(activityBodyReply("b", [ACT_SINCE, "tom"])));
       assert.strictEqual((yield* activityOf(equal, ["tom"])).bodyEdit, null);
     }),
 );
@@ -4870,13 +4881,13 @@ it.effect(
       const comments = setup(fail(1, "Not Found"));
       const failed = yield* comments.err(comments.github.activitySince(6, ACT_SINCE, ["tom"]));
       assert.strictEqual(failed._tag, "GitHubFailed");
-      assert.deepStrictEqual(failed.args, commentsCall);
+      assert.deepStrictEqual(argsOf(failed), commentsCall);
       assert.strictEqual(comments.calls().length, 1);
 
       const body = setup(reply("[]"), fail(1, "Could not resolve to an Issue"));
       const bodyFailed = yield* body.err(body.github.activitySince(6, ACT_SINCE, ["tom"]));
       assert.strictEqual(bodyFailed._tag, "GitHubFailed");
-      assert.deepStrictEqual(bodyFailed.args, bodyEditCall);
+      assert.deepStrictEqual(argsOf(bodyFailed), bodyEditCall);
 
       for (const bad of ["nope", '{"data":{"repository":null}}', '{"errors":[{"message":"x"}]}']) {
         const t = setup(reply("[]"), reply(bad));
@@ -4890,7 +4901,7 @@ it.effect(
       const notJson = setup(reply("not json"));
       const parse = yield* notJson.err(notJson.github.activitySince(6, ACT_SINCE, ["tom"]));
       assert.strictEqual(parse._tag, "GitHubParse");
-      assert.deepStrictEqual(parse.args, commentsCall);
+      assert.deepStrictEqual(argsOf(parse), commentsCall);
 
       const spawn = setup(spawnError());
       assert.strictEqual(

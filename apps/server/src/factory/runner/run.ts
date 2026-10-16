@@ -76,12 +76,25 @@ export interface Progress {
 }
 
 /**
- * What the gate's actions carry that the ledger does not: the results comment
+ * What a forwarded comment or body edit carries that the ledger does not: the message, under a
+ * command id so a retry is the same command, and for a body edit the `body-edit-forwarded <edited_at>`
+ * step that records it. An action whose part is missing is an `InvalidTransition`.
+ */
+export interface ForwardPayload {
+  readonly commandId: string;
+  readonly text: string;
+  readonly step?: string;
+}
+
+/**
+ * What the gate's and the forwards' actions carry that the ledger does not: the results comment
  * `post-gate-results` posts, and the send `send-gate-failure` makes, under a command id so a
  * retry is the same command, with the attempt and session run ordinal it then records as sent
  * back. An action whose part is missing is an `InvalidTransition`.
  */
 export interface GatePayload {
+  /** What `forward-comment` and `forward-body-edit` send. */
+  readonly forward?: ForwardPayload;
   readonly comment?: string;
   readonly send?: {
     readonly commandId: string;
@@ -140,8 +153,10 @@ export const finishBuilding = (
  * line written. The gate's actions: marking the pull request ready is repeated safely, its
  * results comment (`gate.comment`) is posted once (`at.gateResultsPosted`, the
  * `gate-results-posted` step), and a failure is sent under `gate.send.commandId` and then
- * recorded as sent back for that attempt and run. Actions that belong to later steps, and gate
- * actions with no payload, are an `InvalidTransition`.
+ * recorded as sent back for that attempt and run. A forwarded comment or body edit is sent under
+ * `gate.forward.commandId` and then recorded (`comment_forwarded`, or the step
+ * `gate.forward.step`). Actions that belong to later steps, and gate or forward actions with no
+ * payload, are an `InvalidTransition`.
  */
 export const applyActions = (
   ctx: RunContext,
@@ -252,6 +267,32 @@ export const applyActions = (
               },
               makeCause(at.step, cause.reason, { attempt: send.attempt }),
             ),
+          );
+          break;
+        }
+        case "forward-comment": {
+          const send = gate.forward;
+          if (at.threadId === null || send === undefined) {
+            return yield* new InvalidTransition({ state: at.state, event: action.kind });
+          }
+          yield* ctx.sessions.send(at.threadId, send.commandId, send.text);
+          yield* ledger(() =>
+            out.append(
+              { event: "comment_forwarded", data: { comment_id: action.commentId } },
+              cause,
+            ),
+          );
+          break;
+        }
+        case "forward-body-edit": {
+          const send = gate.forward;
+          if (at.threadId === null || send?.step === undefined) {
+            return yield* new InvalidTransition({ state: at.state, event: action.kind });
+          }
+          const recorded = send.step;
+          yield* ctx.sessions.send(at.threadId, send.commandId, send.text);
+          yield* ledger(() =>
+            out.append({ event: "step_changed", data: { step: recorded } }, cause),
           );
           break;
         }
