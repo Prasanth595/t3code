@@ -12,8 +12,6 @@ import { cn } from "../lib/utils";
 export type SidebarStageBackdropVariant = "nightly" | "nightly-sunshine" | "dev";
 export type EnvironmentIdentificationPillLabel = "Dev" | "Nightly";
 
-// A wide viewBox keeps the 96-unit art height at a fixed scale while sidebar resizing reveals
-// more horizontal canvas instead of zooming the scene.
 const STAGE_BACKDROP_VIEW_BOX = "0 0 8192 96";
 
 export function resolveSidebarStageBackdropVariant(
@@ -55,7 +53,6 @@ export function useSidebarStageBackdropVariant(enabled = true): SidebarStageBack
   return resolveSidebarStageBackdropVariant(stageLabel, enabled, nightlyBannerStyle);
 }
 
-/** Stage-channel header art, shared by both sidebar layouts. */
 export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdropVariant }) {
   return (
     <div
