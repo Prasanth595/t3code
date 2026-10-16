@@ -40,6 +40,7 @@ import {
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { encodeTerminalScriptPaste } from "../terminal/scriptPaste";
 import * as Schema from "effect/Schema";
 import {
   questionAttachmentDraftId,
@@ -4809,6 +4810,7 @@ export default function ChatView(props: ChatViewProps) {
       worktreePath?: string | null;
       preferNewTerminal?: boolean;
       rememberAsLastInvoked?: boolean;
+      pasteScript?: boolean;
     },
   ) => {
     if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
@@ -4884,13 +4886,28 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
+    let data = `${script.command}\r`;
+    if (options?.pasteScript) {
+      try {
+        data = await encodeTerminalScriptPaste(
+          { environmentId, threadId: activeThreadId, terminalId: targetTerminalId },
+          script.command,
+        );
+      } catch (error) {
+        setThreadError(
+          activeThreadId,
+          error instanceof Error ? error.message : "Failed to prepare script paste.",
+        );
+        return;
+      }
+    }
     if (!hasTerminalWriteAccess()) return;
     const writeResult = await writeTerminal({
       environmentId,
       input: {
         threadId: activeThreadId,
         terminalId: targetTerminalId,
-        data: `${script.command}\r`,
+        data,
       },
     });
     if (writeResult._tag === "Failure") {
@@ -4936,7 +4953,7 @@ export default function ChatView(props: ChatViewProps) {
         icon: "play",
         runOnWorktreeCreate: false,
       },
-      { rememberAsLastInvoked: false },
+      { rememberAsLastInvoked: false, pasteScript: command.includes("\n") },
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);

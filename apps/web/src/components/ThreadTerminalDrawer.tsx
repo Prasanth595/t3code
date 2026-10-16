@@ -59,6 +59,7 @@ import {
   type GhosttyTerminalSurfaceOptions,
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
+import { registerTerminalScriptPasteSurface } from "~/terminal/scriptPaste";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isTerminalUrl } from "../terminal-links";
@@ -632,6 +633,9 @@ export function TerminalViewport({
       if (latestSession.error !== null) writeSystemMessage(terminal, latestSession.error);
       synchronizedStatusRef.current = "closed";
       synchronizeTerminalStatus(terminal, latestSession.status, latestSession.version);
+      setupCleanups.push(
+        registerTerminalScriptPasteSurface({ environmentId, threadId, terminalId }, terminal),
+      );
       if (
         hasTerminalWriteAccess() &&
         visibleRef.current &&
