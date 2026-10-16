@@ -415,7 +415,8 @@ export const advance = (
       // `stop-run.sh` ended the run on purpose. The thread is archived, or found gone, by the
       // stuck path and its status is never read: whatever the session is doing, the run goes
       // `stuck` as stopped by hand.
-      if (seen.stopRequested) {
+      // Only a building run: a line that is there for a run past `building` is stale.
+      if (seen.stopRequested && at.state === "building") {
         return yield* stuck("stop-requested", { reason: STOPPED_BY_HAND });
       }
       const threadId = seen.threadId;

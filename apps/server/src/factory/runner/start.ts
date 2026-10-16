@@ -221,20 +221,12 @@ const closed = (issue: number): StartOutcome => ({
 const abandonClosed = (ctx: StartContext, issue: number): Effect.Effect<StartOutcome, StartError> =>
   Effect.gen(function* () {
     const next = nextAttempt(ctx.dataDir, ctx.repo, String(issue));
-    const unfinished: Array<{ id: RunId; seen: Seen }> = [];
-    for (let attempt = 1; attempt < next; attempt += 1) {
-      const id = newRunId(ctx.repo, String(issue), attempt);
-      const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
-        Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
-      );
-      if (record === null) continue;
-      const seen = readProgress(record.entries);
-      if (seen.finished || seen.state === "pr-open" || seen.state === "stuck") continue;
-      if (NodeFS.existsSync(gateLockFile(ctx.dataDir, id))) {
-        return yield* new GateRunningError({ run: id });
-      }
-      unfinished.push({ id, seen });
-    }
+    const unfinished = yield* unfinishedRuns(
+      ctx,
+      issue,
+      next,
+      (seen) => seen.state !== "pr-open" && seen.state !== "stuck",
+    );
     let abandoned = false;
     const mayHaveSession: Array<RunId> = [];
     for (const { id, seen } of unfinished) {
@@ -686,6 +678,35 @@ const launchSession = (
   });
 
 /**
+ * The unfinished runs of the issue before attempt `below` that `wanted` keeps, oldest first
+ * (softfac's `unfinished_runs`). While the gate of any run it keeps is running, none of them is
+ * touched (`GateRunningError`).
+ */
+const unfinishedRuns = (
+  ctx: StartContext,
+  issue: number,
+  below: number,
+  wanted: (seen: Seen) => boolean,
+): Effect.Effect<Array<{ id: RunId; seen: Seen }>, LedgerError | GateRunningError> =>
+  Effect.gen(function* () {
+    const runs: Array<{ id: RunId; seen: Seen }> = [];
+    for (let attempt = 1; attempt < below; attempt += 1) {
+      const id = newRunId(ctx.repo, String(issue), attempt);
+      const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
+        Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
+      );
+      if (record === null) continue;
+      const seen = readProgress(record.entries);
+      if (seen.finished || !wanted(seen)) continue;
+      if (NodeFS.existsSync(gateLockFile(ctx.dataDir, id))) {
+        return yield* new GateRunningError({ run: id });
+      }
+      runs.push({ id, seen });
+    }
+    return runs;
+  });
+
+/**
  * Finishes every unfinished run of the issue before attempt `below`, by its last state, so it is
  * not polled again and cannot write to an issue a newer attempt now owns. While the gate of any
  * of them is running, none of them is finished. A run that names a session or a pull request is
@@ -698,20 +719,7 @@ const finishOlderRuns = (
   appliedBy: string | null,
 ): Effect.Effect<void, LedgerError | GateRunningError> =>
   Effect.gen(function* () {
-    const older: Array<{ id: RunId; seen: Seen }> = [];
-    for (let attempt = 1; attempt < below; attempt += 1) {
-      const id = newRunId(ctx.repo, String(issue), attempt);
-      const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
-        Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
-      );
-      if (record === null) continue;
-      const seen = readProgress(record.entries);
-      if (seen.finished) continue;
-      if (NodeFS.existsSync(gateLockFile(ctx.dataDir, id))) {
-        return yield* new GateRunningError({ run: id });
-      }
-      older.push({ id, seen });
-    }
+    const older = yield* unfinishedRuns(ctx, issue, below, () => true);
     for (const { id, seen } of older) {
       const outcome: Outcome =
         seen.state === "needs-info" ? "needs-info" : seen.state === "pr-open" ? "pr-open" : "stuck";

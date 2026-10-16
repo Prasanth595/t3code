@@ -549,11 +549,11 @@ const workRuns = (
       const name = repo.watched.repo;
       const issue = Number(info.id.issue);
       const notes = pass.notes(name, issue, info.state);
-      yield* takeStopRequest(world, pass, info, notes);
       if (world.gateRunning(info.id)) {
-        // The gate has the run: nothing else is done for it (softfac's `work_runs`).
+        // The gate has the run: nothing else is done for it (softfac's `work_runs`). A stop
+        // request waits, so the gate's own result decides the state first.
         notes.parts.push(GATE_RUNNING);
-      } else if (yield* withinLimit(world, repo, info, notes, pass)) {
+      } else if (yield* takeStopRequestThenWithin(world, repo, info, notes, pass)) {
         if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
         else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
         // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
@@ -586,7 +586,22 @@ const takeStopRequest = (
       pass.failed(notes, "stop request", "pass", taken.failure);
     } else if (taken.success === "recorded") {
       notes.parts.push("stop requested by hand");
+    } else if (taken.success === "not-building") {
+      notes.parts.push("stop request dropped: the run is not building");
     }
+  });
+
+/** Takes the stop request, then checks the time limit: true when the run is still to be worked. */
+const takeStopRequestThenWithin = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+  pass: Pass,
+): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    yield* takeStopRequest(world, pass, info, notes);
+    return yield* withinLimit(world, repo, info, notes, pass);
   });
 
 /** The time limit for the run. False when the run was stopped or the call failed: it is done for this pass. */

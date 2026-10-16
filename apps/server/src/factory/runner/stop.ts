@@ -28,13 +28,20 @@ export const stopRequestPath = (dataDir: string, run: RunId): string =>
 /**
  * What `takeStopRequest` found. `recorded`: the line is now in the ledger. `already-requested`
  * and `finished`: the request is stale (the line is there, or the run is over) and is dropped.
+ * `not-building`: the run left `building` (or has no state yet) after the script checked, so
+ * the request is dropped and no line is written.
  */
-export type StopRequestOutcome = "recorded" | "already-requested" | "none" | "finished";
+export type StopRequestOutcome =
+  | "recorded"
+  | "already-requested"
+  | "none"
+  | "finished"
+  | "not-building";
 
 /**
  * Takes the stop request for `run`, if there is one. The file is removed after the ledger line is
  * written, so a crash between the two leaves the file and the line, and the next pass finds the
- * line and only removes the file. A run that is finished gets no line. A ledger that cannot be
+ * line and only removes the file. A run that is finished, or no longer building, gets no line. A ledger that cannot be
  * read or written is an error and the file is kept for the next pass.
  */
 export const takeStopRequest = (
@@ -56,6 +63,7 @@ export const takeStopRequest = (
     };
     if (seen.finished) return drop("finished");
     if (seen.stopRequested) return drop("already-requested");
+    if (seen.state !== "building") return drop("not-building");
     const out = Ledger.open(dataDir, run, { clock });
     try {
       out.append(
