@@ -88,13 +88,15 @@ function useAttentionWiggle(element: HTMLElement | null, attentionKey: string | 
 
 /**
  * The status icon of the most urgent thread, else the group's own icon. A tab with neither an icon
- * nor a name shows the dot, so it never renders empty.
+ * nor a name shows the dot, so it never renders empty. A squeezed tab gives its group icon's room
+ * to its name.
  */
-function TabIcon(props: { tab: SidebarGroupTab }) {
+function TabIcon(props: { tab: SidebarGroupTab; squeezed: boolean }) {
   const { tab } = props;
   if (tab.status !== null) {
     return <AppIcon slot={tab.status.slot} className={cn("size-3.5", tab.status.className)} />;
   }
+  if (props.squeezed && tab.showName) return null;
   const icon = tab.icon === "none" && !tab.showName ? undefined : tab.icon;
   return <GroupIcon icon={icon} className="size-3.5 text-muted-foreground" />;
 }
@@ -103,9 +105,13 @@ function TabIcon(props: { tab: SidebarGroupTab }) {
 function TabLabel(props: {
   tab: SidebarGroupTab;
   project: EnvironmentProject | null;
-  /** False when the tab does not fit whole: the name keeps the room, and the tooltip the count. */
-  showCount?: boolean;
+  /**
+   * The tab does not fit whole. It drops the count and the group icon before it cuts the name; the
+   * tooltip keeps the count.
+   */
+  squeezed?: boolean;
 }) {
+  const squeezed = props.squeezed === true;
   const { tab, project } = props;
   const single = tab.singleThread;
   return (
@@ -113,15 +119,15 @@ function TabLabel(props: {
       {single !== null && project !== null ? (
         <ProjectFavicon project={project} className="size-3.5 shrink-0" />
       ) : null}
-      <TabIcon tab={tab} />
+      <TabIcon tab={tab} squeezed={squeezed} />
       {single !== null ? (
         <span className={cn(THREAD_CARD_TITLE_CLASS, "max-w-36 min-w-0 truncate text-xs")}>
           {single.title}
         </span>
       ) : (
         <>
-          {tab.showName ? <span className="max-w-32 min-w-8 truncate">{tab.name}</span> : null}
-          {props.showCount === false ? null : (
+          {tab.showName ? <span className="max-w-32 min-w-0 truncate">{tab.name}</span> : null}
+          {squeezed ? null : (
             <span className="shrink-0 text-muted-foreground/80 tabular-nums">
               {tab.threadCount}
             </span>
@@ -215,7 +221,7 @@ function GroupTab(props: {
           />
         }
       >
-        <TabLabel tab={tab} project={props.project} showCount={!props.squeezed} />
+        <TabLabel tab={tab} project={props.project} squeezed={props.squeezed} />
       </TooltipTrigger>
       <TooltipPopup side="bottom">{tooltip}</TooltipPopup>
     </Tooltip>
@@ -233,6 +239,8 @@ function MoreTabsMenu(props: {
   dropTargetId: string | null;
   projectFor: (thread: SidebarThreadSummary) => EnvironmentProject | null;
   onSelect: (tab: SidebarGroupTab) => void;
+  /** The open tab does not fit whole, so the button gives up its chevron to the tab's name. */
+  compact: boolean;
 }) {
   // The button carries the color of a hidden tab that needs the user.
   const attention = props.tabs.find((tab) => tab.needsAttention) ?? null;
@@ -260,7 +268,7 @@ function MoreTabsMenu(props: {
         }
       >
         <span className="tabular-nums">+{props.tabs.length}</span>
-        <AppIcon slot="groups.more" className="size-3.5" />
+        {props.compact ? null : <AppIcon slot="groups.more" className="size-3.5" />}
       </MenuTrigger>
       <MenuPopup align="end">
         {props.tabs.map((tab) => (
@@ -444,6 +452,7 @@ export function SidebarGroupTabs(props: {
             onOpenChange={setMoreOpen}
             dropTargetId={state.dropTargetId}
             projectFor={props.projectFor}
+            compact={squeezedIndex !== null}
             onSelect={(tab) =>
               tab.singleThread === null
                 ? state.setTabId(tab.id)
