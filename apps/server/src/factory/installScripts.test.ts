@@ -92,8 +92,9 @@ const makeArchive = (version: string, options: { binary?: boolean; label?: strin
 // A little launchd-like: bootout leaves the job loaded for two more `print` polls (or
 // LAUNCHCTL_BOOTOUT_DRAIN), and bootstrap fails with EIO while it is still loaded (or when
 // LAUNCHCTL_BOOTSTRAP_FAIL is set). A bootstrap writes "factory started" to the log when
-// LAUNCHCTL_HEALTHY (space-separated `current` targets) lists the version `current` points at;
-// LAUNCHCTL_TRUNCATE_LOG empties the log first, as a rotation would.
+// LAUNCHCTL_HEALTHY (space-separated `current` targets) lists the version `current` points at
+// (LAUNCHCTL_HEALTHY_LINE writes another line instead); LAUNCHCTL_TRUNCATE_LOG empties the log
+// first, as a rotation would.
 const setupSandbox = () => {
   tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-install-")));
   home = NodePath.join(tmp, "home");
@@ -130,7 +131,7 @@ const setupSandbox = () => {
       '        if [ "$entry" = "$target" ]; then',
       '          mkdir -p "$HOME/Library/Logs/t3fac"',
       '          if [ -n "$LAUNCHCTL_TRUNCATE_LOG" ]; then : > "$HOME/Library/Logs/t3fac/t3fac.log"; fi',
-      '          echo "factory started" >> "$HOME/Library/Logs/t3fac/t3fac.log"',
+      '          echo "${LAUNCHCTL_HEALTHY_LINE:-factory started}" >> "$HOME/Library/Logs/t3fac/t3fac.log"',
       "        fi",
       "      done",
       "    fi ;;",
@@ -388,16 +389,32 @@ describe("install.sh and rollback.sh health check", () => {
 
   it("rolls back an install whose server never logs that it started", () => {
     installV1();
-    seedLog("boot line one\nboot line two\n");
+    const lines = Array.from({ length: 60 }, (_, i) => `boot line ${i + 1}`);
+    seedLog(lines.join("\n") + "\n");
     const result = runWith({ LAUNCHCTL_HEALTHY: `versions/${v1}` }, "install.sh", archives[v2]!);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
       `install of ${v2} failed its health check; rolled back to ${v1}`,
     );
-    expect(result.stderr).toContain("boot line two");
+    // The last 50 lines: line 11 is the oldest shown, line 10 is cut.
+    expect(result.stderr).toContain("boot line 60");
+    expect(result.stderr).toContain("boot line 11\n");
+    expect(result.stderr).not.toContain("boot line 10\n");
     expect(link("current")).toBe(`versions/${v1}`);
     expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
     expect(bootstraps(result.calls)).toHaveLength(2);
+  });
+
+  it("keeps an install whose server logs that it has no factory config", () => {
+    installV1();
+    const result = runWith(
+      { LAUNCHCTL_HEALTHY_LINE: "no factory config" },
+      "install.sh",
+      archives[v2]!,
+    );
+    expect(result.status).toBe(0);
+    expect(link("current")).toBe(`versions/${v2}`);
+    expect(bootstraps(result.calls)).toHaveLength(1);
   });
 
   it("rolls back an install whose port does not accept connections", async () => {
