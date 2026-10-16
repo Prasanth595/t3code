@@ -38,7 +38,7 @@ const transactionsByInstance = new Map<string, Map<string, Transaction>>();
 // server processes sharing the same credential backend can still race.
 const tailsByInstance = new Map<string, Promise<void>>();
 
-function isCredential(value: unknown): value is Credential {
+export function isPiCredential(value: unknown): value is Credential {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
   if (candidate.type === "api_key") {
@@ -49,7 +49,7 @@ function isCredential(value: unknown): value is Credential {
     typeof candidate.refresh === "string" && typeof candidate.expires === "number";
 }
 
-function parseStore(bytes: Uint8Array | undefined): CredentialMap {
+export function parsePiCredentialStore(bytes: Uint8Array | undefined): CredentialMap {
   if (!bytes) return {};
   if (bytes.byteLength > MAX_STORE_BYTES) throw new Error("Credential store is invalid");
   const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
@@ -60,20 +60,69 @@ function parseStore(bytes: Uint8Array | undefined): CredentialMap {
   if (!records || typeof records !== "object" || Array.isArray(records)) throw new Error("Credential store is invalid");
   const result: CredentialMap = Object.create(null) as CredentialMap;
   for (const [providerId, credential] of Object.entries(records)) {
-    if (!isProviderId(providerId) || !isCredential(credential)) throw new Error("Credential store is invalid");
+    if (!isPiProviderId(providerId) || !isPiCredential(credential)) throw new Error("Credential store is invalid");
     result[providerId] = credential;
   }
   return result;
 }
 
-function isProviderId(value: string): boolean {
+export function isPiProviderId(value: string): boolean {
   return value.length > 0 && value.length <= 128 && /^[A-Za-z0-9._-]+$/.test(value);
 }
 
-function encodeStore(credentials: CredentialMap): Uint8Array {
+export function encodePiCredentialStore(credentials: CredentialMap): Uint8Array {
   const encoded = new TextEncoder().encode(JSON.stringify({ version: 1, credentials }));
   if (encoded.byteLength > MAX_STORE_BYTES) throw new Error("Credential store capacity exceeded");
   return encoded;
+}
+
+export function setPiCredential(input: {
+  readonly host: ProviderHost.ProviderHost["Service"];
+  readonly instanceId: string;
+  readonly providerId: string;
+  readonly credential: unknown;
+}) {
+  return Effect.gen(function* () {
+    if (!isPiProviderId(input.providerId) || !isPiCredential(input.credential)) {
+      return yield* Effect.fail(new Error("Pi credential is invalid"));
+    }
+    const encodedCredential = new TextEncoder().encode(JSON.stringify(input.credential));
+    if (encodedCredential.byteLength > MAX_CREDENTIAL_BYTES) {
+      return yield* Effect.fail(new Error("Pi credential is too large"));
+    }
+    const release = yield* Effect.promise(() => acquireInstanceLock(input.instanceId));
+    yield* Effect.gen(function* () {
+      const store = yield* input.host.credentials("subpolar-pi", input.instanceId);
+      const current = yield* store.get;
+      const credentials = yield* Effect.try({
+        try: () => parsePiCredentialStore(Option.getOrUndefined(current)),
+        catch: () => new Error("Credential store is invalid"),
+      });
+      credentials[input.providerId] = input.credential;
+      yield* store.set(encodePiCredentialStore(credentials));
+    }).pipe(Effect.ensuring(Effect.sync(release)));
+  });
+}
+
+export function removePiCredential(input: {
+  readonly host: ProviderHost.ProviderHost["Service"];
+  readonly instanceId: string;
+  readonly providerId: string;
+}) {
+  return Effect.gen(function* () {
+    const release = yield* Effect.promise(() => acquireInstanceLock(input.instanceId));
+    yield* Effect.gen(function* () {
+      const store = yield* input.host.credentials("subpolar-pi", input.instanceId);
+      const current = yield* store.get;
+      const credentials = yield* Effect.try({
+        try: () => parsePiCredentialStore(Option.getOrUndefined(current)),
+        catch: () => new Error("Credential store is invalid"),
+      });
+      delete credentials[input.providerId];
+      if (Object.keys(credentials).length === 0) yield* store.remove;
+      else yield* store.set(encodePiCredentialStore(credentials));
+    }).pipe(Effect.ensuring(Effect.sync(release)));
+  });
 }
 
 function acquireInstanceLock(instanceId: string): Promise<() => void> {
@@ -110,26 +159,26 @@ export function registerSubpolarCredentialExtension(input: {
   readonly context: AcpAdapterV2ExtensionContext;
 }) {
   const { host, instanceId, context } = input;
-  const providerIds = new Set(input.providerIds.filter(isProviderId));
+  const providerIds = new Set(input.providerIds.filter(isPiProviderId));
   return Effect.gen(function* () {
     const store = yield* host.credentials("subpolar-pi", instanceId);
     const readMap = Effect.gen(function* () {
       const stored = yield* store.get;
       return yield* Effect.try({
-        try: () => parseStore(Option.getOrUndefined(stored)),
+        try: () => parsePiCredentialStore(Option.getOrUndefined(stored)),
         catch: () => new Error("Credential store is invalid"),
       });
     });
     const persist = (credentials: CredentialMap) => Effect.gen(function* () {
       if (Object.keys(credentials).length === 0) yield* store.remove;
-      else yield* store.set(encodeStore(credentials));
+      else yield* store.set(encodePiCredentialStore(credentials));
     });
     yield* context.runtime.handleExtRequest(METHOD, Request, (request) => Effect.gen(function* () {
       const activeSessionId = yield* context.activeSessionId;
       if (!request.sessionId || request.sessionId !== activeSessionId) {
         return yield* requestFailure("Credential request is not bound to the active ACP session");
       }
-      if (request.providerId !== undefined && !isProviderId(request.providerId)) {
+      if (request.providerId !== undefined && !isPiProviderId(request.providerId)) {
         return yield* requestFailure("Credential provider ID is invalid");
       }
       const providerId = request.providerId;
@@ -169,7 +218,7 @@ export function registerSubpolarCredentialExtension(input: {
             return yield* requestFailure("Credential transaction is invalid or expired");
           }
           if (request.credential !== undefined) {
-            if (!isCredential(request.credential) || new TextEncoder().encode(JSON.stringify(request.credential)).byteLength > MAX_CREDENTIAL_BYTES) {
+            if (!isPiCredential(request.credential) || new TextEncoder().encode(JSON.stringify(request.credential)).byteLength > MAX_CREDENTIAL_BYTES) {
               return yield* requestFailure("Credential value is invalid");
             }
           }

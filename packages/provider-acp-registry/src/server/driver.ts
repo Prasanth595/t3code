@@ -763,6 +763,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         settings: effectiveConfig,
         cwd: host.paths.cwd,
         environment: processEnvironment,
+        host,
         onChanged: (authenticated) =>
           confirmedAuthentication
             .set(authenticated)

@@ -56,11 +56,21 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
     ),
     enableSubpolarCredentialBroker: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({
+        title: "Use T3 managed Pi credentials",
+        description:
+          "Allow this ACP instance to provide one Pi credential through its private worker bridge.",
+        providerSettingsForm: { control: "switch" },
+      }),
     ),
-    subpolarCredentialProviderIds: Schema.Array(TrimmedString).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    subpolarCredentialProviderId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Pi provider ID",
+        description:
+          "Provider ID whose credential this ACP instance may use, for example 'openai'.",
+        providerSettingsForm: { placeholder: "openai", clearWhenEmpty: "omit" },
+      }),
     ),
     distribution: AcpRegistryDistributionPreference.pipe(
       Schema.withDecodingDefault(Effect.succeed("auto")),
@@ -72,7 +82,14 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["source", "agentId", "commandPath", "authMethodId"],
+    order: [
+      "source",
+      "agentId",
+      "commandPath",
+      "authMethodId",
+      "enableSubpolarCredentialBroker",
+      "subpolarCredentialProviderId",
+    ],
   },
 );
 export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;

@@ -18,10 +18,17 @@ import type * as AcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  isPiCredential,
+  isPiProviderId,
+  removePiCredential,
+  setPiCredential,
+} from "./subpolarCredentials.ts";
 
 type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -29,12 +36,14 @@ type Runtime = Pick<
 >;
 
 const MAX_AUTH_FORM_PAYLOAD_BYTES = 256 * 1024;
+const SUBPOLAR_PI_CREDENTIAL_METHOD = "t3-subpolar-pi-credential";
 
 export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (options: {
   readonly instanceId: ProviderInstanceId;
   readonly settings: AcpRegistrySettings;
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
+  readonly host?: ProviderHost.ProviderHost["Service"];
   readonly onChanged: (authenticated: boolean) => Effect.Effect<void>;
   readonly makeRuntime?: (
     spawn: AcpSessionRuntime.AcpSpawnInput,
@@ -141,7 +150,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     }),
   );
 
-  const methods = Option.isSome(coordinator)
+  const discoveredMethods = Option.isSome(coordinator)
     ? coordinator.value
         .runBackgroundProbe(agentKey, discoverMethods)
         .pipe(
@@ -157,6 +166,26 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           ),
         )
     : discoverMethods;
+
+  const configuredPiProviderId = options.settings.subpolarCredentialProviderId;
+  const canConfigurePiCredential =
+    options.settings.enableSubpolarCredentialBroker &&
+    options.host !== undefined &&
+    isPiProviderId(configuredPiProviderId);
+  const methods = discoveredMethods.pipe(
+    Effect.map((advertised) => {
+      if (!canConfigurePiCredential) return advertised;
+      return [
+        ...advertised.filter((method) => method.id !== SUBPOLAR_PI_CREDENTIAL_METHOD),
+        {
+          id: SUBPOLAR_PI_CREDENTIAL_METHOD,
+          name: "Pi provider credential",
+          description: `Enter a Pi credential for ${configuredPiProviderId}. The credential is stored securely by T3 for this provider instance.`,
+          type: "credentials" as const,
+        },
+      ];
+    }),
+  );
 
   const runTerminal = Effect.fnUntraced(function* (
     resolved: AcpRegistrySupport.ResolvedAcpRegistryAgent,
@@ -234,6 +263,50 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     Effect.gen(function* () {
       if (!options.settings.enabled)
         return yield* failure("start", "Enable this provider before signing in.");
+      if (methodId === SUBPOLAR_PI_CREDENTIAL_METHOD) {
+        if (!canConfigurePiCredential || !options.host) {
+          return yield* failure(
+            "start",
+            "Configure an allowlisted Pi provider ID before entering its credential.",
+          );
+        }
+        const values = yield* Deferred.make<Readonly<Record<string, string>> | null>();
+        yield* context.setInteraction(
+          {
+            type: "credentials",
+            id: context.flowId,
+            fields: [{ name: "credentialJson", label: "Pi credential JSON", secret: true }],
+          },
+          (response) =>
+            response.type === "credentials"
+              ? Deferred.succeed(values, response.values).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        const submitted = yield* Deferred.await(values);
+        const credentialText = submitted?.credentialJson?.trim();
+        if (!credentialText) return yield* failure("start", "A Pi credential is required.");
+        const credential = yield* Effect.try({
+          try: () => JSON.parse(credentialText) as unknown,
+          catch: () => failure("start", "The Pi credential must be valid JSON."),
+        });
+        if (!isPiCredential(credential)) {
+          return yield* failure(
+            "start",
+            'Use a Pi credential object with type "api_key" or type "oauth".',
+          );
+        }
+        yield* context.verifying;
+        yield* setPiCredential({
+          host: options.host,
+          instanceId: options.instanceId,
+          providerId: configuredPiProviderId,
+          credential,
+        }).pipe(
+          Effect.mapError(() => failure("start", "T3 could not save the Pi credential securely.")),
+        );
+        yield* options.onChanged(true);
+        return;
+      }
       const login = Effect.scoped(
         Effect.gen(function* () {
           const resolved = yield* resolve;
@@ -400,6 +473,15 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     });
   const logout = Effect.scoped(
     Effect.gen(function* () {
+      if (canConfigurePiCredential && options.host) {
+        yield* removePiCredential({
+          host: options.host,
+          instanceId: options.instanceId,
+          providerId: configuredPiProviderId,
+        }).pipe(
+          Effect.mapError(() => failure("logout", "T3 could not remove the Pi credential securely.")),
+        );
+      }
       const resolved = yield* resolve;
       const runtime = yield* makeRuntime(resolved.spawn);
       yield* runtime.logout.pipe(

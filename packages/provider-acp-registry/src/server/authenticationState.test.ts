@@ -53,6 +53,8 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
           { settings: { ...settings, agentId: "other-agent" } },
           { settings: { ...settings, authMethodId: "enterprise" } },
           { settings: { ...settings, commandPath: "/other/devin" } },
+          { settings: { ...settings, enableSubpolarCredentialBroker: true } },
+          { settings: { ...settings, subpolarCredentialProviderId: "openai" } },
           { environment: [{ name: "DEVIN_TOKEN", value: "different-token", sensitive: true }] },
           { processEnvironment: { HOME: "/home/other" } },
         ]) {

@@ -95,11 +95,18 @@ The worker image contains no gateway token, T3 state, account credentials, or
 Docker socket.
 
 Workers currently run with Docker networking disabled. They therefore cannot
-reach a model API or a future credential broker, and the image does not include
-account credentials. The packaged Pi runtime is ready for the worker process,
-but a real Pi turn cannot complete until a filtered gateway provides the
-approved model path and T3-owned credential access. Do not enable direct worker
-networking as a workaround.
+reach a model API. When `Use T3 managed Pi credentials` is enabled on an ACP
+provider instance and its exact Pi provider ID is configured, T3's masked
+sign-in flow can seed an encrypted, instance-scoped Pi credential for the
+worker's private ACP credential bridge. The credential is not copied into the
+worker image or its environment. A real Pi turn still cannot complete until
+the manager provides and verifies a filtered model API path. Do not enable
+direct worker networking as a workaround.
+
+The `subpolar` admin CLI manages environments through the authenticated manager
+API; it does not access Docker directly. See
+[`packages/subpolar-environments/README.md`](../packages/subpolar-environments/README.md)
+for commands and configuration.
 
 The manager and worker protocol have focused unit coverage. A live Docker build
 and container verification have not been performed where no Docker daemon is

@@ -252,7 +252,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
             yield* registerSubpolarCredentialExtension({
               host: options.host,
               instanceId: options.instanceId,
-              providerIds: options.settings.subpolarCredentialProviderIds,
+              providerIds: options.settings.subpolarCredentialProviderId
+                ? [options.settings.subpolarCredentialProviderId]
+                : [],
               context,
             });
           }),

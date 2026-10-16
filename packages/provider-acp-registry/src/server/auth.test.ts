@@ -77,11 +77,22 @@ const makeHarness = (
     let closedBeforeTerminal = false;
     const written: string[] = [];
     const sizes: number[][] = [];
+    let piCredentialBytes: Uint8Array | undefined;
+    const host = {
+      credentials: () =>
+        Effect.succeed({
+          binding: { owner: "t3" as const, key: "instance" },
+          get: Effect.sync(() => piCredentialBytes ? Option.some(piCredentialBytes) : Option.none()),
+          set: (value: Uint8Array) => Effect.sync(() => { piCredentialBytes = value; }),
+          remove: Effect.sync(() => { piCredentialBytes = undefined; }),
+        }),
+    };
     const controller = yield* makeAcpRegistryAuth({
       instanceId: providerInstanceId,
       settings,
       cwd: "/workspace",
       environment: { PATH: "/tools", OVERRIDE: "base" },
+      host: host as never,
       onChanged: (value) =>
         Effect.sync(() => {
           changed.push(value);
@@ -212,6 +223,9 @@ const makeHarness = (
       killed: () => killed,
       written,
       sizes,
+      piCredentialStore: () => piCredentialBytes
+        ? JSON.parse(new TextDecoder().decode(piCredentialBytes))
+        : undefined,
       runtimes: () => runtimes,
       setVersion: (value: string) => {
         version = value;
@@ -283,6 +297,50 @@ it.effect("bridges ACP auth form fields through the private credential interacti
     yield* h.phase("verifying");
     yield* Deferred.succeed(h.verify, undefined);
     yield* h.phase("succeeded");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("stores an allowlisted Pi credential from T3's masked auth interaction", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(
+      browserMethod,
+      false,
+      decodeSettings({
+        agentId: "test-agent",
+        enableSubpolarCredentialBroker: true,
+        subpolarCredentialProviderId: "openai",
+      }),
+    );
+    const flow = yield* h.controller.start("owner", Effect.void, "t3-subpolar-pi-credential");
+    const waiting = yield* h.phase("waiting");
+    assert.isTrue(waiting.methods?.some((method) => method.id === "t3-subpolar-pi-credential"));
+    assert.deepEqual(waiting.interaction, {
+      type: "credentials",
+      id: flow.flowId,
+      fields: [{ name: "credentialJson", label: "Pi credential JSON", secret: true }],
+    });
+    const secret = "pi-api-key-canary";
+    yield* h.controller.respond!("owner", {
+      instanceId,
+      flowId: flow.flowId!,
+      interactionId: flow.flowId!,
+      response: {
+        type: "credentials",
+        values: {
+          credentialJson: JSON.stringify({ type: "api_key", key: secret }),
+        },
+      },
+    });
+    yield* h.phase("succeeded");
+    assert.deepEqual(h.piCredentialStore(), {
+      version: 1,
+      credentials: { openai: { type: "api_key", key: secret } },
+    });
+    assert.deepEqual(h.changed, [true]);
+    assert.notInclude(JSON.stringify(yield* h.phase("succeeded")), secret);
+    yield* h.controller.logout(Effect.void);
+    assert.isUndefined(h.piCredentialStore());
+    assert.deepEqual(h.changed, [true, false]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

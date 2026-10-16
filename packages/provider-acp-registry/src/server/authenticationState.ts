@@ -43,6 +43,8 @@ export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuth
       commandPath: input.settings.commandPath,
       distribution: input.settings.distribution,
       authMethodId: input.settings.authMethodId,
+      enableSubpolarCredentialBroker: input.settings.enableSubpolarCredentialBroker,
+      subpolarCredentialProviderId: input.settings.subpolarCredentialProviderId,
       environment: [...input.environment].toSorted((a, b) => a.name.localeCompare(b.name)),
       profiles: [
         "HOME",
