@@ -1,4 +1,4 @@
-import type { AgentRunPort, JsonValue, RunProgressEmitter, RunRequest, RuntimeToolInvoker, StatelessExecutor } from "../../subpolar-contracts/src/index.ts";
+import type { AgentRunPort, JsonValue, RunProgressEmitter, RunRequest, RuntimeToolInvoker, StatelessExecutor, ToolDefinition } from "../../subpolar-contracts/src/index.ts";
 
 export interface PiExecutionContext {
   principal: RunRequest["context"]["principal"];
@@ -31,6 +31,7 @@ export interface PiTranscriptProjection {
 export interface PiRunRequest extends RunRequest {
   transcript?: PiTranscriptProjection | readonly PiTranscriptEntry[];
   tools?: RuntimeToolInvoker;
+  toolDefinitions?: readonly ToolDefinition[];
 }
 
 export interface PiStreamEvent {
@@ -44,6 +45,7 @@ export interface PiExecutionRequest {
   prompt: string;
   context: PiExecutionContext;
   transcript: PiTranscriptProjection;
+  toolDefinitions?: readonly ToolDefinition[];
   signal?: AbortSignal;
   emit: (event: PiStreamEvent | unknown) => void | Promise<void>;
   tools?: RuntimeToolInvoker;
@@ -193,6 +195,9 @@ const eventTypeAliases: Record<string, PiStreamEvent["type"]> = {
   turn_end: "status",
   tool_call: "tool",
   tool_result: "tool",
+  tool_execution_start: "tool",
+  tool_execution_update: "tool",
+  tool_execution_end: "tool",
 };
 
 /** Convert SDK-shaped events into the adapter's small, JSON-safe event vocabulary. */
@@ -237,6 +242,7 @@ export function createPiRunPort<Config>(factory: PiExecutorFactory<Config>, conf
           prompt: request.prompt,
           context: mapContext(request),
           transcript: normalizePiTranscriptProjection(request.transcript),
+          toolDefinitions: request.toolDefinitions,
           signal: request.signal,
           tools: request.tools,
           emit: async (event) => {
@@ -336,6 +342,7 @@ export function createPiStatelessExecutor<Config>(
   factory: PiExecutorFactory<Config>,
   config: Config,
   transcript?: (execution: Parameters<StatelessExecutor>[0]) => PiRunRequest["transcript"] | Promise<PiRunRequest["transcript"]>,
+  toolDefinitions: readonly ToolDefinition[] = [],
 ): StatelessExecutor {
   const port = createPiRunPort(factory, config);
   return async (execution) => port.run({
@@ -345,6 +352,7 @@ export function createPiStatelessExecutor<Config>(
     signal: execution.request.signal,
     tools: execution.tools,
     transcript: await transcript?.(execution),
+    toolDefinitions,
   }, execution.emit);
 }
 

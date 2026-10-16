@@ -212,7 +212,7 @@ export class StatelessSubpolarRuntime implements StatelessSubpolarRuntimePort {
     return { ...common, state: outcome.state, error: outcome.error ?? { code: "RUN_UNKNOWN", message: "The run outcome is unavailable" }, recoverable };
   }
 
-  async callTool(call: ToolCall, request: StatelessRunRequest): Promise<GatewayResult> {
+  async callTool(call: ToolCall, request: StatelessRunRequest, signal = request.signal): Promise<GatewayResult> {
     this.validateRequest({ ...request, prompt: request.prompt || "tool-call" });
     const context = await this.resolveContext(request);
     const scopedCall: ToolCall = {
@@ -223,7 +223,7 @@ export class StatelessSubpolarRuntime implements StatelessSubpolarRuntimePort {
     };
     // The gateway is the sole policy boundary. The optional idempotency port belongs
     // in createPolicyGateway; this runtime never executes a tool directly.
-    return this.options.gateway.call(scopedCall, context);
+    return this.options.gateway.call(scopedCall, context, signal);
   }
 
   async decideApproval(approvalId: string, decision: ApprovalDecision) {
@@ -269,7 +269,7 @@ export class StatelessSubpolarRuntime implements StatelessSubpolarRuntimePort {
       const execution: RuntimeExecution = {
         request,
         context,
-        tools: { call: (call) => this.callTool(call, request) },
+        tools: { call: (call, signal) => this.callTool(call, request, signal) },
         emit: async (data) => { await this.emit(request, "running", "run.progress", data); },
       };
       output = await this.executor(execution);

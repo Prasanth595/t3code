@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stdio from "effect/Stdio";
+import { createHash } from "node:crypto";
 
 import * as AcpAgent from "effect-acp/agent";
 import * as AcpError from "effect-acp/errors";
@@ -9,6 +10,8 @@ import {
   createPolicyGateway,
   type RuntimeContext,
 } from "@subpolar/runtime";
+import type { PolicyResolver, ToolCall, ToolDefinition, ToolExecutor } from "@subpolar/shared";
+import { validateToolInput } from "@subpolar/tools";
 import { createSubpolarRuntimeHost } from "@subpolar/runtime-host";
 import {
   createPiSdkExecutorFactory,
@@ -23,6 +26,9 @@ export interface SubpolarAcpOptions {
   readonly loadPiSdk?: () => Promise<PiSdkModule>;
   readonly executorFactory?: PiExecutorFactory<PiSdkConfig | undefined>;
   readonly principalId?: string;
+  readonly toolDefinitions?: readonly ToolDefinition[];
+  readonly resolveToolPolicy?: PolicyResolver;
+  readonly executeTool?: ToolExecutor;
 }
 
 interface SessionContext {
@@ -62,13 +68,34 @@ function eventText(value: unknown): string | undefined {
 function createRuntimeHost(
   options: SubpolarAcpOptions,
   sessions: Map<string, SessionContext>,
+  requestPermission: (sessionId: string | undefined, call: ToolCall, definition: ToolDefinition, signal?: AbortSignal) => Promise<boolean>,
   emitProgress: (sessionId: string, runId: string, event: unknown) => Effect.Effect<void>,
 ) {
+  const toolDefinitions = options.executeTool ? options.toolDefinitions ?? [] : [];
+  const toolNameBySdkName = new Map(toolDefinitions.map((definition) => [
+    `subpolar_${createHash("sha256").update(definition.id).digest("hex").slice(0, 16)}`,
+    definition.id,
+  ]));
   const gateway = createPolicyGateway({
-    tools: [],
-    execute: async () => {
-      throw new Error("No Subpolar tools are configured for this ACP agent");
+    tools: toolDefinitions,
+    validateInput: (input, definition) => validateToolInput(
+      input,
+      definition.inputSchema as Parameters<typeof validateToolInput>[1],
+    ),
+    resolvePolicy: async (definition, context, input) => {
+      const policy = await options.resolveToolPolicy?.(definition, context, input);
+      // T3 must authorize each exact invocation. Persistent/"always" grants are
+      // intentionally not offered by this bridge.
+      return { ...(policy ?? {}), requiresApproval: true };
     },
+    approve: async ({ call, definition, context }, signal) => ({
+      approved: await requestPermission(context.sessionId, call, definition, signal),
+      decidedBy: "t3-acp-client",
+    }),
+    execute: options.executeTool ?? (async () => ({
+      ok: false as const,
+      error: { code: "TOOL_EXECUTION_UNAVAILABLE", message: "Subpolar tool execution is not configured" },
+    })),
   });
   const piFactory = options.executorFactory ?? createPiSdkExecutorFactory(options.loadPiSdk ?? loadPiSdk);
 
@@ -105,9 +132,100 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
     const activeSessions = new Set<string>();
     const activeRunIds = new Map<string, string>();
     const streamedText = new Set<string>();
-    const runtime = createRuntimeHost(options, sessions, (sessionId, runId, event) => {
+    const requestPermission = async (
+      sessionId: string | undefined,
+      call: ToolCall,
+      definition: ToolDefinition,
+      signal?: AbortSignal,
+    ): Promise<boolean> => {
+      if (!sessionId || signal?.aborted) return false;
+      try {
+        const permission = Effect.runPromise(agent.client.requestPermission({
+          sessionId,
+          toolCall: {
+            toolCallId: call.callId,
+            kind: "other",
+            status: "pending",
+            title: `${definition.id}: ${definition.description}`,
+            name: definition.id,
+            rawInput: call.input as NonNullable<AcpSchema.ToolCallUpdate["rawInput"]>,
+          },
+          options: [
+            { optionId: "allow-once", name: "Allow this call", kind: "allow_once" },
+            { optionId: "reject-once", name: "Reject this call", kind: "reject_once" },
+          ],
+        }));
+        const response = await (signal
+          ? await new Promise<Awaited<typeof permission>>((resolve, reject) => {
+              const abort = () => reject(new Error("Tool permission request cancelled"));
+              signal.addEventListener("abort", abort, { once: true });
+              permission.then(
+                (value) => { signal.removeEventListener("abort", abort); resolve(value); },
+                (error) => { signal.removeEventListener("abort", abort); reject(error); },
+              );
+            })
+          : permission);
+        if (signal?.aborted) return false;
+        const approved = response.outcome.outcome === "selected" && response.outcome.optionId === "allow-once";
+        await Effect.runPromise(agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: call.callId,
+            status: approved ? "in_progress" : "failed",
+          },
+        })).catch(() => undefined);
+        return approved;
+      } catch {
+        await Effect.runPromise(agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: call.callId,
+            status: "failed",
+          },
+        })).catch(() => undefined);
+        return false;
+      }
+    };
+    const runtime = createRuntimeHost(options, sessions, requestPermission, (sessionId, runId, event) => {
       activeRunIds.set(sessionId, runId);
       const candidate = event as { type?: unknown; data?: unknown };
+      if (candidate?.type === "tool") {
+        const data = candidate.data as { type?: unknown; toolCallId?: unknown; toolName?: unknown; args?: unknown; isError?: unknown; result?: unknown; partialResult?: unknown } | undefined;
+        if (typeof data?.toolCallId !== "string" || typeof data.toolName !== "string") return Effect.void;
+        const isStart = data.type === "tool_execution_start";
+        const isEnd = data.type === "tool_execution_end";
+        const isUpdate = data.type === "tool_execution_update";
+        if (!isStart && !isEnd && !isUpdate) return Effect.void;
+        const toolName = toolNameBySdkName.get(data.toolName) ?? "Subpolar tool";
+        return agent.client.sessionUpdate({
+          sessionId,
+          update: isStart
+            ? {
+                sessionUpdate: "tool_call",
+                toolCallId: data.toolCallId,
+                title: toolName,
+                name: toolName,
+                kind: "other",
+                status: "pending",
+                rawInput: data.args as NonNullable<AcpSchema.ToolCallUpdate["rawInput"]>,
+              }
+            : isUpdate
+              ? {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: data.toolCallId,
+                  status: "in_progress",
+                  rawOutput: data.partialResult,
+                }
+              : {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: data.toolCallId,
+                  status: data.isError === true ? "failed" : "completed",
+                  rawOutput: data.result,
+                },
+        }).pipe(Effect.catchAll(() => Effect.void));
+      }
       if (candidate?.type !== "text") return Effect.void;
       const text = eventText(candidate.data);
       if (!text) return Effect.void;

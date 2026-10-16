@@ -108,6 +108,7 @@ export class SubpolarRuntimeHost {
         const session = id ? this.sessions.get(id) : undefined;
         return { entries: session?.transcript ?? [], sessionId: id };
       },
+      options.gateway.tools,
     );
     this.runtime = createStatelessSubpolarRuntime({
       context: options.context,

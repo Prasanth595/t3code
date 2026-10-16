@@ -1828,6 +1828,12 @@ importers:
 
   packages/subpolar-acp:
     dependencies:
+      '@subpolar/shared':
+        specifier: workspace:*
+        version: link:../subpolar-contracts
+      '@subpolar/tools':
+        specifier: workspace:*
+        version: link:../subpolar-tools
       '@subpolar/runtime':
         specifier: workspace:*
         version: link:../subpolar-core

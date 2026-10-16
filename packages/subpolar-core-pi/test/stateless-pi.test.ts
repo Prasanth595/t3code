@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createPolicyGateway, createStatelessSubpolarRuntime } from "../../subpolar-core/src/index.ts";
-import { createPiStatelessExecutor, createPiSdkExecutorFactory, type PiSdkModule } from "../src/index.ts";
+import { createPiStatelessExecutor, createPiSdkExecutorFactory, type PiExecutionRequest, type PiSdkModule } from "../src/index.ts";
 
 const request = { runId: "run", requestId: "request", prompt: "hello" };
 
@@ -68,4 +68,77 @@ test("SDK execution aborts, unsubscribes, and disposes without loading tools or 
   expect(aborts).toBe(1);
   expect(unsubscribed).toBe(1);
   expect(disposed).toBe(1);
+});
+
+test("SDK exposes only policy-gateway tools and routes calls through the run invoker", async () => {
+  const observedCalls: unknown[] = [];
+  let optionsSeen: Record<string, unknown> | undefined;
+  const messages: Array<{ role: string; content: unknown; stopReason?: string }> = [];
+  const sdk: PiSdkModule = {
+    getAgentDir: () => "/test/agent",
+    SessionManager: { inMemory: () => ({ appendMessage() {} }) },
+    SettingsManager: { inMemory: () => ({}) },
+    DefaultResourceLoader: class { async reload() {} },
+    async createAgentSession(options) {
+      optionsSeen = options;
+      return { session: {
+        subscribe: () => () => undefined,
+        async prompt() {
+          const tools = options.customTools as Array<{
+            name: string;
+            parameters: Record<string, unknown>;
+            execute(id: string, params: unknown): Promise<unknown>;
+          }>;
+          const toolResult = await tools[0]!.execute("call-1", { text: "hello" });
+          observedCalls.push(toolResult);
+          messages.push({ role: "assistant", content: [{ type: "text", text: "tool finished" }], stopReason: "stop" });
+        },
+        async abort() {},
+        dispose() {},
+        messages,
+      } };
+    },
+  };
+  const execution: PiExecutionRequest = {
+    runId: "run-1",
+    requestId: "request-1",
+    prompt: "use the tool",
+    context: { principal: { id: "owner-1", kind: "local" }, sessionId: "session-1" },
+    transcript: { entries: [] },
+    toolDefinitions: [{
+      id: "test.echo",
+      namespace: "test",
+      description: "Echo text",
+      inputSchema: {},
+      enabled: true,
+      risk: "low",
+    }],
+    emit: () => undefined,
+    tools: {
+      async call(call) {
+        observedCalls.push(call);
+        return { ok: true, status: "executed", callId: call.callId, toolId: call.toolId, value: { accepted: true } };
+      },
+    },
+  };
+
+  const executor = await createPiSdkExecutorFactory(async () => sdk)(undefined, execution);
+  const result = await executor.execute(execution);
+
+  expect(optionsSeen).toMatchObject({ noTools: "builtin", tools: [expect.stringMatching(/^subpolar_[a-f0-9]{16}$/)] });
+  const customTools = optionsSeen?.customTools as Array<{ parameters: Record<string, unknown> }>;
+  expect(customTools[0]?.parameters).toEqual({});
+  expect(observedCalls[0]).toMatchObject({
+    callId: "call-1",
+    toolId: "test.echo",
+    input: { text: "hello" },
+    requestId: "request-1",
+    runId: "run-1",
+  });
+  expect(observedCalls[1]).toMatchObject({
+    content: [{ type: "text", text: expect.stringContaining('"accepted":true') }],
+    details: { toolId: "test.echo" },
+  });
+  expect(result).toEqual({ text: "tool finished" });
+  await executor.dispose?.();
 });

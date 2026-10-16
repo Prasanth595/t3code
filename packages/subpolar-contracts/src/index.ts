@@ -185,7 +185,7 @@ export interface StatelessRunRequest {
 }
 
 export interface RuntimeToolInvoker {
-  call(call: ToolCall): Promise<unknown>;
+  call(call: ToolCall, signal?: AbortSignal): Promise<unknown>;
 }
 
 export interface RuntimeExecution {
@@ -346,6 +346,7 @@ export type ApprovalDecision =
 
 export type ApprovalCallback = (
   request: ApprovalRequest,
+  signal?: AbortSignal,
 ) => ApprovalDecision | Promise<ApprovalDecision>;
 
 export type ApprovalStatus = "pending" | "approved" | "denied";
@@ -449,6 +450,7 @@ export type ToolExecutor = (
   call: ToolCall,
   definition: ToolDefinition,
   context: ExecutionContext,
+  signal?: AbortSignal,
 ) => ToolResult | Promise<ToolResult>;
 
 export type AuditStatus =

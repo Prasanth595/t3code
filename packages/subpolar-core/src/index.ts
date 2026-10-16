@@ -114,7 +114,7 @@ export interface ToolGateway {
   readonly tools: readonly ToolDefinition[];
   readonly capabilities: GatewayCapabilities;
   lookup(toolId: string): ToolDefinition | undefined;
-  call(call: ToolCall, context: ExecutionContext): Promise<GatewayResult>;
+  call(call: ToolCall, context: ExecutionContext, signal?: AbortSignal): Promise<GatewayResult>;
 }
 
 const sensitiveKey = /(access[_-]?token|api[_-]?key|authorization|bearer|client[_-]?secret|cookie|credential|password|private[_-]?key|secret|session[_-]?token|set-cookie|token)/i;
@@ -317,7 +317,8 @@ export function createPolicyGateway(options: GatewayOptions): ToolGateway {
     };
   }
 
-  async function executeCall(call: ToolCall, context: ExecutionContext): Promise<GatewayResult> {
+  async function executeCall(call: ToolCall, context: ExecutionContext, signal?: AbortSignal): Promise<GatewayResult> {
+    if (signal?.aborted) return failure(call, context, "failed", "RUN_INTERRUPTED", "Tool request was cancelled", "not_evaluated");
     const definition = definitions.get(call.toolId);
     if (!definition) {
       return failure(call, context, "unknown_tool", "UNKNOWN_TOOL", `Unknown tool: ${call.toolId}`, "not_evaluated");
@@ -376,7 +377,8 @@ export function createPolicyGateway(options: GatewayOptions): ToolGateway {
         if (!options.approve) {
           return failure(call, context, "approval_required", "APPROVAL_REQUIRED", decision.reason, decision.kind, undefined, approvalId);
         }
-        const callbackDecision = await options.approve(approvalRequest);
+        const callbackDecision = await options.approve(approvalRequest, signal);
+        if (signal?.aborted) return failure(call, context, "failed", "RUN_INTERRUPTED", "Tool request was cancelled", decision.kind, undefined, approvalId);
         if (!callbackDecision.approved) {
           return failure(call, context, "approval_denied", "APPROVAL_DENIED", callbackDecision.reason ?? "Approval was denied", decision.kind, undefined, approvalId);
         }
@@ -384,6 +386,7 @@ export function createPolicyGateway(options: GatewayOptions): ToolGateway {
     }
 
     const executeOnce = async (): Promise<ToolResult> => {
+      if (signal?.aborted) return { ok: false, error: { code: "RUN_INTERRUPTED", message: "Tool request was cancelled" } };
       if (approval?.status === "approved" && approvalClaimPort) {
         try {
           const claim = await approvalClaimPort.claim(approval.approvalId, call.callId);
@@ -393,7 +396,8 @@ export function createPolicyGateway(options: GatewayOptions): ToolGateway {
         }
       }
       try {
-        return await toolExecutor(call, definition, context);
+        if (signal?.aborted) return { ok: false, error: { code: "RUN_INTERRUPTED", message: "Tool request was cancelled" } };
+        return await toolExecutor(call, definition, context, signal);
       } catch {
         return { ok: false, error: { code: "EXECUTION_FAILED", message: "Tool execution failed" } };
       }
@@ -432,9 +436,9 @@ export function createPolicyGateway(options: GatewayOptions): ToolGateway {
     return { ok: true, status: "executed", callId: call.callId, toolId: call.toolId, value: execution.value };
   }
 
-  async function runCall(call: ToolCall, context: ExecutionContext): Promise<GatewayResult> {
+  async function runCall(call: ToolCall, context: ExecutionContext, signal?: AbortSignal): Promise<GatewayResult> {
     try {
-      return await executeCall(call, context);
+      return await executeCall(call, context, signal);
     } catch {
       return failure(call, context, "failed", "GATEWAY_FAILED", "Tool gateway failed", "not_evaluated");
     }
@@ -444,20 +448,27 @@ export function createPolicyGateway(options: GatewayOptions): ToolGateway {
     tools,
     capabilities: { idempotency: options.idempotency ? "injected" : "in-memory-per-gateway", multiProcessGuarantee: Boolean(options.idempotency) },
     lookup: (toolId) => definitions.get(toolId),
-    async call(call, context) {
-      const completed = completedResults.get(call.callId);
+    async call(call, context, signal) {
+      if (signal?.aborted) {
+        return failure(call, context, "failed", "RUN_INTERRUPTED", "Tool request was cancelled", "not_evaluated");
+      }
+      const cacheKey = JSON.stringify([
+        context.principal.id, context.sessionId ?? "", context.requestId, context.runId ?? "",
+        call.callId, call.toolId, JSON.stringify(call.input),
+      ]);
+      const completed = completedResults.get(cacheKey);
       if (completed) return completed;
 
-      const inFlight = inFlightResults.get(call.callId);
+      const inFlight = inFlightResults.get(cacheKey);
       if (inFlight) return inFlight;
 
-      const resultPromise = runCall(call, context);
-      inFlightResults.set(call.callId, resultPromise);
+      const resultPromise = runCall(call, context, signal);
+      inFlightResults.set(cacheKey, resultPromise);
       const result = await resultPromise;
       // Approval-required is a durable pending state, not a completed call result.
       // Do not pin it in process memory; the next request must reload the approval.
-      if (result.status !== "approval_required") completedResults.set(call.callId, result);
-      inFlightResults.delete(call.callId);
+      if (result.status !== "approval_required") completedResults.set(cacheKey, result);
+      inFlightResults.delete(cacheKey);
       return result;
     },
   };

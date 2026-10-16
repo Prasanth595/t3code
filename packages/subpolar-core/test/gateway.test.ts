@@ -186,7 +186,7 @@ describe("subpolar-core policy gateway", () => {
     await expect(gateway.call({ callId: "call-invalid", toolId: "safe.echo", input: {} }, context)).resolves.toMatchObject({ status: "validation_failed", error: { code: "INVALID_TOOL_INPUT" } });
   });
 
-  test("executes a callId once, including concurrent duplicates", async () => {
+  test("coalesces only identical concurrent invocations", async () => {
     let executionCount = 0;
     const gateway = createPolicyGateway({
       tools,
@@ -204,9 +204,48 @@ describe("subpolar-core policy gateway", () => {
       gateway.call({ callId: "call-once", toolId: "safe.echo", input: { value: "second" } }, context),
     ]);
 
-    expect(executionCount).toBe(1);
-    expect(calls[0]).toEqual(calls[1]);
+    expect(executionCount).toBe(2);
+    expect(calls[0]).not.toEqual(calls[1]);
     expect(gateway.capabilities).toEqual({ idempotency: "in-memory-per-gateway", multiProcessGuarantee: false });
+  });
+
+  test("does not execute a tool when its approval is cancelled", async () => {
+    let finishApproval!: (decision: { approved: boolean }) => void;
+    let approvalStarted!: () => void;
+    const started = new Promise<void>((resolve) => { approvalStarted = resolve; });
+    let executionCount = 0;
+    const gateway = createPolicyGateway({
+      tools,
+      validateInput: () => ({ valid: true }),
+      resolvePolicy: () => ({ requiresApproval: true }),
+      approve: () => new Promise((resolve) => { finishApproval = resolve; approvalStarted(); }),
+      execute: async () => {
+        executionCount += 1;
+        return { ok: true, value: "should not run" };
+      },
+    });
+    const controller = new AbortController();
+    const pending = gateway.call({ callId: "call-cancel", toolId: "manual.deploy", input: {} }, context, controller.signal);
+    await started;
+    controller.abort();
+    finishApproval({ approved: true });
+
+    await expect(pending).resolves.toMatchObject({ ok: false, error: { code: "RUN_INTERRUPTED" } });
+    expect(executionCount).toBe(0);
+  });
+
+  test("does not replay a call result across sessions that reuse a call id", async () => {
+    let executionCount = 0;
+    const gateway = createPolicyGateway({
+      tools,
+      validateInput: () => ({ valid: true }),
+      resolvePolicy: () => ({ allow: true }),
+      execute: async (call) => ({ ok: true, value: ++executionCount + ":" + JSON.stringify(call.input) }),
+    });
+    const call = { callId: "call-reused", toolId: "safe.echo", input: { value: "same" } };
+    await gateway.call(call, context);
+    await gateway.call(call, { ...context, sessionId: "session-2" });
+    expect(executionCount).toBe(2);
   });
 
   test("returns a stable cached failure when audit emission fails after execution", async () => {
@@ -225,7 +264,7 @@ describe("subpolar-core policy gateway", () => {
     });
 
     const first = await gateway.call({ callId: "call-audit-failure", toolId: "safe.echo", input: { value: true } }, context);
-    const second = await gateway.call({ callId: "call-audit-failure", toolId: "safe.echo", input: { value: false } }, context);
+    const second = await gateway.call({ callId: "call-audit-failure", toolId: "safe.echo", input: { value: true } }, context);
 
     expect(first).toEqual({
       ok: false,
