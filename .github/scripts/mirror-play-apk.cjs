@@ -86,7 +86,7 @@ function readRelease(tag) {
 // Downloads the build's universal APK and uploads it, creating the release on
 // first use. Returns false when Play lists no universal APK, which happens
 // while it is still processing a fresh upload.
-async function uploadApk({ token, appUrl, build, tag, apkName, notes, release }) {
+async function uploadApk({ token, appUrl, build, tag, apkName, notes, title, release }) {
   const generated = await (
     await play(token, "GET", `${appUrl}/generatedApks/${build.versionCode}`)
   ).json();
@@ -117,7 +117,7 @@ async function uploadApk({ token, appUrl, build, tag, apkName, notes, release })
       "--prerelease",
       "--latest=false",
       "--title",
-      "T3 Code for Android (nightly)",
+      title,
       "--notes",
       notes,
     );
@@ -131,6 +131,9 @@ async function main() {
   const packageName = requireEnv("PACKAGE_NAME");
   const trackName = requireEnv("PLAY_TRACK");
   const tag = requireEnv("RELEASE_TAG");
+  const title = requireEnv("RELEASE_TITLE");
+  const releasesUrl = `https://github.com/${requireEnv("GH_REPO")}/releases/tag`;
+  const stability = requireEnv("RELEASE_STABILITY");
   const key = JSON.parse(requireEnv("GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"));
   const summary = (line) =>
     process.env.GITHUB_STEP_SUMMARY &&
@@ -149,7 +152,11 @@ async function main() {
   const notes = [
     `T3 Code for Android, mirrored from the Google Play ${trackName} track. Current build: ${build.versionName} (${build.versionCode}).`,
     "",
-    "Install this APK if you can't join the Play testing group. Only the newest build is kept here.",
+    stability,
+    "",
+    `[Alpha builds](${releasesUrl}/android-nightly) | [Internal builds](${releasesUrl}/android-internal)`,
+    "",
+    "Install this APK if you can't join the Play testing group. Only the newest build from this track is kept here.",
   ].join("\n");
 
   const release = readRelease(tag);
@@ -160,7 +167,7 @@ async function main() {
   );
   if (published) {
     console.log(`${apkName} is already published.`);
-  } else if (await uploadApk({ token, appUrl, build, tag, apkName, notes, release })) {
+  } else if (await uploadApk({ token, appUrl, build, tag, apkName, notes, title, release })) {
     console.log(`Published ${apkName}.`);
     summary(`:white_check_mark: Published \`${apkName}\` to the \`${tag}\` release.`);
   } else {
@@ -179,7 +186,7 @@ async function main() {
     }
   }
   if (release && release.body.replace(/\r\n/g, "\n").trim() !== notes) {
-    gh("release", "edit", tag, "--notes", notes);
+    gh("release", "edit", tag, "--title", title, "--notes", notes);
   }
 }
 
