@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -22,6 +22,7 @@ export class DockerEnvironmentError extends Error {
       | "INVALID_DOCKER_CONFIG"
       | "WORKSPACE_MAPPING_INVALID"
       | "WORKTREE_MAPPING_INVALID"
+      | "GIT_METADATA_MAPPING_INVALID"
       | "UNSUPPORTED_GIT_LAYOUT"
       | "DOCKER_IDENTITY_MISMATCH"
       | "DOCKER_CONFIGURATION_MISMATCH",
@@ -40,6 +41,9 @@ export interface DockerEnvironmentConfig {
   readonly hostStorageRoot: string;
   /** Absolute path inside every worker container. */
   readonly containerStorageRoot: string;
+  /** Optional paired roots used to map T3's shared Git metadata directory. */
+  readonly gatewayGitRoot?: string;
+  readonly hostGitRoot?: string;
   /** Image reference selected by the operator. */
   readonly image: string;
   readonly memoryBytes?: number;
@@ -67,7 +71,7 @@ export interface DockerContainerCreateOptions {
   readonly memoryBytes: number;
   readonly nanoCpus: number;
   readonly pidsLimit: number;
-  readonly mounts: readonly [DockerBindMount];
+  readonly mounts: readonly DockerBindMount[];
   readonly tmpfs: Readonly<Record<string, string>>;
   readonly environment: Readonly<Record<string, string>>;
 }
@@ -176,16 +180,22 @@ function validateLimits(config: DockerEnvironmentConfig): Required<Pick<DockerEn
 
 /**
  * Creates a Docker backend around an injected, restricted client contract.
- * Only one verified worktree bind mount is ever requested. Standard linked Git
- * worktrees use a `.git` pointer to shared repository metadata; because the
- * environment identity does not provide a separately scoped common Git dir,
- * those worktrees are rejected rather than exposing a broad host directory.
+ * A linked worktree gets a second bind mount for its canonical common Git
+ * directory, but only when that directory is within a separately configured
+ * gateway/host root pair. The mount target preserves Git's absolute gitdir
+ * pointer, and no parent repository directory is mounted.
  */
 export function createDockerEnvironmentBackend(
   client: DockerClient,
   config: DockerEnvironmentConfig,
 ): EnvironmentBackend {
   if (!config.image.trim()) throw new DockerEnvironmentError("INVALID_DOCKER_CONFIG", "A Docker image is required");
+  if (Boolean(config.gatewayGitRoot) !== Boolean(config.hostGitRoot)) {
+    throw new DockerEnvironmentError("INVALID_DOCKER_CONFIG", "Gateway and Docker-host Git metadata roots must be configured together");
+  }
+  if (config.gatewayGitRoot && (!path.isAbsolute(config.gatewayGitRoot) || !path.isAbsolute(config.hostGitRoot!))) {
+    throw new DockerEnvironmentError("INVALID_DOCKER_CONFIG", "Gateway and Docker-host Git metadata roots must be absolute paths");
+  }
   if (!path.isAbsolute(config.gatewayStorageRoot) || !path.isAbsolute(config.hostStorageRoot) || !path.posix.isAbsolute(config.containerStorageRoot)) {
     throw new DockerEnvironmentError("INVALID_DOCKER_CONFIG", "Gateway, host, and container storage roots must be absolute");
   }
@@ -196,7 +206,7 @@ export function createDockerEnvironmentBackend(
   const limits = validateLimits(config);
   const backendId = "docker-manager-v1";
 
-  const resolveMount = async (identity: EnvironmentIdentity): Promise<DockerBindMount> => {
+  const resolveMounts = async (identity: EnvironmentIdentity): Promise<readonly DockerBindMount[]> => {
     let gatewayRoot: string;
     let gatewayWorktree: string;
     let hostRoot: string;
@@ -208,6 +218,9 @@ export function createDockerEnvironmentBackend(
       ]);
     } catch (cause) {
       throw new DockerEnvironmentError("WORKSPACE_MAPPING_INVALID", "Configured workspace roots and gateway worktree must exist", { cause });
+    }
+    if (gatewayRoot === "/" || hostRoot === "/") {
+      throw new DockerEnvironmentError("INVALID_DOCKER_CONFIG", "Workspace storage roots must be dedicated directories, not filesystem roots");
     }
     if (identity.storageRoot !== gatewayRoot || !within(gatewayRoot, gatewayWorktree)) {
       throw new DockerEnvironmentError("WORKSPACE_MAPPING_INVALID", "Environment identity is outside the configured gateway storage root");
@@ -228,26 +241,87 @@ export function createDockerEnvironmentBackend(
       throw new DockerEnvironmentError("WORKTREE_MAPPING_INVALID", "Mapped host worktree resolves outside the configured host storage root");
     }
 
-    // `.git` as a file means this is a linked worktree whose actual Git metadata
-    // is elsewhere. Mounting its parent or guessing that path would broaden access.
     const gatewayGitPath = path.join(gatewayWorktree, ".git");
     const hostGitPath = path.join(hostWorktree, ".git");
+    let gitMetadataMount: DockerBindMount | undefined;
     try {
       const [gatewayGitStat, hostGitStat] = await Promise.all([lstat(gatewayGitPath), lstat(hostGitPath)]);
-      if (!gatewayGitStat.isDirectory() || !hostGitStat.isDirectory()) {
-        throw new DockerEnvironmentError("UNSUPPORTED_GIT_LAYOUT", "Linked worktrees and non-directory .git metadata are not supported by this Docker backend");
-      }
-      const [gatewayGitReal, hostGitReal] = await Promise.all([realpath(gatewayGitPath), realpath(hostGitPath)]);
-      if (!within(gatewayWorktree, gatewayGitReal) || !within(hostWorktree, hostGitReal)) {
-        throw new DockerEnvironmentError("UNSUPPORTED_GIT_LAYOUT", ".git metadata resolves outside the worktree");
+      if (gatewayGitStat.isDirectory() && hostGitStat.isDirectory()) {
+        const [gatewayGitReal, hostGitReal] = await Promise.all([realpath(gatewayGitPath), realpath(hostGitPath)]);
+        if (!within(gatewayWorktree, gatewayGitReal) || !within(hostWorktree, hostGitReal)) {
+          throw new DockerEnvironmentError("UNSUPPORTED_GIT_LAYOUT", ".git metadata resolves outside the worktree");
+        }
+      } else if (gatewayGitStat.isFile() && hostGitStat.isFile()) {
+        if (!config.gatewayGitRoot || !config.hostGitRoot) {
+          throw new DockerEnvironmentError("UNSUPPORTED_GIT_LAYOUT", "Linked worktrees require explicit gateway and Docker-host Git metadata roots");
+        }
+        const [gatewayRoot, hostGitRoot] = await Promise.all([
+          realpath(config.gatewayGitRoot),
+          realpath(config.hostGitRoot),
+        ]);
+        if (gatewayRoot === "/" || hostGitRoot === "/" ||
+            !(await lstat(gatewayRoot)).isDirectory() || !(await lstat(hostGitRoot)).isDirectory()) {
+          throw new DockerEnvironmentError("GIT_METADATA_MAPPING_INVALID", "Git metadata roots must be dedicated directories");
+        }
+        const [gatewayPointer, hostPointer] = await Promise.all([
+          readFile(gatewayGitPath, "utf8"),
+          readFile(hostGitPath, "utf8"),
+        ]);
+        const parseGitDir = (pointer: string, worktree: string): string => {
+          const match = /^gitdir:\s*(.+)\s*$/m.exec(pointer);
+          if (!match?.[1]) throw new DockerEnvironmentError("UNSUPPORTED_GIT_LAYOUT", "Linked worktree has an invalid .git pointer");
+          return path.resolve(worktree, match[1]);
+        };
+        const gatewayGitDir = await realpath(parseGitDir(gatewayPointer, gatewayWorktree));
+        const hostGitDir = await realpath(parseGitDir(hostPointer, hostWorktree));
+        if (!within(gatewayRoot, gatewayGitDir) || !within(hostGitRoot, hostGitDir) ||
+            !(await lstat(gatewayGitDir)).isDirectory() || !(await lstat(hostGitDir)).isDirectory()) {
+          throw new DockerEnvironmentError("GIT_METADATA_MAPPING_INVALID", "Linked worktree metadata is outside the configured Git roots");
+        }
+        const gitDirRelative = path.relative(gatewayRoot, gatewayGitDir);
+        const expectedHostGitDir = path.resolve(hostGitRoot, gitDirRelative);
+        if (await realpath(expectedHostGitDir) !== hostGitDir) {
+          throw new DockerEnvironmentError("GIT_METADATA_MAPPING_INVALID", "Gateway and Docker-host linked Git metadata do not map to the same relative path");
+        }
+        const [gatewayCommonPointer, hostCommonPointer] = await Promise.all([
+          readFile(path.join(gatewayGitDir, "commondir"), "utf8"),
+          readFile(path.join(hostGitDir, "commondir"), "utf8"),
+        ]);
+        const gatewayCommonPath = path.resolve(gatewayGitDir, gatewayCommonPointer.trim());
+        const hostCommonPath = path.resolve(hostGitDir, hostCommonPointer.trim());
+        const [gatewayCommonDir, hostCommonDir] = await Promise.all([
+          realpath(gatewayCommonPath),
+          realpath(hostCommonPath),
+        ]);
+        if (!within(gatewayRoot, gatewayCommonDir) || !within(hostGitRoot, hostCommonDir) ||
+            !(await lstat(gatewayCommonDir)).isDirectory() || !(await lstat(hostCommonDir)).isDirectory()) {
+          throw new DockerEnvironmentError("GIT_METADATA_MAPPING_INVALID", "Shared Git metadata is outside the configured Git roots");
+        }
+        const commonRelative = path.relative(gatewayRoot, gatewayCommonDir);
+        const expectedHostCommonDir = path.resolve(hostGitRoot, commonRelative);
+        if (await realpath(expectedHostCommonDir) !== hostCommonDir || gatewayCommonPath !== gatewayCommonDir) {
+          throw new DockerEnvironmentError("GIT_METADATA_MAPPING_INVALID", "Gateway and Docker-host common Git directories do not map canonically");
+        }
+        gitMetadataMount = {
+          type: "bind",
+          source: hostCommonDir,
+          // Preserve the absolute path referenced by the worktree's .git file.
+          target: gatewayCommonDir,
+          readOnly: false,
+        };
+      } else {
+        throw new DockerEnvironmentError("UNSUPPORTED_GIT_LAYOUT", "Gateway and Docker-host worktrees must use matching .git layouts");
       }
     } catch (cause) {
       if (cause instanceof DockerEnvironmentError) throw cause;
-      throw new DockerEnvironmentError("UNSUPPORTED_GIT_LAYOUT", "A self-contained .git directory is required", { cause });
+      throw new DockerEnvironmentError("UNSUPPORTED_GIT_LAYOUT", "The worktree Git metadata could not be resolved safely", { cause });
     }
 
     const target = containerPath(containerStorageRoot, relative);
-    return { type: "bind", source: hostWorktree, target, readOnly: false };
+    return [
+      { type: "bind", source: hostWorktree, target, readOnly: false },
+      ...(gitMetadataMount ? [gitMetadataMount] : []),
+    ];
   };
 
   const labelsFor = (identity: EnvironmentIdentity): Readonly<Record<string, string>> => ({
@@ -269,12 +343,12 @@ export function createDockerEnvironmentBackend(
     capDrop: ["ALL"],
     securityOpt: ["no-new-privileges:true"],
     ...limits,
-    mounts: [await resolveMount(identity)],
+    mounts: await resolveMounts(identity),
     tmpfs: TMPFS,
     environment: ENVIRONMENT,
   });
 
-  const recordFor = (identity: EnvironmentIdentity, inspection: DockerContainerInspection, mount: DockerBindMount): ManagedEnvironment => {
+  const recordFor = (identity: EnvironmentIdentity, inspection: DockerContainerInspection, mounts: readonly DockerBindMount[]): ManagedEnvironment => {
     const expectedLabels = labelsFor(identity);
     if (inspection.name !== containerName(identity.id) || LABELS.some((label) => inspection.labels[label] !== expectedLabels[label])) {
       throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container identity or owner labels do not match the requested environment");
@@ -287,8 +361,11 @@ export function createDockerEnvironmentBackend(
       observed.capDrop.length === 1 && observed.capDrop[0] === "ALL" &&
       observed.securityOpt.length === 1 && observed.securityOpt[0] === "no-new-privileges:true" &&
       observed.memoryBytes === limits.memoryBytes && observed.nanoCpus === limits.nanoCpus && observed.pidsLimit === limits.pidsLimit &&
-      observedMounts.length === 1 && observedMounts[0].type === "bind" && observedMounts[0].source === mount.source &&
-      observedMounts[0].target === mount.target && observedMounts[0].readOnly === false &&
+      observedMounts.length === mounts.length && mounts.every((mount, index) => {
+        const observedMount = observedMounts[index];
+        return observedMount?.type === "bind" && observedMount.source === mount.source &&
+          observedMount.target === mount.target && observedMount.readOnly === false;
+      }) &&
       sameRecord(observed.tmpfs, TMPFS) && sameRecord(observed.environment, ENVIRONMENT) && inspection.id.length > 0;
     if (!safeConfiguration) {
       throw new DockerEnvironmentError("DOCKER_CONFIGURATION_MISMATCH", "Docker container configuration does not match the required isolation settings");
@@ -297,10 +374,10 @@ export function createDockerEnvironmentBackend(
   };
 
   const inspectVerified = async (identity: EnvironmentIdentity): Promise<{ record: ManagedEnvironment; inspection: DockerContainerInspection } | null> => {
-    const [mount] = await Promise.all([resolveMount(identity)]);
+    const mounts = await resolveMounts(identity);
     const inspection = await client.inspectContainer(containerName(identity.id));
     if (!inspection) return null;
-    return { record: recordFor(identity, inspection, mount), inspection };
+    return { record: recordFor(identity, inspection, mounts), inspection };
   };
 
   return {

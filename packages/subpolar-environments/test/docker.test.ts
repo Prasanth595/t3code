@@ -157,7 +157,7 @@ describe("Docker environment backend", () => {
     expect(client.removeCalls).toEqual([]);
   });
 
-  test("rejects a linked Git worktree instead of mounting unknown shared metadata", async () => {
+  test("rejects a linked Git worktree when shared metadata roots are not configured", async () => {
     const { backend, client, identity, request } = await fixture();
     await rm(path.join(identity.worktreePath, ".git"), { recursive: true });
     await Bun.write(path.join(identity.worktreePath, ".git"), "gitdir: ../../.git/worktrees/worktree-a\n");
@@ -166,6 +166,51 @@ describe("Docker environment backend", () => {
     await expect(backend.create(identity)).rejects.toBeInstanceOf(DockerEnvironmentError);
     await expect(backend.create(identity)).rejects.toMatchObject({ code: "UNSUPPORTED_GIT_LAYOUT" });
     expect(client.createCalls).toEqual([]);
+  });
+
+  test("mounts only the verified shared Git directory for a linked T3 worktree", async () => {
+    const { backend, client, identity, config, root } = await fixture();
+    const gatewayGitRoot = path.join(root, "gateway-git-metadata");
+    const hostGitRoot = path.join(root, "docker-host-git-metadata");
+    const gatewayCommonDir = path.join(gatewayGitRoot, "project", ".git");
+    const hostCommonDir = path.join(hostGitRoot, "project", ".git");
+    const gatewayGitDir = path.join(gatewayCommonDir, "worktrees", "t3-worktree");
+    const hostGitDir = path.join(hostCommonDir, "worktrees", "t3-worktree");
+    await Promise.all([
+      mkdir(gatewayGitDir, { recursive: true }),
+      mkdir(hostGitDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      rm(path.join(identity.worktreePath, ".git"), { recursive: true }),
+      rm(path.join(config.hostStorageRoot, "repo", "worktree-a", ".git"), { recursive: true }),
+    ]);
+    await Promise.all([
+      Bun.write(path.join(gatewayGitDir, "commondir"), "../..\n"),
+      Bun.write(path.join(hostGitDir, "commondir"), "../..\n"),
+      Bun.write(path.join(identity.worktreePath, ".git"), `gitdir: ${gatewayGitDir}\n`),
+      Bun.write(path.join(config.hostStorageRoot, "repo", "worktree-a", ".git"), `gitdir: ${hostGitDir}\n`),
+    ]);
+
+    const linkedBackend = createDockerEnvironmentBackend(client, {
+      ...config,
+      gatewayGitRoot,
+      hostGitRoot,
+    });
+    await linkedBackend.create(identity);
+    expect(client.createCalls[0]?.mounts).toEqual([
+      {
+        type: "bind",
+        source: await realpath(path.join(config.hostStorageRoot, "repo", "worktree-a")),
+        target: "/workspaces/repo/worktree-a",
+        readOnly: false,
+      },
+      {
+        type: "bind",
+        source: await realpath(hostCommonDir),
+        target: await realpath(gatewayCommonDir),
+        readOnly: false,
+      },
+    ]);
   });
 
   test("revalidates daemon-host paths and rejects symlink escapes", async () => {
