@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 
 type Projection = OrchestrationV2ThreadProjection;
 type Run = Projection["runs"][number];
@@ -31,6 +32,8 @@ export interface ThreadQueueWorkflowState {
   readonly activeRun: Run | null;
   readonly queuedRuns: ReadonlyArray<QueuedThreadRun>;
   readonly isHeld: boolean;
+  /** The server refuses to resume this queue until the usage-limited run continues. */
+  readonly heldByUsageLimit: boolean;
   readonly canReorder: boolean;
   readonly canPromoteToSteer: boolean;
 }
@@ -152,6 +155,9 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     activeRun,
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
+    heldByUsageLimit:
+      usageLimitBlockedRun(projection.runs, projection.turnItems, session?.lastError ?? null) !==
+      null,
     canReorder: capabilities?.supportsQueuedMessages === true,
     canPromoteToSteer:
       hasSteerableProviderTurn &&
