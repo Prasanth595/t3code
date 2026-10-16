@@ -18,7 +18,7 @@ import {
   PlusIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
@@ -541,9 +541,18 @@ function SidebarGroupEditor(props: {
   const [titleText, setTitleText] = useState("");
   const toggleValue = (field: SidebarGroupRuleField, value: string | null, checked: boolean) =>
     props.onSetRules(toggleSidebarGroupRuleValue(group.rules, field, value, checked));
+  // The name the editor saved last, so a blur and the close that follows save once.
+  const savedName = useRef(group.name);
+  const deleted = useRef(false);
   const commitName = () => {
-    if (name.trim().length > 0 && name.trim() !== group.name) props.onRename(name);
+    const trimmed = name.trim();
+    if (deleted.current || trimmed.length === 0 || trimmed === savedName.current) return;
+    savedName.current = trimmed;
+    props.onRename(trimmed);
   };
+  // Closing the popover unmounts the input without a blur, so the name also saves on close.
+  const commitNameOnClose = useEffectEvent(commitName);
+  useEffect(() => () => commitNameOnClose(), []);
   const knownRules = group.rules.filter(isKnownSidebarGroupRule);
   const isView = knownRules.some((rule) => rule.field === "group");
   const keys = ruleKeys(group.rules);
@@ -663,7 +672,15 @@ function SidebarGroupEditor(props: {
         >
           Move right
         </Button>
-        <Button variant="destructive" size="xs" className="ms-auto" onClick={props.onDelete}>
+        <Button
+          variant="destructive"
+          size="xs"
+          className="ms-auto"
+          onClick={() => {
+            deleted.current = true;
+            props.onDelete();
+          }}
+        >
           Delete group
         </Button>
       </EditorFooter>
