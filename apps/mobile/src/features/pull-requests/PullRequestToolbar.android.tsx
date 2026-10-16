@@ -1,13 +1,9 @@
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
-import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
-import {
-  AndroidHeaderIconButton,
-  AndroidScreenHeader,
-} from "../../components/ui/AndroidScreenHeader";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
+import { BackHandler, Keyboard, type TextInputInstance } from "react-native";
+import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { SearchField } from "../../components/ui/SearchField";
-import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
+import { AndroidWorkspaceHeader } from "../workspace/AndroidWorkspaceHeader";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 
@@ -56,7 +52,7 @@ export function PullRequestToolbar(props: {
     return () => subscription.remove();
   }, [searching, closeSearch, listFocused, navigation, isTabActive]);
   return (
-    <AndroidScreenHeader
+    <AndroidWorkspaceHeader
       title="Pull requests"
       titleContent={
         searching ? (
@@ -68,25 +64,7 @@ export function PullRequestToolbar(props: {
             value={tab.query}
             onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
           />
-        ) : (
-          <View className="min-w-0 flex-1 pl-3">
-            <WorkspaceConnectionTitle
-              grow
-              brand={
-                <CompactBrandTitle
-                  allowFontScaling={false}
-                  accessibilityLabel="T3 Code, Pull requests"
-                />
-              }
-              onPress={() =>
-                navigation.navigate("SettingsSheet", {
-                  screen: "SettingsContent",
-                  params: { screen: "SettingsEnvironments" },
-                })
-              }
-            />
-          </View>
-        )
+        ) : undefined
       }
       leading={
         searching ? (
@@ -97,32 +75,16 @@ export function PullRequestToolbar(props: {
           />
         ) : undefined
       }
-      actions={
-        searching
-          ? []
-          : [
-              {
-                accessibilityLabel: "Search pull requests",
-                icon: "magnifyingglass",
-                onPress: openSearch,
-              },
-            ]
-      }
       trailing={
         <>
-          {props.filters}
           {!searching ? (
             <AndroidHeaderIconButton
-              accessibilityLabel="Open settings"
-              icon="gearshape"
-              onPress={() =>
-                navigation.navigate("SettingsSheet", {
-                  screen: "SettingsContent",
-                  params: { screen: "Settings" },
-                })
-              }
+              accessibilityLabel="Search pull requests"
+              icon="magnifyingglass"
+              onPress={openSearch}
             />
           ) : null}
+          {props.filters}
         </>
       }
     />
