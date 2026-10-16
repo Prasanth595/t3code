@@ -31,6 +31,7 @@ import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import {
+  isOurs,
   resume,
   start,
   utcSecond,
@@ -74,10 +75,7 @@ const unassignedByNumber = (items: ReadonlyArray<IssueSummary>) =>
 /** The numbers of the issues `user` is the only assignee of, by number. */
 const assignedOnlyTo = (items: ReadonlyArray<IssueSummary>, user: string) =>
   items
-    .filter(
-      (item) =>
-        item.assignees.length === 1 && item.assignees[0]!.toLowerCase() === user.toLowerCase(),
-    )
+    .filter((item) => isOurs(item.assignees, user))
     .map((item) => item.number)
     .sort(byNumber);
 

@@ -104,8 +104,11 @@ export interface StartContext {
 export type StartOutcome =
   /** The issue is claimed, its session is launched and the issue is `factory:building`. */
   | { readonly kind: "started"; readonly run: RunId; readonly threadId: string }
-  /** The issue was not ours to take. Nothing was written anywhere. */
-  | { readonly kind: "skipped"; readonly reason: string }
+  /**
+   * The issue was not ours to take. Nothing was written anywhere. `moved` says a person closed
+   * the issue, or put it back to `factory:ready` with nobody assigned, which the claim step takes.
+   */
+  | { readonly kind: "skipped"; readonly reason: string; readonly moved?: "closed" | "ready" }
   /** The issue was `ready` but not approved, so it went back to `factory:proposed` with one fixed comment, and no run was made. */
   | { readonly kind: "refused"; readonly reason: string }
   /** The issue went to `stuck`. */
@@ -127,14 +130,16 @@ export type StartError =
   | GateRunningError
   | SessionsError;
 
-const mention = (issue: number) => `#${issue}`;
+/** An issue as the pass's lines and the skip reasons name it. */
+export const mention = (issue: number) => `#${issue}`;
 
 const skipped = (issue: number, assignees: ReadonlyArray<string>): StartOutcome => ({
   kind: "skipped",
   reason: `issue ${mention(issue)} is already assigned to ${assignees.join(", ")}`,
 });
 
-const isOurs = (assignees: ReadonlyArray<string>, user: string) =>
+/** Whether `user` is the only assignee. Not `asciiLower`: a Linear user can be a display name. */
+export const isOurs = (assignees: ReadonlyArray<string>, user: string) =>
   assignees.length === 1 && assignees[0]!.toLowerCase() === user.toLowerCase();
 
 export const start = (
@@ -157,7 +162,8 @@ export const start = (
  * `start` for a claim already made, which never makes one: what the pass calls for a run it
  * knows of and for a `triage` issue of ours with no run. An issue someone put back to
  * `factory:ready` is left to the claim step, which checks the pause, the limit and the blockers
- * first.
+ * first. Until it claims the issue, which finishes the older runs, an unfinished run of the
+ * issue holds its slot.
  */
 export const resume = (
   ctx: StartContext,
@@ -166,15 +172,17 @@ export const resume = (
   Effect.gen(function* () {
     const detail = yield* ctx.tracker.issue(issue);
     if (detail.closed) return closed(issue);
-    if (detail.state === "ready") {
-      return { kind: "skipped", reason: `issue ${mention(issue)} is ready again, a new claim` };
+    if (detail.state === "ready" && detail.assignees.length === 0) {
+      return { kind: "skipped", reason: `issue ${mention(issue)} is ready again`, moved: "ready" };
     }
+    if (detail.state === "ready") return skipped(issue, detail.assignees);
     return yield* goOn(ctx, issue, detail);
   });
 
 const closed = (issue: number): StartOutcome => ({
   kind: "skipped",
   reason: `issue ${mention(issue)} is closed`,
+  moved: "closed",
 });
 
 /**
@@ -195,7 +203,10 @@ const goOn = (
     if (detail.state === "stuck" && (yield* stuckCutShort(ctx, issue))) {
       return yield* resumeStart(ctx, issue, detail);
     }
-    return { kind: "skipped", reason: `issue ${mention(issue)} is not labelled factory:ready` };
+    return {
+      kind: "skipped",
+      reason: `issue ${mention(issue)} is not factory:triage assigned to ${ctx.trackerUser} alone`,
+    };
   });
 
 /** Whether the issue's newest run is unfinished, still in `triage`, and its ledger says it went stuck. */
@@ -292,7 +303,7 @@ const repairClaim = (
     const labelled =
       assigned && (seen.state === "triage" || (yield* ok(ctx.tracker.setState(issue, "triage"))));
     if (assigned && labelled) {
-      recordClaimRepair(ctx, issue, "finished");
+      yield* recordClaimRepair(ctx, issue, "finished");
       return { kind: "claimed" };
     }
     // Both are tried, so a label that will not move does not leave our assignee on the issue.
@@ -300,14 +311,21 @@ const repairClaim = (
     const moved = yield* ok(ctx.tracker.setState(issue, "proposed"));
     if (off && moved) {
       yield* ok(ctx.tracker.postComment(issue, CUT_SHORT_COMMENT));
-      recordClaimRepair(ctx, issue, "released");
+      yield* recordClaimRepair(ctx, issue, "released");
     }
     return yield* error;
   });
 
-/** Writes a `claim_repaired` line to the machine log. A log that cannot be written is not worth failing the claim for. */
-const recordClaimRepair = (ctx: StartContext, issue: number, outcome: ClaimRepair): void => {
-  try {
+/**
+ * Writes a `claim_repaired` line to the machine log. A log that cannot be written is not worth
+ * failing the claim for, so it is logged as a warning that names the issue.
+ */
+const recordClaimRepair = (
+  ctx: StartContext,
+  issue: number,
+  outcome: ClaimRepair,
+): Effect.Effect<void> =>
+  ledger(() => {
     const log = MachineLog.open(ctx.dataDir, { clock: ctx.clock });
     try {
       log.append({
@@ -317,10 +335,14 @@ const recordClaimRepair = (ctx: StartContext, issue: number, outcome: ClaimRepai
     } finally {
       log.close();
     }
-  } catch {
-    // Not worth failing the claim for.
-  }
-};
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning(
+        `claim_repaired (${outcome}) for ${ctx.repo}${mention(issue)} could not be written to the machine log`,
+        cause,
+      ),
+    ),
+  );
 
 /** How long a refusal comment that has no label time to be compared with counts as recent. */
 const RECENT_MS = 60 * 60 * 1000;

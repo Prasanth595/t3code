@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import { afterEach, describe } from "vite-plus/test";
 
@@ -14,7 +15,7 @@ import type { State } from "../domain/lifecycle.ts";
 import { gateLockFile } from "../gate.ts";
 import { makeCause, type Cause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
-import { scanMachineLog } from "../ledger/machineLog.ts";
+import { MACHINE_LOG, scanMachineLog } from "../ledger/machineLog.ts";
 import { readRun } from "../ledger/read.ts";
 import { parseRunId, runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
@@ -518,18 +519,19 @@ describe("start: a fresh ready issue", () => {
 
   it.effect("an issue that is assigned, closed or not ready is skipped with nothing written", () =>
     Effect.gen(function* () {
-      for (const [issue, reason] of [
-        [detail("ready", ["a", "b"]), "issue #7 is already assigned to a, b"],
-        [detail("ready", [], true), "issue #7 is closed"],
-        [detail("building", [USER]), "issue #7 is not labelled factory:ready"],
-        [detail("triage", ["eve"]), "issue #7 is not labelled factory:ready"],
-        [detail(null), "issue #7 is not labelled factory:ready"],
+      const notOurs = "issue #7 is not factory:triage assigned to rawphp alone";
+      for (const [issue, expected] of [
+        [detail("ready", ["a", "b"]), { reason: "issue #7 is already assigned to a, b" }],
+        [detail("ready", [], true), { reason: "issue #7 is closed", moved: "closed" }],
+        [detail("building", [USER]), { reason: notOurs }],
+        [detail("triage", ["eve"]), { reason: notOurs }],
+        [detail(null), { reason: notOurs }],
       ] as const) {
         const dataDir = tempDir();
         const { tracker, calls } = fakeTracker({ issues: [issue] });
         const t3 = fakeSessions(dataDir, {});
         const outcome = yield* startIn(dataDir, tracker, t3.sessions);
-        assert.deepStrictEqual(outcome, { kind: "skipped", reason });
+        assert.deepStrictEqual(outcome, { kind: "skipped", ...expected });
         assert.deepStrictEqual(calls, ["issue 7"]);
         assert.deepStrictEqual(t3.calls, []);
         assert.strictEqual(NodeFS.existsSync(NodePath.join(dataDir, "runs")), false);
@@ -555,6 +557,30 @@ describe("start: a fresh ready issue", () => {
 });
 
 describe("start: a claim call that fails", () => {
+  it.effect("is finished even when the machine log cannot be written, which is logged", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      // A directory where the log file goes: the machine log cannot be opened.
+      NodeFS.mkdirSync(NodePath.join(dataDir, MACHINE_LOG), { recursive: true });
+      const { tracker } = fakeTracker({
+        issues: [detail("ready"), detail("triage", [USER])],
+        claims: [ghFailure()],
+      });
+      const warnings: Array<string> = [];
+      const capture = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Warn")
+          warnings.push(String(Array.isArray(message) ? message[0] : message));
+      });
+      const outcome = yield* startIn(dataDir, tracker).pipe(
+        Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+      );
+      assert.deepStrictEqual(outcome, { kind: "started", run: run7, threadId: "thread-1" });
+      assert.deepStrictEqual(warnings, [
+        "claim_repaired (finished) for rawphp/softfac#7 could not be written to the machine log",
+      ]);
+    }),
+  );
+
   it.effect("is finished when GitHub applied it, and says so in the machine log", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
@@ -1260,11 +1286,31 @@ describe("resume", () => {
       const { tracker, calls } = fakeTracker({ issues: [detail("ready")] });
       const t3 = fakeSessions(dataDir, {});
       const outcome = yield* resumeIn(dataDir, tracker, t3.sessions);
-      assert.strictEqual(outcome.kind, "skipped");
+      assert.deepStrictEqual(outcome, {
+        kind: "skipped",
+        reason: "issue #7 is ready again",
+        moved: "ready",
+      });
       assert.deepStrictEqual(calls, ["issue 7"]);
       assert.deepStrictEqual(t3.calls, []);
       assert.deepStrictEqual(entriesOf(dataDir), startedEvents().slice(0, 3));
       assert.strictEqual(NodeFS.existsSync(runPath(dataDir, { ...run7, attempt: 2 })), false);
+    }),
+  );
+
+  it.effect("says a closed issue was closed, and touches nothing", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedRun(dataDir, startedLines().slice(0, 3));
+      const { tracker, calls } = fakeTracker({ issues: [detail("triage", [USER], true)] });
+      const outcome = yield* resumeIn(dataDir, tracker);
+      assert.deepStrictEqual(outcome, {
+        kind: "skipped",
+        reason: "issue #7 is closed",
+        moved: "closed",
+      });
+      assert.deepStrictEqual(calls, ["issue 7"]);
+      assert.deepStrictEqual(entriesOf(dataDir), startedEvents().slice(0, 3));
     }),
   );
 

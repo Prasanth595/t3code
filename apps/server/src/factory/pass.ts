@@ -19,7 +19,7 @@ import type { ErrorKind, MachineEvent } from "./ledger/events.ts";
 import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
 import { runIdToString, type RunId } from "./ledger/runId.ts";
 import { duration, formatTs } from "./ledger/time.ts";
-import type { StartError, StartOutcome } from "./runner/start.ts";
+import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
 
 /** An error of the pass's own: what kind it is for the machine log, and what it says. */
@@ -150,8 +150,6 @@ const errorKind = (error: StartError): ErrorKind => {
   }
 };
 
-const mention = (issue: number) => `#${issue}`;
-
 const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 const GATE_RUNNING = "gate running";
@@ -203,10 +201,14 @@ class Pass {
     this.out(`error: ${text}`);
   }
 
-  /** A line a person has to act on. */
-  attention(text: string): void {
+  /**
+   * A line a person has to act on about `run`, and the machine log's `attention` event for it
+   * with the ledger.md `reason` code.
+   */
+  attention(text: string, run: string, reason: string): Effect.Effect<void> {
     this.report.attention += 1;
     this.out(`ATTENTION: ${text}`);
+    return this.record({ event: "attention", data: { run, reason } });
   }
 
   /**
@@ -394,8 +396,8 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
  * Calls `resume` for each confirmed run still in `triage` (or with no state yet), which goes on
  * from its ledger, so a run cut short after the launch was sent is finished and its session
  * never runs on untracked. A run of a repo that is not loaded is left alone. The other states
- * are worked by later steps. It is not a new claim, so it is not counted as one, and an issue
- * put back to `ready` is left to the claim step.
+ * are worked by later steps. It is not a new claim, so it is not counted as one. An issue put
+ * back to `ready` is left to the claim step, and its run holds a slot until a claim finishes it.
  */
 const workRuns = (
   world: PassWorld,
@@ -428,9 +430,15 @@ const workRuns = (
             pass.stuck(notes, runIdToString(outcome.success.run));
             break;
           case "skipped":
-          case "refused":
-            stalled(pass, notes, runIdToString(info.id));
+          case "refused": {
+            const moved = outcome.success.kind === "skipped" ? outcome.success.moved : undefined;
+            if (moved === "ready") notes.parts.push(READY_AGAIN);
+            else {
+              const run = runIdToString(info.id);
+              yield* stalled(pass, notes, run, outcome.success.reason, moved === "closed");
+            }
             break;
+          }
         }
       }
       yield* known.refresh(world, pass, name, issue);
@@ -438,14 +446,32 @@ const workRuns = (
     }
   });
 
+const READY_AGAIN =
+  "its issue is ready again: the claim step takes it when a slot is free, and this run holds one until then";
+
 /**
- * A confirmed run in `triage` that `resume` would not take: a person moved its issue, so nothing
- * in the pass will move it, and it holds a slot. softfac's words, as its `stalled` says them.
+ * A confirmed run in `triage` that `resume` would not take, for `why`: a person moved or closed
+ * its issue, so nothing in the pass will move it, and it holds a slot. softfac's `stalled` words.
+ * Nothing finishes a closed issue's run yet, so its line says how to let the start finish it.
  */
-const stalled = (pass: Pass, notes: Notes, run: string): void =>
-  pass.attention(
-    `${notes.label} run ${run} is not progressing and holds a slot: its issue is not \`factory:triage\` assigned to the factory's user alone, so \`start\` will not take it. If you moved the issue by hand, put it back to \`factory:triage\` assigned to the factory's user so \`start\` can finish it`,
+const stalled = (
+  pass: Pass,
+  notes: Notes,
+  run: string,
+  why: string,
+  closed: boolean,
+): Effect.Effect<void> => {
+  const back =
+    "put it back to `factory:triage` assigned to the factory's user so `start` can finish it";
+  const advice = closed
+    ? `If it was closed by mistake, reopen it and ${back}`
+    : `If you moved the issue by hand, ${back}`;
+  return pass.attention(
+    `${notes.label} run ${run} is not progressing and holds a slot: ${plain(why)}. ${advice}`,
+    run,
+    "not-progressing",
   );
+};
 
 /**
  * The unfinished runs as this pass knows them: listed once at the start of the pass, then the
