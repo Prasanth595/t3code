@@ -1,40 +1,61 @@
-# Sourced by install.sh and rollback.sh: where versions live, the LaunchAgent job, how to
-# restart it and how to tell it came up.
+# Sourced by install.sh and rollback.sh: where versions live, the LaunchAgent jobs (the server
+# and the log rotator), how to restart them and how to tell the server came up.
 
 root="$HOME/.local/share/t3fac"
 label=io.github.rawphp.t3fac
 template="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../launchd" && pwd)/$label.plist"
 plist="$HOME/Library/LaunchAgents/$label.plist"
+# The second job rotates $log on a timer, so a crash-looping server cannot outgrow the disk.
+logrotate_label=io.github.rawphp.t3fac.logrotate
+logrotate_template="$(dirname "$template")/$logrotate_label.plist"
+logrotate_plist="$HOME/Library/LaunchAgents/$logrotate_label.plist"
 log="$HOME/Library/Logs/t3fac/t3fac.log"
 # The log and port the plist template writes to and serves on; change them together. T3FAC_PORT
 # exists only so tests can point the health check at a stub listener; the plist still says 3876.
 port=${T3FAC_PORT:-3876}
 
-# Waits for launchd to report the job unloaded, up to T3FAC_UNLOAD_WAIT seconds (10).
+# Waits for launchd to report job $2 unloaded, up to T3FAC_UNLOAD_WAIT seconds (10).
 wait_unloaded() {
-  local uid=$1 wait=${T3FAC_UNLOAD_WAIT:-10} i
+  local uid=$1 job=$2 wait=${T3FAC_UNLOAD_WAIT:-10} i
   for ((i = 0; i < wait * 5; i++)); do
-    launchctl print "gui/$uid/$label" > /dev/null 2>&1 || return 0
+    launchctl print "gui/$uid/$job" > /dev/null 2>&1 || return 0
     sleep 0.2
   done
-  echo "job $label is still loaded ${wait}s after bootout" >&2
+  echo "job $job is still loaded ${wait}s after bootout" >&2
   return 1
 }
 
-# Writes the plist from the template, boots the job out when it is loaded, waits for it to
-# unload and bootstraps it. Notes the log size first (log_before) so wait_healthy reads only
-# what the restarted job writes.
-restart_job() {
-  local uid
+# Boots job $1 out when it is loaded, waits for it to unload and bootstraps it from plist $2.
+reload_job() {
+  local job=$1 file=$2 uid
   uid=$(id -u)
+  if launchctl print "gui/$uid/$job" > /dev/null 2>&1; then
+    launchctl bootout "gui/$uid/$job"
+    wait_unloaded "$uid" "$job"
+  fi
+  launchctl bootstrap "gui/$uid" "$file"
+}
+
+# Writes the server's plist from the template, boots the job out when it is loaded, waits for
+# it to unload and bootstraps it. Notes the log size first (log_before) so wait_healthy reads
+# only what the restarted job writes. Leaves the logrotate job alone.
+restart_job() {
   log_before=$(($(wc -c 2> /dev/null < "$log" || echo 0)))
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/t3fac" "$HOME/.config/t3fac"
   sed "s|@HOME@|$HOME|g" "$template" > "$plist"
-  if launchctl print "gui/$uid/$label" > /dev/null 2>&1; then
-    launchctl bootout "gui/$uid/$label"
-    wait_unloaded "$uid"
-  fi
-  launchctl bootstrap "gui/$uid" "$plist"
+  reload_job "$label" "$plist"
+}
+
+# Copies rotate-log.sh to $root, which outlives any checkout or release archive the plist could
+# otherwise point at, writes the logrotate plist from its template and reloads that job the way
+# restart_job does the server's. Call it before restart_job so the server's restart stays the
+# last launchd action before wait_healthy.
+restart_logrotate_job() {
+  mkdir -p "$root" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/t3fac"
+  cp "$(dirname "${BASH_SOURCE[0]}")/../rotate-log.sh" "$root/rotate-log.sh"
+  chmod 755 "$root/rotate-log.sh"
+  sed "s|@HOME@|$HOME|g" "$logrotate_template" > "$logrotate_plist"
+  reload_job "$logrotate_label" "$logrotate_plist"
 }
 
 # Waits up to T3FAC_HEALTH_WAIT seconds (90) after restart_job for the server to accept

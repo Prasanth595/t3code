@@ -34,6 +34,14 @@ factory/scripts/install.sh <archive>          # unpack, point `current` at it, r
 factory/scripts/rollback.sh                   # point `current` at the previous version, restart the job and check it comes up
 ```
 
+## Logs
+
+The server writes to `~/Library/Logs/t3fac/t3fac.log`. launchd never rotates that file, and a crash-looping server writes the most and cannot rotate it itself, so a second LaunchAgent, `io.github.rawphp.t3fac.logrotate`, runs `~/.local/share/t3fac/rotate-log.sh` every 10 minutes. When the log is over 20 MB it copies it to `t3fac.log.1`, shifts the older copies up (`.2.gz` to `.5.gz`, gzipped), deletes anything past the fifth and empties `t3fac.log` in place, so the running server keeps writing to the same open file. The rotator's own output goes to `~/Library/Logs/t3fac/logrotate.log` and stays tiny: it prints one line per rotation and nothing otherwise.
+
+`install.sh` and `rollback.sh` copy the script to `~/.local/share/t3fac` and reload this job before they restart the server; restarting the server alone does not touch it. To change the limits, add `<max_mb>` and `<keep>` as two more `<string>` entries after the log path in the ProgramArguments of `factory/launchd/io.github.rawphp.t3fac.logrotate.plist` and rerun `install.sh`. For a quick change, edit `~/Library/LaunchAgents/io.github.rawphp.t3fac.logrotate.plist` the same way, then `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.logrotate` and `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.rawphp.t3fac.logrotate.plist`.
+
+Lines the server writes between the copy and the truncate are lost, a few at most.
+
 ## Recovery
 
 `install.sh` and `rollback.sh` check that the job came up. After the restart they wait up to `T3FAC_HEALTH_WAIT` seconds (default 90) for the server to accept connections on port 3876 and for a `factory started` or `no factory config` line to be written to `~/Library/Logs/t3fac/t3fac.log` after the restart. Lines from before the restart do not count. If either is missing, the script prints the last 50 log lines. A failed `install.sh` then runs `rollback.sh` and exits 1 with `install of <version> failed its health check; rolled back to <previous>`. With no earlier version it exits 1 and says so.
