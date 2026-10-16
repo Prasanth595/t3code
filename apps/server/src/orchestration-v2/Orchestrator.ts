@@ -592,9 +592,13 @@ function delegatedTaskTerminalStatus(
 }
 
 function nextQueuedRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "thread">,
 ): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection)[0];
+  // Retained peer context must neither block human work nor receive its startup failures.
+  return queuedRunsInDeliveryOrder(projection).find((run) => {
+    const message = projection.messages.find((message) => message.id === run.userMessageId);
+    return message === undefined || !isLegacyPeerMessage(message, run, projection.thread);
+  });
 }
 
 function latestStableRun(
@@ -1288,17 +1292,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       const queuedRun = nextQueuedRun(projection);
-      if (queuedRun === undefined) {
-        return;
-      }
-      const peerMessage = projection.messages.find(
-        (message) => message.id === queuedRun.userMessageId,
-      );
-      if (
-        peerMessage !== undefined &&
-        isLegacyPeerMessage(peerMessage, queuedRun, projection.thread)
-      )
-        return;
+      if (queuedRun === undefined) return;
 
       // A message queued behind a worktree that was cancelled or never created
       // would run in the project checkout instead, so it waits for the user.
@@ -10787,7 +10781,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const child = yield* projectionStore
             .getThreadRecords(command.threadId, ["runs"])
             .pipe(mapDispatchError(command));
-          if (child.runs.some((run) => isBlockingRun(run) || run.status === "queued"))
+          if (
+            child.runs.some(
+              (run) => isBlockingRun(run) || (run.status === "queued" && run.queueHeld !== true),
+            )
+          )
             return yield* new OrchestratorDispatchError({
               commandId: command.commandId,
               commandType: command.type,

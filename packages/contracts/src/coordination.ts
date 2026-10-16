@@ -110,6 +110,7 @@ export const CoordinationHandleInput = Schema.Struct({
   projectId: ProjectId,
   threadId: ThreadId,
   entryId: Schema.optional(TrimmedNonEmptyString),
+  entryRevision: Schema.optional(Schema.Number),
   action: Schema.Literals(["handle_now", "handle_after", "return_to_task"]),
 });
 export type CoordinationHandleInput = typeof CoordinationHandleInput.Type;

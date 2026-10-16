@@ -127,6 +127,26 @@ it.effect("correlates replies, bounds open requests and rejects changed retry pa
       "conflict",
     );
     yield* board.post(post("new-request", "A new release?", "request"));
+    for (const broadcast of [false, true]) {
+      const root = yield* board.post({
+        ...post(`audience:${broadcast}`, "Review release", "request"),
+        senderThreadId: broadcast ? sender : undefined,
+        targetThreadId: broadcast ? undefined : recipient,
+        createdBy: broadcast ? "agent" : "user",
+        topic: `Audience ${broadcast}`,
+      });
+      const response = yield* board.post({
+        ...post(`response:${broadcast}`, "Reviewed"),
+        senderThreadId: recipient,
+        replyToId: root.id,
+      });
+      assert.equal(response.targetThreadId, broadcast ? null : recipient);
+      const visible = (yield* board.read({ projectId, threadId: observer })).entries;
+      assert.equal(
+        visible.some((entry) => entry.id === response.id),
+        broadcast,
+      );
+    }
   }).pipe(Effect.provide(layer)),
 );
 
@@ -164,6 +184,18 @@ it.effect("streams project updates and closes stale requests without starting id
       Effect.forkScoped,
     );
     assert.equal((yield* Queue.take(snapshots)).entries.length, 0);
+    const sql = yield* SqlClient.SqlClient;
+    const foreign = ProjectId.make("foreign-project");
+    yield* sql`INSERT INTO projection_projects(project_id,title,workspace_root,scripts_json,created_at,updated_at)
+      VALUES (${foreign},'Other','/other','[]','2026-01-01','2026-01-01')`;
+    yield* board.post({
+      commandId: CommandId.make("foreign-update"),
+      projectId: foreign,
+      topic: "Other deployment",
+      kind: "update",
+      text: "Unrelated",
+      createdBy: "user",
+    });
     const update = yield* board.post({
       ...post("global", "Deployment started"),
       targetThreadId: undefined,
@@ -183,11 +215,10 @@ it.effect("streams project updates and closes stale requests without starting id
       senderThreadId: recipient,
     });
     yield* TestClock.adjust("25 hours");
-    assert.equal(yield* board.context(recipient), "");
     assert.equal((yield* board.get(projectId, request.id)).status, "expired");
+    assert.equal(yield* board.context(recipient), "");
     assert.equal((yield* board.get(projectId, reply.id)).status, "expired");
     assert.equal((yield* board.read({ projectId, threadId: recipient })).unreadCount, 0);
-    const sql = yield* SqlClient.SqlClient;
     assert.deepEqual(yield* sql`SELECT run_id FROM orchestration_v2_projection_runs`, []);
   }).pipe(Effect.provide(layer)),
 );

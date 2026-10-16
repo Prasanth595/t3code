@@ -2530,8 +2530,10 @@ const make = Effect.gen(function* () {
           );
         if (
           existing === undefined &&
-          target.runs.some((run) =>
-            ["preparing", "starting", "running", "waiting", "queued"].includes(run.status),
+          target.runs.some(
+            (run) =>
+              ["preparing", "starting", "running", "waiting"].includes(run.status) ||
+              (run.status === "queued" && run.queueHeld !== true),
           )
         )
           return yield* failure(

@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ChatAttachmentId,
   CommandId,
   EventId,
   MessageId,
@@ -17,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ApplicationEvents from "../persistence/OrchestrationEventStore.ts";
@@ -56,13 +58,13 @@ const layer = Layer.mergeAll(
   ),
 );
 
-const createThread = (threadId: ThreadId) =>
+const createThread = (threadId: ThreadId, threadProjectId = projectId) =>
   Orchestrator.OrchestratorV2.use((orchestrator) =>
     orchestrator.dispatch({
       type: "thread.create",
       commandId: CommandId.make(`create:${threadId}`),
       threadId,
-      projectId,
+      projectId: threadProjectId,
       title: threadId,
       modelSelection,
       runtimeMode: "full-access",
@@ -98,6 +100,11 @@ it.effect(
         (yield* Queue.take(snapshots)).threads.map((thread) => thread.threadId),
         [sender],
       );
+      const foreignProject = ProjectId.make("project:foreign-lifecycle");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO projection_projects(project_id,title,workspace_root,scripts_json,created_at,updated_at)
+        VALUES (${foreignProject},'Other','/other','[]','2026-01-01','2026-01-01')`;
+      yield* createThread(ThreadId.make("thread:foreign-lifecycle"), foreignProject);
       const recipient = ThreadId.make("thread:idle-recipient");
       yield* createThread(recipient);
       assert.lengthOf((yield* Queue.take(snapshots)).threads, 2);
@@ -173,17 +180,19 @@ const seedQueued = (input: {
   user?: boolean;
   childOfSender?: boolean;
   ambiguous?: boolean;
+  threadId?: ThreadId;
+  ordinal?: number;
 }) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const sink = yield* EventSink.EventSinkV2;
-    const threadId = ThreadId.make(`thread:${input.name}`);
+    const threadId = input.threadId ?? ThreadId.make(`thread:${input.name}`);
     const runId = RunId.make(`run:${input.name}`);
     const messageId = MessageId.make(
       input.ambiguous ? `message:${input.name}` : `message:mcp:caller:thread-send:${input.name}`,
     );
     const now = yield* DateTime.now;
-    yield* createThread(threadId);
+    if (input.threadId === undefined) yield* createThread(threadId);
     if (input.childOfSender) {
       const projection = yield* orchestrator.getThreadProjection(threadId);
       yield* sink.write({
@@ -212,7 +221,15 @@ const seedQueued = (input: {
       nodeId: null,
       role: "user",
       text: `Retain ${input.name}`,
-      attachments: [],
+      attachments: [
+        {
+          id: ChatAttachmentId.make(`attachment-${input.name}`),
+          type: "image",
+          name: `${input.name}.png`,
+          mimeType: "image/png",
+          sizeBytes: 8,
+        },
+      ],
       streaming: false,
       createdAt: now,
       updatedAt: now,
@@ -223,7 +240,7 @@ const seedQueued = (input: {
     const run: OrchestrationV2Run = {
       id: runId,
       threadId,
-      ordinal: 1,
+      ordinal: input.ordinal ?? 1,
       providerInstanceId: instanceId,
       modelSelection,
       providerThreadId: null,
@@ -231,7 +248,7 @@ const seedQueued = (input: {
       rootNodeId: null,
       activeAttemptId: null,
       status: "queued",
-      queuePosition: 1,
+      queuePosition: input.ordinal ?? 1,
       queueHeld: true,
       requestedAt: now,
       startedAt: null,
@@ -267,6 +284,8 @@ it.effect("retires only known peer queues once through events, and resume cannot
     const sink = yield* EventSink.EventSinkV2;
     const board = yield* Coordination.CoordinationService;
     const peer = yield* seedQueued({ name: "peer" });
+    const second = yield* seedQueued({ name: "peer-second", threadId: peer.threadId, ordinal: 2 });
+    const retirement = yield* Retirement.Retirement;
     const preserved = yield* Effect.forEach(
       [
         { name: "human", user: true },
@@ -286,11 +305,15 @@ it.effect("retires only known peer queues once through events, and resume cannot
     assert.equal(before.runs[0]?.status, "queued");
     assert.equal(before.runs[0]?.queueHeld, false);
 
-    assert.deepEqual(yield* Retirement.retire, { retired: 1 });
-    assert.deepEqual(yield* Retirement.retire, { retired: 0 });
+    assert.deepEqual(yield* retirement.retire, { retired: 2 });
+    assert.deepEqual(yield* retirement.retire, { retired: 0 });
     const migrated = yield* board.read({ projectId, threadId: peer.threadId });
-    assert.equal(migrated.entries.length, 1);
-    assert.include(migrated.entries[0]!.text, peer.message.text);
+    assert.equal(migrated.entries.length, 2);
+    for (const original of [peer, second]) {
+      const entry = migrated.entries.find((entry) => entry.text.endsWith(original.message.text));
+      assert.isDefined(entry);
+      assert.deepEqual(entry!.attachments, original.message.attachments);
+    }
     const cancellation = yield* sink
       .readByCommandId({
         commandId: CommandId.make(`command:coordination-retire:${peer.run.id}`),
@@ -310,15 +333,15 @@ it.effect("retires only known peer queues once through events, and resume cannot
       threadId: peer.threadId,
     });
     const after = yield* orchestrator.getThreadProjection(peer.threadId);
-    assert.equal(after.runs.length, 1);
-    assert.equal(after.runs[0]?.status, "cancelled");
+    assert.equal(after.runs.length, 2);
+    assert.isTrue(after.runs.every((run) => run.status === "cancelled"));
     assert.equal(after.messages[0]?.text, peer.message.text);
     for (const fixture of preserved) {
       const projection = yield* orchestrator.getThreadProjection(fixture.threadId);
       assert.deepEqual(projection.runs[0], fixture.run);
       assert.deepEqual(projection.messages[0], fixture.message);
     }
-  }).pipe(Effect.provide(layer)),
+  }).pipe(Effect.provide(Retirement.layer.pipe(Layer.provideMerge(layer)))),
 );
 
 it.effect(
@@ -366,5 +389,159 @@ it.effect(
       assert.equal(launched.runs[0]?.status, "preparing");
       assert.equal(launched.messages[0]?.senderThreadId, sender);
       assert.equal(launched.messages[0]?.text, command.text);
+    }).pipe(Effect.provide(layer)),
+);
+
+it.effect.each([true, false])(
+  "promotes human work behind legacy peer context without attributing start failures to peers (valid execution: %s)",
+  (validExecution) =>
+    Effect.gen(function* () {
+      yield* seedProject;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const peer = yield* seedQueued({ name: "stranded-peer" });
+      const humanMessageId = MessageId.make("message:later-human");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("later-human"),
+        threadId: peer.threadId,
+        messageId: humanMessageId,
+        text: "Continue my work",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const sink = yield* EventSink.EventSinkV2;
+      const admitted = yield* orchestrator.getThreadProjection(peer.threadId);
+      const humanRun = admitted.runs.find((run) => run.userMessageId === humanMessageId)!;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("restore-human-queued"),
+            type: "run.updated",
+            threadId: peer.threadId,
+            occurredAt: now,
+            payload: {
+              ...humanRun,
+              status: "queued",
+              queuePosition: 2,
+              queueHeld: true,
+              ...(validExecution
+                ? {}
+                : { rootNodeId: null, activeAttemptId: null, providerThreadId: null }),
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("resume-human"),
+        threadId: peer.threadId,
+      });
+      const projection = yield* orchestrator.getThreadProjection(peer.threadId);
+      assert.equal(projection.runs.find((run) => run.id === peer.run.id)?.status, "queued");
+      assert.equal(
+        projection.runs.find((run) => run.userMessageId === humanMessageId)?.status,
+        validExecution ? "starting" : "failed",
+      );
+      assert.deepEqual(
+        projection.messages.find((message) => message.id === peer.message.id),
+        peer.message,
+      );
+    }).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "handles the displayed root once through replies and refuses changed or expired context",
+  () =>
+    Effect.gen(function* () {
+      yield* seedProject;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const board = yield* Coordination.CoordinationService;
+      const root = yield* board.post({
+        commandId: CommandId.make("handle-root"),
+        projectId,
+        senderThreadId: sender,
+        topic: "Release",
+        kind: "request",
+        text: "Deploy this version",
+        createdBy: "agent",
+      });
+      const reply = yield* board.post({
+        commandId: CommandId.make("handle-reply"),
+        projectId,
+        senderThreadId: sender,
+        topic: "Ignored",
+        kind: "update",
+        text: "A different reply",
+        replyToId: root.id,
+        createdBy: "agent",
+      });
+      const sendToThread: Threads.ThreadManagementService["Service"]["sendToThread"] = (input) =>
+        Effect.gen(function* () {
+          const dispatch = yield* orchestrator.dispatch({
+            ...input,
+            type: "message.dispatch",
+            dispatchMode: { type: "defer_start" },
+          });
+          const projection = yield* orchestrator.getThreadProjection(input.threadId);
+          const message = projection.messages.find((message) => message.id === input.messageId)!;
+          const run = projection.runs.find((run) => run.id === message.runId)!;
+          return {
+            dispatch,
+            projection,
+            message,
+            run,
+            turnItem: null,
+            delivery: "queued" as const,
+          };
+        });
+      const handle = (entryId: string, entryRevision = root.revision) =>
+        Actions.handle({
+          projectId,
+          threadId: sender,
+          entryId,
+          entryRevision,
+          action: "handle_after",
+        }).pipe(
+          Effect.provide(
+            Layer.mock(Threads.ThreadManagementService)({
+              getThreadShell: orchestrator.getThreadShell,
+              sendToThread,
+            }),
+          ),
+        );
+      const stale = yield* board.post({
+        commandId: CommandId.make("consent-old"),
+        projectId,
+        senderThreadId: sender,
+        topic: "Changing update",
+        kind: "update",
+        text: "Reviewed content",
+        createdBy: "agent",
+      });
+      const changed = yield* board.post({
+        commandId: CommandId.make("consent-new"),
+        projectId,
+        senderThreadId: sender,
+        topic: stale.topic,
+        kind: "update",
+        text: "Unreviewed content",
+        createdBy: "agent",
+      });
+      assert.equal(changed.id, stale.id);
+      assert.equal((yield* handle(stale.id, stale.revision).pipe(Effect.flip)).reason, "conflict");
+      assert.lengthOf((yield* orchestrator.getThreadProjection(sender)).runs, 0);
+      yield* handle(root.id);
+      yield* handle(reply.id);
+      const projection = yield* orchestrator.getThreadProjection(sender);
+      assert.lengthOf(projection.runs, 1);
+      assert.lengthOf(projection.messages, 1);
+      assert.include(projection.messages[0]!.text, root.text);
+      assert.notInclude(projection.messages[0]!.text, reply.text);
+      yield* TestClock.adjust("25 hours");
+      assert.equal((yield* handle(reply.id).pipe(Effect.flip)).reason, "conflict");
+      assert.lengthOf((yield* orchestrator.getThreadProjection(sender)).runs, 1);
     }).pipe(Effect.provide(layer)),
 );

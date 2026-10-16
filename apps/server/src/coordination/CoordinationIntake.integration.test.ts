@@ -168,6 +168,15 @@ it.effect(
       const fs = yield* FileSystem.FileSystem;
       const sql = yield* SqlClient.SqlClient;
       const pending = yield* stage;
+      const missing = {
+        ...pending.attachment,
+        id: ChatAttachmentId.make(createPendingAttachmentId(".png")),
+      };
+      const claimError = yield* intake
+        .post({ ...post("missing-upload"), attachments: [missing] })
+        .pipe(Effect.flip);
+      assert.equal(claimError.reason, "forbidden");
+      assert.equal(claimError.message, "An attachment could not be accepted for project Activity.");
       const input = { ...post("upload"), attachments: [pending.attachment] };
       const accepted = yield* intake.post(input);
       const stored = accepted.attachments[0]!;
@@ -236,6 +245,36 @@ it.effect(
       assert.deepEqual(
         yield* sql`SELECT turn_item_id FROM orchestration_v2_projection_turn_items`,
         [],
+      );
+      const deletionUpload = yield* stage;
+      const filesBeforeDeletion = (yield* fs.readDirectory(config.attachmentsDir)).toSorted();
+      const deletedProject = yield* Intake.CoordinationIntake.use((racingIntake) =>
+        racingIntake.post({
+          ...post("deleted-during-claim"),
+          attachments: [deletionUpload.attachment],
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.fresh(
+            Intake.layer.pipe(
+              Layer.provide(
+                Layer.succeed(Board.CoordinationService, {
+                  ...board,
+                  post: (input, original) =>
+                    sql`UPDATE projection_projects SET deleted_at='2026-01-02' WHERE project_id=${projectId}`.pipe(
+                      Effect.andThen(board.post(input, original)),
+                    ),
+                }),
+              ),
+            ),
+          ),
+        ),
+        Effect.flip,
+      );
+      assert.equal(deletedProject.reason, "not_found");
+      assert.deepEqual(
+        (yield* fs.readDirectory(config.attachmentsDir)).toSorted(),
+        filesBeforeDeletion,
       );
     }).pipe(Effect.provide(layer)),
 );

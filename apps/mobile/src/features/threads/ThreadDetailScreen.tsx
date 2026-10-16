@@ -1038,13 +1038,21 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   return (
     <View className="flex-1">
-      {showContent ? (
-        <CoordinationActivity
-          key={`${props.environmentId}:${props.selectedThread.id}`}
-          environmentId={props.environmentId}
-          projectId={props.selectedThread.projectId}
-          threadId={props.selectedThread.id}
-        />
+      {showContent && props.selectedThreadDetailRef !== null ? (
+        <View
+          style={
+            props.usesAutomaticContentInsets === true
+              ? { position: "absolute", top: navigationHeaderHeight, left: 0, zIndex: 10 }
+              : undefined
+          }
+        >
+          <CoordinationActivity
+            key={`${props.environmentId}:${props.selectedThread.id}`}
+            environmentId={props.environmentId}
+            projectId={props.selectedThread.projectId}
+            threadId={props.selectedThread.id}
+          />
+        </View>
       ) : null}
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {showContent ? (

@@ -104,9 +104,9 @@ export const layer = Layer.effect(
     const applicationEvents = yield* Effect.serviceOption(
       ApplicationEvents.OrchestrationEventStore,
     );
-    const changes = yield* PubSub.sliding<void>(1);
-    const changed = (_projectId: ProjectId) =>
-      PubSub.publish(changes, undefined).pipe(Effect.asVoid);
+    const changes = yield* PubSub.unbounded<ProjectId>();
+    const changed = (projectId: ProjectId) =>
+      PubSub.publish(changes, projectId).pipe(Effect.asVoid);
     const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
     const checkProject = (projectId: ProjectId) =>
       Effect.gen(function* () {
@@ -242,7 +242,10 @@ export const layer = Layer.effect(
                     );
                   replyToId = root.id;
                   topic = root.topic;
-                  targetThreadId = root.senderThreadId;
+                  targetThreadId =
+                    root.targetThreadId === null
+                      ? null
+                      : (root.senderThreadId ?? root.targetThreadId);
                   if (
                     input.senderThreadId !== undefined &&
                     !canReplyToCoordination(root, input.senderThreadId)
@@ -452,15 +455,26 @@ export const layer = Layer.effect(
                     "thread.deleted",
                   ].includes("event" in event ? event.event.type : event.type),
                 ),
+                Stream.filterEffect((stored) => {
+                  if (!("event" in stored)) return Effect.succeed(false);
+                  return sql<{ project_id: ProjectId }>`SELECT project_id
+                    FROM orchestration_v2_projection_threads
+                    WHERE thread_id=${stored.event.threadId}`.pipe(
+                    Effect.map((rows) => rows[0]?.project_id === input.projectId),
+                  );
+                }),
                 Stream.map(() => undefined),
                 Stream.catch(() => Stream.empty),
               )
             : Stream.empty;
           return Stream.concat(
             Stream.fromEffect(read(input)),
-            Stream.merge(Stream.fromSubscription(subscription), lifecycle).pipe(
-              Stream.mapEffect(() => read(input)),
-            ),
+            Stream.merge(
+              Stream.fromSubscription(subscription).pipe(
+                Stream.filter((projectId) => projectId === input.projectId),
+              ),
+              lifecycle,
+            ).pipe(Stream.mapEffect(() => read(input))),
           );
         }),
       );
@@ -522,7 +536,11 @@ export const layer = Layer.effect(
       );
     return {
       get: (projectId, id) =>
-        checkProject(projectId).pipe(Effect.andThen(entryFor(projectId, id)), storage),
+        checkProject(projectId).pipe(
+          Effect.andThen(expire(projectId)),
+          Effect.andThen(entryFor(projectId, id)),
+          storage,
+        ),
       replay,
       post,
       read,

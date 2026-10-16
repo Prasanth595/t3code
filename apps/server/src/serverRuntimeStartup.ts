@@ -522,7 +522,14 @@ const make = (options?: StartupOptions) =>
           "orchestration-v2.delegated-tasks.recover",
           orchestrator.recoverDelegatedTasks.pipe(
             Effect.andThen(
-              Option.isSome(retirement) ? retirement.value.retire.pipe(Effect.asVoid) : Effect.void,
+              Option.isSome(retirement)
+                ? retirement.value.retire.pipe(
+                    Effect.catch((error) =>
+                      Effect.logWarning("Pending peer coordination could not be migrated.", error),
+                    ),
+                    Effect.asVoid,
+                  )
+                : Effect.void,
             ),
           ),
         ),

@@ -39,7 +39,7 @@ export const layer = Layer.effect(
         : new CoordinationError({
             reason: isAttachmentClaimError(cause) ? "forbidden" : "storage",
             message: isAttachmentClaimError(cause)
-              ? cause.message
+              ? "An attachment could not be accepted for project Activity."
               : "Could not attach files to project Activity.",
             cause,
           });
@@ -129,6 +129,19 @@ export const layer = Layer.effect(
           );
           if (receipt.type === "found") {
             yield* cleanup(claimed.claimedPaths, receipt.value?.attachments ?? []);
+          } else if (receipt.error.reason === "not_found") {
+            // Membership can disappear after copying. Keep any committed board
+            // references, then release copies a deleted project never indexed.
+            const retained = yield* sql<{ payload_json: string }>`
+              SELECT payload_json FROM coordination_attachments
+              WHERE project_id=${input.projectId} AND ${sql.in(
+                "attachment_id",
+                claimed.attachments.map((attachment) => attachment.id),
+              )}`;
+            yield* cleanup(
+              claimed.claimedPaths,
+              yield* Effect.forEach(retained, (row) => decodeAttachment(row.payload_json)),
+            );
           } else if (receipt.error.reason === "conflict") {
             // Another payload owns this command ID; none of these copies did.
             yield* cleanup(claimed.claimedPaths, []);

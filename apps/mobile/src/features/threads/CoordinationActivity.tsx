@@ -146,7 +146,14 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
       () =>
         handle({
           environmentId,
-          input: { projectId, threadId, ...(entryId ? { entryId } : {}), action },
+          input: {
+            projectId,
+            threadId,
+            ...(entryId
+              ? { entryId, entryRevision: entries.find((entry) => entry.id === entryId)?.revision }
+              : {}),
+            action,
+          },
         }),
       () =>
         setNotice(

@@ -4149,6 +4149,52 @@ describe("orchestrator MCP toolkit", () => {
             afterRead.subagents.find((task) => task.id === queuedFollowup.run.delegatedTaskId)
               ?.completionDelivery?.state,
           ).toBe("acknowledged");
+          const heldMessageId = MessageId.make("message:held-human-after-followup");
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("command:held-human-after-followup"),
+            threadId: delegated.childThreadId,
+            messageId: heldMessageId,
+            text: "Human work held by Stop",
+            attachments: [],
+            dispatchMode: { type: "defer_start" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const heldProjection = yield* orchestrator.getThreadProjection(delegated.childThreadId);
+          const heldRun = heldProjection.runs.find((run) => run.userMessageId === heldMessageId)!;
+          const now = yield* DateTime.now;
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make("event:hold-human-after-followup"),
+                type: "run.updated",
+                threadId: delegated.childThreadId,
+                occurredAt: now,
+                payload: { ...heldRun, status: "queued", queuePosition: 1, queueHeld: true },
+              },
+            ],
+          });
+          const heldFollowupCall = yield* invoke("task_followup", {
+            threadId: delegated.childThreadId,
+            message: "New parent-authorized child work",
+            clientRequestId: "child-followup-with-held-human",
+          });
+          expect(heldFollowupCall.isError, JSON.stringify(heldFollowupCall.content)).not.toBe(true);
+          const heldFollowup = yield* decodeTaskFollowupResult(
+            heldFollowupCall.structuredContent,
+          ).pipe(Effect.orDie);
+          expect(heldFollowup.delivery).toBe("started");
+          const afterHeldFollowup = yield* orchestrator.getThreadProjection(
+            delegated.childThreadId,
+          );
+          expect(afterHeldFollowup.runs.find((run) => run.id === heldRun.id)).toMatchObject({
+            status: "queued",
+            queueHeld: true,
+          });
+          expect(
+            afterHeldFollowup.messages.find((message) => message.id === heldMessageId)?.text,
+          ).toBe("Human work held by Stop");
         }).pipe(Effect.provide(layerTest));
       }),
     ),

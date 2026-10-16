@@ -199,8 +199,9 @@ Unanswered requests expire after 24 hours. Activity never starts a finished
 thread on its own.
 
 Choose **Handle now** or **After current work** when you want the thread to act
-on a post. You can mute a topic, pause coordination context, or return the agent
-to your original task. Unmute or resume coordination when you want updates again.
+on a post. You can mute a topic, choose **Pause delivery** or **Resume delivery**, or
+choose **Return to original task**. Unmute or resume delivery when you want updates
+again.
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation
 keeps the provider's explanation. Retry after the limit resets, or switch to
