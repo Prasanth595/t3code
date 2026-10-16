@@ -250,9 +250,13 @@ export const ThreadPullRequestEntry = Schema.Struct({
   stack: Schema.NullOr(
     Schema.Struct({
       kind: Schema.Literals(["native", "derived"]),
-      /** 1-based, bottom of the stack first. */
-      position: Schema.Int,
-      size: Schema.Int,
+      position: Schema.Int.annotate({
+        description:
+          "Layer in the stack, 1 at the bottom. One more than the pull request it builds on, so pull requests built on the same one share a position.",
+      }),
+      size: Schema.Int.annotate({
+        description: "Number of pull requests in the whole stack, branches included.",
+      }),
     }),
   ),
 });
@@ -263,8 +267,10 @@ export const ListThreadPullRequestsResult = Schema.Struct({
   chains: Schema.Array(
     Schema.Struct({
       kind: Schema.Literals(["native", "derived"]),
-      /** Bottom to top. */
-      numbers: Schema.Array(Schema.Int),
+      numbers: Schema.Array(Schema.Int).annotate({
+        description:
+          "Bottom first. Each pull request comes after the one it builds on, followed by everything built on it; a stack can branch, so read each entry's baseBranch and stack.position for its parent rather than assuming it builds on the number before it.",
+      }),
     }),
   ),
 });
@@ -298,7 +304,7 @@ const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
   .annotate(Tool.OpenWorld, false);
 
 const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
-  description: `List the pull requests linked to a thread (omit threadId for this thread) with their last known host state, and how they chain into stacks (bottom to top). ${REGISTER_EVERY_PR}`,
+  description: `List the pull requests linked to a thread (omit threadId for this thread) with their last known host state, and how they group into stacks by base branch. A stack can branch when several pull requests build on the same one. ${REGISTER_EVERY_PR}`,
   parameters: Schema.Struct({
     threadId: Schema.optional(
       ThreadId.annotate({ description: "Thread to list. Omit for this thread." }),

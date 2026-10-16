@@ -49,6 +49,23 @@ describe("pullRequestListLines", () => {
     ]);
   });
 
+  it("indents pull requests built on the same one side by side under it", () => {
+    const lines = pullRequestListLines(
+      resolveThreadPullRequestChains([
+        link(3, "c", "a", "2026-01-01T10:00:00Z"),
+        link(1, "a", "main", "2026-01-01T10:00:00Z"),
+        link(4, "d", "b", "2026-01-01T10:00:00Z"),
+        link(2, "b", "a", "2026-01-01T10:00:00Z"),
+      ]),
+    );
+    expect(lines.map((line) => [line.link.number, line.depth, line.stack?.size ?? null])).toEqual([
+      [1, 0, 4],
+      [2, 1, null],
+      [4, 2, null],
+      [3, 1, null],
+    ]);
+  });
+
   it("marks native stacks on their base layer", () => {
     const stack = {
       kind: "native" as const,

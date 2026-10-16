@@ -270,6 +270,24 @@ describe("resolveThreadPullRequestChains", () => {
     ]);
   });
 
+  it("nests every pull request built on the same one under it", () => {
+    const chains = resolveThreadPullRequestChains([
+      link(3, { snapshot: snapshot({ headBranch: "c", baseBranch: "a" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "a", baseBranch: "main" }) }),
+      link(5, { snapshot: snapshot({ headBranch: "e", baseBranch: "b" }) }),
+      link(2, { snapshot: snapshot({ headBranch: "b", baseBranch: "a" }) }),
+      link(4, { snapshot: snapshot({ headBranch: "d", baseBranch: "b" }) }),
+    ]);
+    expect(
+      chains.map((chain) => [chain.layers.map((layer) => layer.number), chain.depths]),
+    ).toEqual([
+      [
+        [1, 2, 4, 5, 3],
+        [0, 1, 2, 2, 1],
+      ],
+    ]);
+  });
+
   it("uses the native stack order when the host provides one", () => {
     const stack = {
       kind: "native" as const,
@@ -353,6 +371,37 @@ describe("chain selection and badge state", () => {
       });
     },
   );
+
+  it("points a branching stack at its newest-linked open tip, or its latest-updated tip once done", () => {
+    const links = [
+      link(1, { snapshot: snapshot({ headBranch: "a" }) }),
+      link(2, { snapshot: snapshot({ headBranch: "b", baseBranch: "a" }) }),
+      link(3, { snapshot: snapshot({ headBranch: "c", baseBranch: "a" }) }),
+      link(4, { snapshot: snapshot({ headBranch: "d", baseBranch: "b" }) }),
+    ];
+    const merged = (entry: ThreadPullRequestLink) => ({
+      ...entry,
+      snapshot: { ...entry.snapshot!, state: "merged" as const },
+    });
+    expect(resolveThreadCurrentPullRequest(links)).toMatchObject({
+      kind: "stack",
+      top: { number: 4 },
+    });
+    expect(
+      resolveThreadCurrentPullRequest([links[0]!, links[1]!, links[2]!, merged(links[3]!)]),
+    ).toMatchObject({ kind: "stack", top: { number: 3 } });
+    const finished = links
+      .map(merged)
+      .map((entry) =>
+        entry.number === 3
+          ? { ...entry, snapshot: { ...entry.snapshot, updatedAt: "2026-03-01T00:00:00.000Z" } }
+          : entry,
+      );
+    expect(resolveThreadCurrentPullRequest(finished)).toMatchObject({
+      kind: "single",
+      link: { number: 3 },
+    });
+  });
 
   it("keeps the top native layer after completion and treats an unsynced layer as open", () => {
     const stack = {

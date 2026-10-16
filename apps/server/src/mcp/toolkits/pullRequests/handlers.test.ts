@@ -574,6 +574,24 @@ describe("listThreadPullRequests", () => {
     ]);
     expect(result.chains).toEqual([{ kind: "native", numbers: [1, 2] }]);
   });
+
+  it("gives pull requests built on the same one the same position", () => {
+    const result = listThreadPullRequests({
+      pullRequests: [
+        makeLink(3, { headBranch: "c", baseBranch: "a" }),
+        makeLink(1, { headBranch: "a" }),
+        makeLink(4, { headBranch: "d", baseBranch: "b" }),
+        makeLink(2, { headBranch: "b", baseBranch: "a" }),
+      ],
+    });
+    expect(result.pullRequests.map((entry) => [entry.number, entry.stack])).toEqual([
+      [3, { kind: "derived", position: 2, size: 4 }],
+      [1, { kind: "derived", position: 1, size: 4 }],
+      [4, { kind: "derived", position: 3, size: 4 }],
+      [2, { kind: "derived", position: 2, size: 4 }],
+    ]);
+    expect(result.chains).toEqual([{ kind: "derived", numbers: [1, 2, 4, 3] }]);
+  });
 });
 
 describe("pull request guide tools", () => {
