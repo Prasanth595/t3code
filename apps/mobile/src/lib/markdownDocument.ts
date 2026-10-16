@@ -142,7 +142,24 @@ export function markdownWithHtml(markdown: string): string {
 }
 
 // A delimiter row such as `|---|:--:|`, possibly inside a blockquote or list item.
-const TABLE_DELIMITER_ROW = /^[ \t>]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-*:?[ \t]*)*\r?$/m;
+function isTableDelimiterRow(line: string): boolean {
+  if (!line.includes("-")) return false;
+  const row = line.replace(/^[ \t>]+/, "").trim();
+  return row
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .every((cell) => /^:?-+:?$/.test(cell.trim()));
+}
+
+// Cheap pre-check for a delimiter row two lines below text, so most messages skip the parse.
+function mayHaveTableUnderText(markdown: string): boolean {
+  if (!markdown.includes("|")) return false;
+  const lines = markdown.split(/\r\n|\r|\n/);
+  for (let index = 2; index < lines.length; index += 1) {
+    if (isTableDelimiterRow(lines[index]!) && /[^\s>]/.test(lines[index - 2]!)) return true;
+  }
+  return false;
+}
 
 /**
  * GFM lets a table interrupt a paragraph, but the native parser (md4c) only starts a table
@@ -150,7 +167,7 @@ const TABLE_DELIMITER_ROW = /^[ \t>]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-*:?[ \t]
  * run-on paragraph. Insert the blank line md4c needs before each such table.
  */
 export function markdownWithTableBreaks(markdown: string): string {
-  if (!markdown.includes("|") || !TABLE_DELIMITER_ROW.test(markdown)) return markdown;
+  if (!mayHaveTableUnderText(markdown)) return markdown;
   const lineStarts: number[] = [];
   const visit = (node: MarkdownNode) => {
     if (!("children" in node)) return;
@@ -163,7 +180,12 @@ export function markdownWithTableBreaks(markdown: string): string {
         start?.offset !== undefined &&
         previous.position?.end.line === start.line - 1
       )
-        lineStarts.push(markdown.lastIndexOf("\n", start.offset - 1) + 1);
+        lineStarts.push(
+          Math.max(
+            markdown.lastIndexOf("\n", start.offset - 1),
+            markdown.lastIndexOf("\r", start.offset - 1),
+          ) + 1,
+        );
       visit(child);
     });
   };
@@ -174,7 +196,9 @@ export function markdownWithTableBreaks(markdown: string): string {
       .slice(lineStart)
       .match(/^[ \t>]*/)![0]
       .trimEnd();
-    markdown = `${markdown.slice(0, lineStart)}${prefix}\n${markdown.slice(lineStart)}`;
+    // Reuse the line ending before the table, so a CR-only document gets a real blank line.
+    const lineEnding = markdown.charAt(lineStart - 1);
+    markdown = `${markdown.slice(0, lineStart)}${prefix}${lineEnding}${markdown.slice(lineStart)}`;
   }
   return markdown;
 }
