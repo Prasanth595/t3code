@@ -262,7 +262,9 @@ export const layer = Layer.effect(
                     payload_json: string;
                   }>`SELECT payload_json FROM coordination_entries
         WHERE project_id=${input.projectId} AND sender_thread_id IS ${sender} AND target_thread_id IS ${targetThreadId}
-        AND topic=${topic} AND reply_to_id IS NULL AND status='open' AND (kind=${input.kind} OR (${input.kind}!='update' AND kind!='update')) ORDER BY revision DESC LIMIT 1`;
+        AND topic=${topic} AND reply_to_id IS NULL AND status='open'
+        AND ${input.createdBy}='agent' AND json_extract(payload_json,'$.createdBy')='agent'
+        AND (kind=${input.kind} OR (${input.kind}!='update' AND kind!='update')) ORDER BY revision DESC LIMIT 1`;
                   previous = rows[0] === undefined ? undefined : decodeEntry(rows[0].payload_json);
                   if (previous !== undefined && input.kind !== "update")
                     return yield* fail(

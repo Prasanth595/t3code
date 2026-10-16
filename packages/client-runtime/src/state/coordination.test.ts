@@ -1,6 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId, ThreadId, type CoordinationEntry } from "@t3tools/contracts";
-import { coordinationTopics, mergeCoordinationEntries } from "./coordination.ts";
+import {
+  coordinationMentionQuery,
+  hasCoordinationMention,
+  coordinationPostContent,
+  coordinationTopics,
+  mergeCoordinationEntries,
+} from "./coordination.ts";
 
 const entry = (
   id: string,
@@ -27,6 +33,60 @@ const entry = (
 const threadId = ThreadId.make("thread");
 
 describe("coordination activity", () => {
+  it("posts plain messages without a title and preserves a reply's discussion and audience", () => {
+    const target = ThreadId.make("recipient");
+    expect(coordinationPostContent({ text: "  Release ready\nDetails  ", kind: "update" })).toEqual(
+      {
+        text: "Release ready\nDetails",
+        topic: "Release ready",
+        kind: "update",
+      },
+    );
+    const request = coordinationPostContent({
+      text: "Can you deploy?",
+      kind: "request",
+      targetThreadId: target,
+    });
+    expect(request).toMatchObject({
+      topic: "Can you deploy?",
+      kind: "request",
+      targetThreadId: target,
+    });
+    const root = entry("root", 1, { topic: "Original request", targetThreadId: target });
+    expect(
+      coordinationPostContent({
+        text: "  Done  ",
+        kind: "blocker",
+        targetThreadId: threadId,
+        reply: root,
+      }),
+    ).toEqual({
+      text: "Done",
+      kind: "update",
+      topic: root.topic,
+      replyToId: root.id,
+    });
+    expect(coordinationPostContent({ text: "x".repeat(200), kind: "update" }).topic).toHaveLength(
+      160,
+    );
+    expect(coordinationMentionQuery("Please ask @release", 19)).toEqual({
+      query: "release",
+      start: 11,
+      end: 19,
+    });
+    expect(coordinationMentionQuery("@review then finish", 7)).toEqual({
+      query: "review",
+      start: 0,
+      end: 7,
+    });
+    expect(coordinationMentionQuery("Ask @review\nCheck this", 0)).toBeNull();
+    expect(hasCoordinationMention("Ask @review\nCheck this")).toBe(true);
+    expect(hasCoordinationMention("Email user@example.com")).toBe(false);
+    expect(hasCoordinationMention("Ask  Check this")).toBe(false);
+    expect(coordinationMentionQuery("Email user@example.com", 22)).toBeNull();
+    expect(coordinationMentionQuery("@review\nDone", 12)).toBeNull();
+  });
+
   it("keeps replies with their root and orders topics by newest activity", () => {
     const topics = coordinationTopics(
       [

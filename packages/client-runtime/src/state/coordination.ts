@@ -2,6 +2,7 @@ import {
   canReplyToCoordination,
   WS_METHODS,
   type CoordinationEntry,
+  type CoordinationKind,
   type CoordinationSnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -12,6 +13,36 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
+
+export function coordinationMentionQuery(text: string, caret: number) {
+  const before = text.slice(0, caret);
+  const match = /(?:^|\s)@([^@\n]*)$/.exec(before);
+  if (!match) return null;
+  return { query: match[1] ?? "", start: before.lastIndexOf("@"), end: caret };
+}
+
+export function hasCoordinationMention(text: string) {
+  return /(?:^|\s)@/.test(text);
+}
+
+export function coordinationPostContent(input: {
+  text: string;
+  kind: CoordinationKind;
+  targetThreadId?: ThreadId;
+  reply?: CoordinationEntry;
+}) {
+  const text = input.text.trim();
+  return {
+    text,
+    kind: input.reply ? ("update" as const) : input.kind,
+    topic: input.reply?.topic ?? text.split(/\r?\n/, 1)[0]!.slice(0, 160),
+    ...(input.reply
+      ? { replyToId: input.reply.id }
+      : input.targetThreadId
+        ? { targetThreadId: input.targetThreadId }
+        : {}),
+  };
+}
 
 export function createCoordinationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,

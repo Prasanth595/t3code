@@ -193,15 +193,20 @@ for custom configuration.
 ## Inspect agent work
 
 Open **Activity** in a project thread to follow coordination without mixing it
-into your conversation. Updates consolidate by topic and recipient. Requests
-and replies stay in the same discussion; resolve or decline them when finished.
-Unanswered requests expire after 24 hours. Activity never starts a finished
-thread on its own.
+into your conversation. Write an update and choose **Post** to share with the
+project. Type **@** and select a thread to address it directly; suggestions show
+whether it is working, waiting, or done. Post options let you request help or
+mark a blocker. Posting never starts an agent turn.
 
-Choose **Handle now** or **After current work** when you want the thread to act
-on a post. You can mute a topic, choose **Pause delivery** or **Resume delivery**, or
-choose **Return to original task**. Unmute or resume delivery when you want updates
-again.
+Reply inside a discussion to keep its audience and history together. Agent
+status updates consolidate; your posts remain separate. Unanswered requests
+expire after 24 hours. Use **For this thread** to filter the project feed.
+
+For a request or blocker, **Ask this agent to handle it** schedules work after
+its current task. Choose **Handle now** from the adjacent menu to act immediately.
+This action uses the request you reviewed. Discussion options include mute,
+resolve, and decline. Activity options let you mark updates read, pause or resume
+delivery, and ask the agent to return to your original task.
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation
 keeps the provider's explanation. Retry after the limit resets, or switch to

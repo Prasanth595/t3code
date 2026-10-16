@@ -4,12 +4,16 @@ import {
   type ChatAttachment,
   type CoordinationEntry,
   type CoordinationKind,
+  type CoordinationSnapshot,
   type CoordinationPreferencesInput,
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
+  coordinationMentionQuery,
+  hasCoordinationMention,
+  coordinationPostContent,
   coordinationPresenceLabel,
   coordinationTopics,
   mergeCoordinationEntries,
@@ -19,17 +23,23 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { ActivityIcon } from "lucide-react";
+import {
+  ActivityIcon,
+  ChevronDownIcon,
+  FilterIcon,
+  MoreHorizontalIcon,
+  PlusIcon,
+  XIcon,
+} from "lucide-react";
 import { randomUUID } from "~/lib/utils";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { coordinationEnvironment } from "../../state/coordination";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
-import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
+import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
 import { Sheet, SheetPopup, SheetHeader, SheetTitle, SheetDescription } from "../ui/sheet";
 
 type ActivityProps = {
@@ -79,14 +89,11 @@ export function CoordinationActivity(props: ActivityProps) {
 }
 
 function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) {
-  const [scope, setScope] = useState<"thread" | "project">("thread");
+  const [scope, setScope] = useState<"thread" | "project">("project");
   const [olderEntries, setOlderEntries] = useState<CoordinationEntry[]>([]);
-  const [olderCursor, setOlderCursor] = useState<number | null | undefined>(undefined);
-  const [topic, setTopic] = useState("");
-  const [text, setText] = useState("");
-  const [kind, setKind] = useState<CoordinationKind>("update");
-  const [target, setTarget] = useState<ThreadId | null>(null);
-  const [reply, setReply] = useState<CoordinationEntry | null>(null);
+  const [olderCursor, setOlderCursor] = useState<number | null | undefined>();
+  const [replyId, setReplyId] = useState<string | null>(null);
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -113,17 +120,14 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
       coordinationTopics(mergeCoordinationEntries(olderEntries, snapshot?.entries ?? []), threadId),
     [olderEntries, snapshot?.entries, threadId],
   );
-  const replyBlocked =
-    reply !== null &&
-    !topics.some((group) => group.rows.some((row) => row.entry.id === reply.id && row.canReply));
   const liveEntries = snapshot?.entries;
-  // Once paging, retain the live page as it moves so new posts cannot create a gap in history.
+  // Retain the live page while paging so new posts cannot leave a gap in history.
   useEffect(() => {
     if (olderCursor === undefined || !liveEntries) return;
     setOlderEntries((entries) => mergeCoordinationEntries(entries, liveEntries));
   }, [liveEntries, olderCursor]);
-  const loadOlder = useAtomCommand(coordinationEnvironment.loadOlder, { reportFailure: false });
   const nextBeforeRevision = olderCursor === undefined ? snapshot?.nextBeforeRevision : olderCursor;
+  const loadOlder = useAtomCommand(coordinationEnvironment.loadOlder, { reportFailure: false });
   const post = useAtomCommand(coordinationEnvironment.post, { reportFailure: false });
   const handle = useAtomCommand(coordinationEnvironment.handle, { reportFailure: false });
   const resolve = useAtomCommand(coordinationEnvironment.resolve, { reportFailure: false });
@@ -164,7 +168,7 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
   }
   function handleRequest(
     action: "handle_now" | "handle_after" | "return_to_task",
-    entryId?: string,
+    root?: CoordinationEntry,
   ) {
     return perform(
       () =>
@@ -173,19 +177,17 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
           input: {
             projectId,
             threadId,
-            ...(entryId
-              ? { entryId, entryRevision: entries.find((entry) => entry.id === entryId)?.revision }
-              : {}),
+            ...(root ? { entryId: root.id, entryRevision: root.revision } : {}),
             action,
           },
         }),
       () =>
         setNotice(
           action === "handle_after"
-            ? "Queued for this thread after its current work."
+            ? "Queued for this agent after its current work."
             : action === "return_to_task"
-              ? "Asked this thread to return to its original task."
-              : "Sent to this thread to handle now.",
+              ? "Asked this agent to return to its original task."
+              : "Sent to this agent to handle now.",
         ),
     );
   }
@@ -194,114 +196,109 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
       savePreferences({ environmentId, input: { projectId, threadId, ...update } }),
     );
   }
-  function startReply(entry: CoordinationEntry) {
-    setReply(entry);
-    setTopic(entry.topic);
-    setTarget(entry.senderThreadId === threadId ? entry.targetThreadId : entry.senderThreadId);
-    setKind("update");
-  }
+  const submit = (content: ReturnType<typeof coordinationPostContent>, onSuccess: () => void) => {
+    void perform(
+      () =>
+        post({
+          environmentId,
+          input: {
+            commandId: CommandId.make(randomUUID()),
+            projectId,
+            senderThreadId: threadId,
+            ...content,
+          },
+        }),
+      onSuccess,
+    );
+  };
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-2 px-6 pb-3">
-        <div className="flex gap-1" role="group" aria-label="Activity scope">
-          <Button
-            size="sm"
-            variant={scope === "thread" ? "secondary" : "ghost"}
-            disabled={pending}
-            aria-pressed={scope === "thread"}
-            onClick={() => {
-              setScope("thread");
-              setOlderEntries([]);
-              setOlderCursor(undefined);
-            }}
+      <div className="flex items-center justify-between gap-2 px-6 pb-3">
+        <Button
+          size="sm"
+          variant={scope === "thread" ? "secondary" : "ghost"}
+          aria-pressed={scope === "thread"}
+          disabled={pending}
+          onClick={() => {
+            setScope(scope === "project" ? "thread" : "project");
+            setOlderEntries([]);
+            setOlderCursor(undefined);
+            setReplyId(null);
+          }}
+        >
+          <FilterIcon aria-hidden /> For this thread
+        </Button>
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Activity options"
+                disabled={pending}
+              />
+            }
           >
-            This thread
-          </Button>
-          <Button
-            size="sm"
-            variant={scope === "project" ? "secondary" : "ghost"}
-            disabled={pending}
-            aria-pressed={scope === "project"}
-            onClick={() => {
-              setScope("project");
-              setOlderEntries([]);
-              setOlderCursor(undefined);
-            }}
-          >
-            Project
-          </Button>
-        </div>
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={pending || !canSetPreferences || !inbox.data?.unreadCount}
-          onClick={() => void updatePreferences({ readRevision: inbox.data?.revision ?? 0 })}
-        >
-          Mark read
-        </Button>
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={pending || !canSetPreferences || !preferences}
-          aria-pressed={preferences?.paused ?? false}
-          onClick={() => void updatePreferences({ paused: !preferences?.paused })}
-        >
-          {preferences?.paused ? "Resume delivery" : "Pause delivery"}
-        </Button>
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={pending || !canHandle}
-          onClick={() => void handleRequest("return_to_task")}
-        >
-          Return to original task
-        </Button>
+            <MoreHorizontalIcon aria-hidden />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem
+              disabled={!canSetPreferences || !inbox.data?.unreadCount}
+              onClick={() => void updatePreferences({ readRevision: inbox.data?.revision ?? 0 })}
+            >
+              Mark read
+            </MenuItem>
+            <MenuItem
+              disabled={!canSetPreferences || !preferences}
+              onClick={() => void updatePreferences({ paused: !preferences?.paused })}
+            >
+              {preferences?.paused ? "Resume delivery" : "Pause delivery"}
+            </MenuItem>
+            <MenuItem disabled={!canHandle} onClick={() => void handleRequest("return_to_task")}>
+              Return to original task
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       </div>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-4">
-        <p className="text-xs text-muted-foreground">
-          Handle actions send the request to this thread.
-        </p>
         {notice ? (
           <p role="status" className="text-xs text-muted-foreground">
             {notice}
           </p>
         ) : null}
-        {preferences?.paused ? (
-          <p className="text-xs text-muted-foreground">
-            Automatic delivery to this thread is paused. Activity stays here.
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
           </p>
         ) : null}
+        {preferences?.paused ? (
+          <p className="text-xs text-muted-foreground">Delivery to this agent is paused.</p>
+        ) : null}
         {query.error ? (
-          <div role="alert" className="space-y-2 text-sm">
+          <div role="alert">
             <p>{query.error}</p>
             <Button variant="outline" size="sm" onClick={query.refresh}>
               Retry
             </Button>
           </div>
         ) : null}
-        {!snapshot && !query.error ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            Loading activity...
-          </p>
-        ) : null}
+        {!snapshot && !query.error ? <p role="status">Loading activity...</p> : null}
         {snapshot ? (
           <details>
-            <summary className="cursor-pointer text-sm font-medium">
+            <summary className="cursor-pointer text-xs text-muted-foreground">
               Threads ({threads.length})
             </summary>
             <ul className="mt-2 space-y-2">
               {threads.map((thread) => (
                 <li key={thread.threadId} className="text-xs">
-                  <p className="truncate font-medium">
+                  <span className="font-medium">
                     {thread.title}
                     {thread.threadId === threadId ? " (this thread)" : ""}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {coordinationPresenceLabel(thread.status)} ·{" "}
-                    <time dateTime={thread.updatedAt}>
-                      {new Date(thread.updatedAt).toLocaleString()}
-                    </time>
-                  </p>
+                  </span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    · {coordinationPresenceLabel(thread.status)}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -309,63 +306,228 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
         ) : null}
         {snapshot && topics.length === 0 ? (
           <p className="py-6 text-sm text-muted-foreground">
-            No activity yet. Post an update or ask another thread for help.
+            No activity yet. Share an update below.
           </p>
         ) : null}
-        {topics.map((group) => {
-          const muted = preferences?.mutedTopics.includes(group.topic) ?? false;
-          return (
-            <section
-              key={group.topic}
-              className="space-y-3 rounded-lg border border-border p-3"
-              aria-label={group.topic}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <h3 className="min-w-0 break-words text-sm font-medium">{group.topic}</h3>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={pending || !canSetPreferences || !preferences}
-                  aria-label={`${muted ? "Unmute" : "Mute"} topic ${group.topic}`}
-                  onClick={() =>
-                    void updatePreferences({
-                      mutedTopics: muted
-                        ? (preferences?.mutedTopics.filter((value) => value !== group.topic) ?? [])
-                        : [...(preferences?.mutedTopics ?? []), group.topic],
-                    })
-                  }
-                >
-                  {muted ? "Unmute" : "Mute"}
-                </Button>
-              </div>
-              {group.rows.map(({ entry, depth, canReply }) => (
-                <article
-                  key={entry.id}
-                  className={depth ? "ml-3 space-y-2 border-l border-border pl-3" : "space-y-2"}
-                >
-                  <div className="text-xs text-muted-foreground">
-                    <span
-                      className={
-                        entry.kind === "blocker" && entry.status === "open"
-                          ? "font-medium text-destructive"
-                          : ""
-                      }
-                    >
-                      {entry.kind}
-                    </span>
-                    {" · "}
-                    {entry.createdBy === "user" ? "You" : threadTitle(entry.senderThreadId)}
-                    {entry.targetThreadId
-                      ? ` → ${threadTitle(entry.targetThreadId)}`
-                      : " → Project"}
-                    {entry.updateCount > 1 ? ` · ${entry.updateCount} updates` : ""}
-                    {entry.status !== "open" ? ` · ${entry.status}` : ""}
-                    <p>
-                      <time dateTime={entry.updatedAt}>
-                        {new Date(entry.updatedAt).toLocaleString()}
-                      </time>
-                    </p>
-                  </div>
+        {topics.map((group) => (
+          <div key={group.topic} className="space-y-4">
+            {group.rows
+              .filter(({ depth }) => depth === 0)
+              .map(({ entry, canReply }) => {
+                const replies = group.rows.filter((row) => row.entry.replyToId === entry.id);
+                const muted = preferences?.mutedTopics.includes(entry.topic) ?? false;
+                return (
+                  <article key={entry.id} className="space-y-2 rounded-lg border border-border p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          {entry.createdBy === "user" ? "You" : threadTitle(entry.senderThreadId)}
+                        </span>
+                        {entry.targetThreadId
+                          ? ` → ${threadTitle(entry.targetThreadId)}`
+                          : " · Project"}
+                        {" · "}
+                        <time
+                          dateTime={entry.updatedAt}
+                          aria-label={new Date(entry.updatedAt).toLocaleString()}
+                        >
+                          {new Date(entry.updatedAt).toLocaleString([], {
+                            month: "short",
+                            day: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </time>
+                        {entry.status !== "open" ? ` · ${entry.status}` : ""}
+                        {muted ? " · Muted" : ""}
+                      </p>
+                      <Menu>
+                        <MenuTrigger
+                          render={
+                            <Button
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label="Discussion options"
+                              disabled={pending}
+                            />
+                          }
+                        >
+                          <MoreHorizontalIcon aria-hidden />
+                        </MenuTrigger>
+                        <MenuPopup align="end">
+                          <MenuItem
+                            disabled={!canSetPreferences || !preferences}
+                            onClick={() =>
+                              void updatePreferences({
+                                mutedTopics: muted
+                                  ? preferences!.mutedTopics.filter(
+                                      (topic) => topic !== entry.topic,
+                                    )
+                                  : [...(preferences?.mutedTopics ?? []), entry.topic],
+                              })
+                            }
+                          >
+                            {muted ? "Unmute topic" : "Mute topic"}
+                          </MenuItem>
+                          <MenuItem
+                            disabled={!canResolve || !canReply}
+                            onClick={() =>
+                              void perform(() =>
+                                resolve({
+                                  environmentId,
+                                  input: {
+                                    projectId,
+                                    entryId: entry.id,
+                                    status: "resolved",
+                                    actorThreadId: threadId,
+                                  },
+                                }),
+                              )
+                            }
+                          >
+                            Resolve
+                          </MenuItem>
+                          {entry.kind !== "update" ? (
+                            <MenuItem
+                              disabled={!canResolve || !canReply}
+                              onClick={() =>
+                                void perform(() =>
+                                  resolve({
+                                    environmentId,
+                                    input: {
+                                      projectId,
+                                      entryId: entry.id,
+                                      status: "declined",
+                                      actorThreadId: threadId,
+                                    },
+                                  }),
+                                )
+                              }
+                            >
+                              Decline
+                            </MenuItem>
+                          ) : null}
+                        </MenuPopup>
+                      </Menu>
+                    </div>
+                    {entry.kind !== "update" ? (
+                      <p className="text-xs font-medium">
+                        {entry.kind === "request" ? "Request help" : "Blocked"}
+                      </p>
+                    ) : null}
+                    {entry.createdBy === "agent" ? (
+                      <h3 className="text-sm font-medium">{entry.topic}</h3>
+                    ) : null}
+                    <p className="whitespace-pre-wrap break-words text-sm">{entry.text}</p>
+                    {entry.attachments.map((attachment) => (
+                      <ActivityAttachment
+                        key={attachment.id}
+                        environmentId={environmentId}
+                        attachment={attachment}
+                      />
+                    ))}
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        disabled={pending || !canPost || !canReply}
+                        onClick={() => setReplyId(entry.id)}
+                      >
+                        Reply
+                      </Button>
+                      {entry.kind !== "update" && entry.status === "open" ? (
+                        <>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            disabled={pending || !canHandle || !canReply}
+                            onClick={() => void handleRequest("handle_after", entry)}
+                          >
+                            Ask this agent to handle it
+                          </Button>
+                          <Menu>
+                            <MenuTrigger
+                              render={
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  aria-label="Handle timing"
+                                  disabled={pending || !canHandle || !canReply}
+                                />
+                              }
+                            >
+                              <ChevronDownIcon aria-hidden />
+                            </MenuTrigger>
+                            <MenuPopup>
+                              <MenuItem onClick={() => void handleRequest("handle_now", entry)}>
+                                Handle now
+                              </MenuItem>
+                            </MenuPopup>
+                          </Menu>
+                        </>
+                      ) : null}
+                    </div>
+                    {replies.length ? (
+                      <details>
+                        <summary className="cursor-pointer text-xs text-muted-foreground">
+                          {replies.length} {replies.length === 1 ? "reply" : "replies"}
+                        </summary>
+                        <div className="mt-3 space-y-3 border-l border-border pl-3">
+                          {replies.map(({ entry: response }) => (
+                            <div key={response.id} className="space-y-1">
+                              <p className="text-xs text-muted-foreground">
+                                {response.createdBy === "user"
+                                  ? "You"
+                                  : threadTitle(response.senderThreadId)}
+                              </p>
+                              <p className="whitespace-pre-wrap break-words text-sm">
+                                {response.text}
+                              </p>
+                              {response.attachments.map((attachment) => (
+                                <ActivityAttachment
+                                  key={attachment.id}
+                                  environmentId={environmentId}
+                                  attachment={attachment}
+                                />
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+                    {replyId === entry.id ? (
+                      <ActivityComposer
+                        key={entry.id}
+                        threads={threads}
+                        disabled={pending || !canPost || !canReply}
+                        pending={pending}
+                        reply={entry}
+                        replyText={replyDrafts[entry.id] ?? ""}
+                        onReplyTextChange={(text) =>
+                          setReplyDrafts((drafts) => ({ ...drafts, [entry.id]: text }))
+                        }
+                        onPost={(content, clear) =>
+                          submit(content, () => {
+                            clear();
+                            setReplyId(null);
+                          })
+                        }
+                        onCancel={() => setReplyId(null)}
+                      />
+                    ) : null}
+                  </article>
+                );
+              })}
+            {group.rows
+              .filter(
+                ({ depth, entry }) =>
+                  depth === 1 && !group.rows.some((row) => row.entry.id === entry.replyToId),
+              )
+              .map(({ entry }) => (
+                <article key={entry.id} className="space-y-2 rounded-lg border border-border p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Earlier discussion · {group.topic}
+                  </p>
                   <p className="whitespace-pre-wrap break-words text-sm">{entry.text}</p>
                   {entry.attachments.map((attachment) => (
                     <ActivityAttachment
@@ -374,87 +536,13 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
                       attachment={attachment}
                     />
                   ))}
-                  <div className="flex flex-wrap gap-1">
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      disabled={pending || !canPost || !canReply}
-                      onClick={() => startReply(entry)}
-                    >
-                      Reply
-                    </Button>
-                    {entry.replyToId === null && entry.status === "open" ? (
-                      <>
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          disabled={pending || !canHandle || !canReply}
-                          onClick={() => void handleRequest("handle_now", entry.id)}
-                        >
-                          Handle now
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          disabled={pending || !canHandle || !canReply}
-                          onClick={() => void handleRequest("handle_after", entry.id)}
-                        >
-                          After current work
-                        </Button>
-
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          disabled={pending || !canResolve}
-                          onClick={() =>
-                            void perform(() =>
-                              resolve({
-                                environmentId,
-                                input: {
-                                  projectId,
-                                  entryId: entry.id,
-                                  status: "resolved",
-                                  actorThreadId: threadId,
-                                },
-                              }),
-                            )
-                          }
-                        >
-                          Resolve
-                        </Button>
-                        {entry.kind !== "update" ? (
-                          <Button
-                            size="xs"
-                            variant="ghost"
-                            disabled={pending || !canResolve}
-                            onClick={() =>
-                              void perform(() =>
-                                resolve({
-                                  environmentId,
-                                  input: {
-                                    projectId,
-                                    entryId: entry.id,
-                                    status: "declined",
-                                    actorThreadId: threadId,
-                                  },
-                                }),
-                              )
-                            }
-                          >
-                            Decline
-                          </Button>
-                        ) : null}
-                      </>
-                    ) : null}
-                  </div>
                 </article>
               ))}
-            </section>
-          );
-        })}
-        {nextBeforeRevision !== null && nextBeforeRevision !== undefined ? (
+          </div>
+        ))}
+        {nextBeforeRevision != null ? (
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             disabled={pending}
             onClick={() =>
@@ -485,131 +573,229 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
           </Button>
         ) : null}
       </div>
-      <form
-        className="space-y-3 border-t border-border p-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!topic.trim() || !text.trim() || !canPost || replyBlocked) return;
-          void perform(
-            () =>
-              post({
-                environmentId,
-                input: {
-                  commandId: CommandId.make(randomUUID()),
-                  projectId,
-                  senderThreadId: threadId,
-                  ...(target ? { targetThreadId: target } : {}),
-                  ...(reply ? { replyToId: reply.id } : {}),
-                  topic: topic.trim(),
-                  kind,
-                  text: text.trim(),
-                },
-              }),
-            () => {
-              setText("");
-              setTopic("");
-              setReply(null);
-            },
-          );
-        }}
-      >
-        {reply ? (
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <span>
-              Replying to {reply.createdBy === "user" ? "You" : threadTitle(reply.senderThreadId)}{" "}
-              on {reply.topic}
-            </span>
-            <Button type="button" variant="ghost" size="xs" onClick={() => setReply(null)}>
-              Cancel reply
-            </Button>
-          </div>
-        ) : null}
-        {!reply ? (
-          <div className="flex gap-2">
-            <div className="min-w-0 flex-1">
-              <Select
-                value={kind}
-                onValueChange={(value) => {
-                  if (value) setKind(value);
-                }}
-                disabled={pending || !canPost}
-              >
-                <SelectTrigger aria-label="Post type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectPopup>
-                  {(["update", "request", "blocker"] as const).map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {value === "update" ? "Update" : value === "request" ? "Request" : "Blocker"}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </div>
-            <div className="min-w-0 flex-1">
-              <Select
-                value={target ?? "project"}
-                onValueChange={(value) =>
-                  setTarget(threads.find((thread) => thread.threadId === value)?.threadId ?? null)
-                }
-                disabled={pending || !canPost}
-              >
-                <SelectTrigger aria-label="Send to">
-                  <SelectValue>{target ? threadTitle(target) : "Project"}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="project">Project</SelectItem>
-                  {threads
-                    .filter((thread) => thread.threadId !== threadId)
-                    .map((thread) => (
-                      <SelectItem key={thread.threadId} value={thread.threadId}>
-                        {thread.title}
-                      </SelectItem>
-                    ))}
-                </SelectPopup>
-              </Select>
-            </div>
-          </div>
-        ) : null}
-        <Input
-          aria-label="Topic"
-          placeholder="Topic"
-          value={topic}
-          maxLength={160}
-          disabled={pending || !canPost || reply !== null}
-          onChange={(event) => setTopic(event.target.value)}
-        />
-        <Textarea
-          aria-label="Activity message"
-          placeholder="Share an update, request, or blocker..."
-          value={text}
-          maxLength={16000}
+      <div className="border-t border-border p-4">
+        <ActivityComposer
+          threads={threads}
           disabled={pending || !canPost}
-          onChange={(event) => setText(event.target.value)}
+          pending={pending}
+          onPost={submit}
         />
-        {replyBlocked ? (
-          <p role="status" className="text-xs text-muted-foreground">
-            This discussion is closed or its original post is not loaded. Load older activity or
-            cancel the reply.
-          </p>
-        ) : null}
-        {error ? (
-          <p role="alert" className="text-xs text-destructive">
-            {error}
-          </p>
-        ) : null}
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-muted-foreground">Posting does not start an agent turn.</p>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={pending || !canPost || replyBlocked || !topic.trim() || !text.trim()}
-          >
-            {pending ? "Saving..." : reply ? "Reply" : "Post"}
+      </div>
+    </div>
+  );
+}
+
+function ActivityComposer({
+  threads,
+  disabled,
+  pending,
+  reply,
+  onPost,
+  onCancel,
+  replyText,
+  onReplyTextChange,
+}: {
+  threads: CoordinationSnapshot["threads"];
+  disabled: boolean;
+  pending: boolean;
+  reply?: CoordinationEntry;
+  replyText?: string;
+  onReplyTextChange?: (text: string) => void;
+  onPost: (content: ReturnType<typeof coordinationPostContent>, clear: () => void) => void;
+  onCancel?: () => void;
+}) {
+  const [mainText, setMainText] = useState("");
+  const text = replyText ?? mainText;
+  const setText = onReplyTextChange ?? setMainText;
+  const [kind, setKind] = useState<CoordinationKind>("update");
+  const [target, setTarget] = useState<ThreadId | null>(null);
+  const [caret, setCaret] = useState(0);
+  const [suggestion, setSuggestion] = useState(0);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const listId = useId();
+  const mention = reply ? null : coordinationMentionQuery(text, caret);
+  const mentionPending = !reply && hasCoordinationMention(text);
+  const candidates = mention
+    ? threads
+        .filter((thread) => thread.title.toLowerCase().includes(mention.query.toLowerCase()))
+        .slice(0, 6)
+    : [];
+  const recipient = threads.find((thread) => thread.threadId === target);
+  const targetMissing = target !== null && recipient === undefined;
+  function chooseThread(threadId: ThreadId) {
+    if (!mention) return;
+    setText(text.slice(0, mention.start) + text.slice(mention.end));
+    setCaret(mention.start);
+    setTarget(threadId);
+    setSuggestion(0);
+    editor.current?.focus();
+  }
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (disabled || !text.trim() || mentionPending || targetMissing) return;
+        onPost(
+          coordinationPostContent({
+            text,
+            kind,
+            ...(target ? { targetThreadId: target } : {}),
+            ...(reply ? { reply } : {}),
+          }),
+          () => {
+            setText("");
+            setTarget(null);
+            setKind("update");
+            setCaret(0);
+          },
+        );
+      }}
+    >
+      {reply ? (
+        <div className="flex items-center justify-between text-xs">
+          <span>Reply in this discussion</span>
+          <Button size="xs" variant="ghost" disabled={pending} onClick={onCancel}>
+            Cancel
           </Button>
         </div>
-      </form>
-    </div>
+      ) : null}
+      {target ? (
+        <div className="flex items-center gap-1 text-xs">
+          <span>To: @{recipient?.title ?? "Unavailable thread"}</span>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Remove recipient"
+            disabled={disabled}
+            onClick={() => setTarget(null)}
+          >
+            <XIcon aria-hidden />
+          </Button>
+        </div>
+      ) : null}
+      <Textarea
+        ref={editor}
+        autoFocus={reply !== undefined}
+        aria-label={reply ? "Reply message" : "Activity message"}
+        placeholder={reply ? "Write a reply..." : "Share an update, or @ a thread..."}
+        value={text}
+        maxLength={16000}
+        size="sm"
+        disabled={disabled}
+        role={reply ? undefined : "combobox"}
+        aria-multiline="true"
+        aria-expanded={mention !== null}
+        aria-controls={mention ? listId : undefined}
+        aria-autocomplete="list"
+        aria-activedescendant={candidates[suggestion] ? `${listId}-${suggestion}` : undefined}
+        onChange={(event) => {
+          setText(event.target.value);
+          setCaret(event.target.selectionStart);
+          setSuggestion(0);
+        }}
+        onSelect={(event) => {
+          setCaret(event.currentTarget.selectionStart);
+        }}
+        onKeyDown={(event) => {
+          if (!mention || !candidates.length) return;
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setSuggestion(
+              (index) =>
+                (index + (event.key === "ArrowDown" ? 1 : -1) + candidates.length) %
+                candidates.length,
+            );
+          } else if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            chooseThread(candidates[suggestion]?.threadId ?? candidates[0]!.threadId);
+          }
+        }}
+      />
+      {mention ? (
+        <div
+          id={listId}
+          role="listbox"
+          aria-label="Threads"
+          className="space-y-1 rounded-lg border border-border p-2"
+        >
+          {candidates.length ? (
+            candidates.map((thread, index) => (
+              <Button
+                key={thread.threadId}
+                id={`${listId}-${index}`}
+                role="option"
+                aria-selected={suggestion === index}
+                variant={suggestion === index ? "secondary" : "ghost"}
+                size="sm"
+                disabled={disabled}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseThread(thread.threadId)}
+              >
+                {thread.title} · {coordinationPresenceLabel(thread.status)}
+              </Button>
+            ))
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No matching thread. Remove @ to share with the project.
+            </p>
+          )}
+        </div>
+      ) : null}
+      {mentionPending && !mention ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          Choose a thread for the @mention or remove @ before posting.
+        </p>
+      ) : null}
+      {targetMissing ? (
+        <p role="status" className="text-xs text-destructive">
+          This thread is no longer available. Remove the recipient to share with the project.
+        </p>
+      ) : null}
+      <div className="flex items-center justify-between gap-2">
+        {reply ? (
+          <span />
+        ) : (
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button variant="ghost" size="xs" aria-label="Post options" disabled={disabled} />
+              }
+            >
+              {kind === "update" ? (
+                <PlusIcon aria-hidden />
+              ) : kind === "request" ? (
+                "Request help"
+              ) : (
+                "Blocked"
+              )}
+              <ChevronDownIcon aria-hidden />
+            </MenuTrigger>
+            <MenuPopup side="top" align="start">
+              {(["update", "request", "blocker"] as const).map((value) => (
+                <MenuItem key={value} onClick={() => setKind(value)}>
+                  {value === "update" ? "Update" : value === "request" ? "Request help" : "Blocked"}
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
+        )}
+        <span className="text-xs text-muted-foreground">
+          {reply
+            ? "Reply stays in this discussion."
+            : target
+              ? "Sharing with this thread."
+              : "Sharing with the project."}
+        </span>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={disabled || !text.trim() || mentionPending || targetMissing}
+        >
+          {pending ? "Saving..." : reply ? "Reply" : "Post"}
+        </Button>
+      </div>
+    </form>
   );
 }
 

@@ -63,6 +63,35 @@ it.effect("consolidates status traffic without admitting any chat work", () =>
         ?.status,
       "waiting_for_user",
     );
+
+    const human = { ...post("human-first", "First human update"), createdBy: "user" as const };
+    const first = yield* board.post(human);
+    const second = yield* board.post({
+      ...human,
+      commandId: CommandId.make("human-second"),
+      text: "Second human update",
+    });
+    assert.notEqual(first.id, second.id);
+    assert.deepEqual(yield* board.post(human), first);
+    yield* board.post(post("agent-next", "Agent status after human posts"));
+    const latest = yield* board.read({ projectId });
+    assert.lengthOf(latest.entries, 3);
+    assert.includeMembers(
+      latest.entries.map((entry) => entry.text),
+      [human.text, second.text, "Agent status after human posts"],
+    );
+    const humanRequest = {
+      ...human,
+      commandId: CommandId.make("human-request-first"),
+      kind: "request" as const,
+    };
+    const requestOne = yield* board.post(humanRequest);
+    const requestTwo = yield* board.post({
+      ...humanRequest,
+      commandId: CommandId.make("human-request-second"),
+      text: "Another request with the same heading",
+    });
+    assert.notEqual(requestOne.id, requestTwo.id);
   }).pipe(Effect.provide(layer)),
 );
 
