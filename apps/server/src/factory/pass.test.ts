@@ -710,25 +710,41 @@ describe("runs that are confirmed and still in triage", () => {
     }),
   );
 
-  it.effect(
-    "a triage run whose issue is ready again waits for the claim step, with no attention",
-    () =>
-      Effect.gen(function* () {
-        const fake = new Fake();
-        fake.runIn(12, "triage");
-        fake.ready[REPO] = [12];
-        fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
-        const { report, lines } = yield* pass(fake, machine([REPO], 1));
-        // `resume` never claims, and the run holds the only slot.
-        assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
-        assert.equal(report.attention, 0);
-        const line = runLine(lines, "rawphp/softfac#12 triage:");
-        assert.ok(line.includes("ready again: the claim step takes it when a slot is free"), line);
-        assert.ok(
-          lines.some((l) => l.startsWith("limit reached: 1 ready issue")),
-          lines.join("\n"),
-        );
-      }),
+  it.effect("a ready-again issue whose own run holds the only slot is an attention line", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.ready[REPO] = [12];
+      fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      // `resume` never claims, and the run holds the only slot.
+      assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
+      const note = runLine(lines, "rawphp/softfac#12 triage:");
+      assert.ok(note.includes("ready again: the claim step takes it when a slot is free"), note);
+      assert.equal(report.attention, 1);
+      const line = runLine(lines, "ATTENTION: rawphp/softfac#12 ");
+      assert.ok(line.includes("the new claim waits for a slot this run holds"), line);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "attention"),
+        [
+          {
+            event: "attention",
+            data: { run: "rawphp__softfac__12__1", reason: "not-progressing" },
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("a ready issue the limit holds back by other runs raises no attention", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING);
+      fake.ready[REPO] = [3];
+      const { report } = yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), []);
+      assert.equal(report.attention, 0);
+    }),
   );
 
   it.effect("a triage run whose issue is ready again is claimed afresh when a slot is free", () =>

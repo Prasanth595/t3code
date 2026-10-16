@@ -17,7 +17,7 @@ import { sanitize } from "./gate.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { ErrorKind, MachineEvent } from "./ledger/events.ts";
 import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
-import { runIdToString, type RunId } from "./ledger/runId.ts";
+import { asciiLower, runIdToString, type RunId } from "./ledger/runId.ts";
 import { duration, formatTs } from "./ledger/time.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
@@ -150,7 +150,8 @@ const errorKind = (error: StartError): ErrorKind => {
   }
 };
 
-const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+/** Repos match as run ids do: `owner/name` folded with `asciiLower`. */
+const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
 const GATE_RUNNING = "gate running";
 
@@ -445,6 +446,17 @@ const workRuns = (
       yield* pass.flush(notes, info.id);
     }
   });
+
+/**
+ * A ready issue the limit holds back while its own unfinished run holds a slot: the claim would
+ * finish that run (`finishOlderRuns`), so with no other slot freeing, nothing moves.
+ */
+const waitsOnItself = (pass: Pass, notes: Notes, run: string): Effect.Effect<void> =>
+  pass.attention(
+    `${notes.label} run ${run} is not progressing and holds a slot: its issue is ready again, and the new claim waits for a slot this run holds. Put the issue back to \`factory:triage\` assigned to the factory's user so \`start\` can finish this run, or free a slot`,
+    run,
+    "not-progressing",
+  );
 
 const READY_AGAIN =
   "its issue is ready again: the claim step takes it when a slot is free, and this run holds one until then";
@@ -763,6 +775,9 @@ const claim = (
           event: "claim_skipped",
           data: { repo: name, issue: String(issue), reason: "limit" },
         });
+        // Only this claim would finish the issue's own run, so a slot it holds never frees.
+        const own = known.of(name, issue).find(holdsSlot);
+        if (own !== undefined) yield* waitsOnItself(pass, notes, runIdToString(own.id));
         continue;
       }
       // A blocked issue takes no slot. Nothing is written for it, and a read that fails holds it

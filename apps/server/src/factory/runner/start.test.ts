@@ -1298,6 +1298,22 @@ describe("resume", () => {
     }),
   );
 
+  it.effect("says nothing moved for a ready issue someone is assigned to", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedRun(dataDir, startedLines().slice(0, 3));
+      const { tracker, calls } = fakeTracker({ issues: [detail("ready", ["bob"])] });
+      const outcome = yield* resumeIn(dataDir, tracker);
+      // Not `moved: "ready"`: the claim step never takes an assigned issue, so the run stalls.
+      assert.deepStrictEqual(outcome, {
+        kind: "skipped",
+        reason: "issue #7 is already assigned to bob",
+      });
+      assert.deepStrictEqual(calls, ["issue 7"]);
+      assert.deepStrictEqual(entriesOf(dataDir), startedEvents().slice(0, 3));
+    }),
+  );
+
   it.effect("says a closed issue was closed, and touches nothing", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
