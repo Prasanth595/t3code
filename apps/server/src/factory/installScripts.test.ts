@@ -829,7 +829,11 @@ describe("build.sh smoke test", () => {
     };
   };
 
+  // build.sh's cleanup waits for the server it started to exit. A missing pid file means the
+  // fake was killed before it recorded itself, which can happen when a one-second smoke
+  // timeout expires within bash's whole-second clock, and it is as dead as a recorded one.
   const serverAlive = () => {
+    if (!NodeFS.existsSync(pidFile)) return false;
     const pid = Number(NodeFS.readFileSync(pidFile, "utf8"));
     try {
       process.kill(pid, 0);
