@@ -162,7 +162,14 @@ const make = (config: Config | null, options: { readonly webhookSecret?: string 
       }
       return null;
     };
-    const insert = (event: Message, now: string) =>
+    const quarantine = (rawEvent: unknown, reason: string, now: string) =>
+      Effect.gen(function* () {
+        const encoded = stableStringify(rawEvent);
+        const digest = NodeCrypto.createHash("sha256").update(encoded).digest("hex");
+        yield* sql`INSERT INTO bridge_inbox_quarantine (owner, payload_digest, event_json, reason, received_at)
+          VALUES (${owner}, ${digest}, ${encoded}, ${reason}, ${now}) ON CONFLICT DO NOTHING`;
+      });
+    const insert = (event: Message, now: string, quarantineConflict = false) =>
       Effect.gen(function* () {
         const route = routeFor(event);
         const rejected = disposition(event, false, now);
@@ -172,8 +179,10 @@ const make = (config: Config | null, options: { readonly webhookSecret?: string 
           event_json: string;
         }>`SELECT event_json FROM bridge_inbox WHERE owner = ${owner} AND event_id = ${event.eventId}`;
         // A changed body with the same ID is a conflict, never a second delivery.
-        if (existing[0] && existing[0].event_json !== encoded)
+        if (existing[0] && existing[0].event_json !== encoded) {
+          if (quarantineConflict) return yield* quarantine(event, "event_conflict", now);
           return yield* new BridgeInboxError({ operation: "event_conflict", cause: event.eventId });
+        }
         yield* sql`INSERT INTO bridge_inbox (owner, event_id, event_json, route_json, status, reason, received_at, event_at)
       VALUES (${owner}, ${event.eventId}, ${encoded}, ${encodedRoute},
         ${rejected ? "rejected" : "pending"}, ${rejected ?? (route ? "awaiting_dispatch" : "unbound_route")}, ${now}, ${event.timestamp}) ON CONFLICT DO NOTHING`;
@@ -208,15 +217,19 @@ const make = (config: Config | null, options: { readonly webhookSecret?: string 
         const now = DateTime.formatIso(yield* DateTime.now);
         yield* sql.withTransaction(
           Effect.gen(function* () {
-            const advanced =
-              yield* sql`UPDATE bridge_inbox_consumers SET cursor = ${page.cursor} WHERE owner = ${owner} AND cursor IS ${previous} RETURNING owner`;
-            if (advanced.length === 0) return; // Another pull committed this cursor first.
+            // Persist every observed page before cursor CAS: a losing pull may contain
+            // events absent from the winner's page. Only the winner advances the cursor.
             for (const rawEvent of page.events) {
-              const name = yield* decodeName(rawEvent);
-              if (name.name !== "message.created") continue;
-              const event = yield* decodeMessage(rawEvent);
-              yield* insert(event, now);
+              const name = yield* decodeName(rawEvent).pipe(Effect.option);
+              if (name._tag === "Some" && name.value.name !== "message.created") continue;
+              const event = yield* decodeMessage(rawEvent).pipe(Effect.option);
+              if (event._tag === "None") {
+                yield* quarantine(rawEvent, "invalid_event", now);
+                continue;
+              }
+              yield* insert(event.value, now, true);
             }
+            yield* sql`UPDATE bridge_inbox_consumers SET cursor = ${page.cursor} WHERE owner = ${owner} AND cursor IS ${previous}`;
           }),
         );
       }).pipe(Effect.mapError(failure("ingest_page")));

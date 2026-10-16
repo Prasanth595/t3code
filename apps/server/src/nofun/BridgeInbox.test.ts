@@ -26,6 +26,9 @@ import * as Harness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
 import * as Inbox from "./BridgeInbox.ts";
+// Captured from grok-bot-mcp-bridge signedHeaders (15f818c); synthetic secret only.
+// origin/f08/ack-contract (94afc25) has the same signedHeaders/deliver contract.
+import senderFixture from "./fixtures/bridgeWebhook.json" with { type: "json" };
 import * as Source from "./BridgeInboxSource.ts";
 
 const config = {
@@ -92,17 +95,17 @@ const event = (id: string, overrides = {}) => ({
   ...overrides,
 });
 const encodeFixture = (value: unknown) => JSON.stringify(value);
-const callback = (value: ReturnType<typeof event>) =>
+const callback = (value: ReturnType<typeof event>, webhookId = value.eventId) =>
   Effect.gen(function* () {
     const inbox = yield* Inbox.BridgeInbox;
     const now = yield* DateTime.now;
     const body = encodeFixture(value);
     const timestamp = String(Math.floor(DateTime.toEpochMillis(now) / 1000));
     const signature = NodeCrypto.createHmac("sha256", Buffer.from(secret.slice(6), "base64"))
-      .update(`${value.eventId}.${timestamp}.${body}`)
+      .update(`${webhookId}.${timestamp}.${body}`)
       .digest("base64");
     return yield* inbox.receiveCallback(body, {
-      "webhook-id": value.eventId,
+      "webhook-id": webhookId,
       "webhook-timestamp": timestamp,
       "webhook-signature": `v1,${signature}`,
       "x-mcp-subscription-id": "fixture-sub",
@@ -172,6 +175,16 @@ it.effect(
       yield* sql`CREATE TRIGGER fixture_crash BEFORE UPDATE OF status ON bridge_inbox WHEN NEW.status = 'delivered' BEGIN SELECT RAISE(ABORT, 'fixture crash after T3 commit'); END`;
       yield* inbox.drain.pipe(Effect.ignore);
       expect(yield* messages).toHaveLength(1);
+      const first = yield* sql<{
+        command_id: string;
+      }>`SELECT command_id FROM orchestration_command_receipts WHERE command_id LIKE 'bridge-inbox:%'`;
+      const commandId = first[0]!.command_id;
+      const committedEvents =
+        yield* sql`SELECT sequence FROM orchestration_events WHERE command_id = ${commandId} ORDER BY sequence`;
+      const committedEffects =
+        yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox WHERE command_id = ${commandId} ORDER BY effect_id`;
+      expect(committedEvents.length).toBeGreaterThan(0);
+      expect(committedEffects.length).toBeGreaterThan(0);
       yield* sql`DROP TRIGGER fixture_crash`;
       // Construct a fresh service on the same durable SQL/orchestrator, as after restart.
       const restarted = yield* Inbox.BridgeInbox.pipe(
@@ -192,6 +205,12 @@ it.effect(
         count: number;
       }>`SELECT count(*) AS count FROM orchestration_command_receipts WHERE command_id LIKE 'bridge-inbox:%'`;
       expect(receipts[0]?.count).toBe(2);
+      expect(
+        yield* sql`SELECT sequence FROM orchestration_events WHERE command_id = ${commandId} ORDER BY sequence`,
+      ).toEqual(committedEvents);
+      expect(
+        yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox WHERE command_id = ${commandId} ORDER BY effect_id`,
+      ).toEqual(committedEffects);
       expect((yield* restarted.status).rows.every((r) => r.status === "delivered")).toBe(true);
     }).pipe(Effect.provide(serviceLayer())),
 );
@@ -459,4 +478,148 @@ it.effect(
       expect(yield* messages).toHaveLength(2);
       expect((yield* pulling.status).cursor).toBe("opaque:full-history");
     }).pipe(Effect.provide(serviceLayer())),
+);
+
+it.effect("quarantines malformed events and changed bodies without starving the next event", () =>
+  Effect.gen(function* () {
+    yield* createThread;
+    const inbox = yield* Inbox.BridgeInbox;
+    const sql = yield* SqlClient.SqlClient;
+    yield* inbox.ingestPage(null, {
+      events: [event("evt_original")],
+      cursor: "page:1",
+      has_more: true,
+    });
+    yield* inbox.ingestPage("page:1", {
+      events: [
+        event("evt_bad", { data: { text: "missing required fields" } }),
+        event("evt_original", { data: { ...event("x").data, text: "changed" } }),
+        null,
+        event("evt_Y"),
+      ],
+      cursor: "page:2",
+      has_more: false,
+    });
+    expect((yield* inbox.status).cursor).toBe("page:2");
+    yield* inbox.drain;
+    expect(yield* messages).toHaveLength(2);
+    expect((yield* messages).some((m) => m.text.includes("Event: evt_Y"))).toBe(true);
+    expect((yield* messages).some((m) => m.text.includes("changed"))).toBe(false);
+    const rejected = yield* sql<{
+      reason: string;
+    }>`SELECT reason FROM bridge_inbox_quarantine ORDER BY reason`;
+    expect(rejected.map((r) => r.reason)).toEqual([
+      "event_conflict",
+      "invalid_event",
+      "invalid_event",
+    ]);
+    // Replaying a poison page is idempotent and cannot rewind the cursor.
+    yield* inbox.ingestPage("page:1", {
+      events: [null, event("evt_bad", { data: { text: "missing required fields" } })],
+      cursor: "stale-cursor",
+      has_more: false,
+    });
+    expect((yield* inbox.status).cursor).toBe("page:2");
+    expect(yield* sql`SELECT reason FROM bridge_inbox_quarantine`).toHaveLength(3);
+    // Storage failure must still roll back the page, including its valid rows.
+    yield* sql`CREATE TRIGGER fixture_quarantine_disk BEFORE INSERT ON bridge_inbox_quarantine BEGIN SELECT RAISE(ABORT, 'disk failure'); END`;
+    const failed = yield* inbox
+      .ingestPage("page:2", {
+        events: [event("evt_not_committed"), { name: "message.created" }],
+        cursor: "page:3",
+        has_more: false,
+      })
+      .pipe(Effect.result);
+    expect(failed._tag).toBe("Failure");
+    expect((yield* inbox.status).cursor).toBe("page:2");
+    expect((yield* inbox.status).rows.some((r) => r.event_id === "evt_not_committed")).toBe(false);
+  }).pipe(Effect.provide(serviceLayer())),
+);
+
+it.effect("retains divergent pages from two concurrent pulls while fencing the cursor", () =>
+  Effect.gen(function* () {
+    yield* createThread;
+    const bothReading = yield* Deferred.make<void>();
+    let reads = 0;
+    const pulling = yield* Inbox.BridgeInbox.pipe(
+      Effect.provide(
+        Inbox.layerWithConfig(config).pipe(
+          Layer.provide(
+            Layer.succeed(Source.BridgeInboxSource, {
+              readPage: (previous) =>
+                Effect.gen(function* () {
+                  expect(previous).toBe(null);
+                  const index = ++reads;
+                  if (index === 2) yield* Deferred.succeed(bothReading, undefined);
+                  yield* Deferred.await(bothReading);
+                  return {
+                    events: [event(index === 1 ? "evt_X" : "evt_Y")],
+                    cursor: `divergent:${index}`,
+                    has_more: false,
+                  };
+                }),
+            }),
+          ),
+        ),
+      ),
+    );
+    yield* Effect.all([pulling.pull, pulling.pull], { concurrency: 2 });
+    expect(["divergent:1", "divergent:2"]).toContain((yield* pulling.status).cursor);
+    yield* pulling.drain;
+    expect(yield* messages).toHaveLength(2);
+    expect((yield* pulling.status).rows.map((r) => r.event_id).sort()).toEqual(["evt_X", "evt_Y"]);
+  }).pipe(Effect.provide(serviceLayer())),
+);
+
+it.effect(
+  "accepts the bridge sender's captured headers and rejects tampering, stale replay, ID and subscription mismatch",
+  () =>
+    Effect.gen(function* () {
+      const inbox = yield* Inbox.BridgeInbox;
+      yield* TestClock.setTime(Date.parse("2026-10-15T01:00:00.000Z"));
+      // HTTP header names are normalized by the server transport, including X-MCP-Subscription-Id.
+      const headers = Object.fromEntries(
+        Object.entries(senderFixture.headers).map(([key, value]) => [key.toLowerCase(), value]),
+      );
+      expect(yield* inbox.receiveCallback(senderFixture.body, headers)).toMatchObject({
+        status: 202,
+      });
+      expect(yield* callback(event("evt_mismatched_id"), "delivery-id-not-event-id")).toMatchObject(
+        { status: 400, body: { error: "event_id_mismatch" } },
+      );
+      expect(yield* inbox.receiveCallback(senderFixture.body + " ", headers)).toMatchObject({
+        status: 401,
+      });
+      expect(
+        yield* inbox.receiveCallback(senderFixture.body, {
+          ...headers,
+          "x-mcp-subscription-id": "other",
+        }),
+      ).toMatchObject({ status: 403 });
+      expect(
+        yield* inbox.receiveCallback(senderFixture.body, {
+          ...headers,
+          "x-mcp-subscription-id": undefined,
+        }),
+      ).toMatchObject({ status: 403 });
+      yield* TestClock.adjust(301_000);
+      expect(yield* inbox.receiveCallback(senderFixture.body, headers)).toMatchObject({
+        status: 401,
+      });
+      expect((yield* inbox.status).rows).toHaveLength(1);
+    }).pipe(Effect.provide(serviceLayer())),
+);
+
+it.effect("quarantines a changed eventId body and still commits Y in the same page", () =>
+  Effect.gen(function* () {
+    const inbox = yield* Inbox.BridgeInbox;
+    yield* inbox.ingestPage(null, { events: [event("evt_A")], cursor: "before", has_more: true });
+    yield* inbox.ingestPage("before", {
+      events: [event("evt_A", { data: { ...event("x").data, text: "changed" } }), event("evt_Y")],
+      cursor: "after",
+      has_more: false,
+    });
+    expect((yield* inbox.status).cursor).toBe("after");
+    expect((yield* inbox.status).rows.map((r) => r.event_id).sort()).toEqual(["evt_A", "evt_Y"]);
+  }).pipe(Effect.provide(serviceLayer())),
 );
