@@ -5631,6 +5631,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }
         });
 
+        const startGoalHoldGrace = (nativeThreadId: string, event: CodexRootTerminalEvent) =>
+          Effect.sleep(CODEX_GOAL_CONTINUATION_GRACE).pipe(
+            Effect.andThen(
+              turnTerminalizationPermit.withPermits(1)(releaseGoalHold(nativeThreadId, event)),
+            ),
+            Effect.forkIn(scope),
+          );
+
         const emitOrDeferRootTerminal = Effect.fn("CodexAdapterV2.emitOrDeferRootTerminal")(
           function* (input: {
             readonly context: ActiveCodexTurnContext;
@@ -5665,12 +5673,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 completedTurn: input.goalHoldTurn,
                 next: yield* Deferred.make<ActiveCodexTurnContext | undefined>(),
               });
-              yield* Effect.sleep(CODEX_GOAL_CONTINUATION_GRACE).pipe(
-                Effect.andThen(
-                  turnTerminalizationPermit.withPermits(1)(releaseGoalHold(nativeThreadId, event)),
-                ),
-                Effect.forkIn(scope),
-              );
+              // The grace is for Codex to start a turn once the goal is active,
+              // so an activation in flight starts it when it finishes.
+              if (!goalActivations.has(nativeThreadId)) {
+                yield* startGoalHoldGrace(nativeThreadId, event);
+              }
               return;
             }
             yield* emitRootTerminal(input.context, event);
@@ -6367,6 +6374,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }
                     if (goalsByNativeThread.get(threadId)?.status !== "active") {
                       yield* releaseGoalHold(threadId);
+                    } else if (!goalActivations.has(threadId)) {
+                      const hold = goalHolds.get(threadId);
+                      if (hold !== undefined) yield* startGoalHoldGrace(threadId, hold.event);
                     }
                   }),
                 ),
