@@ -621,6 +621,23 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("does not persist a temporary popover close as an inline choice", () => {
+    const store = useRightPanelStore.getState();
+
+    store.toggleThreadPanel(refA, "popover");
+    store.toggleThreadPanel(refA, "popover");
+
+    expect(useRightPanelStore.getState().threadPanelVisibilityByThreadKey).toEqual({});
+    expect(
+      selectThreadPanelOpen(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        refA,
+        "inline",
+        false,
+      ),
+    ).toBe(false);
+  });
+
   it("closes the popover atomically when the real right panel opens", () => {
     useRightPanelStore.getState().setThreadPanelOpen(refA, "popover", true);
     useRightPanelStore.getState().open(refA, "diff");

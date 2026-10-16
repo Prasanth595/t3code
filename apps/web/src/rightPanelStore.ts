@@ -1079,10 +1079,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const storedVisibility = state.threadPanelVisibilityByThreadKey[threadKey];
-          const visibility = selectThreadPanelVisibility(
-            state.threadPanelVisibilityByThreadKey,
-            ref,
-          );
+          const visibility =
+            presentation === "popover"
+              ? (storedVisibility ?? DEFAULT_THREAD_PANEL_VISIBILITY)
+              : selectThreadPanelVisibility(state.threadPanelVisibilityByThreadKey, ref);
           return {
             threadPanelVisibilityByThreadKey: updateThreadPanelVisibilityMap(
               state.threadPanelVisibilityByThreadKey,
@@ -1094,13 +1094,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                       inlineOpen: open,
                       ...(open ? { inlineOpenExplicit: true } : {}),
                     }
-                  : {
-                      ...visibility,
-                      popoverOpen: open,
-                      ...(storedVisibility?.inlineOpenExplicit === true
-                        ? { inlineOpenExplicit: true }
-                        : {}),
-                    },
+                  : { ...visibility, popoverOpen: open },
             ),
           };
         }),
@@ -1108,11 +1102,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const storedVisibility = state.threadPanelVisibilityByThreadKey[threadKey];
-          const visibility = selectThreadPanelVisibility(
-            state.threadPanelVisibilityByThreadKey,
-            ref,
-            inlineOpenByDefault,
-          );
+          const visibility =
+            presentation === "popover"
+              ? (storedVisibility ?? DEFAULT_THREAD_PANEL_VISIBILITY)
+              : selectThreadPanelVisibility(
+                  state.threadPanelVisibilityByThreadKey,
+                  ref,
+                  inlineOpenByDefault,
+                );
           return {
             threadPanelVisibilityByThreadKey: updateThreadPanelVisibilityMap(
               state.threadPanelVisibilityByThreadKey,
@@ -1124,13 +1121,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                       inlineOpen: !visibility.inlineOpen,
                       ...(!visibility.inlineOpen ? { inlineOpenExplicit: true } : {}),
                     }
-                  : {
-                      ...visibility,
-                      popoverOpen: !visibility.popoverOpen,
-                      ...(storedVisibility?.inlineOpenExplicit === true
-                        ? { inlineOpenExplicit: true }
-                        : {}),
-                    },
+                  : { ...visibility, popoverOpen: !visibility.popoverOpen },
             ),
           };
         }),
