@@ -8,6 +8,7 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
@@ -22,7 +23,7 @@ import {
   type WatchedRepo,
 } from "./config.ts";
 import { clearGateLocks, gateLockFile } from "./gate.ts";
-import { ledgerCall as ledger } from "./ledger/errors.ts";
+import { ledgerCall as ledger, type LedgerError } from "./ledger/errors.ts";
 import { makeCause, type MachineEvent } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { listUnfinishedRuns } from "./ledger/listRuns.ts";
@@ -233,39 +234,48 @@ const hostName = (): string => {
 };
 
 /**
- * Whether an unfinished run under `dataDir` names `threadId` as its session's thread. A run whose
- * file cannot be read is not counted, and a failed listing is logged and counts as not owned: the
- * next scheduled pass covers it.
+ * The threads the unfinished runs under `dataDir` name as their sessions'. A run whose file
+ * cannot be read names none.
  */
-export const ownsThread = (dataDir: string, threadId: string): Effect.Effect<boolean> =>
-  ledger(() =>
-    listUnfinishedRuns(dataDir).some((info) => {
-      if (info.unreadable) return false;
+export const ownedThreads = (dataDir: string): Effect.Effect<ReadonlySet<string>, LedgerError> =>
+  ledger(() => {
+    const ids = new Set<string>();
+    for (const info of listUnfinishedRuns(dataDir)) {
+      if (info.unreadable || !info.session) continue;
       try {
-        return readProgress(readRun(dataDir, info.id).entries).threadId === threadId;
+        const threadId = readProgress(readRun(dataDir, info.id).entries).threadId;
+        if (threadId !== null) ids.add(threadId);
       } catch {
-        return false;
+        // Unreadable since it was listed: the next refresh reads it again.
       }
-    }),
-  ).pipe(
+    }
+    return ids;
+  });
+
+/**
+ * Reads the owned threads again into `owned`. A listing that fails is logged and keeps the set
+ * it had: the next refresh, or the next scheduled pass, covers what it missed.
+ */
+const refreshOwned = (dataDir: string, owned: Ref.Ref<ReadonlySet<string>>) =>
+  ownedThreads(dataDir).pipe(
+    Effect.flatMap((ids) => Ref.set(owned, ids)),
     Effect.catch((error) =>
-      Effect.logWarning(
-        `factory cannot tell whether it owns thread ${threadId}: ${error.message}`,
-      ).pipe(Effect.as(false)),
+      Effect.logWarning(`factory cannot list the threads it owns: ${error.message}`),
     ),
   );
 
 /**
- * Runs one events stream to its end, waking for each thread the factory owns. The stream's own
- * failure is the caller's to handle.
+ * Runs one events stream to its end, waking for each thread in `owned`. A lookup is a set read,
+ * so the many events of threads the factory does not own cost nothing. The stream's own failure
+ * is the caller's to handle.
  */
 export const wakeOn = (
-  dataDir: string,
+  owned: Ref.Ref<ReadonlySet<string>>,
   events: Stream.Stream<string, Events.EventsError>,
   wake: Effect.Effect<void>,
 ): Effect.Effect<void, Events.EventsError> =>
   Stream.runForEach(events, (threadId) =>
-    Effect.flatMap(ownsThread(dataDir, threadId), (owned) => (owned ? wake : Effect.void)),
+    Effect.flatMap(Ref.get(owned), (ids) => (ids.has(threadId) ? wake : Effect.void)),
   );
 
 /**
@@ -273,10 +283,14 @@ export const wakeOn = (
  * stream that ends or fails is run again after `restartDelay`; the status changes in the gap are
  * not replayed, and the next pass reads them.
  */
-const wakeOnOwnedThreads = (dataDir: string, loop: Loop, restartDelay: Duration.Input) =>
+const wakeOnOwnedThreads = (
+  owned: Ref.Ref<ReadonlySet<string>>,
+  loop: Loop,
+  restartDelay: Duration.Input,
+) =>
   Effect.gen(function* () {
     const events = yield* Events.FactoryEvents;
-    return yield* wakeOn(dataDir, events.runStatusChanges, loop.wake).pipe(
+    return yield* wakeOn(owned, events.runStatusChanges, loop.wake).pipe(
       Effect.catch((error) => Effect.logWarning("factory events stream failed, restarting", error)),
       Effect.andThen(Effect.sleep(restartDelay)),
       Effect.forever,
@@ -311,16 +325,18 @@ const startFactory = (options: RuntimeOptions) =>
     const process = yield* FactoryProcess;
     const sessions = yield* T3Sessions.FactorySessions;
     const world = liveWorld(machine, factoryDir, process, sessions, () => Date.now(), hostName());
+    // The threads of the unfinished runs, read at start and after every pass: a pass is what
+    // launches and finishes sessions, so between passes the set does not change.
+    const owned = yield* Ref.make<ReadonlySet<string>>(new Set());
+    yield* refreshOwned(factoryDir, owned);
     const onePass = Effect.gen(function* () {
       // Each line is logged as it is decided, so a pass that hangs or dies has said what it did.
       const context = yield* Effect.context<never>();
       const log = Effect.runSyncWith(context);
       return yield* runPass(world, machine, (line) => log(Effect.logInfo(line)));
-    });
+    }).pipe(Effect.ensuring(refreshOwned(factoryDir, owned)));
     const loop = yield* runLoop(onePass, machine.pollSeconds);
-    yield* Effect.forkScoped(
-      wakeOnOwnedThreads(factoryDir, loop, options.restartDelay ?? "5 seconds"),
-    );
+    yield* Effect.forkScoped(wakeOnOwnedThreads(owned, loop, options.restartDelay ?? "5 seconds"));
     return loop;
   });
 

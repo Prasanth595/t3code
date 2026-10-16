@@ -43,6 +43,21 @@ describe("readProgress: the pull request", () => {
     const seen = readProgress([]);
     assert.deepStrictEqual(seen.opened, []);
     assert.strictEqual(seen.lastPr, null);
+    assert.strictEqual(seen.prReported, false);
+  });
+
+  it("is reported from pr_opened until the run is building again", () => {
+    const opened = line(1, "pr_opened", {
+      pr: 12,
+      url: "https://github.com/rawphp/softfac/pull/12",
+    });
+    assert.strictEqual(readProgress([opened]).prReported, true);
+    assert.strictEqual(readProgress([opened, moved(2, "building", "pr-open")]).prReported, true);
+    assert.strictEqual(
+      readProgress([opened, moved(2, "building", "pr-open"), moved(3, "pr-open", "building")])
+        .prReported,
+      false,
+    );
   });
 });
 

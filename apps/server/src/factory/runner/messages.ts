@@ -67,16 +67,16 @@ export interface WorkLeft {
   readonly base: string;
 }
 
-/** Says where the work is, and that the next attempt continues from there. */
-export const workLeftSentence = ({ branch, commitsAhead, base }: WorkLeft): string => {
-  const where =
-    commitsAhead === null
-      ? `The work so far is on branch ${branch}.`
-      : commitsAhead === 1
-        ? `The work so far is on branch ${branch} (1 commit ahead of ${base}).`
-        : `The work so far is on branch ${branch} (${commitsAhead} commits ahead of ${base}).`;
-  return `${where} Set \`factory:ready\` again and the next attempt continues from the previous session's commits.`;
-};
+/**
+ * Says where the work is. A new attempt starts from the base branch, so this does not promise
+ * that it continues from there.
+ */
+export const workLeftSentence = ({ branch, commitsAhead, base }: WorkLeft): string =>
+  commitsAhead === null
+    ? `The work so far is on branch ${branch}.`
+    : commitsAhead === 1
+      ? `The work so far is on branch ${branch} (1 commit ahead of ${base}).`
+      : `The work so far is on branch ${branch} (${commitsAhead} commits ahead of ${base}).`;
 
 /**
  * The comment that says why the factory gave up on an issue. `reason` is one of the factory's

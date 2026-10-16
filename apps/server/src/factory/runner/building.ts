@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type { ProjectConfig } from "../config.ts";
-import { transition, type State } from "../domain/lifecycle.ts";
+import { transition } from "../domain/lifecycle.ts";
 import {
   NO_MESSAGE,
   NO_RESULT_LINE,
@@ -44,9 +44,6 @@ import {
   WRONG_ACCOUNT,
   WRONG_ACCOUNT_PREFIX,
   prepareSessionText,
-  questionsComment,
-  sessionMayExistNote,
-  statusBody,
 } from "./messages.ts";
 import {
   RESULT_LINE_REMINDED,
@@ -159,7 +156,10 @@ export type LimitOutcome =
   | { readonly kind: "within" }
   /** The run went to `stuck`. `reason` is the one the ledger records. */
   | { readonly kind: "stopped"; readonly reason: string }
-  | { readonly kind: "skipped"; readonly why: "finished" | "not-running" };
+  | {
+      readonly kind: "skipped";
+      readonly why: "finished" | "not-running" | "launch-unrecorded" | "pr-reported";
+    };
 
 const MINUTE_MS = 60_000;
 
@@ -217,13 +217,13 @@ const stopOf = (
   };
 };
 
+/** Whether a run status is one the run ended badly with: not completed, and not stopped by a person. */
+const isEndedBadly = (status: RunStatus): boolean =>
+  status === "failed" || status === "cancelled" || status === "rolled_back";
+
 /** Whether a run status is one the run has finished with. An active status is not. */
 const isTerminal = (status: RunStatus): boolean =>
-  status === "completed" ||
-  status === "interrupted" ||
-  status === "failed" ||
-  status === "cancelled" ||
-  status === "rolled_back";
+  status === "completed" || status === "interrupted" || isEndedBadly(status);
 
 /**
  * Whether the session ended without any result line: no message, or a last line that is none of
@@ -381,6 +381,16 @@ export const advance = (
       if (status === null) return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
       const message = status.lastAssistantMessage;
       const result = parseSessionResult(ctx.repo, message ?? undefined);
+      // Sends the reminder for run `k`; a thread T3 no longer has, or a refusal, ends the run.
+      const remind = (k: number) =>
+        Effect.gen(function* () {
+          const sent = yield* sendReminder(ctx, out, run, threadId, k);
+          if (sent === "gone") return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
+          if (sent !== "sent") {
+            return yield* stuck("session-stuck", refusedStop(result, message, sent));
+          }
+          return { kind: "reminded" } as const;
+        });
 
       // A `result-line-reminding <k>` step with no `result-line-reminded` is a reminder cut short
       // before its send or its step. If a run newer than `k` exists the send reached the session
@@ -391,11 +401,7 @@ export const advance = (
           yield* append(out, remindedStep, "advance", "result-line-reminded");
           alreadyReminded = true;
         } else {
-          const sent = yield* sendReminder(ctx, out, run, threadId, seen.reminding);
-          if (sent === "gone") return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
-          if (sent !== "sent")
-            return yield* stuck("session-stuck", refusedStop(result, message, sent));
-          return { kind: "reminded" } as const;
+          return yield* remind(seen.reminding);
         }
       }
       // The reminder is owed once per run: the latest run, which has an ordinal, ended with
@@ -421,11 +427,7 @@ export const advance = (
         }
         return { kind: "paused" } as const;
       }
-      if (
-        status.run !== null &&
-        result.kind !== "done" &&
-        (status.run === "failed" || status.run === "cancelled" || status.run === "rolled_back")
-      ) {
+      if (status.run !== null && result.kind !== "done" && isEndedBadly(status.run)) {
         return yield* stuck(
           "session-ended-badly",
           stopOf(`the session run ended as ${status.run}`, message),
@@ -441,11 +443,7 @@ export const advance = (
           "advance",
           "result-line-reminding",
         );
-        const sent = yield* sendReminder(ctx, out, run, threadId, status.runOrdinal);
-        if (sent === "gone") return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
-        if (sent !== "sent")
-          return yield* stuck("session-stuck", refusedStop(result, message, sent));
-        return { kind: "reminded" } as const;
+        return yield* remind(status.runOrdinal);
       }
 
       switch (result.kind) {
@@ -678,16 +676,17 @@ const branchOf = (ctx: BuildingContext, threadId: string): Effect.Effect<string 
  * past the limit has its session's thread read for its branch and then archived (archiving a
  * thread whose run is active stops that run), then goes `stuck` through the stuck path with the
  * fixed reason `the run passed its time limit`, released and finished. When the thread has a
- * branch, the stuck line and the comment name it, so the next attempt can continue from there; a
- * thread that cannot be read, or has no branch, changes nothing. A run still in `triage` with no
- * thread has nothing to archive; when its ledger shows a launch call was sent the recorded
- * reason says a session may exist, as for any other stop from there. An archive that fails is an
- * error before anything is written, so the next call decides and archives again.
+ * branch, the stuck line and the comment name it; a thread that cannot be read, or has no branch,
+ * changes nothing. A run still in `triage` that never sent a launch has nothing to archive.
  *
  * A run that is finished, past `building`, in `needs-info`, or has a stuck or questions decision
- * not yet committed is skipped. A run of another repo is an error. There is no loop or timer: the
- * caller decides how often to call it, and it should call it first for a run in `triage` or
- * `building`, and skip the run's other steps when it stops.
+ * not yet committed is skipped. So is a run whose session reported its pull request since it
+ * last entered `building` (`pr-reported`): the session's work is done and waits for the gate, and
+ * that wait is not the build's time. So is a run whose launch was sent with no session recorded
+ * (`launch-unrecorded`): the session may be running, and only `resume` can name it, so the call
+ * after `resume` stops it with its thread. A run of another repo is an error. There is no loop or
+ * timer: the caller decides how often to call it, and it should call it first for a run in
+ * `triage` or `building`, and skip the run's other steps when it stops.
  */
 export const timeLimit = (
   ctx: BuildingContext,
@@ -705,6 +704,10 @@ export const timeLimit = (
     if (!working || seen.stuck !== null || seen.questionsPosted) {
       return { kind: "skipped", why: "not-running" } as const;
     }
+    if (seen.prReported) return { kind: "skipped", why: "pr-reported" } as const;
+    if (seen.threadId === null && seen.launchSent) {
+      return { kind: "skipped", why: "launch-unrecorded" } as const;
+    }
     const worked =
       seen.workedMs +
       (seen.workingSince === null ? 0 : Math.max(0, ctx.clock() - seen.workingSince));
@@ -714,10 +717,6 @@ export const timeLimit = (
     const prepared = branch === undefined ? "" : prepareSessionText(branch);
     const stop: Stop = {
       reason: TIME_LIMIT,
-      ...(seen.threadId === null &&
-        seen.launchSent && {
-          detail: sessionMayExistNote(TIME_LIMIT, `softfac:${runIdToString(run)}:launch`),
-        }),
       ...(prepared !== "" && { branch: prepared, commitsAhead: null }),
     };
     // Called by the pass before any step, so the pass is what decided.

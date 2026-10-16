@@ -948,6 +948,31 @@ describe("runs that are confirmed and still in triage", () => {
     }),
   );
 
+  it.effect("a run that is not confirmed is never time-limited, watched or advanced", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      for (const [issue, state] of [
+        [12, "triage"],
+        [40, BUILDING],
+        [41, "stuck"],
+      ] as const) {
+        fake.runs.push({
+          id: rid(issue),
+          state,
+          unreadable: false,
+          confirmed: false,
+          session: true,
+        });
+      }
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const calls = fake.calls.filter((c) => /^(time_limit|watch|advance|start|resume) /.test(c));
+      assert.deepEqual(calls, []);
+      for (const issue of [12, 40, 41]) {
+        assert.ok(!lines.some((l) => l.startsWith(`${REPO}#${issue} `)), lines.join("\n"));
+      }
+    }),
+  );
+
   it.effect("a run of a repo that is not loaded is left alone", () =>
     Effect.gen(function* () {
       const fake = new Fake();

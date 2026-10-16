@@ -24,12 +24,12 @@ import {
   gateRoot,
   layer as gateLayer,
   makeWorkspace,
-  sanitize,
   type CommandResult,
   type GateError,
   type GateInput,
   type GateOptions,
 } from "./gate.ts";
+import { sanitize } from "./text.ts";
 import type { AppendIo } from "./ledger/appendFile.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
 import { Ledger } from "./ledger/ledger.ts";

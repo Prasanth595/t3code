@@ -20,7 +20,7 @@ import {
   FactoryLoop,
   FactoryRuntime,
   liveWorld,
-  ownsThread,
+  ownedThreads,
   wakeOn,
 } from "./index.ts";
 import { makeCause } from "./ledger/events.ts";
@@ -207,16 +207,9 @@ it.effect("logs each pass line as it is decided, so a pass that dies has said wh
 // ---- the wake ----
 
 describe("waking the pass when a factory thread's run changes status", () => {
-  /** A factory dir with a valid config and one unfinished run whose session is `thread-1`. */
-  const seeded = Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const { join } = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-wake-" });
-    const factoryDir = join(baseDir, "factory");
-    yield* fs.makeDirectory(factoryDir);
-    const machineConfigPath = join(factoryDir, "config.yml");
-    yield* fs.writeFileString(machineConfigPath, VALID);
-    const out = Ledger.create(factoryDir, newRunId("a/b", "1", 1));
+  /** Writes an unfinished run of issue `issue` whose session is `threadId`. */
+  const seedRun = (factoryDir: string, issue: number, threadId: string, finished = false) => {
+    const out = Ledger.create(factoryDir, newRunId("a/b", String(issue), 1));
     try {
       out.append(
         { event: "claimed", data: { machine: "m", github_user: "u" } },
@@ -226,7 +219,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
         {
           event: "session_launched",
           data: {
-            thread_id: "thread-1",
+            thread_id: threadId,
             worktree: "/t3/wt",
             branch: "t3code/abc",
             model_instance: "claudeAgent",
@@ -236,33 +229,92 @@ describe("waking the pass when a factory thread's run changes status", () => {
         },
         makeCause("start", "seed"),
       );
+      if (finished) out.finish("stuck", null, null, makeCause("start", "seed"));
     } finally {
       out.close();
     }
+  };
+
+  /** A factory dir with a valid config and one unfinished run whose session is `thread-1`. */
+  const seeded = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const { join } = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-wake-" });
+    const factoryDir = join(baseDir, "factory");
+    yield* fs.makeDirectory(factoryDir);
+    const machineConfigPath = join(factoryDir, "config.yml");
+    yield* fs.writeFileString(machineConfigPath, VALID);
+    seedRun(factoryDir, 1, "thread-1");
     return { baseDir, factoryDir, machineConfigPath, worktreesDir: join(baseDir, "worktrees") };
   });
 
-  it.effect("a thread named by an unfinished run's session is owned; any other is not", () =>
+  it.effect("owns the threads of unfinished runs' sessions, and no finished run's", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { factoryDir } = yield* seeded;
-        assert.isTrue(yield* ownsThread(factoryDir, "thread-1"));
-        assert.isFalse(yield* ownsThread(factoryDir, "thread-other"));
+        seedRun(factoryDir, 2, "thread-done", true);
+        assert.deepStrictEqual([...(yield* ownedThreads(factoryDir))], ["thread-1"]);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("a thread the factory does not own never wakes the pass", () =>
+    Effect.gen(function* () {
+      const owned = yield* Ref.make<ReadonlySet<string>>(new Set(["thread-1"]));
+      const wakes = yield* Ref.make(0);
+      yield* wakeOn(
+        owned,
+        Stream.fromIterable(["thread-other", "thread-1", "thread-other"]),
+        Ref.update(wakes, (n) => n + 1),
+      );
+      assert.strictEqual(yield* Ref.get(wakes), 1);
+    }),
+  );
+
+  /** The factory's loop over the seeded dir, with `events` as T3's run status changes. */
+  const loopOver = (
+    dirs: Effect.Success<typeof seeded>,
+    events: Stream.Stream<string, EventsError>,
+  ) =>
+    Layer.build(
+      factoryRuntime({ restartDelay: 0 }).pipe(
+        Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
+        Layer.provide(noGh),
+        Layer.provide(noSessions),
+        Layer.provide(Layer.succeed(FactoryEvents, FactoryEvents.of({ runStatusChanges: events }))),
+      ),
+    ).pipe(Effect.map((context) => Context.get(context, FactoryLoop)));
+
+  const countOf = (factoryDir: string, event: string) => () =>
+    scanMachineLog(factoryDir).filter((entry) => entry.event === event).length;
+
+  it.effect("a thread launched after the start is owned once a pass has ended", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { factoryDir } = yield* seeded;
-        const wakes = yield* Ref.make(0);
-        yield* wakeOn(
-          factoryDir,
-          Stream.fromIterable(["thread-other", "thread-1", "thread-other"]),
-          Ref.update(wakes, (n) => n + 1),
-        );
-        assert.strictEqual(yield* Ref.get(wakes), 1);
+        const dirs = yield* seeded;
+        const queue = yield* Queue.unbounded<string>();
+        const loop = yield* loopOver(dirs, Stream.fromQueue(queue));
+        const started = countOf(dirs.factoryDir, "pass_started");
+        const finished = countOf(dirs.factoryDir, "pass_finished");
+        // The poll is a minute away, so every pass here is the first or one a wake started. Each
+        // wait is bounded so a wake that never comes fails the test instead of hanging it.
+        const until = (done: () => boolean, each: Effect.Effect<unknown> = Effect.void) =>
+          Effect.gen(function* () {
+            while (!done()) {
+              yield* each;
+              yield* Effect.timeoutOption(loop.awaitPass, "1 second");
+            }
+          }).pipe(Effect.timeoutOption("30 seconds"), Effect.map(Option.isSome));
+        assert.isTrue(yield* until(() => finished() >= 1), "the first pass never ended");
+        seedRun(dirs.factoryDir, 2, "thread-2");
+        const before = finished();
+        yield* loop.wake;
+        assert.isTrue(yield* until(() => finished() > before), "the woken pass never ended");
+        // That pass read the new run's thread when it ended, so an event for the thread wakes the
+        // next one. It is offered until it does: one offered before the read is not a wake.
+        const after = started();
+        const woke = yield* until(() => started() > after, Queue.offer(queue, "thread-2"));
+        assert.isTrue(woke, "the new run's thread never woke the pass");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

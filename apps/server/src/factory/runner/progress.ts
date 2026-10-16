@@ -31,6 +31,8 @@ export interface Seen {
   readonly lastPr: { readonly pr: number; readonly url: string } | null;
   /** A `questions_posted` since the run last entered `building`: this stop's questions are on the issue. */
   readonly questionsPosted: boolean;
+  /** A `pr_opened` since the run last entered `building`: the session's pull request waits for the gate. */
+  readonly prReported: boolean;
   /** The ordinal in the newest `result-line-reminding` step: a reminder send was started. */
   readonly reminding: number | null;
   /** A `result-line-reminded` step: the session has had its one reminder. */
@@ -85,6 +87,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   const opened: Array<number> = [];
   let lastPr: Seen["lastPr"] = null;
   let questionsPosted = false;
+  let prReported = false;
   let reminding: number | null = null;
   let reminded = false;
   let waitingAfter: number | null = null;
@@ -133,7 +136,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (state === "pr-open" && to === "building") workedMs = 0;
         if (to === "triage" || to === "building") workingSince = entry.ms;
         state = isState(to) ? to : null;
-        if (to === "building") questionsPosted = false;
+        if (to === "building") {
+          questionsPosted = false;
+          prReported = false;
+        }
         break;
       }
       case "session_launched": {
@@ -167,6 +173,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (typeof pr === "number" && typeof url === "string") {
           opened.push(pr);
           lastPr = { pr, url };
+          prReported = true;
         }
         break;
       }
@@ -195,6 +202,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     opened,
     lastPr,
     questionsPosted,
+    prReported,
     reminding,
     reminded,
     waitingAfter,

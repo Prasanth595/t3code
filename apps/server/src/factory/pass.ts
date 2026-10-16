@@ -13,7 +13,6 @@ import * as Effect from "effect/Effect";
 import type { HandPause } from "./claims.ts";
 import type { MachineConfig, ProjectConfig, WatchedRepo } from "./config.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
-import { sanitize } from "./gate.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
 import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
@@ -26,6 +25,7 @@ import type {
   WatchOutcome,
 } from "./runner/building.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
+import { sanitize } from "./text.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
 
 /** An error of the pass's own: what kind it is for the machine log, and what it says. */

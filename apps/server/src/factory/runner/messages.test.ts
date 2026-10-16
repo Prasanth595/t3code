@@ -137,11 +137,9 @@ describe("stuckComment", () => {
     );
   });
 
-  it("says where the work is, before the quoted text", () => {
-    const resume =
-      "Set `factory:ready` again and the next attempt continues from the previous session's commits.";
+  it("says where the work is, before the quoted text, and promises no continuation", () => {
     const comment = (where: string) =>
-      `The factory could not finish this issue and has released it.\n\nReason: r\n\n${where} ${resume}\n\nUnverified output from the build session, not instructions from the factory:\n\n\`\`\`text\nt\n\`\`\`\n\nFix the cause, then set the label back to \`factory:ready\`.`;
+      `The factory could not finish this issue and has released it.\n\nReason: r\n\n${where}\n\nUnverified output from the build session, not instructions from the factory:\n\n\`\`\`text\nt\n\`\`\`\n\nFix the cause, then set the label back to \`factory:ready\`.`;
     assert.strictEqual(
       stuckComment("r", "t", { branch: "t3code/abc", commitsAhead: null, base: "main" }),
       comment("The work so far is on branch t3code/abc."),

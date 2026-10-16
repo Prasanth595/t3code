@@ -47,7 +47,6 @@ import {
   type AdvanceOutcome,
   type BuildingContext,
 } from "./building.ts";
-import { sessionMayExistNote } from "./messages.ts";
 
 const tempDir = useTempDirs();
 
@@ -1896,8 +1895,6 @@ describe("watch", () => {
 // ---- the time limit -----------------------------------------------------------------------------------
 
 const TIME_LIMIT = "the run passed its time limit";
-const RESUME_SENTENCE =
-  "Set `factory:ready` again and the next attempt continues from the previous session's commits.";
 const LIMIT_MS = 90 * MINUTE;
 
 /** The started run, claimed at `T0` and building one minute later. */
@@ -1905,7 +1902,7 @@ const startedAtT0 = (index: number) => (index === STARTED.length - 1 ? T0 + MINU
 
 /** The comment a time-limit stop posts, with the line that says where the work is. */
 const limitComment = (workLine?: string) => {
-  const work = workLine === undefined ? "" : `${workLine} ${RESUME_SENTENCE}\n\n`;
+  const work = workLine === undefined ? "" : `${workLine}\n\n`;
   return `The factory could not finish this issue and has released it.\n\nReason: ${TIME_LIMIT}\n\n${work}Fix the cause, then set the label back to \`factory:ready\`.`;
 };
 
@@ -2051,36 +2048,74 @@ describe("timeLimit", () => {
   );
 
   it.effect(
-    "stops a run that never left triage, whose launch was sent, saying a session may exist",
+    "leaves a triage run whose launch was sent and not recorded to resume, which names its session",
     () =>
       Effect.gen(function* () {
         const sent = [STARTED[0]!, STARTED[1]!, moved("ready", "triage"), step("launch-sending")];
         const rig = rigFor(sent);
-        rig.clock.now = T0 + LIMIT_MS + 1;
-        const recorded = sessionMayExistNote(TIME_LIMIT, "softfac:rawphp__softfac__10__1:launch");
+        rig.clock.now = T0 + 10 * LIMIT_MS;
+        const bytes = bytesOf(rig);
         assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
-          kind: "stopped",
-          reason: recorded,
+          kind: "skipped",
+          why: "launch-unrecorded",
         });
-        // The ledger says a session may exist; the comment says only the plain reason.
-        assert.deepStrictEqual(linesOf(rig), [
-          ...sent,
-          { event: "stuck", data: { reason: recorded } },
-          moved("triage", "stuck"),
-          {
-            event: "finished",
-            data: { ...(FINISHED("stuck").data as object), total_ms: LIMIT_MS + 1 },
-          },
-        ]);
-        assert.deepStrictEqual(rig.gh, [
-          `comment 10 ${limitComment()}`,
-          "setState 10 stuck",
-          "unassign 10 rawphp",
-          "status 10 rawphp **Factory status:** stuck\n- Machine: mac-mini\n- Session: none\n- PR: none",
-        ]);
-        // There is no thread: nothing to read or archive.
+        assert.deepStrictEqual(rig.gh, []);
         assert.deepStrictEqual(rig.t3, []);
+        assert.strictEqual(bytesOf(rig), bytes);
       }),
+  );
+
+  it.effect(
+    "does not charge the wait for the gate once the session reported its pull request",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor([...STARTED, PR_OPENED], { ms: startedAtT0 });
+        rig.clock.now = T0 + 10 * LIMIT_MS;
+        const bytes = bytesOf(rig);
+        assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+          kind: "skipped",
+          why: "pr-reported",
+        });
+        assert.deepStrictEqual(rig.gh, []);
+        assert.deepStrictEqual(rig.t3, []);
+        assert.strictEqual(bytesOf(rig), bytes);
+      }),
+  );
+
+  it.effect("limits a run again once it comes back to building from pr-open", () =>
+    Effect.gen(function* () {
+      const back = [
+        ...STARTED,
+        PR_OPENED,
+        moved("building", "pr-open"),
+        moved("pr-open", "building"),
+      ];
+      const rig = rigFor(back, {
+        ms: (index) => (index === back.length - 1 ? T0 + 2 * MINUTE : T0),
+      });
+      rig.clock.now = T0 + 2 * MINUTE + LIMIT_MS + 1;
+      assert.strictEqual((yield* timeLimit(rig.ctx, rig.run)).kind, "stopped");
+    }),
+  );
+
+  it.effect("names a hostile branch in the comment and the ledger only as prepared text", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      rig.world.thread = {
+        worktreePath: "/t3/wt",
+        branch: "x@octocat<!-- softfac -->",
+        archived: false,
+      };
+      const elapsed = yield* stopAtTheLimit(rig);
+      const prepared = "x@\u200Boctocat<\u200B!-- softfac -->";
+      assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed, prepared));
+      assert.deepStrictEqual(
+        rig.gh[0],
+        `comment 10 ${limitComment(`The work so far is on branch ${prepared}.`)}`,
+      );
+      assert.ok(!rig.gh[0]!.includes("@octocat"), rig.gh[0]);
+      assert.ok(!rig.gh[0]!.includes("<!--"), rig.gh[0]);
+    }),
   );
 
   it.effect("stops a run that never launched anything with the plain reason", () =>

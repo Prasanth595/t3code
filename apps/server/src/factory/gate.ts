@@ -136,8 +136,6 @@ export type GateError = WorkspaceError | GateCommandSpawnError | GateRecordError
 
 // ---- text -----------------------------------------------------------------------------------
 
-export { sanitize } from "./text.ts";
-
 /** The command as one short line: sanitised, newlines and tabs turned into spaces, cut at 300 characters. */
 const commandLine = (command: string): string => {
   const chars = Array.from(sanitize(command, false));
