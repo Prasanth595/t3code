@@ -21,6 +21,7 @@ import * as MissionMcpAuthority from "./MissionMcpAuthority.ts";
 import * as MissionMcpPolicy from "./MissionMcpPolicy.ts";
 import * as MissionMcpService from "./MissionMcpService.ts";
 import * as MissionMcpToolkit from "./MissionMcpToolkit.ts";
+import * as MissionPlanningToolkit from "./MissionPlanningToolkit.ts";
 import * as MissionHandlers from "./toolkits/mission/handlers.ts";
 import { MissionToolkit } from "./toolkits/mission/tools.ts";
 
@@ -290,4 +291,5 @@ export const layerOptionalToolkits = isCatchesPersona()
   : Layer.mergeAll(
       layerMissionToolkitOptional,
       MissionCompletionToolkit.layerOptionalMissionCompletionToolkit,
+      MissionPlanningToolkit.layerOptional,
     );

@@ -34,6 +34,8 @@ import * as ReplayArtifacts from "./MissionRetroReplayArtifacts.ts";
 import * as Runner from "./MissionRetroReplayRunner.ts";
 import * as SkillStore from "./MissionRetroSkillEvaluationStore.ts";
 import * as Missions from "./MissionService.ts";
+import * as Planning from "./MissionPlanningStore.ts";
+import type { ProPlanningEvent } from "../../../../packages/contracts/src/missionProPlanning.ts";
 import * as Projections from "./ProjectionStore.ts";
 import * as Sessions from "./ProviderSessionManager.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
@@ -50,6 +52,7 @@ export class CombinedMissionRuntimeError extends Schema.TaggedError<CombinedMiss
       "replay_unavailable",
       "mission_inactive",
       "request_conflict",
+      "planning_unavailable",
     ]),
   },
 ) {}
@@ -61,6 +64,7 @@ type RuntimeError =
   | SkillStore.MissionRetroSkillEvaluationStoreError
   | Lifecycle.MissionManagerLifecycleStoreError
   | Manager.MissionManagerRuntimeError
+  | Planning.MissionPlanningStoreError
   | Missions.MissionServiceError;
 type Role = "delivery" | "retro";
 type ReplayCommand = {
@@ -72,6 +76,14 @@ type ReplayCommand = {
 
 /** Capabilities expire with this request; no authority or currency callback is caller supplied. */
 export interface CombinedMissionRequest {
+  readonly commitPlanning: (command: {
+    readonly commandId: CommandId;
+    readonly event: ProPlanningEvent;
+  }) => Effect.Effect<Planning.MissionPlanningResult, RuntimeError>;
+  readonly restartPlanning: (command: {
+    readonly commandId: CommandId;
+    readonly planningId: string;
+  }) => Effect.Effect<Planning.MissionPlanningResult, RuntimeError>;
   readonly replayAndRecord: (
     command: ReplayCommand,
   ) => Effect.Effect<SkillStore.MissionRetroSkillEvaluationResult, RuntimeError>;
@@ -108,6 +120,7 @@ export class CombinedMissionRuntime extends Context.Service<
     readonly status: Effect.Effect<{
       readonly authority: "available" | "authority_unavailable";
       readonly replay: "configured" | "unconfigured" | "unavailable";
+      readonly planning: "configured" | "unavailable";
     }>;
     readonly withRequest: <A, E, R>(
       scope: McpInvocationScope,
@@ -234,6 +247,9 @@ const make = Effect.gen(function* () {
     >();
   const events = yield* Events.OrchestrationEventStore;
   const receipts = yield* Receipts.OrchestrationCommandReceiptRepository;
+  // Observations must come from an independently configured trusted producer.
+  // Tool parameters and an available operator quota never stand in for it.
+  const planningFacts = yield* Effect.serviceOption(Planning.MissionPlanningFactsPort);
   const configured = yield* (
     currentPolicy()?.environmentId === environmentId
       ? readStartupConfig
@@ -420,7 +436,42 @@ const make = Effect.gen(function* () {
           sql
             .withTransaction(checked(effect))
             .pipe(Effect.mapError((e) => (e._tag === "SqlError" ? fail("scope_denied") : e)));
+        const planningStore = Effect.gen(function* () {
+          if (request.role !== "delivery") return yield* fail("scope_denied");
+          if (Option.isNone(planningFacts)) return yield* fail("planning_unavailable");
+          const context = yield* Layer.buildWithMemoMap(
+            Planning.layer.pipe(
+              Layer.provide(authority),
+              Layer.provide(Layer.succeed(SqlClient.SqlClient, requestSql)),
+              Layer.provide(
+                Layer.succeed(Receipts.OrchestrationCommandReceiptRepository, receipts),
+              ),
+              Layer.provide(Layer.succeed(Planning.MissionPlanningFactsPort, planningFacts.value)),
+            ),
+            memo,
+            requestScope,
+          );
+          return Context.get(context, Planning.MissionPlanningStore);
+        });
         const runtime: CombinedMissionRequest = {
+          commitPlanning: (command) =>
+            managerActions.withPermits(1)(
+              checked(
+                Effect.gen(function* () {
+                  const store = yield* planningStore;
+                  return yield* store.commit({ ...command, missionId: request.missionId });
+                }),
+              ),
+            ),
+          restartPlanning: (command) =>
+            managerActions.withPermits(1)(
+              checked(
+                Effect.gen(function* () {
+                  const store = yield* planningStore;
+                  return yield* store.restart({ ...command, missionId: request.missionId });
+                }),
+              ),
+            ),
           launchStandby: (reservationId) =>
             managerActions.withPermits(1)(
               transactional(adapter.launchStandby({ ...request, reservationId })),
@@ -592,6 +643,7 @@ const make = Effect.gen(function* () {
       authority:
         currentPolicy()?.environmentId !== environmentId ? "authority_unavailable" : "available",
       replay: replayStatus,
+      planning: Option.isSome(planningFacts) ? "configured" : "unavailable",
     })),
     withRequest,
   });

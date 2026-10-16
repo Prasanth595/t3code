@@ -76,6 +76,7 @@ import Migration0059 from "./Migrations/059_Missions.ts";
 import Migration0060 from "./Migrations/060_BridgeInbox.ts";
 import Migration0061 from "./Migrations/061_BridgeInboxQuarantine.ts";
 import Migration0062 from "./Migrations/062_BridgeInboxQuarantineEventId.ts";
+import Migration0063 from "./Migrations/063_MissionPlanning.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -152,6 +153,7 @@ export const migrationEntries = [
   [60, "BridgeInbox", Migration0060],
   [61, "BridgeInboxQuarantine", Migration0061],
   [62, "BridgeInboxQuarantineEventId", Migration0062],
+  [63, "MissionPlanning", Migration0063],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

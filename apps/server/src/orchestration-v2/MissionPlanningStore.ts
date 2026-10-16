@@ -153,8 +153,12 @@ export type MissionPlanningResult = Result.Result<
 export class MissionPlanningStore extends Context.Service<
   MissionPlanningStore,
   {
-    readonly commit: (command: unknown) => Effect.Effect<MissionPlanningResult, MissionPlanningStoreError>;
-    readonly restart: (command: unknown) => Effect.Effect<MissionPlanningResult, MissionPlanningStoreError>;
+    readonly commit: (
+      command: unknown,
+    ) => Effect.Effect<MissionPlanningResult, MissionPlanningStoreError>;
+    readonly restart: (
+      command: unknown,
+    ) => Effect.Effect<MissionPlanningResult, MissionPlanningStoreError>;
   }
 >()("t3/orchestration-v2/MissionPlanningStore") {}
 
@@ -255,7 +259,11 @@ const leaseFor = (
   decision: ProPlanningDecision,
   threadId: string,
   epoch: number,
-): { readonly guiLease: "held" | "released"; readonly threadId: string | null; readonly epoch: number | null } =>
+): {
+  readonly guiLease: "held" | "released";
+  readonly threadId: string | null;
+  readonly epoch: number | null;
+} =>
   decision.guiLease === "required" && PRO_PLANNING_GUI_ACTIONS.has(decision.action)
     ? { guiLease: "held", threadId, epoch }
     : { guiLease: "released", threadId: null, epoch: null };
@@ -327,10 +335,7 @@ const make = Effect.gen(function* () {
         return yield* persistenceFailed(operation);
       }
       const delivery = mission.managers.delivery;
-      if (
-        delivery?.threadId !== authority.controllerThreadId ||
-        delivery.epoch === undefined
-      ) {
+      if (delivery?.threadId !== authority.controllerThreadId || delivery.epoch === undefined) {
         return yield* scopeDenied(operation);
       }
       return { mission, deliveryThreadId: delivery.threadId, deliveryEpoch: delivery.epoch };
@@ -405,7 +410,8 @@ const make = Effect.gen(function* () {
       const stored = (yield* loadReceipt(commandId))[0];
       const canonical = yield* receipts.getByCommandId({ commandId });
       if (stored === undefined && Option.isNone(canonical)) return undefined;
-      if (stored === undefined || Option.isNone(canonical)) return yield* persistenceFailed(operation);
+      if (stored === undefined || Option.isNone(canonical))
+        return yield* persistenceFailed(operation);
       if (
         stored.team_id !== authority.teamId ||
         stored.authority_environment_id !== authority.environmentId ||
@@ -416,7 +422,7 @@ const make = Effect.gen(function* () {
         stored.request_hash !== requestHash
       ) {
         return yield* stored.team_id !== authority.teamId ||
-          stored.authority_environment_id !== authority.environmentId
+        stored.authority_environment_id !== authority.environmentId
           ? scopeDenied(operation)
           : conflict(operation);
       }
@@ -466,7 +472,8 @@ const make = Effect.gen(function* () {
         commandId,
         aggregateKind: "mission",
         aggregateId: missionId,
-        commandType: operation === "commit" ? "mission.planning.commit" : "mission.planning.restart",
+        commandType:
+          operation === "commit" ? "mission.planning.commit" : "mission.planning.restart",
         acceptedAt: nowIso,
         resultSequence: revision,
         status: "accepted",
@@ -476,25 +483,31 @@ const make = Effect.gen(function* () {
       if (!reserved) return yield* conflict(operation);
     });
 
-  const otherLeaseHeld = (missionId: string, planningId: string) =>
+  const otherLeaseHeld = (planningId: string) =>
     sql<{ planning_id: string }>`
       SELECT planning_id FROM projection_mission_planning
-      WHERE mission_id = ${missionId}
-        AND team_id = ${authority.teamId}
-        AND authority_environment_id = ${authority.environmentId}
+      WHERE authority_environment_id = ${authority.environmentId}
         AND gui_lease = 'held'
         AND planning_id != ${planningId}
       LIMIT 1
     `;
 
-  const commitTransaction = (command: CommitCommand, observations: Observations, requestHash: string) =>
+  const commitTransaction = (
+    command: CommitCommand,
+    observations: Observations,
+    requestHash: string,
+  ) =>
     Effect.gen(function* () {
       const loaded = yield* loadMission("commit", command.missionId);
       const prior = yield* replay("commit", command.missionId, requestHash, command.commandId);
       if (prior !== undefined) return Result.succeed(prior);
 
       const identity = eventIdentity(command.event);
-      const matches = yield* loadPlanning(command.missionId, identity.planningId, identity.idempotencyKey);
+      const matches = yield* loadPlanning(
+        command.missionId,
+        identity.planningId,
+        identity.idempotencyKey,
+      );
       if (matches.length > 1) return yield* conflict("commit");
       const row = matches[0];
       const current = row === undefined ? null : yield* recordOf("commit", row);
@@ -528,7 +541,9 @@ const make = Effect.gen(function* () {
       };
       if (decodeFacts(factsInput) === undefined) return yield* persistenceFailed("commit");
       const evidence = {
-        ...(observations.verification === undefined ? {} : { verification: observations.verification }),
+        ...(observations.verification === undefined
+          ? {}
+          : { verification: observations.verification }),
         ...(reservation === undefined ? {} : { reservation }),
         ...(observations.completion === undefined ? {} : { completion: observations.completion }),
       };
@@ -558,7 +573,7 @@ const make = Effect.gen(function* () {
       const lease = leaseFor(decision, loaded.deliveryThreadId, loaded.deliveryEpoch);
       const planningId = decision.record?.planningId ?? row?.planning_id;
       if (planningId === undefined) return yield* persistenceFailed("commit");
-      if (lease.guiLease === "held" && (yield* otherLeaseHeld(command.missionId, planningId)).length > 0) {
+      if (lease.guiLease === "held" && (yield* otherLeaseHeld(planningId)).length > 0) {
         return Result.fail(
           new MissionPlanningHold({ code: "gui_lease_busy", reasons: [], action: "none" }),
         );
@@ -760,8 +775,10 @@ const make = Effect.gen(function* () {
       );
     });
 
-  const runOnce = <A>(operation: "commit" | "restart", body: Effect.Effect<A, MissionPlanningStoreError>) =>
-    sql.withTransaction(body).pipe(Effect.mapError(toStoreError(operation)));
+  const runOnce = <A>(
+    operation: "commit" | "restart",
+    body: Effect.Effect<A, MissionPlanningStoreError>,
+  ) => sql.withTransaction(body).pipe(Effect.mapError(toStoreError(operation)));
 
   const commit = Effect.fn("MissionPlanningStore.commit")(function* (input: unknown) {
     if (Option.isSome(yield* Effect.serviceOption(sql.transactionService))) {
@@ -769,7 +786,8 @@ const make = Effect.gen(function* () {
     }
     const detached = yield* Effect.try({
       try: () => structuredClone(input),
-      catch: (cause) => new MissionPlanningStoreError({ operation: "commit", category: "request_conflict", cause }),
+      catch: (cause) =>
+        new MissionPlanningStoreError({ operation: "commit", category: "request_conflict", cause }),
     });
     const command = decodeCommit(detached);
     if (command === undefined) {
@@ -814,7 +832,12 @@ const make = Effect.gen(function* () {
     }
     const detached = yield* Effect.try({
       try: () => structuredClone(input),
-      catch: (cause) => new MissionPlanningStoreError({ operation: "restart", category: "request_conflict", cause }),
+      catch: (cause) =>
+        new MissionPlanningStoreError({
+          operation: "restart",
+          category: "request_conflict",
+          cause,
+        }),
     });
     const command = decodeRestart(detached);
     if (command === undefined) {

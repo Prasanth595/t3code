@@ -47,6 +47,9 @@ CREATE TABLE projection_mission_planning (
 );
 CREATE INDEX idx_projection_mission_planning_mission
   ON projection_mission_planning (mission_id, team_id, authority_environment_id);
+-- The GUI belongs to this environment, not to an individual mission.
+CREATE UNIQUE INDEX idx_projection_mission_planning_gui_owner
+  ON projection_mission_planning (authority_environment_id) WHERE gui_lease = 'held';
 CREATE TABLE projection_mission_planning_receipts (
   command_id TEXT PRIMARY KEY,
   mission_id TEXT NOT NULL,
@@ -144,7 +147,9 @@ export const decodePlanningRecordJson = (json: string): ProPlanningRecord | unde
   }
 };
 
-export const durableLeaseOf = (row: MissionPlanningRow | undefined): "held" | "released" | "absent" =>
+export const durableLeaseOf = (
+  row: MissionPlanningRow | undefined,
+): "held" | "released" | "absent" =>
   row === undefined ? "absent" : row.gui_lease === "held" ? "held" : "released";
 
 /** ACK bytes are the insert-time snapshot. Later manager rebinding does not rewrite them. */
@@ -194,10 +199,7 @@ export const decodeReceiptOutcome = (json: string): MissionPlanningReceiptOutcom
   }
 };
 
-export const rowAgreesWithRecord = (
-  row: MissionPlanningRow,
-  record: ProPlanningRecord,
-): boolean =>
+export const rowAgreesWithRecord = (row: MissionPlanningRow, record: ProPlanningRecord): boolean =>
   row.planning_id === record.planningId &&
   row.mission_id === record.missionId &&
   row.idempotency_key === record.idempotencyKey &&
