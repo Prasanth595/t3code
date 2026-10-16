@@ -321,8 +321,9 @@ unreleased major and get its first beta build approved.
 ## Android APK mirror
 
 `.github/workflows/mobile-android-apk.yml` checks Google Play hourly and publishes the newest
-build on the internal testing track to the rolling `android-nightly` prerelease for users
-who can't join the Play testing group. The APK is the universal APK Play generates and signs from the
+build on the Alpha closed-testing track to the rolling `android-nightly` prerelease for users
+who can't join the Play testing group. Android submissions go to internal testing; the mirror
+updates after a build is promoted to Alpha. The APK is the universal APK Play generates and signs from the
 uploaded bundle, so no signing key lives in GitHub. The job skips itself until
 `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` holds a Play service account key with the "Release to
 production, exclude devices, and use Play App Signing" permission, which downloading generated
