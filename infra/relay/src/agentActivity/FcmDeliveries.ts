@@ -225,18 +225,21 @@ export const make = Effect.gen(function* () {
       // Deletion jobs can observe another thread's newly completed state. They
       // update the card, but must leave that transition for its own alert job.
       let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
+      const state = job.state
+        ? yield* rows.getForUserThread({
+            userId: job.userId,
+            environmentId: job.state.environmentId,
+            threadId: job.state.threadId,
+          })
+        : null;
+      // Also clears alerts posted before notifications were turned off.
+      if (state?.visited) dismissGroup = alertGroup(state);
       if (job.state && preferences.value.notificationsEnabled) {
-        const state = yield* rows.getForUserThread({
-          userId: job.userId,
-          environmentId: job.state.environmentId,
-          threadId: job.state.threadId,
-        });
         if (
           !previousAggregate &&
           (!state || state.phase !== job.state.phase || state.updatedAt !== job.state.updatedAt)
         )
           return;
-        if (state?.visited) dismissGroup = alertGroup(state);
         const link = yield* links.getForUser({
           userId: job.userId,
           environmentId: job.state.environmentId,

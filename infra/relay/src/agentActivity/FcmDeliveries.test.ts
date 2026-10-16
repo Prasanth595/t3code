@@ -758,6 +758,22 @@ describe("dismissing read threads", () => {
       expect(h.sent[0]?.data.dismiss_group).toBe(visitedGroup);
     }).pipe(Effect.provide(h.layer));
   });
+
+  it.effect("dismisses even after notifications were turned off", () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process(h.job);
+      h.current.target.preferences_json = encodeJson({
+        ...preferences,
+        notificationsEnabled: false,
+      });
+      h.current.state = { ...state, phase: "completed", visited: true };
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent.at(-1)?.alert).toBe(false);
+      expect(h.sent.at(-1)?.data.dismiss_group).toBe(visitedGroup);
+    }).pipe(Effect.provide(h.layer));
+  });
 });
 
 describe("delivery policy regressions", () => {
