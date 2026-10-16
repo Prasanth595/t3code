@@ -287,9 +287,10 @@ export const runPass = (
     yield* pass.record({ event: "pass_started", data: {} });
     const repos = yield* loadRepos(world, machine, pass);
     // Without the ledger there is no telling how many runs are active, so nothing is claimed.
-    const infos = yield* runs(world, repos, pass);
+    const infos = yield* runs(world, pass);
     if (infos !== null) {
       const known = new Known(infos);
+      yield* workRuns(world, repos, known, pass);
       yield* untrackedClaims(world, repos, known, pass);
       yield* unassignedClaims(world, repos, known, pass);
       yield* claim(world, repos, known, machine, pass);
@@ -349,11 +350,7 @@ const loadRepos = (
   });
 
 /** Every unfinished run, counted; a run whose file cannot be read is an error line and counts as active. */
-const runs = (
-  world: PassWorld,
-  repos: ReadonlyArray<Loaded>,
-  pass: Pass,
-): Effect.Effect<ReadonlyArray<RunInfo> | null> =>
+const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo> | null> =>
   Effect.gen(function* () {
     const listed = yield* Effect.result(world.unfinishedRuns());
     if (listed._tag === "Failure") {
@@ -379,10 +376,55 @@ const runs = (
         );
         continue;
       }
-      // The steps that follow a run of a loaded repo (issues #16 to #20) go here.
-      void repos;
     }
     return listed.success;
+  });
+
+/**
+ * Calls `start` again for each confirmed run still in `triage` (or with no state yet): `start`
+ * resumes it from its ledger, so a run cut short after the launch was sent is finished and its
+ * session never runs on untracked. A run of a repo that is not loaded is left alone. The other
+ * states are worked by later steps. It is not a new claim, so it is not counted as one.
+ */
+const workRuns = (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  known: Known,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    for (const info of [...known.infos]) {
+      if (info.unreadable || !info.confirmed) continue;
+      if (info.state !== null && info.state !== "triage") continue;
+      const loaded = repos.find(
+        (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
+      );
+      if (loaded === undefined || loaded.kind !== "ready") continue;
+      const repo = loaded.repo;
+      const name = repo.watched.repo;
+      const issue = Number(info.id.issue);
+      const notes = pass.notes(`${name}${mention(issue)}`, info.state);
+      const outcome = yield* Effect.result(world.start(repo, issue));
+      if (outcome._tag === "Failure") {
+        if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
+        else pass.failed(notes, "start", outcome.failure);
+      } else {
+        switch (outcome.success.kind) {
+          case "started":
+            notes.parts.push("session started, the issue is building");
+            break;
+          case "stuck":
+            pass.stuck(notes, runIdToString(outcome.success.run));
+            break;
+          case "skipped":
+          case "refused":
+            notes.parts.push("not started, left to a later pass");
+            break;
+        }
+      }
+      yield* known.refresh(world, pass, name, issue);
+      yield* pass.flush(notes, info.id);
+    }
   });
 
 /**
