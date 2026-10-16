@@ -33,6 +33,7 @@ import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { utcSecond } from "./runner/start.ts";
 import { MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
+import { FactoryGate } from "./gate.ts";
 import { EventsError, FactoryEvents } from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as Sessions from "./t3/sessions.ts";
@@ -56,6 +57,12 @@ const stubSessions = Sessions.FactorySessions.of({
   removeWorktree: () => Effect.die("not removed"),
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
+
+/** A gate that never runs: the runtime is built without one. */
+const noGate = Layer.succeed(
+  FactoryGate,
+  FactoryGate.of({ run: () => Effect.succeed({ _tag: "running" as const }) }),
+);
 
 /** FactoryEvents that never says anything. */
 const quietEvents = Layer.succeed(
@@ -114,6 +121,7 @@ const logsFor = (
             Layer.provide(gh),
             Layer.provide(noSessions),
             Layer.provide(quietEvents),
+            Layer.provide(noGate),
           ),
         ),
       ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
@@ -283,6 +291,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
         Layer.provide(noGh),
         Layer.provide(noSessions),
         Layer.provide(Layer.succeed(FactoryEvents, FactoryEvents.of({ runStatusChanges: events }))),
+        Layer.provide(noGate),
       ),
     ).pipe(Effect.map((context) => Context.get(context, FactoryLoop)));
 
@@ -352,6 +361,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
             Layer.provide(noGh),
             Layer.provide(noSessions),
             Layer.provide(events),
+            Layer.provide(noGate),
           ),
         ).pipe(Effect.map((context) => Context.get(context, FactoryLoop)));
         const started = () =>
