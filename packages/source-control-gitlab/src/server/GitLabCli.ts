@@ -547,7 +547,9 @@ export const make = Effect.gen(function* () {
         ),
       ),
     getRepositoryCloneUrls: (input) => {
-      const requestedHost = URL.parse(input.repository.trim())?.hostname;
+      const requestedHost =
+        URL.parse(input.repository.trim())?.hostname ??
+        /^[^@/\s]+@([^:/\s]+):/u.exec(input.repository.trim())?.[1]?.toLowerCase();
       const urlPath = SourceControlProvider.repositoryPathFromRemoteUrl(input.repository);
       const projectPath =
         !requestedHost || urlPath === null

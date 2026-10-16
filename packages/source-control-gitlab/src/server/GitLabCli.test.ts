@@ -190,24 +190,30 @@ layer("GitLabCli.layer", (it) => {
       ssh_url_to_repo: `git@${host}:${path}.git`,
     });
 
-  it.effect("looks up a pasted repository URL by its project path", () =>
+  it.effect.each([
+    {
+      repository: "https://sourcecontrol.example.com/group/sub/project.git",
+      host: "sourcecontrol.example.com",
+      path: "group/sub/project",
+      endpoint: "projects/group%2Fsub%2Fproject",
+    },
+    {
+      repository: "git@gitlab.com:group/project.git",
+      host: "gitlab.com",
+      path: "group/project",
+      endpoint: "projects/group%2Fproject",
+    },
+  ])("looks up the pasted address $repository by its project path", (row) =>
     Effect.gen(function* () {
       mockedRun
-        .mockReturnValueOnce(Effect.succeed(processOutput("sourcecontrol.example.com\n")))
-        .mockReturnValueOnce(
-          Effect.succeed(
-            processOutput(projectJson("sourcecontrol.example.com", "group/sub/project")),
-          ),
-        );
+        .mockReturnValueOnce(Effect.succeed(processOutput(`${row.host}\n`)))
+        .mockReturnValueOnce(Effect.succeed(processOutput(projectJson(row.host, row.path))));
 
       const glab = yield* GitLabCli.GitLabCli;
-      yield* glab.getRepositoryCloneUrls({
-        cwd: "/repo",
-        repository: "https://sourcecontrol.example.com/group/sub/project.git",
-      });
+      yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository: row.repository });
 
       expect(mockedRun).toHaveBeenLastCalledWith(
-        expect.objectContaining({ args: ["api", "projects/group%2Fsub%2Fproject"] }),
+        expect.objectContaining({ args: ["api", row.endpoint] }),
       );
     }),
   );
