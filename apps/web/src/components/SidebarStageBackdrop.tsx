@@ -8,8 +8,6 @@ import { primaryServerConfigAtom } from "../state/server";
 export type SidebarStageBackdropVariant = "nightly" | "dev";
 export type EnvironmentIdentificationPillLabel = "Dev" | "Nightly";
 
-// A wide viewBox keeps the 96-unit art height at a fixed scale while sidebar resizing reveals
-// more horizontal canvas instead of zooming the scene.
 const STAGE_BACKDROP_VIEW_BOX = "0 0 8192 96";
 
 export function resolveSidebarStageBackdropVariant(
@@ -46,10 +44,6 @@ export function useSidebarStageBackdropVariant(enabled = true): SidebarStageBack
   return resolveSidebarStageBackdropVariant(useEnvironmentStageLabel(), enabled);
 }
 
-/**
- * Returns the user's custom artwork URL when it is usable, otherwise null so the built-in art
- * renders. Secure web pages require HTTPS images; desktop and local HTTP pages can also use HTTP.
- */
 export function resolveCustomStageArtworkUrl(
   value: string,
   pageProtocol = typeof window === "undefined" ? "" : window.location.protocol,
@@ -67,7 +61,6 @@ export function resolveCustomStageArtworkUrl(
     : null;
 }
 
-/** Stage-channel header art; palettes mirror the per-channel app icons in `assets/`. */
 export function SidebarStageBackdrop({
   variant,
   customImageUrl = null,
