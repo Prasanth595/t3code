@@ -450,6 +450,19 @@ function resolvePart(base: string, target: string): string {
   return parts.join("/");
 }
 
+function textPrefix(text: string, length: number): string {
+  let end = Math.min(text.length, length);
+  if (
+    end > 0 &&
+    text.charCodeAt(end - 1) >= 0xd800 &&
+    text.charCodeAt(end - 1) <= 0xdbff &&
+    text.charCodeAt(end) >= 0xdc00 &&
+    text.charCodeAt(end) <= 0xdfff
+  )
+    end--;
+  return text.slice(0, end);
+}
+
 function textBudget() {
   let remaining = MAX_TEXT_BYTES / 2;
   let truncated = false;
@@ -457,7 +470,9 @@ function textBudget() {
     take(text: string) {
       const length = Math.min(MAX_CELL_CHARS, remaining);
       const value =
-        text.length > length ? text.slice(0, Math.max(0, length - 1)) + (length ? "…" : "") : text;
+        text.length > length
+          ? textPrefix(text, Math.max(0, length - 1)) + (length ? "…" : "")
+          : text;
       remaining -= value.length;
       truncated ||= value !== text;
       return value;
@@ -743,7 +758,7 @@ function parseSpreadsheet(bytes: Uint8Array, format: "xlsx" | "xls"): OfficeDocu
       }
       rows.push(cells);
     }
-    return { name: name.slice(0, MAX_CELL_CHARS), rows, totalRows, totalColumns, truncated };
+    return { name: textPrefix(name, MAX_CELL_CHARS), rows, totalRows, totalColumns, truncated };
   });
   if (sheets.length === 0) fail("The workbook has no visible worksheets to preview.");
   const warnings = ["Values only; styles, charts, and formula recalculation are not included."];
@@ -901,7 +916,7 @@ function paragraphText(node: XmlNode): string {
   const visit = (current: XmlNode) => {
     if (text.length > MAX_CELL_CHARS) return;
     if (current.tag.uri === DRAWING_NS && current.tag.local === "t")
-      text += current.value.slice(0, MAX_CELL_CHARS + 1 - text.length);
+      text += textPrefix(current.value, MAX_CELL_CHARS + 2 - text.length);
     else if (current.tag.uri === DRAWING_NS && current.tag.local === "br") text += "\n";
     else for (const nested of current.children) visit(nested);
   };
@@ -1113,7 +1128,7 @@ function parsePresentation(parts: Map<string, Uint8Array>): OfficeDocument {
         imageTextBytes += src.length;
         const alt =
           nodeAttribute(descendants(shape, "cNvPr", PRESENTATION_NS)[0], "descr") ?? "Slide image";
-        elements.push({ kind: "image", ...box, src, alt: alt.slice(0, 200) });
+        elements.push({ kind: "image", ...box, src, alt: textPrefix(alt, 200) });
         if (descendants(shape, "srcRect").length)
           warnings.add("Image cropping is simplified in this preview.");
         continue;

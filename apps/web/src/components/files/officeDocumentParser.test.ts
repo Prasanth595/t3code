@@ -480,6 +480,46 @@ describe("parseOfficeDocument spreadsheets", () => {
     expect(document.sheets[0]?.truncated).toBe(true);
   });
 
+  it.each(["xlsx", "biff8"] as const)("preserves emoji at %s cell text boundaries", (format) => {
+    const values = [
+      "a".repeat(1998) + "🐈tail",
+      "a".repeat(1997) + "🐈tail",
+      "a".repeat(1998) + "🐈",
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet(values.map((value) => [value])),
+      "Emoji",
+    );
+    const document = parseOfficeDocument(
+      new Uint8Array(XLSX.write(workbook, { type: "array", bookType: format, bookSST: true })),
+      format === "biff8" ? "xls" : format,
+    );
+    if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+    expect(document.sheets[0]?.rows).toEqual([
+      ["a".repeat(1998) + "…"],
+      ["a".repeat(1997) + "🐈…"],
+      [values[2]],
+    ]);
+  });
+
+  it("preserves emoji when the aggregate cell text budget is exhausted", () => {
+    const values = [...Array<string>(131).fill("a".repeat(2000)), "a".repeat(142) + "🐈tail", "🐈"];
+    const rows = Array.from({ length: Math.ceil(values.length / 10) }, (_, row) =>
+      values.slice(row * 10, row * 10 + 10),
+    );
+    const document = parseOfficeDocument(
+      workbookBytes("xlsx", XLSX.utils.aoa_to_sheet(rows)),
+      "xlsx",
+    );
+    if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+    const cells = document.sheets[0]!.rows.flat();
+    expect(cells.slice(131, 133)).toEqual(["a".repeat(142) + "…", "…"]);
+    expect(cells.slice(133).every((cell) => cell === "")).toBe(true);
+    expect(cells.reduce((length, cell) => length + cell.length, 0)).toBe((512 * 1024) / 2);
+  });
+
   it("uses a formula expression when no cached result exists", () => {
     const document = parseOfficeDocument(
       workbookBytes("xlsx", { A1: { t: "n", f: "1+1" }, "!ref": "A1" }),
@@ -634,6 +674,22 @@ describe("parseOfficeDocument presentation outlines", () => {
     expect(document.slides[0]?.text[0]).toHaveLength(2000);
     expect(document.slides[0]?.truncated).toBe(true);
     expect(document.truncated).toBe(true);
+  });
+
+  it("preserves emoji at paragraph boundaries across text runs", () => {
+    const parts = presentationParts();
+    const values = ["a".repeat(1998) + "🐈", "a".repeat(1997) + "🐈"];
+    parts["ppt/slides/slide2.xml"] = strToU8(
+      `<p:sld xmlns:p="${P}" xmlns:a="${A}">${values.map((value) => `<a:p><a:r><a:t>${value}</a:t></a:r><a:r><a:t>tail</a:t></a:r></a:p>`).join("")}<a:p><a:r><a:t>${values[0]}</a:t></a:r></a:p></p:sld>`,
+    );
+    const document = parseOfficeDocument(zipSync(parts), "pptx");
+    if (document.kind !== "presentation") throw new Error("Expected presentation");
+    expect(document.slides[0]?.text).toEqual([
+      "a".repeat(1998) + "…",
+      "a".repeat(1997) + "🐈…",
+      values[0],
+    ]);
+    expect(document.slides[0]?.truncated).toBe(true);
   });
 
   it("rejects entity declarations before processing XML", () => {

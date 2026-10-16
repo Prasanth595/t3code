@@ -163,6 +163,15 @@ function pendingAuthorization() {
   return { promise, complete: (url: string | null) => complete?.(url) };
 }
 
+const remoteAttachment = (attachmentId = "captured-xlsx") => (
+  <AttachmentFilePreview
+    name={`${attachmentId}.xlsx`}
+    mimeType="text/plain"
+    sizeBytes={100}
+    asset={{ environmentId, attachmentId }}
+  />
+);
+
 describe("Office entry points with the real document client and parser", () => {
   it("waits for reauthorization before starting one download per open for a cached completed mutation", async () => {
     const firstAuthorization = pendingAuthorization();
@@ -415,6 +424,107 @@ describe("Office entry points with the real document client and parser", () => {
     expect(container.querySelector("tbody")?.textContent).toContain("ねこ / real workbook1800");
     expect(container.querySelector("pre")).toBeNull();
     expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("starts one attachment reader after retry authorization even when the signed URL is unchanged", async () => {
+    const initialAuthorization = pendingAuthorization();
+    const initialPosted = nextWorker();
+    await act(() => root.render(remoteAttachment()));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(ParserWorker.instances).toHaveLength(0);
+    await act(async () => {
+      initialAuthorization.complete(mocks.url);
+      await initialAuthorization.promise;
+    });
+    const first = await initialPosted;
+    await act(() => first.fail());
+    const retryAuthorization = pendingAuthorization();
+    const retryPosted = nextWorker();
+    vi.mocked(fetch).mockImplementation(
+      async () => new Response(workbookBytes("xlsx", "renewed attachment")),
+    );
+    await act(() => container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(ParserWorker.instances).toHaveLength(1);
+    expect(container.querySelector("table")).toBeNull();
+    await act(async () => {
+      retryAuthorization.complete(mocks.url);
+      await retryAuthorization.promise;
+    });
+    const retry = await retryPosted;
+    await act(() => retry.finish());
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual([mocks.url, mocks.url]);
+    expect(ParserWorker.instances).toHaveLength(2);
+    expect(first.terminate).toHaveBeenCalledOnce();
+    expect(retry.terminate).toHaveBeenCalledOnce();
+    expect(container.querySelector("tbody")?.textContent).toContain("renewed attachment");
+  });
+
+  it("does not reuse attachment authorization across A-to-B-to-A or accept results after closing", async () => {
+    const firstPosted = nextWorker();
+    await act(() => root.render(remoteAttachment("a")));
+    const first = await firstPosted;
+    await act(() => first.finish());
+    const otherAuthorization = pendingAuthorization();
+    await act(() => root.render(remoteAttachment("b")));
+    const returnedAuthorization = pendingAuthorization();
+    const returnedPosted = nextWorker();
+    await act(() => root.render(remoteAttachment("a")));
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(ParserWorker.instances).toHaveLength(1);
+    expect(container.querySelector("table")).toBeNull();
+    await act(async () => {
+      otherAuthorization.complete("https://environment.test/obsolete-b.xlsx");
+      await otherAuthorization.promise;
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    await act(async () => {
+      returnedAuthorization.complete("https://environment.test/returned-a.xlsx");
+      await returnedAuthorization.promise;
+    });
+    const returned = await returnedPosted;
+    await act(() => returned.finish());
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fetch).mock.calls[1]?.[0]).toBe("https://environment.test/returned-a.xlsx");
+    expect(container.querySelector("tbody")?.textContent).toContain("ねこ / real workbook");
+    const closingAuthorization = pendingAuthorization();
+    await act(() => root.render(remoteAttachment("closing")));
+    await act(() => root.render(null));
+    await act(async () => {
+      closingAuthorization.complete("https://environment.test/closed.xlsx");
+      await closingAuthorization.promise;
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(ParserWorker.instances).toHaveLength(2);
+    expect(container.textContent).toBe("");
+  });
+
+  it("retries a local Office Blob without remote authorization or HTTP loading", async () => {
+    const file = new Blob([workbookBytes()]);
+    const firstPosted = nextWorker();
+    await act(() =>
+      root.render(
+        <AttachmentFilePreview
+          name="local.xlsx"
+          mimeType="application/octet-stream"
+          sizeBytes={file.size}
+          file={file}
+        />,
+      ),
+    );
+    const first = await firstPosted;
+    await act(() => first.fail());
+    const retryPosted = nextWorker();
+    await act(() => container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+    const retry = await retryPosted;
+    await act(() => retry.finish());
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(ParserWorker.instances).toHaveLength(2);
+    expect(first.terminate).toHaveBeenCalledOnce();
+    expect(container.querySelector("tbody")?.textContent).toContain("ねこ / real workbook");
   });
 
   it("reads real BIFF8 from a local Blob and releases its object URL when changing to legacy ppt fallback", async () => {
