@@ -36,6 +36,9 @@ import * as SkillStore from "./MissionRetroSkillEvaluationStore.ts";
 import * as Missions from "./MissionService.ts";
 import * as Planning from "./MissionPlanningStore.ts";
 import type { ProPlanningEvent } from "../../../../packages/contracts/src/missionProPlanning.ts";
+import type { HostTransportBinding } from "../../../../packages/contracts/src/missionHostProtocol.ts";
+import * as Peer from "./MissionPeerHttp.ts";
+import type { MissionPeerHandshakeError } from "./MissionPeerHandshake.ts";
 import * as Projections from "./ProjectionStore.ts";
 import * as Sessions from "./ProviderSessionManager.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
@@ -53,6 +56,7 @@ export class CombinedMissionRuntimeError extends Schema.TaggedError<CombinedMiss
       "mission_inactive",
       "request_conflict",
       "planning_unavailable",
+      "host_unavailable",
     ]),
   },
 ) {}
@@ -65,6 +69,7 @@ type RuntimeError =
   | Lifecycle.MissionManagerLifecycleStoreError
   | Manager.MissionManagerRuntimeError
   | Planning.MissionPlanningStoreError
+  | MissionPeerHandshakeError
   | Missions.MissionServiceError;
 type Role = "delivery" | "retro";
 type ReplayCommand = {
@@ -76,6 +81,8 @@ type ReplayCommand = {
 
 /** Capabilities expire with this request; no authority or currency callback is caller supplied. */
 export interface CombinedMissionRequest {
+  /** Authenticates the peer channel only; never readiness, execution or artifact ACK. */
+  readonly connectHost: Effect.Effect<HostTransportBinding, RuntimeError>;
   readonly commitPlanning: (command: {
     readonly commandId: CommandId;
     readonly event: ProPlanningEvent;
@@ -249,6 +256,7 @@ const make = Effect.gen(function* () {
   // Observations must come from an independently configured trusted producer.
   // Tool parameters and an available operator quota never stand in for it.
   const planningFacts = yield* Effect.serviceOption(Planning.MissionPlanningFactsPort);
+  const peerClient = yield* Effect.serviceOption(Peer.MissionPeerHttp);
   const configured = yield* (
     currentPolicy()?.environmentId === environmentId
       ? readStartupConfig
@@ -453,6 +461,19 @@ const make = Effect.gen(function* () {
           return Context.get(context, Planning.MissionPlanningStore);
         });
         const runtime: CombinedMissionRequest = {
+          connectHost: managerActions.withPermits(1)(
+            Effect.gen(function* () {
+              if (request.role !== "delivery") return yield* fail("scope_denied");
+              if (Option.isNone(peerClient)) return yield* fail("host_unavailable");
+              yield* assertCanonical;
+              const binding = yield* peerClient.value.connect;
+              // The network wait must not let a rotated manager retain a result.
+              yield* assertCanonical;
+              if (binding.teamId !== trusted.teamId || binding.environmentId !== environmentId)
+                return yield* fail("scope_denied");
+              return binding;
+            }),
+          ),
           commitPlanning: (command) =>
             managerActions.withPermits(1)(
               checked(

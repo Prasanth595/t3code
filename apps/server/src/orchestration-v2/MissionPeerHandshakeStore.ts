@@ -17,9 +17,12 @@ CREATE TABLE mission_peer_handshake_nonces (
 );`;
 
 export class MissionPeerHandshakeStoreError extends Schema.TaggedError<MissionPeerHandshakeStoreError>()(
-  "MissionPeerHandshakeStoreError", { cause: Schema.Defect() },
+  "MissionPeerHandshakeStoreError",
+  { cause: Schema.Defect() },
 ) {
-  override get message() { return "Mission peer replay ledger unavailable."; }
+  override get message() {
+    return "Mission peer replay ledger unavailable.";
+  }
 }
 
 interface NonceKey {
@@ -28,20 +31,28 @@ interface NonceKey {
 }
 
 /** Replay state only: never another mission, manager, claim, or artifact authority. */
-export class MissionPeerHandshakeStore extends Context.Service<MissionPeerHandshakeStore, {
-  readonly reserve: (input: NonceKey & {
-    readonly direction: "sender" | "receiver";
-    readonly nowMs: number;
-    readonly expiresAtMs: number;
-  }) => Effect.Effect<boolean, MissionPeerHandshakeStoreError>;
-  readonly consume: (input: NonceKey & {
-    readonly nowMs: number;
-  }) => Effect.Effect<boolean, MissionPeerHandshakeStoreError>;
-}>()("t3/orchestration-v2/MissionPeerHandshakeStore") {}
+export class MissionPeerHandshakeStore extends Context.Service<
+  MissionPeerHandshakeStore,
+  {
+    readonly reserve: (
+      input: NonceKey & {
+        readonly direction: "sender" | "receiver";
+        readonly nowMs: number;
+        readonly expiresAtMs: number;
+      },
+    ) => Effect.Effect<boolean, MissionPeerHandshakeStoreError>;
+    readonly consume: (
+      input: NonceKey & {
+        readonly nowMs: number;
+      },
+    ) => Effect.Effect<boolean, MissionPeerHandshakeStoreError>;
+  }
+>()("t3/orchestration-v2/MissionPeerHandshakeStore") {}
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const reserve: MissionPeerHandshakeStore["Service"]["reserve"] = (input) => sql`
+  const reserve: MissionPeerHandshakeStore["Service"]["reserve"] = (input) =>
+    sql`
     INSERT INTO mission_peer_handshake_nonces
       (scope_digest, direction, nonce, created_at_ms, expires_at_ms, consumed_at_ms)
     VALUES (${input.scopeDigest}, ${input.direction}, ${input.nonce},
@@ -49,19 +60,20 @@ const make = Effect.gen(function* () {
     ON CONFLICT (scope_digest, direction, nonce) DO NOTHING
     RETURNING nonce
   `.pipe(
-    Effect.map((rows) => rows.length === 1),
-    Effect.mapError((cause) => new MissionPeerHandshakeStoreError({ cause })),
-  );
-  const consume: MissionPeerHandshakeStore["Service"]["consume"] = (input) => sql`
+      Effect.map((rows) => rows.length === 1),
+      Effect.mapError((cause) => new MissionPeerHandshakeStoreError({ cause })),
+    );
+  const consume: MissionPeerHandshakeStore["Service"]["consume"] = (input) =>
+    sql`
     UPDATE mission_peer_handshake_nonces SET consumed_at_ms = ${input.nowMs}
     WHERE scope_digest = ${input.scopeDigest} AND direction = 'sender'
       AND nonce = ${input.nonce} AND consumed_at_ms IS NULL
       AND created_at_ms <= ${input.nowMs} AND expires_at_ms > ${input.nowMs}
     RETURNING nonce
   `.pipe(
-    Effect.map((rows) => rows.length === 1),
-    Effect.mapError((cause) => new MissionPeerHandshakeStoreError({ cause })),
-  );
+      Effect.map((rows) => rows.length === 1),
+      Effect.mapError((cause) => new MissionPeerHandshakeStoreError({ cause })),
+    );
   return MissionPeerHandshakeStore.of({ reserve, consume });
 });
 
