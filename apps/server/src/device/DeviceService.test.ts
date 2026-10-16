@@ -759,6 +759,10 @@ it.effect.each([
     for (const readiness of [service.readiness(), service.agentReadinessIfSupported()]) {
       const error = yield* readiness.pipe(Effect.flip);
       expect(error).toMatchObject({ reason: expected, cause: failure });
+      expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+        status: "failed",
+        detail: expected,
+      });
     }
     for (const state of [yield* service.list, yield* service.retryHost(LOCAL_DEVICE_HOST_ID)]) {
       expect(state.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({

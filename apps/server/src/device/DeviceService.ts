@@ -273,7 +273,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         )
         .pipe(
           Effect.tapError((error) =>
-            setHostStatus(host.id, { status: "failed", detail: error.message }),
+            setHostStatus(host.id, {
+              status: "failed",
+              detail:
+                error._tag === "DeviceHostError" && error.step === "probe"
+                  ? sshProbeFailureMessage(error)
+                  : error.message,
+            }),
           ),
           Effect.mapError(
             (error) =>
@@ -328,7 +334,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         )
         .pipe(
           Effect.tapError((error) =>
-            setHostStatus(host.id, { status: "failed", detail: error.message }),
+            setHostStatus(host.id, {
+              status: "failed",
+              detail:
+                error._tag === "DeviceHostError" && error.step === "probe"
+                  ? sshProbeFailureMessage(error)
+                  : error.message,
+            }),
           ),
           Effect.mapError(
             (error) =>
