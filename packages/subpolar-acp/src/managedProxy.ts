@@ -44,6 +44,7 @@ function workerEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {
     TMPDIR: "/tmp",
     USER: "subpolar",
     SUBPOLAR_ACP_EXECUTION: "local",
+    SUBPOLAR_ACP_WORKER_MODE: "1",
   };
   for (const [key, value] of Object.entries(source)) {
     if (value !== undefined && SAFE_WORKER_ENVIRONMENT_KEYS.has(key)) result[key] = value;

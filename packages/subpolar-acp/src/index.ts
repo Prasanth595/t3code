@@ -29,6 +29,8 @@ export interface SubpolarAcpOptions {
   readonly toolDefinitions?: readonly ToolDefinition[];
   readonly resolveToolPolicy?: PolicyResolver;
   readonly executeTool?: ToolExecutor;
+  /** Map a gateway cwd to the worker's mounted path for proxy-started sessions. */
+  readonly sessionCwd?: (requestedCwd: string) => string;
 }
 
 interface SessionContext {
@@ -251,7 +253,7 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
     yield* agent.handleCreateSession((request) =>
       Effect.sync(() => {
         const session = runtime.createSession({ id: options.principalId ?? "local", kind: "local" });
-        sessions.set(session.sessionId, { cwd: request.cwd });
+        sessions.set(session.sessionId, { cwd: options.sessionCwd?.(request.cwd) ?? request.cwd });
         return { sessionId: session.sessionId };
       }),
     );

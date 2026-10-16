@@ -31,3 +31,16 @@ package a compatible ACP worker and provide its runtime credentials and network
 access within that environment before managed ACP can run a real Pi turn. This
 proxy and its protocol tests do not establish that worker image or end-to-end
 runtime configuration.
+
+When the worker command starts the Subpolar ACP CLI, the managed proxy supplies
+`SUBPOLAR_ACP_WORKER_MODE=1` and `SUBPOLAR_ACP_EXECUTION=local` in the worker's
+filtered environment. Worker mode adds one `execute` tool that runs argv
+directly inside the worker, requires T3's existing per-call ACP approval,
+limits captured output to 128 KiB, and confines its working directory to the
+mounted worktree. The tool does not call the environment manager and rejects
+attempts to pass manager credentials to child commands. Ordinary local ACP
+mode keeps its existing manager-backed tool behavior.
+
+Worker mode only supplies local command execution. It does not package the ACP
+CLI or Pi SDK, configure model credentials, or allow model API network access;
+those remain prerequisites for a complete managed ACP deployment.

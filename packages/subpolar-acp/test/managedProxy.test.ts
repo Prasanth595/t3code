@@ -5,7 +5,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
-import type { EnvironmentManager, EnvironmentRequest } from "@subpolar/environments";
+import type { EnvironmentManagedSessionRequest, EnvironmentManager, EnvironmentRequest } from "@subpolar/environments";
 import { makeInMemoryStdio } from "../../effect-acp/src/_internal/stdio.ts";
 import { layerManagedAcpProxy } from "../src/managedProxy.ts";
 
@@ -18,14 +18,14 @@ const baseEnvironment = {
 const encoder = new TextEncoder();
 
 function fakeManager(options: { failStart?: boolean; requestPermission?: boolean } = {}) {
-  const calls: Array<{ method: string; request?: EnvironmentRequest; command?: readonly string[]; sessionId?: string; data?: string }> = [];
+  const calls: Array<{ method: string; request?: EnvironmentRequest; process?: EnvironmentManagedSessionRequest; command?: readonly string[]; sessionId?: string; data?: string }> = [];
   const outputs = new Map<string, ReturnType<typeof yieldQueue>>();
   let markCancelled!: () => void;
   const cancelled = new Promise<void>((resolve) => { markCancelled = resolve; });
   let nextSession = 0;
   const manager = {
-    startManagedSession: async (request: EnvironmentRequest, command: readonly string[]) => {
-      calls.push({ method: "start", request, command });
+    startManagedSession: async (request: EnvironmentRequest, command: readonly string[], process?: EnvironmentManagedSessionRequest) => {
+      calls.push({ method: "start", request, command, process });
       if (options.failStart) throw new Error("manager unavailable");
       const sessionId = `managed-${++nextSession}`;
       outputs.set(sessionId, yieldQueue());
@@ -148,7 +148,16 @@ test("managed proxy starts a worker for the requested worktree and forwards ACP 
       worktreePath: "/workspaces/project-a",
       workspaceId: expect.stringMatching(/^ws_[a-f0-9]{24}$/),
     },
+    process: {
+      environment: {
+        SUBPOLAR_ACP_EXECUTION: "local",
+        SUBPOLAR_ACP_WORKER_MODE: "1",
+      },
+    },
   });
+  expect(fake.calls[0]?.process?.environment).not.toHaveProperty("SUBPOLAR_MANAGER_TOKEN");
+  expect(fake.calls[0]?.process?.environment).not.toHaveProperty("SUBPOLAR_MANAGER_URL");
+  expect(fake.calls[0]?.process?.environment).not.toHaveProperty("SUBPOLAR_STORAGE_ROOT");
 
   await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-managed-1", prompt: [{ type: "text", text: "hello" }] } }));
   const update = await readMessage(output, (message) => message.method === "session/update" && JSON.stringify(message.params).includes("from worker"));
