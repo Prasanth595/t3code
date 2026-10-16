@@ -161,6 +161,25 @@ describe("Docker environment backend", () => {
     expect(output).toEqual(["stdout:hello"]);
   });
 
+  test("keeps worker egress closed when a process supplies proxy environment variables", async () => {
+    const { backend, identity, client } = await fixture();
+    const ready = await backend.start(await backend.create(identity));
+
+    await backend.execute(ready, ["node", "agent.js"], {
+      cwd: ".",
+      environment: {
+        HTTPS_PROXY: "http://proxy.example:8080",
+        ALL_PROXY: "socks5://proxy.example:1080",
+      },
+    });
+
+    expect(client.createCalls[0]?.networkMode).toBe("none");
+    expect(client.processCalls[0]?.request.environment).toEqual({
+      HTTPS_PROXY: "http://proxy.example:8080",
+      ALL_PROXY: "socks5://proxy.example:1080",
+    });
+  });
+
   test("starts non-TTY process sessions inside the verified mounted worktree", async () => {
     const { backend, identity, client } = await fixture();
     const ready = await backend.start(await backend.create(identity));
@@ -394,5 +413,21 @@ describe("Docker environment backend", () => {
     });
 
     await expect(backend.inspect(identity)).rejects.toMatchObject({ code: "DOCKER_CONFIGURATION_MISMATCH" });
+  });
+
+  test("refuses to execute in a worker whose network is no longer isolated", async () => {
+    const { backend, client, identity } = await fixture();
+    const ready = await backend.start(await backend.create(identity));
+    const [name] = client.containers.keys();
+    const container = client.containers.get(name!)!;
+    client.containers.set(name!, {
+      ...container,
+      config: { ...container.config, networkMode: "bridge" },
+    });
+
+    await expect(backend.execute(ready, ["node", "agent.js"], {})).rejects.toMatchObject({
+      code: "DOCKER_CONFIGURATION_MISMATCH",
+    });
+    expect(client.processCalls).toEqual([]);
   });
 });

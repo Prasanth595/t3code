@@ -507,6 +507,8 @@ export function createDockerEnvironmentBackend(
     user: "1000:1000",
     privileged: false,
     readOnlyRootfs: true,
+    // Keep worker egress closed until a manager-owned filtering gateway can be
+    // attached and verified as part of the container lifecycle.
     networkMode: "none",
     capDrop: ["ALL"],
     securityOpt: ["no-new-privileges:true"],
