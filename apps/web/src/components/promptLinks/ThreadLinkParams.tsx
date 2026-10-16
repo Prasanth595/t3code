@@ -27,11 +27,6 @@ export interface LinkedMessageRequest {
 
 const handledLinkKeys = new Set<string>();
 
-/**
- * Moves a thread link's `?prompt=` into that thread's composer and hands its `?message=` to the
- * timeline, then drops both from the URL so a reload or a copied address does not bring them
- * back. Rendered beside the thread view.
- */
 export function ThreadLinkParams({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const navigate = useNavigate();
   const location = useLocation({
