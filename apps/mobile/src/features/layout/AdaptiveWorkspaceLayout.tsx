@@ -245,7 +245,10 @@ function AdaptiveWorkspaceLayoutContent(
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
-  const showPrimarySidebar = pathname === "/" || primarySidebarPreferredVisible;
+  // Native columns keep a sidebar toggle in the empty detail header, so only
+  // the JS layout must pin the sidebar open on the workspace root.
+  const primarySidebarPinned = pathname === "/" && !nativeWorkspace;
+  const showPrimarySidebar = primarySidebarPinned || primarySidebarPreferredVisible;
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
   const [supplementaryPanePreferredWidth, setSupplementaryPanePreferredWidth] = useState<
     number | null
@@ -378,7 +381,7 @@ function AdaptiveWorkspaceLayoutContent(
     };
   }, []);
   const togglePrimarySidebar = useCallback(() => {
-    if (pathname === "/") {
+    if (primarySidebarPinned) {
       return;
     }
     if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
@@ -387,7 +390,11 @@ function AdaptiveWorkspaceLayoutContent(
       return;
     }
     setPrimarySidebarPreferredVisible((current) => !current);
-  }, [panes.primarySidebarSuppressedByAuxiliary, panes.primarySidebarVisible, pathname]);
+  }, [
+    panes.primarySidebarSuppressedByAuxiliary,
+    panes.primarySidebarVisible,
+    primarySidebarPinned,
+  ]);
   const revealPrimarySidebar = useCallback(() => {
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
@@ -399,8 +406,8 @@ function AdaptiveWorkspaceLayoutContent(
     return true;
   }, [togglePrimarySidebar]);
   const sidebarCommands = useMemo(
-    () => (pathname === "/" ? [] : (["toggleSidebar"] as const)),
-    [pathname],
+    () => (primarySidebarPinned ? [] : (["toggleSidebar"] as const)),
+    [primarySidebarPinned],
   );
   useHardwareKeyboardCommand(sidebarCommands, handleToggleSidebarCommand);
   const showAuxiliaryPane = useCallback((role: WorkspaceAuxiliaryPaneRole) => {
