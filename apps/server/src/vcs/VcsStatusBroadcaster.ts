@@ -144,6 +144,11 @@ interface StreamStatusOptions {
   readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
 }
 
+/** Passed only by the window focus / visibility refresh. */
+interface WindowFocusRefreshOptions {
+  readonly automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>;
+}
+
 export class VcsAutoPullPolicy extends Context.Reference<{
   readonly isEnabled: (cwd: string) => Effect.Effect<boolean, never>;
 }>("t3/vcs/VcsAutoPullPolicy", {
@@ -192,7 +197,15 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshLocalStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
-    readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    /**
+     * Refresh local and remote status. Pass `options` only for the window
+     * focus / visibility refresh: a zero Git fetch interval then skips the
+     * remote fetch. Callers that omit `options` still fetch.
+     */
+    readonly refreshStatus: (
+      cwd: string,
+      options?: WindowFocusRefreshOptions,
+    ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly refreshPullRequestStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
@@ -472,8 +485,14 @@ export const make = Effect.gen(function* () {
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
-  )(function* (rawCwd) {
+  )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    // A zero interval on the focus refresh reads the upstream already on disk.
+    // Omitting the interval, including after git commands, still fetches.
+    const refreshUpstream =
+      options === undefined
+        ? true
+        : !Duration.isZero(yield* options.automaticRemoteRefreshInterval);
     // invalidateStatus (not the two partial invalidations) so an explicit
     // refresh also bypasses GitManager's slow PR-lookup cache.
     return yield* withRemoteWriteLock(
@@ -481,7 +500,10 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* workflow.invalidateStatus(cwd);
         // Local after remote: the fetch can move the base that the Changes totals compare with.
-        const remote = yield* workflow.remoteStatus({ cwd });
+        const remote = yield* workflow.remoteStatus(
+          { cwd },
+          refreshUpstream ? undefined : { refreshUpstream: false },
+        );
         const local = yield* workflow.localStatus({ cwd });
         const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);

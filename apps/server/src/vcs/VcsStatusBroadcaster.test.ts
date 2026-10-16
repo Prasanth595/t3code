@@ -212,6 +212,128 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
+  it.effect("does not fetch on a window-focus refresh when the Git fetch interval is zero", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.refreshStatus("/repo", {
+        automaticRemoteRefreshInterval: Effect.succeed(Duration.seconds(0)),
+      });
+
+      assert.equal(state.localStatusCalls, 1);
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [false]);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
+  it.effect(
+    "still fetches on a window-focus refresh when the Git fetch interval is not zero",
+    () => {
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
+      };
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.refreshStatus("/repo", {
+          automaticRemoteRefreshInterval: Effect.succeed(Duration.seconds(30)),
+        });
+
+        assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [undefined]);
+      }).pipe(Effect.provide(layerTestFor(state)));
+    },
+  );
+
+  it.effect("still fetches on a status refresh that is not a window-focus refresh", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.refreshStatus("/repo");
+
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [undefined]);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
+  it.effect(
+    "still pulls automatically on a window-focus refresh when the Git fetch interval is zero",
+    () => {
+      let remoteStatus: VcsStatusRemoteResult = { ...baseRemoteStatus, behindCount: 2 };
+      let pullCalls = 0;
+      const remoteStatusRefreshUpstreamValues: Array<boolean | undefined> = [];
+      const localStatus: VcsStatusLocalResult = {
+        ...baseLocalStatus,
+        isDefaultRef: true,
+        refName: "main",
+      };
+      const layer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(layerBackgroundPolicy(() => true)),
+        Layer.provide(
+          Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+            isEnabled: () => Effect.succeed(true),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () => Effect.succeed(localStatus),
+            remoteStatus: (_input, options) =>
+              Effect.sync(() => {
+                remoteStatusRefreshUpstreamValues.push(options?.refreshUpstream);
+                return remoteStatus;
+              }),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+            pullCurrentBranch: () =>
+              Effect.sync(() => {
+                pullCalls += 1;
+                remoteStatus = { ...remoteStatus, behindCount: 0 };
+                return {
+                  status: "pulled" as const,
+                  refName: "main",
+                  upstreamRef: "origin/main",
+                };
+              }),
+          }),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const status = yield* broadcaster.refreshStatus("/repo", {
+          automaticRemoteRefreshInterval: Effect.succeed(Duration.seconds(0)),
+        });
+
+        assert.equal(pullCalls, 1);
+        assert.equal(status.behindCount, 0);
+        assert.deepStrictEqual(remoteStatusRefreshUpstreamValues, [false, false]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("reuses the cached VCS status across repeated reads", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

@@ -11,6 +11,7 @@ import {
   resolveGitActionProgressPresentation,
   resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
+  gitStatusRefreshInput,
   resolveQuickAction,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
@@ -1243,5 +1244,18 @@ describe("resolveAutoFeatureBranchName", () => {
   it("falls back to feature/update when no preferred name is provided", () => {
     const ref = resolveAutoFeatureBranchName(["main"]);
     assert.equal(ref, "feature/update");
+  });
+});
+
+describe("gitStatusRefreshInput", () => {
+  it("marks a window-focus refresh so a zero fetch interval can skip the fetch", () => {
+    assert.deepEqual(gitStatusRefreshInput("/repo", "window-focus"), {
+      cwd: "/repo",
+      windowFocus: true,
+    });
+  });
+
+  it("leaves an explicit refresh unmarked", () => {
+    assert.deepEqual(gitStatusRefreshInput("/repo", "explicit"), { cwd: "/repo" });
   });
 });

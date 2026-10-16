@@ -108,6 +108,16 @@ export const VcsStatusInput = Schema.Struct({
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
+export const VcsRefreshStatusInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  /**
+   * Set only by the window focus and visibility refresh. The server then
+   * skips the remote fetch when the Git fetch interval is 0.
+   */
+  windowFocus: Schema.optional(Schema.Boolean),
+});
+export type VcsRefreshStatusInput = typeof VcsRefreshStatusInput.Type;
+
 export const VcsStatusSubscriptionInput = Schema.Struct({
   ...VcsStatusInput.fields,
   /** Passive observers receive cached remote status without retaining its refresh loop. */

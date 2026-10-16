@@ -481,3 +481,16 @@ export function resolveLiveThreadBranchUpdate(input: {
 }
 
 export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+
+export type GitStatusRefreshTrigger = "window-focus" | "explicit";
+
+/**
+ * Window focus and visibility are the only refreshes that report themselves.
+ * The server uses that flag to skip the remote fetch when the interval is 0.
+ */
+export function gitStatusRefreshInput(
+  cwd: string,
+  trigger: GitStatusRefreshTrigger,
+): { readonly cwd: string; readonly windowFocus?: true } {
+  return trigger === "window-focus" ? { cwd, windowFocus: true } : { cwd };
+}
