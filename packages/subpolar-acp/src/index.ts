@@ -373,11 +373,11 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
 
 /** Build a local ACP agent backed by Subpolar's stateless runtime and Pi adapter. */
 export const layer = (stdio: Stdio.Stdio, options: SubpolarAcpOptions = {}) =>
-  Layer.scoped(AcpAgent.AcpAgent, makeAgent(stdio, options));
+  Layer.effect(AcpAgent.AcpAgent, makeAgent(stdio, options));
 
 /** Build a stdio agent using the host's Node stdin/stdout services. */
 export const layerStdio = (options: SubpolarAcpOptions = {}) =>
-  Layer.scoped(
+  Layer.effect(
     AcpAgent.AcpAgent,
     Effect.flatMap(Effect.service(Stdio.Stdio), (stdio) => makeAgent(stdio, options)),
   );

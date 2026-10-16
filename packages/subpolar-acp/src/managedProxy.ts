@@ -230,7 +230,10 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
         if (initialized.protocolVersion !== initializeRequest.protocolVersion) {
           throw new Error("Managed ACP worker negotiated an incompatible protocol version");
         }
-        const created = await Effect.runPromise(workerClient.agent.createSession(request));
+        const created = await Effect.runPromise(workerClient.agent.createSession({
+          ...request,
+          mcpServers: request.mcpServers ?? [],
+        }));
         const session: WorkerSession = {
           environment: target,
           sessionId: started.sessionId,
@@ -310,11 +313,11 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
 }
 
 export function layerManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions) {
-  return Layer.scoped(AcpAgent.AcpAgent, makeManagedAcpProxy(stdio, options));
+  return Layer.effect(AcpAgent.AcpAgent, makeManagedAcpProxy(stdio, options));
 }
 
 export const layerManagedStdio = (options: ManagedAcpProxyOptions) =>
-  Layer.scoped(AcpAgent.AcpAgent,
+  Layer.effect(AcpAgent.AcpAgent,
     Effect.flatMap(Effect.service(Stdio.Stdio), (stdio) =>
       makeManagedAcpProxy(stdio, options),
     ));

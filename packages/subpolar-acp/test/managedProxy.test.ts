@@ -22,6 +22,8 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
   const outputs = new Map<string, ReturnType<typeof yieldQueue>>();
   let markCancelled!: () => void;
   const cancelled = new Promise<void>((resolve) => { markCancelled = resolve; });
+  let markPermissionResponse!: () => void;
+  const permissionResponse = new Promise<void>((resolve) => { markPermissionResponse = resolve; });
   let nextSession = 0;
   const manager = {
     startManagedSession: async (request: EnvironmentRequest, command: readonly string[], process?: EnvironmentManagedSessionRequest) => {
@@ -39,7 +41,10 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
       for (const line of text.trim().split("\n")) {
         if (!line) continue;
         const message = JSON.parse(line) as { id?: string | number; method?: string; params?: unknown };
-        if (message.id === 77) calls.push({ method: "permission-response", data: JSON.stringify(message) });
+        if (message.result && typeof message.result === "object" && JSON.stringify(message.result).includes("allow-once")) {
+          calls.push({ method: "permission-response", data: JSON.stringify(message) });
+          markPermissionResponse();
+        }
         if (message.method === "session/cancel") markCancelled();
         if (message.method === "initialize") {
           output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {
@@ -54,7 +59,8 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
           if (options.requestPermission) {
             output.push(JSON.stringify({ jsonrpc: "2.0", id: 77, method: "session/request_permission", params: {
               sessionId: `worker-${sessionId}`,
-              toolCall: { toolCallId: "tool-1", kind: "other", status: "pending", title: "test", rawInput: { command: "pwd" } },
+              title: "test",
+              subject: { type: "command", command: "pwd", cwd: "/workspaces/project-a" },
               options: [{ optionId: "allow-once", name: "Allow", kind: "allow_once" }],
             } }));
           }
@@ -87,7 +93,7 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
       outputs.get(sessionId)?.end();
     },
   } as unknown as EnvironmentManager;
-  return { manager, calls, cancelled };
+  return { manager, calls, cancelled, permissionResponse };
 }
 
 function yieldQueue() {
@@ -116,12 +122,17 @@ function yieldQueue() {
 const send = (input: Queue.Queue<Uint8Array, Cause.Done<void>>, message: unknown) =>
   Queue.offer(input, encoder.encode(`${JSON.stringify(message)}\n`));
 
+const pendingMessages: Array<Record<string, unknown>> = [];
+
 async function readMessage(output: Queue.Queue<string>, matches: (message: Record<string, unknown>) => boolean) {
   while (true) {
+    const pendingIndex = pendingMessages.findIndex(matches);
+    if (pendingIndex >= 0) return pendingMessages.splice(pendingIndex, 1)[0]!;
     let line = "";
     while (!line.includes("\n")) line += await Effect.runPromise(Queue.take(output));
     const message = JSON.parse(line.slice(0, line.indexOf("\n"))) as Record<string, unknown>;
     if (matches(message)) return message;
+    pendingMessages.push(message);
   }
 }
 
@@ -199,14 +210,15 @@ test("managed proxy sends worker permission requests to the T3 ACP client and fo
   await readMessage(output, (message) => message.id === 2);
   await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-managed-1", prompt: [{ type: "text", text: "run a command" }] } }));
   const permission = await readMessage(output, (message) => message.method === "session/request_permission");
-  expect(permission.params).toMatchObject({ sessionId: "worker-managed-1", toolCall: { toolCallId: "tool-1" } });
+  expect(permission.params).toMatchObject({ sessionId: "worker-managed-1", title: "test", subject: { type: "command" } });
   await Effect.runPromise(send(input, {
     jsonrpc: "2.0",
     id: permission.id,
     result: { outcome: { outcome: "selected", optionId: "allow-once" } },
   }));
   await readMessage(output, (message) => message.id === 3);
-  expect(fake.calls.some((call) => call.method === "permission-response" && call.data?.includes('"id":77'))).toBe(true);
+  await fake.permissionResponse;
+  expect(fake.calls.some((call) => call.method === "permission-response" && call.data?.includes("allow-once"))).toBe(true);
 
   await Effect.runPromise(send(input, { jsonrpc: "2.0", method: "session/cancel", params: { sessionId: "worker-managed-1" } }));
   await fake.cancelled;
