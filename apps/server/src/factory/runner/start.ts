@@ -43,7 +43,6 @@ import { newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runI
 import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import type { BoundGitHub, GitHubError, IssueDetail } from "../tracker/github.ts";
-import { ThreadNotFoundError } from "../t3/sessions.ts";
 import type { FactorySessions, Model, SessionsError } from "../t3/sessions.ts";
 import {
   CANNOT_CONFIRM,
@@ -55,7 +54,8 @@ import {
   statusBody,
   stuckComment,
 } from "./messages.ts";
-import { readProgress, type Seen } from "./progress.ts";
+import { APPROVAL_RECHECKED, LAUNCH_SENDING, readProgress, type Seen } from "./progress.ts";
+import { describe, finishBuilding, goStuck, type Progress } from "./run.ts";
 
 /**
  * What the claim asks of the tracker: the subset of `makeGitHub` it calls, with the process
@@ -402,6 +402,7 @@ const begin = (
       );
     }
     const at: Progress = {
+      step: "start",
       state: seen.state ?? claimed.next,
       threadId: seen.threadId,
       worktree: seen.worktree,
@@ -457,7 +458,7 @@ const begin = (
       }
       yield* ledger(() =>
         out.append(
-          { event: "step_changed", data: { step: "approval-rechecked" } },
+          { event: "step_changed", data: { step: APPROVAL_RECHECKED } },
           makeCause("start", "approval-rechecked"),
         ),
       );
@@ -465,27 +466,6 @@ const begin = (
     if (at.state !== "building") yield* finishBuilding(ctx, issue, out, at, threadId);
     return { kind: "started", run, threadId };
   });
-
-/**
- * Where the issue stands while the stuck actions are applied. `threadId`, `worktree` and
- * `worktreeDone` start from the ledger and move as this call launches and stops the session.
- */
-interface Progress {
-  state: State;
-  threadId: string | null;
-  worktree: string | null;
-  worktreeDone: boolean;
-  readonly seen: Seen;
-}
-
-/** The words for what a failed call said: its message when it has one. */
-const describe = (cause: unknown): string =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "message" in cause &&
-  typeof cause.message === "string"
-    ? cause.message
-    : String(cause);
 
 type Launch =
   | { readonly ok: true; readonly threadId: string; readonly worktree: string | null }
@@ -521,7 +501,7 @@ const launchSession = (
     if (!seen.launchSent) {
       yield* ledger(() =>
         out.append(
-          { event: "step_changed", data: { step: "launch-sending" } },
+          { event: "step_changed", data: { step: LAUNCH_SENDING } },
           makeCause("start", "launch-sending"),
         ),
       );
@@ -561,158 +541,6 @@ const launchSession = (
       ),
     );
     return { ok: true, threadId, worktree: worktreePath };
-  });
-
-/** The label, the status comment and the ledger line that follow a launch. Safe to repeat. */
-const finishBuilding = (
-  ctx: StartContext,
-  issue: number,
-  out: Ledger,
-  at: Progress,
-  threadId: string,
-): Effect.Effect<void, StartError> =>
-  Effect.gen(function* () {
-    const building = yield* Effect.fromResult(transition(at.state, { kind: "session-starting" }));
-    for (const action of building.actions) {
-      switch (action.kind) {
-        case "set-label":
-          yield* ctx.tracker.setState(issue, action.state);
-          break;
-        case "launch-session":
-          // Launched already.
-          break;
-        case "update-status-comment":
-          yield* ctx.tracker.upsertStatusComment(
-            issue,
-            ctx.trackerUser,
-            statusBody("building", ctx.machine, threadId, null),
-          );
-          break;
-        default:
-          return yield* new InvalidTransition({ state: at.state, event: "session-starting" });
-      }
-    }
-    yield* ledger(() =>
-      out.append(
-        { event: "state_changed", data: { from: at.state, to: building.next } },
-        makeCause("start", "session-started"),
-      ),
-    );
-    at.state = building.next;
-  });
-
-/**
- * Stops the session before the run goes stuck: archives the thread, then removes its worktree
- * unless the ledger says that is done. An archive or a read of the thread that fails fails the
- * start with nothing written, and the next pass archives again. A worktree that cannot be
- * removed is written down and does not stop the run.
- */
-const stopSession = (
-  ctx: StartContext,
-  out: Ledger,
-  at: Progress,
-): Effect.Effect<void, StartError> =>
-  Effect.gen(function* () {
-    if (at.threadId === null) return;
-    yield* ctx.sessions.archive(at.threadId);
-    if (at.worktreeDone) return;
-    const reported = yield* ctx.sessions.thread(at.threadId).pipe(
-      Effect.map((thread) => thread.worktreePath),
-      Effect.catchIf(isThreadNotFound, () => Effect.succeed(null)),
-    );
-    const path = reported ?? at.worktree;
-    if (path !== null) {
-      const removed = yield* Effect.result(ctx.sessions.removeWorktree(path));
-      if (removed._tag === "Success") {
-        yield* ledger(() =>
-          out.append(
-            { event: "worktree_removed", data: { path } },
-            makeCause("start", "worktree-removed"),
-          ),
-        );
-      } else {
-        yield* ledger(() =>
-          out.append(
-            {
-              event: "worktree_remove_failed",
-              data: { path, error: describe(removed.failure.cause) },
-            },
-            makeCause("start", "worktree-remove-failed"),
-          ),
-        );
-      }
-    }
-    at.worktreeDone = true;
-  });
-
-const isThreadNotFound = Schema.is(ThreadNotFoundError);
-
-/** Why a run goes stuck: `reason` is the public one; `detail`, when there is one, stays in the ledger. */
-interface Stop {
-  readonly reason: string;
-  readonly detail?: string;
-}
-
-/**
- * The stuck path. The session is stopped first (see `stopSession`), so a failure of that leaves
- * the issue as it was and the next pass tries again. Then the actions `lifecycle.transition`
- * asks for on a failure, in order, then the `state_changed` line and the summary line. The
- * comment says `stop.reason`; the ledger's `stuck` line says `stop.detail` when there is one. A
- * comment is skipped when the ledger already records it; the label, the release and the status
- * comment are repeated safely. `code` is the reason of every line it writes.
- */
-const goStuck = (
-  ctx: StartContext,
-  issue: number,
-  out: Ledger,
-  at: Progress,
-  code: string,
-  stop: Stop,
-): Effect.Effect<void, StartError> =>
-  Effect.gen(function* () {
-    const cause = makeCause("start", code);
-    if (at.state === "stuck") {
-      yield* ledger(() => out.finish("stuck", null, null, cause));
-      return;
-    }
-    yield* stopSession(ctx, out, at);
-    const recorded = stop.detail ?? stop.reason;
-    const failed = yield* Effect.fromResult(
-      transition(at.state, { kind: "failed", reason: recorded }),
-    );
-    let movedTo: State | null = null;
-    let stuckPosted = at.seen.stuck !== null;
-    for (const action of failed.actions) {
-      switch (action.kind) {
-        case "post-stuck-comment":
-          if (!stuckPosted) {
-            yield* ctx.tracker.postComment(issue, stuckComment(stop.reason));
-            yield* ledger(() => out.append({ event: "stuck", data: { reason: recorded } }, cause));
-            stuckPosted = true;
-          }
-          break;
-        case "set-label":
-          yield* ctx.tracker.setState(issue, action.state);
-          movedTo = action.state;
-          break;
-        case "unassign":
-          yield* ctx.tracker.unassign(issue, ctx.trackerUser);
-          break;
-        case "update-status-comment":
-          yield* ctx.tracker.upsertStatusComment(
-            issue,
-            ctx.trackerUser,
-            statusBody(movedTo ?? at.state, ctx.machine, at.threadId, null),
-          );
-          break;
-        default:
-          return yield* new InvalidTransition({ state: at.state, event: "failed" });
-      }
-    }
-    yield* ledger(() =>
-      out.append({ event: "state_changed", data: { from: at.state, to: failed.next } }, cause),
-    );
-    yield* ledger(() => out.finish("stuck", null, null, cause));
   });
 
 /**

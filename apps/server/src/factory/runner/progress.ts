@@ -27,7 +27,10 @@ export interface Seen {
   readonly finished: boolean;
 }
 
-const LAUNCH_SENDING = "launch-sending";
+/** The ledger step that says a launch call is about to be sent. */
+export const LAUNCH_SENDING = "launch-sending";
+/** The ledger step that says the issue text was checked again after the launch. */
+export const APPROVAL_RECHECKED = "approval-rechecked";
 
 const field = (data: unknown, key: string): unknown =>
   typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
@@ -53,7 +56,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (approvedAt === null && typeof step === "string" && step.startsWith("approved ")) {
           approvedAt = step.slice("approved ".length);
         }
-        if (step === "approval-rechecked") rechecked = true;
+        if (step === APPROVAL_RECHECKED) rechecked = true;
         if (
           typeof step === "string" &&
           (step === LAUNCH_SENDING || step.startsWith(`${LAUNCH_SENDING} resumed-from `))
