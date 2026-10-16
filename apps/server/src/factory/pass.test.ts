@@ -3205,4 +3205,20 @@ describe("pr-open runs: gated again only when something moved", () => {
       assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
     }),
   );
+
+  it.effect("a pr-open run is gated again last, after the claims", () =>
+    Effect.gen(function* () {
+      // A claim of an issue a person relabelled `factory:ready` ends that issue's older pr-open
+      // run, and a re-gate takes a gate slot: so the claims go first, as softfac orders it.
+      const fake = new Fake();
+      fake.runIn(40, BUILDING);
+      pr(fake, 41);
+      fake.baseTips[REPO] = MOVED;
+      fake.ready[REPO] = [1];
+      fake.pushStart(`${REPO}#1`, started(1));
+      yield* pass(fake, machine([REPO], 2));
+      const order = fake.calls.filter((c) => /^(advance|start|gate) /.test(c));
+      assert.deepEqual(order, [`advance ${REPO}#40`, `start ${REPO}#1`, `gate ${REPO}#41`]);
+    }),
+  );
 });
