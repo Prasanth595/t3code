@@ -1,8 +1,10 @@
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  DEFAULT_SERVER_SETTINGS,
   SourceControlProviderKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -1135,6 +1137,11 @@ export default function GitActionsControl({
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
+  const projectSettings = resolveProjectSettings(
+    serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+    activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
+  ).settings;
+  const { pullRequestCreationEnabled } = projectSettings;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -1181,13 +1188,31 @@ export default function GitActionsControl({
   }, [gitStatusForActions?.isDefaultRef]);
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasPrimaryRemote),
-    [gitStatusForActions, hasPrimaryRemote, isGitActionRunning],
+    () =>
+      buildMenuItems(
+        gitStatusForActions,
+        isGitActionRunning,
+        hasPrimaryRemote,
+        pullRequestCreationEnabled,
+      ),
+    [gitStatusForActions, hasPrimaryRemote, isGitActionRunning, pullRequestCreationEnabled],
   );
   const quickAction = useMemo(
     () =>
-      resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
-    [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning],
+      resolveQuickAction(
+        gitStatusForActions,
+        isGitActionRunning,
+        isDefaultRef,
+        hasPrimaryRemote,
+        pullRequestCreationEnabled,
+      ),
+    [
+      gitStatusForActions,
+      hasPrimaryRemote,
+      isDefaultRef,
+      isGitActionRunning,
+      pullRequestCreationEnabled,
+    ],
   );
   const quickActionDisabledReason = !canWriteSourceControl
     ? "This connection cannot change source control."

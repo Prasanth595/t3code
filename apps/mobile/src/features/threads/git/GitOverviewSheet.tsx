@@ -10,7 +10,8 @@ import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
 } from "@t3tools/shared/threadPullRequests";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommonActions,
   StackActions,
@@ -87,6 +88,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       ),
     [selectedThread?.pullRequests, supportsLinkedPrSnapshots],
   );
+  const { pullRequestCreationEnabled } = resolveProjectSettings(
+    selectedEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+    selectedThread?.projectId ?? null,
+  ).settings;
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
@@ -113,8 +118,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
   const menuItems = useMemo(
-    () => (isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : []),
-    [busy, gitStatus.data, hasPrimaryRemote, isRepo],
+    () =>
+      isRepo
+        ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote, pullRequestCreationEnabled)
+        : [],
+    [busy, gitStatus.data, hasPrimaryRemote, isRepo, pullRequestCreationEnabled],
   );
 
   const sheetMenuItems = useMemo(
