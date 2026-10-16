@@ -793,8 +793,6 @@ export function desiredState(
   };
 }
 
-// ---------------------------------------------------------------- MM-1114: fractions to pixels
-
 type Json = Readonly<Record<string, unknown>>;
 const isRecord = (value: unknown): value is Json =>
   typeof value === "object" && value !== null && !Array.isArray(value);
