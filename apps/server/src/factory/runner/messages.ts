@@ -127,24 +127,41 @@ export const sessionMayExistNote = (what: string, commandId: string): string =>
 /** How the first line of a stuck session's message begins when gh acts as another account. */
 export const WRONG_ACCOUNT_PREFIX = "the session's gh account is ";
 
-/** Why a launch continues from an earlier run's branch, which the first message says in the factory's words. */
-export type ResumeAfter = "time-limit" | "interrupted";
+/**
+ * What a launch continues from, and why. The worktree is made from `branch`. `time-limit` and
+ * `interrupted` continue an earlier run of this issue (`run`); `failed-regate` continues the
+ * run's own pull request at `prUrl`, which passed the gate and failed it when it ran again.
+ */
+export type ResumeFrom = EarlierRunResume | RegateResume;
 
-/** The earlier run and branch a launch continues from. */
-export interface ResumeFrom {
+/** A launch that continues an earlier run's branch. */
+export interface EarlierRunResume {
+  readonly after: "time-limit" | "interrupted";
   readonly run: RunId;
   readonly branch: string;
-  readonly after: ResumeAfter;
+}
+
+/** A launch that continues the run's own pull request, whose re-gate failed. */
+export interface RegateResume {
+  readonly after: "failed-regate";
+  readonly branch: string;
+  readonly prUrl: string;
 }
 
 /**
- * The paragraph of a resumed launch. The worktree holds the earlier run's commits and the session
- * is to go on from them; the branch is not named, the session is in it.
+ * The paragraph of a resumed launch, in the factory's fixed words. The worktree holds the earlier
+ * commits and the session is to go on from them.
  */
-const resumeParagraph = ({ run, after }: ResumeFrom): string =>
-  after === "time-limit"
-    ? `A previous attempt of this issue (${runIdToString(run)}) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over.`
-    : `A previous attempt of this issue (${runIdToString(run)}) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.`;
+const resumeParagraph = (resumed: ResumeFrom): string => {
+  switch (resumed.after) {
+    case "time-limit":
+      return `A previous attempt of this issue (${runIdToString(resumed.run)}) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over.`;
+    case "interrupted":
+      return `A previous attempt of this issue (${runIdToString(resumed.run)}) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.`;
+    case "failed-regate":
+      return `The pull request ${resumed.prUrl} of this issue passed the gate, and the gate failed when it ran again. The worktree holds that pull request's branch at its tip on origin. Fix the failure below from there and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`;
+  }
+};
 
 /**
  * The first message of a session for a GitHub issue: invokes `/factory`, says nobody is in the

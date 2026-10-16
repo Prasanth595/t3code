@@ -22,7 +22,7 @@ import {
   questionsComment,
   sessionMayExistNote,
   stuckComment,
-  type ResumeFrom,
+  type EarlierRunResume,
 } from "./messages.ts";
 
 /** The paragraph that names the GitHub identity, for the login `rawphp` and the `gh` directory `/gh/rawphp`. */
@@ -34,6 +34,18 @@ describe("launchMessage", () => {
     assert.strictEqual(
       launchMessage("rawphp/softfac", 10, "rawphp", "/gh/rawphp"),
       `/factory rawphp/softfac#10\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.\n\n${IDENTITY_WORDS}`,
+    );
+  });
+
+  it("for a failed re-gate names the pull request and the branch the session pushes to", () => {
+    const message = launchMessage("rawphp/softfac", 10, "rawphp", "/gh/rawphp", {
+      branch: "t3code/abc",
+      prUrl: "https://github.com/rawphp/softfac/pull/12",
+      after: "failed-regate",
+    });
+    assert.strictEqual(
+      message,
+      `/factory rawphp/softfac#10\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.\n\nThe pull request https://github.com/rawphp/softfac/pull/12 of this issue passed the gate, and the gate failed when it ran again. The worktree holds that pull request's branch at its tip on origin. Fix the failure below from there and push your commits to the same branch with \`git push origin HEAD:t3code/abc\`, so the same pull request is updated. Do not open another pull request.\n\n${IDENTITY_WORDS}`,
     );
   });
 
@@ -73,7 +85,7 @@ describe("launchMessage", () => {
 });
 
 describe("launchMessage: a resumed run", () => {
-  const resumed = (after: ResumeFrom["after"]): ResumeFrom => ({
+  const resumed = (after: EarlierRunResume["after"]): EarlierRunResume => ({
     run: { repo: "acme/widgets", issue: "42", attempt: 1 },
     branch: "t3code/abc",
     after,

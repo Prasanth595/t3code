@@ -63,8 +63,7 @@ import {
   TEXT_CHANGED,
   launchMessage,
   sessionMayExistNote,
-  type ResumeAfter,
-  type ResumeFrom,
+  type EarlierRunResume,
 } from "./messages.ts";
 import {
   APPROVAL_RECHECKED,
@@ -762,7 +761,7 @@ const recordedResume = (
   ctx: StartContext,
   run: RunId,
   branch: string,
-): Effect.Effect<ResumeFrom, LedgerError> =>
+): Effect.Effect<EarlierRunResume, LedgerError> =>
   Effect.gen(function* () {
     const previous = yield* previousRun(ctx, run);
     return {
@@ -789,7 +788,7 @@ const resumeFrom = (
   ctx: StartContext,
   run: RunId,
   issue: number,
-): Effect.Effect<ResumeFrom | null, StartError> =>
+): Effect.Effect<EarlierRunResume | null, StartError> =>
   Effect.gen(function* () {
     const previous = yield* previousRun(ctx, run);
     if (previous === null) return null;
@@ -825,7 +824,7 @@ export const isPlainRefName = (name: string): boolean =>
  */
 const continuation = (
   entries: ReadonlyArray<Entry>,
-): { readonly branch: string; readonly after: ResumeAfter } | null => {
+): { readonly branch: string; readonly after: "time-limit" | "interrupted" } | null => {
   if (entries.some((e) => e.event === "finished" && field(e.data, "outcome") === "needs-info")) {
     return null;
   }

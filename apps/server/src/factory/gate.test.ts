@@ -24,6 +24,7 @@ import {
   gateRoot,
   layer as gateLayer,
   makeWorkspace,
+  regateResultsComment,
   type CommandResult,
   type GateError,
   type GateInput,
@@ -1243,6 +1244,19 @@ it("the results comment says the commands ran in a fresh checkout of the pr head
   assert.strictEqual(
     gateResultsComment([result("cargo test", 0, 1_000)], 2, SOME_SHA, BASE),
     `**Factory gate: passed** (attempt 2, run by the factory in a fresh checkout of the pull request's head \`${SHORT}\` merged with the base branch tip \`${BASE_SHORT}\`)\n\n| Command | Exit | Time |\n|---|---|---|\n| \`cargo test\` | 0 | 1.0 s |`,
+  );
+});
+
+it("the comment for a pass on a pull request that was ready already says it passed again", () => {
+  assert.strictEqual(
+    regateResultsComment([result("cargo test", 0, 1_000)], 2, SOME_SHA, BASE),
+    `**Factory gate: passed again** (attempt 2, run by the factory in a fresh checkout of the pull request's head \`${SHORT}\` merged with the base branch tip \`${BASE_SHORT}\`)\n\n| Command | Exit | Time |\n|---|---|---|\n| \`cargo test\` | 0 | 1.0 s |`,
+  );
+  // The same table as the first pass's comment: only the verdict differs.
+  const first = gateResultsComment([result("a | b", 1, 12_345)], 1, SOME_SHA, "");
+  assert.strictEqual(
+    regateResultsComment([result("a | b", 1, 12_345)], 1, SOME_SHA, ""),
+    first.replace("passed**", "passed again**"),
   );
 });
 

@@ -463,7 +463,8 @@ export interface Unbound {
  * Binds a pull request to a run: it exists, is in this repo and not a fork, merges into `base`,
  * and has as its head the session's own `branch`, or the branch it `resumedFrom`. The text came from a session that issue text
  * can steer, so it must not be able to name someone else's pull request. Whether it is a draft
- * is asked after, so only a bound one is ever put back to draft.
+ * is asked after, so only a bound one is ever put back to draft. `resumedFrom` is the branch a
+ * relaunched session was started from: its pull request is the session's too.
  */
 export const checkBinding = (
   pull: PullRequest | null,
@@ -486,7 +487,9 @@ export const checkBinding = (
   if (branch === null && resumedFrom === null) {
     return { public: `${reported} the session has no branch` };
   }
-  // A resumed run may have the draft its earlier session opened on the branch it resumed from.
+  // A session relaunched for a failed re-gate pushes to the pull request's branch, which its
+  // `session_launched` line names; a resumed run may hold the draft its earlier session opened on
+  // the branch it resumed from.
   if (pull.headRef !== branch && pull.headRef !== resumedFrom) {
     return {
       public: `${reported} its branch is not this session's branch`,
