@@ -422,7 +422,8 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
  * runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
  * its ledger, so a run cut short after the launch was sent is finished and its session never runs
  * on untracked. A building run has its text watched and its session's result read by `advance`.
- * The gate and the states after it are later steps. A run of a repo that is not loaded is left
+ * A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
+ * thread is archived and its slot freed. The gate and the states after it are later steps. A run of a repo that is not loaded is left
  * alone. None of it is a new claim, so none is counted as one. An issue put back to `ready` is
  * left to the claim step, which finishes its run when it claims the issue.
  */
@@ -449,7 +450,11 @@ const workRuns = (
       } else if (yield* withinLimit(world, repo, info, notes, pass)) {
         if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
         else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
-        // Any other state (`needs-info`, `pr-open`, `stuck`) waits for a later step.
+        // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
+        else if (info.state === "needs-info" || info.state === "stuck") {
+          yield* advanceRun(world, repo, info, notes, pass);
+        }
+        // `pr-open` waits for the gate, a later step.
       }
       yield* known.refresh(world, pass, name, issue);
       yield* pass.flush(notes, info.id);
@@ -522,10 +527,22 @@ const followBuilding = (
   pass: Pass,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const run = runIdToString(info.id);
     const watched = yield* Effect.result(world.watch(repo, info.id));
     if (watched._tag === "Failure") return pass.failed(notes, "watch", watched.failure);
-    if (watched.success.kind === "stopped") return pass.stuck(notes, run);
+    if (watched.success.kind === "stopped") return pass.stuck(notes, runIdToString(info.id));
+    yield* advanceRun(world, repo, info, notes, pass);
+  });
+
+/** `advance` for a run, and what it did in a line. */
+const advanceRun = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const run = runIdToString(info.id);
     const advanced = yield* Effect.result(world.advance(repo, info.id));
     // A `NotBuildingError` is a run that finished meanwhile: softfac prints it as an error too.
     if (advanced._tag === "Failure") return pass.failed(notes, "advance", advanced.failure);
