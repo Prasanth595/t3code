@@ -730,17 +730,32 @@ export const make = Effect.gen(function* () {
       if (alert) {
         const preferences = parsePreferences(currentTarget.preferences_json);
         const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
+        // Reading a thread keeps its phase and updatedAt, so a job queued
+        // before the visit still updates the card but must not ring for it.
+        const visitedThreads = new Set(
+          (yield* activityRows
+            .listForUser({ userId: input.target.user_id })
+            .pipe(Effect.orElseSucceed(() => [])))
+            .filter((row) => row.visited)
+            .map((row) => `${row.environmentId}\u0000${row.threadId}`),
+        );
+        const alertAggregate = aggregate && {
+          ...aggregate,
+          activities: aggregate.activities.filter(
+            (row) => !visitedThreads.has(`${row.environmentId}\u0000${row.threadId}`),
+          ),
+        };
         alert =
-          !preferences?.notificationsEnabled || !aggregate
+          !preferences?.notificationsEnabled || !alertAggregate
             ? null
             : (alertForAttentionTransition({
                 previousAggregate,
-                nextAggregate: aggregate,
+                nextAggregate: alertAggregate,
                 preferences,
               }) ??
               alertForNewlyTerminal({
                 previousAggregate,
-                nextAggregate: aggregate,
+                nextAggregate: alertAggregate,
                 preferences,
                 nowMs: now.epochMilliseconds,
                 includeUnobserved: true,

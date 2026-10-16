@@ -1544,6 +1544,64 @@ describe("ApnsDeliveries", () => {
     );
   });
 
+  it.effect("updates a queued Done Live Activity silently once the thread is read", () => {
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const completedAt = "1970-01-01T00:00:01.000Z";
+    const completedAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activeCount: 0,
+      updatedAt: completedAt,
+      activities: [
+        {
+          ...aggregate.activities[0]!,
+          phase: "completed",
+          status: "Done",
+          updatedAt: completedAt,
+        },
+      ],
+    };
+    const payload = makeApnsDeliveryJobPayload({
+      kind: "live_activity_update",
+      userId: target.user_id,
+      deviceId: target.device_id,
+      token: target.activity_push_token ?? "activity-token",
+      aggregate: completedAggregate,
+      alert: { title: "Thread", body: "Done: Project" },
+      createdAt: completedAt,
+      expiresAt: "1970-01-01T00:10:00.000Z",
+      jobId: "job-update-visited",
+    });
+    const signed = signApnsDeliveryJob({ secret: config.apnsDeliveryJobSigningSecret, payload });
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        requests.push(request);
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.processSignedJob(signed);
+
+      expect(requests).toHaveLength(1);
+      const body = requests[0]?.body;
+      const sent = JSON.parse(
+        new TextDecoder().decode(body?._tag === "Uint8Array" ? body.body : undefined),
+      );
+      expect(sent.aps["content-state"]).toBeDefined();
+      expect(sent.aps.alert).toBeUndefined();
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          currentTargets: [{ ...target, last_aggregate_json: JSON.stringify(aggregate) }],
+          activityStates: [{ ...state, phase: "completed", updatedAt: completedAt, visited: true }],
+          config: signingConfig,
+          execute,
+        }),
+      ),
+    );
+  });
+
   it.effect("skips a queued Done notification after the thread resumes working", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     let executeCount = 0;
