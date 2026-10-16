@@ -50,6 +50,7 @@ const machine = (repos: ReadonlyArray<string>, max: number): MachineConfig => ({
   maxConcurrentGates: 2,
   modelInstance: "claudeAgent",
   model: "claude-sonnet-5-5",
+  notify: true,
   repos: repos.map((repo) => ({ repo, path: `/p/${repo.replace("/", "-")}` })),
 });
 

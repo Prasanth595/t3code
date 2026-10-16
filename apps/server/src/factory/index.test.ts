@@ -405,6 +405,7 @@ describe("liveWorld", () => {
     maxConcurrentGates: 1,
     modelInstance: "claudeAgent",
     model: "claude-sonnet-5-5",
+    notify: true,
     repos: [{ repo: REPO, path: "/p" }],
   };
 
