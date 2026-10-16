@@ -705,7 +705,9 @@ const layerMakeRoutes = Layer.mergeAll(
     // Mission tools read the same registry, environment, projections, and SQL
     // as the rest of the server; their NoFun policy comes from the owner's
     // local policy file (see MissionMcpRuntime), never from a default.
-    Layer.provide(MissionMcpRuntime.layerCombined.pipe(Layer.provide(ProjectionStoreV2.layer))),
+    Layer.provide(MissionMcpRuntime.layerCombined),
+    // Both the runtime and the optional policy-only toolkit fallback read projections.
+    Layer.provide(ProjectionStoreV2.layer),
   ),
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients
