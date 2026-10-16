@@ -41,7 +41,7 @@ export function SegmentedControl<Value extends string | number>(
           width={width}
           height={height}
           dark={dark}
-          fillTop={colors["--color-screen"]}
+          fillTop={colors[dark ? "--color-screen" : "--color-grouped-card"]}
           fillBottom={colors["--color-card"]}
           edgeColor={colors["--color-foreground"]}
         />
@@ -51,7 +51,7 @@ export function SegmentedControl<Value extends string | number>(
             className="absolute bottom-[3px] start-[3px] top-[3px] rounded-full"
             style={[
               {
-                boxShadow: dark ? "0px 1px 2px #00000046" : "0px 1px 2px #0000000e",
+                boxShadow: dark ? "0px 1px 2px #00000046" : "0px 2px 3px #00000026",
               },
               selectionStyle,
             ]}
@@ -60,8 +60,8 @@ export function SegmentedControl<Value extends string | number>(
               width={segmentWidth}
               height={height - 6}
               dark={dark}
-              fillTop={colors["--color-secondary"]}
-              fillBottom={colors["--color-secondary"]}
+              fillTop={colors[dark ? "--color-secondary" : "--color-screen"]}
+              fillBottom={colors[dark ? "--color-secondary" : "--color-screen"]}
               edgeColor={colors["--color-secondary-foreground"]}
               selected
             />
@@ -147,6 +147,17 @@ function CapsuleSurface({
         height={height - 1}
         rx={(height - 1) / 2}
         fill="url(#fill)"
+      />
+      {selected && !dark ? (
+        <Rect width={width} height={height} rx={height / 2} fill="white" fillOpacity={0.85} />
+      ) : null}
+      <Rect
+        x={0.5}
+        y={0.5}
+        width={width - 1}
+        height={height - 1}
+        rx={(height - 1) / 2}
+        fill="none"
         stroke="url(#edge)"
         strokeWidth={1}
       />
