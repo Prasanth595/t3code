@@ -9,7 +9,10 @@ import {
   type TerminalBufferState,
 } from "@t3tools/client-runtime/state/terminal";
 
-import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
+import {
+  synchronizeTerminalOutput,
+  writeTerminalOutputUpdate,
+} from "../../components/ThreadTerminalDrawer";
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";
 import { loadGhosttyRuntime } from "./runtime";
 
@@ -320,6 +323,51 @@ describe("GhosttyTerminalCore snapshots", () => {
     writeTerminalOutputUpdate(core, update);
 
     expect({ type: update.type, replies }).toEqual({ type: "append", replies: ["\x1b[0n"] });
+  });
+
+  it.each([
+    { tail: "", ready: true },
+    { tail: "\x1b[?2004l", ready: false },
+  ])(
+    "preserves bracketed paste across capped replay unless disabled: $ready",
+    async ({ tail, ready }) => {
+      const core = await createCore();
+      let state = createSession("\x1b[?2004hprompt$ ");
+      const cursor = synchronizeTerminalOutput(core, state, INITIAL_TERMINAL_OUTPUT_CURSOR);
+      state = applyTerminalAttachStreamEvent(
+        state,
+        {
+          type: "output",
+          threadId: "terminal-stream-test",
+          terminalId: "term-1",
+          data: `${"background output\r\n".repeat(10)}${tail}`,
+        },
+        64,
+      );
+      expect(readTerminalOutputUpdate(state.output, cursor).type).toBe("reset");
+      expect(terminalOutputText(state.output)).not.toContain("\x1b[?2004h");
+      synchronizeTerminalOutput(core, state, cursor);
+      expect(core.isBracketedPasteMode()).toBe(ready);
+      if (ready) expect(core.encodePaste("a\nb")).toBe("\x1b[200~a\nb\x1b[201~");
+
+      state = applyTerminalAttachStreamEvent(state, {
+        type: "cleared",
+        threadId: "terminal-stream-test",
+        terminalId: "term-1",
+      });
+      synchronizeTerminalOutput(core, state, cursor);
+      expect(core.isBracketedPasteMode()).toBe(false);
+    },
+  );
+
+  it("does not reuse bracketed paste readiness from a previous attach stream", async () => {
+    const core = await createCore();
+    const initial = createSession("\x1b[?2004hprompt$ ");
+    const cursor = synchronizeTerminalOutput(core, initial, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    expect(core.isBracketedPasteMode()).toBe(true);
+
+    synchronizeTerminalOutput(core, createSession("new shell output"), cursor);
+    expect(core.isBracketedPasteMode()).toBe(false);
   });
 
   it("recovers a lagging renderer once from bounded output and resumes appending", async () => {

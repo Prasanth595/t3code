@@ -351,8 +351,9 @@ export class GhosttyTerminalCore {
     this.runtime.free(pointer, bytes.length);
   }
 
-  resetAndWrite(data: string): void {
+  resetAndWrite(data: string, preserveBracketedPaste = false): void {
     this.ensureActive();
+    const bracketedPaste = preserveBracketedPaste && this.isBracketedPasteMode();
     this.runtime.call("ghostty_terminal_reset", this.terminal);
     // RIS returns the cursor to Ghostty's built-in steady default, so the
     // embedder default has to be applied again before the replay runs.
@@ -365,6 +366,7 @@ export class GhosttyTerminalCore {
       this.ptyWriterId = 0;
     }
     try {
+      if (bracketedPaste) this.write("\x1b[?2004h");
       this.write(data);
     } finally {
       if (writer !== null && !this.disposed) {

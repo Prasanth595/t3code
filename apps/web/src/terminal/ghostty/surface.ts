@@ -729,10 +729,10 @@ export class GhosttyTerminalSurface {
     this.requestRender();
   }
 
-  resetAndWrite(data: string): void {
+  resetAndWrite(data: string, preserveBracketedPaste = false): void {
     if (this.disposed) return;
     this.lastMouseMotionData = "";
-    this.core.resetAndWrite(data);
+    this.core.resetAndWrite(data, preserveBracketedPaste);
     for (const listener of this.outputListeners) listener();
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
