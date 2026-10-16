@@ -35,14 +35,16 @@ stage=""
 smoke=""
 server_pid=""
 
+# The smoke server leads its own process group, so stopping it also stops what it spawned
+# (vp's node shim can still be downloading a runtime into the smoke HOME).
 cleanup() {
-  if [[ -n $server_pid ]] && kill -0 "$server_pid" 2>/dev/null; then
-    kill "$server_pid" 2>/dev/null || true
+  if [[ -n $server_pid ]] && kill -0 -- "-$server_pid" 2>/dev/null; then
+    kill -- "-$server_pid" 2>/dev/null || true
     for _ in $(seq 1 50); do
-      kill -0 "$server_pid" 2>/dev/null || break
+      kill -0 -- "-$server_pid" 2>/dev/null || break
       sleep 0.2
     done
-    kill -9 "$server_pid" 2>/dev/null || true
+    kill -9 -- "-$server_pid" 2>/dev/null || true
   fi
   [[ -z $smoke ]] || rm -rf "$smoke"
   [[ -z $stage ]] || rm -rf "$stage"
@@ -92,9 +94,12 @@ fail() {
 }
 
 echo "smoke: serve on 127.0.0.1:$port"
+# Job control puts the background server in a process group of its own, led by its pid.
+set -m
 HOME="$smoke/home" "$pkg/t3" serve --base-dir "$smoke/base" --host 127.0.0.1 --port "$port" \
   > "$smoke/server.log" 2>&1 &
 server_pid=$!
+set +m
 
 ok=""
 start=$SECONDS
