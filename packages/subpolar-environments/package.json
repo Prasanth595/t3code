@@ -8,7 +8,8 @@
   },
   "exports": {
     ".": "./src/index.ts",
-    "./docker": "./src/docker.ts"
+    "./docker": "./src/docker.ts",
+    "./persistence": "./src/persistence.ts"
   },
   "scripts": {
     "typecheck": "tsc-rs --noEmit",

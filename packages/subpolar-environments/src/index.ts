@@ -46,6 +46,25 @@ export interface EnvironmentManager {
   start(request: EnvironmentRequest): Promise<ManagedEnvironment>;
   stop(request: EnvironmentRequest): Promise<ManagedEnvironment>;
   remove(request: EnvironmentRequest): Promise<void>;
+  reconcile(): Promise<readonly EnvironmentReconciliationResult[]>;
+}
+
+export interface EnvironmentRegistration {
+  readonly environment: ManagedEnvironment;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface EnvironmentRegistrationStore {
+  loadAll(): Promise<readonly EnvironmentRegistration[]>;
+  save(environment: ManagedEnvironment, createdAt: string, updatedAt: string): Promise<void>;
+  remove(environmentId: string): Promise<void>;
+}
+
+export interface EnvironmentReconciliationResult {
+  readonly environmentId: string;
+  readonly environment?: ManagedEnvironment;
+  readonly error?: EnvironmentManagerError;
 }
 
 export class EnvironmentManagerError extends Error {
@@ -87,7 +106,11 @@ function stableId(identity: Omit<EnvironmentIdentity, "id">): string {
  * coalescing only; durable registrations and cross-process reconciliation are
  * responsibilities of the injected manager backend.
  */
-export function createEnvironmentManager(backend: EnvironmentBackend): EnvironmentManager {
+export function createEnvironmentManager(
+  backend: EnvironmentBackend,
+  registrations?: EnvironmentRegistrationStore,
+  now: () => Date = () => new Date(),
+): EnvironmentManager {
   if (!backend.id.trim()) throw new EnvironmentManagerError("INVALID_REQUEST", "A backend ID is required");
   const operations = new Map<string, Promise<unknown>>();
 
@@ -147,6 +170,14 @@ export function createEnvironmentManager(backend: EnvironmentBackend): Environme
     return record;
   };
 
+  const persist = async (environment: ManagedEnvironment): Promise<ManagedEnvironment> => {
+    if (!registrations) return environment;
+    const prior = (await registrations.loadAll()).find((entry) => entry.environment.id === environment.id);
+    const timestamp = now().toISOString();
+    await registrations.save(environment, prior?.createdAt ?? timestamp, timestamp);
+    return environment;
+  };
+
   const inspect = async (expected: EnvironmentIdentity) => {
     const found = await backendCall("inspect", () => backend.inspect(expected));
     return found === null ? null : validateRecord(expected, found);
@@ -158,9 +189,10 @@ export function createEnvironmentManager(backend: EnvironmentBackend): Environme
       let current = await inspect(expected);
       if (current === null) {
         current = validateRecord(expected, await backendCall("create", () => backend.create(expected)));
+        await persist(current);
       }
-      if (current.status === "ready") return current;
-      return validateRecord(expected, await backendCall("start", () => backend.start(current!)));
+      if (current.status === "ready") return persist(current);
+      return persist(validateRecord(expected, await backendCall("start", () => backend.start(current!))));
     });
   };
 
@@ -169,8 +201,8 @@ export function createEnvironmentManager(backend: EnvironmentBackend): Environme
     return withIdentityLock(expected.id, async () => {
       const current = await inspect(expected);
       if (current === null) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Environment has not been created");
-      if (current.status === "ready") return current;
-      return validateRecord(expected, await backendCall("start", () => backend.start(current)));
+      if (current.status === "ready") return persist(current);
+      return persist(validateRecord(expected, await backendCall("start", () => backend.start(current))));
     });
   };
 
@@ -179,8 +211,8 @@ export function createEnvironmentManager(backend: EnvironmentBackend): Environme
     return withIdentityLock(expected.id, async () => {
       const current = await inspect(expected);
       if (current === null) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Environment has not been created");
-      if (current.status === "stopped") return current;
-      return validateRecord(expected, await backendCall("stop", () => backend.stop(current)));
+      if (current.status === "stopped") return persist(current);
+      return persist(validateRecord(expected, await backendCall("stop", () => backend.stop(current))));
     });
   };
 
@@ -188,10 +220,35 @@ export function createEnvironmentManager(backend: EnvironmentBackend): Environme
     const expected = await identity(request);
     return withIdentityLock(expected.id, async () => {
       const current = await inspect(expected);
-      if (current === null) return;
+      if (current === null) {
+        await registrations?.remove(expected.id);
+        return;
+      }
       await backendCall("remove", () => backend.remove(current));
+      await registrations?.remove(expected.id);
     });
   };
 
-  return { identity, ensure, start, stop, remove };
+  const reconcile: EnvironmentManager["reconcile"] = async () => {
+    if (!registrations) return [];
+    const saved = await registrations.loadAll();
+    return Promise.all(saved.map(async ({ environment }) => {
+      try {
+        const currentIdentity = await identity(environment);
+        if (currentIdentity.id !== environment.id) {
+          throw new EnvironmentManagerError("OWNERSHIP_MISMATCH", "Registered environment path no longer resolves to its original identity");
+        }
+        return { environmentId: environment.id, environment: await ensure(environment) };
+      } catch (error) {
+        return {
+          environmentId: environment.id,
+          error: error instanceof EnvironmentManagerError
+            ? error
+            : new EnvironmentManagerError("BACKEND_FAILURE", "Environment reconciliation failed", { cause: error }),
+        };
+      }
+    }));
+  };
+
+  return { identity, ensure, start, stop, remove, reconcile };
 }
