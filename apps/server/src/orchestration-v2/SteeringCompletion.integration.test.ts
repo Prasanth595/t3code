@@ -709,3 +709,109 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
     }),
   ),
 );
+
+// A /compact turn cannot take a steer. The steer joins the message a
+// compact-first send queued behind it, or queues on its own.
+it.effect.each([{ queued: true }, { queued: false }])(
+  "folds a steer during compaction into the queued message (queued: $queued)",
+  ({ queued }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace(`steer-during-compaction-${queued}`);
+        const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+          instanceId,
+          driver,
+          getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+          planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+          openSession: () => Effect.die("unused"),
+        };
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const threadId = ThreadId.make("thread:steer-during-compaction");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create"),
+            threadId,
+            projectId: ProjectId.make("project:steer-during-compaction"),
+            title: "Steer during compaction",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("compact"),
+            threadId,
+            messageId: MessageId.make("message:compact"),
+            text: "/compact",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const compactRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          if (queued) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("queued"),
+              threadId,
+              messageId: MessageId.make("message:queued"),
+              text: "first follow-up",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          }
+          const screenshot = {
+            type: "image",
+            id: "steer-screenshot",
+            name: "image.png",
+            mimeType: "image/png",
+            sizeBytes: 10,
+          } as const;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("steer"),
+            threadId,
+            messageId: MessageId.make("message:steer"),
+            text: "second thought",
+            attachments: [screenshot],
+            dispatchMode: { type: "steer_active", targetRunId: compactRun.id },
+            createdBy: "user",
+            creationSource: "web",
+          });
+
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+          assert.equal(queuedRuns.length, 1);
+          const queuedMessage = projection.messages.find(
+            (message) => message.id === queuedRuns[0]?.userMessageId,
+          );
+          assert.equal(queuedMessage?.id, MessageId.make("message:steer"));
+          assert.equal(
+            queuedMessage?.text,
+            queued ? "first follow-up\n\nsecond thought" : "second thought",
+          );
+          assert.deepEqual(queuedMessage?.attachments, [screenshot]);
+          assert.equal(
+            projection.runs.filter((run) => run.status === "cancelled").length,
+            queued ? 1 : 0,
+          );
+          assert.equal(projection.runs.find((run) => run.id === compactRun.id)?.status, "starting");
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              { name: `steer-during-compaction-${queued}` },
+              ProviderAdapterRegistry.layerSingle(adapter),
+              { runEffectWorker: false },
+            ),
+          ),
+        );
+      }),
+    ),
+);

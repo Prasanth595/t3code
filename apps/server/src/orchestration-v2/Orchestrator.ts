@@ -20,11 +20,13 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
+  COMPOSER_CONTEXT_MAX_RECORDS,
   isProviderNativeSubagentThread,
   MessageId,
   type NodeId,
   type ModelSelection,
   OrchestrationV2Command,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
@@ -432,6 +434,26 @@ export function isNativeMaintenanceCommand(message: {
     message.attachments.length === 0 &&
     ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
   );
+}
+
+/**
+ * The content of a queued message with a later message appended, so both reach
+ * the agent as one turn.
+ */
+function foldedQueuedMessageContent(
+  queued: Pick<OrchestrationV2ConversationMessage, "text" | "attachments" | "context">,
+  appended: {
+    readonly text: string;
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
+  },
+) {
+  const records = [...(queued.context?.records ?? []), ...(appended.context?.records ?? [])];
+  return {
+    text: `${queued.text}\n\n${appended.text}`,
+    attachments: [...queued.attachments, ...appended.attachments],
+    ...(records.length === 0 ? {} : { context: { version: 1 as const, records } }),
+  };
 }
 
 /** A native `/goal` command. It changes the provider's goal, so it never steers a running turn. */
@@ -4930,6 +4952,50 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               payload: { ...sourcePlan, status: "completed" },
             });
 
+      // A /compact or sign-out turn cannot take a steer. A user's steer joins the
+      // message queued right behind it (a compact-first send queues one there), or
+      // queues on its own, and runs once the maintenance turn ends.
+      let foldIntoQueued:
+        | {
+            readonly run: OrchestrationV2Run;
+            readonly message: OrchestrationV2ConversationMessage;
+          }
+        | undefined;
+      if (
+        (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") &&
+        delegatedCompletion === undefined &&
+        !isNativeMaintenanceCommand(command) &&
+        !isGoalCommand(command)
+      ) {
+        const steerTargetRunId = dispatchMode.targetRunId;
+        const targetMessageId = projection.runs.find(
+          (run) => run.id === steerTargetRunId,
+        )?.userMessageId;
+        const targetMessage = projection.messages.find((message) => message.id === targetMessageId);
+        if (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)) {
+          dispatchMode = { type: "queue_after_active" };
+          const queuedRun = nextQueuedRun(projection);
+          const queuedMessage = projection.messages.find(
+            (message) => message.id === queuedRun?.userMessageId,
+          );
+          if (
+            command.createdBy === "user" &&
+            queuedRun !== undefined &&
+            queuedRun.sourcePlanRef === undefined &&
+            queuedMessage?.createdBy === "user" &&
+            queuedMessage.notification === undefined &&
+            !isNativeMaintenanceCommand(queuedMessage) &&
+            !isGoalCommand(queuedMessage) &&
+            queuedMessage.attachments.length + command.attachments.length <=
+              PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
+            (queuedMessage.context?.records.length ?? 0) + (command.context?.records.length ?? 0) <=
+              COMPOSER_CONTEXT_MAX_RECORDS
+          ) {
+            foldIntoQueued = { run: queuedRun, message: queuedMessage };
+          }
+        }
+      }
+
       if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
         yield* dispatchSteerIntoRun({
           command,
@@ -5098,12 +5164,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? { queueHeld: true }
             : {}),
           queuePosition:
-            Math.max(
-              0,
-              ...projection.runs
-                .filter((candidate) => candidate.status === "queued")
-                .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
-            ) + 1,
+            foldIntoQueued === undefined
+              ? Math.max(
+                  0,
+                  ...projection.runs
+                    .filter((candidate) => candidate.status === "queued")
+                    .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
+                ) + 1
+              : (foldIntoQueued.run.queuePosition ?? foldIntoQueued.run.ordinal),
           requestedAt: now,
           startedAt: null,
           completedAt: null,
@@ -5159,9 +5227,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           runId,
           nodeId: rootNodeId,
           role: "user",
-          text: dispatchText,
-          ...(command.context ? { context: command.context } : {}),
-          attachments: command.attachments,
+          ...(foldIntoQueued === undefined
+            ? {
+                text: dispatchText,
+                ...(command.context ? { context: command.context } : {}),
+                attachments: command.attachments,
+              }
+            : foldedQueuedMessageContent(foldIntoQueued.message, {
+                text: dispatchText,
+                attachments: command.attachments,
+                context: command.context,
+              })),
           streaming: false,
           createdAt: now,
           updatedAt: now,
@@ -5169,6 +5245,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.notification === undefined ? {} : { notification: command.notification }),
         };
         const emitEvent = emit(events, command);
+        if (foldIntoQueued !== undefined) {
+          // The combined message replaces the queued one in its queue slot.
+          yield* emitQueuedRunCancelled({
+            events,
+            command,
+            projection,
+            queuedRun: foldIntoQueued.run,
+            now,
+          });
+        }
         if (targetProviderThread === undefined) {
           yield* emitEvent({
             type: "provider-thread.updated",
@@ -7857,54 +7943,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     });
 
-  const dispatchQueuedRunCancel = (
-    command: Extract<OrchestrationV2Command, { readonly type: "queued-run.cancel" }>,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-  ) =>
+  /** Retires a queued run that never started, with its attempt and root node. */
+  const emitQueuedRunCancelled = (input: {
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly command: Extract<
+      OrchestrationV2Command,
+      { readonly type: "queued-run.cancel" | "message.dispatch" }
+    >;
+    readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "attempts">;
+    readonly queuedRun: OrchestrationV2Run;
+    readonly now: DateTime.Utc;
+  }) =>
     Effect.gen(function* () {
-      const projection = yield* projectionStore
-        .getThreadRecords(
-          command.threadId,
-          ["runs", "messages", "nodes", "attempts", "subagents", "turnItems"],
-          { turnItemTypes: [], messageRoles: ["user"] },
-        )
-        .pipe(
-          Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
-        );
-      const queuedRun = projection.runs.find((candidate) => candidate.id === command.runId);
-      if (queuedRun === undefined || queuedRun.status !== "queued") {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Run ${command.runId} is not queued.`,
-        });
-      }
-      const queuedMessage = projection.messages.find(
-        (candidate) => candidate.id === queuedRun.userMessageId,
-      );
-      if (queuedMessage?.delegatedCompletion !== undefined) {
-        const now = yield* DateTime.now;
-        yield* disposeDelegatedCompletionCohort({
-          command,
-          events,
-          projection,
-          parentRunId: queuedMessage.delegatedCompletion.parentRunId,
-          disposition: "disposed",
-          now,
-        });
-        return;
-      }
+      const { command, queuedRun, now } = input;
       const queuedRootNode =
         queuedRun.rootNodeId === null
           ? undefined
-          : projection.nodes.find((candidate) => candidate.id === queuedRun.rootNodeId);
+          : input.projection.nodes.find((candidate) => candidate.id === queuedRun.rootNodeId);
       const queuedAttempt =
         queuedRun.activeAttemptId === null
           ? undefined
-          : projection.attempts.find((candidate) => candidate.id === queuedRun.activeAttemptId);
-
-      const now = yield* DateTime.now;
-      const emitEvent = emit(events, command);
+          : input.projection.attempts.find(
+              (candidate) => candidate.id === queuedRun.activeAttemptId,
+            );
+      const emitEvent = emit(input.events, command);
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
@@ -7949,6 +8011,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         });
       }
+    });
+
+  const dispatchQueuedRunCancel = (
+    command: Extract<OrchestrationV2Command, { readonly type: "queued-run.cancel" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) =>
+    Effect.gen(function* () {
+      const projection = yield* projectionStore
+        .getThreadRecords(
+          command.threadId,
+          ["runs", "messages", "nodes", "attempts", "subagents", "turnItems"],
+          { turnItemTypes: [], messageRoles: ["user"] },
+        )
+        .pipe(
+          Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
+        );
+      const queuedRun = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (queuedRun === undefined || queuedRun.status !== "queued") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Run ${command.runId} is not queued.`,
+        });
+      }
+      const queuedMessage = projection.messages.find(
+        (candidate) => candidate.id === queuedRun.userMessageId,
+      );
+      if (queuedMessage?.delegatedCompletion !== undefined) {
+        const now = yield* DateTime.now;
+        yield* disposeDelegatedCompletionCohort({
+          command,
+          events,
+          projection,
+          parentRunId: queuedMessage.delegatedCompletion.parentRunId,
+          disposition: "disposed",
+          now,
+        });
+        return;
+      }
+      yield* emitQueuedRunCancelled({
+        events,
+        command,
+        projection,
+        queuedRun,
+        now: yield* DateTime.now,
+      });
     });
 
   const dispatchQueuedRunEdit = (

@@ -9144,17 +9144,18 @@ export default function ChatView(props: ChatViewProps) {
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     // A stale Claude session compacts before this message so the turn does not re-read the
-    // old history. The message queues behind the /compact run, since steering into it is
-    // rejected.
+    // old history. The message queues behind the /compact run, since it cannot be steered.
     const compactBeforeSend =
       resumeCompactionTokens !== null &&
       !keepFullHistory &&
       messageTextForSend.toLowerCase() !== "/compact";
     const turnDispatchMode = compactBeforeSend || sendQueuesBehindSetup ? "queue" : dispatchMode;
+    // The server folds a steer sent during /compact into the next queued message,
+    // so it waits in the queue rather than appearing as a steer.
     const shouldQueueBehindActiveRun =
       compactBeforeSend ||
       sendQueuesBehindSetup ||
-      (phase === "running" && dispatchMode === "queue");
+      (phase === "running" && (dispatchMode === "queue" || compactRequestIsActive));
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
