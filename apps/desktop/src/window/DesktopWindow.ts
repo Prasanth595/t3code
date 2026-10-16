@@ -848,8 +848,8 @@ export const make = Effect.gen(function* () {
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const settings = yield* desktopSettings.get;
-    const width = 360;
-    const height = 220;
+    const width = 280;
+    const height = 212;
     const placement = yield* Effect.sync(() => {
       try {
         const { workArea, scaleFactor } = Electron.screen.getDisplayNearestPoint(
@@ -871,7 +871,10 @@ export const make = Effect.gen(function* () {
       height,
       useContentSize: true,
       ...placement.bounds,
-      ...(environment.platform === "linux" ? { type: "splash" } : {}),
+      // An opaque Linux surface adds client-side shadow margins even without a frame.
+      ...(environment.platform === "linux"
+        ? { type: "splash", transparent: true, backgroundColor: "#00000000" }
+        : { backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors) }),
       resizable: false,
       minimizable: false,
       maximizable: false,
@@ -879,7 +882,6 @@ export const make = Effect.gen(function* () {
       frame: false,
       show: false,
       skipTaskbar: false,
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
       title: environment.displayName,
       webPreferences: {
         contextIsolation: true,
