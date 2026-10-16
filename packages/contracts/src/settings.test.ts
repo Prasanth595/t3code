@@ -23,6 +23,31 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("Changes scope settings", () => {
+  it("preserves branch changes for existing installations", () => {
+    expect(decodeServerSettings({}).changesScope).toBe("branch");
+  });
+
+  it.each(["branch", "uncommitted", "thread"])(
+    "round-trips %s globally and per project",
+    (changesScope) => {
+      const input = { changesScope, projectSettingsOverrides: { project: { changesScope } } };
+      expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+      expect(decodeServerSettingsPatch(input)).toEqual(input);
+    },
+  );
+
+  it("rejects unsupported global scopes and ignores unknown project scopes", () => {
+    expect(() => decodeServerSettingsPatch({ changesScope: "unsupported" })).toThrow();
+    const settings = decodeServerSettings({
+      projectSettingsOverrides: { project: { changesScope: "unsupported" } },
+    });
+    expect(
+      settings.projectSettingsOverrides[ProjectId.make("project")]?.changesScope,
+    ).toBeUndefined();
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

@@ -1,5 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { RunId, ScopedThreadRef } from "@t3tools/contracts";
+import type { ChangesScope, RunId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -8,6 +8,7 @@ import { resolveStorage } from "./lib/storage";
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
+  | { kind: "thread" }
   | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
@@ -16,6 +17,7 @@ interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
+  selectChangesScope: (ref: ScopedThreadRef, scope: ChangesScope) => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
@@ -29,9 +31,18 @@ function normalizeBaseRef(baseRef: string | null): string | null {
 
 export const useDiffPanelStore = create<DiffPanelStoreState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      selectChangesScope: (ref, scope) => {
+        if (scope !== "thread") {
+          get().selectGitScope(ref, scope === "uncommitted" ? "unstaged" : "branch");
+          return;
+        }
+        set((state) => ({
+          byThreadKey: { ...state.byThreadKey, [scopedThreadKey(ref)]: { kind: "thread" } },
+        }));
+      },
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);

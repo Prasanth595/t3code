@@ -14,6 +14,23 @@ describe("diffPanelStore", () => {
     }),
   );
 
+  it("opens each configured scope and keeps the branch base when leaving conversation changes", () => {
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(THREAD_REF, "origin/release");
+    store.selectChangesScope(THREAD_REF, "thread");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "thread" });
+    store.selectChangesScope(THREAD_REF, "uncommitted");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "unstaged" });
+    store.selectChangesScope(THREAD_REF, "branch");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: "origin/release" });
+  });
+
   it("defaults each thread to Changes without requiring git status", () => {
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),

@@ -54,6 +54,9 @@ export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
 
+export const ChangesScope = Schema.Literals(["branch", "uncommitted", "thread"]);
+export type ChangesScope = typeof ChangesScope.Type;
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -875,6 +878,7 @@ export const WorktreeCleanup = Schema.NullOr(
 export type WorktreeCleanup = typeof WorktreeCleanup.Type;
 
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
+  "changesScope",
   "worktreeCleanup",
   "defaultModelSelection",
   "defaultRuntimeMode",
@@ -918,6 +922,7 @@ export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOver
  * settings.json shape but overrides field by field, per `ProviderInstanceId`.
  */
 export const ProjectSettingsOverrides = Schema.Struct({
+  changesScope: ForwardCompatibleOptional(ChangesScope),
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
@@ -1085,6 +1090,7 @@ export const ServerSettings = Schema.Struct({
   projectSettingsOverrides: Schema.Record(ProjectId, ProjectSettingsOverrides).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  changesScope: ChangesScope.pipe(Schema.withDecodingDefault(Effect.succeed("branch" as const))),
   /**
    * The fold runs once so a later reset in the settings UI is not undone by the
    * next server start.
@@ -1426,6 +1432,7 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
+  changesScope: Schema.optionalKey(ChangesScope),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),

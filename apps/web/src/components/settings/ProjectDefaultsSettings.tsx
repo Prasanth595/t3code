@@ -79,6 +79,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
+  const mixedChangesScope = useScopedSettingsMixed(["changesScope"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
@@ -381,6 +382,53 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       ) : category === "source-control" ? (
         <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["changesScope"]}
+            mixed={mixedChangesScope}
+            id={searchableSetting("changes-scope").id}
+            title="Changes scope"
+            description="Choose what the Changes shortcut counts and opens. Projects can override this default. Conversation shows net changes through the latest completed checkpoint."
+            resetAction={
+              settings.changesScope !== DEFAULT_SERVER_SETTINGS.changesScope ? (
+                <SettingResetButton
+                  label="changes scope"
+                  onClick={() =>
+                    updateSettings({ changesScope: DEFAULT_SERVER_SETTINGS.changesScope })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={mixedChangesScope ? null : settings.changesScope}
+                onValueChange={(value) => {
+                  if (value === "branch" || value === "uncommitted" || value === "thread") {
+                    updateSettings({ changesScope: value });
+                  }
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Changes scope">
+                  <SelectValue>
+                    {(value: string | null) =>
+                      value === "branch"
+                        ? "Branch changes"
+                        : value === "uncommitted"
+                          ? "Uncommitted"
+                          : value === "thread"
+                            ? "Conversation"
+                            : "Mixed"
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="branch">Branch changes</SelectItem>
+                  <SelectItem value="uncommitted">Uncommitted</SelectItem>
+                  <SelectItem value="thread">Conversation</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
           <SettingsRow
             serverScoped
             settingKeys={["defaultAutoPull"]}

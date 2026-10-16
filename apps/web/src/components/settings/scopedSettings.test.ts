@@ -151,6 +151,29 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
+  it("writes Changes scope at the selected environment or project and can clear the override", () => {
+    expect(
+      planScopedSettingsPatch(named, environments, { changesScope: "uncommitted" }).serverWrites,
+    ).toMatchObject([
+      { environmentId: server.environmentId, patch: { changesScope: "uncommitted" } },
+    ]);
+    const configured = environment("Server", {
+      settings: { projectSettingsOverrides: { [projectId]: { changesScope: "thread" } } },
+    });
+    expect(
+      planScopedSettingsPatch(checkout, [configured], { changesScope: "thread" }).serverWrites,
+    ).toMatchObject([
+      {
+        environmentId: server.environmentId,
+        patch: { projectSettingsOverrides: { [projectId]: { changesScope: "thread" } } },
+      },
+    ]);
+    expect(
+      planScopedSettingsClear(checkout, [configured], ["changesScope"]).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: { [projectId]: null },
+    });
+  });
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {

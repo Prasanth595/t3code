@@ -759,6 +759,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["auto pull default branch current checkout fast forward upstream"],
   },
   {
+    id: "changes-scope",
+    title: "Changes scope",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: [
+      "sidebar right panel diff branch main uncommitted conversation thread checkpoint",
+    ],
+  },
+  {
     id: "remove-agent-credits-on-merge",
     title: "Remove agent credits when merging",
     to: "/settings/source-control",

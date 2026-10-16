@@ -1,8 +1,11 @@
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
+import { ThreadChangesControl } from "./chat/ThreadChangesControl";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  DEFAULT_SERVER_SETTINGS,
   SourceControlProviderKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -28,7 +31,6 @@ import {
   ChevronDownIcon,
   CloudDownloadIcon,
   CloudUploadIcon,
-  FileDiffIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
@@ -1134,7 +1136,10 @@ export default function GitActionsControl({
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
-  const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
+  const changesScope = resolveProjectSettings(
+    serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+    activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
+  ).settings.changesScope;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -1889,23 +1894,12 @@ export default function GitActionsControl({
       )}
 
       {isPanel && isRepo ? (
-        <ThreadDetailsControl
-          type="button"
-          variant="ghost"
-          size="sm"
-          part="row"
-          disabled={!onOpenChanges}
-          onClick={onOpenChanges}
-        >
-          <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
-            <span className="text-success">+{formatDiffCount(changesTotals?.insertions ?? 0)}</span>
-            <span className="text-destructive">
-              -{formatDiffCount(changesTotals?.deletions ?? 0)}
-            </span>
-          </span>
-        </ThreadDetailsControl>
+        <ThreadChangesControl
+          threadRef={activeThreadRef}
+          scope={changesScope}
+          status={gitStatus ?? null}
+          onOpenChanges={onOpenChanges}
+        />
       ) : null}
 
       <Dialog

@@ -8,6 +8,29 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+export function getLatestCompletedCheckpointTurnCount(
+  checkpoints: ReadonlyArray<
+    Pick<
+      OrchestrationV2ThreadProjection["checkpoints"][number],
+      "status" | "appRunOrdinal" | "runId"
+    >
+  >,
+  runs: ReadonlyArray<Pick<OrchestrationV2ThreadProjection["runs"][number], "id" | "status">>,
+): number {
+  const completedRunIds = new Set(
+    runs.filter((run) => run.status === "completed").map((run) => run.id),
+  );
+  return checkpoints.reduce(
+    (latest, checkpoint) =>
+      checkpoint.status === "ready" &&
+      checkpoint.runId !== null &&
+      completedRunIds.has(checkpoint.runId)
+        ? Math.max(latest, checkpoint.appRunOrdinal ?? 0)
+        : latest,
+    0,
+  );
+}
+
 export interface ThreadCheckpointSummary {
   readonly checkpointId?: CheckpointId;
   readonly scopeId?: CheckpointScopeId;

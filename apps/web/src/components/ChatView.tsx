@@ -2336,14 +2336,16 @@ export default function ChatView(props: ChatViewProps) {
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
   const diffOpen = activeRightPanelKind === "diff";
+  const changesScope = resolveProjectSettings(settings, activeThread?.projectId ?? null).settings
+    .changesScope;
   const explicitDiffOpenRef = useRef<ScopedThreadRef | null>(null);
   useLayoutEffect(() => {
     const explicitThreadRef = explicitDiffOpenRef.current;
     explicitDiffOpenRef.current = null;
     if (diffOpen && activeThreadRef && explicitThreadRef !== activeThreadRef) {
-      useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
+      useDiffPanelStore.getState().selectChangesScope(activeThreadRef, changesScope);
     }
-  }, [activeThreadRef, diffOpen]);
+  }, [activeThreadRef, diffOpen, changesScope]);
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
@@ -5218,7 +5220,7 @@ export default function ChatView(props: ChatViewProps) {
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
   const addDiffSurface = () => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
-    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
+    useDiffPanelStore.getState().selectChangesScope(activeThreadRef, changesScope);
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   };
@@ -5603,7 +5605,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!panels.openProactive(activeThreadRef, { id: "diff", kind: "diff" }, userActionRevision)) {
       return;
     }
-    useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
+    useDiffPanelStore.getState().selectChangesScope(activeThreadRef, changesScope);
     onDiffPanelOpen?.();
   }, [
     turnDiffSummaries,
@@ -5624,6 +5626,7 @@ export default function ChatView(props: ChatViewProps) {
     pullRequestsSurfaceAvailable,
     visiblePullRequestCount,
 
+    changesScope,
     settings.proactivePanelsEnabled,
     shouldUsePlanSidebarSheet,
     threadDetailLoading,

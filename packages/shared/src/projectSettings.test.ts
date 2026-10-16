@@ -22,6 +22,23 @@ const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
 
 describe("resolveProjectSettings", () => {
+  it("inherits the changes scope and restores inheritance when a project override is cleared", () => {
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      changesScope: "uncommitted",
+      projectSettingsOverrides: { [projectId]: { changesScope: "thread" } },
+    });
+    expect(resolveProjectSettings(settings, projectId).settings.changesScope).toBe("thread");
+    expect(resolveProjectSettings(settings, otherProjectId).settings.changesScope).toBe(
+      "uncommitted",
+    );
+    const cleared = applyServerSettingsPatch(settings, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(settings, projectId, ["changesScope"]),
+      },
+    });
+    expect(resolveProjectSettings(cleared, projectId).settings.changesScope).toBe("uncommitted");
+    expect(resolveProjectSettings(cleared, projectId).sources.changesScope).toBe("environment");
+  });
   it("inherits every scopable key when the project has no overrides", () => {
     const resolved = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId);
     expect(resolved.settings).toBe(DEFAULT_SERVER_SETTINGS);

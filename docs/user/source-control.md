@@ -5,6 +5,13 @@ and publish repositories, create pull requests, and review changes.
 
 ## Review turn changes
 
+In **Settings → Source Control → Changes scope**, choose what the **Changes** shortcut in the
+web and desktop thread details shows: changes against the base branch, **Uncommitted** changes
+(including staged and untracked files), or **Conversation** changes. Select a project in Settings
+to override the default, or reset its override to inherit it again. Conversation shows net changes
+from the start of the conversation through its latest completed checkpoint; work in a running
+turn appears after its checkpoint completes. You can also switch scopes in the diff panel.
+
 A turn's changed files and diff show only the turn's own work. When a turn pulls, merges, or
 rebases, the files Git brought in are left out. A file stays in the list when the turn edited it,
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed

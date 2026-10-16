@@ -52,6 +52,7 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
   "new-threads": ["defaultThreadEnvMode", "worktreeSubmodules", "defaultRuntimeMode"],
   "source-control": [
+    "changesScope",
     "defaultAutoPull",
     "removeAgentCreditsOnMerge",
     "newWorktreesStartFromOrigin",
@@ -347,6 +348,47 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
               {props.page === "source-control" ? (
                 <>
+                  <SettingsSection
+                    title="Changes scope"
+                    trailing={
+                      pendingWrites === 0 && isMixed("changesScope") ? (
+                        <MixedValuesLabel projectSelected={projectSelected} />
+                      ) : null
+                    }
+                  >
+                    {(
+                      [
+                        {
+                          value: "branch",
+                          label: "Branch changes",
+                          description: "Compare against the base branch.",
+                        },
+                        {
+                          value: "uncommitted",
+                          label: "Uncommitted",
+                          description: "Show staged, unstaged, and untracked changes.",
+                        },
+                        {
+                          value: "thread",
+                          label: "Conversation",
+                          description: "Show net changes through the latest completed checkpoint.",
+                        },
+                      ] as const
+                    ).map((choice, index) => (
+                      <SettingsChoiceRow
+                        key={choice.value}
+                        label={choice.label}
+                        description={choice.description}
+                        selected={uniform("changesScope") === choice.value}
+                        separated={index > 0}
+                        disabled={disabledFor("changesScope")}
+                        onPress={() => write({ changesScope: choice.value })}
+                      />
+                    ))}
+                    <Text className="px-4 py-3 text-sm text-foreground-muted">
+                      Applies to the Changes shortcut in web and desktop thread details.
+                    </Text>
+                  </SettingsSection>
                   <BranchNamingSettings
                     key={targets
                       .map((target) => `${target.environment.environmentId}:${target.projectId}`)
