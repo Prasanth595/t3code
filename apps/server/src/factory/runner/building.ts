@@ -225,13 +225,6 @@ const isTerminal = (status: RunStatus): boolean =>
   status === "cancelled" ||
   status === "rolled_back";
 
-/** A run that ended without finishing: T3's own name for it. */
-const endedBadly = (status: RunStatus): boolean =>
-  status === "failed" ||
-  status === "interrupted" ||
-  status === "cancelled" ||
-  status === "rolled_back";
-
 /**
  * Whether the session ended without any result line: no message, or a last line that is none of
  * the three. A malformed `FACTORY-DONE`, or questions with no questions, is not this: the
@@ -405,16 +398,15 @@ export const advance = (
           return { kind: "reminded" } as const;
         }
       }
-      // The reminder is owed once per run: the latest run, which has an ordinal, ended on its own
-      // (not as failed or cancelled) with no result line, and none was sent. A run with no
-      // ordinal cannot be waited for, so it is read as it always was.
+      // The reminder is owed once per run: the latest run, which has an ordinal, ended with
+      // no result line, and none was sent. A run with no ordinal cannot be waited for, so it is
+      // read as it always was. Paused and ended-badly runs return below, before this is read.
       const owed =
         !alreadyReminded &&
         lacksResultLine(result) &&
         status.runOrdinal !== null &&
         status.run !== null &&
-        isTerminal(status.run) &&
-        !endedBadly(status.run);
+        isTerminal(status.run);
       if (sessionBusy(seen, status)) return { kind: "running" } as const;
       // A run a person stopped in T3 is paused, on purpose: nothing is sent to resume it and the
       // issue is not touched.

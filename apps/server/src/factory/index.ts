@@ -256,6 +256,19 @@ export const ownsThread = (dataDir: string, threadId: string): Effect.Effect<boo
   );
 
 /**
+ * Runs one events stream to its end, waking for each thread the factory owns. The stream's own
+ * failure is the caller's to handle.
+ */
+export const wakeOn = (
+  dataDir: string,
+  events: Stream.Stream<string, Events.EventsError>,
+  wake: Effect.Effect<void>,
+): Effect.Effect<void, Events.EventsError> =>
+  Stream.runForEach(events, (threadId) =>
+    Effect.flatMap(ownsThread(dataDir, threadId), (owned) => (owned ? wake : Effect.void)),
+  );
+
+/**
  * Wakes the loop when T3 says the latest run of a thread the factory owns changed status. A
  * stream that ends or fails is run again after `restartDelay`; the status changes in the gap are
  * not replayed, and the next pass reads them.
@@ -263,10 +276,7 @@ export const ownsThread = (dataDir: string, threadId: string): Effect.Effect<boo
 const wakeOnOwnedThreads = (dataDir: string, loop: Loop, restartDelay: Duration.Input) =>
   Effect.gen(function* () {
     const events = yield* Events.FactoryEvents;
-    return yield* events.runStatusChanges.pipe(
-      Stream.runForEach((threadId) =>
-        Effect.flatMap(ownsThread(dataDir, threadId), (owned) => (owned ? loop.wake : Effect.void)),
-      ),
+    return yield* wakeOn(dataDir, events.runStatusChanges, loop.wake).pipe(
       Effect.catch((error) => Effect.logWarning("factory events stream failed, restarting", error)),
       Effect.andThen(Effect.sleep(restartDelay)),
       Effect.forever,
