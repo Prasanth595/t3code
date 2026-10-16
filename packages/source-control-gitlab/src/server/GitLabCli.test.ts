@@ -209,6 +209,12 @@ layer("GitLabCli.layer", (it) => {
       path: "gitlab/team/app",
       endpoint: "projects/gitlab%2Fteam%2Fapp",
     },
+    {
+      repository: "ssh://git@example.com/gitlab/team/app.git",
+      host: "example.com/gitlab",
+      path: "gitlab/team/app",
+      endpoint: "projects/gitlab%2Fteam%2Fapp",
+    },
   ])("looks up the pasted address $repository by its project path", (row) =>
     Effect.gen(function* () {
       mockedRun.mockImplementation((input) =>

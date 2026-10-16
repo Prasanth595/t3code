@@ -555,7 +555,7 @@ export const make = Effect.gen(function* () {
       const projectPath =
         !requestedHost || urlPath === null
           ? Effect.succeed(input.repository)
-          : pastedUrl === null
+          : !/^https?:$/u.test(pastedUrl?.protocol ?? "")
             ? Effect.succeed(urlPath)
             : execute({ cwd: input.cwd, args: ["config", "get", "host"] }).pipe(
                 Effect.map((result) => withoutInstallRoot(urlPath, result.stdout, requestedHost)),
