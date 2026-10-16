@@ -40,11 +40,6 @@ export function cursorSdkParameterPriority(parameterId: string): number {
   }
 }
 
-/**
- * Token capacity named by the selected `context` parameter, such as "272k" or "1m".
- * A selection without one runs on the model's default in `models`, the Cursor catalog,
- * which is unknown until that catalog has loaded.
- */
 export function cursorContextWindowTokens(
   modelSelection: ModelSelection,
   models: ReadonlyArray<ServerProviderModel>,

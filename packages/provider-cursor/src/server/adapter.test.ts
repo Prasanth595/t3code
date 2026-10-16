@@ -864,8 +864,7 @@ describe("CursorAdapterV2", () => {
         }),
       );
 
-      // Cursor reports no context usage, so the budget falls back to a byte
-      // estimate of the native transcript, here a thread with long shell output.
+      // Cursor reports no context usage, so the budget prices the native byte estimate.
       const budget = (modelContextWindow: number | undefined) =>
         handoffBudget({
           tokenCap: DEFAULT_HANDOFF_TOKEN_CAP,

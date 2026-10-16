@@ -847,7 +847,6 @@ export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: CursorSettings;
   readonly environment: NodeJS.ProcessEnv;
-  /** The driver's latest Cursor catalog, which names each model's default context window. */
   readonly getModels?: () => ReadonlyArray<ServerProviderModel>;
 }
 

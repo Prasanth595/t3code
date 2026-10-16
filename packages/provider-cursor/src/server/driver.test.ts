@@ -203,7 +203,6 @@ it.layer(layerTest)("CursorDriver", (it) => {
         }),
       });
 
-      // The first catalog read waits on `catalog`, so no default is known yet.
       expect(runtime.getModelContextWindow?.(selection())).toBeUndefined();
       catalog.resolve([
         {
