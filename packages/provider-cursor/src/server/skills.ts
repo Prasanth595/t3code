@@ -240,12 +240,9 @@ const decodeCursorPluginManifest = Schema.decodeUnknownOption(
 );
 
 /**
- * Cursor reads a manifest `skills` string (default `skills`) as a directory of
- * skill folders, and each `skills` array entry as one skill folder, its
- * SKILL.md, or such a directory. It reads no deeper, skips symlinked manifests,
- * and never reads a file through a symlink that leaves the plugin. It asks its
- * account API which cached plugins are enabled, so this also lists plugins the
- * user disabled.
+ * Follows the plugin loader in `@cursor/sdk`. Cursor asks its account API which
+ * cached plugins are enabled, which the SDK does not expose, so this also lists
+ * plugins the user disabled.
  */
 const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkillDirectories")(
   function* (userHome: string, budget: CursorSkillScanBudget) {
