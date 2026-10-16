@@ -313,8 +313,6 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
   };
 };
 
-type FakeGitHub = ReturnType<typeof makeGitHub>;
-
 // ---- the provider's transcript -------------------------------------------------------------
 
 /**

@@ -7,6 +7,9 @@
 # The gh login directory the factory acts on GitHub as (rawphp). Log in to it once with
 # GH_CONFIG_DIR=<this directory> gh auth login. The launchd job sets the same directory
 # as GH_CONFIG_DIR for the server, so the agent sessions it starts use this login too.
+# The two must match: to change this, change GH_CONFIG_DIR in
+# factory/launchd/io.github.rawphp.t3fac.plist too and reinstall, or the sessions act as
+# whichever login sits in the plist's directory.
 gh_config_dir: /Users/tomkaczocha/.config/t3fac/gh
 
 # Seconds between passes over GitHub. At least 10. A thread's run ending and a finished

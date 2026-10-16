@@ -120,19 +120,19 @@ softfac runs show original-solutions__t3code-factory__<issue>__1 --data-dir ~/.c
 
 A good run goes `factory:ready`, `factory:triage`, `factory:building`, then `factory:pr-open`, and `runs list` shows it as `running` and then `watching`, with its pull request. If something is wrong, hand the repo back (below) until it is fixed.
 
-## 8. Handing it back to the Rust factory
+## 8. Handing it back and moving it back
 
 ### Handing this repo back to the Rust factory
 
-Do this when every installed version has a bug that stops the fork from building its own fix. It is the reverse of the #21 switch.
+Do this when every installed version has a bug that stops the fork from building its own fix. It is the reverse of the #21 switch. A factory keeps watching the repos it read at its last start, so the order matters: the fork lets go of the repo before the Rust factory takes it.
 
 1. Check that no run of either factory holds an issue for this repo: `softfac runs list` for the Rust factory, `softfac runs list --data-dir ~/.config/t3fac/factory` for the fork, and `gh issue list --repo original-solutions/t3code-factory --label factory:building` and `--label factory:triage` both come back empty.
 2. Remove `original-solutions/t3code-factory` from `repos` in `~/.config/t3fac/factory/config.yml`. When it is the only repo there, move `config.yml` aside instead (`mv ~/.config/t3fac/factory/config.yml ~/.config/t3fac/factory/config.yml.off`): an empty `repos` is a config error, which fails every later health check, while a missing config logs `no factory config` and passes.
-3. Add it to `repos` in `~/.config/softfac/config.yml` with `repo`, `path` and `user`.
-4. Restart each factory so it rereads its config.
+3. Restart the fork (`launchctl kickstart -k gui/$(id -u)/io.github.rawphp.t3fac`) and check `~/Library/Logs/t3fac/t3fac.log` for `no factory config`, or for `factory started` when other repos stay, after the restart.
+4. Only then add the repo to `repos` in `~/.config/softfac/config.yml` with `repo`, `path` and `user`, and restart the Rust factory (`launchctl kickstart -k gui/$(id -u)/io.github.rawphp.softfac`).
 
 The Rust factory then builds the fix.
 
 ### Moving it back
 
-Once `install.sh` has installed a fixed archive and it passed its health check, repeat the steps above in reverse: check that no run holds an issue, remove the repo from `~/.config/softfac/config.yml`, add it to `repos` in `~/.config/t3fac/factory/config.yml` (or move `config.yml.off` back to `config.yml`), and restart each factory.
+Once `install.sh` has installed a fixed archive and it passed its health check, run steps 3 to 7 again, in their order: check that no run holds an issue, remove the repo from `~/.config/softfac/config.yml` and restart the Rust factory, and only then add the repo to `repos` in `~/.config/t3fac/factory/config.yml` (or move `config.yml.off` back to `config.yml`) and restart the fork. launchd can restart the fork at any time, so the config goes back only after the Rust factory has let go of the repo.
