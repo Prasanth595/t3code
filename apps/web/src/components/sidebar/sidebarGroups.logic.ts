@@ -326,7 +326,8 @@ export function moveSidebarGroup(
 /**
  * Checks or unchecks one value of a field in the rule editor. A field has one rule. Checking a
  * group in an "any group" view turns it into "group is X". Unchecking the last value removes the
- * rule, so no rule is left with no values: "is not (nothing)" would match every thread.
+ * rule, so no rule is left with no values: "is not (nothing)" would match every thread. A view
+ * keeps its group rule as "any group", so it does not turn into a group that takes threads.
  */
 export function toggleSidebarGroupRuleValue(
   rules: SidebarGroup["rules"],
@@ -344,9 +345,15 @@ export function toggleSidebarGroupRuleValue(
       ? { field, operator: "is", values: [value] }
       : { ...current, values: [...current.values, value] }
     : { ...current, values: current.values.filter((candidate) => candidate !== value) };
-  return next.values.length === 0
+  const kept: SidebarGroupRule | null =
+    next.values.length > 0
+      ? next
+      : field === "group"
+        ? { field, operator: "is_not", values: [] }
+        : null;
+  return kept === null
     ? rules.filter((_, candidate) => candidate !== index)
-    : rules.map((rule, candidate) => (candidate === index ? next : rule));
+    : rules.map((rule, candidate) => (candidate === index ? kept : rule));
 }
 
 // Highest first. A tab shows the status of its most urgent thread.
@@ -496,4 +503,39 @@ export function buildSidebarGroupRuleOptions(input: {
         { value: null, label: "None" },
       ];
   }
+}
+
+/**
+ * The tabs that fit the bar, by index, in display order. Every tab that shows, shows whole; the
+ * rest go to the "more" menu, which then takes `moreWidth`. The selected tab always shows: when
+ * it would overflow, it takes the place of the last tabs that fit before it.
+ */
+export function fitSidebarGroupTabs(input: {
+  readonly widths: readonly number[];
+  readonly available: number;
+  readonly gap: number;
+  readonly moreWidth: number;
+  readonly selectedIndex: number;
+}): number[] {
+  const { widths, gap, selectedIndex } = input;
+  const all = widths.map((_, index) => index);
+  const total = widths.reduce((sum, width) => sum + width, 0) + gap * (widths.length - 1);
+  if (total <= input.available) return all;
+  const budget = input.available - input.moreWidth - gap;
+  const visible: number[] = [];
+  let used = 0;
+  for (const index of all) {
+    const next = used + (visible.length === 0 ? 0 : gap) + widths[index]!;
+    if (next > budget) break;
+    visible.push(index);
+    used = next;
+  }
+  if (selectedIndex < 0 || selectedIndex >= widths.length || visible.includes(selectedIndex)) {
+    return visible;
+  }
+  const selectedWidth = widths[selectedIndex]!;
+  while (visible.length > 0 && used + gap + selectedWidth > budget) {
+    used -= widths[visible.pop()!]! + (visible.length === 0 ? 0 : gap);
+  }
+  return [...visible, selectedIndex];
 }

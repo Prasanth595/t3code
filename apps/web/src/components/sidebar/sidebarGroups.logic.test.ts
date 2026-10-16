@@ -12,11 +12,13 @@ import {
   buildSidebarGroupProjectFacts,
   compileSidebarGroups,
   DEFAULT_SIDEBAR_GROUP_ID,
+  fitSidebarGroupTabs,
   moveSidebarThreads,
   pruneSidebarGroupAssignments,
   resolveSidebarThreadGroupId,
   sidebarGroupShowsThread,
   sidebarGroupThreadKey,
+  toggleSidebarGroupRuleValue,
 } from "./sidebarGroups.logic";
 
 const mac = EnvironmentId.make("environment-mac");
@@ -136,5 +138,33 @@ describe("sidebar group assignments", () => {
       "environment-offline:thread": "monitors",
       [sidebarGroupThreadKey(conductor)]: "monitors",
     });
+  });
+});
+
+describe("fitSidebarGroupTabs", () => {
+  it("shows whole tabs only, keeps the selected tab, and leaves room for the more menu", () => {
+    const widths = [70, 60, 80, 90];
+    expect(
+      fitSidebarGroupTabs({ widths, available: 400, gap: 4, moreWidth: 40, selectedIndex: 0 }),
+    ).toEqual([0, 1, 2, 3]);
+    // 200 px: the menu takes 44 px, so tabs 0 and 1 fit in 156 px.
+    expect(
+      fitSidebarGroupTabs({ widths, available: 200, gap: 4, moreWidth: 40, selectedIndex: 1 }),
+    ).toEqual([0, 1]);
+    // The selected last tab replaces the tabs that would push it out.
+    expect(
+      fitSidebarGroupTabs({ widths, available: 200, gap: 4, moreWidth: 40, selectedIndex: 3 }),
+    ).toEqual([3]);
+  });
+});
+
+describe("toggleSidebarGroupRuleValue", () => {
+  it("keeps a view a view when its last group is unchecked, and drops other empty rules", () => {
+    const view: SidebarGroup["rules"] = [{ field: "group", operator: "is", values: ["monitors"] }];
+    expect(toggleSidebarGroupRuleValue(view, "group", "monitors", false)).toEqual([
+      { field: "group", operator: "is_not", values: [] },
+    ]);
+    const status: SidebarGroup["rules"] = [{ field: "status", operator: "is", values: ["input"] }];
+    expect(toggleSidebarGroupRuleValue(status, "status", "input", false)).toEqual([]);
   });
 });

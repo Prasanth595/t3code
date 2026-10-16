@@ -12,7 +12,9 @@ import {
   resolveSidebarProjectScopeKey,
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
+import type { SidebarThreadSummary } from "../../types";
 import { useUiStateStore } from "../../uiStateStore";
+import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 import {
   buildSidebarOwnerOptions,
   countHiddenThreadsNeedingUser,
@@ -30,9 +32,14 @@ export function useSidebarOwnerFilter<Group extends SidebarProjectSnapshot>(inpu
   /** The sorted groups, for the project scope menu. */
   readonly projectGroups: ReadonlyArray<Group>;
   readonly projectGroupingSettings: ProjectGroupingSettings;
-  readonly threads: ReadonlyArray<Parameters<typeof countHiddenThreadsNeedingUser>[0][number]>;
+  readonly threads: ReadonlyArray<SidebarThreadSummary>;
 }) {
-  const { unsortedProjectGroups, projectGroups, projectGroupingSettings, threads } = input;
+  const { unsortedProjectGroups, projectGroups, projectGroupingSettings } = input;
+  // Counts cover the threads the sidebar lists: no archived threads and no subagents.
+  const threads = useMemo(
+    () => filterSidebarV2VisibleThreads(input.threads, null),
+    [input.threads],
+  );
   const repositoryOwnerFiltersEnabled = useClientSettings((s) => s.repositoryOwnerFilters);
   const savedOwnerFilter = useClientSettings((s) => s.sidebarOwnerFilter);
   const updateClientSettings = useUpdateClientSettings();
@@ -89,6 +96,10 @@ export function useSidebarOwnerFilter<Group extends SidebarProjectSnapshot>(inpu
       updateClientSettings,
     ],
   );
+  const ownerHiddenThreadsNeedingUser = useMemo(
+    () => countHiddenThreadsNeedingUser(threads, ownerVisibleProjectKeys),
+    [ownerVisibleProjectKeys, threads],
+  );
   return {
     repositoryOwnerFiltersEnabled,
     savedOwnerFilter,
@@ -97,7 +108,7 @@ export function useSidebarOwnerFilter<Group extends SidebarProjectSnapshot>(inpu
     ownerVisibleProjectKeys,
     visibleProjectGroups,
     ownerHiddenProjectCount: unsortedProjectGroups.length - ownerVisibleGroups.length,
-    ownerHiddenThreadsNeedingUser: countHiddenThreadsNeedingUser(threads, ownerVisibleProjectKeys),
+    ownerHiddenThreadsNeedingUser,
     setOwnerFilter,
   };
 }
