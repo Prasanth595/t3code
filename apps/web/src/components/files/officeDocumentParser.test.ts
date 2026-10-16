@@ -56,6 +56,9 @@ function centralOffset(bytes: Uint8Array): number {
 
 function visualPresentationParts(): Record<string, Uint8Array> {
   const parts: Record<string, Uint8Array> = presentationParts();
+  parts["[Content_Types].xml"] = strToU8(
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="png" ContentType="image/png"/></Types>',
+  );
   const placeholder = (idx: number, text: string, props = "", runs = "") =>
     `<p:sp><p:nvSpPr><p:cNvPr id="${idx}" name="Shape ${idx}"/><p:nvPr><p:ph idx="${idx}"/></p:nvPr></p:nvSpPr><p:spPr>${props}</p:spPr><p:txBody><a:p><a:r>${runs}<a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
   parts["ppt/slides/slide2.xml"] =
@@ -80,6 +83,24 @@ function visualPresentationParts(): Record<string, Uint8Array> {
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6xTgAAAAASUVORK5CYII=",
     ),
     (char) => char.charCodeAt(0),
+  );
+  return parts;
+}
+
+function presentationWithBitmap(name: string, bytes: Uint8Array, mime: string, override = true) {
+  const parts = visualPresentationParts();
+  delete parts["ppt/media/picture.png"];
+  parts[`ppt/media/${name}`] = bytes;
+  const relationships = "ppt/slides/_rels/slide2.xml.rels";
+  parts[relationships] = strToU8(
+    strFromU8(parts[relationships]!).replace("../media/picture.png", `../media/${name}`),
+  );
+  parts["[Content_Types].xml"] = strToU8(
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">${
+      override
+        ? `<Override PartName="/ppt/media/${name}" ContentType="${mime}"/>`
+        : `<Default Extension="${name.slice(name.lastIndexOf(".") + 1)}" ContentType="${mime}"/>`
+    }</Types>`,
   );
   return parts;
 }
@@ -280,6 +301,161 @@ describe("normal OOXML namespace and encoding compatibility", () => {
 });
 
 describe("parseOfficeDocument spreadsheets", () => {
+  it("preserves a canonical workbook declared through a Default content type", () => {
+    const original = workbookBytes("xlsx");
+    const parts = unzipSync(original);
+    let contentTypes = strFromU8(parts["[Content_Types].xml"]!)
+      .replace(/<Override\b[^>]*PartName="\/xl\/workbook\.xml"[^>]*\/>/, "")
+      .replace(
+        /<Default\b[^>]*Extension="xml"[^>]*\/>/,
+        '<Default Extension="xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
+      );
+    for (const name of Object.keys(parts)) {
+      if (name === "[Content_Types].xml" || name === "xl/workbook.xml" || !name.endsWith(".xml"))
+        continue;
+      if (!contentTypes.includes(`PartName="/${name}"`)) {
+        contentTypes = contentTypes.replace(
+          "</Types>",
+          `<Override PartName="/${name}" ContentType="application/xml"/></Types>`,
+        );
+      }
+    }
+    parts["[Content_Types].xml"] = strToU8(contentTypes);
+    const document = parseOfficeDocument(zipSync(parts), "xlsx");
+    expect(document).toEqual(parseOfficeDocument(original, "xlsx"));
+    if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+    expect(document.sheets[0]).toMatchObject({
+      name: "売上",
+      rows: [
+        ["品名", "価格"],
+        ["りんご", "125"],
+      ],
+    });
+  });
+
+  it.each([
+    { prefix: "book/", location: "book/main.xml", moveTree: true },
+    { prefix: "", location: "rootmain.xml", moveTree: true },
+    { prefix: "book/", location: "book/main.xml", moveTree: false },
+    { prefix: "", location: "rootmain.xml", moveTree: false },
+    { prefix: "book/", location: "book/main.xml", moveTree: false, strictUtf16: true },
+  ])(
+    "reads relocated workbook $location (move subtree: $moveTree, Strict UTF-16: $strictUtf16) through the relationship graph",
+    ({
+      prefix,
+      location,
+      moveTree,
+      strictUtf16,
+    }: {
+      prefix: string;
+      location: string;
+      moveTree: boolean;
+      strictUtf16?: boolean;
+    }) => {
+      const workbook = XLSX.utils.book_new();
+      const visible = XLSX.utils.aoa_to_sheet([
+        ["品名 🐈", "数量", "単価", "合計"],
+        ["りんご café", 12, 150, 1800],
+      ]);
+      visible.D2 = { t: "n", f: "B2*C2", v: 1800 };
+      XLSX.utils.book_append_sheet(workbook, visible, "売上 日本語");
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["secret"]]), "Hidden");
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet([["very secret"]]),
+        "Very hidden",
+      );
+      XLSX.utils.book_set_sheet_visibility(workbook, "Hidden", 1);
+      XLSX.utils.book_set_sheet_visibility(workbook, "Very hidden", 2);
+      const original = new Uint8Array(
+        XLSX.write(workbook, { type: "array", bookType: "xlsx", bookSST: true }),
+      );
+      const originalParts = unzipSync(original);
+      const baseName = location.slice(location.lastIndexOf("/") + 1);
+      const parts = Object.fromEntries(
+        Object.entries(originalParts).map(([name, bytes]) => [
+          name === "xl/workbook.xml"
+            ? location
+            : name === "xl/_rels/workbook.xml.rels"
+              ? `${prefix}_rels/${baseName}.rels`
+              : moveTree && name.startsWith("xl/")
+                ? prefix + name.slice(3)
+                : name,
+          bytes,
+        ]),
+      );
+      parts["_rels/.rels"] = strToU8(
+        strFromU8(parts["_rels/.rels"]!).replace(
+          'Target="xl/workbook.xml"',
+          `Target="/${location}"`,
+        ),
+      );
+      let contentTypes = strFromU8(parts["[Content_Types].xml"]!);
+      if (moveTree)
+        contentTypes = contentTypes.replaceAll('PartName="/xl/', `PartName="/${prefix}`);
+      parts["[Content_Types].xml"] = strToU8(
+        contentTypes.replace(
+          `PartName="/${moveTree ? prefix : "xl/"}workbook.xml"`,
+          `PartName="/${location}"`,
+        ),
+      );
+      if (!moveTree) {
+        const sidecar = `${prefix}_rels/${baseName}.rels`;
+        parts[sidecar] = strToU8(
+          strFromU8(parts[sidecar]!).replace(
+            /Target="([^"]+)"/g,
+            (_attribute: string, target: string) =>
+              `Target="${target.startsWith("/") ? target : `${prefix ? "../" : ""}xl/${target}`}"`,
+          ),
+        );
+      }
+      const encoded = strictUtf16
+        ? utf16Parts(
+            transformXmlParts(parts, (xml) =>
+              strToU8(
+                xml
+                  .replaceAll(
+                    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+                    "http://purl.oclc.org/ooxml/spreadsheetml/main",
+                  )
+                  .replaceAll(R, "http://purl.oclc.org/ooxml/officeDocument/relationships"),
+              ),
+            ),
+            xmlEncodings[1],
+          )
+        : parts;
+      const document = parseOfficeDocument(zipSync(encoded), "xlsx");
+      expect(document).toEqual(parseOfficeDocument(original, "xlsx"));
+      if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+      expect(document.sheets.map((sheet) => sheet.name)).toEqual(["売上 日本語"]);
+      expect(document.sheets[0]?.rows).toEqual([
+        ["品名 🐈", "数量", "単価", "合計"],
+        ["りんご café", "12", "150", "1800"],
+      ]);
+    },
+  );
+
+  it.each([
+    { label: "missing", entries: "" },
+    {
+      label: "external",
+      entries: `<Relationship Id="workbook" Type="${R}/officeDocument" Target="https://example.com/workbook.xml" TargetMode="External"/>`,
+    },
+    {
+      label: "ambiguous",
+      entries: `<Relationship Id="one" Type="${R}/officeDocument" Target="xl/workbook.xml"/><Relationship Id="two" Type="${R}/officeDocument" Target="xl/workbook.xml"/>`,
+    },
+  ])(
+    "rejects a $label workbook root relationship instead of guessing its conventional path",
+    ({ entries }: { entries: string }) => {
+      const parts = unzipSync(workbookBytes("xlsx"));
+      parts["_rels/.rels"] = strToU8(`<Relationships xmlns="${REL}">${entries}</Relationships>`);
+      expect(() => parseOfficeDocument(zipSync(parts), "xlsx")).toThrow(
+        /office document|relationship/,
+      );
+    },
+  );
+
   it.each(["xlsx", "xls"] as const)(
     "previews visible sheets after twenty hidden sheets in %s",
     (format) => {
@@ -547,6 +723,94 @@ describe("parseOfficeDocument spreadsheets", () => {
 });
 
 describe("parseOfficeDocument presentation outlines", () => {
+  it.each([
+    { name: "hero.bin", override: true },
+    { name: "hero.data", override: false },
+    { name: "hero.jpg", override: true },
+  ])(
+    "preserves PNG bytes and the whole slide model when named $name (override: $override)",
+    ({ name, override }: { name: string; override: boolean }) => {
+      const original = visualPresentationParts();
+      const bytes = original["ppt/media/picture.png"]!;
+      const document = parseOfficeDocument(
+        zipSync(presentationWithBitmap(name, bytes, "image/png", override)),
+        "pptx",
+      );
+      expect(document).toEqual(parseOfficeDocument(zipSync(original), "pptx"));
+      if (document.kind !== "presentation") throw new Error("Expected presentation");
+      const image = document.slides[0]?.elements.find((element) => element.kind === "image");
+      if (image?.kind !== "image") throw new Error("Expected slide bitmap");
+      expect(image).toMatchObject({
+        x: 4000000,
+        y: 3000000,
+        width: 1000000,
+        height: 1000000,
+        alt: "テスト画像",
+      });
+      expect(image.src.startsWith("data:image/png;base64,")).toBe(true);
+      expect(
+        Uint8Array.from(atob(image.src.split(",")[1]!), (character) => character.charCodeAt(0)),
+      ).toEqual(bytes);
+    },
+  );
+
+  it("keeps actual JPEG bytes and MIME when a declared JPEG image uses an arbitrary part name", () => {
+    // A normal Pillow RGB 2x2 JPEG, independently verified before embedding this fixture.
+    const bytes = Uint8Array.from(
+      atob(
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAACAAIDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDmqKKK/VT80P/Z",
+      ),
+      (character) => character.charCodeAt(0),
+    );
+    const expected = parseOfficeDocument(
+      zipSync(presentationWithBitmap("picture.jpg", bytes, "image/jpeg")),
+      "pptx",
+    );
+    const document = parseOfficeDocument(
+      zipSync(presentationWithBitmap("hero.bin", bytes, "image/jpeg")),
+      "pptx",
+    );
+    expect(document).toEqual(expected);
+    if (document.kind !== "presentation") throw new Error("Expected presentation");
+    const image = document.slides[0]?.elements.find((element) => element.kind === "image");
+    if (image?.kind !== "image") throw new Error("Expected JPEG bitmap");
+    expect(image.src).toBe(`data:image/jpeg;base64,${btoa(String.fromCharCode(...bytes))}`);
+  });
+
+  it("omits non-bitmap bytes even when their part declares a supported image MIME", () => {
+    const document = parseOfficeDocument(
+      zipSync(presentationWithBitmap("hero.bin", strToU8("ordinary text content"), "image/png")),
+      "pptx",
+    );
+    if (document.kind !== "presentation") throw new Error("Expected presentation");
+    expect(document.slides[0]?.elements.some((element) => element.kind === "image")).toBe(false);
+    expect(document.slides[0]?.text).toEqual(["日本語の見出し", "本文はマスターから継承"]);
+    expect(document.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("still omits an ordinary animated GIF when its declared GIF part has a png filename", () => {
+    const bytes = Uint8Array.from(
+      atob(
+        "R0lGODlhAgACAIEAACh4yAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAgACAAAIBgABCAQQEAAh+QQBCgABACwAAAAAAgACAIHIeCgAAAAAAAAAAAAIBgABCAQQEAA7",
+      ),
+      (character) => character.charCodeAt(0),
+    );
+    const document = parseOfficeDocument(
+      zipSync(presentationWithBitmap("hero.png", bytes, "image/gif")),
+      "pptx",
+    );
+    const expected = parseOfficeDocument(zipSync(visualPresentationParts()), "pptx");
+    if (document.kind !== "presentation" || expected.kind !== "presentation")
+      throw new Error("Expected presentation");
+    expect(document.slides[0]?.elements).toEqual(
+      expected.slides[0]?.elements.filter((element) => element.kind !== "image"),
+    );
+    expect(document.slides.map((slide) => slide.text)).toEqual(
+      expected.slides.map((slide) => slide.text),
+    );
+    expect(document.warnings.join(" ")).toContain("Only static PNG, JPEG, GIF, and WebP images");
+  });
+
   it.each([
     { location: "deck/main.xml", strict: false },
     { location: "main.xml", strict: false },

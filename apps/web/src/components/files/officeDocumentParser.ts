@@ -84,12 +84,14 @@ const MAX_CELL_CHARS = 2000;
 const MAX_TEXT_BYTES = 512 * 1024;
 const DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const PRESENTATION_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
+const SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const DOCUMENT_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
 
 function normalizeOfficeUri(uri: string): string {
   if (uri === "http://purl.oclc.org/ooxml/drawingml/main") return DRAWING_NS;
   if (uri === "http://purl.oclc.org/ooxml/presentationml/main") return PRESENTATION_NS;
+  if (uri === "http://purl.oclc.org/ooxml/spreadsheetml/main") return SPREADSHEET_NS;
   const strictRelationships = "http://purl.oclc.org/ooxml/officeDocument/relationships";
   return uri === strictRelationships || uri.startsWith(`${strictRelationships}/`)
     ? DOCUMENT_REL_NS + uri.slice(strictRelationships.length)
@@ -389,7 +391,7 @@ function parseXml(
   return encoding;
 }
 
-/** Normalize validated UTF-16 XML for SheetJS without retaining a second set of parts. */
+/** Normalize validated XML for SheetJS without retaining a second set of parts. */
 function normalizedWorkbookArchive(
   parts: Map<string, Uint8Array>,
   encodings: Map<string, XmlEncoding>,
@@ -926,14 +928,15 @@ function paragraphText(node: XmlNode): string {
   return text;
 }
 
-function imageSource(bytes: Uint8Array, path: string): string | undefined {
-  const mime = /\.png$/i.test(path)
+function imageSource(bytes: Uint8Array): string | undefined {
+  const signature = String.fromCharCode(...bytes.subarray(0, 12));
+  const mime = signature.startsWith("\x89PNG\r\n\x1a\n")
     ? "image/png"
-    : /\.jpe?g$/i.test(path)
+    : bytes[0] === 0xff && bytes[1] === 0xd8
       ? "image/jpeg"
-      : /\.gif$/i.test(path)
+      : signature.startsWith("GIF87a") || signature.startsWith("GIF89a")
         ? "image/gif"
-        : /\.webp$/i.test(path)
+        : signature.startsWith("RIFF") && signature.slice(8, 12) === "WEBP"
           ? "image/webp"
           : undefined;
   if (!mime) return undefined;
@@ -985,6 +988,110 @@ function imageSource(bytes: Uint8Array, path: string): string | undefined {
   return `data:${mime};base64,${btoa(binary)}`;
 }
 
+function partRelationships(path: string, tree: (path: string) => XmlNode | undefined) {
+  const split = path.lastIndexOf("/");
+  const relPath = `${path.slice(0, split + 1)}_rels/${path.slice(split + 1)}.rels`;
+  const relationships = new Map<string, { type: string; path: string; target: string }>();
+  const ids = new Set<string>();
+  for (const node of children(tree(relPath), "Relationship", PACKAGE_REL_NS)) {
+    const id = nodeAttribute(node, "Id");
+    const target = nodeAttribute(node, "Target");
+    const type = nodeAttribute(node, "Type");
+    if (!id || !target || !type) fail("Invalid presentation relationship.");
+    if (ids.has(id)) fail("Duplicate presentation relationship.");
+    ids.add(id);
+    const normalizedType = normalizeOfficeUri(type);
+    const mode = nodeAttribute(node, "TargetMode");
+    if (mode === "External") {
+      if (!path && normalizedType === `${DOCUMENT_REL_NS}/officeDocument`)
+        fail("The office document relationship must be internal.");
+      continue;
+    }
+    if (mode && mode !== "Internal") fail("Invalid presentation relationship target mode.");
+    relationships.set(id, { type: normalizedType, path: resolvePart(path, target), target });
+  }
+  return relationships;
+}
+
+function officeDocumentPath(parts: Map<string, Uint8Array>): string {
+  const relationships = partRelationships("", (path) => {
+    const bytes = parts.get(path);
+    return bytes ? xmlTree(bytes) : undefined;
+  });
+  const officeDocuments = [...relationships.values()].filter(
+    (rel) => rel.type === `${DOCUMENT_REL_NS}/officeDocument`,
+  );
+  if (officeDocuments.length !== 1)
+    fail("The document must have exactly one internal office document relationship.");
+  return officeDocuments[0]!.path;
+}
+
+function normalizeWorkbookRelationships(
+  parts: Map<string, Uint8Array>,
+  path: string,
+  workbook: XmlNode,
+): string | undefined {
+  const tree = (name: string) => {
+    const bytes = parts.get(name);
+    return bytes ? xmlTree(bytes) : undefined;
+  };
+  const workbookTypes = new Set([
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+    "application/vnd.ms-excel.sheet.binary.macroEnabled.main",
+    "application/vnd.ms-excel.addin.macroEnabled.main+xml",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml",
+  ]);
+  const candidates = children(
+    tree("[Content_Types].xml"),
+    "Override",
+    "http://schemas.openxmlformats.org/package/2006/content-types",
+  ).filter((node) => workbookTypes.has(nodeAttribute(node, "ContentType") ?? ""));
+  // SheetJS selects content types first, with a legacy fallback to xl/workbook.xml.
+  if (
+    candidates.length > 1 ||
+    (candidates.length
+      ? nodeAttribute(candidates[0], "PartName") !== `/${path}`
+      : path !== "xl/workbook.xml")
+  )
+    fail("The workbook content type disagrees with its office document relationship.");
+  const relationships = partRelationships(path, tree);
+  const directory = path.slice(0, path.lastIndexOf("/") + 1);
+  const archiveNames = new Map([...parts.keys()].map((name) => [name.toLowerCase(), name]));
+  const find = (name: string) => archiveNames.get(name.toLowerCase());
+  let changed = false;
+  for (const sheet of descendants(workbook, "sheet", SPREADSHEET_NS)) {
+    const id = nodeAttribute(sheet, "id", DOCUMENT_REL_NS);
+    const relationship = id ? relationships.get(id) : undefined;
+    if (!relationship || !find(relationship.path))
+      fail("The workbook references a missing worksheet.");
+    const target = relationship.target;
+    const selected = ["xl/" + target.replace(/\/?xl\//, ""), target, directory + target]
+      .map(find)
+      .find((name) => name !== undefined);
+    changed ||= selected !== find(relationship.path);
+    const preferred = find("xl/" + relationship.path.replace(/\/?xl\//, ""));
+    if (preferred && preferred !== find(relationship.path))
+      fail("The workbook worksheet paths are ambiguous for preview.");
+  }
+  if (!changed) return undefined;
+  const escape = (value: string) =>
+    value.replace(/[&<"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", '"': "&quot;" })[char]!);
+  let xml = `<Relationships xmlns="${PACKAGE_REL_NS}">`;
+  for (const [id, rel] of relationships) {
+    const entry = `<Relationship Id="${escape(id)}" Type="${escape(rel.type)}" Target="${escape(rel.path)}"/>`;
+    if (xml.length + entry.length + "</Relationships>".length > ENTRY_MAX_BYTES)
+      fail("The normalized workbook XML exceeds preview limits.");
+    xml += entry;
+  }
+  xml += "</Relationships>";
+  const bytes = new TextEncoder().encode(xml);
+  if (bytes.length > ENTRY_MAX_BYTES) fail("The normalized workbook XML exceeds preview limits.");
+  const relPath = `${directory}_rels/${path.slice(directory.length)}.rels`;
+  parts.set(relPath, bytes);
+  return relPath;
+}
+
 function parsePresentation(parts: Map<string, Uint8Array>): OfficeDocument {
   const trees = new Map<string, XmlNode>();
   const tree = (path: string | undefined) => {
@@ -998,39 +1105,11 @@ function parsePresentation(parts: Map<string, Uint8Array>): OfficeDocument {
     }
     return result;
   };
-  function relationships(path: string) {
-    const split = path.lastIndexOf("/");
-    const relPath = `${path.slice(0, split + 1)}_rels/${path.slice(split + 1)}.rels`;
-    const relationships = new Map<string, { type: string; path: string }>();
-    const ids = new Set<string>();
-    for (const node of children(tree(relPath), "Relationship", PACKAGE_REL_NS)) {
-      const id = nodeAttribute(node, "Id");
-      const target = nodeAttribute(node, "Target");
-      const type = nodeAttribute(node, "Type");
-      if (!id || !target || !type) fail("Invalid presentation relationship.");
-      if (ids.has(id)) fail("Duplicate presentation relationship.");
-      ids.add(id);
-      const normalizedType = normalizeOfficeUri(type);
-      const mode = nodeAttribute(node, "TargetMode");
-      if (mode === "External") {
-        if (!path && normalizedType === `${DOCUMENT_REL_NS}/officeDocument`)
-          fail("The presentation office document relationship must be internal.");
-        continue;
-      }
-      if (mode && mode !== "Internal") fail("Invalid presentation relationship target mode.");
-      relationships.set(id, { type: normalizedType, path: resolvePart(path, target) });
-    }
-    return relationships;
-  }
+  const relationships = (path: string) => partRelationships(path, tree);
   const related = (path: string, type: string) =>
     [...relationships(path).values()].find((rel) => rel.type === `${DOCUMENT_REL_NS}/${type}`)
       ?.path;
-  const officeDocuments = [...relationships("").values()].filter(
-    (rel) => rel.type === `${DOCUMENT_REL_NS}/officeDocument`,
-  );
-  if (officeDocuments.length !== 1)
-    fail("The presentation must have exactly one internal office document relationship.");
-  const presentationPath = officeDocuments[0]!.path;
+  const presentationPath = officeDocumentPath(parts);
   const presentation = tree(presentationPath);
   if (
     !presentation ||
@@ -1140,7 +1219,7 @@ function parsePresentation(parts: Map<string, Uint8Array>): OfficeDocument {
           );
           continue;
         }
-        const src = imageSource(imageBytes, imagePath);
+        const src = imageSource(imageBytes);
         if (!src) {
           warnings.add("Only static PNG, JPEG, GIF, and WebP images are shown.");
           continue;
@@ -1238,9 +1317,15 @@ export function parseOfficeDocument(
     }
   }
   if (format === "pptx") return parsePresentation(parts);
-  if (!parts.has("xl/workbook.xml")) fail("This file is not a supported Excel workbook.");
+  const workbookPath = officeDocumentPath(parts);
+  const workbookBytes = parts.get(workbookPath);
+  const workbook = workbookBytes ? xmlTree(workbookBytes) : undefined;
+  if (!workbook || workbook.tag.local !== "workbook" || workbook.tag.uri !== SPREADSHEET_NS)
+    fail("This file is not a supported Excel workbook.");
+  const normalizedRelationships = normalizeWorkbookRelationships(parts, workbookPath, workbook);
+  if (normalizedRelationships) encodings.delete(normalizedRelationships);
   return parseSpreadsheet(
-    encodings.size ? normalizedWorkbookArchive(parts, encodings) : bytes,
+    encodings.size || normalizedRelationships ? normalizedWorkbookArchive(parts, encodings) : bytes,
     "xlsx",
   );
 }
