@@ -1609,6 +1609,57 @@ describe("gate: a failed attempt goes back into the session", () => {
     }),
   );
 
+  /** A failed attempt whose send reached the session but whose `gate_sent_back` was never written. */
+  const sentButUnrecorded = () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      failFirst(rig, 1);
+      // The send's answer is lost: T3 has the message, the ledger stops at `gate-sending`.
+      rig.t3.failAt = 1;
+      const error = yield* Effect.flip(gateIn(rig));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      rig.t3.failAt = null;
+      assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, ...failingAttempt(1), sending(1, 1)]);
+      clearCalls(rig);
+      return rig;
+    });
+
+  it.effect(
+    "a send that reached the session is recorded once its next run ended, and gated as the next attempt",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* sentButUnrecorded();
+        setRun(rig, "completed", 2);
+        assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        assert.deepStrictEqual(sends(rig), [], "the failure is not sent again");
+        assert.deepStrictEqual(linesOf(rig), [
+          ...BASE_EVENTS,
+          ...failingAttempt(1),
+          sending(1, 1),
+          sentBack(1, 1),
+          ...passingAttempt(2),
+          ...PASS_TAIL,
+        ]);
+        assert.deepStrictEqual(causeOf(rig, sentBack(1, 1)), {
+          step: "gate",
+          reason: "gate-send-recovered",
+        });
+      }),
+  );
+
+  it.effect("a send that reached the session whose next run asked questions is never gated", () =>
+    Effect.gen(function* () {
+      const rig = yield* sentButUnrecorded();
+      rig.t3.status = () =>
+        statusOf("completed", "Which one?\nFACTORY-STOP: needs-info", { runOrdinal: 2 });
+      assert.strictEqual((yield* advanceIn(rig)).kind, "needs-info");
+      assert.deepStrictEqual(rig.ws.calls, []);
+      assert.ok(!rig.gh.world.prReady);
+      assert.strictEqual(rig.gh.world.state, "needs-info");
+    }),
+  );
+
   it.effect("the second failure is sent with its own command id and the ordinal it read", () =>
     Effect.gen(function* () {
       const rig = yield* readyForGate();

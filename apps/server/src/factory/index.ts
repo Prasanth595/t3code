@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import type * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
@@ -35,8 +36,11 @@ import { MachineLog } from "./ledger/machineLog.ts";
 import { runLoop, type Loop } from "./loop.ts";
 import {
   GATE_PASSED_LINE,
+  errorKind,
   gateQueued,
+  plain,
   runPass,
+  stuckLine,
   type GateStart,
   type PassError,
   type PassWorld,
@@ -46,12 +50,7 @@ import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
 import { readProgress } from "./runner/progress.ts";
 import { advance, timeLimit, watch, type BuildingContext } from "./runner/building.ts";
-import {
-  gate as gateStep,
-  type GateContext,
-  type GateStep,
-  type GateStepError,
-} from "./runner/gating.ts";
+import { gate as gateStep, type GateContext, type GateStep } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
 import * as Events from "./t3/events.ts";
@@ -136,6 +135,8 @@ export interface LiveGate {
   readonly gate: FactoryGate["Service"];
   /** Run when a gate ends with a decision (`gateDecided`), so the next pass carries on at once. */
   readonly wake: Effect.Effect<void>;
+  /** The factory's scope: a gate still running when it closes is interrupted, and its cleanup runs. */
+  readonly scope: Scope.Scope;
 }
 
 /** The run's line when its gate, started in the background, has ended. */
@@ -146,7 +147,7 @@ const gateWords = (run: string, step: GateStep): string => {
     case "sent-back":
       return `the gate failed on attempt ${step.attempt} and was sent back into the session`;
     case "stuck":
-      return `stuck, the reason is in the ledger of run ${run}`;
+      return stuckLine(run);
     case "not-ready":
       return "nothing to gate";
     case "ended":
@@ -169,38 +170,6 @@ export const gateDecided = (step: GateStep | null): boolean =>
     step.kind === "sent-back" ||
     step.kind === "stuck" ||
     step.kind === "ended");
-
-/** What a gate error was about, for the run's `error` line. */
-const gateErrorKind = (error: GateStepError): ErrorKind => {
-  switch (error._tag) {
-    case "WorkspaceFailedError":
-    case "WorkspaceUnexpectedError":
-    case "WorkspaceCleanupError":
-    case "WorkspaceIoError":
-    case "WorkspaceSpawnError":
-      return "git";
-    case "GateCommandSpawnError":
-    case "GateRecordError":
-      return "gate";
-    case "NoGateCommandsError":
-    case "WrongRepoError":
-      return "config";
-    case "GitHubSpawnError":
-    case "GitHubInvalidArgument":
-    case "GitHubFailed":
-    case "GitHubTimedOut":
-    case "GitHubOutputTooLarge":
-    case "GitHubParse":
-    case "GitHubRateLimited":
-      return "tracker";
-    case "FactorySessionsError":
-    case "FactoryThreadNotFoundError":
-    case "FactoryMessageRejectedError":
-      return "t3";
-    default:
-      return "ledger";
-  }
-};
 
 /** The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock. */
 export const liveWorld = (
@@ -277,18 +246,18 @@ export const liveWorld = (
         return { kind: "queued", running: gating.size, max: machine.maxConcurrentGates } as const;
       }
       gating.add(id);
-      const label = `${repo.watched.repo}#${run.issue}`;
+      const label = plain(`${repo.watched.repo}#${run.issue}`);
       yield* gateStep(gateContext(repo), run).pipe(
         Effect.matchEffect({
           onSuccess: (step) =>
             Effect.logInfo(`${label} building: ${gateWords(id, step)}`).pipe(Effect.as(step)),
           onFailure: (error) =>
-            Effect.logError(`error: ${label} gate: ${error.message}`).pipe(
+            Effect.logError(`error: ${label} gate: ${plain(error.message)}`).pipe(
               Effect.andThen(
-                recordError(run, "gate", gateErrorKind(error), error.message).pipe(
+                recordError(run, "gate", errorKind(error), error.message).pipe(
                   Effect.catch((failed) =>
                     Effect.logError(
-                      `error: ${label} gate: cannot record the error: ${failed.message}`,
+                      `error: ${label} gate: cannot record the error: ${plain(failed.message)}`,
                     ),
                   ),
                 ),
@@ -298,7 +267,7 @@ export const liveWorld = (
         }),
         Effect.ensuring(Effect.sync(() => gating.delete(id))),
         Effect.flatMap((step) => (gateDecided(step) ? live.wake : Effect.void)),
-        Effect.forkDetach,
+        Effect.forkIn(live.scope),
       );
       return { kind: "started" } as const;
     });
@@ -495,6 +464,7 @@ const startFactory = (options: RuntimeOptions) =>
     const world = liveWorld(machine, factoryDir, process, sessions, () => Date.now(), hostName(), {
       gate,
       wake: Effect.suspend(() => running?.wake ?? Effect.void),
+      scope: yield* Effect.scope,
     });
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.

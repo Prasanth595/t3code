@@ -13,6 +13,7 @@ import {
   type State,
 } from "../domain/lifecycle.ts";
 import { FactoryProcess } from "../process.ts";
+import { isCommitId } from "../text.ts";
 import {
   APPROVAL_QUERY,
   ApprovalAnswer,
@@ -514,8 +515,6 @@ const encodeBranch = (branch: string): string | null => {
 
 const isPlainSegment = (part: string): boolean =>
   part !== "." && part !== ".." && /^[A-Za-z0-9._-]+$/.test(part);
-
-const isCommitId = (text: string): boolean => /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(text);
 
 /** gh's stderr for a pull request number the repo does not have. */
 const PULL_REQUEST_GONE = /could not resolve to a pullrequest/i;

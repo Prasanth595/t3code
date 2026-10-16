@@ -6,6 +6,7 @@
 
 import { isState, type State } from "../domain/lifecycle.ts";
 import type { Entry } from "../ledger/read.ts";
+import { isCommitId } from "../text.ts";
 
 /** A passing attempt as the ledger records it: the commands that ran, and the commit they were gated on. */
 export interface PassRecord {
@@ -120,9 +121,6 @@ const canonical = (text: string): number | null =>
 /** The `k` of a step written as `<name> <k>`, `k` a number without a sign or leading zero. */
 const stepNumber = (step: string, name: string): number | null =>
   step.startsWith(`${name} `) ? canonical(step.slice(name.length + 1)) : null;
-
-/** Whether `text` is a full commit id: 40 hex digits (64 in a SHA-256 repo). */
-const isCommitId = (text: string): boolean => /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(text);
 
 /** The `gate-sending <attempt> <ordinal>` step's numbers, or null for text that breaks the rules. */
 export const parseGateSending = (

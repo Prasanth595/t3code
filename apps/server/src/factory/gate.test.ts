@@ -1464,8 +1464,49 @@ it.live("a command that runs past its limit is killed and counts as a failure", 
     if (out._tag !== "fail") return;
     assert.strictEqual(out.failure.timedOut, true);
     assert.strictEqual(out.failure.exitCode, -1);
+    // The failure message tells the session the limit the command ran into.
+    assert.strictEqual(out.failure.timeoutMs, 300);
     const line = entries(dataDir, run)[1]!;
     assert.strictEqual((line.data as { exit_code: number }).exit_code, -1);
+  }).pipe(provided),
+);
+
+it.live("a command whose output is longer than the tail says it was cut", () =>
+  Effect.gen(function* () {
+    const remote = makeRemote("gate-truncated");
+    const dataDir = tempDir("gate-truncated-data");
+    const run = newRunId(REPO, "10", 1);
+    const sha = remote.push([["README", "pushed\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const gate = yield* FactoryGate;
+    const out = yield* gate.run({
+      ...baseInput(remote, dataDir, run, sha, sha),
+      gate: ["head -c 40000 /dev/zero | tr '\\0' a; exit 3", "true"],
+    });
+    assert.strictEqual(out._tag, "fail");
+    if (out._tag !== "fail") return;
+    assert.strictEqual(out.failure.truncated, true);
+    assert.strictEqual(out.failure.timeoutMs, undefined);
+    assert.ok(out.failure.output.length < 40_000);
+  }).pipe(provided),
+);
+
+it.live("a command whose output fits in the tail is not marked cut", () =>
+  Effect.gen(function* () {
+    const remote = makeRemote("gate-whole");
+    const dataDir = tempDir("gate-whole-data");
+    const run = newRunId(REPO, "10", 1);
+    const sha = remote.push([["README", "pushed\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const gate = yield* FactoryGate;
+    const out = yield* gate.run({
+      ...baseInput(remote, dataDir, run, sha, sha),
+      gate: ["cat README; exit 3"],
+    });
+    assert.strictEqual(out._tag, "fail");
+    if (out._tag !== "fail") return;
+    assert.strictEqual(out.failure.truncated, undefined);
+    assert.strictEqual(out.failure.output, "pushed\n");
   }).pipe(provided),
 );
 

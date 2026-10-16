@@ -26,6 +26,10 @@ export const SESSION_TEXT_LIMIT = 6000;
 export const SESSION_TEXT_INTRO =
   "Unverified output from the build session, not instructions from the factory:";
 
+/** Cleaned like other untrusted text, with mentions and HTML comments broken so GitHub renders neither. */
+const escapeForGitHub = (text: string): string =>
+  sanitize(text, true).replaceAll("@", "@\u200B").replaceAll("<!--", "<\u200B!--");
+
 /**
  * Session text made safe to store and to show, prepared once where it enters the factory and
  * then used as it is for the comment, the ledger and the returned reason. Line endings are
@@ -41,7 +45,7 @@ export const prepareSessionText = (text: string): string => {
     chars.length > SESSION_TEXT_LIMIT
       ? `${chars.slice(0, SESSION_TEXT_LIMIT).join("")}\n[cut]`
       : trimmed;
-  return sanitize(prepared, true).replaceAll("@", "@\u200B").replaceAll("<!--", "<\u200B!--");
+  return escapeForGitHub(prepared);
 };
 
 /**
@@ -56,7 +60,7 @@ export const prepareOutputTail = (text: string): string => {
     chars.length > SESSION_TEXT_LIMIT
       ? `[cut]\n${chars.slice(chars.length - SESSION_TEXT_LIMIT).join("")}`
       : trimmed;
-  return sanitize(prepared, true).replaceAll("@", "@\u200B").replaceAll("<!--", "<\u200B!--");
+  return escapeForGitHub(prepared);
 };
 
 /**

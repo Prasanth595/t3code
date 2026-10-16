@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -11,6 +12,7 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { describe } from "vite-plus/test";
@@ -29,7 +31,8 @@ import {
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { scanMachineLog } from "./ledger/machineLog.ts";
-import { newRunId } from "./ledger/runId.ts";
+import { readRun } from "./ledger/read.ts";
+import { newRunId, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import type { Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
@@ -425,6 +428,7 @@ describe("liveWorld", () => {
     liveWorld(machine, "/factory-test/data", process, stubSessions, () => NOW, "mac-mini", {
       gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
       wake: Effect.void,
+      scope: Scope.makeUnsafe(),
     });
 
   const repo: Repo = {
@@ -818,6 +822,7 @@ describe("the gate in the background", () => {
         {
           gate: { run: () => Effect.die("no gate runs for a recorded pass") },
           wake: Deferred.succeed(woken, undefined).pipe(Effect.asVoid),
+          scope: yield* Scope.make(),
         },
       );
       assert.deepStrictEqual(yield* world.gate(repo, run), { kind: "started" });
@@ -830,6 +835,118 @@ describe("the gate in the background", () => {
       });
       yield* Deferred.await(woken);
       assert.strictEqual(world.gateRunning(run), false);
+    }),
+  );
+
+  /** A building run whose session reported its pull request: the gate reads the thread first. */
+  const reportedRun = (dataDir: string): RunId => {
+    const run = newRunId(REPO, "10", 1);
+    const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+    ledger.append(
+      {
+        event: "session_launched",
+        data: {
+          thread_id: "thread-1",
+          worktree: null,
+          branch: null,
+          model_instance: null,
+          model: null,
+          resumed_from: null,
+        },
+      },
+      makeCause("start", "seed"),
+    );
+    ledger.append(
+      { event: "state_changed", data: { from: "triage", to: "building" } },
+      makeCause("start", "seed"),
+    );
+    ledger.append(
+      { event: "pr_opened", data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" } },
+      makeCause("advance", "seed"),
+    );
+    ledger.close();
+    return run;
+  };
+
+  const gateMachine: MachineConfig = {
+    ghConfigDir: "/gh/rawphp",
+    pollSeconds: 60,
+    maxConcurrentRuns: 1,
+    maxConcurrentGates: 1,
+    modelInstance: "claudeAgent",
+    model: "claude-sonnet-5-5",
+    repos: [{ repo: REPO, path: "/p" }],
+  };
+  const gateRepo: Repo = {
+    watched: gateMachine.repos[0]!,
+    project: timeLimitOnlyProjectConfig(),
+    trackerUser: "rawphp",
+  };
+  const deadGh: FactoryProcess["Service"] = {
+    run: () => Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
+  };
+
+  it.effect(
+    "a gate that fails records the error by kind, frees the run and does not wake the loop",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = reportedRun(dataDir);
+        const done = yield* Deferred.make<void>();
+        const woken = yield* Ref.make(0);
+        const sessions = Sessions.FactorySessions.of({
+          ...stubSessions,
+          status: () =>
+            Effect.fail(new Sessions.SessionsError({ operation: "status", cause: "timeout" })).pipe(
+              Effect.ensuring(Deferred.succeed(done, undefined)),
+            ),
+        });
+        const world = liveWorld(gateMachine, dataDir, deadGh, sessions, () => 1_000, "mac-mini", {
+          gate: { run: () => Effect.die("the thread read fails first") },
+          wake: Ref.update(woken, (n) => n + 1),
+          scope: yield* Scope.make(),
+        });
+        assert.deepStrictEqual(yield* world.gate(gateRepo, run), { kind: "started" });
+        yield* Deferred.await(done);
+        // The error line lands after the failed read: wait for the run to be freed.
+        while (world.gateRunning(run)) yield* Effect.yieldNow;
+        const errors = readRun(dataDir, run).entries.filter((e) => e.event === "error");
+        assert.strictEqual(errors.length, 1);
+        assert.deepInclude(errors[0]!.data as object, { step: "gate", kind: "t3" });
+        assert.strictEqual(yield* Ref.get(woken), 0);
+        // The run is free for the next pass's gate.
+        assert.deepStrictEqual(yield* world.gate(gateRepo, run), { kind: "started" });
+      }),
+  );
+
+  it.effect("a gate still running when the factory's scope closes is interrupted", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = reportedRun(dataDir);
+      const entered = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const sessions = Sessions.FactorySessions.of({
+        ...stubSessions,
+        status: () =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+          ),
+      });
+      const scope = yield* Scope.make();
+      const world = liveWorld(gateMachine, dataDir, deadGh, sessions, () => 1_000, "mac-mini", {
+        gate: { run: () => Effect.die("the thread read never ends") },
+        wake: Effect.void,
+        scope,
+      });
+      assert.deepStrictEqual(yield* world.gate(gateRepo, run), { kind: "started" });
+      // The gate is under way, waiting on T3, when the factory stops.
+      yield* Deferred.await(entered);
+      assert.strictEqual(world.gateRunning(run), true);
+      yield* Scope.close(scope, Exit.void);
+      yield* Deferred.await(interrupted);
+      assert.strictEqual(world.gateRunning(run), false);
+      assert.ok(!readRun(dataDir, run).entries.some((e) => e.event === "error"));
     }),
   );
 

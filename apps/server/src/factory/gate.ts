@@ -16,7 +16,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, validateRunId, type RunId } from "./ledger/runId.ts";
 import { FactoryProcess, type RunInput, type RunResult, type RunSpawnError } from "./process.ts";
-import { commandLine, sanitize } from "./text.ts";
+import { commandLine, isCommitId, sanitize } from "./text.ts";
 
 /**
  * The gate: a fresh checkout of a pull request's head merged with the base branch tip, the
@@ -395,9 +395,6 @@ interface GitCall {
   /** Its stdout is read, so output cut at the cap is refused. The other calls' output is only shown. */
   readonly parsed?: boolean;
 }
-
-/** Whether `text` is a full commit id: 40 hex digits (64 in a SHA-256 repo). */
-const isCommitId = (text: string): boolean => /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(text);
 
 /**
  * An `owner/name` of plain characters: both parts non-empty, not `.` or `..`, not starting with

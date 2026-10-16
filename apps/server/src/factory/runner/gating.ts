@@ -26,7 +26,7 @@ import { ledgerCall as ledger } from "../ledger/errors.ts";
 import { makeCause } from "../ledger/events.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
-import { sanitize } from "../text.ts";
+import { isCommitId, sanitize } from "../text.ts";
 import type { BoundGitHub, PullRequest } from "../tracker/github.ts";
 import {
   WrongRepoError,
@@ -117,8 +117,6 @@ export type GateStep =
   | { readonly kind: "queued"; readonly running: number; readonly max: number };
 
 const NOT_READY = { kind: "not-ready" } as const;
-
-const isCommitId = (text: string): boolean => /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(text);
 
 /** `attempt` as the stuck comment counts it: "1 attempt", "2 attempts". */
 const attempts = (n: number): string => `${n} ${n === 1 ? "attempt" : "attempts"}`;

@@ -35,3 +35,7 @@ export const commandLine = (command: string): string => {
     ? `${chars.slice(0, MAX_COMMAND_CHARS).join("")}\u2026`
     : chars.join("");
 };
+
+/** Whether `text` is a full commit id: 40 hex digits (64 in a SHA-256 repo). */
+export const isCommitId = (text: string): boolean =>
+  /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(text);

@@ -10,9 +10,11 @@ import {
   THREAD_GONE,
   TIME_LIMIT,
   WRONG_ACCOUNT,
+  failureMessage,
   fenced,
   launchMessage,
   mergeConflictMessage,
+  prepareOutputTail,
   prepareSessionText,
   questionsComment,
   sessionMayExistNote,
@@ -211,5 +213,50 @@ describe("mergeConflictMessage", () => {
     const shown = mergeConflictMessage("main", [long, "src/a\u0007b\u202e.rs"]).split("\n");
     assert.strictEqual(shown[2], `  ${"x".repeat(200)}\u2026`);
     assert.strictEqual(shown[3], "  src/a b .rs");
+  });
+});
+
+describe("prepareOutputTail", () => {
+  it("keeps the end of output over the limit, under a first line [cut]", () => {
+    const output = `${"a".repeat(SESSION_TEXT_LIMIT)}\nerror: the last line`;
+    const prepared = prepareOutputTail(output);
+    assert.ok(prepared.startsWith("[cut]\n"), prepared.slice(0, 20));
+    assert.ok(prepared.endsWith("\nerror: the last line"));
+    assert.strictEqual(Array.from(prepared).length, "[cut]\n".length + SESSION_TEXT_LIMIT);
+  });
+
+  it("leaves output within the limit whole and escapes it like session text", () => {
+    assert.strictEqual(
+      prepareOutputTail("  ping @tom <!-- x -->\r\n"),
+      "ping @\u200Btom <\u200B!-- x -->",
+    );
+    const atLimit = "b".repeat(SESSION_TEXT_LIMIT);
+    assert.strictEqual(prepareOutputTail(atLimit), atLimit);
+  });
+});
+
+describe("failureMessage", () => {
+  const failed = {
+    command: "cargo test",
+    exitCode: -1,
+    durationMs: 30_000,
+    timedOut: true,
+    output: "slow\n",
+  };
+
+  it("says how long the command ran before it timed out, and that the output was cut", () => {
+    const message = failureMessage({ ...failed, timeoutMs: 1_800_000, truncated: true });
+    assert.include(message, "\nResult: timed out after 1800 s\n");
+    assert.include(message, "(last 5 bytes, truncated)");
+  });
+
+  it("says neither when it does not know them", () => {
+    const message = failureMessage(failed);
+    assert.include(message, "\nResult: timed out\n");
+    assert.include(message, "(last 5 bytes)");
+    assert.include(
+      failureMessage({ ...failed, timedOut: false, exitCode: 101 }),
+      "\nResult: exit code 101\n",
+    );
   });
 });

@@ -24,6 +24,7 @@ import type {
   LimitOutcome,
   WatchOutcome,
 } from "./runner/building.ts";
+import type { GateStepError } from "./runner/gating.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import { sanitize } from "./text.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
@@ -125,6 +126,10 @@ export type GateStart =
   | { readonly kind: "started" }
   | { readonly kind: "queued"; readonly running: number; readonly max: number };
 
+/** The line of a run that ended in `stuck`. The reason is not printed: it can hold text the session or GitHub wrote. */
+export const stuckLine = (run: string): string =>
+  `stuck, the reason is in the ledger of run ${run}`;
+
 /** The counts the pass prints in its last line. */
 export interface Report {
   runs: number;
@@ -152,7 +157,7 @@ interface NoteError {
 }
 
 /** `text` with nothing in it that could drive a terminal or hide text. */
-const plain = (text: string): string => sanitize(text, false);
+export const plain = (text: string): string => sanitize(text, false);
 
 /** An error of the pass's own, in the words `what` and `detail`. */
 const passError = (kind: ErrorKind, what: string, detail: string): NoteError => ({
@@ -162,9 +167,18 @@ const passError = (kind: ErrorKind, what: string, detail: string): NoteError => 
   message: `${what}${detail}`,
 });
 
-/** Every call `start` makes is a tracker call, whatever host the tracker runs on. */
-const errorKind = (error: StartError | BuildingError): ErrorKind => {
+/**
+ * What an error of a run's step was about, for its `error` line. Every call `start` makes is a
+ * tracker call, whatever host the tracker runs on; the gate's checkout is git.
+ */
+export const errorKind = (error: StartError | BuildingError | GateStepError): ErrorKind => {
   switch (error._tag) {
+    case "WorkspaceFailedError":
+    case "WorkspaceUnexpectedError":
+    case "WorkspaceCleanupError":
+    case "WorkspaceIoError":
+    case "WorkspaceSpawnError":
+      return "git";
     case "GitHubSpawnError":
     case "GitHubInvalidArgument":
     case "GitHubFailed":
@@ -174,12 +188,15 @@ const errorKind = (error: StartError | BuildingError): ErrorKind => {
     case "GitHubRateLimited":
       return "tracker";
     case "GateRunningError":
+    case "GateCommandSpawnError":
+    case "GateRecordError":
       return "gate";
     case "FactorySessionsError":
     case "FactoryThreadNotFoundError":
     case "FactoryMessageRejectedError":
       return "t3";
     case "WrongRepoError":
+    case "NoGateCommandsError":
       return "config";
     default:
       // The run's own record disagrees with what the step expected.
@@ -312,9 +329,9 @@ class Pass {
     notes.errors.push({ ...error, line: `${notes.label} ${error.line}` });
   }
 
-  /** The run ended in `stuck`. The reason is not printed: it can hold text the session or GitHub wrote. */
+  /** The run ended in `stuck`. */
   stuck(notes: Notes, run: string): void {
-    notes.parts.push(`stuck, the reason is in the ledger of run ${run}`);
+    notes.parts.push(stuckLine(run));
   }
 
   flush(notes: Notes, run: RunId | null): Effect.Effect<void> {
@@ -441,10 +458,11 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
  * Works each confirmed run: the time limit first, for every state (the runner decides which
  * runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
  * its ledger, so a run cut short after the launch was sent is finished and its session never runs
- * on untracked. A building run has its text watched and its session's result read by `advance`,
- * until its session reports its pull request: the build is then done, and the run gets its gate,
- * started in the background (softfac's `softfac gate` child), with no tracker or T3 call in the
- * pass. A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
+ * on untracked. A building run has its text watched and its session's result read by `advance`
+ * on every pass, as softfac's `building` does, also once its session has reported its pull
+ * request: `advance` puts a pull request someone took out of draft back to draft and judges the
+ * session's latest run, and only when it says `ready-for-gate` is the gate started, in the
+ * background (softfac's `softfac gate` child). A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
  * thread is archived and its slot freed. The states after `pr-open` are later steps. A run of a
  * repo that is not loaded is left alone. None of it is a new
  * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
@@ -472,13 +490,7 @@ const workRuns = (
         notes.parts.push(GATE_RUNNING);
       } else if (yield* withinLimit(world, repo, info, notes, pass)) {
         if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
-        // The session's pull request waits for the gate: nothing is left to read or decide
-        // here, and the gate decides in the background.
-        else if (info.state === "building" && info.prReported) {
-          yield* startGate(world, repo, info, notes);
-        } else if (info.state === "building") {
-          yield* followBuilding(world, repo, info, notes, pass);
-        }
+        else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
         // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
         else if (info.state === "needs-info" || info.state === "stuck") {
           yield* advanceRun(world, repo, info, notes, pass);
