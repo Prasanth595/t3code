@@ -594,17 +594,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const onEditorFocusChange = props.onEditorFocusChange;
   const handleFocus = useCallback(() => {
     setIsFocused(true);
-    onExpandedChange?.(true);
     onEditorFocusChange?.(true);
-  }, [onEditorFocusChange, onExpandedChange]);
+  }, [onEditorFocusChange]);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    if (!settingsSheetPresentation.keepsComposerExpanded) {
-      onExpandedChange?.(false);
-    }
     onEditorFocusChange?.(false);
-  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
+  }, [onEditorFocusChange]);
   const handleSend = useCallback(
     async (followUp?: ActiveTurnComposerAction) => {
       if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
