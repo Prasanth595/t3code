@@ -182,7 +182,7 @@ export async function probeAssets(dir: string, html: string): Promise<ProbeResul
     }
   }
   keepAlive();
-  return { paths: [...requested], errors: [...errors] };
+  return { paths: [...requested].sort(), errors: [...errors].sort() };
 }
 
 /** For scripts: close the shared probe browser now. */

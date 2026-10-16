@@ -19,6 +19,7 @@ import {
 import {
   JS_TARGET,
   PACKAGE_SRC_DIR,
+  REPRODUCIBLE_BUILD,
   USER_PACKAGES,
   candidatesOf,
   formatMessages,
@@ -26,6 +27,7 @@ import {
 import { buildCss } from "./live/css.ts";
 import { brandScheme } from "./live/registry.ts";
 import { assertComponentsDir } from "./live/source.ts";
+import { deterministicStampInstant } from "./stamp.ts";
 import { DEFAULT_ARTIFACT_THEME, T3_THEME, artifactThemeIds, isArtifactTheme } from "./themes.ts";
 
 export interface LinkedCompileInput {
@@ -174,6 +176,7 @@ async function userChunk(tsx: string, modules: ReadonlySet<string> | undefined):
         loader: "js",
         sourcefile: "nf-linked.js",
       },
+      absWorkingDir: PACKAGE_SRC_DIR,
       bundle: true,
       write: false,
       format: "iife",
@@ -181,10 +184,10 @@ async function userChunk(tsx: string, modules: ReadonlySet<string> | undefined):
       target: JS_TARGET,
       minify: true,
       jsx: "automatic",
-      legalComments: "none",
       logLevel: "silent",
       define: { "process.env.NODE_ENV": '"production"' },
       plugins: [plugin],
+      ...REPRODUCIBLE_BUILD,
     });
     return result.outputFiles[0]?.text ?? "";
   } catch (error) {
@@ -295,7 +298,10 @@ export async function compileLinked(input: LinkedCompileInput): Promise<LinkedAr
   const assets: AssetMap = inlineAssets(dir, findAssetPaths(dir, texts, brand), brand);
   const hasAssets = Object.keys(assets.map).length > 0;
   const size = input.size ? `;size=${input.size.width}x${input.size.height}` : "";
-  const stamp = `components=${input.runtimeSHA};lane=${input.lane};theme=${theme}${size};at=${new Date().toISOString()};linked=${input.runtimeSHA}`;
+  const sourceBytes =
+    typeof input.source === "string" ? input.source : JSON.stringify(input.source);
+  const at = deterministicStampInstant(sourceBytes, input.runtimeSHA);
+  const stamp = `components=${input.runtimeSHA};lane=${input.lane};theme=${theme}${size};at=${at};linked=${input.runtimeSHA}`;
   const html = [
     `<!doctype html><html lang="en"><head>`,
     `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`,

@@ -5,6 +5,9 @@
  * observation here arrived passively (seen during useful work or delivered by
  * a passive reader) and every failure stays sanitized metadata.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous registry binding must match the standalone ACP reader byte for byte.
+import * as NodeCrypto from "node:crypto";
+
 import {
   ProviderDriverKind,
   type ServerProviderUsageWindow,
@@ -80,10 +83,17 @@ export type MuseAccountsFile = typeof MuseAccountsFile.Type;
 /** What a missing or unreadable accounts file means: Muse usage is off. */
 export const NO_MUSE_ACCOUNTS: MuseAccountsFile = { persona: "", accounts: [] };
 
+const EpochMs = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0),
+  Schema.isLessThanOrEqualTo(8_640_000_000_000_000),
+);
 const UsageBlock = Schema.Struct({
-  usedPercent: Schema.Number,
-  resetsAtMs: Schema.Number,
-  windowDurationMins: Schema.optional(Schema.Number),
+  usedPercent: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0)),
+  resetsAtMs: EpochMs,
+  windowDurationMins: Schema.optional(
+    Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0)),
+  ),
 });
 
 /** The MSP `SubscriptionUsage` payload of `usage/changed` and `usage/read`. */
@@ -91,7 +101,7 @@ export const MuseSubscriptionUsage = Schema.Struct({
   window: UsageBlock,
   weekly: UsageBlock,
   tier: Schema.optional(Schema.String),
-  observedAtMs: Schema.Number,
+  observedAtMs: EpochMs,
 });
 export type MuseSubscriptionUsage = typeof MuseSubscriptionUsage.Type;
 
@@ -170,11 +180,34 @@ export const MuseStoredObservation = Schema.Struct({
   usage: MuseSubscriptionUsage,
   signedInAs: Schema.optional(Schema.String),
   cost: Schema.optional(MuseObservationCost),
-  recordedAtMs: Schema.Number,
+  recordedAtMs: EpochMs,
+  accountBinding: Schema.optional(Schema.String),
 });
 export type MuseStoredObservation = typeof MuseStoredObservation.Type;
 
-export type MuseRestoreRejection = "account_mismatch" | "source_mismatch" | "identity_mismatch";
+/** Must match the ACP bridge's registry binding; roots are expanded before this call. */
+export function museAccountBinding(account: MuseAccount): string {
+  return NodeCrypto.createHash("sha256")
+    .update(
+      JSON.stringify([
+        account.id,
+        account.expectedEmail?.trim().toLowerCase() ?? null,
+        ...[
+          account.cliExecutable,
+          account.workerExecutable,
+          account.configHome,
+          account.dataHome,
+        ].map((value) => value || null),
+      ]),
+    )
+    .digest("hex");
+}
+
+export type MuseRestoreRejection =
+  | "account_mismatch"
+  | "source_mismatch"
+  | "identity_mismatch"
+  | "config_mismatch";
 
 export type MuseRestoreResult =
   | {
@@ -200,6 +233,9 @@ export function restoreMuseStoredObservation(
   }
   if (stored.sourceId !== museSourceId(account.id)) {
     return { _tag: "Rejected", reason: "source_mismatch" };
+  }
+  if (stored.accountBinding && stored.accountBinding !== museAccountBinding(account)) {
+    return { _tag: "Rejected", reason: "config_mismatch" };
   }
   const expected = account.expectedEmail?.trim().toLowerCase();
   // Fail closed: a configured expected login must be positively matched. An

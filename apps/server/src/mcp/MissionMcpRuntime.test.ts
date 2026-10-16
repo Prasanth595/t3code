@@ -566,6 +566,57 @@ it.effect("reaches get, execute, and completion route read through the registry 
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect(
+  "grants a Retro child through delivery authority and denies foreign, missing or unrelated targets",
+  () => {
+    const harness = makeHarness(activePolicy);
+    return Effect.gen(function* () {
+      yield* seed;
+      const delivery = yield* issue(deliveryThread);
+      const initial = missionFixture();
+      const unassigned = { ...initial, managers: { delivery: initial.managers.delivery } };
+      assert.strictEqual(
+        (yield* callAs(delivery, "mission_execute", {
+          type: "mission.create",
+          commandId: "grant-create",
+          mission: decodeJson(encodeMissionJson(decodeMission(unassigned))),
+        })).isError,
+        false,
+      );
+      for (const target of [foreignThread, outsiderThread, ThreadId.make("missing-thread")]) {
+        const denied = yield* callAs(delivery, "mission_execute", {
+          ...replaceArguments(`grant-deny-${target}`, 3),
+          mission: {
+            ...missionJson(),
+            revision: 1,
+            managers: { ...unassigned.managers, retro: { threadId: target, epoch: 1 } },
+          },
+        });
+        assert.strictEqual(failureOf(denied).code, "scope_denied");
+      }
+      const outsider = yield* issue(outsiderThread);
+      assert.strictEqual(
+        failureOf(
+          yield* callAs(outsider, "mission_execute", replaceArguments("grant-deny-caller", 3)),
+        ).code,
+        "scope_denied",
+      );
+      const granted = yield* callAs(
+        delivery,
+        "mission_execute",
+        replaceArguments("grant-retro", 3),
+      );
+      assert.strictEqual(granted.isError, false);
+      const retro = yield* issue(retroThread);
+      const route = yield* callAs(retro, "mission_completion_route_read", {
+        selector: { ...RETRO_SELECTOR },
+      });
+      assert.strictEqual(route.isError, false);
+      assert.strictEqual((route.structuredContent as { status: string }).status, "hold");
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
 it.effect("denies callers outside the policy, mission, team, epoch, and live credential", () => {
   const harness = makeHarness(activePolicy);
   return Effect.gen(function* () {

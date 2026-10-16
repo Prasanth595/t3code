@@ -23,6 +23,22 @@ export const RUNTIME_DIR = NodePath.join(PACKAGE_SRC_DIR, "runtime");
 
 export const JS_TARGET = ["es2022", "chrome111", "safari16.4", "firefox115"];
 
+/**
+ * Same sources must emit the same bytes. `production` is always enabled so
+ * `NODE_ENV` cannot switch a package's conditional export between runs.
+ * `jsxDev` stays off so the runtime does not embed file:line ids. The outfile
+ * name is fixed and `write` stays false, so no temp path is created or baked in.
+ */
+export const REPRODUCIBLE_BUILD = {
+  charset: "utf8",
+  legalComments: "none",
+  sourcemap: false,
+  jsxDev: false,
+  treeShaking: true,
+  conditions: ["production"],
+  outfile: "nf-artifact.js",
+} as const satisfies esbuild.BuildOptions;
+
 /** Third-party packages generated TSX may import besides react and the @nofun aliases. */
 export const USER_PACKAGES = [
   "react",
@@ -260,12 +276,12 @@ export async function bundle(
       target: JS_TARGET,
       minify: input.minify ?? true,
       jsx: "automatic",
-      legalComments: "none",
       logLevel: "silent",
       loader: ASSET_LOADERS,
       define: { "process.env.NODE_ENV": '"production"', global: "globalThis" },
       banner: { js: 'var process=globalThis.process||{env:{NODE_ENV:"production"}};' },
       plugins: [plugin],
+      ...REPRODUCIBLE_BUILD,
     });
   } catch (error) {
     const failure = error as { errors?: ReadonlyArray<esbuild.Message> };
@@ -275,12 +291,15 @@ export async function bundle(
     result.outputFiles.find((file) => file.path.endsWith(".js"))?.text ??
     result.outputFiles[0]?.text ??
     "";
+  // onLoad runs as files finish, so Set insertion order is not stable across builds.
+  // Sort before the order can reach Tailwind or a content hash.
   const sourceFiles = Object.keys(result.metafile.inputs)
     .filter((input) => !input.includes(":") || /^[a-z]:/i.test(input))
     .map((input) => NodePath.resolve(dir, input))
     .filter((file) => !file.includes(`${NodePath.sep}node_modules${NodePath.sep}`))
-    .filter((file) => /\.(tsx|ts|jsx|js|mjs)$/.test(file));
-  return { js, cssImports: [...cssImports], sourceFiles, rejected };
+    .filter((file) => /\.(tsx|ts|jsx|js|mjs)$/.test(file))
+    .sort();
+  return { js, cssImports: [...cssImports].sort(), sourceFiles, rejected };
 }
 
 export function formatMessages(dir: string, messages: ReadonlyArray<esbuild.Message>) {

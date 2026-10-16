@@ -104,8 +104,10 @@ const sameBindings = (
 const sameAssignment = (a: MissionManagers["delivery"], b: MissionManagers["delivery"]): boolean =>
   a?.threadId === b?.threadId && a?.epoch === b?.epoch;
 
-const sameManagers = (a: MissionManagers, b: MissionManagers): boolean =>
-  sameAssignment(a.delivery, b.delivery) && sameAssignment(a.retro, b.retro);
+const validManagerGrant = (next: MissionManagers, current: MissionManagers): boolean =>
+  sameAssignment(next.delivery, current.delivery) &&
+  (sameAssignment(next.retro, current.retro) ||
+    (current.retro === undefined && next.retro?.threadId !== undefined && next.retro.epoch === 1));
 
 const checkBindings = (bindings: ReadonlyArray<MissionRepositoryBinding>): Check => {
   if (bindings.length === 0) {
@@ -364,11 +366,11 @@ const planReplace = (
       "Command authority is not a recorded mission authority.",
     );
   }
-  if (!sameManagers(command.mission.managers, current.managers)) {
+  if (!validManagerGrant(command.mission.managers, current.managers)) {
     return err(
       command.commandId,
       "manager_assignment_immutable",
-      "Generic replacement must preserve manager role owner and epoch; use a separate transfer.",
+      "Replacement may grant an unassigned Retro role at epoch 1; existing owners and epochs require a transfer.",
     );
   }
   const taskCheck = checkTasks(command.mission);
@@ -424,7 +426,7 @@ const planReplace = (
   const committed: Mission = {
     ...command.mission,
     projectTimezone: command.mission.projectTimezone ?? current.projectTimezone,
-    managers: current.managers,
+    managers: command.mission.managers,
     execution: current.execution,
     tasks: committedTasks,
   };

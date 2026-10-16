@@ -18,11 +18,10 @@ const atMost =
   (limit: number) =>
   (values: ReadonlyArray<unknown>): boolean =>
     values.length <= limit;
-const atLeastOne = (values: ReadonlyArray<unknown>): boolean =>
-  values.length > 0 && values.length <= 64;
-
 export const MissionResultCommitSet = Schema.Array(TrimmedNonEmptyString).check(
-  Schema.makeFilter(atLeastOne, { expected: "one to sixty-four commits" }),
+  Schema.makeFilter(atMost(64), {
+    expected: "at most sixty-four commits; scratch results may have none",
+  }),
 );
 export type MissionResultCommitSet = typeof MissionResultCommitSet.Type;
 

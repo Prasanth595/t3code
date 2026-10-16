@@ -345,6 +345,27 @@ const make = Effect.gen(function* () {
           )
             return yield* deny;
           const mission = yield* decodeMission(row.snapshot_json).pipe(Effect.mapError(() => deny));
+          if (
+            operation === "commit" &&
+            mission.managers.retro === undefined &&
+            proposedMission?.managers.retro !== undefined
+          ) {
+            const targetId = proposedMission.managers.retro.threadId;
+            if (targetId === undefined || proposedMission.managers.retro.epoch !== 1)
+              return yield* deny;
+            const target = yield* projections.getThread(targetId).pipe(Effect.mapError(() => deny));
+            // Initial delegation stays inside the authenticated controller's project and lineage.
+            // Replacing an existing owner is fenced by the separate P3 transfer lifecycle.
+            if (
+              target.deletedAt !== null ||
+              target.archivedAt !== null ||
+              target.projectId !== thread.projectId ||
+              target.lineage.rootThreadId !== thread.lineage.rootThreadId ||
+              target.lineage.relationshipToParent !== "subagent" ||
+              target.lineage.parentThreadId === null
+            )
+              return yield* deny;
+          }
           const completionRole =
             operation === "completion-route-read" && completionSelector !== undefined
               ? completionSelector.kind === "task-result"

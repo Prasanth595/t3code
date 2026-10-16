@@ -7,14 +7,16 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
-import { MuseStoredObservation } from "./museUsage.logic.ts";
+import { museAccountBinding, MuseAccountsFile, MuseStoredObservation } from "./museUsage.logic.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeStoredJson = Schema.decodeUnknownSync(Schema.fromJsonString(MuseStoredObservation));
+const decodeAccountsJson = Schema.decodeUnknownSync(Schema.fromJsonString(MuseAccountsFile));
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as MuseUsage from "./MuseUsage.ts";
+import { usageHeadroom } from "../mcp/usageHeadroom.ts";
 
 interface FsCall {
   readonly method: "makeDirectory" | "readFileString" | "writeFileString" | "rename";
@@ -58,6 +60,15 @@ const makeMemoryFileSystem = (
       Effect.sync(() => {
         calls.push({ method: "makeDirectory", path: String(path) });
       }),
+    readDirectory: (path) =>
+      Effect.succeed(
+        [...files.keys()]
+          .filter(
+            (key) =>
+              key.startsWith(`${path}/`) && !key.slice(String(path).length + 1).includes("/"),
+          )
+          .map((key) => key.slice(String(path).length + 1)),
+      ),
     readLink: (path) => Effect.fail(missingTestFile("readLink", String(path))),
     readFileString: (path) => {
       const key = String(path);
@@ -543,5 +554,114 @@ describe("MuseUsage passive observations", () => {
         restoreEnv();
       }
     }),
+  );
+});
+
+describe("native useful-work observations", () => {
+  const account = decodeAccountsJson(accountsJson).accounts[0]!;
+  const keptPath =
+    "/mem/muse-usage-observations/personal.900000.00000000-0000-4000-8000-000000000000.json";
+  const kept = (overrides: Record<string, unknown> = {}) =>
+    encodeJson({
+      version: 1,
+      accountId: "personal",
+      sourceId: "muse:personal",
+      accountBinding: museAccountBinding(account),
+      signedInAs: "you@example.com",
+      cost: "passive",
+      recordedAtMs: 950_000,
+      usage: {
+        ...observation(900_000),
+        window: { usedPercent: 0, resetsAtMs: 1_100_000, windowDurationMins: 300 },
+        weekly: { usedPercent: 100, resetsAtMs: 9_000_000 },
+      },
+      ...overrides,
+    });
+
+  it.effect(
+    "current consumes a kept native observation and restart retains age and agent-visible exhaustion",
+    () =>
+      Effect.gen(function* () {
+        const files = new Map<string, string>();
+        const calls: Array<FsCall> = [];
+        const restoreEnv = useAccountsFile(files, accountsJson);
+        try {
+          yield* TestClock.setTime(1_000_000);
+          yield* withService(files, calls, (service) =>
+            Effect.gen(function* () {
+              expect((yield* service.current)[0]?.accounts).toEqual([]);
+              files.set(keptPath, kept());
+              const source = (yield* service.current)[0]!;
+              expect(source.accounts[0]?.usageLimits.windows).toMatchObject([
+                { usedPercent: 0 },
+                { usedPercent: 100 },
+              ]);
+              expect(usageHeadroom(source.accounts[0]?.usageLimits, 1_000_000).headroom).toBe(
+                "exhausted",
+              );
+              const writes = calls.filter((call) => call.method === "writeFileString").length;
+              yield* service.current;
+              expect(calls.filter((call) => call.method === "writeFileString")).toHaveLength(
+                writes,
+              );
+            }),
+          );
+          files.delete(keptPath); // Server's own sanitized copy survives independently.
+          yield* TestClock.setTime(1_200_000);
+          yield* withService(files, calls, (service) =>
+            Effect.gen(function* () {
+              const source = (yield* service.current)[0]!;
+              expect(source.checkedAt).toBe("1970-01-01T00:15:00.000Z");
+              // A passed reset never becomes a replenished pool.
+              expect(usageHeadroom(source.accounts[0]?.usageLimits, 1_200_000).headroom).toBe(
+                "unknown",
+              );
+              expect(usageHeadroom(source.accounts[0]?.usageLimits, 3_000_000).headroom).toBe(
+                "unknown",
+              );
+            }),
+          );
+        } finally {
+          restoreEnv();
+        }
+      }),
+  );
+
+  it.effect(
+    "rejects wrong account, source, roots, identity, provenance, future data and replay",
+    () =>
+      Effect.gen(function* () {
+        const files = new Map<string, string>();
+        const calls: Array<FsCall> = [];
+        const restoreEnv = useAccountsFile(files, accountsJson);
+        try {
+          yield* TestClock.setTime(1_000_000);
+          yield* withService(files, calls, (service) =>
+            Effect.gen(function* () {
+              for (const overrides of [
+                { accountId: "other" },
+                { sourceId: "muse:other" },
+                { accountBinding: museAccountBinding({ ...account, dataHome: "/another" }) },
+                { signedInAs: "other@example.com" },
+                { signedInAs: "" },
+                { cost: "model_turn" },
+                { recordedAtMs: 1_100_000 },
+                { usage: observation(1_100_000) },
+              ]) {
+                files.set(keptPath, kept(overrides));
+                expect((yield* service.current)[0]?.accounts).toEqual([]);
+              }
+              files.set(keptPath, kept());
+              const original = yield* service.current;
+              files.set(keptPath, kept({ usage: observation(899_000) }));
+              expect(yield* service.current).toEqual(original);
+              files.set(keptPath, kept({ usage: observation(900_000) }));
+              expect(yield* service.current).toEqual(original);
+            }),
+          );
+        } finally {
+          restoreEnv();
+        }
+      }),
   );
 });

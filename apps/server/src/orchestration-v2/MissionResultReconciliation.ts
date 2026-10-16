@@ -503,6 +503,8 @@ export const integrateMissionResult = (input: {
   const policy = input.evidencePolicy ?? defaultMissionResultEvidencePolicy;
   if (record.state !== "accepted")
     return refuse("integrate", "invalid_transition", "Only an accepted result can be integrated.");
+  if (record.provenance.commitSet.length === 0)
+    return refuse("integrate", "evidence_mismatch", "Git integration requires a producing commit.");
   const blocked = promotionBlock(record, "integrate");
   if (blocked) return blocked;
   if (receipt.kind !== "integration")
