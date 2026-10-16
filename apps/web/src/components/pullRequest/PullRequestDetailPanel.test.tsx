@@ -50,7 +50,13 @@ vi.mock("~/lib/sourceControlActions", () => ({
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/pullRequests", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/pullRequests")>()),
-  pullRequestEnvironment: { detail: () => "detail", activity: () => "activity" },
+  pullRequestEnvironment: {
+    detail: () => "detail",
+    activity: () => "activity",
+
+    reviewGuide: () => "review-guide",
+    generateReviewGuide: { permissionAtom: () => "generate-review-guide" },
+  },
   usePullRequestTurnRefresh: () => 0,
   useSharedPullRequestSummary: () => null,
 }));
@@ -124,6 +130,8 @@ vi.mock("./PullRequestSummaryTab", () => ({
     </div>
   ),
 }));
+
+vi.mock("./PullRequestGuideTab", () => ({ PullRequestGuideTab: () => null }));
 vi.mock("./PullRequestCodeTab", () => ({
   default: ({
     onAddToAgentSelection,
@@ -261,9 +269,6 @@ const actions = [
   "Add to agent",
 ];
 
-// The surface ChatView opens for `detail`, and the thread states it can be opened beside. The
-// context prop is derived here the way ChatView derives it, so a wrong answer from the thread's
-// link list fails these cases rather than only a hand-picked prop.
 const surface = { projectId: detail.projectId, repository: detail.repository, number: 1 };
 const link = (number: number, source: ThreadPullRequestLink["source"]): ThreadPullRequestLink => ({
   host: "github.com",
@@ -278,7 +283,7 @@ const link = (number: number, source: ThreadPullRequestLink["source"]): ThreadPu
 const stackThread = {
   projectId: detail.projectId,
   pullRequests: [link(3, "manual"), link(2, "stack"), link(1, "stack")],
-  // The server's one-slot field names the top layer; the panel shows the bottom one.
+
   linkedPullRequest: { ...surface, number: 3, url: link(3, "manual").url },
 };
 const unrelatedThread = {

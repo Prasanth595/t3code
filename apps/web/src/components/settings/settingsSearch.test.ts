@@ -191,6 +191,8 @@ describe("searchSettings", () => {
       "provider-health-check-interval",
       "cursor-keychain-usage",
       "source-control-writer-model",
+      "review-guide-model",
+      "review-guide-instructions",
       "source-control-writing-style",
       "t3-connect",
       "hold-webhooks-while-offline",
@@ -240,7 +242,6 @@ describe("searchSettings", () => {
     expect(remoteOnly).not.toContain("t3-connect");
     expect(remoteOnly).not.toContain("publish-agent-activity");
     expect(remoteOnly).not.toContain("wsl-backend");
-    // Browsers without access:write still render CloudLinkRow for their host.
     const browser = filterAvailableSettingsSearchItems(availability).map((item) => item.id);
     expect(browser).toContain("publish-agent-activity");
   });
