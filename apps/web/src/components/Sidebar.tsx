@@ -938,9 +938,8 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     let row: SidebarDraftRowData | null = null;
     if (props.routeDraftId !== null) {
       const draftId = DraftId.make(props.routeDraftId);
-      const store = useComposerDraftStore.getState();
-      const session = store.getDraftSession(draftId);
-      const composer = store.getComposerDraft(draftId);
+      const session = draftThreadsByThreadKey[draftId];
+      const composer = draftsByThreadKey[draftId];
       row =
         session && session.promotedTo == null && composer && composerDraftHasUserContent(composer)
           ? { draftId, session, composer }
@@ -2136,17 +2135,14 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   });
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
-  const fileDropHandlers = useMemo(
-    () =>
-      makeWorkspaceFileDropHandlers({
-        setDragActive: setIsFileDragOver,
-        addFiles: (files) => {
-          props.onFileDropThreads(threadRef, files);
-        },
-        addFolders: () => {},
-      }),
-    [props.onFileDropThreads, threadRef],
-  );
+  const onFileDropThreads = props.onFileDropThreads;
+  const fileDropHandlers = makeWorkspaceFileDropHandlers({
+    setDragActive: setIsFileDragOver,
+    addFiles: (files) => {
+      onFileDropThreads(threadRef, files);
+    },
+    addFolders: () => {},
+  });
   useEffect(() => {
     if (!isFileDragOver) return;
     const clearFileDrag = () => setIsFileDragOver(false);
@@ -2359,10 +2355,10 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  const routeTargetRef = useRef(routeTarget);
-  routeTargetRef.current = routeTarget;
   const routeThreadKeyRef = useRef(routeThreadKey);
-  routeThreadKeyRef.current = routeThreadKey;
+  useLayoutEffect(() => {
+    routeThreadKeyRef.current = routeThreadKey;
+  });
 
   const environmentLabelById = useMemo(
     () =>
@@ -2374,7 +2370,9 @@ export default function Sidebar() {
   const environmentMachineById = useEnvironmentMachines();
   const projectGroups = useSidebarProjectGroups();
   const projectGroupsRef = useRef(projectGroups);
-  projectGroupsRef.current = projectGroups;
+  useLayoutEffect(() => {
+    projectGroupsRef.current = projectGroups;
+  });
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
   // are driver slugs, so a flat map would collide across environments.
@@ -2754,9 +2752,9 @@ export default function Sidebar() {
 
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
   const settledResetKey = projectScopeKey ?? "all";
-  const lastSettledResetKeyRef = useRef(settledResetKey);
-  if (lastSettledResetKeyRef.current !== settledResetKey) {
-    lastSettledResetKeyRef.current = settledResetKey;
+  const [lastSettledResetKey, setLastSettledResetKey] = useState(settledResetKey);
+  if (lastSettledResetKey !== settledResetKey) {
+    setLastSettledResetKey(settledResetKey);
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
   }
   const visibleSettledThreads = useMemo(() => {
@@ -2859,7 +2857,9 @@ export default function Sidebar() {
     [orderedThreads],
   );
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
-  orderedThreadKeysRef.current = orderedThreadKeys;
+  useLayoutEffect(() => {
+    orderedThreadKeysRef.current = orderedThreadKeys;
+  });
   const threadByKey = useMemo(
     () =>
       new Map(
@@ -2874,9 +2874,13 @@ export default function Sidebar() {
   // identities would give every row a fresh callback prop on each shell
   // event and defeat row memoization during streaming.
   const threadByKeyRef = useRef(threadByKey);
-  threadByKeyRef.current = threadByKey;
+  useLayoutEffect(() => {
+    threadByKeyRef.current = threadByKey;
+  });
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
-  handleNewThreadRef.current = newThreadContext.handleNewThread;
+  useLayoutEffect(() => {
+    handleNewThreadRef.current = newThreadContext.handleNewThread;
+  });
   const settledThreadKeys = useMemo(
     () =>
       new Set(
@@ -2887,7 +2891,9 @@ export default function Sidebar() {
     [settledThreads],
   );
   const settledThreadKeysRef = useRef(settledThreadKeys);
-  settledThreadKeysRef.current = settledThreadKeys;
+  useLayoutEffect(() => {
+    settledThreadKeysRef.current = settledThreadKeys;
+  });
   const snoozedThreadKeys = useMemo(
     () =>
       new Set(
@@ -2898,7 +2904,9 @@ export default function Sidebar() {
     [snoozedThreads],
   );
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
-  snoozedThreadKeysRef.current = snoozedThreadKeys;
+  useLayoutEffect(() => {
+    snoozedThreadKeysRef.current = snoozedThreadKeys;
+  });
 
   const jumpLabelByKey = useMemo(() => {
     const mapping = new Map<string, string>();
@@ -3112,35 +3120,32 @@ export default function Sidebar() {
         const threadKey = scopedThreadKey(threadRef);
         if (settlingThreadKeysRef.current.has(threadKey)) return;
         settlingThreadKeysRef.current.add(threadKey);
-        try {
-          const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
-          const result = await settleThread(threadRef);
-          if (result._tag === "Failure") {
-            if (!isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: "Failed to settle thread",
-                  description: error instanceof Error ? error.message : "An error occurred.",
-                }),
-              );
-            }
-            return;
+        const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
+        const result = await settleThread(threadRef);
+        settlingThreadKeysRef.current.delete(threadKey);
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to settle thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
           }
-          if (
-            shouldNavigateAfterThreadPark({
-              threadKey,
-              currentThreadKey: routeThreadKeyRef.current,
-              action: "settle",
-              now: new Date().toISOString(),
-              thread: readThreadShell(threadRef),
-            })
-          ) {
-            navigateAfterSettle?.();
-          }
-        } finally {
-          settlingThreadKeysRef.current.delete(threadKey);
+          return;
+        }
+        if (
+          shouldNavigateAfterThreadPark({
+            threadKey,
+            currentThreadKey: routeThreadKeyRef.current,
+            action: "settle",
+            now: new Date().toISOString(),
+            thread: readThreadShell(threadRef),
+          })
+        ) {
+          navigateAfterSettle?.();
         }
       })();
     },
@@ -3310,7 +3315,9 @@ export default function Sidebar() {
     return map;
   }, [activeThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads]);
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
-  sectionByThreadKeyRef.current = sectionByThreadKey;
+  useLayoutEffect(() => {
+    sectionByThreadKeyRef.current = sectionByThreadKey;
+  });
   const [actionSweep, setActionSweep] = useState<{
     action: SidebarSweepAction;
     keys: ReadonlySet<string>;
@@ -3930,29 +3937,26 @@ export default function Sidebar() {
         return { status: "skipped" } as const;
       }
       snoozingThreadKeysRef.current.add(threadKey);
-      try {
-        const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-        const result = await snoozeThread(threadRef, preset.snoozedUntil);
-        if (result._tag === "Failure") {
-          return isAtomCommandInterrupted(result)
-            ? ({ status: "interrupted" } as const)
-            : ({ status: "failure", error: squashAtomCommandFailure(result) } as const);
-        }
-        if (
-          shouldNavigateAfterThreadPark({
-            threadKey,
-            currentThreadKey: routeThreadKeyRef.current,
-            action: "snooze",
-            now: new Date().toISOString(),
-            thread: readThreadShell(threadRef),
-          })
-        ) {
-          navigateAfterSnooze?.();
-        }
-        return { status: "success" } as const;
-      } finally {
-        snoozingThreadKeysRef.current.delete(threadKey);
+      const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
+      const result = await snoozeThread(threadRef, preset.snoozedUntil);
+      snoozingThreadKeysRef.current.delete(threadKey);
+      if (result._tag === "Failure") {
+        return isAtomCommandInterrupted(result)
+          ? ({ status: "interrupted" } as const)
+          : ({ status: "failure", error: squashAtomCommandFailure(result) } as const);
       }
+      if (
+        shouldNavigateAfterThreadPark({
+          threadKey,
+          currentThreadKey: routeThreadKeyRef.current,
+          action: "snooze",
+          now: new Date().toISOString(),
+          thread: readThreadShell(threadRef),
+        })
+      ) {
+        navigateAfterSnooze?.();
+      }
+      return { status: "success" } as const;
     },
     [planForwardNavigation, snoozeThread],
   );

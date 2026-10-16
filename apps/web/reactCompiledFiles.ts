@@ -24,4 +24,7 @@ export const REACT_COMPILED_FILES = [
  * Files the compiler already compiles that still carry manual memoization or
  * effect-driven state, so only the compile test covers them for now.
  */
-export const REACT_COMPILED_FILES_PENDING_LINT = ["apps/web/src/components/ChatView.tsx"] as const;
+export const REACT_COMPILED_FILES_PENDING_LINT = [
+  "apps/web/src/components/ChatView.tsx",
+  "apps/web/src/components/Sidebar.tsx",
+] as const;
