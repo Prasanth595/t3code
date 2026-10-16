@@ -1904,6 +1904,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const goalHolds = new Map<string, CodexGoalHold>();
         const goalRuns = new Map<ProviderTurnId, Array<ActiveCodexTurnContext>>();
         const goalActivations = new Map<string, { stopped: boolean }>();
+        // Codex can start a turn on its own while no run exists, such as when it
+        // resumes a goal with the thread. `/goal resume` adopts it.
+        const unownedRootTurns = new Map<
+          string,
+          { readonly nativeTurnId: string; readonly startedAt: DateTime.Utc }
+        >();
         // Stops in progress by native thread. Until a Stop resolves its target,
         // a held run must not settle as completed.
         const goalStops = new Map<string, number>();
@@ -4466,10 +4472,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               return;
             }
+            const startedAt = codexTimestamp(payload.turn.startedAt);
+            unownedRootTurns.set(payload.threadId, { nativeTurnId: payload.turn.id, startedAt });
             yield* rememberSubagentTurnStarted({
               nativeThreadId: payload.threadId,
               nativeTurnId: payload.turn.id,
-              startedAt: codexTimestamp(payload.turn.startedAt),
+              startedAt,
             });
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
@@ -5982,6 +5990,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("turn/completed", (payload) =>
           Effect.gen(function* () {
+            if (unownedRootTurns.get(payload.threadId)?.nativeTurnId === payload.turn.id) {
+              unownedRootTurns.delete(payload.threadId);
+            }
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context === undefined) {
               return;
@@ -6011,9 +6022,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
         );
 
+        /**
+         * With `holdForGoalTurn`, call with the terminalization permit: the run
+         * stays open for the turn Codex starts once the goal is active.
+         */
         const completeGoalCommandTurn = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           reply: string,
+          holdForGoalTurn = false,
         ) {
           const now = yield* DateTime.now;
           const nativeId = `goal-command:${turnInput.attemptId}`;
@@ -6076,11 +6092,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             driver: CODEX_PROVIDER,
             turnItem: artifacts.turnItem,
           });
+          const completedTurn = { ...providerTurn, status: "completed", completedAt: now } as const;
+          if (holdForGoalTurn) {
+            return yield* emitOrDeferRootTerminal({
+              context,
+              nativeTurnId: nativeId,
+              status: "completed",
+              goalHoldTurn: completedTurn,
+            });
+          }
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: CODEX_PROVIDER,
             threadId: turnInput.threadId,
-            providerTurn: { ...providerTurn, status: "completed", completedAt: now },
+            providerTurn: completedTurn,
           });
           yield* emitRootTerminal(context, {
             type: "turn.terminal",
@@ -6228,9 +6253,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
 
         /**
-         * Setting or resuming a goal starts the first goal turn with this run's
-         * turn configuration (approvals, sandbox, model, plan mode), since a
-         * turn Codex starts on its own reuses the last turn's settings.
+         * Codex rejects a turn/start with no input, so resuming starts no turn of
+         * its own: the run takes the turn Codex already started, or else waits
+         * for the one it starts once the goal is active.
+         */
+        const claimGoalTurn = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+          turnTerminalizationPermit.withPermits(1)(
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(turnInput.providerThread);
+              const started = unownedRootTurns.get(threadId);
+              if (started === undefined) {
+                return yield* completeGoalCommandTurn(turnInput, "Goal resumed.", true);
+              }
+              unownedRootTurns.delete(threadId);
+              yield* registerRootTurn({ turnInput, ...started });
+            }),
+          );
+
+        /**
+         * Setting a goal starts its first turn with this run's turn
+         * configuration (approvals, sandbox, model, plan mode), since a turn
+         * Codex starts on its own reuses the last turn's settings.
          */
         const runGoalCommand = (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -6291,15 +6334,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const activation = { stopped: false };
             goalActivations.set(threadId, activation);
             yield* Effect.gen(function* () {
-              yield* startNativeTurn(
-                turnInput,
-                command.type === "set"
-                  ? yield* toCodexInput({
-                      ...turnInput,
-                      message: { ...turnInput.message, text: command.objective },
-                    })
-                  : [],
-              );
+              if (command.type === "set") {
+                yield* startNativeTurn(
+                  turnInput,
+                  yield* toCodexInput({
+                    ...turnInput,
+                    message: { ...turnInput.message, text: command.objective },
+                  }),
+                );
+              } else {
+                yield* claimGoalTurn(turnInput);
+              }
               if (activation.stopped) return;
               const { goal } = yield* client.request("thread/goal/set", {
                 threadId,
