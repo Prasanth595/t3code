@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { SshSensitiveText } from "../settings/SshSensitiveText";
 
 function describeSshTarget(request: DesktopSshPasswordPromptRequest): string {
   return request.username ? `${request.username}@${request.destination}` : request.destination;
@@ -145,8 +146,6 @@ function ActiveSshPasswordPrompt({
     void respond(null);
   };
 
-  const target = describeSshTarget(request);
-
   return (
     <Dialog
       open
@@ -160,8 +159,10 @@ function ActiveSshPasswordPrompt({
         <DialogHeader>
           <DialogTitle>SSH Password Required</DialogTitle>
           <DialogDescription>
-            T3 needs your SSH password to connect to <code>{target}</code>. The password is passed
-            to the local SSH process for this connection attempt and is not saved by T3 Code.
+            T3 needs your SSH password to connect to{" "}
+            <SshSensitiveText value={describeSshTarget(request)} className="text-sm" />. The
+            password is passed to the local SSH process for this connection attempt and is not saved
+            by T3 Code.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -175,7 +176,13 @@ function ActiveSshPasswordPrompt({
           >
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-medium text-foreground">{request.prompt}</p>
+                <p className="text-sm font-medium text-foreground">
+                  <SshSensitiveText
+                    value={request.prompt}
+                    destination={describeSshTarget(request)}
+                    className="font-sans text-sm text-left"
+                  />
+                </p>
                 {remainingLabel ? (
                   <span
                     className={

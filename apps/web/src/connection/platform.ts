@@ -16,6 +16,7 @@ import {
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
+  redactSshAddresses,
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
@@ -164,18 +165,23 @@ function clientMetadata() {
   });
 }
 
-function sshPreparationError(cause: unknown) {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  if (message.toLowerCase().includes("cancel")) {
-    return new ConnectionBlockedError({
-      reason: "authentication",
-      detail: message,
+function sshPreparationError(target: DesktopSshEnvironmentTarget) {
+  return (cause: unknown) => {
+    const original = cause instanceof Error ? cause.message : String(cause);
+    const message = redactSshAddresses(original, target);
+    if (original.toLowerCase().includes("cancel")) {
+      return new ConnectionBlockedError({
+        reason: "authentication",
+        detail: message,
+        rawDetail: original,
+      });
+    }
+    return new ConnectionTransientError({
+      reason: "remote-unavailable",
+      detail: `Could not prepare the SSH environment: ${message}`,
+      rawDetail: original,
     });
-  }
-  return new ConnectionTransientError({
-    reason: "remote-unavailable",
-    detail: `Could not prepare the SSH environment: ${message}`,
-  });
+  };
 }
 
 export const provisionDesktopSshEnvironment = Effect.fn(
@@ -190,7 +196,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
       bridge.ensureSshEnvironment(target, {
         issuePairingToken: true,
       }),
-    catch: sshPreparationError,
+    catch: sshPreparationError(target),
   });
   const pairingToken = bootstrap.pairingToken;
   if (pairingToken === null) {
@@ -201,7 +207,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   }
   const descriptor = yield* Effect.tryPromise({
     try: () => bridge.fetchSshEnvironmentDescriptor(bootstrap.httpBaseUrl),
-    catch: sshPreparationError,
+    catch: sshPreparationError(target),
   });
   if (expectedEnvironmentId !== undefined && descriptor.environmentId !== expectedEnvironmentId) {
     return yield* new ConnectionBlockedError({
@@ -211,7 +217,7 @@ export const provisionDesktopSshEnvironment = Effect.fn(
   }
   const access = yield* Effect.tryPromise({
     try: () => bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, pairingToken),
-    catch: sshPreparationError,
+    catch: sshPreparationError(target),
   });
   return {
     environmentId: descriptor.environmentId,
@@ -295,7 +301,7 @@ const layerCapabilities = Layer.effectContext(
             bridge.ensureSshEnvironment(input.target, {
               issuePairingToken: true,
             }),
-          catch: sshPreparationError,
+          catch: sshPreparationError(input.target),
         });
         if (bootstrap.pairingToken === null) {
           return yield* new ConnectionBlockedError({
@@ -306,7 +312,7 @@ const layerCapabilities = Layer.effectContext(
         const access = yield* Effect.tryPromise({
           try: () =>
             bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, bootstrap.pairingToken!),
-          catch: sshPreparationError,
+          catch: sshPreparationError(input.target),
         });
         return {
           bootstrap,

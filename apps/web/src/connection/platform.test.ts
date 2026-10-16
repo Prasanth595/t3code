@@ -35,11 +35,14 @@ const TARGET: DesktopSshEnvironmentTarget = {
 
 function makeBridge(
   calls: string[],
-  options?: { readonly failDescriptor?: boolean },
+  options?: { readonly failDescriptor?: boolean; readonly ensureError?: string },
 ): DesktopBridge {
   return {
     ensureSshEnvironment: async (target: DesktopSshEnvironmentTarget) => {
       calls.push("ensure");
+      if (options?.ensureError !== undefined) {
+        throw new Error(options.ensureError);
+      }
       return {
         target,
         httpBaseUrl: "http://127.0.0.1:3201/",
@@ -115,6 +118,37 @@ describe("desktop SSH pairing", () => {
       ).pipe(Effect.flip);
 
       expect(calls).toEqual(["ensure", "descriptor"]);
+    }),
+  );
+
+  it.effect("keeps the host address out of a failed connection's error", () =>
+    Effect.gen(function* () {
+      const error = yield* provisionDesktopSshEnvironment(
+        makeBridge([], {
+          ensureError: "developer@devbox.example.test: Permission denied (publickey).",
+        }),
+        TARGET,
+      ).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        detail: "Could not prepare the SSH environment: •••@devbox: Permission denied (publickey).",
+        rawDetail: "developer@devbox.example.test: Permission denied (publickey).",
+      });
+    }),
+  );
+
+  it.effect("classifies a failure by the ssh error, not the alias substituted into it", () =>
+    Effect.gen(function* () {
+      const error = yield* provisionDesktopSshEnvironment(
+        makeBridge([], { ensureError: "ssh: connect to host 203.0.113.42: Connection timed out" }),
+        { ...TARGET, alias: "cancel-box", hostname: "203.0.113.42" },
+      ).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionTransientError",
+        detail:
+          "Could not prepare the SSH environment: ssh: connect to host cancel-box: Connection timed out",
+      });
     }),
   );
 });
