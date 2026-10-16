@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- request hashes bind durable receipts.
 import * as NodeCrypto from "node:crypto";
 import { stableStringify } from "@t3tools/shared/relaySigning";
-import { CommandId, MissionId } from "../../../../packages/contracts/src/baseSchemas.ts";
-import { Mission } from "../../../../packages/contracts/src/mission.ts";
+import { CommandId } from "../../../../packages/contracts/src/baseSchemas.ts";
+import { Mission, MissionId } from "../../../../packages/contracts/src/mission.ts";
 import {
   ProPlanningAction,
   ProPlanningCompletionReceipt,
@@ -775,10 +775,8 @@ const make = Effect.gen(function* () {
       );
     });
 
-  const runOnce = <A>(
-    operation: "commit" | "restart",
-    body: Effect.Effect<A, MissionPlanningStoreError>,
-  ) => sql.withTransaction(body).pipe(Effect.mapError(toStoreError(operation)));
+  const runOnce = <A, E>(operation: "commit" | "restart", body: Effect.Effect<A, E>) =>
+    sql.withTransaction(body).pipe(Effect.mapError(toStoreError(operation)));
 
   const commit = Effect.fn("MissionPlanningStore.commit")(function* (input: unknown) {
     if (Option.isSome(yield* Effect.serviceOption(sql.transactionService))) {

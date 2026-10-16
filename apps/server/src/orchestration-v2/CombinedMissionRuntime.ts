@@ -120,7 +120,6 @@ export class CombinedMissionRuntime extends Context.Service<
     readonly status: Effect.Effect<{
       readonly authority: "available" | "authority_unavailable";
       readonly replay: "configured" | "unconfigured" | "unavailable";
-      readonly planning: "configured" | "unavailable";
     }>;
     readonly withRequest: <A, E, R>(
       scope: McpInvocationScope,
@@ -643,7 +642,6 @@ const make = Effect.gen(function* () {
       authority:
         currentPolicy()?.environmentId !== environmentId ? "authority_unavailable" : "available",
       replay: replayStatus,
-      planning: Option.isSome(planningFacts) ? "configured" : "unavailable",
     })),
     withRequest,
   });
