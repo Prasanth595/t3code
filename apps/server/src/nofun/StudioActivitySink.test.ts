@@ -55,28 +55,16 @@ describe("readStudioActivityBridgeConfig", () => {
 });
 
 describe("studio activity HTTP sink", () => {
-  it("releases the unused response body before completing delivery", async () => {
-    let cancelled = false;
-    const sink = makeStudioActivitySink({
-      config: { baseUrl: BASE_URL, token: TOKEN },
-      fetchFn: async () =>
-        new Response(
-          new ReadableStream({
-            cancel: () => {
-              cancelled = true;
-            },
-          }),
-        ),
-    });
-    await sink.send(envelope());
-    expect(cancelled).toBe(true);
-  });
-
   it("POSTs the envelope once with the bearer header", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fetchFn: StudioActivityFetch = async (url, init) => {
       calls.push({ url, init });
-      return new Response("{}", { status: 200 });
+      return Response.json({
+        verdict: "accept",
+        eventId: "evt_one",
+        stamp: envelope().stamp,
+        payloadHash: "hash-1",
+      });
     };
     const sink = makeStudioActivitySink({
       config: { baseUrl: BASE_URL, token: TOKEN },
@@ -101,7 +89,12 @@ describe("studio activity HTTP sink", () => {
       config: { baseUrl: `${BASE_URL}//`, token: TOKEN },
       fetchFn: async (url) => {
         seen.push(url);
-        return new Response("{}", { status: 200 });
+        return Response.json({
+          verdict: "accept",
+          eventId: "evt_one",
+          stamp: envelope().stamp,
+          payloadHash: "hash-1",
+        });
       },
     });
     await sink.send(envelope());
@@ -114,36 +107,147 @@ describe("studio activity HTTP sink", () => {
       config: null,
       fetchFn: async () => {
         calls += 1;
-        return new Response("{}", { status: 200 });
+        return Response.json({
+          verdict: "accept",
+          eventId: "evt_one",
+          stamp: envelope().stamp,
+          payloadHash: "hash-1",
+        });
       },
     });
     await sink.send(envelope());
     expect(calls).toBe(0);
   });
 
-  it("swallows network failures, non-2xx and timeouts", async () => {
-    const hanging: StudioActivityFetch = (_url, init) =>
-      new Promise((_resolve, reject) => {
-        const signal = init.signal;
-        if (signal?.aborted) {
-          reject(new Error("aborted"));
-          return;
-        }
-        signal?.addEventListener("abort", () => reject(new Error("aborted")), {
-          once: true,
-        });
-      });
-    const failing: StudioActivityFetch = async () => {
-      throw new Error("network down");
-    };
-    const serverError: StudioActivityFetch = async () => new Response("boom", { status: 500 });
-    for (const fetchFn of [hanging, failing, serverError]) {
+  it("reports non-2xx with a bounded response excerpt", async () => {
+    const sink = makeStudioActivitySink({
+      config: { baseUrl: BASE_URL, token: TOKEN },
+      fetchFn: async () => new Response("overloaded " + "x".repeat(4000), { status: 503 }),
+    });
+    await expect(sink.send(envelope())).rejects.toMatchObject({
+      kind: "http",
+      status: 503,
+      bodyExcerpt: expect.stringMatching(/^overloaded /),
+    });
+    try {
+      await sink.send(envelope());
+    } catch (error) {
+      expect((error as { bodyExcerpt: string }).bodyExcerpt.length).toBeLessThanOrEqual(1024);
+    }
+  });
+
+  it("surfaces network errors and enforces a deadline even for a stuck fetch", async () => {
+    for (const [fetchFn, kind] of [
+      [
+        async () => {
+          throw new Error("network down");
+        },
+        "network",
+      ],
+      [() => new Promise<Response>(() => {}), "timeout"],
+    ] as const) {
       const sink = makeStudioActivitySink({
         config: { baseUrl: BASE_URL, token: TOKEN },
         fetchFn,
-        timeoutMs: 50,
+        timeoutMs: 10,
       });
-      await sink.send(envelope());
+      await expect(sink.send(envelope())).rejects.toMatchObject({ kind });
     }
   });
+
+  it("requires observed bridge acceptance, including the event ID and exact stamp/hash", async () => {
+    for (const body of [
+      {},
+      { verdict: "accept", stamp: envelope().stamp, payloadHash: "hash-1" },
+      {
+        verdict: "accept",
+        eventId: "evt_one",
+        stamp: { ...envelope().stamp, sequence: 2 },
+        payloadHash: "hash-1",
+      },
+    ]) {
+      const sink = makeStudioActivitySink({
+        config: { baseUrl: BASE_URL, token: TOKEN },
+        fetchFn: async () => Response.json(body),
+      });
+      await expect(sink.send(envelope())).rejects.toMatchObject({ kind: "ack_invalid" });
+    }
+  });
+  it("bounds body reads and times out after headers while releasing the stream", async () => {
+    let cancelled = false;
+    const sink = makeStudioActivitySink({
+      config: { baseUrl: BASE_URL, token: TOKEN },
+      timeoutMs: 10,
+      fetchFn: async () =>
+        new Response(
+          new ReadableStream({
+            cancel: () => {
+              cancelled = true;
+            },
+          }),
+        ),
+    });
+    await expect(sink.send(envelope())).rejects.toMatchObject({ kind: "timeout", status: 200 });
+    expect(cancelled).toBe(true);
+  });
+
+  it("redacts the configured credential from failure excerpts", async () => {
+    const sink = makeStudioActivitySink({
+      config: { baseUrl: BASE_URL, token: TOKEN },
+      fetchFn: async () => new Response(`bad ${TOKEN}`, { status: 401 }),
+    });
+    await expect(sink.send(envelope())).rejects.toMatchObject({
+      kind: "http",
+      status: 401,
+      bodyExcerpt: "bad [redacted]",
+    });
+  });
+
+  it("passes the opaque cursor through readback and decodes acceptance metadata", async () => {
+    let target = "";
+    const sink = makeStudioActivitySink({
+      config: { baseUrl: BASE_URL, token: TOKEN },
+      fetchFn: async (url) => {
+        target = url;
+        return Response.json({
+          cursor: "next",
+          has_more: true,
+          watermark: { eventId: "evt_current", stamp: envelope().stamp, payloadHash: "hash-1" },
+          events: [
+            {
+              eventId: "evt_first",
+              name: "studio.producer.accepted",
+              data: { partition_id: "t3.activity", stamp: envelope().stamp, payloadHash: "hash-1" },
+            },
+          ],
+        });
+      },
+    });
+    const page = await sink.readEvents!("opaque+/=", "t3.activity-publisher");
+    expect(new URL(target).searchParams.get("cursor")).toBe("opaque+/=");
+    expect(page).toMatchObject({
+      cursor: "next",
+      has_more: true,
+      watermark: { eventId: "evt_current" },
+      events: [{ eventId: "evt_first", verdict: "accept" }],
+    });
+  });
+});
+
+describe("conflict readback", () => {
+  it.each(["reject_stale", "reject_conflict", "reject_epoch_reset_required"])(
+    "preserves a valid 409 %s stamp and hash for reconciliation",
+    async (verdict) => {
+      const current = { ...envelope().stamp!, sequence: 12 };
+      const sink = makeStudioActivitySink({
+        config: { baseUrl: BASE_URL, token: TOKEN },
+        fetchFn: async () =>
+          Response.json({ verdict, stamp: current, payloadHash: "current-hash" }, { status: 409 }),
+      });
+      await expect(sink.send(envelope())).rejects.toMatchObject({
+        stamp: current,
+        payloadHash: "current-hash",
+      });
+    },
+  );
 });

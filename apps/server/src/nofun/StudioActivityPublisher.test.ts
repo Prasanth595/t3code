@@ -1,12 +1,26 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  ActivityStateInvalidError,
+  ActivityConflictError,
   activityPayloadHash,
+  decodeStudioActivityState,
   canonicalActivityJson,
   StudioActivityPublisher,
   type ActivityProducerInput,
+  type ActivityAcknowledgement,
+  type StudioActivityState,
   type ActivityThreadRead,
 } from "./StudioActivityPublisher.ts";
+
+function ack(input: ActivityProducerInput): ActivityAcknowledgement {
+  return {
+    eventId: `evt_${input.stamp!.sequence}`,
+    verdict: "accept",
+    stamp: input.stamp!,
+    payloadHash: input.payloadHash!,
+  };
+}
 
 const NOW = "2026-10-12T00:00:00.000Z";
 const EPOCH = "epoch-f08-test";
@@ -74,14 +88,24 @@ function fixtureReads(): ActivityThreadRead[] {
 function setup(
   options: {
     online?: boolean;
-    send?: (input: ActivityProducerInput) => void | Promise<void>;
+    send?: (
+      input: ActivityProducerInput,
+    ) => ActivityAcknowledgement | Promise<ActivityAcknowledgement> | void;
   } = {},
 ) {
   const { online = true, send } = options;
   const sent: ActivityProducerInput[] = [];
-  const sink = { send: send ?? ((input: ActivityProducerInput) => void sent.push(input)) };
+  const sink = {
+    send:
+      send ??
+      ((input: ActivityProducerInput) => {
+        sent.push(input);
+        return ack(input);
+      }),
+  };
   const publisher = new StudioActivityPublisher({
     epoch: EPOCH,
+    retryBaseMs: 0,
     allowedProjectIds: [ALLOWED_PROJECT],
     allowedRoots: ["/work"],
     reads: { listActivityThreads: () => fixtureReads() },
@@ -161,7 +185,7 @@ describe("StudioActivityPublisher", () => {
     }
     // No transcript / message text marker passes through.
     expect(bytes).not.toContain("secret transcript body");
-    expect(publisher.pendingCount).toBe(1);
+    expect(publisher.pendingCount).toBe(0);
   });
 
   it("retry resends the original update identity (same stamp, same bytes)", async () => {
@@ -172,6 +196,7 @@ describe("StudioActivityPublisher", () => {
         calls += 1;
         seen.push(canonicalActivityJson(input));
         if (calls === 1) throw new Error("network down");
+        return ack(input);
       },
     });
     const first = await publisher.publishNow();
@@ -204,7 +229,11 @@ describe("StudioActivityPublisher", () => {
   });
 
   it("offline resume cannot overwrite a newer watermark; older pending is dropped, duplicates replay", async () => {
-    const { publisher } = setup();
+    const { publisher } = setup({
+      send: () => {
+        throw new Error("lost");
+      },
+    });
     await publisher.publishNow();
     expect(publisher.pendingCount).toBe(1);
     // Bridge accepted a NEWER stamp (sequence 5): the queued seq-1 is stale.
@@ -225,7 +254,7 @@ describe("StudioActivityPublisher", () => {
     expect(publisher.lastAckedStamp?.sequence).toBe(5);
     // Next publish continues the monotonic sequence past the watermark.
     const next = await publisher.publishNow();
-    expect(next.delivered).toBe(true);
+    expect(next.delivered).toBe(false);
     expect((next as { envelope: ActivityProducerInput }).envelope.stamp?.sequence).toBe(6);
     // Observing the same stamp with the same bytes replays as a duplicate.
     const accepted = (next as { envelope: ActivityProducerInput }).envelope;
@@ -266,4 +295,375 @@ describe("StudioActivityPublisher", () => {
     expect(result.delivered).toBe(false);
     expect(sent).toHaveLength(0);
   });
+});
+
+describe("observed acceptance and recovery", () => {
+  it("never calls a resolved void transport delivered", async () => {
+    const { publisher } = setup({ send: () => {} });
+    expect((await publisher.publishNow()).delivered).toBe(false);
+    expect(publisher.lastAckedStamp).toBeNull();
+    expect(publisher.pendingCount).toBe(1);
+  });
+
+  it("persists pending before send and resumes identical bytes after restart with backoff", async () => {
+    let persisted: StudioActivityState | null = null;
+    const stateStore = {
+      load: async () => structuredClone(persisted),
+      save: async (state: StudioActivityState) => {
+        persisted = structuredClone(state);
+      },
+    };
+    let clock = 1000;
+    const seen: string[] = [];
+    let fail = true;
+    const make = () =>
+      new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        stateStore,
+        nowMs: () => clock,
+        sink: {
+          send: (input) => {
+            expect(persisted?.pending).toHaveLength(1);
+            seen.push(JSON.stringify(input));
+            if (fail) throw new Error("lost");
+            return ack(input);
+          },
+        },
+      });
+    const first = make();
+    expect((await first.publishNow()).delivered).toBe(false);
+    const resumed = make();
+    await resumed.initialize();
+    await resumed.retryPending();
+    expect(seen).toHaveLength(1);
+    clock += 1000;
+    fail = false;
+    await resumed.retryPending();
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(seen[0]);
+    expect((persisted as StudioActivityState | null)?.pending).toHaveLength(0);
+    const third = make();
+    await third.initialize();
+    expect(third.lastAckedStamp?.sequence).toBe(1);
+  });
+
+  it("reconciles lost responses, duplicate and reordered replay without regressing the watermark", async () => {
+    let saved: StudioActivityState | null = null;
+    let cursor: string | null | undefined;
+    const seen: ActivityProducerInput[] = [];
+    const publisher = new StudioActivityPublisher({
+      epoch: EPOCH,
+      allowedProjectIds: [],
+      reads: { listActivityThreads: () => [] },
+      stateStore: {
+        load: async () => null,
+        save: async (state) => {
+          saved = structuredClone(state);
+        },
+      },
+      sink: {
+        send: (input) => {
+          seen.push(input);
+          throw new Error("response lost");
+        },
+        readEvents: async (after) => {
+          cursor = after;
+          const receipt = ack(seen[0]!);
+          return {
+            events: [
+              receipt,
+              receipt,
+              { ...receipt, eventId: "evt_older", stamp: { ...receipt.stamp, sequence: 0 } },
+            ],
+            cursor: "opaque-next",
+            has_more: false,
+            watermark: null,
+          };
+        },
+      },
+    });
+    await publisher.publishNow();
+    await publisher.recover();
+    expect(cursor).toBeNull();
+    expect(publisher.pendingCount).toBe(0);
+    expect(publisher.lastAckedStamp?.sequence).toBe(1);
+    expect((saved as StudioActivityState | null)?.cursor).toBe("opaque-next");
+    expect((saved as StudioActivityState | null)?.seenEventIds).toEqual(["evt_1", "evt_older"]);
+  });
+  it("does not reconcile a conflicting hash or a foreign producer/epoch", async () => {
+    const { publisher } = setup({
+      send: () => {
+        throw new Error("lost");
+      },
+    });
+    const pending = (await publisher.publishNow()).envelope;
+    const stamp = pending.stamp!;
+    expect(publisher.observeWatermark(stamp, "different-hash").verdict).toBe("reject_conflict");
+    expect(
+      publisher.observeWatermark(
+        { ...stamp, producer_id: "another-producer" },
+        pending.payloadHash!,
+      ).verdict,
+    ).toBe("reject_epoch_reset_required");
+    expect(
+      publisher.observeWatermark({ ...stamp, epoch: "another-epoch" }, pending.payloadHash!)
+        .verdict,
+    ).toBe("reject_epoch_reset_required");
+    expect(publisher.pendingCount).toBe(1);
+    expect(publisher.lastAckedStamp).toBeNull();
+  });
+
+  it("bounds the accepted snapshot to the bridge's 200-record contract and marks coverage partial", async () => {
+    const publisher = new StudioActivityPublisher({
+      epoch: EPOCH,
+      allowedProjectIds: [ALLOWED_PROJECT],
+      reads: {
+        listActivityThreads: () =>
+          Array.from({ length: 201 }, (_, index) => row({ threadId: `thread-${index}` })),
+      },
+      sink: { send: ack },
+      now: () => NOW,
+    });
+    const result = await publisher.publishNow();
+    expect(result.delivered).toBe(true);
+    expect(result.envelope.records).toHaveLength(200);
+    expect(result.envelope.partial).toBe(true);
+  });
+
+  it("restores a validated cursor and dedupes replay across restart", async () => {
+    let state: StudioActivityState | null = null;
+    let input: ActivityProducerInput | undefined;
+    const requested: Array<string | null> = [];
+    const make = () =>
+      new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        stateStore: {
+          load: async () =>
+            state ? decodeStudioActivityState(JSON.parse(JSON.stringify(state))) : null,
+          save: async (value) => {
+            state = structuredClone(value);
+          },
+        },
+        sink: {
+          send: (value) => {
+            input = value;
+            throw new Error("lost");
+          },
+          readEvents: async (cursor) => {
+            requested.push(cursor);
+            return {
+              cursor: "persisted-next",
+              has_more: false,
+              events: [ack(input!)],
+              watermark: null,
+            };
+          },
+        },
+      });
+    const first = make();
+    await first.publishNow();
+    await first.recover();
+    const restarted = make();
+    await restarted.recover();
+    expect(requested).toEqual([null, "persisted-next"]);
+    expect(restarted.lastAckedStamp?.sequence).toBe(1);
+    expect(restarted.pendingCount).toBe(0);
+    expect((state as StudioActivityState | null)?.seenEventIds).toEqual(["evt_1"]);
+  });
+  it.each(["decode", "producer", "epoch"])(
+    "quarantines invalid %s state once and resumes from readback",
+    async (reason) => {
+      let saved: StudioActivityState | null = null;
+      const seed = new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        sink: { send: ack },
+        stateStore: {
+          load: async () => null,
+          save: async (state) => {
+            saved = state;
+          },
+        },
+      });
+      await seed.publishNow();
+      const invalid = structuredClone(saved!);
+      if (reason === "producer") invalid.producerId = "foreign";
+      if (reason === "epoch") invalid.epoch = "foreign";
+      let quarantines = 0;
+      const publisher = new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        stateStore: {
+          load: async () => {
+            if (reason === "decode") throw new ActivityStateInvalidError();
+            return invalid;
+          },
+          quarantine: async () => {
+            quarantines++;
+          },
+          save: async (state) => {
+            saved = state;
+          },
+        },
+        sink: {
+          send: ack,
+          readEvents: async (cursor) => {
+            expect(cursor).toBeNull();
+            return {
+              events: [],
+              cursor: "fresh",
+              has_more: false,
+              watermark: {
+                ...invalid.watermark!,
+                stamp: { ...invalid.watermark!.stamp, sequence: 99 },
+              },
+            };
+          },
+        },
+      });
+      await publisher.recover();
+      const result = await publisher.publishNow();
+      expect(result.delivered).toBe(true);
+      expect(result.envelope.stamp?.sequence).toBe(100);
+      expect(quarantines).toBe(1);
+    },
+  );
+
+  it("does not quarantine an unavailable store or continue after a failed quarantine", async () => {
+    for (const decode of [false, true]) {
+      let quarantines = 0;
+      const publisher = new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        sink: { send: ack },
+        stateStore: {
+          load: async () => {
+            throw decode ? new ActivityStateInvalidError() : new Error("unavailable");
+          },
+          save: async () => {},
+          quarantine: async () => {
+            quarantines++;
+            throw new Error("rename_failed");
+          },
+        },
+      });
+      await expect(publisher.initialize()).rejects.toThrow(
+        decode ? "rename_failed" : "unavailable",
+      );
+      expect(quarantines).toBe(decode ? 1 : 0);
+    }
+  });
+
+  it("reconciles a conflict through durable readback without claiming the rejected envelope was delivered", async () => {
+    let input: ActivityProducerInput | undefined;
+    let reads = 0;
+    const publisher = new StudioActivityPublisher({
+      epoch: EPOCH,
+      allowedProjectIds: [],
+      reads: { listActivityThreads: () => [] },
+      sink: {
+        send: (value) => {
+          input = value;
+          throw new ActivityConflictError({ ...value.stamp!, sequence: 10 }, "new-hash");
+        },
+        readEvents: async () => {
+          reads++;
+          return {
+            events: [],
+            cursor: "next",
+            has_more: false,
+            watermark: {
+              ...ack(input!),
+              stamp: { ...input!.stamp!, sequence: 10 },
+              payloadHash: "new-hash",
+            },
+          };
+        },
+      },
+    });
+    expect((await publisher.publishNow()).delivered).toBe(false);
+    expect(reads).toBe(1);
+    expect(publisher.lastAckedStamp?.sequence).toBe(10);
+    expect(publisher.pendingCount).toBe(0);
+  });
+  it("reissues a rejected conflicting snapshot above the bridge sequence without fabricating an ACK", async () => {
+    const sent: ActivityProducerInput[] = [];
+    let clock = 1000;
+    const publisher = new StudioActivityPublisher({
+      epoch: EPOCH,
+      now: () => NOW,
+      nowMs: () => clock,
+      allowedProjectIds: [],
+      reads: { listActivityThreads: () => [] },
+      sink: {
+        send: (input) => {
+          sent.push(input);
+          if (sent.length === 1) throw new ActivityConflictError(input.stamp!, "conflicting-hash");
+          return ack(input);
+        },
+        readEvents: async () => ({
+          events: [],
+          cursor: null,
+          has_more: false,
+          watermark: {
+            ...ack(sent[0]!),
+            payloadHash: "conflicting-hash",
+          },
+        }),
+      },
+    });
+    expect((await publisher.publishNow()).delivered).toBe(false);
+    expect(publisher.lastAckedStamp).toBeNull();
+    expect(publisher.pendingCount).toBe(1);
+    clock += 1000;
+    expect((await publisher.retryPending())[0]?.sent).toBe(true);
+    expect(sent[1]!.stamp!.sequence).toBeGreaterThan(sent[0]!.stamp!.sequence);
+    expect(sent[1]!.records).toEqual(sent[0]!.records);
+    expect(sent[1]!.payloadHash).toBe(sent[0]!.payloadHash);
+    expect(publisher.pendingCount).toBe(0);
+  });
+  it.each(["producer", "epoch"])(
+    "keeps pending identity on a foreign %s conflict",
+    async (foreign) => {
+      let saved: StudioActivityState | null = null;
+      const publisher = new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        stateStore: {
+          load: async () => null,
+          save: async (state) => {
+            saved = state;
+          },
+        },
+        sink: {
+          send: (input) => {
+            throw new ActivityConflictError(
+              {
+                ...input.stamp!,
+                ...(foreign === "producer" ? { producer_id: "foreign" } : { epoch: "foreign" }),
+              },
+              input.payloadHash!,
+            );
+          },
+          readEvents: async () => {
+            throw new Error("must not reconcile a foreign stream");
+          },
+        },
+      });
+      const result = await publisher.publishNow();
+      expect(result.delivered).toBe(false);
+      expect(publisher.lastAckedStamp).toBeNull();
+      expect((saved as StudioActivityState | null)?.pending[0]?.stamp).toEqual(
+        result.envelope.stamp,
+      );
+    },
+  );
 });

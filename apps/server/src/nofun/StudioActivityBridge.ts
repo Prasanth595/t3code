@@ -1,26 +1,10 @@
 // StudioActivityBridge.ts — wires the studio activity publisher into the
 // server runtime.
 //
-// The bridge subscribes to the EXISTING application-event stream (the same
-// race-free project/thread event source that feeds the shell stream), so
-// every committed thread/project activity notifies the publisher. No new
-// scheduler, timer or polling loop is added: delivery is purely event-driven.
-//
-// Configuration is read once at startup. Environment values win; an unset URL
-// uses the studio bridge, and an unset token uses the macOS Keychain item
-// nofun-studio-bridge. Without a token the layer subscribes to nothing.
-// Credentials and Keychain command output are never logged.
-//
-// The reads adapter maps shell fields only (thread/run ids, title, state,
-// revision, last event time) plus project settings (workspace root,
-// allowlist). No prompt or message content ever reaches the envelope:
-// anything not on the allowlist is excluded by the publisher.
-//
-// Bounded: at most one publish in flight plus one coalesced rerun; sends
-// never throw (the sink swallows network/non-2xx/timeout failures) and the
-// notifier catches everything else, so bridge delivery can never block or
-// crash the runtime. No automatic retry: each publish is a full snapshot
-// that supersedes the previous one.
+// Serializes event-driven snapshots, startup readback and idle reconciliation.
+// Delivery is a durable one-snapshot outbox; a scoped timer retries with capped
+// backoff even when no later application event arrives. No runtime command waits
+// for HTTP. Scope closure interrupts the worker and removes the timer.
 
 import type { OrchestrationProjectShell, OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -28,22 +12,33 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import { nofunTeamFromEnv } from "../terminal/contextEnv.ts";
 import { personaRootViolation, readNofunPersonaScope } from "./persona.ts";
-import { StudioActivityPublisher, type ActivityThreadRead } from "./StudioActivityPublisher.ts";
+import {
+  ActivityStateInvalidError,
+  StudioActivityPublisher,
+  activityPayloadHash,
+  decodeStudioActivityState,
+  type StudioActivityStateStore,
+  type ActivityThreadRead,
+} from "./StudioActivityPublisher.ts";
 import {
   makeStudioActivitySink,
   readStudioActivityBridgeConfig,
   STUDIO_ACTIVITY_BRIDGE_TOKEN_ENV,
   STUDIO_ACTIVITY_BRIDGE_URL_ENV,
   type StudioActivityFetch,
+  StudioActivityTransportError,
 } from "./StudioActivitySink.ts";
 
 /** Producer epoch for this bridge. Constant across restarts; the bridge
@@ -101,6 +96,56 @@ export interface StudioActivityBridgeOptions {
   readonly nowMs?: () => number;
   /** Minimum gap between coalesced publishes. */
   readonly minIntervalMs?: number;
+  readonly idleIntervalMs?: number;
+  readonly retryTickMs?: number;
+  readonly stateStore?: StudioActivityStateStore;
+  readonly publishOnStart?: boolean;
+}
+
+/** Promise adapter for the runtime's durable publisher file; never consumes credentials. */
+export function makeStudioActivityFileStateStore(
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  statePath: string,
+): StudioActivityStateStore {
+  return {
+    load: async () => {
+      const text = await Effect.runPromise(
+        Effect.gen(function* () {
+          if (!(yield* fs.exists(statePath))) return null;
+          return yield* fs.readFileString(statePath);
+        }),
+      );
+      if (text === null) return null;
+      try {
+        return decodeStudioActivityState(JSON.parse(text));
+      } catch {
+        throw new ActivityStateInvalidError();
+      }
+    },
+    quarantine: () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const directory = yield* fs.makeTempDirectory({
+            directory: path.dirname(statePath),
+            prefix: "activity-quarantine-",
+          });
+          const quarantinePath = path.join(directory, `state-${Date.now()}.json`);
+          yield* fs.rename(statePath, quarantinePath);
+          yield* Effect.logError(
+            "studio activity state invalid; quarantined original file; recovering from bridge readback",
+            { quarantinePath },
+          );
+        }),
+      ),
+    save: (state) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          yield* fs.writeFileString(`${statePath}.pending`, JSON.stringify(state), { mode: 0o600 });
+          yield* fs.rename(`${statePath}.pending`, statePath);
+        }),
+      ),
+  };
 }
 
 /**
@@ -157,6 +202,17 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
         );
         return;
       }
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      // Namespace by endpoint, never by credential bytes. Runtime
+      // persistence uses the configured environment's state directory only.
+      const statePath = path.join(
+        serverConfig.stateDir,
+        `studio-activity-${activityPayloadHash(config.baseUrl).slice(0, 16)}.json`,
+      );
+      const stateStore =
+        options.stateStore ?? makeStudioActivityFileStateStore(fs, path, statePath);
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const projects = yield* ProjectStore.ProjectStoreV2;
       const events = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -170,6 +226,8 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
       let publisherRef: StudioActivityPublisher | null = null;
       const publisher = new StudioActivityPublisher({
         epoch: STUDIO_ACTIVITY_BRIDGE_EPOCH,
+        stateStore,
+        nowMs: options.nowMs ?? Date.now,
         initialSequence: (options.nowMs ?? Date.now)(),
         allowedProjectIds: [],
         allowedRoots,
@@ -177,11 +235,8 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
           listActivityThreads: () =>
             Effect.runPromise(
               Effect.gen(function* () {
-                const snapshot = yield* projections
-                  .getShellSnapshot()
-                  .pipe(Effect.orElseSucceed(() => null));
-                if (snapshot === null) return [];
-                const shells = yield* projects.listShells().pipe(Effect.orElseSucceed(() => []));
+                const snapshot = yield* projections.getShellSnapshot();
+                const shells = yield* projects.listShells();
                 // Fresh allowlist from current project settings per publish,
                 // so created/deleted projects take effect without a restart.
                 publisherRef?.setAllowedProjectIds(shells.map((shell) => String(shell.id)));
@@ -202,39 +257,76 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
       });
       publisherRef = publisher;
       const minIntervalMs = options.minIntervalMs ?? 10_000;
-      const publishOnce = Effect.promise(() => publisher.publishNow()).pipe(
-        Effect.catchCause(() => Effect.logDebug("studio activity publish failed")),
-      );
+      const nowMs = options.nowMs ?? Date.now;
+      let recoverAt = 0;
+      let lastPublishAt = Number.NEGATIVE_INFINITY;
+      let snapshotDue = options.publishOnStart ?? true;
+      const reportFailure = (error: unknown) =>
+        Effect.logWarning("studio activity delivery pending", {
+          kind: error instanceof StudioActivityTransportError ? error.kind : "delivery_or_state",
+          status: error instanceof StudioActivityTransportError ? error.status : null,
+        });
       const drain: Effect.Effect<void> = Effect.gen(function* () {
         for (;;) {
-          yield* publishOnce;
+          yield* Effect.promise(async () => {
+            await publisher.initialize();
+            if (nowMs() >= recoverAt) {
+              // Keep each replay turn bounded; subsequent timer ticks drain more pages.
+              const more = await publisher.recover();
+              recoverAt = more ? nowMs() : nowMs() + (options.idleIntervalMs ?? 30_000);
+            }
+            // On restart, retry the exact durable identity before allocating a
+            // fresh snapshot. A readback watermark may already have covered it.
+            if (publisher.pendingCount > 0) {
+              const outcomes = await publisher.retryPending();
+              if (publisher.pendingCount > 0)
+                return outcomes.find((outcome) => outcome.error)?.error;
+            }
+            if (snapshotDue && nowMs() - lastPublishAt >= minIntervalMs) {
+              snapshotDue = false;
+              lastPublishAt = nowMs();
+              const result = await publisher.publishNow();
+              if (!result.delivered && result.status === "send_failed") return result.error;
+            }
+          }).pipe(
+            Effect.flatMap((error) => (error === undefined ? Effect.void : reportFailure(error))),
+            Effect.catchCause(() => reportFailure(undefined)),
+          );
           const rerun = yield* Ref.modify(state, (flag) =>
             flag.dirty
               ? ([true, { inFlight: true, dirty: false }] as const)
               : ([false, { inFlight: false, dirty: false }] as const),
           );
           if (!rerun) return;
-          // Busy turns emit events continuously; coalesce them so the bridge
-          // sees at most one snapshot per interval.
           if (minIntervalMs > 0) yield* Effect.sleep(minIntervalMs);
         }
       });
-      const notify = Effect.gen(function* () {
-        const start = yield* Ref.modify(state, (flag) =>
-          flag.inFlight
-            ? ([false, { ...flag, dirty: true }] as const)
-            : ([true, { inFlight: true, dirty: false }] as const),
-        );
-        if (start) yield* Effect.forkIn(drain, bridgeScope);
-      });
+      const notify = (changed: boolean) =>
+        Effect.gen(function* () {
+          if (changed) snapshotDue = true;
+          const start = yield* Ref.modify(state, (flag) =>
+            flag.inFlight
+              ? ([false, { ...flag, dirty: true }] as const)
+              : ([true, { inFlight: true, dirty: false }] as const),
+          );
+          if (start) yield* Effect.forkIn(drain, bridgeScope);
+        });
       // Start behind the current tip: this is a live activity feed, not a
       // backfill. The stream itself is race-free replay-to-live.
       const after = yield* events.latestApplicationSequence.pipe(Effect.orElseSucceed(() => 0));
       yield* events.streamApplicationEvents({ afterSequence: after }).pipe(
-        Stream.runForEach(() => notify),
+        Stream.runForEach(() => notify(true)),
         Effect.catchCause(() => Effect.logDebug("studio activity subscriber ended")),
         Effect.forkScoped,
       );
+      // Startup and idle recovery are independent of new orchestration events.
+      yield* notify(false);
+      yield* Effect.gen(function* () {
+        for (;;) {
+          yield* Effect.sleep(options.retryTickMs ?? 1000);
+          yield* notify(false);
+        }
+      }).pipe(Effect.forkScoped);
       yield* Effect.logDebug("studio activity bridge enabled");
     }),
   );

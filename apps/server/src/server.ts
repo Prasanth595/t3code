@@ -63,6 +63,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as SideQuestShelf from "./nofun/SideQuestShelf.ts";
 import * as StudioActivityBridge from "./nofun/StudioActivityBridge.ts";
+import * as BridgeInboxRuntime from "./nofun/BridgeInboxRuntime.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -573,6 +574,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
 ).pipe(
+  // One inbox instance is shared by the callback route and scoped pull/dispatch worker.
+  Layer.provideMerge(BridgeInboxRuntime.layer),
   // Core Services
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
@@ -685,6 +688,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
+    BridgeInboxRuntime.routeLayer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     WarpBridgeRoutes.routeLayer,

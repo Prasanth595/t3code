@@ -23,17 +23,8 @@
 // The network send is an injected `sink`; this module performs no fetch and
 // owns no scheduler.
 //
-// REGISTRATION REQUEST (for root; this file edits nothing shared):
-// - Inject one publisher in apps/server/src/orchestration-v2/runtimeLayer.ts
-//   next to the existing projection-store-backed services (same layer block
-//   as the settlement/recovery readers), constructed with the persona scope
-//   from readNofunPersonaScope and the explicit project allowlist.
-// - Drive it from the existing thread/shell refresh trigger that already
-//   re-reads getShellSnapshot (no new scheduler): after a shell refresh
-//   commits, call publishNow(); on producer-offline, skip the sink call.
-// - Wire observeWatermark to the bridge snapshot acknowledgement carrying
-//   the accepted t3.activity producer stamp. No server.ts route changes.
 import * as NodeCrypto from "node:crypto";
+import { z } from "zod";
 
 export const STUDIO_ACTIVITY_PARTITION = "t3.activity" as const;
 export const STUDIO_ACTIVITY_PRODUCER_ID = "t3.activity-publisher" as const;
@@ -106,8 +97,58 @@ export type StudioActivityReads = {
     | ReadonlyArray<ActivityThreadRead>;
 };
 
+export type ActivityAcknowledgement = {
+  eventId: string;
+  verdict: "accept" | "replay_duplicate";
+  stamp: ActivityProducerStamp;
+  payloadHash: string;
+};
+export type ActivityReplayPage = {
+  events: ActivityAcknowledgement[];
+  cursor: string | null;
+  has_more: boolean;
+  watermark: ActivityAcknowledgement | null;
+};
 export type StudioActivitySink = {
-  send: (input: ActivityProducerInput) => Promise<void> | void;
+  send: (
+    input: ActivityProducerInput,
+  ) => Promise<ActivityAcknowledgement | void> | ActivityAcknowledgement | void;
+  readEvents?: (cursor: string | null, producerId: string) => Promise<ActivityReplayPage>;
+};
+export type StudioActivityState = {
+  version: 1;
+  producerId: string;
+  epoch: string;
+  nextSequence: number;
+  watermark: ActivityAcknowledgement | null;
+  pending: QueuedActivityUpdate[];
+  cursor: string | null;
+  seenEventIds: string[];
+  failures: number;
+  retryAt: number;
+};
+/** Decode/identity failures are recoverable only after preserving the original file. */
+export class ActivityStateInvalidError extends Error {
+  constructor() {
+    super("activity_state_invalid");
+  }
+}
+
+/** A 409 is an ordering observation, never a durable acceptance receipt. */
+export class ActivityConflictError extends Error {
+  readonly stamp: ActivityProducerStamp;
+  readonly payloadHash: string;
+  constructor(stamp: ActivityProducerStamp, payloadHash: string) {
+    super("activity_conflict");
+    this.stamp = stamp;
+    this.payloadHash = payloadHash;
+  }
+}
+
+export type StudioActivityStateStore = {
+  load: () => Promise<StudioActivityState | null>;
+  save: (state: StudioActivityState) => Promise<void>;
+  quarantine?: () => Promise<void>;
 };
 
 export type StudioActivityPublisherOptions = {
@@ -123,6 +164,9 @@ export type StudioActivityPublisherOptions = {
   online?: boolean;
   /** First sequence number. Seed from the clock so sequences stay monotonic across restarts. */
   initialSequence?: number;
+  stateStore?: StudioActivityStateStore;
+  nowMs?: () => number;
+  retryBaseMs?: number;
 };
 
 /** Deterministic canonical JSON: sorted object keys, compact separators. */
@@ -193,10 +237,109 @@ export type QueuedActivityUpdate = {
   envelope: ActivityProducerInput;
 };
 
+// Persist only the same thin, allowlisted shell references sent to the bridge.
+const persistedStamp = z
+  .object({
+    producer_id: z.string().min(1),
+    epoch: z.string().min(1),
+    sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    emitted_at: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+const persistedEnvelope = z
+  .object({
+    partition_id: z.literal("t3.activity"),
+    status: z.enum(["online", "offline"]),
+    stamp: persistedStamp.nullable(),
+    payloadHash: z.string().nullable(),
+    observed_at: z.string().nullable(),
+    heartbeat_at: z.string().nullable(),
+    partial: z.boolean(),
+    records: z
+      .array(
+        z
+          .object({
+            projection_id: z.string(),
+            origin_id: z.string(),
+            kind: z.literal("local_task"),
+            record_id: z.string(),
+            revision_scheme: z.string(),
+            revision_value: z.string(),
+            canonical_state: z.string(),
+            summary: z.string().max(280),
+            observed_at: z.string(),
+            fresh_until: z.string(),
+            correlation: z.null(),
+            provenance: z.literal("known"),
+            restriction: z.literal("none"),
+            derived: z.literal(false),
+          })
+          .strict(),
+      )
+      .max(200),
+  })
+  .strict();
+const persistedReceipt = z
+  .object({
+    eventId: z.string(),
+    verdict: z.enum(["accept", "replay_duplicate"]),
+    stamp: persistedStamp,
+    payloadHash: z.string(),
+  })
+  .strict();
+const persistedState = z
+  .object({
+    version: z.literal(1),
+    producerId: z.string(),
+    epoch: z.string(),
+    nextSequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    watermark: persistedReceipt.nullable(),
+    pending: z
+      .array(
+        z
+          .object({
+            stamp: persistedStamp,
+            payloadHash: z.string(),
+            canonicalBytes: z.string(),
+            envelope: persistedEnvelope,
+          })
+          .strict(),
+      )
+      .max(1),
+    cursor: z.string().max(4096).nullable(),
+    seenEventIds: z.array(z.string().max(200)).max(512),
+    failures: z.number().int().min(0).max(16),
+    retryAt: z.number().nonnegative(),
+  })
+  .strict();
+
+export function decodeStudioActivityState(value: unknown): StudioActivityState {
+  const state = persistedState.parse(value);
+  for (const entry of state.pending) {
+    if (
+      canonicalActivityJson(entry.stamp) !== canonicalActivityJson(entry.envelope.stamp) ||
+      entry.payloadHash !== entry.envelope.payloadHash ||
+      entry.canonicalBytes !== canonicalActivityJson(entry.envelope.records) ||
+      entry.payloadHash !== activityPayloadHash(entry.canonicalBytes) ||
+      entry.stamp.producer_id !== state.producerId ||
+      entry.stamp.epoch !== state.epoch ||
+      entry.stamp.sequence >= state.nextSequence
+    )
+      throw new Error("activity_state_invalid");
+  }
+  if (
+    state.watermark &&
+    (state.watermark.stamp.producer_id !== state.producerId ||
+      state.watermark.stamp.epoch !== state.epoch)
+  )
+    throw new Error("activity_state_invalid");
+  return state;
+}
+
 export type PublishResult =
   | { delivered: true; envelope: ActivityProducerInput }
   | { delivered: false; status: "offline"; envelope: ActivityProducerInput }
-  | { delivered: false; status: "send_failed"; envelope: ActivityProducerInput };
+  | { delivered: false; status: "send_failed"; envelope: ActivityProducerInput; error: unknown };
 
 /**
  * Bounded publisher with an injected read interface and an injected sink.
@@ -214,7 +357,15 @@ export class StudioActivityPublisher {
   private readonly now: () => string;
   private online: boolean;
   private nextSequence = 1;
-  private watermark: { stamp: ActivityProducerStamp; payloadHash: string } | null = null;
+  private watermark: ActivityAcknowledgement | null = null;
+  private readonly stateStore: StudioActivityStateStore | undefined;
+  private readonly nowMs: () => number;
+  private readonly retryBaseMs: number;
+  private initialized = false;
+  private cursor: string | null = null;
+  private seenEventIds: string[] = [];
+  private failures = 0;
+  private retryAt = 0;
   private pending: QueuedActivityUpdate[] = [];
 
   constructor(options: StudioActivityPublisherOptions) {
@@ -227,6 +378,138 @@ export class StudioActivityPublisher {
     this.now = options.now ?? (() => new Date().toISOString());
     this.online = options.online ?? true;
     this.nextSequence = options.initialSequence ?? 1;
+    this.stateStore = options.stateStore;
+    this.nowMs = options.nowMs ?? Date.now;
+    this.retryBaseMs = options.retryBaseMs ?? 1000;
+  }
+
+  /** Invalid state is preserved before starting fresh; I/O failures remain retryable. */
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+    let state: StudioActivityState | null | undefined;
+    try {
+      state = await this.stateStore?.load();
+      if (state) {
+        try {
+          decodeStudioActivityState(state);
+        } catch {
+          throw new ActivityStateInvalidError();
+        }
+        if (state.producerId !== this.producerId || state.epoch !== this.epoch)
+          throw new ActivityStateInvalidError();
+      }
+    } catch (error) {
+      if (!(error instanceof ActivityStateInvalidError) || !this.stateStore?.quarantine)
+        throw error;
+      await this.stateStore.quarantine();
+      state = null;
+    }
+    if (state) {
+      this.nextSequence = Math.max(this.nextSequence, state.nextSequence);
+      this.watermark = state.watermark;
+      this.pending = state.pending;
+      this.cursor = state.cursor;
+      this.seenEventIds = state.seenEventIds.slice(-512);
+      this.failures = state.failures;
+      this.retryAt = state.retryAt;
+    }
+    this.initialized = true;
+  }
+
+  private async persist(): Promise<void> {
+    await this.stateStore?.save({
+      version: 1,
+      producerId: this.producerId,
+      epoch: this.epoch,
+      nextSequence: this.nextSequence,
+      watermark: this.watermark,
+      pending: this.pending,
+      cursor: this.cursor,
+      seenEventIds: this.seenEventIds,
+      failures: this.failures,
+      retryAt: this.retryAt,
+    });
+  }
+
+  private remember(receipt: ActivityAcknowledgement): void {
+    if (this.seenEventIds.includes(receipt.eventId)) return;
+    if (
+      !receipt.eventId ||
+      receipt.stamp.producer_id !== this.producerId ||
+      receipt.stamp.epoch !== this.epoch
+    )
+      return;
+    this.observeWatermark(receipt.stamp, receipt.payloadHash, receipt.eventId);
+    this.seenEventIds = [...this.seenEventIds, receipt.eventId].slice(-512);
+  }
+
+  /** One bounded replay page per tick; persist its opaque cursor only after reconciliation. */
+  async recover(): Promise<boolean> {
+    await this.initialize();
+    if (!this.online || !this.sink.readEvents) return false;
+    const page = await this.sink.readEvents(this.cursor, this.producerId);
+    for (const receipt of page.events) this.remember(receipt);
+    if (page.watermark) this.remember(page.watermark);
+    this.cursor = page.cursor;
+    await this.persist();
+    return page.has_more;
+  }
+
+  private async deliver(entry: QueuedActivityUpdate): Promise<void> {
+    let receipt: ActivityAcknowledgement | void;
+    try {
+      receipt = await this.sink.send(entry.envelope);
+    } catch (error) {
+      if (
+        error instanceof ActivityConflictError &&
+        error.stamp.producer_id === this.producerId &&
+        error.stamp.epoch === this.epoch
+      ) {
+        // Readback must supply an acceptance event ID before pending can be cleared.
+        await this.recover();
+        if (
+          this.pending[0] === entry &&
+          error.stamp.sequence >= entry.stamp.sequence &&
+          error.stamp.sequence < Number.MAX_SAFE_INTEGER - 1
+        ) {
+          // An explicit rejection permits a new identity for this full snapshot.
+          // Keep it pending until its own durable ACK; never acknowledge the rejected stamp.
+          this.nextSequence = Math.max(this.nextSequence, error.stamp.sequence + 1);
+          this.queue(
+            {
+              ...entry.envelope,
+              stamp: {
+                ...entry.stamp,
+                sequence: this.nextSequence,
+                emitted_at: this.now(),
+              },
+            },
+            entry.canonicalBytes,
+          );
+          await this.persist();
+        }
+      }
+      throw error;
+    }
+    if (
+      !receipt ||
+      !receipt.eventId ||
+      !["accept", "replay_duplicate"].includes(receipt.verdict) ||
+      canonicalActivityJson(receipt.stamp) !== canonicalActivityJson(entry.stamp) ||
+      receipt.payloadHash !== entry.payloadHash
+    ) {
+      throw new Error("activity_ack_invalid");
+    }
+    this.remember(receipt);
+    this.failures = 0;
+    this.retryAt = 0;
+    await this.persist();
+  }
+
+  private async failed(): Promise<void> {
+    this.failures = Math.min(16, this.failures + 1);
+    this.retryAt = this.nowMs() + Math.min(60_000, this.retryBaseMs * 2 ** (this.failures - 1));
+    await this.persist();
   }
 
   setOnline(online: boolean): void {
@@ -301,7 +584,8 @@ export class StudioActivityPublisher {
         Date.parse(b.observed_at) - Date.parse(a.observed_at) ||
         (a.projection_id < b.projection_id ? -1 : 1),
     );
-    const bytes = canonicalActivityJson(records);
+    const boundedRecords = records.slice(0, 200);
+    const bytes = canonicalActivityJson(boundedRecords);
     const stamp: ActivityProducerStamp = {
       producer_id: this.producerId,
       epoch: this.epoch,
@@ -317,8 +601,8 @@ export class StudioActivityPublisher {
         payloadHash: activityPayloadHash(bytes),
         observed_at: at,
         heartbeat_at: at,
-        records,
-        partial: false,
+        records: boundedRecords,
+        partial: records.length > boundedRecords.length,
       },
     };
   }
@@ -339,6 +623,7 @@ export class StudioActivityPublisher {
 
   /** Build from current reads and send. Offline: sink untouched, nothing queued. */
   async publishNow(): Promise<PublishResult> {
+    await this.initialize();
     if (!this.online)
       return { delivered: false, status: "offline", envelope: this.offlineEnvelope() };
     let rows: ReadonlyArray<ActivityThreadRead>;
@@ -349,64 +634,42 @@ export class StudioActivityPublisher {
     }
     const { envelope, bytes } = this.buildEnvelope(rows);
     this.queue(envelope, bytes);
+    // Durable outbox before network I/O, including the allocated sequence.
+    await this.persist();
+    if (this.nowMs() < this.retryAt)
+      return {
+        delivered: false,
+        status: "send_failed",
+        envelope,
+        error: new Error("activity_backoff"),
+      };
     try {
-      await this.sink.send(envelope);
-    } catch {
-      return { delivered: false, status: "send_failed", envelope };
+      await this.deliver(this.pending[0]!);
+    } catch (error) {
+      await this.failed();
+      return { delivered: false, status: "send_failed", envelope, error };
     }
     return { delivered: true, envelope };
   }
 
-  /**
-   * Resend queued updates with their ORIGINAL stamp and bytes (no new
-   * sequence). Entries the watermark already covers are dropped, or replayed
-   * as duplicates when the bytes match. Returns one verdict per queued entry.
-   */
   async retryPending(): Promise<
-    Array<{ stamp: ActivityProducerStamp; verdict: ProducerUpdateVerdict; sent: boolean }>
-  > {
-    const outcomes: Array<{
+    Array<{
       stamp: ActivityProducerStamp;
       verdict: ProducerUpdateVerdict;
       sent: boolean;
-    }> = [];
-    if (!this.online) {
-      for (const entry of this.pending)
-        outcomes.push({ stamp: entry.stamp, verdict: "reject_stale", sent: false });
-      return outcomes;
+      error?: unknown;
+    }>
+  > {
+    await this.initialize();
+    const entry = this.pending[0];
+    if (!entry || !this.online || this.nowMs() < this.retryAt) return [];
+    try {
+      await this.deliver(entry);
+      return [{ stamp: entry.stamp, verdict: "accept", sent: true }];
+    } catch (error) {
+      await this.failed();
+      return [{ stamp: entry.stamp, verdict: "accept", sent: false, error }];
     }
-    const remaining: QueuedActivityUpdate[] = [];
-    for (const entry of this.pending) {
-      const verdict = classifyProducerUpdate({
-        current: this.watermark?.stamp ?? null,
-        incoming: entry.stamp,
-        bytesEqual:
-          this.watermark !== null &&
-          this.watermark.payloadHash === entry.payloadHash &&
-          this.watermark.stamp.sequence === entry.stamp.sequence &&
-          this.watermark.stamp.epoch === entry.stamp.epoch,
-      });
-      if (
-        verdict === "reject_stale" ||
-        verdict === "reject_conflict" ||
-        verdict === "reject_epoch_reset_required"
-      ) {
-        outcomes.push({ stamp: entry.stamp, verdict, sent: false });
-        continue;
-      }
-      try {
-        await this.sink.send(entry.envelope);
-      } catch {
-        remaining.push(entry);
-        outcomes.push({ stamp: entry.stamp, verdict, sent: false });
-        continue;
-      }
-      outcomes.push({ stamp: entry.stamp, verdict, sent: true });
-      if (verdict === "accept")
-        this.watermark = { stamp: entry.stamp, payloadHash: entry.payloadHash };
-    }
-    this.pending = remaining;
-    return outcomes;
   }
 
   /**
@@ -417,7 +680,19 @@ export class StudioActivityPublisher {
   observeWatermark(
     stamp: ActivityProducerStamp,
     payloadHash: string,
+    eventId = "",
   ): { verdict: ProducerUpdateVerdict; dropped: number } {
+    if (stamp.producer_id !== this.producerId || stamp.epoch !== this.epoch)
+      return { verdict: "reject_epoch_reset_required", dropped: 0 };
+    if (
+      this.pending.some(
+        (entry) =>
+          entry.stamp.epoch === stamp.epoch &&
+          entry.stamp.sequence === stamp.sequence &&
+          entry.payloadHash !== payloadHash,
+      )
+    )
+      return { verdict: "reject_conflict", dropped: 0 };
     const verdict = classifyProducerUpdate({
       current: this.watermark?.stamp ?? null,
       incoming: stamp,
@@ -428,7 +703,7 @@ export class StudioActivityPublisher {
         this.watermark.stamp.epoch === stamp.epoch,
     });
     if (verdict !== "accept") return { verdict, dropped: 0 };
-    this.watermark = { stamp, payloadHash };
+    this.watermark = { stamp, payloadHash, eventId, verdict: "accept" };
     if (stamp.sequence + 1 > this.nextSequence) this.nextSequence = stamp.sequence + 1;
     const before = this.pending.length;
     this.pending = this.pending.filter(

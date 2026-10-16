@@ -1,0 +1,10 @@
+{
+  "body": "{\"eventId\":\"evt_captured_sender\",\"name\":\"message.created\",\"timestamp\":\"2026-10-15T01:00:00.000Z\",\"data\":{\"source\":\"mcp\",\"sender_id\":\"fixture-agent\",\"source_message_id\":\"source-message-42\",\"workstream_id\":\"fixture-m1-agent-computer\",\"target\":\"fixture-m1\",\"text\":\"Captured sender contract\",\"authority\":\"agent\"},\"cursor\":null}",
+  "headers": {
+    "Content-Type": "application/json",
+    "webhook-id": "evt_captured_sender",
+    "webhook-timestamp": "1792026000",
+    "webhook-signature": "v1,M+437M9+c0rN0P+sLWldW5COXrs46FNg+vQhkm8ILS8=",
+    "X-MCP-Subscription-Id": "fixture-sub"
+  }
+}
