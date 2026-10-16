@@ -203,6 +203,12 @@ class Pass {
     this.out(`error: ${text}`);
   }
 
+  /** A line a person has to act on. */
+  attention(text: string): void {
+    this.report.attention += 1;
+    this.out(`ATTENTION: ${text}`);
+  }
+
   /**
    * Writes `event` to the machine log. A log that cannot be written is an error line once per
    * pass and nothing else: it is not an event, which could not be written either.
@@ -423,7 +429,7 @@ const workRuns = (
             break;
           case "skipped":
           case "refused":
-            notes.parts.push("not started, left to a later pass");
+            stalled(pass, notes, runIdToString(info.id));
             break;
         }
       }
@@ -431,6 +437,15 @@ const workRuns = (
       yield* pass.flush(notes, info.id);
     }
   });
+
+/**
+ * A confirmed run in `triage` that `resume` would not take: a person moved its issue, so nothing
+ * in the pass will move it, and it holds a slot. softfac's words, as its `stalled` says them.
+ */
+const stalled = (pass: Pass, notes: Notes, run: string): void =>
+  pass.attention(
+    `${notes.label} run ${run} is not progressing and holds a slot: its issue is not \`factory:triage\` assigned to the factory's user alone, so \`start\` will not take it. If you moved the issue by hand, put it back to \`factory:triage\` assigned to the factory's user so \`start\` can finish it`,
+  );
 
 /**
  * The unfinished runs as this pass knows them: listed once at the start of the pass, then the
@@ -715,11 +730,8 @@ const claim = (
       // the machine's, said once after the loop.
       if (paused !== null) continue;
       // Before the blockers: with no slot free nothing is claimed, so they are not read. Every
-      // issue left is counted as left over, blocked or not. The issue's own runs do not count: a
-      // claim finishes them first, so a run an instructor retried by labelling the issue
-      // `factory:ready` again does not hold the slot its new attempt needs.
-      const own = known.of(name, issue).filter(holdsSlot).length;
-      if (active - own >= machine.maxConcurrentRuns) {
+      // issue left is counted as left over, blocked or not.
+      if (active >= machine.maxConcurrentRuns) {
         left += 1;
         yield* pass.record({
           event: "claim_skipped",

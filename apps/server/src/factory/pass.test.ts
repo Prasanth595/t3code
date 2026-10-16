@@ -710,27 +710,23 @@ describe("runs that are confirmed and still in triage", () => {
     }),
   );
 
-  it.effect("an issue put back to ready is claimed past the slot its own run holds", () =>
+  it.effect("a triage run whose issue a person moved is an attention line and keeps its slot", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(12, "triage");
-      fake.ready[REPO] = [12];
-      yield* pass(fake, machine([REPO], 1));
-      // `resume` leaves a ready issue alone; the claim finishes the old run and starts afresh.
-      assert.deepEqual(starts(fake), [`resume ${REPO}#12`, `start ${REPO}#12`]);
-    }),
-  );
-
-  it.effect("an issue put back to ready still waits for a slot another run holds", () =>
-    Effect.gen(function* () {
-      const fake = new Fake();
-      fake.runIn(40, BUILDING);
-      fake.runIn(12, "triage");
-      fake.ready[REPO] = [12];
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      fake.ready[REPO] = [12, 3];
+      fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "issue #12 is ready again" });
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      // `resume` never claims; the run holds the only slot, so neither issue is claimed.
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
+      assert.equal(report.attention, 1);
+      const line = runLine(lines, "ATTENTION: rawphp/softfac#12 ");
       assert.ok(
-        lines.some((l) => l.startsWith("limit reached: 1 ready issue")),
+        line.includes("run rawphp__softfac__12__1 is not progressing and holds a slot"),
+        line,
+      );
+      assert.ok(
+        lines.some((l) => l.startsWith("limit reached: 2 ready issues")),
         lines.join("\n"),
       );
     }),
