@@ -19,7 +19,7 @@ Only `apps/server/src/factory/t3/` may import T3 internals. Other files under `a
 3. `vp run --filter t3 typecheck`
 4. `vp run --filter @t3tools/web typecheck`
 
-The same script is the factory gate (`gate` in `.dw/config.yml`) and the `factory-ci` GitHub workflow. To run it locally from the repo root:
+The same script is the factory gate (`gate` in `.dw/config.yml`) and the `Check` job of the `factory-ci` GitHub workflow. The workflow has a second job, `Lint`, which runs `vp check` (upstream's lint and format check, the command upstream's `ci.yml` Lint job runs) beside `check.sh`. The gate does not run it. To run `check.sh` locally from the repo root:
 
 ```sh
 vp i
