@@ -16,10 +16,10 @@ This source-level compatibility check does not prove the clients work against an
 
 The following focused checks have passed in the current checkout:
 
-- Bun tests for the Pi adapter, runtime host, managed ACP proxy, and worker execution passed in the focused run.
+- Focused Bun tests passed: 34 tests across the Docker backend, manager HTTP API, managed ACP proxy, and worker execution.
 - The broader ACP package run reported 27 passing tests, but `agent.test.ts` could not load because Bun could not import the Vitest-only `assert` export from `@effect/vitest`.
 - Frozen offline pnpm lockfile validation succeeded across all 40 workspace projects.
-- Managed proxy and CLI sources build with Bun. This build does not verify that their runtime dependencies are installed or that a real worker can run them.
+- The Subpolar ACP CLI bundles with Bun (253 modules) without the removed Effect API warning. This does not verify Docker image creation or a real worker run.
 
 Typechecking and T3 server tests could not run in the filtered dependency environment: platform-specific `tsc-rs` and TypeScript 7 packages were absent, as was the Vite+ native test runner binding. Installing optional dependencies did not complete in the restricted environment. No Docker daemon was available, so there has been no real Docker container execution or gateway/Compose smoke test.
 
