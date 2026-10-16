@@ -1,4 +1,5 @@
 import {
+  type ChatAttachment,
   CommandId,
   ModelSelection,
   type OrchestrationV2Command,
@@ -116,6 +117,34 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
+export function isNativeMaintenanceCommand(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return (
+    message.attachments.length === 0 &&
+    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
+  );
+}
+
+// A /compact or /logout run cannot take a steer or restart. Automatic sends
+// queue behind it; explicit steer and restart keep their intent and get the
+// orchestrator's wait error.
+function queueBehindMaintenanceRun(
+  projection: OrchestrationV2ThreadProjection,
+  decision: MessageDispatchMode,
+): MessageDispatchMode {
+  if (decision.type !== "steer_active" && decision.type !== "restart_active") return decision;
+  const targetRun = projection.runs.find((run) => run.id === decision.targetRunId);
+  const targetMessage =
+    targetRun === undefined
+      ? undefined
+      : projection.messages.find((message) => message.id === targetRun.userMessageId);
+  return targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)
+    ? { type: "queue_after_active" }
+    : decision;
+}
+
 export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
@@ -152,13 +181,19 @@ export function resolveMessageDispatchIntent(
         );
   const capabilities = providerSession?.capabilities.turns;
   if (capabilities?.supportsActiveSteering === true) {
-    return { type: "steer_active", targetRunId: activeRun.id };
+    return queueBehindMaintenanceRun(projection, {
+      type: "steer_active",
+      targetRunId: activeRun.id,
+    });
   }
   if (capabilities?.supportsQueuedMessages === true) {
     return { type: "queue_after_active" };
   }
   if (capabilities?.supportsSteeringByInterruptRestart === true) {
-    return { type: "restart_active", targetRunId: activeRun.id };
+    return queueBehindMaintenanceRun(projection, {
+      type: "restart_active",
+      targetRunId: activeRun.id,
+    });
   }
   return { type: "queue_after_active" };
 }

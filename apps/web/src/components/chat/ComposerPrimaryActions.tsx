@@ -31,6 +31,7 @@ interface ComposerPrimaryActionsProps {
   pendingAction: PendingActionState | null;
   isRunning: boolean;
   canInterrupt: boolean;
+  activeTurnIsCompaction?: boolean;
   followUpBehavior?: "queue" | "steer";
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
@@ -85,6 +86,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   pendingAction,
   isRunning,
   canInterrupt,
+  activeTurnIsCompaction = false,
   followUpBehavior = "steer",
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
@@ -117,9 +119,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     resolveComposerDispatchMode({
       running: isRunning,
       activeTurnDefault: followUpBehavior,
+      activeTurnIsCompaction,
       alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
     }) === "queue";
-  const alternateAction = alternateComposerDispatchAction(followUpBehavior);
+  const alternateAction = alternateComposerDispatchAction(followUpBehavior, activeTurnIsCompaction);
+  const defaultAction = activeTurnIsCompaction ? "queue" : followUpBehavior;
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
@@ -298,7 +302,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     (compactsBeforeSend
       ? `Summarize ${compactTokens} tokens of history, then send`
       : isRunning && !isEditingQueuedMessage
-        ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
+        ? defaultAction === alternateAction
+          ? `Click to ${defaultAction}`
+          : `Click to ${defaultAction}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
         : submitLabel);
 
   const sendButton = (

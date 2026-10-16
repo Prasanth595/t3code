@@ -307,7 +307,6 @@ export function useThreadComposerState() {
       ? EMPTY_QUEUE_WORKFLOW_ATOM
       : environmentThreadDetails.queueWorkflowAtom(selectedThreadDetailRef),
   );
-  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true;
   const queuedRunEdit = useQueuedRunEdit(selectedThreadKey);
   const composerDraftKey =
     selectedThreadKey === null
@@ -394,6 +393,9 @@ export function useThreadComposerState() {
     selectedThreadRuntime,
     selectedThreadVisibleTurnItems,
   ]);
+
+  // A /compact run cannot take a steer, so follow-ups show and send as queued.
+  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true && !isCompacting;
 
   const runlessWorkStartedAt = useMemo(
     () =>

@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  MessageId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
@@ -34,6 +35,7 @@ function dispatchProjection(
   const providerThreadId = ProviderThreadId.make("command-policy-provider-thread");
   const providerSessionId = ProviderSessionId.make("command-policy-provider-session");
   return {
+    messages: [],
     runs:
       sessionCapabilities === undefined
         ? []
@@ -138,6 +140,68 @@ it("targets the latest active run for explicit steer and restart intent", () => 
       "steer",
     ),
     { type: "start_immediately" },
+  );
+});
+
+function projectionRunningMessage(
+  text: string,
+  sessionCapabilities: OrchestrationV2ProviderCapabilities = baseCapabilities,
+) {
+  const messageId = MessageId.make("command-policy-active-message");
+  const projection = dispatchProjection(sessionCapabilities);
+  return {
+    ...projection,
+    runs: projection.runs.map((run) => ({ ...run, userMessageId: messageId })),
+    messages: [{ id: messageId, text, attachments: [] }],
+  } as unknown as OrchestrationV2ThreadProjection;
+}
+
+it.each(["/compact", " /Compact ", "/logout"])(
+  "queues an automatic message behind a running %s and keeps explicit intent",
+  (text) => {
+    const projection = projectionRunningMessage(text);
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+      { type: "queue_after_active" },
+    );
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projectionRunningMessage(
+          text,
+          capabilities((current) => ({
+            ...current,
+            turns: {
+              ...current.turns,
+              supportsActiveSteering: false,
+              supportsQueuedMessages: false,
+              supportsSteeringByInterruptRestart: true,
+            },
+          })),
+        ),
+        { type: "start_immediately" },
+        "auto",
+      ),
+      { type: "queue_after_active" },
+    );
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        "steer",
+      ),
+      { type: "steer_active", targetRunId: activeRunId },
+    );
+  },
+);
+
+it("still steers an automatic message into an ordinary run", () => {
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      projectionRunningMessage("ship it"),
+      { type: "start_immediately" },
+      "auto",
+    ),
+    { type: "steer_active", targetRunId: activeRunId },
   );
 });
 

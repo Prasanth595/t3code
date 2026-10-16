@@ -69,4 +69,20 @@ describe("resolveComposerDispatchMode", () => {
     expect(alternateComposerDispatchAction("steer")).toBe("queue");
     expect(alternateComposerDispatchAction()).toBe("queue");
   });
+
+  it("queues every follow-up, the alternate included, while compaction runs", () => {
+    for (const activeTurnDefault of ["queue", "steer"] as const) {
+      for (const alternateModifier of [false, true]) {
+        expect(
+          resolveComposerDispatchMode({
+            running: true,
+            alternateModifier,
+            activeTurnDefault,
+            activeTurnIsCompaction: true,
+          }),
+        ).toBe("queue");
+      }
+      expect(alternateComposerDispatchAction(activeTurnDefault, true)).toBe("queue");
+    }
+  });
 });
