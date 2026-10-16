@@ -145,7 +145,7 @@ export function makeStudioActivityFileStateStore(
       Effect.runPromise(
         Effect.gen(function* () {
           // The publisher owns state validation; this codec handles only the JSON boundary.
-          const text = yield* Schema.encodeEffect(Schema.UnknownFromJsonString)(state);
+          const text = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(state);
           yield* fs.writeFileString(`${statePath}.pending`, text, { mode: 0o600 });
           yield* fs.rename(`${statePath}.pending`, statePath);
         }),
