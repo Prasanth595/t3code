@@ -3282,15 +3282,19 @@ export default function Sidebar() {
     },
     [contextDragThreads, pointerOutsideThreadList],
   );
-  const dndSensors = useSensors(
-    useSensor(SidebarPointerSensor, {
+  // useSensor memoizes on the options object; a fresh one each render rebuilds
+  // the sensors, and with them DndContext and every sortable row.
+  const pointerSensorOptions = useMemo(
+    () => ({
       distance: SIDEBAR_DRAG_DISTANCE,
       onAttach: attachDragSensor,
       onFinish: finishThreadDrag,
       onMove: moveThreadContextDrag,
       onDrop: dropThreadContextDrag,
     }),
+    [attachDragSensor, dropThreadContextDrag, finishThreadDrag, moveThreadContextDrag],
   );
+  const dndSensors = useSensors(useSensor(SidebarPointerSensor, pointerSensorOptions));
   const sectionByThreadKey = useMemo(() => {
     const map = new Map<string, SidebarSection>();
     const add = (list: readonly EnvironmentThreadShell[], section: SidebarSection) => {
