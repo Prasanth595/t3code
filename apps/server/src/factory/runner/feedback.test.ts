@@ -1041,6 +1041,68 @@ describe("feedback: the window", () => {
 });
 
 describe("feedback: the step", () => {
+  it.effect(
+    "an issue comment forwarded or reported as dropped while building is not read as feedback",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* prOpenRun();
+        appendAt(rig, T0 + 1_000, [
+          { event: "comment_forwarded", data: { comment_id: "42" } },
+          step("comment-dropped 43"),
+        ]);
+        rig.gh.activity = {
+          comments: [
+            issueComment("42", "2026-10-04T11:00:00Z", "forwarded"),
+            issueComment("43", "2026-10-04T11:01:00Z", "dropped"),
+          ],
+          bodyEdit: null,
+          dropped: [],
+        };
+        assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
+        assert.deepStrictEqual(eventsOf(rig, "feedback_relaunching"), []);
+        assert.deepStrictEqual(rig.t3.launches, []);
+        // The filter is per id: a third comment in the same answer is relaunched alone.
+        rig.gh.activity = {
+          ...rig.gh.activity,
+          comments: [
+            ...rig.gh.activity.comments,
+            issueComment("44", "2026-10-04T11:02:00Z", "new"),
+          ],
+        };
+        rig.clock.now = T0 + TEN_MINUTES;
+        assert.deepStrictEqual(yield* feedbackIn(rig), relaunched(1));
+        assert.deepStrictEqual(
+          decisions(rig).map((d) => d[2]),
+          [["issue-comment:44"]],
+        );
+      }),
+  );
+
+  it.effect(
+    "a run that reached pr-open before a pass removed worktrees has its old session stopped before the relaunch",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* reviewedRun();
+        // The ledger of a run from before worktrees were removed: no worktree line.
+        const path = runPath(rig.dataDir, rig.run);
+        const kept = NodeFS.readFileSync(path, "utf8")
+          .split("\n")
+          .filter((l) => l !== "" && !l.includes('"worktree_removed"'));
+        NodeFS.writeFileSync(path, `${kept.join("\n")}\n`);
+        assert.deepStrictEqual(worktreeLines(rig), []);
+        assert.deepStrictEqual(yield* feedbackIn(rig), relaunched(1));
+        assert.deepStrictEqual(
+          rig.t3.calls.filter((c) => c.startsWith("archive ")),
+          ["archive thread-1"],
+        );
+        const lines = linesOf(rig);
+        const removed = lines.findIndex((l) => sameLine(l, worktreeRemoved));
+        const decision = lines.findIndex((l) => l.event === "feedback_relaunching");
+        assert.ok(removed >= 0 && removed < decision, `${removed} < ${decision}`);
+        assert.deepStrictEqual(liveThreads(rig), ["thread-2"]);
+      }),
+  );
+
   it.effect("feedback forwarded into a paused session is not sent again by a relaunch", () =>
     Effect.gen(function* () {
       const rig = yield* reviewedRun();
