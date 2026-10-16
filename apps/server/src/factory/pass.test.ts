@@ -25,6 +25,7 @@ import {
   type Report,
 } from "./pass.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
+import { SessionsError } from "./t3/sessions.ts";
 import { GitHubFailed, type Blocker } from "./tracker/github.ts";
 
 const REPO = "rawphp/softfac";
@@ -714,6 +715,19 @@ describe("runs that are confirmed and still in triage", () => {
       const { report } = yield* pass(fake, machine([REPO], 3));
       assert.deepEqual(starts(fake), []);
       assert.equal(report.errors, 0);
+    }),
+  );
+
+  it.effect("a start that fails at T3 is recorded as a t3 error", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.pushStart(
+        `${REPO}#12`,
+        new SessionsError({ operation: "find-project", cause: new Error("down") }),
+      );
+      yield* pass(fake, machine([REPO], 3));
+      assert.equal(fake.runErrors[0]!.kind, "t3");
     }),
   );
 });
