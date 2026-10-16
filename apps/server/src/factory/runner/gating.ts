@@ -337,7 +337,7 @@ const gateAttempts = (
       );
 
     const pull = yield* ctx.tracker.pullRequest(pr);
-    const unbound = checkBinding(pull, pr, ctx.project.base, branch, true);
+    const unbound = checkBinding(pull, pr, ctx.project.base, branch, true, seen.resumedFrom);
     if (unbound !== null || pull === null) {
       return yield* stuckUnbound(
         unbound ?? { public: `the session reported PR #${pr} but it does not exist` },
@@ -390,7 +390,14 @@ const gateAttempts = (
         const pullNow = yield* ctx.tracker.pullRequest(pr);
         // A building run's pull request that someone else took out of draft while the commands
         // ran is not stuck: the factory was about to mark it ready itself.
-        const unboundNow = checkBinding(pullNow, pr, ctx.project.base, branch, false);
+        const unboundNow = checkBinding(
+          pullNow,
+          pr,
+          ctx.project.base,
+          branch,
+          false,
+          seen.resumedFrom,
+        );
         if (unboundNow !== null || pullNow === null) {
           return yield* stuckUnbound(
             unboundNow ?? { public: `the session reported PR #${pr} but it does not exist` },

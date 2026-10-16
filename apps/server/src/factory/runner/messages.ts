@@ -6,6 +6,7 @@
 
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
+import { runIdToString, type RunId } from "../ledger/runId.ts";
 import { commandLine, sanitize } from "../text.ts";
 import type { DropReason } from "../tracker/github.ts";
 
@@ -126,18 +127,39 @@ export const sessionMayExistNote = (what: string, commandId: string): string =>
 /** How the first line of a stuck session's message begins when gh acts as another account. */
 export const WRONG_ACCOUNT_PREFIX = "the session's gh account is ";
 
+/** Why a launch continues from an earlier run's branch, which the first message says in the factory's words. */
+export type ResumeAfter = "time-limit" | "interrupted";
+
+/** The earlier run and branch a launch continues from. */
+export interface ResumeFrom {
+  readonly run: RunId;
+  readonly branch: string;
+  readonly after: ResumeAfter;
+}
+
+/**
+ * The paragraph of a resumed launch. The worktree holds the earlier run's commits and the session
+ * is to go on from them; the branch is not named, the session is in it.
+ */
+const resumeParagraph = ({ run, after }: ResumeFrom): string =>
+  after === "time-limit"
+    ? `A previous attempt of this issue (${runIdToString(run)}) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over.`
+    : `A previous attempt of this issue (${runIdToString(run)}) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.`;
+
 /**
  * The first message of a session for a GitHub issue: invokes `/factory`, says nobody is in the
- * chat, and names the GitHub identity the session acts as (`login`, and the `ghConfigDir` its T3
- * server should have been started with) with what to do when `gh` says otherwise.
+ * chat, adds the resume paragraph when the launch continues an earlier run's branch, and names
+ * the GitHub identity the session acts as (`login`, and the `ghConfigDir` its T3 server should
+ * have been started with) with what to do when `gh` says otherwise.
  */
 export const launchMessage = (
   repo: string,
   issue: number,
   login: string,
   ghConfigDir: string,
+  resumed?: ResumeFrom,
 ): string =>
-  `/factory ${repo}#${issue}\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.\n\nYou act on GitHub as ${login}. Your T3 server should have been started with GH_CONFIG_DIR=${ghConfigDir}. Before anything else run gh api user --jq .login exactly as written, in the environment you were started with. Never set GH_CONFIG_DIR, GH_TOKEN or GH_HOST, and never use gh auth token or gh auth switch, on any command. If it prints any other login, end with FACTORY-STOP: stuck and make the first line of your message "${WRONG_ACCOUNT_PREFIX}<x>, not ${login}".`;
+  `/factory ${repo}#${issue}\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.${resumed === undefined ? "" : `\n\n${resumeParagraph(resumed)}`}\n\nYou act on GitHub as ${login}. Your T3 server should have been started with GH_CONFIG_DIR=${ghConfigDir}. Before anything else run gh api user --jq .login exactly as written, in the environment you were started with. Never set GH_CONFIG_DIR, GH_TOKEN or GH_HOST, and never use gh auth token or gh auth switch, on any command. If it prints any other login, end with FACTORY-STOP: stuck and make the first line of your message "${WRONG_ACCOUNT_PREFIX}<x>, not ${login}".`;
 
 /** The issue's single status comment. */
 export const statusBody = (

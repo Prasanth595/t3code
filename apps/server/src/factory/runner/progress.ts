@@ -41,6 +41,14 @@ export interface Seen {
   readonly threadId: string | null;
   /** The `launch-sending` step: a launch call was about to be sent, so a session may exist. */
   readonly launchSent: boolean;
+  /**
+   * The branch in a `launch-sending resumed-from <branch>` step: the decision to resume, made
+   * before the first launch call. Null for a plain `launch-sending` or none. A launch sent again
+   * reads it and never asks GitHub again.
+   */
+  readonly launchResumedFrom: string | null;
+  /** The branch on the `session_launched` line's `resumed_from`: the earlier run's branch this session continued. */
+  readonly resumedFrom: string | null;
   /** The `approval-rechecked` step: the issue text was checked again after the launch. */
   readonly rechecked: boolean;
   /** The `session_launched` line's worktree path. */
@@ -110,6 +118,8 @@ export interface Seen {
 
 /** The ledger step that says a launch call is about to be sent. */
 export const LAUNCH_SENDING = "launch-sending";
+/** The start of the `launch-sending` step of a launch that resumes from an earlier run's branch: `launch-sending resumed-from <branch>`. */
+export const LAUNCH_SENDING_RESUMED = `${LAUNCH_SENDING} resumed-from `;
 /** The ledger step that says the issue text was checked again after the launch. */
 export const APPROVAL_RECHECKED = "approval-rechecked";
 /** The ledger step written before the reminder is sent: `result-line-reminding <k>`, `k` the ordinal of the run that ended. */
@@ -129,7 +139,8 @@ export const GATE_PASSED = "gate-passed";
 /** The ledger step that says the gate results are on the pull request. */
 export const GATE_RESULTS_POSTED = "gate-results-posted";
 
-const field = (data: unknown, key: string): unknown =>
+/** `key` of a ledger line's `data`, or undefined when that is not an object with it. */
+export const field = (data: unknown, key: string): unknown =>
   typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
 
 /** `text` when it is a number without a sign or leading zero that is a safe integer. */
@@ -178,6 +189,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let state: State | null = null;
   let threadId: string | null = null;
   let launchSent = false;
+  let launchResumedFrom: string | null = null;
+  let resumedFrom: string | null = null;
   let rechecked = false;
   let worktree: string | null = null;
   let worktreeDone = false;
@@ -246,8 +259,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         }
         const droppedId = commentDroppedId(step);
         if (droppedId !== null) dropped.add(droppedId);
-        if (step === LAUNCH_SENDING || step.startsWith(`${LAUNCH_SENDING} resumed-from `)) {
+        if (step === LAUNCH_SENDING) {
           launchSent = true;
+          launchResumedFrom = null;
+        } else if (step.startsWith(LAUNCH_SENDING_RESUMED)) {
+          launchSent = true;
+          launchResumedFrom = step.slice(LAUNCH_SENDING_RESUMED.length);
         }
         const gateSending = parseGateSending(step);
         if (gateSending !== null) sending = gateSending;
@@ -301,6 +318,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const path = field(entry.data, "worktree");
         worktree = typeof path === "string" ? path : null;
         worktreeDone = false;
+        const from = field(entry.data, "resumed_from");
+        const fromBranch = field(from, "branch");
+        resumedFrom = typeof fromBranch === "string" ? fromBranch : null;
         // A new session has run numbers of its own, one reminder, and no stop by hand yet.
         waitingAfter = null;
         waitIsForward = false;
@@ -406,6 +426,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     state,
     threadId,
     launchSent,
+    launchResumedFrom,
+    resumedFrom,
     rechecked,
     worktree,
     worktreeDone,
