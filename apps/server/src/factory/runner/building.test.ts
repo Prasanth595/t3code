@@ -6,7 +6,9 @@
  * `done_with_a_pull_request_closed_without_a_merge_ends_the_run_as_closed`, #20), a closed issue
  * abandoning the run (#20), the "a new attempt ..." tests (`start.ts`, covered by its own tests),
  * `apply()` internals (`a_stuck_comment_without_a_stop_never_shows_the_lifecycle_reason`), the
- * gate and forward interplay, and the crash matrix.
+ * gate and forward interplay, and the crash matrix. For `watch` and `timeLimit` also left out: a
+ * recorded gate pass (#19), a run whose own merge closed the issue (#20), a relaunch decided by
+ * an interruption, and the tests over the real `gh` client (`tracker/github.test.ts` owns them).
  */
 import * as NodeFS from "node:fs";
 
@@ -38,7 +40,14 @@ import {
   type IssueDetail,
   type PullRequest,
 } from "../tracker/github.ts";
-import { advance, type AdvanceOutcome, type BuildingContext } from "./building.ts";
+import {
+  advance,
+  timeLimit,
+  watch,
+  type AdvanceOutcome,
+  type BuildingContext,
+} from "./building.ts";
+import { sessionMayExistNote } from "./messages.ts";
 
 const tempDir = useTempDirs();
 
@@ -227,6 +236,8 @@ interface World {
     delivered: boolean;
   } | null;
   archiveFails: SessionsError | null;
+  /** The next read of the thread fails, once. */
+  threadOnce: SessionsError | null;
   /** The text of each message T3 took, by command id. */
   delivered: Map<string, string>;
   archived: Array<string>;
@@ -243,12 +254,18 @@ const issueDetail = (state: State | null, assignees: ReadonlyArray<string>): Iss
   closed: false,
 });
 
-const projectConfig = (base = "main"): ProjectConfig => ({
-  ...timeLimitOnlyProjectConfig(),
-  instructors: ["rawphp"],
-  base,
-  gate: ["cargo test"],
-});
+const MINUTE = 60_000;
+
+const projectConfig = (base = "main"): ProjectConfig => {
+  const config = timeLimitOnlyProjectConfig();
+  return {
+    ...config,
+    instructors: ["rawphp"],
+    base,
+    gate: ["cargo test"],
+    limits: { ...config.limits, minutes: 90 },
+  };
+};
 
 /** Seeds a run file with `events`, line `i` written at `ms(i)`. */
 const seed = (
@@ -296,6 +313,7 @@ const rigFor = (
     failNext: {},
     sendFailure: null,
     archiveFails: null,
+    threadOnce: null,
     delivered: new Map(),
     archived: [],
   };
@@ -371,6 +389,9 @@ const rigFor = (
     },
     thread: (threadId) => {
       t3Call(`thread ${threadId}`);
+      const once = world.threadOnce;
+      world.threadOnce = null;
+      if (once !== null) return Effect.fail(once);
       const answer = world.thread;
       return isThreadNotFound(answer) || isSessionsError(answer)
         ? Effect.fail(answer)
@@ -1616,6 +1637,445 @@ describe("advance: the result-line reminder", () => {
       const outcome = yield* advanceIn(rig);
       assert.deepStrictEqual(outcome, { kind: "stuck", reason: THREAD_GONE });
       assert.strictEqual(stuckCauses(rig)[0], "advance thread-gone");
+    }),
+  );
+});
+
+// ---- watch -----------------------------------------------------------------------------------------
+
+const CHANGED_DURING_BUILD =
+  "the issue text was changed during the build by someone who is not an instructor";
+const CANNOT_VERIFY_DURING_BUILD =
+  "the factory could not verify who changed the issue text during the build";
+const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
+const TEXT_READ = `textCheck 10 ${LABELED} rawphp`;
+/** What a stop that does not read the session does in T3: archive the thread, then remove its worktree. */
+const ARCHIVE_CALLS = ["archive thread-1", "thread thread-1", "removeWorktree /t3/wt"];
+
+const approvedLine = (at: string): RunEvent => step(`approved ${at}`);
+
+describe("watch", () => {
+  it.effect("leaves a run alone when the text is unchanged since the approval", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), { kind: "unchanged" });
+      // One read, since the moment the run's first line records, with the project's instructors.
+      assert.deepStrictEqual(rig.gh, [TEXT_READ]);
+      assert.deepStrictEqual(rig.t3, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+      // And again: the same read each pass, never a step that says it passed.
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), { kind: "unchanged" });
+      assert.deepStrictEqual(rig.gh, [TEXT_READ, TEXT_READ]);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("checks since the approval the ledger records", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([approvedLine("2026-10-04T12:34:56Z"), ...STARTED.slice(1)]);
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), { kind: "unchanged" });
+      assert.deepStrictEqual(rig.gh, ["textCheck 10 2026-10-04T12:34:56Z rawphp"]);
+    }),
+  );
+
+  it.effect("stops a run whose text someone else changed", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.textCheck = "changed";
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: CHANGED_DURING_BUILD,
+      });
+      assert.deepStrictEqual(rig.gh, [TEXT_READ, ...stuckCalls(CHANGED_DURING_BUILD)]);
+      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([], CHANGED_DURING_BUILD));
+      assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("watch text-changed-during-build"));
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      assert.deepStrictEqual(rig.world.issue.assignees, []);
+    }),
+  );
+
+  it.effect("stops a run whose history cannot be judged, without blaming anyone", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.textCheck = "unjudged";
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: CANNOT_VERIFY_DURING_BUILD,
+      });
+      assert.deepStrictEqual(rig.gh, [TEXT_READ, ...stuckCalls(CANNOT_VERIFY_DURING_BUILD)]);
+      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([], CANNOT_VERIFY_DURING_BUILD));
+      assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("watch edits-unverifiable"));
+    }),
+  );
+
+  it.effect("finishes a stopped run, and nothing polls it again", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.textCheck = "changed";
+      yield* watch(rig.ctx, rig.run);
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), { kind: "skipped", why: "finished" });
+      assert.strictEqual((yield* Effect.flip(advanceIn(rig)))._tag, "NotBuildingError");
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+
+  it.effect("leaves the draft pull request open and does not mark it ready", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, PR_OPENED]);
+      rig.world.textCheck = "changed";
+      assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
+      assert.ok(
+        !rig.gh.some((call) => call.startsWith("pullRequest") || call.startsWith("markPrDraft")),
+        rig.gh.join("\n"),
+      );
+      // The status comment still names the pull request the run reported.
+      assert.ok(rig.gh.at(-1)!.endsWith(statusText("stuck", "#12")), rig.gh.at(-1));
+    }),
+  );
+
+  it.effect("does nothing for a run that is finished, has no session or is not building", () =>
+    Effect.gen(function* () {
+      const questions: RunEvent = { event: "questions_posted", data: { questions: "1. Which?" } };
+      const stuck: RunEvent = { event: "stuck", data: { reason: "gave up" } };
+      const cases: ReadonlyArray<[string, ReadonlyArray<RunEvent>, string]> = [
+        ["finished", [...STARTED, FINISHED_EVENT], "finished"],
+        [
+          "no session",
+          [STARTED[0]!, STARTED[1]!, moved("ready", "triage"), moved("triage", "building")],
+          "no-session",
+        ],
+        ["triage", STARTED.slice(0, 5), "not-building"],
+        ["needs-info", [...STARTED, questions, moved("building", "needs-info")], "not-building"],
+        ["stuck", [...STARTED, stuck, moved("building", "stuck")], "not-building"],
+        // The decision is in the ledger and `state_changed` is not: `advance` finishes it.
+        ["half stuck", [...STARTED, stuck], "not-building"],
+        ["half needs-info", [...STARTED, questions], "not-building"],
+      ];
+      for (const [name, events, why] of cases) {
+        const rig = rigFor(events);
+        rig.world.textCheck = "changed";
+        const bytes = bytesOf(rig);
+        assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), { kind: "skipped", why }, name);
+        assert.deepStrictEqual(rig.gh, [], name);
+        assert.deepStrictEqual(rig.t3, [], name);
+        assert.strictEqual(bytesOf(rig), bytes, name);
+      }
+    }),
+  );
+
+  it.effect("refuses a run of another repo before touching anything", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      const other: RunId = { repo: "rawphp/other", issue: "10", attempt: 1 };
+      const error = yield* Effect.flip(watch(rig.ctx, other));
+      assert.strictEqual(error._tag, "WrongRepoError");
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+
+  it.effect("is an error, never a stop or a pass, when the text cannot be read", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.textCheck = "changed";
+      rig.world.failNext.textCheck = ghFailure();
+      const bytes = bytesOf(rig);
+      assert.strictEqual((yield* Effect.flip(watch(rig.ctx, rig.run)))._tag, "GitHubFailed");
+      assert.deepStrictEqual(rig.gh, [TEXT_READ]);
+      assert.deepStrictEqual(rig.t3, [], "nothing archived");
+      assert.strictEqual(bytesOf(rig), bytes, "nothing written");
+      assert.strictEqual(rig.world.issue.state, "building");
+      // The next pass reads again and, the text being changed, stops the run.
+      assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
+    }),
+  );
+
+  it.effect(
+    "is an error with nothing written when the archive fails, and the next pass retries",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        rig.world.textCheck = "changed";
+        rig.world.archiveFails = sessionsFailure("archive");
+        const bytes = bytesOf(rig);
+        for (const pass of [1, 2]) {
+          const error = yield* Effect.flip(watch(rig.ctx, rig.run));
+          assert.strictEqual(error._tag, "FactorySessionsError");
+          assert.strictEqual(bytesOf(rig), bytes, `pass ${pass}`);
+          assert.strictEqual(rig.world.issue.state, "building");
+          // Only the read: no comment, no label, no release.
+          assert.strictEqual(rig.gh.length, pass, rig.gh.join("\n"));
+        }
+        rig.world.archiveFails = null;
+        assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
+        assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
+        assert.deepStrictEqual(linesOf(rig), stuckEvents([], CHANGED_DURING_BUILD));
+      }),
+  );
+
+  it.effect("does not let a thread T3 no longer knows stop the stop", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.textCheck = "changed";
+      rig.world.thread = new ThreadNotFoundError({ threadId: "thread-1" });
+      assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      // The worktree is removed from the path the launch recorded.
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([], CHANGED_DURING_BUILD));
+    }),
+  );
+
+  it.effect("fails closed for a run with no approval step", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(STARTED.slice(1));
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: CANNOT_CONFIRM,
+      });
+      // No read: there is no moment to read since. The archive, then the stuck path.
+      assert.deepStrictEqual(rig.gh, stuckCalls(CANNOT_CONFIRM));
+      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED.slice(1),
+        worktreeRemoved,
+        ...stuckTail(CANNOT_CONFIRM),
+      ]);
+      assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("watch approval-unconfirmed"));
+    }),
+  );
+
+  it.effect(
+    "is an error with nothing written for a run with no approval step and a failing archive",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor(STARTED.slice(1));
+        rig.world.archiveFails = sessionsFailure("archive");
+        const bytes = bytesOf(rig);
+        assert.strictEqual(
+          (yield* Effect.flip(watch(rig.ctx, rig.run)))._tag,
+          "FactorySessionsError",
+        );
+        assert.deepStrictEqual(rig.gh, []);
+        assert.strictEqual(bytesOf(rig), bytes);
+      }),
+  );
+});
+
+// ---- the time limit -----------------------------------------------------------------------------------
+
+const TIME_LIMIT = "the run passed its time limit";
+const RESUME_SENTENCE =
+  "Set `factory:ready` again and the next attempt continues from the previous session's commits.";
+const LIMIT_MS = 90 * MINUTE;
+
+/** The started run, claimed at `T0` and building one minute later. */
+const startedAtT0 = (index: number) => (index === STARTED.length - 1 ? T0 + MINUTE : T0);
+
+/** The comment a time-limit stop posts, with the line that says where the work is. */
+const limitComment = (workLine?: string) => {
+  const work = workLine === undefined ? "" : `${workLine} ${RESUME_SENTENCE}\n\n`;
+  return `The factory could not finish this issue and has released it.\n\nReason: ${TIME_LIMIT}\n\n${work}Fix the cause, then set the label back to \`factory:ready\`.`;
+};
+
+/** The lines of a time-limit stop `elapsed` ms after the run began, with the branch the stop recorded. */
+const limitEvents = (elapsed: number, branch?: string): Array<Line> => [
+  ...STARTED,
+  worktreeRemoved,
+  { event: "stuck", data: { reason: TIME_LIMIT, ...(branch !== undefined && { branch }) } },
+  moved("building", "stuck"),
+  { event: "finished", data: { ...(FINISHED("stuck").data as object), total_ms: elapsed } },
+];
+
+/** A started run that is past its limit and stopped by `timeLimit`; returns the elapsed time. */
+const stopAtTheLimit = (rig: Rig) =>
+  Effect.gen(function* () {
+    const elapsed = LIMIT_MS + 1;
+    rig.clock.now = T0 + elapsed;
+    const outcome = yield* timeLimit(rig.ctx, rig.run);
+    assert.deepStrictEqual(outcome, { kind: "stopped", reason: TIME_LIMIT });
+    return elapsed;
+  });
+
+const limitedRig = () => rigFor(STARTED, { ms: startedAtT0 });
+
+describe("timeLimit", () => {
+  it.effect("is within the limit up to and including the last millisecond of it", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      const bytes = bytesOf(rig);
+      rig.clock.now = T0 + 1;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), { kind: "within" });
+      rig.clock.now = T0 + LIMIT_MS;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), { kind: "within" });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.t3, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("stops a run past its limit and names the branch without a count of commits", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      const elapsed = yield* stopAtTheLimit(rig);
+      assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed, "t3code/abc"));
+      assert.deepStrictEqual(rig.gh, [
+        `comment 10 ${limitComment("The work so far is on branch t3code/abc.")}`,
+        "setState 10 stuck",
+        "unassign 10 rawphp",
+        `status 10 rawphp ${statusText("stuck")}`,
+      ]);
+      // The branch is read before the archive, then the archive and the worktree as for any stop.
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
+      assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("pass time-limit"));
+    }),
+  );
+
+  it.effect(
+    "stops a run past its limit whose thread has no branch as it would without the work",
+    () =>
+      Effect.gen(function* () {
+        const rig = limitedRig();
+        rig.world.thread = { worktreePath: "/t3/wt", branch: null, archived: false };
+        const elapsed = yield* stopAtTheLimit(rig);
+        assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed));
+        assert.deepStrictEqual(rig.gh[0], `comment 10 ${limitComment()}`);
+        assert.strictEqual(rig.world.issue.state, "stuck");
+      }),
+  );
+
+  it.effect(
+    "stops a run past its limit whose thread cannot be read as it would without the work",
+    () =>
+      Effect.gen(function* () {
+        const rig = limitedRig();
+        // The first read of the thread is the branch; the stop path's own read goes through.
+        rig.world.threadOnce = sessionsFailure();
+        const elapsed = yield* stopAtTheLimit(rig);
+        assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed));
+        assert.deepStrictEqual(rig.gh[0], `comment 10 ${limitComment()}`);
+        assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
+      }),
+  );
+
+  it.effect(
+    "stops a run past its limit whose thread T3 no longer knows as it would without the work",
+    () =>
+      Effect.gen(function* () {
+        const rig = limitedRig();
+        rig.world.thread = new ThreadNotFoundError({ threadId: "thread-1" });
+        const elapsed = yield* stopAtTheLimit(rig);
+        assert.deepStrictEqual(linesOf(rig), limitEvents(elapsed));
+      }),
+  );
+
+  it.effect(
+    "is an error with nothing written when the archive fails, and the next call decides again",
+    () =>
+      Effect.gen(function* () {
+        const rig = limitedRig();
+        rig.clock.now = T0 + LIMIT_MS + 1;
+        rig.world.archiveFails = sessionsFailure("archive");
+        const bytes = bytesOf(rig);
+        assert.strictEqual(
+          (yield* Effect.flip(timeLimit(rig.ctx, rig.run)))._tag,
+          "FactorySessionsError",
+        );
+        assert.strictEqual(bytesOf(rig), bytes);
+        assert.deepStrictEqual(rig.gh, []);
+        rig.world.archiveFails = null;
+        assert.strictEqual((yield* timeLimit(rig.ctx, rig.run)).kind, "stopped");
+      }),
+  );
+
+  it.effect(
+    "skips a finished run, and a run that is waiting, stuck or in the middle of either",
+    () =>
+      Effect.gen(function* () {
+        const questions: RunEvent = { event: "questions_posted", data: { questions: "1. Which?" } };
+        const stuck: RunEvent = { event: "stuck", data: { reason: "gave up" } };
+        const cases: ReadonlyArray<[string, ReadonlyArray<RunEvent>, string]> = [
+          ["finished", [...STARTED, FINISHED_EVENT], "finished"],
+          ["needs-info", [...STARTED, questions, moved("building", "needs-info")], "not-running"],
+          ["stuck", [...STARTED, stuck, moved("building", "stuck")], "not-running"],
+          ["pr-open", [...STARTED, moved("building", "pr-open")], "not-running"],
+          ["half stuck", [...STARTED, stuck], "not-running"],
+          ["half needs-info", [...STARTED, questions], "not-running"],
+        ];
+        for (const [name, events, why] of cases) {
+          const rig = rigFor(events);
+          rig.clock.now = T0 + 10 * LIMIT_MS;
+          const bytes = bytesOf(rig);
+          assert.deepStrictEqual(
+            yield* timeLimit(rig.ctx, rig.run),
+            { kind: "skipped", why },
+            name,
+          );
+          assert.deepStrictEqual(rig.gh, [], name);
+          assert.deepStrictEqual(rig.t3, [], name);
+          assert.strictEqual(bytesOf(rig), bytes, name);
+        }
+      }),
+  );
+
+  it.effect(
+    "stops a run that never left triage, whose launch was sent, saying a session may exist",
+    () =>
+      Effect.gen(function* () {
+        const sent = [STARTED[0]!, STARTED[1]!, moved("ready", "triage"), step("launch-sending")];
+        const rig = rigFor(sent);
+        rig.clock.now = T0 + LIMIT_MS + 1;
+        const recorded = sessionMayExistNote(TIME_LIMIT, "softfac:rawphp__softfac__10__1:launch");
+        assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+          kind: "stopped",
+          reason: recorded,
+        });
+        // The ledger says a session may exist; the comment says only the plain reason.
+        assert.deepStrictEqual(linesOf(rig), [
+          ...sent,
+          { event: "stuck", data: { reason: recorded } },
+          moved("triage", "stuck"),
+          {
+            event: "finished",
+            data: { ...(FINISHED("stuck").data as object), total_ms: LIMIT_MS + 1 },
+          },
+        ]);
+        assert.deepStrictEqual(rig.gh, [
+          `comment 10 ${limitComment()}`,
+          "setState 10 stuck",
+          "unassign 10 rawphp",
+          "status 10 rawphp **Factory status:** stuck\n- Machine: mac-mini\n- Session: none\n- PR: none",
+        ]);
+        // There is no thread: nothing to read or archive.
+        assert.deepStrictEqual(rig.t3, []);
+      }),
+  );
+
+  it.effect("stops a run that never launched anything with the plain reason", () =>
+    Effect.gen(function* () {
+      const claimed = [STARTED[0]!, STARTED[1]!, moved("ready", "triage")];
+      const rig = rigFor(claimed);
+      rig.clock.now = T0 + LIMIT_MS + 1;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: TIME_LIMIT,
+      });
+      assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+
+  it.effect("refuses a run of another repo before touching anything", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      const other: RunId = { repo: "rawphp/other", issue: "10", attempt: 1 };
+      const error = yield* Effect.flip(timeLimit(rig.ctx, other));
+      assert.strictEqual(error._tag, "WrongRepoError");
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.t3, []);
     }),
   );
 });
