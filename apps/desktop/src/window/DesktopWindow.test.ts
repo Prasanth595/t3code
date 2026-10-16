@@ -1513,6 +1513,7 @@ describe("DesktopWindow", () => {
   it.effect("shows startup status before opening the main renderer", () =>
     Effect.gen(function* () {
       const splash = makeFakeBrowserWindow();
+      splash.loadURL.mockRejectedValueOnce(new Error("splash closed during load"));
       const main = makeFakeBrowserWindow();
       const scenario = yield* makeSplashScenario([splash.window, main.window], "linux");
       yield* Effect.gen(function* () {

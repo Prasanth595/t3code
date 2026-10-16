@@ -933,7 +933,7 @@ export const make = Effect.gen(function* () {
     );
     const startupUrl = new URL(getDesktopUrl(environment.isDevelopment));
     startupUrl.hash = settings.wslOnly ? "desktop-startup-wsl" : "desktop-startup";
-    void splash.loadURL(startupUrl.href);
+    void splash.loadURL(startupUrl.href).catch(() => undefined);
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     // Startup feedback is best-effort; a failure must not block the backend.
