@@ -190,10 +190,7 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
     return undefined;
   };
 
-  const api = (
-    rest: ReadonlyArray<string>,
-    branchOfThread: (threadId: string) => Effect.Effect<string | null>,
-  ): Effect.Effect<RunResult | undefined> =>
+  const api = (rest: ReadonlyArray<string>): Effect.Effect<RunResult | undefined> =>
     Effect.gen(function* () {
       const [first = "", second = ""] = rest;
       if (first === "user") return ok(json({ login: LOGIN }));
@@ -274,7 +271,7 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
       const [a = "", b = "", c = ""] = args;
       let answer: RunResult | undefined;
       if (a === "api") {
-        answer = yield* api(args.slice(1), branchOfThread);
+        answer = yield* api(args.slice(1));
       } else if (a === "issue" && b === "list") {
         const wanted = after(args, "--label") ?? "";
         const fields = (after(args, "--json") ?? "").split(",");
