@@ -1,0 +1,1634 @@
+// @effect-diagnostics nodeBuiltinImport:off - the tests read the bytes of real run files.
+/**
+ * Interruptions and relaunches, ported from softfac's `runner/tests/interruption.rs` and
+ * `runner/tests/stop.rs`: `advance` says a session that ended `failed` or `cancelled`, or whose
+ * thread is gone, ended badly and writes nothing; `interrupted` decides whether that was an
+ * interruption (a resume into the same thread, or a relaunch from the run's branch) or a stop.
+ * Left out, for the issue that owns them (#24): everything in `interruption.rs` that reads pull
+ * request feedback into a paused thread (`paused_with_pr` and the `feedback_forwarding` and
+ * owed-feedback tests after it).
+ */
+import * as NodeFS from "node:fs";
+
+import { assert, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
+import { describe } from "vite-plus/test";
+
+import { timeLimitOnlyProjectConfig, type ProjectConfig } from "../config.ts";
+import type { TextCheck } from "../domain/approval.ts";
+import type { State } from "../domain/lifecycle.ts";
+import { makeCause, type RunEvent } from "../ledger/events.ts";
+import { Ledger } from "../ledger/ledger.ts";
+import { readRun } from "../ledger/read.ts";
+import { runPath, type RunId } from "../ledger/runId.ts";
+import { T0, useTempDirs } from "../ledger/testSupport.ts";
+import {
+  SessionsError,
+  ThreadNotFoundError,
+  type LaunchRequest,
+  type Launched,
+  type RunStatus,
+  type Thread,
+  type ThreadStatus,
+} from "../t3/sessions.ts";
+import {
+  GitHubFailed,
+  type Activity,
+  type Comment,
+  type GitHubError,
+  type IssueDetail,
+  type PullRequest,
+} from "../tracker/github.ts";
+import {
+  advance,
+  forward,
+  interrupted,
+  timeLimit,
+  watch,
+  type AdvanceOutcome,
+  type Evidence,
+  type InterruptContext,
+  type InterruptOutcome,
+} from "./building.ts";
+import { launchMessage, type ResumeFrom } from "./messages.ts";
+import { resume, start } from "./start.ts";
+
+const tempDir = useTempDirs();
+
+const REPO = "rawphp/softfac";
+const run10: RunId = { repo: REPO, issue: "10", attempt: 1 };
+const run10b: RunId = { repo: REPO, issue: "10", attempt: 2 };
+const LABELED = "2026-10-04T10:00:00Z";
+const URL12 = "https://github.com/rawphp/softfac/pull/12";
+const DONE_MESSAGE = `Built it.\nFACTORY-DONE: ${URL12}`;
+const THREAD_GONE = "the T3 thread no longer exists";
+const STOPPED_BY_HAND = "stopped by hand";
+const MINUTE = 60_000;
+
+const T3_ERROR = "T3 Code is not reachable: the request timed out";
+
+/** The one message a resume sends, written out independently of the code under test. */
+const RESUME_MESSAGE =
+  "The session was interrupted: your last turn was cut off, probably because T3 Code was unreachable or restarting, so the factory is not treating it as your decision. Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
+
+/** The paragraph a relaunch adds to the first message of the next attempt. */
+const INTERRUPTED_WORDS =
+  "A previous attempt of this issue (rawphp__softfac__10__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.";
+
+const evidence = (t3Error: string | null, endedInPass: number): Evidence => ({
+  t3Error,
+  endedInPass,
+});
+/** One session ended badly, and the machine log has a T3 timeout in the last ten minutes. */
+const afterOutage = () => evidence(T3_ERROR, 1);
+/** One session ended badly and T3 has been healthy. */
+const lone = () => evidence(null, 1);
+
+// ---- the ledger of a started run ------------------------------------------------------------
+
+type Line = { readonly event: string; readonly data: unknown };
+
+const step = (text: string): RunEvent => ({ event: "step_changed", data: { step: text } });
+const moved = (from: State, to: State): RunEvent => ({
+  event: "state_changed",
+  data: { from, to },
+});
+
+/** What the ledger holds when the issue is `building`; the launch line names `branch` and `worktree`. */
+const startedWith = (
+  branch: string | null = "t3code/abc",
+  worktree: string | null = "/t3/wt",
+): ReadonlyArray<RunEvent> => [
+  step(`approved ${LABELED}`),
+  { event: "claimed", data: { machine: "mac-mini", github_user: "rawphp" } },
+  moved("ready", "triage"),
+  step("launch-sending"),
+  {
+    event: "session_launched",
+    data: {
+      thread_id: "thread-1",
+      worktree,
+      branch,
+      model_instance: "claudeAgent",
+      model: "claude-opus-5-5",
+      resumed_from: null,
+    },
+  },
+  step("approval-rechecked"),
+  moved("triage", "building"),
+];
+const STARTED = startedWith();
+
+const FINISHED: Line = {
+  event: "finished",
+  data: {
+    outcome: "stuck",
+    total_ms: 0,
+    gate_attempts: 0,
+    review_cycles: null,
+    pr_url: null,
+    pr_end: null,
+  },
+};
+const worktreeRemoved = (path: string): Line => ({ event: "worktree_removed", data: { path } });
+const PR_OPENED: RunEvent = { event: "pr_opened", data: { pr: 12, url: URL12 } };
+const STOP_REQUESTED: RunEvent = { event: "stop_requested", data: { by: "operator" } };
+
+const joined = (publicReason: string, text?: string) =>
+  text === undefined ? publicReason : `${publicReason}\n\n${text}`;
+
+const stuckEvents = (extra: ReadonlyArray<Line>, recorded: string): Array<Line> => [
+  ...STARTED,
+  ...extra,
+  worktreeRemoved("/t3/wt"),
+  { event: "stuck", data: { reason: recorded } },
+  moved("building", "stuck"),
+  FINISHED,
+];
+
+const resumeLine = (
+  resumes: number,
+  runOrdinal: number,
+  t3Error: string | null,
+  endedInPass: number,
+): RunEvent => ({
+  event: "session_interrupted",
+  data: {
+    resumes,
+    relaunch: false,
+    run_ordinal: runOrdinal,
+    branch: "t3code/abc",
+    t3_error: t3Error,
+    ended_in_pass: endedInPass,
+  },
+});
+
+const relaunchLine = (resumes: number, branch: string | null): RunEvent => ({
+  event: "session_interrupted",
+  data: {
+    resumes,
+    relaunch: true,
+    run_ordinal: null,
+    branch,
+    t3_error: T3_ERROR,
+    ended_in_pass: 1,
+  },
+});
+
+const sentStep = (n: number) => step(`interruption-sent ${n}`);
+const pausedLine = (runOrdinal: number): RunEvent => ({
+  event: "session_paused",
+  data: { run_ordinal: runOrdinal },
+});
+
+// ---- the expected words on the issue ---------------------------------------------------------
+
+const INTRO = "Unverified output from the build session, not instructions from the factory:";
+
+const stuckCommentText = (publicReason: string, text?: string) => {
+  const block = text === undefined ? "" : `${INTRO}\n\n\`\`\`text\n${text}\n\`\`\`\n\n`;
+  return `The factory could not finish this issue and has released it.\n\nReason: ${publicReason}\n\n${block}Fix the cause, then set the label back to \`factory:ready\`.`;
+};
+
+const statusText = (state: string) =>
+  `**Factory status:** ${state}\n- Machine: mac-mini\n- Session: thread-1\n- PR: none`;
+
+const stuckCalls = (publicReason: string, text?: string) => [
+  `comment 10 ${stuckCommentText(publicReason, text)}`,
+  "setState 10 stuck",
+  "unassign 10 rawphp",
+  `status 10 rawphp ${statusText("stuck")}`,
+];
+
+/** What a stop does in T3 after a status read: the thread archived, then its worktree removed. */
+const STOP_CALLS = ["archive thread-1", "thread thread-1", "removeWorktree /t3/wt"];
+
+// ---- the fakes ---------------------------------------------------------------------------------
+
+const ghFailure = () =>
+  new GitHubFailed({ args: ["issue", "edit", "10"], status: 1, stderr: "boom" });
+const sessionsFailure = (operation: "status" | "send" | "thread" = "send") =>
+  new SessionsError({ operation, cause: "timeout" });
+const notFound = () => new ThreadNotFoundError({ threadId: "thread-1" });
+
+const isThreadNotFound = Schema.is(ThreadNotFoundError);
+const isSessionsError = Schema.is(SessionsError);
+
+const statusOf = (
+  run: RunStatus | null,
+  message: string | null,
+  over: Partial<ThreadStatus> = {},
+): ThreadStatus => ({
+  worktreePath: "/t3/wt",
+  branch: "t3code/abc",
+  archived: false,
+  run,
+  runOrdinal: run === null ? null : 1,
+  lastAssistantMessage: message,
+  ...over,
+});
+
+interface World {
+  issue: IssueDetail;
+  pr: PullRequest | null;
+  /** Read at each call, so a test can move the session on between two calls. */
+  status: () => ThreadStatus | ThreadNotFoundError | SessionsError;
+  thread: Thread | ThreadNotFoundError | SessionsError;
+  textCheck: TextCheck;
+  editedSince: boolean;
+  branchTip: "found" | "missing";
+  /** The comments the instructors made, for `forward`. */
+  comments: Array<Comment>;
+  /** The next send fails with this, once. */
+  sendFailure: SessionsError | null;
+  /** Every send fails: T3 no longer has the thread. */
+  sendNotFound: boolean;
+  /** The next `setState` fails with this, once. */
+  setStateFails: GitHubError | null;
+  /** What each launch answers. */
+  launch: () => Launched | SessionsError;
+  /** The text of each message T3 took, by command id. */
+  delivered: Map<string, string>;
+}
+
+const issueDetail = (state: State | null, assignees: ReadonlyArray<string>): IssueDetail => ({
+  number: 10,
+  title: "Build step",
+  body: "Build the runner.",
+  labels: state === null ? [] : [`factory:${state}`],
+  assignees,
+  author: "tomkaczocha",
+  state,
+  closed: false,
+});
+
+const projectConfig = (): ProjectConfig => {
+  const config = timeLimitOnlyProjectConfig();
+  return {
+    ...config,
+    instructors: ["rawphp"],
+    base: "main",
+    gate: ["cargo test"],
+    limits: { ...config.limits, minutes: 90 },
+  };
+};
+
+const defaultPr = (): PullRequest => ({
+  number: 12,
+  isDraft: true,
+  open: true,
+  merged: false,
+  headRef: "t3code/abc",
+  crossRepository: false,
+  baseRef: "main",
+  headSha: "abc123",
+});
+
+const seed = (dataDir: string, id: RunId, events: ReadonlyArray<RunEvent>) => {
+  const ledger = Ledger.create(dataDir, id, { clock: () => T0 });
+  try {
+    for (const event of events) ledger.append(event, makeCause("start", "seed"));
+  } finally {
+    ledger.close();
+  }
+};
+
+interface Rig {
+  readonly dataDir: string;
+  readonly run: RunId;
+  readonly world: World;
+  /** The tracker's writes and its pull request reads, in order. */
+  readonly gh: Array<string>;
+  /** Its other reads: the issue, the text, the branch tip. */
+  readonly reads: Array<string>;
+  readonly t3: Array<string>;
+  readonly launches: Array<LaunchRequest>;
+  readonly clock: { now: number };
+  ctx: InterruptContext;
+}
+
+const rigFor = (events: ReadonlyArray<RunEvent> = STARTED): Rig => {
+  const dataDir = tempDir();
+  seed(dataDir, run10, events);
+  const world: World = {
+    issue: issueDetail("building", ["rawphp"]),
+    pr: null,
+    status: () => statusOf("completed", DONE_MESSAGE),
+    thread: { worktreePath: "/t3/wt", branch: "t3code/abc", archived: false },
+    textCheck: "unchanged",
+    editedSince: false,
+    branchTip: "found",
+    comments: [],
+    sendFailure: null,
+    sendNotFound: false,
+    setStateFails: null,
+    launch: () => ({ threadId: "thread-2", worktreePath: "/t3/wt2", branch: "t3code/def" }),
+    delivered: new Map(),
+  };
+  const gh: Array<string> = [];
+  const reads: Array<string> = [];
+  const t3: Array<string> = [];
+  const launches: Array<LaunchRequest> = [];
+  const clock = { now: T0 };
+  const notHere = () => Effect.die("not an interruption's");
+  const tracker: InterruptContext["tracker"] = {
+    issue: (n) => {
+      reads.push(`issue ${n}`);
+      return Effect.succeed(world.issue);
+    },
+    closedBy: () => Effect.succeed(null),
+    pullRequest: (n) => {
+      gh.push(`pullRequest ${n}`);
+      return Effect.succeed(world.pr);
+    },
+    activitySince: (): Effect.Effect<Activity> =>
+      Effect.succeed({ comments: world.comments, bodyEdit: null, dropped: [] }),
+    approval: (n, instructors) => {
+      reads.push(`approval ${n} ${instructors.join(",")}`);
+      return Effect.succeed({ kind: "approved", labeledAt: LABELED, labeledBy: "rawphp" });
+    },
+    claim: (n, user, from, to) => {
+      gh.push(`claim ${n} ${user} ${from}->${to}`);
+      world.issue = { ...world.issue, state: to, assignees: [user], labels: [`factory:${to}`] };
+      return Effect.succeed({ kind: "claimed" });
+    },
+    newestFactoryComment: () => Effect.succeed(null),
+    assign: (n, user) => {
+      gh.push(`assign ${n} ${user}`);
+      return Effect.void;
+    },
+    setState: (n, state) => {
+      gh.push(`setState ${n} ${state}`);
+      const failure = world.setStateFails;
+      world.setStateFails = null;
+      if (failure !== null) return Effect.fail(failure);
+      world.issue = { ...world.issue, state, labels: [`factory:${state}`] };
+      return Effect.void;
+    },
+    unassign: (n, user) => {
+      gh.push(`unassign ${n} ${user}`);
+      world.issue = { ...world.issue, assignees: [] };
+      return Effect.void;
+    },
+    postComment: (n, body) => {
+      gh.push(`comment ${n} ${body}`);
+      return Effect.void;
+    },
+    upsertStatusComment: (n, user, body) => {
+      gh.push(`status ${n} ${user} ${body}`);
+      return Effect.void;
+    },
+    textCheck: (n, since, instructors) => {
+      reads.push(`textCheck ${n} ${since} ${instructors.join(",")}`);
+      return Effect.succeed(world.textCheck);
+    },
+    branchTip: (branch) => {
+      reads.push(`branchTip ${branch}`);
+      return world.branchTip === "found"
+        ? Effect.succeed("a".repeat(40))
+        : Effect.fail(
+            new GitHubFailed({
+              args: ["api", "ref"],
+              status: 1,
+              stderr: "gh: Not Found (HTTP 404)",
+            }),
+          );
+    },
+    textEditedSince: (n, since) => {
+      reads.push(`textEditedSince ${n} ${since}`);
+      return Effect.succeed(world.editedSince);
+    },
+    markPrReady: notHere,
+    markPrDraft: notHere,
+    commentOnPr: notHere,
+  };
+  const sessions: InterruptContext["sessions"] = {
+    findProject: () => Effect.succeed("proj-1"),
+    launch: (request) => {
+      t3.push(`launch ${request.commandId}`);
+      launches.push(request);
+      const answer = world.launch();
+      return isSessionsError(answer) ? Effect.fail(answer) : Effect.succeed(answer);
+    },
+    status: (threadId) => {
+      t3.push(`status ${threadId}`);
+      const answer = world.status();
+      return isThreadNotFound(answer) || isSessionsError(answer)
+        ? Effect.fail(answer)
+        : Effect.succeed(answer);
+    },
+    thread: (threadId) => {
+      t3.push(`thread ${threadId}`);
+      const answer = world.thread;
+      return isThreadNotFound(answer) || isSessionsError(answer)
+        ? Effect.fail(answer)
+        : Effect.succeed(answer);
+    },
+    send: (threadId, commandId, text) => {
+      t3.push(`send ${threadId} ${commandId} ${text}`);
+      if (world.sendNotFound) return Effect.fail(notFound());
+      const failure = world.sendFailure;
+      world.sendFailure = null;
+      if (failure !== null) return Effect.fail(failure);
+      world.delivered.set(commandId, text);
+      return Effect.void;
+    },
+    archive: (threadId) => {
+      t3.push(`archive ${threadId}`);
+      return Effect.void;
+    },
+    removeWorktree: (path) => {
+      t3.push(`removeWorktree ${path}`);
+      return Effect.void;
+    },
+  };
+  const ctx: InterruptContext = {
+    repo: REPO,
+    trackerUser: "rawphp",
+    machine: "mac-mini",
+    project: projectConfig(),
+    dataDir,
+    tracker,
+    sessions,
+    repoPath: "/work/softfac",
+    ghConfigDir: "/gh/rawphp",
+    model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+    clock: () => clock.now,
+  };
+  return { dataDir, run: run10, world, gh, reads, t3, launches, clock, ctx };
+};
+
+const advanceIn = (rig: Rig, run: RunId = rig.run) => advance(rig.ctx, run);
+const decide = (rig: Rig, ev: Evidence, run: RunId = rig.run) => interrupted(rig.ctx, run, ev);
+const forwardIn = (rig: Rig) => forward(rig.ctx, rig.run);
+/** What the pass does for a run after a resume or a relaunch that left the issue to `start`. */
+const resumeIn = (rig: Rig) => resume(rig.ctx, 10);
+
+const linesOf = (rig: Rig, id: RunId = rig.run): Array<Line> =>
+  readRun(rig.dataDir, id).entries.map(({ event, data }) => ({ event, data }));
+
+const bytesOf = (rig: Rig, id: RunId = rig.run) =>
+  NodeFS.readFileSync(runPath(rig.dataDir, id), "utf8");
+
+const clearCalls = (rig: Rig) => {
+  rig.gh.length = 0;
+  rig.reads.length = 0;
+  rig.t3.length = 0;
+};
+
+/** The session's latest run is `status` with the ordinal `ordinal`. */
+const endedAs = (rig: Rig, status: RunStatus, ordinal: number, message: string | null) => {
+  rig.world.status = () => statusOf(status, message, { runOrdinal: ordinal });
+};
+const setActive = (rig: Rig, ordinal: number) => {
+  rig.world.status = () => statusOf("running", null, { runOrdinal: ordinal });
+};
+/** T3 no longer has the thread: not for its status, and not for its own fields. */
+const threadGone = (rig: Rig) => {
+  rig.world.status = notFound;
+  rig.world.thread = notFound();
+};
+const withResumeLimit = (rig: Rig, interruptionResumes: number) => {
+  rig.ctx = {
+    ...rig.ctx,
+    project: {
+      ...rig.ctx.project,
+      limits: { ...rig.ctx.project.limits, interruptionResumes },
+    },
+  };
+};
+
+const sends = (rig: Rig) => rig.t3.filter((call) => call.startsWith("send "));
+const resumeCall = (n: number, run = "rawphp__softfac__10__1", thread = "thread-1") =>
+  `send ${thread} softfac:${run}:interrupted:${n} ${RESUME_MESSAGE}`;
+
+const appendTo = (rig: Rig, id: RunId, events: ReadonlyArray<RunEvent>, step = "advance") => {
+  const ledger = Ledger.open(rig.dataDir, id, { clock: () => T0 });
+  try {
+    for (const event of events) ledger.append(event, makeCause("pass", step));
+  } finally {
+    ledger.close();
+  }
+};
+
+const theIssueIsStillBuilding = (rig: Rig) => {
+  assert.deepStrictEqual(rig.gh, []);
+  assert.strictEqual(rig.world.issue.state, "building");
+};
+
+const endedBadly = (what: "failed" | "cancelled" | "thread-gone"): AdvanceOutcome => ({
+  kind: "ended-badly",
+  what,
+});
+
+/** A run that ended `failed` with a result line only a person can read, after `advance` said so. */
+const failedAndSaid = (rig: Rig, ordinal = 1, message: string | null = "it crashed") =>
+  Effect.gen(function* () {
+    endedAs(rig, "failed", ordinal, message);
+    assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+  });
+
+// ---- advance ------------------------------------------------------------------------------------
+
+describe("advance: a session that ended badly", () => {
+  it.effect("writes nothing for a failed or cancelled run and says it ended badly", () =>
+    Effect.gen(function* () {
+      for (const status of ["failed", "cancelled"] as const) {
+        const rig = rigFor();
+        endedAs(rig, status, 1, "it crashed");
+        const before = bytesOf(rig);
+        assert.deepStrictEqual(yield* advanceIn(rig), endedBadly(status), status);
+        assert.deepStrictEqual(rig.gh, [], status);
+        assert.strictEqual(bytesOf(rig), before, status);
+        assert.deepStrictEqual(rig.t3, ["status thread-1"], status);
+      }
+    }),
+  );
+
+  it.effect("says a thread that no longer exists ended badly and writes nothing", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      threadGone(rig);
+      const before = bytesOf(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.deepStrictEqual(rig.gh, []);
+      assert.strictEqual(bytesOf(rig), before);
+    }),
+  );
+
+  it.effect("still sends a rolled back run to stuck by itself", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "rolled_back", 1, "it crashed");
+      const outcome = yield* advanceIn(rig);
+      assert.deepStrictEqual(outcome, {
+        kind: "stuck",
+        reason: joined("the session run ended as rolled_back", "it crashed"),
+      });
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      assert.deepStrictEqual(
+        rig.gh,
+        stuckCalls("the session run ended as rolled_back", "it crashed"),
+      );
+    }),
+  );
+
+  it.effect(
+    "sends an ended badly run with no ordinal to stuck at once, since it cannot be waited for",
+    () =>
+      Effect.gen(function* () {
+        for (const status of ["failed", "cancelled"] as const) {
+          const rig = rigFor();
+          rig.world.status = () => statusOf(status, "it crashed", { runOrdinal: null });
+          const outcome = yield* advanceIn(rig);
+          assert.strictEqual(outcome.kind, "stuck", status);
+          assert.deepStrictEqual(
+            rig.gh,
+            stuckCalls(`the session run ended as ${status}`, "it crashed"),
+            status,
+          );
+        }
+      }),
+  );
+
+  it.effect(
+    "reads a failed, interrupted or cancelled run that ended with a done line as done",
+    () =>
+      Effect.gen(function* () {
+        for (const status of ["failed", "interrupted", "cancelled"] as const) {
+          const rig = rigFor();
+          rig.world.pr = defaultPr();
+          endedAs(rig, status, 1, DONE_MESSAGE);
+          const outcome = yield* advanceIn(rig);
+          assert.strictEqual(outcome.kind, "ready-for-gate", status);
+        }
+      }),
+  );
+});
+
+describe("advance: a pause by hand", () => {
+  it.effect("pauses an interrupted run by hand and does not call it ended badly", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "interrupted", 1, "stopped mid-thought");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "paused" });
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, pausedLine(1)]);
+      // Nothing on GitHub and nothing sent into the thread.
+      theIssueIsStillBuilding(rig);
+      assert.deepStrictEqual(rig.t3, ["status thread-1"]);
+      // The next pass finds the same stopped run and writes nothing more.
+      const before = bytesOf(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "paused" });
+      assert.strictEqual(bytesOf(rig), before);
+    }),
+  );
+
+  it.effect("does not decide a paused run as an interruption even with T3 trouble", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "interrupted", 1, "stopped");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "paused" });
+      clearCalls(rig);
+      const outcome = yield* decide(rig, afterOutage());
+      assert.deepStrictEqual(outcome, {
+        kind: "unchanged",
+        why: "its thread has moved on since",
+      });
+      assert.deepStrictEqual(sends(rig), []);
+      theIssueIsStillBuilding(rig);
+    }),
+  );
+
+  it.effect("reads a stopped run that a person resumes in T3 as any other", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.pr = defaultPr();
+      endedAs(rig, "interrupted", 1, "stopped");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "paused" });
+      setActive(rig, 2);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      endedAs(rig, "completed", 2, DONE_MESSAGE);
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
+    }),
+  );
+
+  it.effect("pauses a second stop after a resume again with its own line", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "interrupted", 1, "stopped");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "paused" });
+      endedAs(rig, "interrupted", 3, "stopped again");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "paused" });
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, pausedLine(1), pausedLine(3)]);
+    }),
+  );
+
+  it.effect("lifts the pause with an instructor's issue comment through forward", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "interrupted", 1, "stopped");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "paused" });
+      rig.world.comments = [
+        {
+          id: "101",
+          author: "rawphp",
+          createdAt: "2026-10-04T10:13:16Z",
+          body: "Try the other way.",
+        },
+      ];
+      assert.strictEqual((yield* forwardIn(rig)).comments, 1);
+      // The comment starts a new run: until it ends, the session is working, not paused.
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        pausedLine(1),
+        step("forward-wait 1"),
+        { event: "comment_forwarded", data: { comment_id: "101" } },
+      ]);
+    }),
+  );
+});
+
+// ---- a resume ------------------------------------------------------------------------------------
+
+describe("interrupted: a resume", () => {
+  it.effect(
+    "resumes a session that failed right after a T3 timeout in its thread and keeps it building",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        yield* failedAndSaid(rig);
+        clearCalls(rig);
+        const outcome = yield* decide(rig, afterOutage());
+        assert.deepStrictEqual(outcome, {
+          kind: "resumed",
+          resumes: 1,
+          limit: 2,
+          status: "failed",
+        });
+        // The decision, then the step that says the message was sent.
+        assert.deepStrictEqual(linesOf(rig), [
+          ...STARTED,
+          resumeLine(1, 1, T3_ERROR, 1),
+          sentStep(1),
+        ]);
+        assert.deepStrictEqual(rig.t3, ["status thread-1", resumeCall(1)]);
+        // No stuck comment, no label, nothing released.
+        theIssueIsStillBuilding(rig);
+        const reasons = readRun(rig.dataDir, rig.run)
+          .entries.slice(STARTED.length)
+          .map((entry) => `${entry.cause?.step} ${entry.cause?.reason}`);
+        assert.deepStrictEqual(reasons, [
+          "advance session-interrupted",
+          "advance interruption-sent",
+        ]);
+      }),
+  );
+
+  it.effect("resumes a cancelled session after a T3 timeout too", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "cancelled", 1, null);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+        kind: "resumed",
+        resumes: 1,
+        limit: 2,
+        status: "cancelled",
+      });
+      theIssueIsStillBuilding(rig);
+    }),
+  );
+
+  it.effect("resumes two sessions that ended badly in one pass without any T3 trouble", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      yield* failedAndSaid(rig);
+      const outcome = yield* decide(rig, evidence(null, 2));
+      assert.deepStrictEqual(outcome, { kind: "resumed", resumes: 1, limit: 2, status: "failed" });
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, resumeLine(1, 1, null, 2), sentStep(1)]);
+      theIssueIsStillBuilding(rig);
+    }),
+  );
+
+  it.effect("sends a lone failed session with T3 healthy to stuck with the old words", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      yield* failedAndSaid(rig);
+      clearCalls(rig);
+      const outcome = yield* decide(rig, lone());
+      const reason = joined("the session run ended as failed", "it crashed");
+      assert.deepStrictEqual(outcome, { kind: "stuck", reason });
+      assert.deepStrictEqual(rig.gh, stuckCalls("the session run ended as failed", "it crashed"));
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([], reason));
+      // The session is stopped before anything is written on the issue.
+      assert.deepStrictEqual(rig.t3, ["status thread-1", ...STOP_CALLS]);
+      assert.deepStrictEqual(sends(rig), []);
+    }),
+  );
+
+  it.effect("sends a cancelled session with T3 healthy to stuck as cancelled", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "cancelled", 1, null);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      assert.deepStrictEqual(yield* decide(rig, lone()), {
+        kind: "stuck",
+        reason: "the session run ended as cancelled",
+      });
+      assert.strictEqual(rig.world.issue.state, "stuck");
+    }),
+  );
+
+  it.effect("records the old reason code for a stuck decision of an ended badly run", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "failed", 1, null);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+      yield* decide(rig, lone());
+      const stuck = readRun(rig.dataDir, rig.run).entries.find((entry) => entry.event === "stuck");
+      assert.deepStrictEqual(
+        { step: stuck?.cause?.step, reason: stuck?.cause?.reason },
+        { step: "advance", reason: "session-ended-badly" },
+      );
+    }),
+  );
+
+  it.effect("leaves a thread that moved on since advance looked alone", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      yield* failedAndSaid(rig);
+      // A person (or T3 itself) started it again before the pass got to the decision.
+      setActive(rig, 2);
+      const before = bytesOf(rig);
+      clearCalls(rig);
+      const outcome = yield* decide(rig, afterOutage());
+      assert.strictEqual(outcome.kind, "unchanged");
+      assert.strictEqual(bytesOf(rig), before);
+      assert.deepStrictEqual(sends(rig), []);
+      theIssueIsStillBuilding(rig);
+    }),
+  );
+
+  it.effect("makes a resumed run wait for a newer run and then read it as any other", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.pr = defaultPr();
+      yield* failedAndSaid(rig);
+      yield* decide(rig, afterOutage());
+      const before = bytesOf(rig);
+      clearCalls(rig);
+      // The thread still shows the failed run 1: the resume has not started a run yet.
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      // And while the resumed run works.
+      setActive(rig, 2);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      assert.strictEqual(bytesOf(rig), before);
+      assert.deepStrictEqual(sends(rig), []);
+      // Run 2 ends with a result line: it is acted on.
+      endedAs(rig, "completed", 2, DONE_MESSAGE);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+    }),
+  );
+});
+
+// ---- the cap -------------------------------------------------------------------------------------
+
+describe("interrupted: the cap", () => {
+  it.effect("is two resumes, and the third ended badly goes stuck", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      const ordinal = { n: 1 };
+      rig.world.status = () => statusOf("failed", "it crashed", { runOrdinal: ordinal.n });
+      for (const n of [1, 2]) {
+        ordinal.n = n;
+        assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+        assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+          kind: "resumed",
+          resumes: n,
+          limit: 2,
+          status: "failed",
+        });
+      }
+      assert.deepStrictEqual(sends(rig), [resumeCall(1), resumeCall(2)]);
+      ordinal.n = 3;
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+      assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+        kind: "stuck",
+        reason: joined("the session run ended as failed", "it crashed"),
+      });
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      // Each resume has its own line, with its own count and the run it read.
+      assert.deepStrictEqual(
+        linesOf(rig).filter((line) => line.event === "session_interrupted"),
+        [resumeLine(1, 1, T3_ERROR, 1), resumeLine(2, 2, T3_ERROR, 1)],
+      );
+    }),
+  );
+
+  it.effect("is read from the project limits", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      withResumeLimit(rig, 3);
+      const ordinal = { n: 1 };
+      rig.world.status = () => statusOf("failed", "it crashed", { runOrdinal: ordinal.n });
+      for (const n of [1, 2, 3]) {
+        ordinal.n = n;
+        assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+        assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+          kind: "resumed",
+          resumes: n,
+          limit: 3,
+          status: "failed",
+        });
+      }
+      ordinal.n = 4;
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "stuck");
+    }),
+  );
+
+  it.effect("of zero sends an interrupted session to stuck at once", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      withResumeLimit(rig, 0);
+      yield* failedAndSaid(rig);
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "stuck");
+      assert.ok(!linesOf(rig).some((line) => line.event === "session_interrupted"));
+      assert.deepStrictEqual(sends(rig), []);
+      assert.strictEqual(rig.world.issue.state, "stuck");
+    }),
+  );
+
+  it.effect("used up sends a thread that is gone to stuck as thread-gone", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      withResumeLimit(rig, 0);
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+        kind: "stuck",
+        reason: THREAD_GONE,
+      });
+    }),
+  );
+});
+
+// ---- a send cut short ------------------------------------------------------------------------------
+
+/** Run 1 as a crash leaves it after the decision to resume and before the send. */
+const cutShortBeforeTheSend = () => {
+  const rig = rigFor([...STARTED, resumeLine(1, 1, T3_ERROR, 1)]);
+  clearCalls(rig);
+  return rig;
+};
+
+describe("interrupted: a send cut short", () => {
+  it.effect("is sent again under the same command id", () =>
+    Effect.gen(function* () {
+      const rig = cutShortBeforeTheSend();
+      endedAs(rig, "failed", 1, "it crashed");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      assert.deepStrictEqual(sends(rig), [resumeCall(1)]);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        resumeLine(1, 1, T3_ERROR, 1),
+        sentStep(1),
+      ]);
+      theIssueIsStillBuilding(rig);
+      // Done: the next call sends nothing and writes nothing.
+      const bytes = bytesOf(rig);
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      assert.deepStrictEqual(sends(rig), []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("that reached the thread only gets its step", () =>
+    Effect.gen(function* () {
+      const rig = cutShortBeforeTheSend();
+      // The thread already has a newer run: the message arrived.
+      setActive(rig, 2);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      assert.deepStrictEqual(sends(rig), []);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        resumeLine(1, 1, T3_ERROR, 1),
+        sentStep(1),
+      ]);
+    }),
+  );
+
+  it.effect("that fails leaves the decision in the ledger and the next advance sends again", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      yield* failedAndSaid(rig);
+      clearCalls(rig);
+      rig.world.sendFailure = sessionsFailure("send");
+      const error = yield* Effect.flip(decide(rig, afterOutage()));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, resumeLine(1, 1, T3_ERROR, 1)]);
+
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      assert.deepStrictEqual(sends(rig), [resumeCall(1)]);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        resumeLine(1, 1, T3_ERROR, 1),
+        sentStep(1),
+      ]);
+      // The attempt that failed was one resume, not two.
+      assert.strictEqual(
+        linesOf(rig).filter((line) => line.event === "session_interrupted").length,
+        1,
+      );
+    }),
+  );
+
+  it.effect("into a thread that is gone is the thread-gone case", () =>
+    Effect.gen(function* () {
+      const rig = cutShortBeforeTheSend();
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+    }),
+  );
+
+  it.effect("before its send is not charged twice when the thread is gone", () =>
+    Effect.gen(function* () {
+      for (const limit of [2, 1]) {
+        const rig = cutShortBeforeTheSend();
+        withResumeLimit(rig, limit);
+        threadGone(rig);
+        assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+        const outcome = yield* decide(rig, afterOutage());
+        assert.strictEqual(outcome.kind, "relaunched", `limit ${limit}`);
+        assert.ok(outcome.kind === "relaunched" && outcome.resumes === 1, `limit ${limit}`);
+        assert.ok(outcome.kind === "relaunched" && outcome.limit === limit, `limit ${limit}`);
+        assert.deepStrictEqual(
+          linesOf(rig).filter((line) => line.event === "session_interrupted"),
+          [resumeLine(1, 1, T3_ERROR, 1), relaunchLine(1, "t3code/abc")],
+          `limit ${limit}`,
+        );
+      }
+    }),
+  );
+});
+
+// ---- a thread that is gone --------------------------------------------------------------------------
+
+const relaunchedRig = () =>
+  Effect.gen(function* () {
+    const rig = rigFor();
+    threadGone(rig);
+    assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+    clearCalls(rig);
+    const outcome = yield* decide(rig, afterOutage());
+    return { rig, outcome };
+  });
+
+const RESUMED_FROM_ABC: ResumeFrom = { run: run10, branch: "t3code/abc", after: "interrupted" };
+
+/** The first message of a launch that continues no earlier run. */
+const plainLaunchMessage = () => launchMessage(REPO, 10, "rawphp", "/gh/rawphp");
+
+const assertPlainStart = (rig: Rig) => {
+  const request = rig.launches.at(-1)!;
+  assert.strictEqual(request.baseRef, "main");
+  assert.strictEqual(request.startFromOrigin, false);
+  assert.strictEqual(request.message, plainLaunchMessage());
+};
+
+describe("interrupted: a thread that is gone", () => {
+  it.effect("after a T3 outage is relaunched from its branch and not stuck", () =>
+    Effect.gen(function* () {
+      const { rig, outcome } = yield* relaunchedRig();
+      assert.deepStrictEqual(outcome, {
+        kind: "relaunched",
+        resumes: 1,
+        limit: 2,
+        start: { kind: "started", run: run10b, threadId: "thread-2" },
+      });
+      // The old run: the decision, its worktree, and the summary line. No stuck line.
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        relaunchLine(1, "t3code/abc"),
+        worktreeRemoved("/t3/wt"),
+        FINISHED,
+      ]);
+      assert.strictEqual(
+        readRun(rig.dataDir, rig.run).entries.at(-1)?.cause?.reason,
+        "session-interrupted",
+      );
+      // GitHub: the label goes to triage so `start` can finish the new run. No comment, no stuck.
+      assert.strictEqual(rig.gh[0], "setState 10 triage");
+      assert.ok(!rig.gh.some((call) => call.startsWith("comment ")), rig.gh.join("\n"));
+      assert.ok(!rig.gh.includes("setState 10 stuck"), rig.gh.join("\n"));
+      assert.strictEqual(rig.world.issue.state, "building");
+      assert.deepStrictEqual(rig.world.issue.assignees, ["rawphp"]);
+      // The new attempt carries the approval, and resumes from the branch with the paragraph.
+      assert.deepStrictEqual(linesOf(rig, run10b)[0], step(`approved ${LABELED}`));
+      const request = rig.launches.at(-1)!;
+      assert.strictEqual(request.commandId, "softfac:rawphp__softfac__10__2:launch");
+      assert.strictEqual(request.baseRef, "t3code/abc");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.ok(request.message.includes(INTERRUPTED_WORDS), request.message);
+      assert.strictEqual(
+        request.message,
+        launchMessage(REPO, 10, "rawphp", "/gh/rawphp", RESUMED_FROM_ABC),
+      );
+      const launched = readRun(rig.dataDir, run10b).entries.find(
+        (entry) => entry.event === "session_launched",
+      );
+      assert.deepStrictEqual((launched?.data as { resumed_from: unknown }).resumed_from, {
+        run: "rawphp__softfac__10__1",
+        branch: "t3code/abc",
+      });
+      assert.strictEqual(launched?.cause?.reason, "resumed-from-branch");
+    }),
+  );
+
+  it.effect("has the interrupted paragraph in the factory's fixed words", () =>
+    Effect.gen(function* () {
+      const message = launchMessage(REPO, 10, "rawphp", "/gh/rawphp", RESUMED_FROM_ABC);
+      assert.ok(
+        message.includes(`\n\n${INTERRUPTED_WORDS}\n\nYou act on GitHub as rawphp.`),
+        message,
+      );
+      assert.ok(!message.includes("time limit"));
+    }),
+  );
+
+  it.effect("with no evidence goes stuck as thread-gone", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* decide(rig, lone()), { kind: "stuck", reason: THREAD_GONE });
+      assert.deepStrictEqual(rig.gh, stuckCalls(THREAD_GONE));
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([], THREAD_GONE));
+      // Nothing was launched.
+      assert.deepStrictEqual(rig.launches, []);
+    }),
+  );
+
+  it.effect("twice in one pass is relaunched without any T3 trouble", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, evidence(null, 2))).kind, "relaunched");
+    }),
+  );
+
+  it.effect("found by a send into it relaunches and counts the resume once", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      yield* failedAndSaid(rig);
+      rig.world.sendNotFound = true;
+      const outcome = yield* decide(rig, afterOutage());
+      assert.ok(outcome.kind === "relaunched" && outcome.resumes === 1 && outcome.limit === 2);
+      assert.deepStrictEqual(
+        linesOf(rig).filter((line) => line.event === "session_interrupted"),
+        [resumeLine(1, 1, T3_ERROR, 1), relaunchLine(1, "t3code/abc")],
+      );
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED);
+      assert.strictEqual(rig.world.issue.state, "building");
+    }),
+  );
+
+  it.effect("relaunched without a recorded branch starts the next attempt from base", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(startedWith(null));
+      // T3 knows nothing of the thread's branch either.
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "relaunched");
+      assert.ok(
+        linesOf(rig).some(
+          (line) =>
+            line.event === "session_interrupted" &&
+            (line.data as { relaunch: boolean; branch: unknown }).relaunch &&
+            (line.data as { branch: unknown }).branch === null,
+        ),
+      );
+      assertPlainStart(rig);
+    }),
+  );
+
+  it.effect("relaunched starts from base when the issue text was edited since the approval", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.editedSince = true;
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "relaunched");
+      assert.ok(!rig.reads.some((call) => call.startsWith("branchTip ")), rig.reads.join("\n"));
+      assertPlainStart(rig);
+    }),
+  );
+
+  it.effect("relaunched starts from base when the branch is not on origin", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.branchTip = "missing";
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      yield* decide(rig, afterOutage());
+      assertPlainStart(rig);
+    }),
+  );
+
+  it.effect("relaunched keeps the interrupted paragraph when its launch is sent again", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      // The first launch of the new attempt dies before it answers, as a crash does.
+      let first = true;
+      const launched = rig.world.launch;
+      rig.world.launch = () => {
+        if (first) {
+          first = false;
+          throw new Error("the factory died during the launch");
+        }
+        return launched();
+      };
+      const exit = yield* Effect.exit(decide(rig, afterOutage()));
+      assert.ok(Exit.isFailure(exit));
+      // The old run is over and the new one has recorded what it launches from.
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED);
+      assert.ok(
+        linesOf(rig, run10b).some(
+          (line) =>
+            line.event === "step_changed" &&
+            (line.data as { step: string }).step === "launch-sending resumed-from t3code/abc",
+        ),
+      );
+      // The next pass finishes the new attempt, with the same request as before.
+      yield* resumeIn(rig);
+      const request = rig.launches.at(-1)!;
+      assert.strictEqual(request.baseRef, "t3code/abc");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.ok(request.message.includes(INTERRUPTED_WORDS), request.message);
+      assert.ok(!request.message.includes("time limit"), request.message);
+    }),
+  );
+
+  it.effect("carries the counter over a relaunch so the new attempt has the rest of the cap", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      // One resume in run 1.
+      yield* failedAndSaid(rig);
+      yield* decide(rig, afterOutage());
+      // Then its thread is gone: the relaunch is the second.
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      const outcome = yield* decide(rig, afterOutage());
+      assert.ok(outcome.kind === "relaunched" && outcome.resumes === 2 && outcome.limit === 2);
+      assert.ok(
+        linesOf(rig).some(
+          (line) => JSON.stringify(line) === JSON.stringify(relaunchLine(2, "t3code/abc")),
+        ),
+      );
+
+      // Run 2's session ends badly too: the cap of 2 is used up, so it goes stuck.
+      endedAs(rig, "failed", 1, "it crashed again");
+      assert.deepStrictEqual(yield* advanceIn(rig, run10b), endedBadly("failed"));
+      assert.deepStrictEqual(yield* decide(rig, afterOutage(), run10b), {
+        kind: "stuck",
+        reason: joined("the session run ended as failed", "it crashed again"),
+      });
+      assert.strictEqual(rig.world.issue.state, "stuck");
+    }),
+  );
+
+  it.effect("does not pass the resumes of a stuck run to a new attempt a person relabelled", () =>
+    Effect.gen(function* () {
+      // Run 1 resumed once and then went stuck for its own reason; a person set `ready` again.
+      const rig = rigFor();
+      yield* failedAndSaid(rig);
+      yield* decide(rig, afterOutage());
+      endedAs(rig, "failed", 2, "it crashed");
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+      withResumeLimit(rig, 1);
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "stuck");
+      withResumeLimit(rig, 2);
+      rig.world.issue = issueDetail("ready", []);
+      assert.strictEqual((yield* start(rig.ctx, 10)).kind, "started");
+      endedAs(rig, "failed", 1, "it crashed");
+      assert.deepStrictEqual(yield* advanceIn(rig, run10b), endedBadly("failed"));
+      assert.deepStrictEqual(yield* decide(rig, afterOutage(), run10b), {
+        kind: "resumed",
+        resumes: 1,
+        limit: 2,
+        status: "failed",
+      });
+    }),
+  );
+
+  it.effect("cut short is finished by advance without a new decision", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      // The decision is written, then the first GitHub call (the label) fails.
+      rig.world.setStateFails = ghFailure();
+      const error = yield* Effect.flip(decide(rig, afterOutage()));
+      assert.strictEqual(error._tag, "GitHubFailed");
+      assert.deepStrictEqual(linesOf(rig).at(-1), relaunchLine(1, "t3code/abc"));
+      // The new attempt's ledger exists with the approval, and the old run is not finished.
+      assert.deepStrictEqual(linesOf(rig, run10b), [step(`approved ${LABELED}`)]);
+
+      // The next pass: `advance` continues; it needs no evidence and decides nothing again.
+      clearCalls(rig);
+      const outcome = yield* advanceIn(rig);
+      assert.deepStrictEqual(outcome, {
+        kind: "relaunched",
+        start: { kind: "started", run: run10b, threadId: "thread-2" },
+      });
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        relaunchLine(1, "t3code/abc"),
+        worktreeRemoved("/t3/wt"),
+        FINISHED,
+      ]);
+      assert.strictEqual(
+        linesOf(rig, run10b).filter(
+          (line) => JSON.stringify(line) === JSON.stringify(step(`approved ${LABELED}`)),
+        ).length,
+        1,
+      );
+      assert.strictEqual(rig.world.issue.state, "building");
+      assert.deepStrictEqual(
+        rig.t3.filter((call) => call.startsWith("removeWorktree ")),
+        ["removeWorktree /t3/wt"],
+      );
+    }),
+  );
+
+  it.effect("refuses a finished run and a run of another repo", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "failed", 1, null);
+      const foreign: RunId = { repo: "rawphp/other", issue: "10", attempt: 1 };
+      assert.strictEqual(
+        (yield* Effect.flip(decide(rig, afterOutage(), foreign)))._tag,
+        "WrongRepoError",
+      );
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+      yield* decide(rig, lone());
+      assert.strictEqual((yield* Effect.flip(decide(rig, afterOutage())))._tag, "NotBuildingError");
+    }),
+  );
+});
+
+// ---- a decided relaunch is always finished by advance --------------------------------------------------
+
+/** A relaunch the pass decided and then cut short, on a run that is past `limits.minutes` by the next pass. */
+const cutShortRelaunchPastTheLimit = () =>
+  Effect.gen(function* () {
+    const rig = rigFor();
+    threadGone(rig);
+    assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+    rig.world.setStateFails = ghFailure();
+    yield* Effect.flip(decide(rig, afterOutage()));
+    clearCalls(rig);
+    rig.clock.now = T0 + 91 * MINUTE;
+    return rig;
+  });
+
+describe("a decided relaunch", () => {
+  it.effect("is left to advance by the time limit", () =>
+    Effect.gen(function* () {
+      const rig = yield* cutShortRelaunchPastTheLimit();
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "skipped",
+        why: "relaunching",
+      });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+      // So the next step of the pass, `advance`, finishes it.
+      assert.strictEqual((yield* advanceIn(rig)).kind, "relaunched");
+      assert.strictEqual(readRun(rig.dataDir, rig.run).entries.at(-1)?.event, "finished");
+      assert.strictEqual(rig.world.issue.state, "building");
+    }),
+  );
+
+  it.effect("is left to advance by the watch even when the text changed", () =>
+    Effect.gen(function* () {
+      const rig = yield* cutShortRelaunchPastTheLimit();
+      rig.world.textCheck = "changed";
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), {
+        kind: "skipped",
+        why: "relaunching",
+      });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.reads, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("is left to advance by forward", () =>
+    Effect.gen(function* () {
+      const rig = yield* cutShortRelaunchPastTheLimit();
+      rig.world.comments = [
+        { id: "101", author: "rawphp", createdAt: "2026-10-04T10:13:16Z", body: "Do it." },
+      ];
+      const bytes = bytesOf(rig);
+      const outcome = yield* forwardIn(rig);
+      assert.strictEqual(outcome.skipped, "relaunching");
+      assert.deepStrictEqual(sends(rig), []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("is finished by the pass's steps in order on a run past its limit", () =>
+    Effect.gen(function* () {
+      const rig = yield* cutShortRelaunchPastTheLimit();
+      rig.world.textCheck = "changed";
+      // What a pass does for a building run: the time limit, the watch, then `advance`.
+      assert.notStrictEqual((yield* timeLimit(rig.ctx, rig.run)).kind, "stopped");
+      assert.notStrictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
+      assert.strictEqual((yield* advanceIn(rig)).kind, "relaunched");
+      // The old run was finished as a relaunch, not stopped: no `stuck` line.
+      const lines = linesOf(rig);
+      assert.ok(!lines.some((line) => line.event === "stuck"), JSON.stringify(lines));
+      assert.strictEqual(lines.at(-1)?.event, "finished");
+    }),
+  );
+
+  it.effect("does not reset the label of a next attempt that already started", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, relaunchLine(1, "t3code/abc")]);
+      // Attempt 2 was claimed and launched by the pass's start before `advance` came back.
+      seed(rig.dataDir, run10b, STARTED);
+      const outcome = yield* advanceIn(rig);
+      assert.strictEqual(outcome.kind, "relaunched");
+      assert.ok(!rig.gh.includes("setState 10 triage"), rig.gh.join("\n"));
+      assert.strictEqual(rig.world.issue.state, "building");
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED);
+    }),
+  );
+});
+
+// ---- where a relaunch finds the branch -------------------------------------------------------------------
+
+const relaunchBranchIn = (rig: Rig): string | null | undefined => {
+  const line = linesOf(rig).find(
+    (entry) =>
+      entry.event === "session_interrupted" && (entry.data as { relaunch: boolean }).relaunch,
+  );
+  return line === undefined ? undefined : (line.data as { branch: string | null }).branch;
+};
+
+describe("a relaunch finds the branch", () => {
+  it.effect("an archived thread still reports when the ledger names none", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(startedWith(null));
+      rig.world.status = () =>
+        statusOf("failed", "it crashed", {
+          runOrdinal: 1,
+          archived: true,
+          branch: "t3code/from-thread",
+        });
+      rig.world.thread = { worktreePath: "/t3/wt", branch: "t3code/from-thread", archived: true };
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "relaunched");
+      assert.strictEqual(relaunchBranchIn(rig), "t3code/from-thread");
+      const request = rig.launches.at(-1)!;
+      assert.strictEqual(request.baseRef, "t3code/from-thread");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.ok(request.message.includes(INTERRUPTED_WORDS), request.message);
+    }),
+  );
+
+  it.effect("and removes the worktree an archived thread still reports", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(startedWith("t3code/abc", null));
+      rig.world.status = () => statusOf("failed", "it crashed", { runOrdinal: 1, archived: true });
+      rig.world.thread = { worktreePath: "/t3/wt", branch: "t3code/abc", archived: true };
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "relaunched");
+      assert.ok(rig.t3.includes("removeWorktree /t3/wt"), rig.t3.join("\n"));
+      assert.ok(
+        linesOf(rig).some(
+          (line) => JSON.stringify(line) === JSON.stringify(worktreeRemoved("/t3/wt")),
+        ),
+      );
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED);
+    }),
+  );
+
+  it.effect("of a thread that is gone and never named a worktree still finishes", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(startedWith("t3code/abc", null));
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "relaunched");
+      assert.deepStrictEqual(
+        rig.t3.filter((call) => call.startsWith("removeWorktree ")),
+        [],
+      );
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED);
+    }),
+  );
+
+  it.effect("takes the head of the run's pull request when nothing else names one", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...startedWith(null), PR_OPENED]);
+      rig.world.pr = { ...defaultPr(), headRef: "t3code/pr-head" };
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "relaunched");
+      assert.strictEqual(relaunchBranchIn(rig), "t3code/pr-head");
+      const request = rig.launches.at(-1)!;
+      assert.strictEqual(request.baseRef, "t3code/pr-head");
+      assert.strictEqual(request.startFromOrigin, true);
+    }),
+  );
+
+  it.effect("does not resume from a pull request from a fork or with an odd head", () =>
+    Effect.gen(function* () {
+      for (const [head, fork] of [
+        ["t3code/pr-head", true],
+        ["--upload-pack=x", false],
+        ["a..b", false],
+      ] as const) {
+        const rig = rigFor([...startedWith(null), PR_OPENED]);
+        rig.world.pr = { ...defaultPr(), headRef: head, crossRepository: fork };
+        threadGone(rig);
+        assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+        yield* decide(rig, afterOutage());
+        assert.strictEqual(relaunchBranchIn(rig), null, `${head} ${fork}`);
+        assertPlainStart(rig);
+      }
+    }),
+  );
+
+  it.effect("starts the next attempt from base with no branch anywhere", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(startedWith(null));
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      yield* decide(rig, afterOutage());
+      assert.strictEqual(relaunchBranchIn(rig), null);
+      assertPlainStart(rig);
+    }),
+  );
+
+  it.effect("that cannot be read is an error before anything is written", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(startedWith(null));
+      rig.world.status = notFound;
+      rig.world.thread = sessionsFailure("thread");
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      const before = bytesOf(rig);
+      clearCalls(rig);
+      const error = yield* Effect.flip(decide(rig, afterOutage()));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      assert.strictEqual(bytesOf(rig), before);
+      assert.deepStrictEqual(rig.gh, []);
+    }),
+  );
+});
+
+// ---- a stop by hand ------------------------------------------------------------------------------------
+
+describe("interrupted: a stop by hand", () => {
+  it.effect("is not relaunched when the thread is gone, whatever else ended badly", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      threadGone(rig);
+      // `advance` looked before the operator stopped the run, and said it ended badly.
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      appendTo(rig, rig.run, [STOP_REQUESTED], "operator");
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* decide(rig, evidence(T3_ERROR, 3)), {
+        kind: "stuck",
+        reason: STOPPED_BY_HAND,
+      });
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([STOP_REQUESTED], STOPPED_BY_HAND));
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      assert.deepStrictEqual(sends(rig), []);
+      assert.deepStrictEqual(rig.launches, []);
+    }),
+  );
+
+  it.effect("whose session ended badly is stuck by hand and not an interruption", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      yield* failedAndSaid(rig, 1, null);
+      appendTo(rig, rig.run, [STOP_REQUESTED], "operator");
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* decide(rig, evidence(T3_ERROR, 3)), {
+        kind: "stuck",
+        reason: STOPPED_BY_HAND,
+      });
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([STOP_REQUESTED], STOPPED_BY_HAND));
+      assert.deepStrictEqual(sends(rig), []);
+      assert.strictEqual(rig.world.issue.state, "stuck");
+    }),
+  );
+
+  it.effect("that lands between the ledger read and the thread read is not a relaunch", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      yield* failedAndSaid(rig, 1, null);
+      // The operator's stop line and archive land after `interrupted` has read the ledger and
+      // before it reads the thread, which T3 then no longer has.
+      rig.world.status = () => {
+        appendTo(rig, rig.run, [STOP_REQUESTED], "operator");
+        return notFound();
+      };
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* decide(rig, evidence(T3_ERROR, 3)), {
+        kind: "stuck",
+        reason: STOPPED_BY_HAND,
+      });
+      assert.deepStrictEqual(sends(rig), []);
+      assert.deepStrictEqual(rig.launches, []);
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([STOP_REQUESTED], STOPPED_BY_HAND));
+    }),
+  );
+
+  it.effect("that lands before the resume is sent is not a relaunch", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      yield* failedAndSaid(rig, 1, null);
+      // The stop lands after the thread read; the archive makes the resume send fail as not found.
+      rig.world.status = () => {
+        appendTo(rig, rig.run, [STOP_REQUESTED], "operator");
+        return statusOf("failed", "it crashed", { runOrdinal: 1 });
+      };
+      rig.world.sendNotFound = true;
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* decide(rig, evidence(T3_ERROR, 3)), {
+        kind: "stuck",
+        reason: STOPPED_BY_HAND,
+      });
+      assert.deepStrictEqual(rig.launches, []);
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      // The line the pass wrote before the send stays, as a resume cut short does; the stop wins.
+      const lines = linesOf(rig);
+      assert.strictEqual(lines.at(-1)?.event, "finished");
+      assert.ok(
+        !lines.some(
+          (line) =>
+            line.event === "session_interrupted" && (line.data as { relaunch: boolean }).relaunch,
+        ),
+        JSON.stringify(lines),
+      );
+    }),
+  );
+});

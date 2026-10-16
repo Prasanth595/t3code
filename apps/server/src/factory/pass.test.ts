@@ -31,7 +31,9 @@ import {
   NotBuildingError,
   type AdvanceOutcome,
   type BuildingError,
+  type Evidence,
   type ForwardOutcome,
+  type InterruptOutcome,
   type LimitOutcome,
   type WatchOutcome,
 } from "./runner/building.ts";
@@ -127,6 +129,10 @@ class Fake implements PassWorld {
   pendingSendFails = false;
   /** What `gate` answers per `"<repo>#<issue>"`; started otherwise. */
   gateStarts: Record<string, GateStart> = {};
+  /** What the machine log says of T3 trouble in the last ten minutes: the newest message, or why it cannot be read. */
+  t3Trouble_: string | null | { error: string } = null;
+  /** What deciding about a session that ended badly answers per `"<repo>#<issue>"`; a resume otherwise. */
+  interrupts: Record<string, Array<InterruptOutcome | BuildingError>> = {};
   now = T0;
   calls: Array<string> = [];
   events: Array<MachineEvent> = [];
@@ -346,6 +352,34 @@ class Fake implements PassWorld {
         }
       }),
     );
+  }
+
+  t3Trouble() {
+    this.calls.push("t3_trouble");
+    const answer = this.t3Trouble_;
+    return typeof answer === "object" && answer !== null
+      ? Effect.fail(
+          new LedgerIoError({ path: "/data/events.jsonl", cause: new Error(answer.error) }),
+        )
+      : Effect.succeed(answer);
+  }
+
+  /** A decision that sends the run to `stuck` or relaunches it takes it off the list, as the ledger does. */
+  interrupted(repo: Repo, run: RunId, evidence: Evidence) {
+    this.calls.push(
+      `interrupted ${runIdToString(run)} t3=${evidence.t3Error ?? "none"} ended=${evidence.endedInPass}`,
+    );
+    const answer = this.interrupts[`${repo.watched.repo}#${run.issue}`]?.shift() ?? {
+      kind: "resumed" as const,
+      resumes: 1,
+      limit: 2,
+      status: "failed" as const,
+    };
+    if (!("kind" in answer)) return Effect.fail(answer);
+    if (answer.kind === "stuck" || answer.kind === "relaunched") {
+      this.runs = this.runs.filter((r) => runIdToString(r.id) !== runIdToString(run));
+    }
+    return Effect.succeed(answer);
   }
 
   handPause() {
@@ -2992,6 +3026,300 @@ describe("attention items", () => {
       fake.items = [open({ id: "a", kind: "attention", run: RUN_40 })];
       yield* pass(fake, machine([REPO], 5));
       assert.deepEqual(ids(fake), ["a"]);
+    }),
+  );
+});
+
+// ---- sessions that ended badly ----
+
+/**
+ * softfac's `tick/tests/interruption.rs`: `advance` says a session ended `failed` or `cancelled`
+ * (or lost its thread) and writes nothing; the pass decides about every such run together after
+ * it has been through all of them, with what the machine log says of T3. Left out: the dry run
+ * and the `triage` run `start` skips, which this pass has no counterpart for.
+ */
+describe("sessions that ended badly", () => {
+  const T3_ERROR = "T3 Code is not reachable: the request timed out";
+  const badEnd = (what: "failed" | "cancelled" | "thread-gone"): AdvanceOutcome => ({
+    kind: "ended-badly",
+    what,
+  });
+  const decisions = (fake: Fake) =>
+    fake.calls.filter((c) => /^(advance |interrupted |t3_trouble)/.test(c));
+  const lineFor = (lines: ReadonlyArray<string>, issue: number) =>
+    runLine(lines, `rawphp/softfac#${issue} `);
+  const twoRuns = () => {
+    const fake = new Fake();
+    fake.runIn(12, BUILDING, REPO, true);
+    fake.runIn(13, BUILDING, REPO, true);
+    return fake;
+  };
+
+  it.effect("is decided with the T3 error from the machine log", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.t3Trouble_ = T3_ERROR;
+      fake.advances[`${REPO}#12`] = [badEnd("failed")];
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 0);
+      assert.deepEqual(decisions(fake), [
+        `advance ${REPO}#12`,
+        "t3_trouble",
+        `interrupted ${runIdToString(rid(12))} t3=${T3_ERROR} ended=1`,
+      ]);
+      assert.equal(
+        lineFor(lines, 12),
+        "rawphp/softfac#12 building: session ended as failed; interrupted, sent it a resume (1 of 2)",
+      );
+      // The gate is not started for a session that ended badly.
+      assert.ok(!fake.calls.some((c) => c.startsWith("gate ")));
+    }),
+  );
+
+  it.effect("says nothing about it before the decision", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [badEnd("failed")];
+      const { lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(
+        lines.filter((l) => l.startsWith("rawphp/softfac#12")).length,
+        1,
+        lines.join("\n"),
+      );
+    }),
+  );
+
+  it.effect("is decided together with the others after the loop, each with the count", () =>
+    Effect.gen(function* () {
+      const fake = twoRuns();
+      fake.advances[`${REPO}#12`] = [badEnd("failed")];
+      fake.advances[`${REPO}#13`] = [badEnd("cancelled")];
+      const { report } = yield* pass(fake, machine([REPO], 2));
+      assert.equal(report.errors, 0);
+      // Every run has been advanced before the log is read, once, and each is decided with the
+      // number of sessions that ended badly.
+      assert.deepEqual(decisions(fake), [
+        `advance ${REPO}#12`,
+        `advance ${REPO}#13`,
+        "t3_trouble",
+        `interrupted ${runIdToString(rid(12))} t3=none ended=2`,
+        `interrupted ${runIdToString(rid(13))} t3=none ended=2`,
+      ]);
+    }),
+  );
+
+  it.effect("leaves the machine log unread when no session ended badly", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      const { report } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 0);
+      assert.ok(!fake.calls.includes("t3_trouble"));
+      assert.ok(!fake.calls.some((c) => c.startsWith("interrupted ")));
+    }),
+  );
+
+  it.effect("decides nothing for a lone session when the machine log cannot be read", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.t3Trouble_ = { error: "cannot read events.jsonl" };
+      fake.advances[`${REPO}#12`] = [badEnd("failed")];
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 1);
+      assert.ok(
+        lines.some((l) => l.startsWith("error: ") && l.includes("cannot read events.jsonl")),
+        lines.join("\n"),
+      );
+      // Nothing is written and nothing is said of the run: `advance` reports it again next pass.
+      assert.ok(!fake.calls.some((c) => c.startsWith("interrupted ")));
+      assert.ok(!lines.some((l) => l.startsWith("rawphp/softfac#12")), lines.join("\n"));
+    }),
+  );
+
+  it.effect("still decides two sessions when the machine log cannot be read", () =>
+    Effect.gen(function* () {
+      const fake = twoRuns();
+      fake.t3Trouble_ = { error: "cannot read events.jsonl" };
+      fake.advances[`${REPO}#12`] = [badEnd("failed")];
+      fake.advances[`${REPO}#13`] = [badEnd("failed")];
+      const { report, lines } = yield* pass(fake, machine([REPO], 2));
+      assert.equal(report.errors, 1);
+      assert.ok(
+        lines.some((l) => l.includes("cannot read events.jsonl")),
+        lines.join("\n"),
+      );
+      for (const issue of [12, 13]) {
+        assert.ok(
+          fake.calls.includes(`interrupted ${runIdToString(rid(issue))} t3=none ended=2`),
+          fake.calls.join("\n"),
+        );
+      }
+    }),
+  );
+
+  it.effect("sent to stuck by the decision is printed as stuck", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [badEnd("failed")];
+      fake.interrupts[`${REPO}#12`] = [
+        { kind: "stuck", reason: "the session run ended as failed" },
+      ];
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 0);
+      assert.equal(
+        lineFor(lines, 12),
+        `rawphp/softfac#12 building: stuck, the reason is in the ledger of run ${runIdToString(rid(12))}`,
+      );
+      assert.ok(
+        fake.items.some((item) => item.kind === "stuck" && item.run === runIdToString(rid(12))),
+      );
+    }),
+  );
+
+  it.effect("relaunched is printed with the run that took over", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [badEnd("thread-gone")];
+      const next = newRunId(REPO, "12", 2);
+      fake.interrupts[`${REPO}#12`] = [
+        {
+          kind: "relaunched",
+          resumes: 1,
+          limit: 2,
+          start: { kind: "started", run: next, threadId: "thread-2" },
+        },
+      ];
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 0);
+      assert.equal(
+        lineFor(lines, 12),
+        `rawphp/softfac#12 building: the T3 thread is gone; interrupted, relaunched as run ${runIdToString(next)} (1 of 2)`,
+      );
+    }),
+  );
+
+  it.effect("relaunched whose start went stuck names the run that went stuck", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [badEnd("thread-gone")];
+      const next = newRunId(REPO, "12", 2);
+      fake.interrupts[`${REPO}#12`] = [
+        {
+          kind: "relaunched",
+          resumes: 1,
+          limit: 2,
+          start: { kind: "stuck", run: next, reason: "the factory could not launch a session" },
+        },
+      ];
+      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const line = lineFor(lines, 12);
+      assert.ok(line.includes("relaunched (1 of 2)"), line);
+      assert.ok(
+        line.includes(`stuck, the reason is in the ledger of run ${runIdToString(next)}`),
+        line,
+      );
+    }),
+  );
+
+  it.effect("relaunched whose new attempt waits is printed as relaunching", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [badEnd("thread-gone")];
+      fake.interrupts[`${REPO}#12`] = [
+        {
+          kind: "relaunched",
+          resumes: 2,
+          limit: 2,
+          start: { kind: "skipped", reason: "scripted" },
+        },
+      ];
+      const { lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(
+        lineFor(lines, 12),
+        "rawphp/softfac#12 building: the T3 thread is gone; interrupted, relaunching (2 of 2), the new attempt starts on the next pass",
+      );
+    }),
+  );
+
+  it.effect("that moved on before the decision is left alone and said so", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [badEnd("failed")];
+      fake.interrupts[`${REPO}#12`] = [{ kind: "unchanged", why: "its thread has a newer run" }];
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 0);
+      assert.equal(
+        lineFor(lines, 12),
+        "rawphp/softfac#12 building: session ended as failed, but its thread has a newer run; left alone",
+      );
+    }),
+  );
+
+  it.effect(
+    "whose decision fails is an error line for that run and the others are still decided",
+    () =>
+      Effect.gen(function* () {
+        const fake = twoRuns();
+        fake.advances[`${REPO}#12`] = [badEnd("failed")];
+        fake.advances[`${REPO}#13`] = [badEnd("failed")];
+        fake.interrupts[`${REPO}#12`] = [
+          new SessionsError({ operation: "send", cause: "timeout" }),
+        ];
+        const { report, lines } = yield* pass(fake, machine([REPO], 2));
+        assert.equal(report.errors, 1);
+        assert.ok(
+          lines.some((l) => l.startsWith("error: rawphp/softfac#12 interrupted: ")),
+          lines.join("\n"),
+        );
+        assert.ok(
+          fake.calls.includes(`interrupted ${runIdToString(rid(13))} t3=none ended=2`),
+          fake.calls.join("\n"),
+        );
+        assert.equal(fake.runErrors[0]?.step, "advance");
+        assert.equal(fake.runErrors[0]?.kind, "t3");
+      }),
+  );
+
+  it.effect("a relaunch that advance finishes is printed too, with no evidence read", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      const next = newRunId(REPO, "12", 2);
+      fake.advances[`${REPO}#12`] = [
+        { kind: "relaunched", start: { kind: "started", run: next, threadId: "thread-2" } },
+      ];
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 0);
+      assert.equal(
+        lineFor(lines, 12),
+        `rawphp/softfac#12 building: the T3 thread is gone; interrupted, relaunched as run ${runIdToString(next)}`,
+      );
+      // It was decided in an earlier pass: no evidence is read for it now.
+      assert.ok(!fake.calls.includes("t3_trouble"));
+    }),
+  );
+
+  it.effect("a session stopped by hand is printed as paused and never decided", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.t3Trouble_ = T3_ERROR;
+      fake.advances[`${REPO}#12`] = [{ kind: "paused" }];
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 0);
+      assert.deepEqual(decisions(fake), [`advance ${REPO}#12`]);
+      assert.equal(
+        lineFor(lines, 12),
+        "rawphp/softfac#12 building: session stopped by hand, waiting for an instructor's comment on the pull request or the issue",
+      );
     }),
   );
 });

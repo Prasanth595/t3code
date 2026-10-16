@@ -330,3 +330,65 @@ describe("readProgress: the last wait marker", () => {
     }
   });
 });
+
+describe("readProgress: an interruption", () => {
+  const interrupted = (ms: number, over: Record<string, unknown> = {}) =>
+    line(ms, "session_interrupted", {
+      resumes: 1,
+      relaunch: false,
+      run_ordinal: 2,
+      branch: "t3code/abc",
+      t3_error: null,
+      ended_in_pass: 2,
+      ...over,
+    });
+
+  it("is none before the first line", () => {
+    const seen = readProgress([launched(1)]);
+    assert.strictEqual(seen.interruption, null);
+    assert.strictEqual(seen.lastBranch, "t3code/abc");
+  });
+
+  it("keeps the newest line, owed its send until the matching step", () => {
+    const owed = readProgress([launched(1), interrupted(2)]);
+    assert.deepStrictEqual(owed.interruption, {
+      resumes: 1,
+      relaunch: false,
+      runOrdinal: 2,
+      sent: false,
+    });
+    const sent = readProgress([launched(1), interrupted(2), step(3, "interruption-sent 1")]);
+    assert.strictEqual(sent.interruption?.sent, true);
+    // A step for another count is not this line's.
+    const other = readProgress([launched(1), interrupted(2), step(3, "interruption-sent 2")]);
+    assert.strictEqual(other.interruption?.sent, false);
+  });
+
+  it("is a wait marker for the run that ended, as a forward's is", () => {
+    const seen = readProgress([launched(1), interrupted(2)]);
+    assert.strictEqual(seen.waitingAfter, 2);
+    assert.strictEqual(seen.lastWait, 2);
+    // A relaunch waits for nothing: the thread is gone.
+    const relaunch = readProgress([
+      launched(1),
+      interrupted(2, { relaunch: true, run_ordinal: null }),
+    ]);
+    assert.strictEqual(relaunch.waitingAfter, null);
+    assert.strictEqual(relaunch.interruption?.relaunch, true);
+  });
+
+  it("names the newest branch a launch or an interruption line carries", () => {
+    const seen = readProgress([
+      launched(1),
+      interrupted(2, { branch: "t3code/def" }),
+      interrupted(3, { branch: null }),
+    ]);
+    assert.strictEqual(seen.lastBranch, "t3code/def");
+  });
+
+  it("owes nothing to a new session: its thread has its own runs", () => {
+    const seen = readProgress([launched(1), interrupted(2), launched(3)]);
+    assert.strictEqual(seen.interruption?.sent, true);
+    assert.strictEqual(seen.waitingAfter, null);
+  });
+});

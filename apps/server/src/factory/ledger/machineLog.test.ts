@@ -9,7 +9,12 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { LedgerUnknownEventError, LedgerIoError } from "./errors.ts";
 import type { AppendIo } from "./appendFile.ts";
 import { MACHINE_EVENT_FIELDS, type MachineEvent } from "./events.ts";
-import { MachineLog, scanMachineLog, type MachineLogOptions } from "./machineLog.ts";
+import {
+  MachineLog,
+  scanMachineLog,
+  t3TroubleSince,
+  type MachineLogOptions,
+} from "./machineLog.ts";
 import { catchLedgerError, scripted, T0, ticking, useTempDirs } from "./testSupport.ts";
 
 const tempDir = useTempDirs();
@@ -660,5 +665,87 @@ describe("scan machine log", () => {
     const dataDir = tempDir();
     expect(NodeChildProcess.spawnSync("mkfifo", [logFile(dataDir)]).status).toBe(0);
     expect(catchLedgerError(() => scanMachineLog(dataDir))._tag).toBe("LedgerIoError");
+  });
+});
+
+describe("T3 trouble in the machine log", () => {
+  // softfac's `tick/tests/interruption.rs` ("what counts as T3 trouble in the machine log").
+  const NOW = 1_800_000_000_000;
+  const MINUTE = 60_000;
+
+  /** A log with `event` written as if it happened at `ms`. */
+  const logWith = (dataDir: string, ...entries: ReadonlyArray<[number, MachineEvent]>) => {
+    for (const [ms, event] of entries) {
+      const log = MachineLog.open(dataDir, { clock: () => ms });
+      try {
+        log.append(event);
+      } finally {
+        log.close();
+      }
+    }
+  };
+  const t3Error = (message: string): MachineEvent => ({
+    event: "error",
+    data: { step: "pass", kind: "t3", message },
+  });
+  const preflight = (check: string, why: string): MachineEvent => ({
+    event: "preflight_failed",
+    data: { check, why },
+  });
+
+  it("is an error of kind t3 in the last ten minutes", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [NOW - 3 * MINUTE, t3Error("sweep: T3 timed out")]);
+    expect(t3TroubleSince(dataDir, NOW)).toBe("sweep: T3 timed out");
+  });
+
+  it("is not an error of kind t3 older than ten minutes", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [NOW - 10 * MINUTE - 1, t3Error("sweep: T3 timed out")]);
+    expect(t3TroubleSince(dataDir, NOW)).toBeNull();
+  });
+
+  it("is an error exactly ten minutes old", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [NOW - 10 * MINUTE, t3Error("edge")]);
+    expect(t3TroubleSince(dataDir, NOW)).toBe("edge");
+  });
+
+  it("is a failed t3 preflight in the window, and says why", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [
+      NOW - MINUTE,
+      preflight("t3", "T3 Code is not reachable: connection refused"),
+    ]);
+    expect(t3TroubleSince(dataDir, NOW)).toBe("T3 Code is not reachable: connection refused");
+  });
+
+  it("is not another preflight check or another kind of error", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - MINUTE, preflight("github-login", "not logged in")],
+      [
+        NOW - MINUTE,
+        { event: "error", data: { step: "pass", kind: "github", message: "gh failed" } },
+      ],
+      [NOW - MINUTE, passStarted],
+    );
+    expect(t3TroubleSince(dataDir, NOW)).toBeNull();
+  });
+
+  it("names the newest trouble in the window", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 9 * MINUTE, preflight("t3", "first")],
+      [NOW - 5 * MINUTE, t3Error("second")],
+      [NOW - 2 * MINUTE, passStarted],
+    );
+    expect(t3TroubleSince(dataDir, NOW)).toBe("second");
+  });
+
+  it("is none for a missing machine log", () => {
+    expect(t3TroubleSince(tempDir(), NOW)).toBeNull();
   });
 });
