@@ -726,6 +726,14 @@ describe("ClientSettings composer collapse", () => {
     ).toBe(false);
   });
 
+  it("compacts stale threads by default and accepts opting out", () => {
+    expect(decodeClientSettings({}).compactStaleThreadsByDefault).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ compactStaleThreadsByDefault: false })
+        .compactStaleThreadsByDefault,
+    ).toBe(false);
+  });
+
   it("drops the retired blur trigger key", () => {
     const decoded = decodeClientSettings({ composerCollapseOnBlur: false });
     expect(decoded.composerCollapseOnScroll).toBe(true);

@@ -7381,16 +7381,18 @@ export default function ChatView(props: ChatViewProps) {
     })
       ? activeContextWindow.usedTokens
       : null;
-  const [fullHistoryThreadKeys, setFullHistoryThreadKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const keepFullHistory = fullHistoryThreadKeys.has(routeThreadKey);
-  const setKeepFullHistory = (threadKey: string, keep: boolean) => {
-    setFullHistoryThreadKeys((current) => {
-      if (current.has(threadKey) === keep) return current;
-      const next = new Set(current);
-      if (keep) next.add(threadKey);
-      else next.delete(threadKey);
+  const [fullHistoryByThreadKey, setFullHistoryByThreadKey] = useState<
+    ReadonlyMap<string, boolean>
+  >(() => new Map());
+  const keepFullHistory =
+    fullHistoryByThreadKey.get(routeThreadKey) ?? !settings.compactStaleThreadsByDefault;
+  // `null` drops the thread's entry so its chip follows the setting again.
+  const setKeepFullHistory = (threadKey: string, keep: boolean | null) => {
+    setFullHistoryByThreadKey((current) => {
+      if (current.get(threadKey) === (keep ?? undefined)) return current;
+      const next = new Map(current);
+      if (keep === null) next.delete(threadKey);
+      else next.set(threadKey, keep);
       return next;
     });
   };
@@ -9591,7 +9593,7 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        setKeepFullHistory(routeThreadKey, false);
+        setKeepFullHistory(routeThreadKey, null);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);

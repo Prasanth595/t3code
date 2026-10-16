@@ -613,6 +613,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.composerCollapseOnScroll !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll
         ? ["Collapse composer on scroll"]
         : []),
+      ...(settings.compactStaleThreadsByDefault !==
+      DEFAULT_UNIFIED_SETTINGS.compactStaleThreadsByDefault
+        ? ["Compact stale threads by default"]
+        : []),
       ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
         ? ["Rich text composer"]
         : []),
@@ -682,6 +686,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.confirmThreadUnpin,
       settings.composerCollapseOnScroll,
+      settings.compactStaleThreadsByDefault,
       settings.composerRichTextEnabled,
       settings.sendShortcut,
       settings.followUpBehavior,
@@ -799,6 +804,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
+      compactStaleThreadsByDefault: DEFAULT_UNIFIED_SETTINGS.compactStaleThreadsByDefault,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -2757,6 +2763,34 @@ export function GeneralSettingsPanel() {
                 updateSettings({ composerCollapseOnScroll: Boolean(checked) })
               }
               aria-label="Collapse composer on scroll"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("compact-stale-threads")}
+          description="When you return to a large Claude thread after its prompt cache expires, start the Compact chip on so your next message summarizes the history first. Turn this off to keep the full history unless you switch the chip on."
+          resetAction={
+            settings.compactStaleThreadsByDefault !==
+            DEFAULT_UNIFIED_SETTINGS.compactStaleThreadsByDefault ? (
+              <SettingResetButton
+                label="compact stale threads by default"
+                onClick={() =>
+                  updateSettings({
+                    compactStaleThreadsByDefault:
+                      DEFAULT_UNIFIED_SETTINGS.compactStaleThreadsByDefault,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.compactStaleThreadsByDefault}
+              onCheckedChange={(checked) =>
+                updateSettings({ compactStaleThreadsByDefault: Boolean(checked) })
+              }
+              aria-label="Compact stale threads by default"
             />
           }
         />
