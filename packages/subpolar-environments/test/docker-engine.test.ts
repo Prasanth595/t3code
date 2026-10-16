@@ -131,20 +131,25 @@ test("routes container process requests through the worker runner", async () => 
 test("routes interactive sessions through the TTY runner and Docker resize API", async () => {
   const requests: string[] = [];
   let seen: { id: string; request: unknown } | undefined;
+  let cleanup: (() => Promise<void>) | undefined;
   const client = createDockerEngineClient({
     socketPath: "/var/run/docker.sock",
     transport: async (request) => {
       requests.push(`${request.method} ${request.path}`);
-      return { statusCode: 200, body: new Uint8Array() };
+      return {
+        statusCode: request.path.endsWith("/exec") ? 201 : request.path.endsWith("/start") ? 200 : 200,
+        body: request.path.endsWith("/exec") ? Buffer.from('{"Id":"cleanup-exec"}') : new Uint8Array(),
+      };
     },
-    interactiveRunner: async (id, request, resize) => {
+    interactiveRunner: async (id, request, resize, terminate) => {
       seen = { id, request };
+      cleanup = () => terminate(id, request.controlToken!);
       return {
         output: { async *[Symbol.asyncIterator]() { yield Buffer.from("prompt"); } },
         result: Promise.resolve({ exitCode: null, cancelled: false }),
         async write() {},
         resize: (columns, rows) => resize("exec-tty", columns, rows),
-        async terminate() {},
+        async terminate() { await cleanup?.(); },
       };
     },
   });
@@ -153,8 +158,20 @@ test("routes interactive sessions through the TTY runner and Docker resize API",
   await session.resize(120, 40);
   const output = [];
   for await (const chunk of session.output) output.push(chunk);
+  await session.terminate();
 
-  expect(seen).toEqual({ id: "container-tty", request: processRequest });
-  expect(requests).toEqual(["POST /v1.41/exec/exec-tty/resize?h=40&w=120"]);
+  expect(seen?.id).toBe("container-tty");
+  const supervised = seen?.request as { command: string[]; workingDirectory: string; controlToken: string };
+  expect(supervised.command.slice(0, 2)).toEqual(["node", "/usr/local/lib/subpolar/terminal-supervisor.mjs"]);
+  expect(supervised.command[2]).toMatch(/^[a-f0-9-]{36}$/);
+  expect(supervised.controlToken).toBe(supervised.command[2]);
+  expect(supervised.workingDirectory).toBe(processRequest.worktreeDirectory);
+  const payload = JSON.parse(Buffer.from(supervised.command[3], "base64url").toString("utf8"));
+  expect(payload).toEqual({ ...processRequest, environment: {} });
+  expect(requests).toEqual([
+    "POST /v1.41/exec/exec-tty/resize?h=40&w=120",
+    "POST /v1.41/containers/container-tty/exec",
+    "POST /v1.41/exec/cleanup-exec/start",
+  ]);
   expect(output).toEqual([Buffer.from("prompt")]);
 });

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
 import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest } from "./docker.ts";
@@ -11,6 +12,7 @@ export interface DockerEngineClientOptions {
   readonly transport?: DockerEngineTransport;
   readonly dockerBinary?: string;
   readonly workerCommand?: readonly string[];
+  readonly terminalSupervisorCommand?: readonly string[];
   readonly processRunner?: DockerContainerProcessRunner;
   readonly interactiveRunner?: DockerContainerInteractiveRunner;
 }
@@ -24,6 +26,7 @@ export type DockerContainerInteractiveRunner = (
   containerId: string,
   request: DockerContainerInteractiveRequest,
   resize: (execId: string, columns: number, rows: number) => Promise<void>,
+  terminate: (containerId: string, controlToken: string) => Promise<void>,
 ) => Promise<EnvironmentInteractiveSession>;
 
 export interface DockerEngineTransportRequest {
@@ -252,7 +255,9 @@ async function runDockerTty(
   containerId: string,
   request: DockerContainerInteractiveRequest,
   resize: (execId: string, columns: number, rows: number) => Promise<void>,
+  terminateSupervisor: (containerId: string, controlToken: string) => Promise<void>,
 ): Promise<EnvironmentInteractiveSession> {
+  if (!request.controlToken) throw new DockerEngineClientError(undefined, "Interactive process has no cleanup token");
   const create = await new Promise<IncomingMessage>((resolve, reject) => {
     const outgoing = httpRequest({
       socketPath, method: "POST", path: `/${version}/containers/${encodeURIComponent(containerId)}/exec`, timeout: timeoutMs,
@@ -393,10 +398,7 @@ async function runDockerTty(
     async terminate() {
       if (ended || terminating) return;
       terminating = true;
-      // With a TTY, VINTR delivers SIGINT to the foreground process group.
-      socket.write(Buffer.from([3]));
-      await Promise.race([result, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
-      if (!ended) socket.destroy();
+      await terminateSupervisor(containerId, request.controlToken);
       await result;
     },
   };
@@ -419,13 +421,26 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120_000) throw new Error("Docker Engine timeout is invalid");
   const dockerBinary = options.dockerBinary ?? "docker";
   const workerCommand = options.workerCommand ?? ["node", "/usr/local/lib/subpolar/worker.mjs"];
-  if (!dockerBinary || dockerBinary.includes("\0") || workerCommand.length === 0 || workerCommand.some((part) => !part || part.includes("\0"))) {
+  const terminalSupervisorCommand = options.terminalSupervisorCommand ?? ["node", "/usr/local/lib/subpolar/terminal-supervisor.mjs"];
+  if (!dockerBinary || dockerBinary.includes("\0") || workerCommand.length === 0 || workerCommand.some((part) => !part || part.includes("\0")) || terminalSupervisorCommand.length === 0 || terminalSupervisorCommand.some((part) => !part || part.includes("\0"))) {
     throw new Error("Docker worker command configuration is invalid");
   }
   const processRunner = options.processRunner ?? ((containerId, request) => runDockerWorker(dockerBinary, workerCommand, containerId, request));
-  const interactiveRunner: DockerContainerInteractiveRunner = options.interactiveRunner ?? ((containerId, request, resize) => {
+  const terminateSupervisor = async (containerId: string, controlToken: string) => {
+    const created = await request("POST", `/containers/${encodeURIComponent(containerId)}/exec`, {
+      Cmd: [...terminalSupervisorCommand, "--terminate", controlToken],
+      AttachStdin: false,
+      AttachStdout: false,
+      AttachStderr: false,
+      Tty: false,
+    }, [201]);
+    const execId = text(record(decodeJson(created.body)).Id);
+    if (!execId) throw new DockerEngineClientError(undefined, "Docker Engine did not return a terminal cleanup process ID");
+    await request("POST", `/exec/${encodeURIComponent(execId)}/start`, { Detach: true, Tty: false }, [200]);
+  };
+  const interactiveRunner: DockerContainerInteractiveRunner = options.interactiveRunner ?? ((containerId, request, resize, terminate) => {
     if (options.transport) throw new DockerEngineClientError(undefined, "Interactive TTY requires the Docker Engine socket transport");
-    return runDockerTty(options.socketPath, version, timeoutMs, containerId, request, resize);
+    return runDockerTty(options.socketPath, version, timeoutMs, containerId, request, resize, terminate);
   });
 
   const request = async (
@@ -511,9 +526,23 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
       return processRunner(id, processRequest);
     },
     async startInteractiveContainer(id, interactiveRequest) {
-      return interactiveRunner(id, interactiveRequest, async (execId, columns, rows) => {
+      const controlToken = randomUUID();
+      const encodedRequest = Buffer.from(JSON.stringify({
+        command: interactiveRequest.command,
+        worktreeDirectory: interactiveRequest.worktreeDirectory,
+        workingDirectory: interactiveRequest.workingDirectory,
+        environment: interactiveRequest.environment ?? {},
+      })).toString("base64url");
+      const supervisedRequest: DockerContainerInteractiveRequest = {
+        command: [...terminalSupervisorCommand, controlToken, encodedRequest],
+        worktreeDirectory: interactiveRequest.worktreeDirectory,
+        workingDirectory: interactiveRequest.worktreeDirectory,
+        environment: {},
+        controlToken,
+      };
+      return interactiveRunner(id, supervisedRequest, async (execId, columns, rows) => {
         await request("POST", `/exec/${encodeURIComponent(execId)}/resize?h=${rows}&w=${columns}`, undefined, [200]);
-      });
+      }, terminateSupervisor);
     },
   };
 }

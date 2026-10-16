@@ -7,7 +7,8 @@ RUN apt-get update \
   && useradd --uid 1000 --gid subpolar --create-home --home-dir /tmp/home --shell /bin/bash subpolar
 
 COPY docker/subpolar-worker/worker.mjs /usr/local/lib/subpolar/worker.mjs
-RUN chmod 0555 /usr/local/lib/subpolar/worker.mjs
+COPY docker/subpolar-worker/terminal-supervisor.mjs /usr/local/lib/subpolar/terminal-supervisor.mjs
+RUN chmod 0555 /usr/local/lib/subpolar/worker.mjs /usr/local/lib/subpolar/terminal-supervisor.mjs
 
 ENV HOME=/tmp/home TMPDIR=/tmp
 USER 1000:1000

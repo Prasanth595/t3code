@@ -95,6 +95,8 @@ export interface DockerContainerInteractiveRequest extends EnvironmentInteractiv
   readonly command: readonly string[];
   readonly worktreeDirectory: string;
   readonly workingDirectory: string;
+  /** Manager generated token used only by the Docker Engine adapter for cleanup. */
+  readonly controlToken?: string;
 }
 
 export type DockerContainerState = "created" | "running" | "paused" | "restarting" | "exited" | "dead";
