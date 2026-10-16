@@ -43,17 +43,18 @@ export type StopRequestOutcome =
  * Asks for `run` to be stopped by hand, as the API does: reads the run's ledger and, when the run
  * is building and no stop was asked for, appends the `stop_requested` line. Throws the ledger's
  * errors (`LedgerNotFoundError` for a run with no file); a caller runs it through `ledgerCall`.
- * `none` is not an outcome here: the caller asked.
+ * `none` is not an outcome here: the caller asked. `seen` is the progress the decision was made
+ * from, so a refusal can say why without reading the ledger again.
  */
 export const requestStop = (
   dataDir: string,
   run: RunId,
   clock: () => number,
-): Exclude<StopRequestOutcome, "none"> => {
+): { readonly outcome: Exclude<StopRequestOutcome, "none">; readonly seen: Seen } => {
   const seen = readProgress(readRun(dataDir, run).entries);
-  if (seen.finished) return "finished";
-  if (seen.stopRequested) return "already-requested";
-  if (seen.state !== "building") return "not-building";
+  if (seen.finished) return { outcome: "finished", seen };
+  if (seen.stopRequested) return { outcome: "already-requested", seen };
+  if (seen.state !== "building") return { outcome: "not-building", seen };
   const out = Ledger.open(dataDir, run, { clock });
   try {
     out.append(
@@ -63,7 +64,7 @@ export const requestStop = (
   } finally {
     out.close();
   }
-  return "recorded";
+  return { outcome: "recorded", seen };
 };
 
 /**
@@ -109,5 +110,5 @@ export const takeStopRequest = (
       }
       return outcome;
     };
-    return drop(requestStop(dataDir, run, clock));
+    return drop(requestStop(dataDir, run, clock).outcome);
   });

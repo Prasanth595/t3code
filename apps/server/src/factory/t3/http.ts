@@ -12,8 +12,10 @@
  *   pass archives the thread and removes the worktree as `stop-run.sh` has it.
  * - `POST /api/factory/claims/pause` and `.../resume`: `claims pause` and `claims resume`.
  *
- * A run id is parsed before anything is read, so no id reaches the file system as a path. A
- * ledger error or a failed read or write answers 500 `factory_error`.
+ * Each handler decodes its input, calls one function (`control.ts`, `status.ts`, the ledger reads)
+ * and maps the result to a status and a body. A run id is parsed before anything is read, so no
+ * id reaches the file system as a path. A ledger error or a failed read or write answers 500
+ * `factory_error`.
  */
 import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -25,15 +27,11 @@ import * as HttpRouter from "effect/http/HttpRouter";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import { Attention } from "../attention.ts";
-import { pauseClaims, resumeClaims } from "../claims.ts";
+import { pauseClaimsNow, resumeClaimsNow, showRun, stopRun } from "../control.ts";
 import { FactoryLoop, hostName } from "../index.ts";
 import { isLedgerError, type LedgerError } from "../ledger/errors.ts";
 import { listRuns, type RunSummary } from "../ledger/listRuns.ts";
-import { readRun } from "../ledger/read.ts";
-import { parseRunId, runIdToString, type RunId } from "../ledger/runId.ts";
-import { formatTs } from "../ledger/time.ts";
-import { readProgress } from "../runner/progress.ts";
-import { notBuildingMessage, requestStop } from "../runner/stop.ts";
+import { runIdToString } from "../ledger/runId.ts";
 import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
 import { FactoryPaths } from "./paths.ts";
@@ -57,20 +55,22 @@ const guarded = <A>(call: () => A): Effect.Effect<A, LedgerError | FactoryFileEr
     catch: (cause) => (isLedgerError(cause) ? cause : new FactoryFileError({ cause })),
   });
 
-/** The response for what a handler's ledger or file call threw. */
-const failure = (error: LedgerError | FactoryFileError, id: string | null = null) => {
-  if (error._tag === "InvalidRunIdError") {
-    return respond({ code: "invalid_run_id", message: error.message }, 400);
-  }
-  if (error._tag === "LedgerNotFoundError" && id !== null) {
-    return respond({ code: "run_not_found", id }, 404);
-  }
+/**
+ * The response for what a handler's ledger or file call threw. The message may name a path under
+ * the T3 home; that is accepted, because the same scope already reads `data_dir` and
+ * `machine_config` in the status report.
+ */
+const failure = (error: LedgerError | FactoryFileError) => {
   const cause = error._tag === "FactoryFileError" ? error.cause : error;
   return respond(
     { code: "factory_error", message: cause instanceof Error ? cause.message : String(cause) },
     500,
   );
 };
+
+const invalidRunId = (message: string) => respond({ code: "invalid_run_id", message }, 400);
+const runNotFound = (id: string) =>
+  respond({ code: "run_not_found", id, message: `no run ${id}` }, 404);
 
 /** The word `softfac runs list` gives a run's status. */
 const statusWord = (run: RunSummary) =>
@@ -82,11 +82,8 @@ const statusWord = (run: RunSummary) =>
         ? "watching"
         : "running";
 
-/** Parses the `:id` of the route; nothing is read before this succeeds. */
-const runParam = Effect.gen(function* () {
-  const { id } = yield* HttpRouter.params;
-  return yield* guarded(() => parseRunId(id ?? ""));
-});
+/** The `:id` of the route, as text: `control.ts` parses it before anything is read. */
+const idParam = Effect.map(HttpRouter.params, ({ id }) => id ?? "");
 
 const statusRoute = route(
   "GET",
@@ -143,25 +140,21 @@ const runRoute = route(
   AuthOrchestrationReadScope,
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
-    const run = yield* runParam;
-    const id = runIdToString(run);
-    return yield* guarded(() => readRun(factoryDir, run)).pipe(
-      Effect.map((record) =>
-        respond({
-          id,
-          entries: record.entries.map(({ ts, ms, event, data, cause }) => ({
-            ts,
-            ms,
-            event,
-            data,
-            cause,
-          })),
-          truncated: record.truncated,
-          skipped: record.skipped,
-        }),
-      ),
-      Effect.catch((error) => Effect.succeed(failure(error, id))),
-    );
+    const idText = yield* idParam;
+    const shown = yield* guarded(() => showRun(factoryDir, idText));
+    switch (shown.kind) {
+      case "ok":
+        return respond({
+          id: shown.id,
+          entries: shown.entries,
+          truncated: shown.truncated,
+          skipped: shown.skipped,
+        });
+      case "invalid":
+        return invalidRunId(shown.message);
+      case "not-found":
+        return runNotFound(shown.id);
+    }
   }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
 );
 
@@ -172,29 +165,20 @@ const stopRoute = route(
   Effect.gen(function* () {
     const loop = yield* FactoryLoop;
     const { factoryDir } = yield* FactoryPaths;
-    const run: RunId = yield* runParam;
-    const id = runIdToString(run);
+    const idText = yield* idParam;
     const nowMs = yield* Clock.currentTimeMillis;
-    return yield* Effect.gen(function* () {
-      const outcome = yield* guarded(() => requestStop(factoryDir, run, () => nowMs));
-      if (outcome === "recorded") {
-        yield* loop.wake;
-        return respond({
-          stopped: id,
-          already: false,
-          message: `stop requested: ${id}; the issue goes to factory:stuck on the next pass`,
-        });
-      }
-      if (outcome === "already-requested") {
-        return respond({
-          stopped: id,
-          already: true,
-          message: `stop already requested: ${id}; the issue goes to factory:stuck on the next pass`,
-        });
-      }
-      const seen = yield* guarded(() => readProgress(readRun(factoryDir, run).entries));
-      return respond({ code: "not_building", message: notBuildingMessage(id, seen) }, 409);
-    }).pipe(Effect.catch((error) => Effect.succeed(failure(error, id))));
+    const stopped = yield* guarded(() => stopRun(factoryDir, idText, () => nowMs));
+    switch (stopped.kind) {
+      case "stopped":
+        if (!stopped.already) yield* loop.wake;
+        return respond({ stopped: stopped.id, already: stopped.already, message: stopped.message });
+      case "refused":
+        return respond({ code: "not_building", message: stopped.message }, 409);
+      case "not-found":
+        return runNotFound(stopped.id);
+      case "invalid":
+        return invalidRunId(stopped.message);
+    }
   }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
 );
 
@@ -205,22 +189,7 @@ const pauseRoute = route(
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
     const nowMs = yield* Clock.currentTimeMillis;
-    const paused = yield* guarded(() => pauseClaims(factoryDir, nowMs));
-    if (paused.kind === "now") {
-      return respond({
-        paused: true,
-        already: false,
-        since: formatTs(nowMs),
-        message: "claims paused",
-      });
-    }
-    const since = formatTs(paused.sinceMs);
-    return respond({
-      paused: true,
-      already: true,
-      since,
-      message: `claims already paused since ${since}`,
-    });
+    return respond(yield* guarded(() => pauseClaimsNow(factoryDir, nowMs)));
   }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
 );
 
@@ -230,12 +199,7 @@ const resumeRoute = route(
   AuthOrchestrationOperateScope,
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
-    const wasPaused = yield* guarded(() => resumeClaims(factoryDir));
-    return respond({
-      paused: false,
-      was_paused: wasPaused,
-      message: wasPaused ? "claims resumed" : "claims were not paused",
-    });
+    return respond(yield* guarded(() => resumeClaimsNow(factoryDir)));
   }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
 );
 
