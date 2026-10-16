@@ -125,6 +125,8 @@ import {
 import {
   applyChanges,
   checkEditableChanges,
+  absoluteChangesJson,
+  absoluteMapJson,
   clientWithKey,
   desiredState,
   emptyMap,
@@ -410,6 +412,44 @@ export class MachineMapObject extends DurableObject<Env> {
     `);
     this.ctx.storage.sql.exec(HEALTH_TABLES);
     this.#dropManageSetting();
+    this.#absolutePlaces();
+  }
+
+  /**
+   * MM-1114: places were fractions of the map area. They move once into map pixels: the map, every
+   * revision with its map, and the proposals, so the layout keeps its shape and History and Undo
+   * still match the map.
+   */
+  #absolutePlaces(): void {
+    if (this.#sql("SELECT key FROM meta WHERE key = 'absolute_places'").length > 0) return;
+    type Stored = { readonly changes?: unknown; readonly inverse?: unknown };
+    const changes = (text: string): string => {
+      const data = JSON.parse(text) as Stored;
+      return JSON.stringify({
+        ...data,
+        ...(data.changes === undefined ? {} : { changes: absoluteChangesJson(data.changes) }),
+        ...(data.inverse === undefined ? {} : { inverse: absoluteChangesJson(data.inverse) }),
+      });
+    };
+    const map = (text: string): string => JSON.stringify(absoluteMapJson(JSON.parse(text)));
+    this.ctx.storage.transactionSync(() => {
+      const current = this.#sql<{ value: string }>("SELECT value FROM meta WHERE key = 'map'")[0];
+      if (current) this.#sql("UPDATE meta SET value = ? WHERE key = 'map'", map(current.value));
+      for (const row of this.#sql<{ revision: number; data: string; map: string }>(
+        "SELECT revision, data, map FROM revisions",
+      )) {
+        this.#sql(
+          "UPDATE revisions SET data = ?, map = ? WHERE revision = ?",
+          changes(row.data),
+          map(row.map),
+          row.revision,
+        );
+      }
+      for (const row of this.#sql<{ id: string; data: string }>("SELECT id, data FROM proposals")) {
+        this.#sql("UPDATE proposals SET data = ? WHERE id = ?", changes(row.data), row.id);
+      }
+      this.#sql("INSERT INTO meta (key, value) VALUES ('absolute_places', ?)", nowIso());
+    });
   }
 
   /**
@@ -766,7 +806,7 @@ export class MachineMapObject extends DurableObject<Env> {
       SNAPSHOT_FINISHED_COMMANDS,
     ).map((row) => decodeCommand(row.data));
     return {
-      placeUnits: "fractions",
+      placeUnits: "pixels",
       map: this.#map,
       presence: Object.fromEntries(this.#map.machines.map((m) => [m.id, this.#presence(m.id)])),
       reportedSettings: Object.fromEntries(
