@@ -39,6 +39,7 @@ const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(ServerEnvironment.layerIdentity),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-http-test-" })),
+  Layer.provide(NodeServices.layer),
 );
 
 const layerRoutes = Layer.mergeAll(FactoryRoutes, testOnlyRoute).pipe(
