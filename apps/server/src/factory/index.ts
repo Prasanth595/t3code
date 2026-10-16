@@ -232,6 +232,7 @@ export const liveWorld = (
   host: string,
   attention: Pick<Attention["Service"], "raise" | "clear">,
   live: LiveGate,
+  gateRemoteBase?: string,
 ): PassWorld => {
   // Built once per process, so judgements last as long as the factory runs.
   const claimMemo = new ClaimMemo();
@@ -273,7 +274,11 @@ export const liveWorld = (
     tracker: trackerFor(repo.watched),
     gate: live.gate,
     maxConcurrentGates: machine.maxConcurrentGates,
-    gateOptions: { ghConfigDir: machine.ghConfigDir, clock },
+    gateOptions: {
+      ghConfigDir: machine.ghConfigDir,
+      clock,
+      ...(gateRemoteBase !== undefined && { remoteBase: gateRemoteBase }),
+    },
   });
   const recordError = (run: RunId, step: CauseStep, kind: ErrorKind, message: string) =>
     ledger(() => {
@@ -510,6 +515,8 @@ const outcomeOf = (exit: Exit.Exit<Report>, lastError: () => string | null): Pas
 export interface RuntimeOptions {
   /** How long to wait before the events stream is run again. Default 5 seconds. */
   readonly restartDelay?: Duration.Input;
+  /** Where the gate fetches `<owner>/<name>.git` from. Default `https://github.com`; a test passes a `file://` base. */
+  readonly gateRemoteBase?: string;
 }
 
 const startFactory = (options: RuntimeOptions) =>
@@ -560,6 +567,7 @@ const startFactory = (options: RuntimeOptions) =>
         wake: Effect.suspend(() => running?.wake ?? Effect.void),
         scope: yield* Effect.scope,
       },
+      options.gateRemoteBase,
     );
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.

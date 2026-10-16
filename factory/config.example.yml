@@ -1,0 +1,37 @@
+# The fork's machine config for this Mac: what the factory watches and how it runs.
+# Copy this file to ~/.config/t3fac/factory/config.yml once the repo has left the Rust
+# factory's config, then restart the t3fac server (see factory/docs/handover.md). The
+# server reads it at start. No path here is expanded, so there is no `~`: write each
+# one out in full.
+
+# The gh login directory the factory acts on GitHub as (rawphp). Log in to it once with
+# GH_CONFIG_DIR=<this directory> gh auth login. The launchd job sets the same directory
+# as GH_CONFIG_DIR for the server, so the agent sessions it starts use this login too.
+# The two must match: to change this, change GH_CONFIG_DIR in
+# factory/launchd/io.github.rawphp.t3fac.plist too and reinstall, or the sessions act as
+# whichever login sits in the plist's directory.
+gh_config_dir: /Users/tomkaczocha/.config/t3fac/gh
+
+# Seconds between passes over GitHub. At least 10. A thread's run ending and a finished
+# gate start the next pass at once, so this is only the longest wait for news from GitHub.
+poll_seconds: 60
+
+# Runs that may hold an issue at once, and gates that may run at once.
+max_concurrent_runs: 1
+max_concurrent_gates: 1
+
+# The provider instance and model each issue's agent session runs on.
+model_instance: claudeAgent
+model: claude-fable-5-1
+
+# A macOS notification when something needs a person. false keeps the list on the
+# Factory page and turns the notification off.
+notify: true
+
+# The repos to watch. `path` is a clone of its own, never the one the Rust factory uses,
+# and it must also be added as a project on this server with exactly this path: the factory
+# finds a repo's T3 project by its workspace root. Take a repo out of the Rust factory's
+# repos list before adding it here: one factory per repo.
+repos:
+  - repo: original-solutions/t3code-factory
+    path: /Users/tomkaczocha/EA/projects/t3code-factory-fac
