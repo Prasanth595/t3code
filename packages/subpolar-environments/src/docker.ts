@@ -3,8 +3,10 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import type {
-  EnvironmentBackend,
   EnvironmentIdentity,
+  EnvironmentProcessBackend,
+  EnvironmentProcessRequest,
+  EnvironmentProcessResult,
   EnvironmentStatus,
   ManagedEnvironment,
 } from "./index.ts";
@@ -25,7 +27,9 @@ export class DockerEnvironmentError extends Error {
       | "GIT_METADATA_MAPPING_INVALID"
       | "UNSUPPORTED_GIT_LAYOUT"
       | "DOCKER_IDENTITY_MISMATCH"
-      | "DOCKER_CONFIGURATION_MISMATCH",
+      | "DOCKER_CONFIGURATION_MISMATCH"
+      | "PROCESS_EXECUTION_UNAVAILABLE"
+      | "PROCESS_REQUEST_INVALID",
     message: string,
     options?: ErrorOptions,
   ) {
@@ -76,6 +80,14 @@ export interface DockerContainerCreateOptions {
   readonly environment: Readonly<Record<string, string>>;
 }
 
+export interface DockerContainerProcessRequest {
+  readonly command: readonly string[];
+  readonly workingDirectory: string;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly signal?: AbortSignal;
+  readonly onOutput?: EnvironmentProcessRequest["onOutput"];
+}
+
 export type DockerContainerState = "created" | "running" | "paused" | "restarting" | "exited" | "dead";
 
 /** Normalized, read-only information the adapter requires from a Docker client. */
@@ -112,6 +124,7 @@ export interface DockerClient {
   startContainer(id: string): Promise<void>;
   stopContainer(id: string, options: { readonly timeoutSeconds: 10 }): Promise<void>;
   removeContainer(id: string, options: { readonly force: false; readonly removeVolumes: false }): Promise<void>;
+  executeContainer?(id: string, request: DockerContainerProcessRequest): Promise<EnvironmentProcessResult>;
 }
 
 export const DOCKER_RESOURCE_DEFAULTS = Object.freeze({
@@ -188,7 +201,7 @@ function validateLimits(config: DockerEnvironmentConfig): Required<Pick<DockerEn
 export function createDockerEnvironmentBackend(
   client: DockerClient,
   config: DockerEnvironmentConfig,
-): EnvironmentBackend {
+): EnvironmentProcessBackend {
   if (!config.image.trim()) throw new DockerEnvironmentError("INVALID_DOCKER_CONFIG", "A Docker image is required");
   if (Boolean(config.gatewayGitRoot) !== Boolean(config.hostGitRoot)) {
     throw new DockerEnvironmentError("INVALID_DOCKER_CONFIG", "Gateway and Docker-host Git metadata roots must be configured together");
@@ -442,6 +455,45 @@ export function createDockerEnvironmentBackend(
         }
       }
       await client.removeContainer(current.inspection.id, { force: false, removeVolumes: false });
+    },
+    async execute(environment, command, request) {
+      if (!client.executeContainer) {
+        throw new DockerEnvironmentError("PROCESS_EXECUTION_UNAVAILABLE", "Docker client does not support managed process execution");
+      }
+      if (!command.length || command.some((part) => !part || part.includes("\0"))) {
+        throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Process command must be a non-empty argv array without NUL bytes");
+      }
+      const relativeCwd = request.cwd ?? ".";
+      if (path.posix.isAbsolute(relativeCwd) || relativeCwd.includes("\0")) {
+        throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Process cwd must be relative to the worktree");
+      }
+      const worktreeRelativePath = path.relative(environment.storageRoot, environment.worktreePath);
+      if (!worktreeRelativePath || worktreeRelativePath === ".." || worktreeRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(worktreeRelativePath)) {
+        throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Environment worktree cannot be mapped inside the container");
+      }
+      const worktreeTarget = containerPath(containerStorageRoot, worktreeRelativePath);
+      const workingDirectory = path.posix.resolve(worktreeTarget, relativeCwd);
+      if (workingDirectory !== worktreeTarget && !workingDirectory.startsWith(`${worktreeTarget}/`)) {
+        throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Process cwd escapes the mounted worktree");
+      }
+      const environmentVariables = request.environment ?? {};
+      for (const [key, value] of Object.entries(environmentVariables)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key) || value.includes("\0") || value.length > 16_384) {
+          throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Process environment contains an invalid key or value");
+        }
+      }
+      const current = await inspectVerified(environment);
+      if (!current || current.record.resourceId !== environment.resourceId || current.record.status !== "ready") {
+        throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker environment is unavailable or changed identity before process execution");
+      }
+      if (request.signal?.aborted) return { exitCode: null, cancelled: true };
+      return client.executeContainer(current.inspection.id, {
+        command: [...command],
+        workingDirectory,
+        environment: { ...environmentVariables },
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+        ...(request.onOutput === undefined ? {} : { onOutput: request.onOutput }),
+      });
     },
   };
 }

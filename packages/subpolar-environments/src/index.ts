@@ -40,12 +40,40 @@ export interface EnvironmentBackend {
   remove(environment: ManagedEnvironment): Promise<void>;
 }
 
+export interface EnvironmentProcessOutput {
+  readonly stream: "stdout" | "stderr";
+  readonly data: Uint8Array;
+}
+
+export interface EnvironmentProcessResult {
+  readonly processId?: string;
+  readonly exitCode: number | null;
+  readonly cancelled: boolean;
+}
+
+export interface EnvironmentProcessRequest {
+  /** Relative to the mounted worktree root; absolute paths are rejected. */
+  readonly cwd?: string;
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly signal?: AbortSignal;
+  readonly onOutput?: (output: EnvironmentProcessOutput) => void | Promise<void>;
+}
+
+export interface EnvironmentProcessBackend extends EnvironmentBackend {
+  execute(
+    environment: ManagedEnvironment,
+    command: readonly string[],
+    request: EnvironmentProcessRequest,
+  ): Promise<EnvironmentProcessResult>;
+}
+
 export interface EnvironmentManager {
   identity(request: EnvironmentRequest): Promise<EnvironmentIdentity>;
   ensure(request: EnvironmentRequest): Promise<ManagedEnvironment>;
   start(request: EnvironmentRequest): Promise<ManagedEnvironment>;
   stop(request: EnvironmentRequest): Promise<ManagedEnvironment>;
   remove(request: EnvironmentRequest): Promise<void>;
+  execute(request: EnvironmentRequest, command: readonly string[], process?: EnvironmentProcessRequest): Promise<EnvironmentProcessResult>;
   reconcile(): Promise<readonly EnvironmentReconciliationResult[]>;
 }
 
@@ -229,6 +257,24 @@ export function createEnvironmentManager(
     });
   };
 
+  const execute: EnvironmentManager["execute"] = async (request, command, process = {}) => {
+    if (!Array.isArray(command) || command.length === 0 || command.some((part) => typeof part !== "string" || part.includes("\0"))) {
+      throw new EnvironmentManagerError("INVALID_REQUEST", "Process command must be a non-empty argv array without NUL bytes");
+    }
+    if (process.signal?.aborted) {
+      return { exitCode: null, cancelled: true };
+    }
+    const processBackend = backend as EnvironmentBackend & Partial<EnvironmentProcessBackend>;
+    if (typeof processBackend.execute !== "function") {
+      throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment backend does not support managed process execution");
+    }
+    const environment = await ensure(request);
+    if (environment.status !== "ready") {
+      throw new EnvironmentManagerError("BACKEND_FAILURE", "Managed environment is not ready for process execution");
+    }
+    return backendCall("execute process", () => processBackend.execute!(environment, command, process));
+  };
+
   const reconcile: EnvironmentManager["reconcile"] = async () => {
     if (!registrations) return [];
     const saved = await registrations.loadAll();
@@ -250,5 +296,5 @@ export function createEnvironmentManager(
     }));
   };
 
-  return { identity, ensure, start, stop, remove, reconcile };
+  return { identity, ensure, start, stop, remove, execute, reconcile };
 }

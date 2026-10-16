@@ -11,6 +11,7 @@ import {
   type DockerClient,
   type DockerContainerCreateOptions,
   type DockerContainerInspection,
+  type DockerContainerProcessRequest,
 } from "../src/docker.ts";
 
 const tempRoots: string[] = [];
@@ -55,6 +56,7 @@ class FakeDockerClient implements DockerClient {
   readonly startCalls: string[] = [];
   readonly stopCalls: string[] = [];
   readonly removeCalls: string[] = [];
+  readonly processCalls: Array<{ id: string; request: DockerContainerProcessRequest }> = [];
   wrongOwner = false;
 
   async inspectContainer(name: string) {
@@ -109,6 +111,12 @@ class FakeDockerClient implements DockerClient {
     for (const [name, container] of this.containers) if (container.id === id) this.containers.delete(name);
   }
 
+  async executeContainer(id: string, request: DockerContainerProcessRequest) {
+    this.processCalls.push({ id, request });
+    await request.onOutput?.({ stream: "stdout", data: new TextEncoder().encode("hello") });
+    return { processId: "exec-1", exitCode: 7, cancelled: request.signal?.aborted ?? false };
+  }
+
   private update(id: string, patch: Partial<DockerContainerInspection>) {
     for (const [name, container] of this.containers) {
       if (container.id === id) this.containers.set(name, { ...container, ...patch });
@@ -117,6 +125,37 @@ class FakeDockerClient implements DockerClient {
 }
 
 describe("Docker environment backend", () => {
+  test("executes argv in the verified mounted worktree and streams output", async () => {
+    const { backend, identity, client } = await fixture();
+    const created = await backend.create(identity);
+    const ready = await backend.start(created);
+    const output: string[] = [];
+    const result = await backend.execute(ready, ["node", "-e", "process.exit(7)"], {
+      cwd: "packages",
+      environment: { NODE_ENV: "test" },
+      onOutput: ({ stream, data }) => output.push(`${stream}:${new TextDecoder().decode(data)}`),
+    });
+
+    expect(result).toEqual({ processId: "exec-1", exitCode: 7, cancelled: false });
+    expect(client.processCalls[0]).toMatchObject({
+      id: ready.resourceId,
+      request: {
+        command: ["node", "-e", "process.exit(7)"],
+        workingDirectory: "/workspaces/repo/worktree-a/packages",
+        environment: { NODE_ENV: "test" },
+      },
+    });
+    expect(output).toEqual(["stdout:hello"]);
+  });
+
+  test("rejects process working directories that escape the worktree", async () => {
+    const { backend, identity, client } = await fixture();
+    const ready = await backend.start(await backend.create(identity));
+
+    await expect(backend.execute(ready, ["id"], { cwd: "../../etc" })).rejects.toMatchObject({ code: "PROCESS_REQUEST_INVALID" });
+    expect(client.processCalls).toEqual([]);
+  });
+
   test("maps the explicit gateway path to the daemon host and enforces safe defaults", async () => {
     const { client, manager, request, identity, config } = await fixture();
     const created = await manager.ensure(request);
