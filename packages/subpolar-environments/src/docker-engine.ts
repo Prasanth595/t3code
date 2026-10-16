@@ -1,0 +1,249 @@
+import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
+import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection } from "./docker.ts";
+
+export interface DockerEngineClientOptions {
+  readonly socketPath: string;
+  readonly apiVersion?: string;
+  readonly timeoutMs?: number;
+  readonly transport?: DockerEngineTransport;
+}
+
+export interface DockerEngineTransportRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly headers?: Readonly<Record<string, string | number>>;
+  readonly body?: Uint8Array;
+}
+
+export interface DockerEngineTransportResponse {
+  readonly statusCode: number;
+  readonly body: Uint8Array;
+}
+
+export type DockerEngineTransport = (request: DockerEngineTransportRequest) => Promise<DockerEngineTransportResponse>;
+
+export class DockerEngineClientError extends Error {
+  constructor(readonly statusCode: number | undefined, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "DockerEngineClientError";
+  }
+}
+
+interface EngineResponse {
+  readonly statusCode: number;
+  readonly body: Uint8Array;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function text(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function number(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function boolean(value: unknown): boolean {
+  return value === true;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  return Object.fromEntries(Object.entries(record(value)).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+}
+
+function envRecord(value: unknown): Record<string, string> {
+  if (!Array.isArray(value)) return {};
+  const entries: Array<[string, string]> = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const separator = item.indexOf("=");
+    if (separator <= 0) continue;
+    entries.push([item.slice(0, separator), item.slice(separator + 1)]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function dockerState(value: unknown): DockerContainerInspection["state"] {
+  switch (value) {
+    case "created": case "running": case "paused": case "restarting": case "exited": case "dead": return value;
+    default: return "dead";
+  }
+}
+
+function normalizeInspection(value: unknown): DockerContainerInspection {
+  const container = record(value);
+  const config = record(container.Config);
+  const host = record(container.HostConfig);
+  const state = record(container.State);
+  const mounts = Array.isArray(container.Mounts) ? container.Mounts.map((mountValue) => {
+    const mount = record(mountValue);
+    return {
+      type: text(mount.Type),
+      source: text(mount.Source),
+      target: text(mount.Destination),
+      readOnly: !boolean(mount.RW),
+    };
+  }) : [];
+  return {
+    id: text(container.Id),
+    name: text(container.Name).replace(/^\//, ""),
+    state: dockerState(state.Status),
+    labels: stringRecord(config.Labels),
+    config: {
+      image: text(config.Image),
+      user: text(config.User),
+      privileged: boolean(host.Privileged),
+      readOnlyRootfs: boolean(host.ReadonlyRootfs),
+      networkMode: text(host.NetworkMode),
+      capDrop: stringArray(host.CapDrop),
+      securityOpt: stringArray(host.SecurityOpt),
+      memoryBytes: number(host.Memory),
+      nanoCpus: number(host.NanoCpus),
+      pidsLimit: number(host.PidsLimit),
+      mounts,
+      tmpfs: stringRecord(host.Tmpfs),
+      environment: envRecord(config.Env),
+    },
+  };
+}
+
+function createPayload(options: DockerContainerCreateOptions): Record<string, unknown> {
+  return {
+    Image: options.image,
+    User: options.user,
+    Labels: options.labels,
+    Env: Object.entries(options.environment).map(([key, value]) => `${key}=${value}`),
+    HostConfig: {
+      Privileged: options.privileged,
+      ReadonlyRootfs: options.readOnlyRootfs,
+      NetworkMode: options.networkMode,
+      CapDrop: options.capDrop,
+      SecurityOpt: options.securityOpt,
+      Memory: options.memoryBytes,
+      NanoCpus: options.nanoCpus,
+      PidsLimit: options.pidsLimit,
+      Mounts: options.mounts.map((mount) => ({ Type: mount.type, Source: mount.source, Target: mount.target, ReadOnly: mount.readOnly })),
+      Tmpfs: options.tmpfs,
+    },
+  };
+}
+
+function readResponse(response: IncomingMessage, maxBytes: number): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    response.on("data", (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += bytes.byteLength;
+      if (size > maxBytes) {
+        response.destroy(new Error("Docker Engine response exceeded the size limit"));
+        return;
+      }
+      chunks.push(bytes);
+    });
+    response.on("end", () => resolve(Buffer.concat(chunks)));
+    response.on("error", reject);
+  });
+}
+
+/**
+ * Docker Engine lifecycle client for a dedicated manager process. Do not
+ * construct this inside the T3 gateway; possession of the socket is root-like.
+ */
+export function createDockerEngineClient(options: DockerEngineClientOptions): DockerClient {
+  if (!options.transport && (!options.socketPath || !options.socketPath.startsWith("/"))) throw new Error("Docker socket path must be absolute");
+  const version = options.apiVersion ?? "v1.41";
+  if (!/^v\d+\.\d+$/.test(version)) throw new Error("Docker Engine API version is invalid");
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120_000) throw new Error("Docker Engine timeout is invalid");
+
+  const request = async (
+    method: string,
+    route: string,
+    body?: unknown,
+    expected: readonly number[] = [200],
+  ): Promise<EngineResponse> => {
+    const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
+    const requestPath = `/${version}${route}`;
+    const headers = payload ? { "content-type": "application/json", "content-length": payload.byteLength } : undefined;
+    try {
+      const result = options.transport
+        ? await options.transport({
+            method,
+            path: requestPath,
+            ...(headers === undefined ? {} : { headers }),
+            ...(payload === undefined ? {} : { body: payload }),
+          })
+        : await (async () => {
+            const requestOptions: RequestOptions = { socketPath: options.socketPath, method, path: requestPath, headers, timeout: timeoutMs };
+            const response = await new Promise<IncomingMessage>((resolve, reject) => {
+              const outgoing = httpRequest(requestOptions, resolve);
+              outgoing.setTimeout(timeoutMs, () => outgoing.destroy(new Error("Docker Engine request timed out")));
+              outgoing.once("error", reject);
+              if (payload) outgoing.write(payload);
+              outgoing.end();
+            });
+            return { statusCode: response.statusCode ?? 0, body: await readResponse(response, 4 * 1024 * 1024) };
+          })();
+      if (result.body.byteLength > 4 * 1024 * 1024) throw new Error("Docker Engine response exceeded the size limit");
+      const statusCode = result.statusCode;
+      if (!expected.includes(statusCode)) {
+        throw new DockerEngineClientError(statusCode, `Docker Engine request failed with HTTP ${statusCode}`);
+      }
+      return { statusCode, body: result.body };
+    } catch (error) {
+      if (error instanceof DockerEngineClientError) throw error;
+      throw new DockerEngineClientError(undefined, "Docker Engine request failed", { cause: error });
+    }
+  };
+
+  const decodeJson = (body: Uint8Array): unknown => {
+    try {
+      return JSON.parse(Buffer.from(body).toString("utf8"));
+    } catch (cause) {
+      throw new DockerEngineClientError(undefined, "Docker Engine returned invalid JSON", { cause });
+    }
+  };
+  const idPath = (id: string): string => `/containers/${encodeURIComponent(id)}`;
+
+  return {
+    async inspectContainer(name) {
+      try {
+        const response = await request("GET", `${idPath(name)}/json`);
+        return normalizeInspection(decodeJson(response.body));
+      } catch (error) {
+        if (error instanceof DockerEngineClientError && error.statusCode === 404) return null;
+        throw error;
+      }
+    },
+    async createContainer(createOptions) {
+      const response = await request(
+        "POST",
+        `/containers/create?name=${encodeURIComponent(createOptions.name)}`,
+        createPayload(createOptions),
+        [201],
+      );
+      const created = record(decodeJson(response.body));
+      if (typeof created.Id !== "string" || !created.Id) throw new DockerEngineClientError(undefined, "Docker Engine did not return a container ID");
+      return { id: created.Id };
+    },
+    async startContainer(id) {
+      await request("POST", `${idPath(id)}/start`, undefined, [204, 304]);
+    },
+    async stopContainer(id, stopOptions) {
+      await request("POST", `${idPath(id)}/stop?t=${stopOptions.timeoutSeconds}`, undefined, [204, 304]);
+    },
+    async removeContainer(id, removeOptions) {
+      await request("DELETE", `${idPath(id)}?force=${removeOptions.force}&v=${removeOptions.removeVolumes}`, undefined, [204]);
+    },
+  };
+}

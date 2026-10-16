@@ -9,6 +9,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./docker": "./src/docker.ts",
+    "./docker-engine": "./src/docker-engine.ts",
     "./persistence": "./src/persistence.ts"
   },
   "scripts": {
