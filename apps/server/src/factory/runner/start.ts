@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - a gate lock is a file, checked the way gate.ts makes it.
 /**
  * The claim: takes a `ready` issue to `factory:triage` with a run file. Ported from softfac's
- * `runner/start.rs` up to the launch, which issue #16 adds.
+ * `runner/start.rs`, through the launch of the `/factory` session and the move to
+ * `factory:building`.
  *
  * Before anything is claimed, a fresh start asks GitHub who applied the `factory:ready` label and
  * who edited the issue text since, and builds only when an instructor applied the label and
@@ -14,9 +15,15 @@
  * A new attempt first finishes every older unfinished run of the issue in the ledger, so a run
  * a person has moved on from stops being polled.
  *
- * Calling `start` again resumes. An issue in `triage` whose only assignee is the factory's own
- * user is an interrupted start: a run with no record of what approved it cannot be confirmed, so
- * it fails closed and goes `stuck` (no session was launched, as the record is written first).
+ * The session is launched under a command id derived from the run, after the ledger says a
+ * launch is about to be sent, so a launch that fails on our side is found again by sending the
+ * same id. The issue text is checked again once the session exists: a change stops the run and
+ * archives the session.
+ *
+ * Calling `start` again resumes; `resume` does only that. An issue in `triage` whose only
+ * assignee is the factory's own user is an interrupted start, and every step goes on from what
+ * the ledger records. A run with no record of what approved it cannot be confirmed, so it fails
+ * closed and goes `stuck` (no session was launched, as the record is written first).
  */
 import * as NodeFS from "node:fs";
 
@@ -25,7 +32,7 @@ import * as Schema from "effect/Schema";
 
 import type { ProjectConfig } from "../config.ts";
 import { refusalReason, unapprovedComment, type Refusal } from "../domain/approval.ts";
-import { InvalidTransition, stateLabel, transition, type State } from "../domain/lifecycle.ts";
+import { InvalidTransition, stateLabel, transition } from "../domain/lifecycle.ts";
 import { gateLockFile } from "../gate.ts";
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type Cause, type ClaimRepair, type Outcome } from "../ledger/events.ts";
@@ -35,9 +42,18 @@ import { readRun } from "../ledger/read.ts";
 import { newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
-import type { BoundGitHub, GitHubError } from "../tracker/github.ts";
-import { CANNOT_CONFIRM, CUT_SHORT_COMMENT, statusBody, stuckComment } from "./messages.ts";
-import { readProgress, type Seen } from "./progress.ts";
+import type { BoundGitHub, GitHubError, IssueDetail } from "../tracker/github.ts";
+import type { FactorySessions, Model, SessionsError } from "../t3/sessions.ts";
+import {
+  CANNOT_CONFIRM,
+  CUT_SHORT_COMMENT,
+  LAUNCH_FAILED,
+  TEXT_CHANGED,
+  launchMessage,
+  sessionMayExistNote,
+} from "./messages.ts";
+import { APPROVAL_RECHECKED, LAUNCH_SENDING, readProgress, type Seen } from "./progress.ts";
+import { describe, finishBuilding, goStuck, type Progress } from "./run.ts";
 
 /**
  * What the claim asks of the tracker: the subset of `makeGitHub` it calls, with the process
@@ -55,6 +71,13 @@ export type Tracker = Pick<
   | "postComment"
   | "upsertStatusComment"
   | "newestFactoryComment"
+  | "textCheck"
+>;
+
+/** The subset of `FactorySessions` the claim calls. */
+export type Sessions = Pick<
+  FactorySessions["Service"],
+  "findProject" | "launch" | "thread" | "archive" | "removeWorktree"
 >;
 
 export interface StartContext {
@@ -67,16 +90,25 @@ export interface StartContext {
   readonly project: ProjectConfig;
   readonly dataDir: string;
   readonly tracker: Tracker;
+  /** The local clone the T3 project is rooted at: `WatchedRepo.path`. */
+  readonly repoPath: string;
+  /** The `GH_CONFIG_DIR` the launch message names. */
+  readonly ghConfigDir: string;
+  readonly model: Model;
+  readonly sessions: Sessions;
   /** Unix epoch milliseconds. */
   readonly clock: () => number;
 }
 
 /** What `start` did. */
 export type StartOutcome =
-  /** The issue is claimed and its run file records it. Issue #16 launches the session from here. */
-  | { readonly kind: "claimed"; readonly run: RunId }
-  /** The issue was not ours to take. Nothing was written anywhere. */
-  | { readonly kind: "skipped"; readonly reason: string }
+  /** The issue is claimed, its session is launched and the issue is `factory:building`. */
+  | { readonly kind: "started"; readonly run: RunId; readonly threadId: string }
+  /**
+   * The issue was not ours to take. Nothing was written anywhere. `moved` says a person closed
+   * the issue, or put it back to `factory:ready` with nobody assigned, which the claim step takes.
+   */
+  | { readonly kind: "skipped"; readonly reason: string; readonly moved?: "closed" | "ready" }
   /** The issue was `ready` but not approved, so it went back to `factory:proposed` with one fixed comment, and no run was made. */
   | { readonly kind: "refused"; readonly reason: string }
   /** The issue went to `stuck`. */
@@ -91,16 +123,23 @@ export class GateRunningError extends Schema.TaggedError<GateRunningError>()("Ga
   }
 }
 
-export type StartError = GitHubError | LedgerError | InvalidTransition | GateRunningError;
+export type StartError =
+  | GitHubError
+  | LedgerError
+  | InvalidTransition
+  | GateRunningError
+  | SessionsError;
 
-const mention = (issue: number) => `#${issue}`;
+/** An issue as the pass's lines and the skip reasons name it. */
+export const mention = (issue: number) => `#${issue}`;
 
 const skipped = (issue: number, assignees: ReadonlyArray<string>): StartOutcome => ({
   kind: "skipped",
   reason: `issue ${mention(issue)} is already assigned to ${assignees.join(", ")}`,
 });
 
-const isOurs = (assignees: ReadonlyArray<string>, user: string) =>
+/** Whether `user` is the only assignee. Not `asciiLower`: a Linear user can be a display name. */
+export const isOurs = (assignees: ReadonlyArray<string>, user: string) =>
   assignees.length === 1 && assignees[0]!.toLowerCase() === user.toLowerCase();
 
 export const start = (
@@ -111,25 +150,90 @@ export const start = (
     const detail = yield* ctx.tracker.issue(issue);
     // A closed issue is never claimed, whatever its label says. Issue #20 ports what softfac
     // does with its unfinished runs; until then they are left alone.
-    if (detail.closed) {
-      return { kind: "skipped", reason: `issue ${mention(issue)} is closed` };
-    }
-    const ours = isOurs(detail.assignees, ctx.trackerUser);
+    if (detail.closed) return closed(issue);
     if (detail.state === "ready" && detail.assignees.length === 0) {
-      return yield* startFresh(ctx, issue);
+      return yield* startFresh(ctx, issue, detail);
     }
     if (detail.state === "ready") return skipped(issue, detail.assignees);
-    if (detail.state === "triage" && ours) return yield* resumeStart(ctx, issue);
-    return { kind: "skipped", reason: `issue ${mention(issue)} is not labelled factory:ready` };
+    return yield* goOn(ctx, issue, detail);
   });
 
-const startFresh = (ctx: StartContext, issue: number): Effect.Effect<StartOutcome, StartError> =>
+/**
+ * `start` for a claim already made, which never makes one: what the pass calls for a run it
+ * knows of and for a `triage` issue of ours with no run. An issue someone put back to
+ * `factory:ready` is left to the claim step, which checks the pause, the limit and the blockers
+ * first, and which finishes the issue's older runs when it claims it.
+ */
+export const resume = (
+  ctx: StartContext,
+  issue: number,
+): Effect.Effect<StartOutcome, StartError, never> =>
+  Effect.gen(function* () {
+    const detail = yield* ctx.tracker.issue(issue);
+    if (detail.closed) return closed(issue);
+    if (detail.state === "ready" && detail.assignees.length === 0) {
+      return { kind: "skipped", reason: `issue ${mention(issue)} is ready again`, moved: "ready" };
+    }
+    if (detail.state === "ready") return skipped(issue, detail.assignees);
+    return yield* goOn(ctx, issue, detail);
+  });
+
+const closed = (issue: number): StartOutcome => ({
+  kind: "skipped",
+  reason: `issue ${mention(issue)} is closed`,
+  moved: "closed",
+});
+
+/**
+ * Goes on from the ledger with an issue that is not `ready`: a `triage` issue of ours, or a
+ * `stuck` issue whose newest run gave up and was cut short before its summary line (the label
+ * moves before the release and the status comment, so a failure in between leaves the run
+ * unfinished in `triage`), which finishes the stuck path.
+ */
+const goOn = (
+  ctx: StartContext,
+  issue: number,
+  detail: IssueDetail,
+): Effect.Effect<StartOutcome, StartError> =>
+  Effect.gen(function* () {
+    if (detail.state === "triage" && isOurs(detail.assignees, ctx.trackerUser)) {
+      return yield* resumeStart(ctx, issue, detail);
+    }
+    if (detail.state === "stuck" && (yield* stuckCutShort(ctx, issue))) {
+      return yield* resumeStart(ctx, issue, detail);
+    }
+    return {
+      kind: "skipped",
+      reason: `issue ${mention(issue)} is not factory:triage assigned to ${ctx.trackerUser} alone`,
+    };
+  });
+
+/** Whether the issue's newest run is unfinished, still in `triage`, and its ledger says it went stuck. */
+const stuckCutShort = (ctx: StartContext, issue: number): Effect.Effect<boolean, LedgerError> =>
+  Effect.gen(function* () {
+    const next = nextAttempt(ctx.dataDir, ctx.repo, String(issue));
+    if (next === 1) return false;
+    const newest = newRunId(ctx.repo, String(issue), next - 1);
+    const seen = readProgress((yield* ledger(() => readRun(ctx.dataDir, newest))).entries);
+    return (
+      !seen.finished && seen.stuck !== null && (seen.state === null || seen.state === "triage")
+    );
+  });
+
+const startFresh = (
+  ctx: StartContext,
+  issue: number,
+  detail: IssueDetail,
+): Effect.Effect<StartOutcome, StartError> =>
   Effect.gen(function* () {
     // Before the claim: nothing is written for an issue that is not approved except the
     // explanation.
     const approval = yield* ctx.tracker.approval(issue, ctx.project.instructors);
     if (approval.kind === "refused") return yield* refuseStart(ctx, issue, approval.refusal);
     const { labeledAt, labeledBy } = approval;
+    // Also before the claim: with T3 out of reach nothing is claimed, so no issue is left in
+    // `triage` for a launch that cannot be sent.
+    const project = yield* ctx.sessions.findProject(ctx.repoPath);
     const run = newRunId(
       ctx.repo,
       String(issue),
@@ -152,7 +256,7 @@ const startFresh = (ctx: StartContext, issue: number): Effect.Effect<StartOutcom
           makeCause("start", "approved", labeledBy === "" ? {} : { actor: labeledBy }),
         ),
       );
-      return yield* begin(ctx, issue, run, out);
+      return yield* begin(ctx, issue, detail, run, out, project);
     } finally {
       out.close();
     }
@@ -198,7 +302,7 @@ const repairClaim = (
     const labelled =
       assigned && (seen.state === "triage" || (yield* ok(ctx.tracker.setState(issue, "triage"))));
     if (assigned && labelled) {
-      recordClaimRepair(ctx, issue, "finished");
+      yield* recordClaimRepair(ctx, issue, "finished");
       return { kind: "claimed" };
     }
     // Both are tried, so a label that will not move does not leave our assignee on the issue.
@@ -206,14 +310,21 @@ const repairClaim = (
     const moved = yield* ok(ctx.tracker.setState(issue, "proposed"));
     if (off && moved) {
       yield* ok(ctx.tracker.postComment(issue, CUT_SHORT_COMMENT));
-      recordClaimRepair(ctx, issue, "released");
+      yield* recordClaimRepair(ctx, issue, "released");
     }
     return yield* error;
   });
 
-/** Writes a `claim_repaired` line to the machine log. A log that cannot be written is not worth failing the claim for. */
-const recordClaimRepair = (ctx: StartContext, issue: number, outcome: ClaimRepair): void => {
-  try {
+/**
+ * Writes a `claim_repaired` line to the machine log. A log that cannot be written is not worth
+ * failing the claim for, so it is logged as a warning that names the issue.
+ */
+const recordClaimRepair = (
+  ctx: StartContext,
+  issue: number,
+  outcome: ClaimRepair,
+): Effect.Effect<void> =>
+  ledger(() => {
     const log = MachineLog.open(ctx.dataDir, { clock: ctx.clock });
     try {
       log.append({
@@ -223,10 +334,14 @@ const recordClaimRepair = (ctx: StartContext, issue: number, outcome: ClaimRepai
     } finally {
       log.close();
     }
-  } catch {
-    // Not worth failing the claim for.
-  }
-};
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning(
+        `claim_repaired (${outcome}) for ${ctx.repo}${mention(issue)} could not be written to the machine log`,
+        cause,
+      ),
+    ),
+  );
 
 /** How long a refusal comment that has no label time to be compared with counts as recent. */
 const RECENT_MS = 60 * 60 * 1000;
@@ -286,23 +401,25 @@ const refuseStart = (
     return { kind: "refused", reason: `issue ${mention(issue)} was not approved: ${reason}` };
   });
 
-const resumeStart = (ctx: StartContext, issue: number): Effect.Effect<StartOutcome, StartError> =>
+const resumeStart = (
+  ctx: StartContext,
+  issue: number,
+  detail: IssueDetail,
+): Effect.Effect<StartOutcome, StartError> =>
   Effect.gen(function* () {
     const next = nextAttempt(ctx.dataDir, ctx.repo, String(issue));
     if (next > 1) {
       const newest = newRunId(ctx.repo, String(issue), next - 1);
       const seen = readProgress((yield* ledger(() => readRun(ctx.dataDir, newest))).entries);
-      // A run already in `stuck` is over; it is finished below with the others. A run cut short
-      // before it recorded an approval or a session never launched one, so `begin` goes on from
-      // it to `stuck`: a stuck path that failed half way is finished in its own run. Any other
-      // unfinished run is left to the step that owns its state: launching a claimed run is
-      // issue #16's.
+      // A run already in `stuck` is over; it is finished below with the others. A run still in
+      // `triage` (or not yet in any state) was cut short, so `begin` goes on from what its
+      // ledger records, whatever it was approved on. Any other unfinished run is left to the
+      // step that owns its state.
       if (!seen.finished && seen.state !== "stuck") {
-        const unconfirmed = seen.approvedAt === null && seen.threadId === null;
-        if (unconfirmed && (seen.state === null || seen.state === "triage")) {
+        if (seen.state === null || seen.state === "triage") {
           const out = yield* ledger(() => Ledger.open(ctx.dataDir, newest, { clock: ctx.clock }));
           try {
-            return yield* begin(ctx, issue, newest, out);
+            return yield* begin(ctx, issue, detail, newest, out, undefined);
           } finally {
             out.close();
           }
@@ -317,7 +434,7 @@ const resumeStart = (ctx: StartContext, issue: number): Effect.Effect<StartOutco
     yield* finishOlderRuns(ctx, issue, next, null);
     const out = yield* ledger(() => Ledger.create(ctx.dataDir, run, { clock: ctx.clock }));
     try {
-      return yield* begin(ctx, issue, run, out);
+      return yield* begin(ctx, issue, detail, run, out, undefined);
     } finally {
       out.close();
     }
@@ -325,15 +442,19 @@ const resumeStart = (ctx: StartContext, issue: number): Effect.Effect<StartOutco
 
 /**
  * Records the claim the tracker call has made (assign, and label `triage`), then goes on from
- * what the ledger shows. A run with no record of what approved it cannot be confirmed, so it
- * fails closed. The record is written before any launch, so with no session in the ledger
- * either, no launch was ever sent, and there is nothing to archive.
+ * what the ledger shows: launch the session, look at the issue text once more, move the issue
+ * to `building`. A run with no record of what approved it cannot be confirmed, so it fails
+ * closed. The record is written before any launch, so with no session in the ledger either, no
+ * launch was ever sent, and there is nothing to archive. `project` is the T3 project found
+ * before the claim; `undefined` on a resume, which looks it up only if it has to launch.
  */
 const begin = (
   ctx: StartContext,
   issue: number,
+  detail: IssueDetail,
   run: RunId,
   out: Ledger,
+  project: string | null | undefined,
 ): Effect.Effect<StartOutcome, StartError> =>
   Effect.gen(function* () {
     const seen = readProgress((yield* ledger(() => readRun(ctx.dataDir, run))).entries);
@@ -352,75 +473,146 @@ const begin = (
         out.append({ event: "state_changed", data: { from: "ready", to: claimed.next } }, claim),
       );
     }
-    const at: Progress = { state: seen.state ?? claimed.next, threadId: seen.threadId, seen };
+    const at: Progress = {
+      step: "start",
+      state: seen.state ?? claimed.next,
+      threadId: seen.threadId,
+      worktree: seen.worktree,
+      worktreeDone: seen.worktreeDone,
+      seen,
+    };
+    // A decision to give up that is already in the ledger stands.
+    if (seen.stuck !== null) {
+      yield* goStuck(ctx, issue, out, at, "stuck-resumed", { reason: seen.stuck });
+      return { kind: "stuck", run, reason: seen.stuck };
+    }
+    // The record is written before any launch: with no session either, nothing was sent, so
+    // nothing is launched here (a session on unconfirmed text, only to archive it).
     if (seen.approvedAt === null && seen.threadId === null) {
-      yield* goStuck(ctx, issue, out, at, "approval-unconfirmed", CANNOT_CONFIRM);
+      yield* goStuck(ctx, issue, out, at, "approval-unconfirmed", { reason: CANNOT_CONFIRM });
       return { kind: "stuck", run, reason: CANNOT_CONFIRM };
     }
-    return { kind: "claimed", run };
+    // A launch that is not in the ledger may still have started a thread: the call can fail on
+    // our side after T3 acted. Launching again under the same command id either starts the
+    // session or returns the thread T3 already started. The text is looked at after the launch
+    // and never before it: skipping the launch for a changed text could leave such a thread
+    // running with nobody to stop it.
+    let threadId = seen.threadId;
+    if (threadId === null) {
+      const launched = yield* launchSession(ctx, issue, detail, run, out, seen, project);
+      if (!launched.ok) {
+        yield* goStuck(ctx, issue, out, at, "launch-failed", {
+          reason: LAUNCH_FAILED,
+          detail: launched.detail,
+        });
+        return { kind: "stuck", run, reason: launched.detail };
+      }
+      threadId = launched.threadId;
+      // What the ledger now records, for a stop that has to remove the worktree while T3 may not
+      // report its path yet.
+      at.worktree = launched.worktree;
+    }
+    at.threadId = threadId;
+    if (seen.approvedAt === null) {
+      yield* goStuck(ctx, issue, out, at, "approval-unconfirmed", { reason: CANNOT_CONFIRM });
+      return { kind: "stuck", run, reason: CANNOT_CONFIRM };
+    }
+    // The session reads the issue live a few seconds after the approval, and the claim has told
+    // anyone watching the labels that it is starting. Check the text again now that the session
+    // exists: a change by someone who is not an instructor stops the run. A failed read is an
+    // error, and the next call checks again; the step says the check passed.
+    if (!seen.rechecked) {
+      const check = yield* ctx.tracker.textCheck(issue, seen.approvedAt, ctx.project.instructors);
+      // A history that cannot be judged counts as changed.
+      if (check !== "unchanged") {
+        yield* goStuck(ctx, issue, out, at, "text-changed-before-start", { reason: TEXT_CHANGED });
+        return { kind: "stuck", run, reason: TEXT_CHANGED };
+      }
+      yield* ledger(() =>
+        out.append(
+          { event: "step_changed", data: { step: APPROVAL_RECHECKED } },
+          makeCause("start", "approval-rechecked"),
+        ),
+      );
+    }
+    if (at.state !== "building") yield* finishBuilding(ctx, issue, out, at, threadId);
+    return { kind: "started", run, threadId };
   });
 
-/** Where the issue stands while the stuck actions are applied. */
-interface Progress {
-  readonly state: State;
-  readonly threadId: string | null;
-  readonly seen: Seen;
-}
+type Launch =
+  | { readonly ok: true; readonly threadId: string; readonly worktree: string | null }
+  | { readonly ok: false; readonly detail: string };
 
 /**
- * The stuck path: the actions `lifecycle.transition` asks for on a failure, in order, then the
- * `state_changed` line and the summary line. A comment is skipped when the ledger already
- * records it; the label, the release and the status comment are repeated safely. `code` is the
- * reason of every line it writes.
+ * Sends the launch: `launch-sending` is written once per run, before the first call, so a
+ * launch that fails on our side is known to have been sent. The command id comes from the run,
+ * so sending it again returns the thread T3 already made. In-process, every failure of the call
+ * is T3's answer after the request went out: it is final, and a session may exist. A launch that
+ * was never sent (no project) says so only when an earlier pass did send one.
  */
-const goStuck = (
+const launchSession = (
   ctx: StartContext,
   issue: number,
+  detail: IssueDetail,
+  run: RunId,
   out: Ledger,
-  at: Progress,
-  code: string,
-  reason: string,
-): Effect.Effect<void, StartError> =>
+  seen: Seen,
+  project: string | null | undefined,
+): Effect.Effect<Launch, StartError> =>
   Effect.gen(function* () {
-    const cause = makeCause("start", code);
-    if (at.state === "stuck") {
-      yield* ledger(() => out.finish("stuck", null, null, cause));
-      return;
+    const commandId = `softfac:${runIdToString(run)}:launch`;
+    const projectId =
+      project === undefined ? yield* ctx.sessions.findProject(ctx.repoPath) : project;
+    if (projectId === null) {
+      const missing = "no T3 project for this repo on this machine";
+      return {
+        ok: false,
+        detail: seen.launchSent ? sessionMayExistNote(missing, commandId) : missing,
+      };
     }
-    const failed = yield* Effect.fromResult(transition(at.state, { kind: "failed", reason }));
-    let movedTo: State | null = null;
-    let stuckPosted = at.seen.stuck !== null;
-    for (const action of failed.actions) {
-      switch (action.kind) {
-        case "post-stuck-comment":
-          if (!stuckPosted) {
-            yield* ctx.tracker.postComment(issue, stuckComment(reason));
-            yield* ledger(() => out.append({ event: "stuck", data: { reason } }, cause));
-            stuckPosted = true;
-          }
-          break;
-        case "set-label":
-          yield* ctx.tracker.setState(issue, action.state);
-          movedTo = action.state;
-          break;
-        case "unassign":
-          yield* ctx.tracker.unassign(issue, ctx.trackerUser);
-          break;
-        case "update-status-comment":
-          yield* ctx.tracker.upsertStatusComment(
-            issue,
-            ctx.trackerUser,
-            statusBody(movedTo ?? at.state, ctx.machine, at.threadId, null),
-          );
-          break;
-        default:
-          return yield* new InvalidTransition({ state: at.state, event: "failed" });
-      }
+    if (!seen.launchSent) {
+      yield* ledger(() =>
+        out.append(
+          { event: "step_changed", data: { step: LAUNCH_SENDING } },
+          makeCause("start", "launch-sending"),
+        ),
+      );
     }
-    yield* ledger(() =>
-      out.append({ event: "state_changed", data: { from: at.state, to: failed.next } }, cause),
+    const launched = yield* Effect.result(
+      ctx.sessions.launch({
+        commandId,
+        projectId,
+        title: `${ctx.repo}#${issue} ${detail.title}`,
+        baseRef: ctx.project.base,
+        startFromOrigin: false,
+        message: launchMessage(ctx.repo, issue, ctx.trackerUser, ctx.ghConfigDir),
+        model: ctx.model,
+      }),
     );
-    yield* ledger(() => out.finish("stuck", null, null, cause));
+    if (launched._tag === "Failure") {
+      return {
+        ok: false,
+        detail: sessionMayExistNote(describe(launched.failure.cause), commandId),
+      };
+    }
+    const { threadId, worktreePath, branch } = launched.success;
+    yield* ledger(() =>
+      out.append(
+        {
+          event: "session_launched",
+          data: {
+            thread_id: threadId,
+            worktree: worktreePath,
+            branch,
+            model_instance: ctx.model.instanceId,
+            model: ctx.model.model,
+            resumed_from: null,
+          },
+        },
+        makeCause("start", "session-launched"),
+      ),
+    );
+    return { ok: true, threadId, worktree: worktreePath };
   });
 
 /**

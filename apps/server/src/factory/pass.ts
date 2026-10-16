@@ -17,9 +17,9 @@ import { sanitize } from "./gate.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { ErrorKind, MachineEvent } from "./ledger/events.ts";
 import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
-import { runIdToString, type RunId } from "./ledger/runId.ts";
+import { asciiLower, runIdToString, type RunId } from "./ledger/runId.ts";
 import { duration, formatTs } from "./ledger/time.ts";
-import type { StartError, StartOutcome } from "./runner/start.ts";
+import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
 
 /** An error of the pass's own: what kind it is for the machine log, and what it says. */
@@ -74,6 +74,8 @@ export interface PassWorld {
   ) => Effect.Effect<ReadonlyArray<Blocker>, PassError>;
   /** The claim: `runner/start.ts`. */
   readonly start: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
+  /** The claim gone on with, never made: `resume` in `runner/start.ts`. */
+  readonly resume: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
   /** Appends an `error` line to the run's own ledger. */
@@ -140,15 +142,16 @@ const errorKind = (error: StartError): ErrorKind => {
       return "tracker";
     case "GateRunningError":
       return "gate";
+    case "FactorySessionsError":
+      return "t3";
     default:
       // The run's own record disagrees with what the step expected.
       return "ledger";
   }
 };
 
-const mention = (issue: number) => `#${issue}`;
-
-const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+/** Repos match as run ids do: `owner/name` folded with `asciiLower`. */
+const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
 const GATE_RUNNING = "gate running";
 
@@ -197,6 +200,16 @@ class Pass {
   error(text: string): void {
     this.report.errors += 1;
     this.out(`error: ${text}`);
+  }
+
+  /**
+   * A line a person has to act on about `run`, and the machine log's `attention` event for it
+   * with the ledger.md `reason` code.
+   */
+  attention(text: string, run: string, reason: string): Effect.Effect<void> {
+    this.report.attention += 1;
+    this.out(`ATTENTION: ${text}`);
+    return this.record({ event: "attention", data: { run, reason } });
   }
 
   /**
@@ -287,9 +300,10 @@ export const runPass = (
     yield* pass.record({ event: "pass_started", data: {} });
     const repos = yield* loadRepos(world, machine, pass);
     // Without the ledger there is no telling how many runs are active, so nothing is claimed.
-    const infos = yield* runs(world, repos, pass);
+    const infos = yield* runs(world, pass);
     if (infos !== null) {
       const known = new Known(infos);
+      yield* workRuns(world, repos, known, pass);
       yield* untrackedClaims(world, repos, known, pass);
       yield* unassignedClaims(world, repos, known, pass);
       yield* claim(world, repos, known, machine, pass);
@@ -349,11 +363,7 @@ const loadRepos = (
   });
 
 /** Every unfinished run, counted; a run whose file cannot be read is an error line and counts as active. */
-const runs = (
-  world: PassWorld,
-  repos: ReadonlyArray<Loaded>,
-  pass: Pass,
-): Effect.Effect<ReadonlyArray<RunInfo> | null> =>
+const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo> | null> =>
   Effect.gen(function* () {
     const listed = yield* Effect.result(world.unfinishedRuns());
     if (listed._tag === "Failure") {
@@ -379,11 +389,103 @@ const runs = (
         );
         continue;
       }
-      // The steps that follow a run of a loaded repo (issues #16 to #20) go here.
-      void repos;
     }
     return listed.success;
   });
+
+/**
+ * Calls `resume` for each confirmed run still in `triage` (or with no state yet), which goes on
+ * from its ledger, so a run cut short after the launch was sent is finished and its session
+ * never runs on untracked. A run of a repo that is not loaded is left alone. The other states
+ * are worked by later steps. It is not a new claim, so it is not counted as one. An issue put
+ * back to `ready` is left to the claim step, which finishes its run when it claims the issue.
+ */
+const workRuns = (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  known: Known,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    for (const info of [...known.infos]) {
+      if (!inTriage(info)) continue;
+      const loaded = repos.find(
+        (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
+      );
+      if (loaded === undefined || loaded.kind !== "ready") continue;
+      const repo = loaded.repo;
+      const name = repo.watched.repo;
+      const issue = Number(info.id.issue);
+      const notes = pass.notes(`${name}${mention(issue)}`, info.state);
+      const outcome = yield* Effect.result(world.resume(repo, issue));
+      if (outcome._tag === "Failure") {
+        if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
+        else pass.failed(notes, "start", outcome.failure);
+      } else {
+        switch (outcome.success.kind) {
+          case "started":
+            notes.parts.push("session started, the issue is building");
+            break;
+          case "stuck":
+            pass.stuck(notes, runIdToString(outcome.success.run));
+            break;
+          case "skipped":
+          case "refused": {
+            const moved = outcome.success.kind === "skipped" ? outcome.success.moved : undefined;
+            if (moved === "ready") notes.parts.push(READY_AGAIN);
+            else {
+              const run = runIdToString(info.id);
+              yield* stalled(pass, notes, run, outcome.success.reason, moved === "closed");
+            }
+            break;
+          }
+        }
+      }
+      yield* known.refresh(world, pass, name, issue);
+      yield* pass.flush(notes, info.id);
+    }
+  });
+
+/**
+ * A ready issue the limit holds back only because of its own triage run whose session may be
+ * running: only the claim would finish that run (`finishOlderRuns`), so the slot never frees.
+ */
+const waitsOnItself = (pass: Pass, notes: Notes, run: string): Effect.Effect<void> =>
+  pass.attention(
+    `${notes.label} run ${run} is not progressing and holds a slot: its issue is ready again, and the new claim waits for a slot this run holds. Put the issue back to \`factory:triage\` assigned to the factory's user so \`start\` can finish this run, or free a slot`,
+    run,
+    "not-progressing",
+  );
+
+const READY_AGAIN = "its issue is ready again, so it is left to the claim step";
+
+/** A confirmed run still in `triage` (or before any state): what `finishOlderRuns` would end. */
+const inTriage = (run: RunInfo): boolean =>
+  !run.unreadable && run.confirmed && (run.state === null || run.state === "triage");
+
+/**
+ * A confirmed run in `triage` that `resume` would not take, for `why`: a person moved or closed
+ * its issue, so nothing in the pass will move it, and it holds a slot. softfac's `stalled` words.
+ * Nothing finishes a closed issue's run yet, so its line says how to let the start finish it.
+ */
+const stalled = (
+  pass: Pass,
+  notes: Notes,
+  run: string,
+  why: string,
+  closed: boolean,
+): Effect.Effect<void> => {
+  const back =
+    "put it back to `factory:triage` assigned to the factory's user so `start` can finish it";
+  const advice = closed
+    ? `If it was closed by mistake, reopen it and ${back}`
+    : `If you moved the issue by hand, ${back}`;
+  return pass.attention(
+    `${notes.label} run ${run} is not progressing and holds a slot: ${plain(why)}. ${advice}`,
+    run,
+    "not-progressing",
+  );
+};
 
 /**
  * The unfinished runs as this pass knows them: listed once at the start of the pass, then the
@@ -424,7 +526,7 @@ class Known {
 /**
  * Claims `start` began that left no run it can go on from: the issue is `factory:triage` and
  * assigned to the factory's login alone, and no unfinished run for it is confirmed (`RunInfo`).
- * `start` finishes such an issue (the design sends it to `stuck`), in the run it left when there
+ * `resume` finishes such an issue (the design sends it to `stuck`), in the run it left when there
  * is one, so a stuck path cut short is tried again on every pass. They are claims already made,
  * so the limit on new claims does not apply to them.
  */
@@ -451,7 +553,7 @@ const untrackedClaims = (
       for (const issue of listing.success.items) {
         if (known.of(name, issue).some((i) => i.unreadable || i.confirmed)) continue;
         const notes = pass.notes(`${name}${mention(issue)}`, "triage");
-        const run = yield* noteStart(world, pass, known, notes, repo, issue, {
+        const run = yield* noteStart(world, pass, known, notes, repo, issue, "resume", {
           claimed: (run) => `no run on record, claimed in run ${run}`,
           notTaken: "no run on record, not ours to resume",
           stuck: "no run on record",
@@ -532,10 +634,10 @@ interface StartWords {
 }
 
 /**
- * Calls `start` for the issue and puts what it did on `notes`: the run it names, when it made
- * one, is the run the notes' errors belong to. The issue's runs are read again into `known`
- * after the call. A refused claim is a `claim_skipped`; a claim counts only when the issue was
- * `ready`.
+ * Calls `call` (`start`, or `resume` for a claim already made) for the issue and puts what it
+ * did on `notes`: the run it names, when it made one, is the run the notes' errors belong to.
+ * The issue's runs are read again into `known` after the call. A refused claim is a
+ * `claim_skipped`; a claim counts only when the issue was `ready`.
  */
 const noteStart = (
   world: PassWorld,
@@ -544,12 +646,13 @@ const noteStart = (
   notes: Notes,
   repo: Repo,
   issue: number,
+  call: "start" | "resume",
   words: StartWords,
 ): Effect.Effect<RunId | null> =>
   Effect.gen(function* () {
     const name = repo.watched.repo;
     const before = newestRun(known.of(name, issue));
-    const outcome = yield* Effect.result(world.start(repo, issue));
+    const outcome = yield* Effect.result(world[call](repo, issue));
     if (outcome._tag === "Failure" && outcome.failure._tag === "GateRunningError") {
       // Nothing was called or written.
       notes.parts.push(GATE_RUNNING);
@@ -561,7 +664,7 @@ const noteStart = (
       return madeSince(newestRun(known.of(name, issue)), before);
     }
     switch (outcome.success.kind) {
-      case "claimed": {
+      case "started": {
         const run = runIdToString(outcome.success.run);
         notes.parts.push(words.claimed(run));
         if (notes.state === "ready") pass.report.claimed += 1;
@@ -667,13 +770,24 @@ const claim = (
       // the machine's, said once after the loop.
       if (paused !== null) continue;
       // Before the blockers: with no slot free nothing is claimed, so they are not read. Every
-      // issue left is counted as left over, blocked or not.
-      if (active >= machine.maxConcurrentRuns) {
+      // issue left is counted as left over, blocked or not. The issue's own triage runs end with
+      // this claim (`finishOlderRuns`). One with no session leaves nothing running, so its slot is
+      // the claim's; one whose session may be running keeps its slot, so no second session
+      // starts past the limit.
+      const own = known.of(name, issue).filter(inTriage);
+      const freed = own.filter((run) => !run.session).length;
+      if (active - freed >= machine.maxConcurrentRuns) {
         left += 1;
         yield* pass.record({
           event: "claim_skipped",
           data: { repo: name, issue: String(issue), reason: "limit" },
         });
+        // Its own running sessions fill the limit alone: when every other run frees its slot,
+        // the claim still waits, and only the claim would end them.
+        const running = own.filter((run) => run.session);
+        if (running.length > 0 && running.length >= machine.maxConcurrentRuns) {
+          yield* waitsOnItself(pass, notes, runIdToString(running[0]!.id));
+        }
         continue;
       }
       // A blocked issue takes no slot. Nothing is written for it, and a read that fails holds it
@@ -715,10 +829,10 @@ const claim = (
         });
         continue;
       }
-      const run = yield* noteStart(world, pass, known, notes, repo, issue, {
-        claimed: (run) => `claimed in run ${run}`,
+      const run = yield* noteStart(world, pass, known, notes, repo, issue, "start", {
+        claimed: (run) => `claimed, session started in run ${run}`,
         notTaken: "not claimed",
-        stuck: "claimed, then",
+        stuck: "claimed, but the launch failed",
       });
       yield* pass.flush(notes, run);
       if (known.lost) return;

@@ -30,8 +30,17 @@ import { runPass, type PassError, type PassWorld, type Repo } from "./pass.ts";
 import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
-import { start, utcSecond, type Tracker } from "./runner/start.ts";
+import {
+  isOurs,
+  resume,
+  start,
+  utcSecond,
+  type Sessions,
+  type StartContext,
+  type Tracker,
+} from "./runner/start.ts";
 import * as Paths from "./t3/paths.ts";
+import * as T3Sessions from "./t3/sessions.ts";
 import { bindProcess, makeGitHub, type GitHubError, type IssueSummary } from "./tracker/github.ts";
 
 /** The running factory, for the code that wakes it (a thread's run changing, a person's request). */
@@ -66,10 +75,7 @@ const unassignedByNumber = (items: ReadonlyArray<IssueSummary>) =>
 /** The numbers of the issues `user` is the only assignee of, by number. */
 const assignedOnlyTo = (items: ReadonlyArray<IssueSummary>, user: string) =>
   items
-    .filter(
-      (item) =>
-        item.assignees.length === 1 && item.assignees[0]!.toLowerCase() === user.toLowerCase(),
-    )
+    .filter((item) => isOurs(item.assignees, user))
     .map((item) => item.number)
     .sort(byNumber);
 
@@ -108,6 +114,7 @@ export const liveWorld = (
   machine: MachineConfig,
   dataDir: string,
   process: FactoryProcess["Service"],
+  sessions: Sessions,
   clock: () => number,
   host: string,
 ): PassWorld => {
@@ -118,6 +125,19 @@ export const liveWorld = (
   const trackerFor = (watched: WatchedRepo): Tracker => bindProcess(githubFor(watched), process);
   const tracker = (effect: Effect.Effect<unknown, GitHubError, FactoryProcess>) =>
     withProcess(effect).pipe(Effect.mapError(asPassError("tracker")));
+  const startContext = (repo: Repo): StartContext => ({
+    repo: repo.watched.repo,
+    trackerUser: repo.trackerUser,
+    machine: host,
+    project: repo.project,
+    dataDir,
+    tracker: trackerFor(repo.watched),
+    repoPath: repo.watched.path,
+    ghConfigDir: machine.ghConfigDir,
+    model: { instanceId: machine.modelInstance, model: machine.model },
+    sessions,
+    clock,
+  });
   return {
     project: (watched) => withProcess(projectFromBase(githubFor(watched))),
     trackerUser: (watched) =>
@@ -164,19 +184,8 @@ export const liveWorld = (
       withProcess(githubFor(repo.watched).textBlockers(issue)).pipe(
         Effect.mapError(asPassError("tracker")),
       ),
-    start: (repo: Repo, issue: number) =>
-      start(
-        {
-          repo: repo.watched.repo,
-          trackerUser: repo.trackerUser,
-          machine: host,
-          project: repo.project,
-          dataDir,
-          tracker: trackerFor(repo.watched),
-          clock,
-        },
-        issue,
-      ),
+    start: (repo: Repo, issue: number) => start(startContext(repo), issue),
+    resume: (repo: Repo, issue: number) => resume(startContext(repo), issue),
     gateRunning: (run) => NodeFS.existsSync(gateLockFile(dataDir, run)),
     recordError: (run, step, kind, message) =>
       ledger(() => {
@@ -231,7 +240,8 @@ const startFactory = Effect.gen(function* () {
   const machine = loaded.success.value;
   yield* Effect.logInfo("factory started");
   const process = yield* FactoryProcess;
-  const world = liveWorld(machine, factoryDir, process, () => Date.now(), hostName());
+  const sessions = yield* T3Sessions.FactorySessions;
+  const world = liveWorld(machine, factoryDir, process, sessions, () => Date.now(), hostName());
   const onePass = Effect.gen(function* () {
     // Each line is logged as it is decided, so a pass that hangs or dies has said what it did.
     const context = yield* Effect.context<never>();
@@ -242,8 +252,8 @@ const startFactory = Effect.gen(function* () {
 });
 
 /**
- * Needs FactoryPaths, FactoryProcess and FileSystem; what index.test.ts builds with a test
- * FactoryPaths and a fake FactoryProcess.
+ * Needs FactoryPaths, FactoryProcess, FactorySessions and FileSystem; what index.test.ts builds
+ * with a test FactoryPaths, a fake FactoryProcess and a stub FactorySessions.
  */
 export const FactoryRuntime = Layer.effect(FactoryLoop, startFactory);
 
@@ -251,4 +261,5 @@ export const FactoryRuntime = Layer.effect(FactoryLoop, startFactory);
 export const FactoryLayer = FactoryRuntime.pipe(
   Layer.provide(Paths.layer),
   Layer.provide(Process.layer),
+  Layer.provide(T3Sessions.layerLive),
 );

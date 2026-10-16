@@ -14,10 +14,23 @@ export interface Seen {
   readonly state: State | null;
   /** The `session_launched` line's thread. */
   readonly threadId: string | null;
+  /** The `launch-sending` step: a launch call was about to be sent, so a session may exist. */
+  readonly launchSent: boolean;
+  /** The `approval-rechecked` step: the issue text was checked again after the launch. */
+  readonly rechecked: boolean;
+  /** The `session_launched` line's worktree path. */
+  readonly worktree: string | null;
+  /** A `worktree_removed` or `worktree_remove_failed` line follows the last `session_launched`. */
+  readonly worktreeDone: boolean;
   /** The reason on the `stuck` line: the comment is on the issue. */
   readonly stuck: string | null;
   readonly finished: boolean;
 }
+
+/** The ledger step that says a launch call is about to be sent. */
+export const LAUNCH_SENDING = "launch-sending";
+/** The ledger step that says the issue text was checked again after the launch. */
+export const APPROVAL_RECHECKED = "approval-rechecked";
 
 const field = (data: unknown, key: string): unknown =>
   typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
@@ -27,6 +40,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let approvedAt: string | null = null;
   let state: State | null = null;
   let threadId: string | null = null;
+  let launchSent = false;
+  let rechecked = false;
+  let worktree: string | null = null;
+  let worktreeDone = false;
   let stuck: string | null = null;
   let finished = false;
   for (const entry of entries) {
@@ -39,6 +56,13 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (approvedAt === null && typeof step === "string" && step.startsWith("approved ")) {
           approvedAt = step.slice("approved ".length);
         }
+        if (step === APPROVAL_RECHECKED) rechecked = true;
+        if (
+          typeof step === "string" &&
+          (step === LAUNCH_SENDING || step.startsWith(`${LAUNCH_SENDING} resumed-from `))
+        ) {
+          launchSent = true;
+        }
         break;
       }
       case "state_changed": {
@@ -49,8 +73,15 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       case "session_launched": {
         const id = field(entry.data, "thread_id");
         if (typeof id === "string") threadId = id;
+        const path = field(entry.data, "worktree");
+        worktree = typeof path === "string" ? path : null;
+        worktreeDone = false;
         break;
       }
+      case "worktree_removed":
+      case "worktree_remove_failed":
+        worktreeDone = true;
+        break;
       case "stuck": {
         const reason = field(entry.data, "reason");
         stuck = typeof reason === "string" ? reason : "";
@@ -61,5 +92,16 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
     }
   }
-  return { claimed, approvedAt, state, threadId, stuck, finished };
+  return {
+    claimed,
+    approvedAt,
+    state,
+    threadId,
+    launchSent,
+    rechecked,
+    worktree,
+    worktreeDone,
+    stuck,
+    finished,
+  };
 };
