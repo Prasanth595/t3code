@@ -49,7 +49,9 @@ import { Check, Copy, Maximize2, Minimize2 } from "lucide";
 import {
   AuthPreviewOperateScope,
   type AssetResource,
+  type EditorId,
   type EnvironmentId,
+  type ServerConfig,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ThreadPullRequestKey,
@@ -2230,6 +2232,22 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
+const NO_MARKDOWN_EDITORS: ReadonlyArray<EditorId> = [];
+
+/** The server config fields markdown reads. */
+function markdownServerConfigFields(config: ServerConfig | null) {
+  return {
+    pullRequestsEnabled: config?.environment.capabilities.pullRequests === true,
+    availableEditors: config?.availableEditors ?? NO_MARKDOWN_EDITORS,
+    revealInFileManagerLabel:
+      config?.shellRevealInFileManager === true && config.availableEditors.includes("file-manager")
+        ? config.shellRevealInFileManagerKind === undefined
+          ? revealInFileExplorerLabelForOs(config.environment.platform.os)
+          : revealInFileExplorerLabelForKind(config.shellRevealInFileManagerKind)
+        : undefined,
+  };
+}
+
 function useChatMarkdownState({
   text,
   cwd,
@@ -2319,23 +2337,27 @@ function useChatMarkdownState({
     },
     [createAssetUrl, cwd, expandMedia, preparedConnection, threadRef],
   );
+  // Only the parts of the server config markdown reads. The config object itself
+  // changes with every provider status push, which would re-render every
+  // visible reply.
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const nextConfigFields = markdownServerConfigFields(serverConfig);
+  const [configFields, setConfigFields] = useState(nextConfigFields);
+  if (
+    configFields.pullRequestsEnabled !== nextConfigFields.pullRequestsEnabled ||
+    configFields.availableEditors !== nextConfigFields.availableEditors ||
+    configFields.revealInFileManagerLabel !== nextConfigFields.revealInFileManagerLabel
+  ) {
+    setConfigFields(nextConfigFields);
+  }
+  const { pullRequestsEnabled, availableEditors, revealInFileManagerLabel } = configFields;
   const projects = useProjects();
-  const availableEditors = serverConfig?.availableEditors ?? [];
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
-  const revealInFileManagerLabel =
-    environmentId !== null &&
-    serverConfig?.shellRevealInFileManager === true &&
-    serverConfig.availableEditors.includes("file-manager")
-      ? serverConfig.shellRevealInFileManagerKind === undefined
-        ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
-        : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
-      : undefined;
   const revealFileInFileManager = useCallback(
     (filePath: string) => {
       if (environmentId === null) {
@@ -2665,7 +2687,7 @@ function useChatMarkdownState({
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
       resolvedTheme,
-      serverConfig,
+      pullRequestsEnabled,
       skills,
       threadRef,
       updateThreadPullRequestLink,
@@ -2697,7 +2719,7 @@ function useChatMarkdownState({
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
       resolvedTheme,
-      serverConfig,
+      pullRequestsEnabled,
       skills,
       threadRef,
       updateThreadPullRequestLink,
@@ -2847,7 +2869,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       projects,
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
-      serverConfig,
+      pullRequestsEnabled,
       updateThreadPullRequestLink,
       fileLinkChip,
       renderContextReference,
@@ -2898,7 +2920,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         ? resolvePullRequestPreviewTarget({
             environmentId,
             projects,
-            pullRequestsEnabled: serverConfig?.environment.capabilities.pullRequests === true,
+            pullRequestsEnabled,
             url: pullRequestCandidateUrl,
           })
         : null;
