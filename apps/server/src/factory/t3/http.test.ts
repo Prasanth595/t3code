@@ -96,7 +96,7 @@ const serving = <A>(
     );
   }).pipe(Effect.provide(layerEnvironmentAuth));
 
-const idle: FactoryStatus = { state: "idle", reason: "no factory config at /x/config.yml" };
+const idle: FactoryStatus = { state: "idle", reason: "no factory config" };
 
 describe("GET /api/factory/status", () => {
   it("is served at the path the Factory page calls", () => {

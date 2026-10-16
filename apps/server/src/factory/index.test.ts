@@ -137,13 +137,12 @@ it.effect("logs that there is no config when the machine file does not exist", (
   }),
 );
 
+// The status goes to every client that can read, so its reason names no path and no error:
+// those stay in the server log.
 it.effect("reports itself idle, and why, when there is no config", () =>
   Effect.gen(function* () {
-    const { machineConfigPath, status } = yield* logsFor(undefined);
-    assert.deepStrictEqual(status, {
-      state: "idle",
-      reason: `no factory config at ${machineConfigPath}`,
-    });
+    const { status } = yield* logsFor(undefined);
+    assert.deepStrictEqual(status, { state: "idle", reason: "no factory config" });
   }),
 );
 
@@ -171,15 +170,10 @@ it.effect("logs each config error and does not start for an invalid machine file
   }),
 );
 
-it.effect("reports itself idle, with the config errors, when the machine file is invalid", () =>
+it.effect("reports itself idle, without the config errors, when the machine file is invalid", () =>
   Effect.gen(function* () {
-    const { machineConfigPath, status } = yield* logsFor(
-      VALID.replace("model: claude-sonnet-5-5\n", ""),
-    );
-    assert.deepStrictEqual(status, {
-      state: "idle",
-      reason: `factory config failed to load: ${machineConfigPath}: model: is missing`,
-    });
+    const { status } = yield* logsFor(VALID.replace("model: claude-sonnet-5-5\n", ""));
+    assert.deepStrictEqual(status, { state: "idle", reason: "factory config failed to load" });
   }),
 );
 

@@ -49,7 +49,12 @@ import {
   type IssueSummary,
 } from "./tracker/github.ts";
 
-/** What the factory is doing: running, or idle for a reason (no config, or one it cannot read). */
+/**
+ * What the factory is doing: running, or idle for a reason (no config, or one it cannot read).
+ * `running` means the pass loop started; it says nothing about whether passes succeed, which the
+ * server log records. The reason names no path and no error, as every reading client gets it;
+ * the log has the detail.
+ */
 export type FactoryStatus =
   | { readonly state: "running" }
   | { readonly state: "idle"; readonly reason: string };
@@ -357,13 +362,11 @@ const startFactory = (options: RuntimeOptions) =>
       for (const error of loaded.failure.errors) {
         yield* Effect.logError(formatConfigError(error));
       }
-      return idle(
-        `factory config failed to load: ${loaded.failure.errors.map(formatConfigError).join("; ")}`,
-      );
+      return idle("factory config failed to load");
     }
     if (Option.isNone(loaded.success)) {
       yield* Effect.logInfo(`no factory config at ${machineConfigPath}`);
-      return idle(`no factory config at ${machineConfigPath}`);
+      return idle("no factory config");
     }
     const machine = loaded.success.value;
     yield* Effect.logInfo("factory started");
