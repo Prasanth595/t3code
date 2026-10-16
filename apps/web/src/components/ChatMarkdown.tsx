@@ -2096,7 +2096,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   }, [onReveal, targetPath]);
 
   const handleCopy = useCallback(
-    (value: string, title: string) => {
+    (value: string | Promise<string>, title: string) => {
       if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
         toastManager.add(
           stackedThreadToast({
@@ -2108,12 +2108,24 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         return;
       }
 
-      void navigator.clipboard.writeText(value).then(
-        () => {
+      // Start a pending value's write within the menu click, so the user
+      // gesture still counts when the path finishes resolving.
+      const write =
+        typeof value === "string"
+          ? navigator.clipboard.writeText(value)
+          : typeof ClipboardItem !== "undefined" && navigator.clipboard.write
+            ? navigator.clipboard.write([
+                new ClipboardItem({
+                  "text/plain": value.then((text) => new Blob([text], { type: "text/plain" })),
+                }),
+              ])
+            : value.then((text) => navigator.clipboard.writeText(text));
+      void Promise.all([value, write]).then(
+        ([copied]) => {
           toastManager.add({
             type: "success",
             title: `${title} copied`,
-            description: value,
+            description: copied,
           });
         },
         (error) => {
@@ -2171,11 +2183,17 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           return;
         }
         if (clicked === "copy-relative") {
-          handleCopy((await resolveLink()).displayPath, "Relative path");
+          handleCopy(
+            resolveLink().then((link) => link.displayPath),
+            "Relative path",
+          );
           return;
         }
         if (clicked === "copy-full") {
-          handleCopy((await resolveLink()).targetPath, "Full path");
+          handleCopy(
+            resolveLink().then((link) => link.targetPath),
+            "Full path",
+          );
         }
       } catch (cause) {
         reportMarkdownActionFailure(
@@ -2627,7 +2645,7 @@ function useChatMarkdownState({
             environmentId,
             input: { cwd, query, limit: WORKSPACE_BASENAME_LOOKUP_LIMIT, kind: "file" },
           });
-          return result._tag === "Success" ? result.value.entries : null;
+          return result._tag === "Success" ? result.value : null;
         },
       });
     },

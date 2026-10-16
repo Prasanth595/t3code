@@ -124,6 +124,15 @@ describe("pickWorkspaceSuffixMatch", () => {
     ).toBe("a/docs/plan.md");
   });
 
+  it("trusts a truncated page only when a fuzzy file follows the match", () => {
+    const match: WorkspaceEntryCandidate = { path: "apps/web/src/ChatMarkdown.tsx", kind: "file" };
+    const fuzzy: WorkspaceEntryCandidate = { path: "apps/web/src/ChatMarkup.tsx", kind: "file" };
+    expect(pickWorkspaceSuffixMatch("src/ChatMarkdown.tsx", [match, fuzzy], true)).toBe(match.path);
+    // The page ends on the match, so the next page could hold another one.
+    expect(pickWorkspaceSuffixMatch("src/ChatMarkdown.tsx", [fuzzy, match], true)).toBeNull();
+    expect(pickWorkspaceSuffixMatch("src/ChatMarkdown.tsx", [fuzzy, match])).toBe(match.path);
+  });
+
   it("ignores directories", () => {
     expect(
       pickWorkspaceSuffixMatch("src/components", [
@@ -141,6 +150,7 @@ describe("findWorkspaceFileMatch", () => {
   const lookup = (
     literalExists: boolean,
     entries: ReadonlyArray<WorkspaceEntryCandidate> | null,
+    truncated = false,
   ) => {
     const queries: string[] = [];
     return {
@@ -148,7 +158,7 @@ describe("findWorkspaceFileMatch", () => {
       literalExists: async () => literalExists,
       searchFiles: async (query: string) => {
         queries.push(query);
-        return entries;
+        return entries ? { entries, truncated } : null;
       },
     };
   };
@@ -175,6 +185,16 @@ describe("findWorkspaceFileMatch", () => {
     ).resolves.toBeNull();
     await expect(
       findWorkspaceFileMatch("docs/GROUPS_PLAN.md", lookup(false, null)),
+    ).resolves.toBeNull();
+  });
+
+  it("passes a truncated page through to the suffix pick", async () => {
+    const fuzzy: WorkspaceEntryCandidate = { path: "docs/GROUPS_PLAN.old.md", kind: "file" };
+    await expect(
+      findWorkspaceFileMatch("docs/GROUPS_PLAN.md", lookup(false, [nestedPlan, fuzzy], true)),
+    ).resolves.toBe("BudgetLens/docs/GROUPS_PLAN.md");
+    await expect(
+      findWorkspaceFileMatch("docs/GROUPS_PLAN.md", lookup(false, [fuzzy, nestedPlan], true)),
     ).resolves.toBeNull();
   });
 

@@ -60,11 +60,14 @@ function slashPath(path: string): string {
 /**
  * The one indexed file whose path ends with every segment of `relativePath`,
  * e.g. `docs/plan.md` in `BudgetLens/docs/plan.md`. Two candidates have no
- * right answer, so they resolve to nothing.
+ * right answer, so they resolve to nothing. The index ranks whole-suffix
+ * matches ahead of fuzzy ones, so a truncated page can hide another match
+ * only when its last file is a match too.
  */
 export function pickWorkspaceSuffixMatch(
   relativePath: string,
   entries: ReadonlyArray<WorkspaceEntryCandidate>,
+  truncated = false,
 ): string | null {
   const target = slashPath(relativePath);
   if (!target) return null;
@@ -78,7 +81,9 @@ export function pickWorkspaceSuffixMatch(
   };
   const exact = matching((path) => path);
   const matches = exact.length > 0 ? exact : matching((path) => path.toLowerCase());
-  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
+  const match = matches.length === 1 ? matches[0] : undefined;
+  if (!match || (truncated && files.at(-1) === match)) return null;
+  return match.path;
 }
 
 /**
@@ -94,14 +99,17 @@ export async function findWorkspaceFileMatch(
     /** False only when the literal file is known to be missing. */
     readonly literalExists: () => Promise<boolean>;
     /** Indexed candidates for the query, or null when the search failed. */
-    readonly searchFiles: (query: string) => Promise<ReadonlyArray<WorkspaceEntryCandidate> | null>;
+    readonly searchFiles: (query: string) => Promise<{
+      readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
+      readonly truncated: boolean;
+    } | null>;
   },
 ): Promise<string | null> {
   if (needsWorkspaceBasenameLookup(relativePath)) {
-    const entries = await lookup.searchFiles(relativePath);
-    return entries ? pickWorkspaceBasenameMatch(relativePath, entries) : null;
+    const result = await lookup.searchFiles(relativePath);
+    return result ? pickWorkspaceBasenameMatch(relativePath, result.entries) : null;
   }
   if (!/[\\/]/.test(relativePath) || (await lookup.literalExists())) return null;
-  const entries = await lookup.searchFiles(relativePath);
-  return entries ? pickWorkspaceSuffixMatch(relativePath, entries) : null;
+  const result = await lookup.searchFiles(relativePath);
+  return result ? pickWorkspaceSuffixMatch(relativePath, result.entries, result.truncated) : null;
 }
