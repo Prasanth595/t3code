@@ -851,13 +851,18 @@ const unsent = (seen: Seen, activity: Activity) =>
 
 /**
  * The dropped comments the issue was not told about yet, in the order read, each id once. A
- * comment already forwarded is left out: the session has the instructor's own words, and a later
- * edit by someone else changes nothing it holds.
+ * comment already forwarded, or sent as instructor feedback, is left out: the session has the
+ * instructor's own words, and a later edit by someone else changes nothing it holds.
  */
 const unreported = (seen: Seen, activity: Activity): ReadonlyArray<Dropped> => {
   const told = new Set(seen.dropped);
   return activity.dropped.filter((dropped) => {
-    if (seen.forwarded.has(dropped.id) || told.has(dropped.id)) return false;
+    if (
+      seen.forwarded.has(dropped.id) ||
+      seen.feedbackSent.has(`issue-comment:${dropped.id}`) ||
+      told.has(dropped.id)
+    )
+      return false;
     told.add(dropped.id);
     return true;
   });
