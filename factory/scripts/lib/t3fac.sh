@@ -42,11 +42,19 @@ reload_job() {
   launchctl bootstrap "gui/$uid" "$file"
 }
 
+# The inode of file $1, or nothing when it is missing. rotate-log.sh moves a fresh copy onto
+# $log.1, so a different inode there means a rotation has happened since it was noted.
+file_id() {
+  { ls -di "$1" 2> /dev/null || true; } | awk '{print $1}'
+}
+
 # Writes the server's plist from the template, boots the job out when it is loaded, waits for
-# it to unload and bootstraps it. Notes the log size first (log_before) so wait_healthy reads
-# only what the restarted job writes. Leaves the logrotate job alone.
+# it to unload and bootstraps it. Notes the log size and $log.1's inode first (log_before,
+# rotated_before) so wait_healthy reads only what the restarted job writes. Leaves the logrotate
+# job alone.
 restart_job() {
   log_before=$(($(wc -c 2> /dev/null < "$log" || echo 0)))
+  rotated_before=$(file_id "$log.1")
   mkdir -p "$HOME/Library/Logs/t3fac" "$HOME/.config/t3fac"
   render_plist "$template" "$plist"
   reload_job "$label" "$plist"
@@ -91,9 +99,10 @@ has_start_line() {
 # Waits up to T3FAC_HEALTH_WAIT seconds (90) after restart_job for the server to accept
 # connections on $port and for a "factory started" or "no factory config" line to appear in
 # the bytes appended to the log since the restart. A log smaller than it was before the
-# restart was truncated by rotate-log.sh, which first copied it to $log.1, so the bytes since
-# the restart are looked for there once and the log is then read from the start. On timeout prints what is missing and
-# the last 50 log lines to stderr and returns 1.
+# restart was truncated, and the log is then read from the start. When rotate-log.sh did that,
+# $log.1 is a new file holding the log as it was, so the bytes since the restart are looked for
+# there once; a $log.1 left from before the restart is never read. On timeout prints what is
+# missing and the last 50 log lines to stderr and returns 1.
 wait_healthy() {
   local version=$1 wait=${T3FAC_HEALTH_WAIT:-90} offset=${log_before:-0}
   local i size port_ok log_ok rotated_ok=0 missing
@@ -103,7 +112,10 @@ wait_healthy() {
     if (exec 3<> "/dev/tcp/127.0.0.1/$port") 2> /dev/null; then port_ok=1; fi
     size=$(($(wc -c 2> /dev/null < "$log" || echo 0)))
     if ((size < offset)); then
-      if tail -c +$((offset + 1)) "$log.1" 2> /dev/null | has_start_line; then rotated_ok=1; fi
+      if [[ $(file_id "$log.1") != "${rotated_before:-}" ]] &&
+        tail -c +$((offset + 1)) "$log.1" 2> /dev/null | has_start_line; then
+        rotated_ok=1
+      fi
       offset=0
     fi
     if ((rotated_ok)) || tail -c +$((offset + 1)) "$log" 2> /dev/null | has_start_line; then

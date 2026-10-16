@@ -96,14 +96,15 @@ const makeArchive = (version: string, options: { binary?: boolean; label?: strin
 
 // A little launchd-like, one loaded flag and drain file per job label (the main job and the
 // logrotate job): bootout leaves the job loaded for two more `print` polls (or
-// LAUNCHCTL_BOOTOUT_DRAIN for the main job, LAUNCHCTL_BOOTOUT_DRAIN_LOGROTATE for the other), and bootstrap fails with EIO while it is still loaded (or when
-// LAUNCHCTL_BOOTSTRAP_FAIL is set, main job only; LAUNCHCTL_BOOTSTRAP_FAIL_LOGROTATE fails the
-// logrotate job's bootstrap only). Only the main job's bootstrap writes "factory started" to the log when
+// LAUNCHCTL_BOOTOUT_DRAIN for the main job, LAUNCHCTL_BOOTOUT_DRAIN_LOGROTATE for the other),
+// and bootstrap fails with EIO while it is still loaded (or when LAUNCHCTL_BOOTSTRAP_FAIL is
+// set, main job only; LAUNCHCTL_BOOTSTRAP_FAIL_LOGROTATE fails the logrotate job's bootstrap
+// only). Only the main job's bootstrap writes "factory started" to the log when
 // LAUNCHCTL_HEALTHY (space-separated `current` targets) lists the version `current` points at
 // (LAUNCHCTL_HEALTHY_LINE writes another line instead, LAUNCHCTL_HEALTHY_DELAY writes it that many
 // seconds later, as a server still starting would); LAUNCHCTL_TRUNCATE_LOG empties the log first,
-// as a rotation would, and LAUNCHCTL_ROTATE_LOG copies the log to .1 and empties it right after
-// the line, as rotate-log.sh would.
+// and LAUNCHCTL_ROTATE_LOG moves a fresh copy of the log to .1 and empties it right after the
+// line, as rotate-log.sh would.
 const setupSandbox = () => {
   tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-install-")));
   home = NodePath.join(tmp, "home");
@@ -152,7 +153,7 @@ const setupSandbox = () => {
       '            (sleep "$LAUNCHCTL_HEALTHY_DELAY"; echo "$line" >> "$HOME/Library/Logs/t3fac/t3fac.log") > /dev/null 2>&1 &',
       "          else",
       '            echo "$line" >> "$HOME/Library/Logs/t3fac/t3fac.log"',
-      '            if [ -n "$LAUNCHCTL_ROTATE_LOG" ]; then cp "$HOME/Library/Logs/t3fac/t3fac.log" "$HOME/Library/Logs/t3fac/t3fac.log.1"; : > "$HOME/Library/Logs/t3fac/t3fac.log"; fi',
+      '            if [ -n "$LAUNCHCTL_ROTATE_LOG" ]; then cp "$HOME/Library/Logs/t3fac/t3fac.log" "$HOME/Library/Logs/t3fac/t3fac.log.new"; mv -f "$HOME/Library/Logs/t3fac/t3fac.log.new" "$HOME/Library/Logs/t3fac/t3fac.log.1"; : > "$HOME/Library/Logs/t3fac/t3fac.log"; fi',
       "          fi",
       "        fi",
       "      done",
@@ -679,6 +680,38 @@ describe("install.sh and rollback.sh health check", () => {
     const result = runWith({ LAUNCHCTL_ROTATE_LOG: "1" }, "install.sh", archives[v2]!);
     expect(result.status).toBe(0);
     expect(link("current")).toBe(`versions/${v2}`);
+  });
+
+  it("counts a line the log rotation moved to .1 when an older .1 was already there", () => {
+    installV1();
+    seedLog("older log content\n".repeat(10));
+    NodeFS.writeFileSync(`${logPath()}.1`, "oldest log content\n".repeat(20));
+    const result = runWith({ LAUNCHCTL_ROTATE_LOG: "1" }, "install.sh", archives[v2]!);
+    expect(result.status).toBe(0);
+    expect(link("current")).toBe(`versions/${v2}`);
+  });
+
+  it("does not count a start line from before the restart that the rotation moved to .1", () => {
+    installV1ThenV2();
+    seedLog("factory started\n" + "older log content\n".repeat(10));
+    const result = runWith(
+      { LAUNCHCTL_ROTATE_LOG: "1", LAUNCHCTL_HEALTHY_LINE: "booting", T3FAC_HEALTH_WAIT: "1" },
+      "rollback.sh",
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rollback to ${v1} from ${v2} failed its health check`);
+  });
+
+  it("does not read an old .1 when the log shrank without a rotation", () => {
+    installV1ThenV2();
+    seedLog("older log content\n".repeat(10));
+    NodeFS.writeFileSync(`${logPath()}.1`, "older log content\n".repeat(10) + "factory started\n");
+    const result = runWith(
+      { LAUNCHCTL_TRUNCATE_LOG: "1", LAUNCHCTL_HEALTHY_LINE: "booting", T3FAC_HEALTH_WAIT: "1" },
+      "rollback.sh",
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rollback to ${v1} from ${v2} failed its health check`);
   });
 
   it("exits 1 and says so when an unhealthy first install has nothing to roll back to", () => {
