@@ -2349,7 +2349,7 @@ const historyCut = (labeledAt: string): Refusal => ({
   kind: "edit-history-incomplete",
   labeledAt,
 });
-const byNonInstructor = (by: Who, labeledAt: string): Refusal => ({
+const byNonInstructor = (by: string | null, labeledAt: string): Refusal => ({
   kind: "labeled-by-non-instructor",
   by,
   labeledAt,
