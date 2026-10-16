@@ -2789,18 +2789,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   li: function MarkdownListItem({ node, children, ...props }) {
     const { skills } = use(ChatMarkdownRendererContext);
-    const text = use(ChatMarkdownTextContext);
-    const listItemStart = node?.position?.start.offset;
-    const markerOffset =
-      typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+    // The checkbox finds its marker from this offset when toggled, so list items
+    // don't read the source text and re-render on every streamed token.
+    // remark-gfm marks task items with this class; plain items carry no offset.
+    const isTaskItem = String(props.className ?? "").includes("task-list-item");
     return (
-      <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
+      <li {...props} data-list-item-offset={isTaskItem ? node?.position?.start.offset : undefined}>
         {renderSkillInlineMarkdownChildren(children, skills)}
       </li>
     );
   },
   input: function MarkdownInput({ node: _node, type, checked, disabled: _disabled, ...props }) {
     const { onTaskListChange } = use(ChatMarkdownRendererContext);
+    const text = use(ChatMarkdownTextContext);
     if (type !== "checkbox" || !onTaskListChange) {
       return (
         <input
@@ -2820,8 +2821,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
         aria-label="Toggle task"
         checked={checked}
         onChange={(event) => {
-          const markerOffset = Number(event.currentTarget.closest("li")?.dataset.taskMarkerOffset);
-          if (!Number.isSafeInteger(markerOffset)) return;
+          const listItemStart = Number(event.currentTarget.closest("li")?.dataset.listItemOffset);
+          if (!Number.isSafeInteger(listItemStart)) return;
+          const markerOffset = findTaskListMarkerOffset(text, listItemStart);
+          if (markerOffset === null) return;
           onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
         }}
       />
