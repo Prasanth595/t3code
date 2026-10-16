@@ -288,11 +288,10 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
-import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
+import { ContextWindowMeter } from "./ContextWindowMeter";
 import {
   providerSupportsManualCompaction,
   resolveContextWindowModelDisplayName,
-  shouldReserveContextWindowMeter,
 } from "./ContextWindowMeter.logic";
 import {
   attachVideoThumbnail,
@@ -1349,7 +1348,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
-  reserveContextWindowMeter: boolean;
+  contextWindowMeterEnabled: boolean;
+  contextWindowMeterKey: string;
+  compactionProviderName: string | null;
   activeThreadModelDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
@@ -1384,16 +1385,16 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
-      {props.activeContextWindow ? (
+      {props.contextWindowMeterEnabled ? (
         <ContextWindowMeter
+          key={props.contextWindowMeterKey}
           usage={props.activeContextWindow}
+          providerDisplayName={props.compactionProviderName}
           modelDisplayName={props.activeThreadModelDisplayName}
           onCompact={props.onCompactContext}
           compactDisabled={props.compactDisabled}
           compactDisabledReason={props.compactDisabledReason}
         />
-      ) : props.reserveContextWindowMeter ? (
-        <ContextWindowMeterPlaceholder />
       ) : null}
       <ComposerPrimaryActions
         compact={props.compact}
@@ -2352,14 +2353,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => resolveContextWindowModelDisplayName(activeThreadModelSelection, modelOptionsByInstance),
     [activeThreadModelSelection, modelOptionsByInstance],
   );
-  const reserveContextWindowMeter = shouldReserveContextWindowMeter({
-    meterEnabled: settings.contextWindowMeterEnabled,
-    detailLoading: props.threadSyncPhase === "loading",
-    threadStarted: threadShellHasStarted(props.activeThreadShell),
-    providerReportsContextWindow: selectedProviderStatus
-      ? selectedProviderStatus.reportsContextWindow === true
-      : null,
-  });
 
   // ------------------------------------------------------------------
   // Composer-local state
@@ -7284,9 +7277,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   "relative",
                   isComposerResting && "flex min-w-0 items-center gap-1",
                   isComposerResting &&
-                    ((settings.contextWindowMeterEnabled && activeContextWindow) ||
-                    reserveContextWindowMeter
-                      ? "pr-28"
+                    (settings.contextWindowMeterEnabled
+                      ? "pr-40"
                       : showComposerAttachAction
                         ? "pr-20"
                         : "pr-12"),
@@ -7516,7 +7508,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeContextWindow={
                       settings.contextWindowMeterEnabled ? activeContextWindow : null
                     }
-                    reserveContextWindowMeter={reserveContextWindowMeter}
+                    contextWindowMeterEnabled={settings.contextWindowMeterEnabled}
+                    contextWindowMeterKey={`${environmentId}:${activeThreadId ?? draftId ?? "new"}`}
+                    compactionProviderName={selectedProviderEntry?.displayName ?? null}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}

@@ -29,6 +29,19 @@ describe("resolveCodexLaunchArgs", () => {
 });
 
 describe("codexAppServerArgs", () => {
+  it("forwards the proposed native compaction limit without enlarging the model window", () => {
+    const launchArgs = "-c model_auto_compact_token_limit=400000";
+    NodeAssert.deepStrictEqual(codexAppServerArgs(launchArgs), [
+      "app-server",
+      "-c",
+      "model_auto_compact_token_limit=400000",
+    ]);
+    NodeAssert.deepStrictEqual(codexExecLaunchArgs(launchArgs), [
+      "-c",
+      "model_auto_compact_token_limit=400000",
+    ]);
+  });
+
   it("returns the app-server command for empty launch args", () => {
     NodeAssert.deepStrictEqual(codexAppServerArgs(""), ["app-server"]);
   });

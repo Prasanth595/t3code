@@ -21,6 +21,8 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly usedPercentage: number | null;
   readonly remainingPercentage: number | null;
   readonly updatedAt: string;
+  /** Only populated when the provider supplies a usage sample timestamp. */
+  readonly sampledAt: string | null;
 };
 
 /** Prefers the provider's live usage report (#8144); falls back to the last compaction item. */
@@ -57,10 +59,11 @@ export function deriveLatestContextWindowSnapshot(
       lastReasoningOutputTokens: null,
       toolUses: null,
       durationMs: null,
-      compactsAutomatically: true,
+      compactsAutomatically: null,
       autoCompactThreshold: null,
       cost: null,
       updatedAt: liveUsage.updatedAt,
+      sampledAt: liveUsage.updatedAt,
     };
   }
   const providerUsage = providerThread?.contextUsage;
@@ -96,6 +99,7 @@ export function deriveLatestContextWindowSnapshot(
       cost: providerUsage.cost ?? null,
       autoCompactThreshold: providerUsage.autoCompactThreshold ?? null,
       updatedAt: DateTime.formatIso(providerUsageUpdatedAt),
+      sampledAt: null,
     };
   }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -134,10 +138,11 @@ export function deriveLatestContextWindowSnapshot(
       lastReasoningOutputTokens: null,
       toolUses: null,
       durationMs: null,
-      compactsAutomatically: true,
+      compactsAutomatically: null,
       autoCompactThreshold: null,
       cost: null,
       updatedAt: DateTime.formatIso(payload.startedAt ?? payload.updatedAt),
+      sampledAt: null,
     };
   }
 
@@ -146,7 +151,7 @@ export function deriveLatestContextWindowSnapshot(
 
 export function formatContextWindowTokens(value: number | null): string {
   if (value === null || !Number.isFinite(value)) {
-    return "0";
+    return "—";
   }
   if (value < 1_000) {
     return `${Math.round(value)}`;

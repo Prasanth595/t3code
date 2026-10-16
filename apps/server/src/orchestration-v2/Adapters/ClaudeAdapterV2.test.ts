@@ -218,25 +218,31 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
-  it("passes automatic compaction and resume-dialog controls to the SDK", () => {
-    const onUserDialog = async () => ({
-      behavior: "completed" as const,
-      result: "continue" as const,
-    });
-    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
-      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-      nativeThreadId: "native-thread-auto-compact",
-      resume: true,
-      cwd: "/workspace",
-      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
-      onUserDialog,
-      supportedDialogKinds: ["resume_return"],
-    });
+  it.each([300_000, 400_000])(
+    "passes automatic compaction at %i and resume-dialog controls to the SDK",
+    (threshold) => {
+      const onUserDialog = async () => ({
+        behavior: "completed" as const,
+        result: "continue" as const,
+      });
+      const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "native-thread-auto-compact",
+        resume: true,
+        cwd: "/workspace",
+        settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, autoCompactWindow: String(threshold) },
+        onUserDialog,
+        supportedDialogKinds: ["resume_return"],
+      });
 
-    assert.equal((options.settings as { autoCompactWindow?: number }).autoCompactWindow, 300_000);
-    assert.equal(options.onUserDialog, onUserDialog);
-    assert.deepEqual(options.supportedDialogKinds, ["resume_return"]);
-  });
+      assert.equal(
+        (options.settings as { autoCompactWindow?: number }).autoCompactWindow,
+        threshold,
+      );
+      assert.equal(options.onUserDialog, onUserDialog);
+      assert.deepEqual(options.supportedDialogKinds, ["resume_return"]);
+    },
+  );
 
   it("projects AskUserQuestion input with question text as the answer key", () => {
     assert.deepEqual(

@@ -226,7 +226,7 @@ describe("ClaudeSettings auto-compaction", () => {
     expect(decodeClaudeSettings({}).autoCompactWindow).toBe("");
   });
 
-  it.each(["100000", "300000", "1000000"])(
+  it.each(["100000", "300000", "400000", "1000000"])(
     "accepts a supported auto-compaction threshold: %s",
     (value) => {
       expect(decodeClaudeSettings({ autoCompactWindow: value }).autoCompactWindow).toBe(value);
