@@ -16,7 +16,7 @@ This source-level compatibility check does not prove the clients work against an
 
 The following focused checks have passed in the current checkout:
 
-- Focused Bun tests passed: 34 tests across the Docker backend, manager HTTP API, managed ACP proxy, and worker execution.
+- Focused Bun tests passed: 47 tests across the Pi adapter, runtime host, Docker backend, manager HTTP API, managed ACP proxy, and worker execution.
 - The broader ACP package run reported 27 passing tests, but `agent.test.ts` could not load because Bun could not import the Vitest-only `assert` export from `@effect/vitest`.
 - Frozen offline pnpm lockfile validation succeeded across all 40 workspace projects.
 - The Subpolar ACP CLI bundles with Bun (253 modules) without the removed Effect API warning. This does not verify Docker image creation or a real worker run.
