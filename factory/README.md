@@ -70,6 +70,14 @@ The Rust factory then builds the fix.
 
 Once `install.sh` has installed a fixed archive and it passed its health check, repeat the steps above in reverse: check that no run holds an issue, remove the repo from `~/.config/softfac/config.yml`, add it to `repos` in `~/.config/t3fac/factory/config.yml` (or move `config.yml.off` back to `config.yml`), and restart each factory.
 
+## Stopping a run by hand
+
+```sh
+factory/scripts/stop-run.sh <run id>      # e.g. original-solutions__t3code-factory__20__1
+```
+
+It checks that the run has a ledger, is not finished and is `building`, then leaves a request in `<data dir>/stop-requests/<run id>` (the data dir is `$T3FAC_DATA`, default `~/.config/t3fac/factory`). It exits 1 with the reason for any other run and writes nothing else. The next pass takes the request into the run's ledger as a `stop_requested` line, archives the session, removes its worktree and sends the issue to `factory:stuck` with the reason `stopped by hand`, without reading what the session was doing. The other way to end a run is to close its issue: the factory archives the session and finishes the run, and writes nothing on GitHub. A run whose own pull request was merged or closed ends the same way, with `pr_end` in its summary line.
+
 ## Syncing with upstream
 
 `factory/scripts/sync.sh` merges upstream's newest `v*-nightly.*` tag into `main` through a pull request. `.github/workflows/factory-sync.yml` runs it daily at 03:17 UTC and on `workflow_dispatch`, as two jobs:

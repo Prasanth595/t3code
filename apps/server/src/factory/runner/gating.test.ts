@@ -2754,7 +2754,8 @@ describe("gate: the decision that the gate passed is in the ledger", () => {
       }
       ledger.close();
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "passed", pr: 12 });
-      assert.deepStrictEqual(rig.gh.calls, []);
+      // Only a read: the pull request is still open.
+      assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12"]);
       assert.deepStrictEqual(rig.t3.calls, []);
       // The run is open while its pull request waits: asking again says the same.
       assert.deepStrictEqual(linesOf(rig).at(-1), moved("building", "pr-open"));
@@ -2919,7 +2920,8 @@ describe("gate: a closed issue", () => {
       rig.gh.closed = true;
       rig.gh.closedByAnswer = "alice";
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "abandoned" });
-      assert.deepStrictEqual(rig.gh.calls, []);
+      // The run's pull request is read to see whether it was merged; nothing is written.
+      assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12"]);
       assert.deepStrictEqual(rig.gh.reads, ["issue 10", "closedBy 10"]);
       assert.deepStrictEqual(rig.ws.calls, []);
       assert.deepStrictEqual(rig.t3.calls, ARCHIVE_ONLY_CALLS);
@@ -2947,7 +2949,7 @@ describe("gate: a closed issue", () => {
       const bytes = bytesOf(rig);
       assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "FactorySessionsError");
       assert.strictEqual(bytesOf(rig), bytes);
-      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12"]);
       rig.t3.archiveFails = false;
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "abandoned" });
       assert.deepStrictEqual(rig.t3.archived, ["thread-1"]);
@@ -3090,7 +3092,7 @@ describe("gate: a run stopped by hand", () => {
       appendLines(rig, [STOP_REQUESTED]);
       rig.gh.closed = true;
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "abandoned" });
-      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12"]);
     }),
   );
 

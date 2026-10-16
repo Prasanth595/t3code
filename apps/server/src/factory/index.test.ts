@@ -1057,7 +1057,28 @@ describe("the gate in the background", () => {
     }),
   );
 
-  /** A building run whose session reported its pull request: the gate reads the thread first. */
+  /** What `gh issue view` answers for the open `factory:building` issue the gate reads before anything else. */
+  const OPEN_ISSUE = JSON.stringify({
+    number: 10,
+    title: "Build step",
+    body: "",
+    labels: [{ name: "factory:building" }],
+    assignees: [{ login: "rawphp" }],
+    state: "OPEN",
+    author: { login: "tomkaczocha" },
+  });
+  const readsIssue = (input: RunInput) =>
+    input.args?.includes("number,title,body,labels,assignees,state,author") === true;
+  const answered = (tail: string) =>
+    Effect.succeed({
+      exitCode: 0,
+      timedOut: false,
+      tail,
+      stderrTail: "",
+      truncated: false,
+    } satisfies RunResult);
+
+  /** A building run whose session reported its pull request: the gate reads the issue, then the thread. */
   const reportedRun = (dataDir: string): RunId => {
     const run = newRunId(REPO, "10", 1);
     const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
@@ -1102,8 +1123,12 @@ describe("the gate in the background", () => {
     project: timeLimitOnlyProjectConfig(),
     trackerUser: "rawphp",
   };
+  /** `gh` answers the read of the open issue and is not found for anything else. */
   const deadGh: FactoryProcess["Service"] = {
-    run: () => Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
+    run: (input) =>
+      readsIssue(input)
+        ? answered(OPEN_ISSUE)
+        : Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
   };
 
   it.effect(
@@ -1157,17 +1182,15 @@ describe("the gate in the background", () => {
       // answers every write.
       const quietGh: FactoryProcess["Service"] = {
         run: (input) =>
-          Effect.succeed({
-            exitCode: 0,
-            timedOut: false,
-            tail: input.args?.includes("labels")
-              ? JSON.stringify({ labels: [{ name: "factory:building" }] })
-              : input.args?.some((arg) => arg.endsWith("/comments"))
-                ? "[]"
-                : "",
-            stderrTail: "",
-            truncated: false,
-          } satisfies RunResult),
+          answered(
+            readsIssue(input)
+              ? OPEN_ISSUE
+              : input.args?.includes("labels")
+                ? JSON.stringify({ labels: [{ name: "factory:building" }] })
+                : input.args?.some((arg) => arg.endsWith("/comments"))
+                  ? "[]"
+                  : "",
+          ),
       };
       const sessions = Sessions.FactorySessions.of({
         ...stubSessions,

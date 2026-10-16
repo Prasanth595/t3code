@@ -49,6 +49,8 @@ export interface Seen {
   readonly worktreeDone: boolean;
   /** The reason on the `stuck` line: the comment is on the issue. */
   readonly stuck: string | null;
+  /** A `stop_requested` line: an operator asked for this run to be stopped by hand. */
+  readonly stopRequested: boolean;
   readonly finished: boolean;
   /** Every pull request a `pr_opened` line names, in order. */
   readonly opened: ReadonlyArray<number>;
@@ -157,6 +159,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let worktree: string | null = null;
   let worktreeDone = false;
   let stuck: string | null = null;
+  let stopRequested = false;
   let finished = false;
   const opened: Array<number> = [];
   let lastPr: Seen["lastPr"] = null;
@@ -282,6 +285,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         stuck = typeof reason === "string" ? reason : "";
         break;
       }
+      case "stop_requested":
+        stopRequested = true;
+        break;
       case "questions_posted":
         questionsPosted = true;
         break;
@@ -365,6 +371,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     worktree,
     worktreeDone,
     stuck,
+    stopRequested,
     finished,
     opened,
     lastPr,

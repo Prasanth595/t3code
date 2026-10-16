@@ -161,6 +161,9 @@ export const TIME_LIMIT = "the run passed its time limit";
 /** The public reason when T3 no longer has the session's thread. */
 export const THREAD_GONE = "the T3 thread no longer exists";
 
+/** The public reason of a run an operator stopped with `factory/scripts/stop-run.sh`. */
+export const STOPPED_BY_HAND = "stopped by hand";
+
 /** The public reason when someone who is not an instructor changed the issue text during a build. */
 export const CHANGED_DURING_BUILD =
   "the issue text was changed during the build by someone who is not an instructor";

@@ -28,7 +28,7 @@ import { makeCause } from "../ledger/events.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
 import { isCommitId, sanitize } from "../text.ts";
-import type { BoundGitHub, PullRequest } from "../tracker/github.ts";
+import type { BoundGitHub } from "../tracker/github.ts";
 import {
   WrongRepoError,
   append,
@@ -45,6 +45,7 @@ import {
 import {
   BASE_KEPT_MOVING,
   END_WITH_DONE,
+  STOPPED_BY_HAND,
   THREAD_GONE,
   failureMessage,
   howItEnded,
@@ -61,7 +62,11 @@ import {
   type Seen,
 } from "./progress.ts";
 import {
+  abandon,
   applyActions,
+  closedIssue,
+  endOwnMerge,
+  endRun,
   goStuck,
   progressFrom,
   recordedReason,
@@ -113,6 +118,8 @@ export type GateStep =
   | { readonly kind: "not-ready" }
   /** The pull request was merged or closed, so the run is finished and is never looked at again. A pass on the commit that was merged is recorded and moves the issue to `pr-open` first. */
   | { readonly kind: "ended" }
+  /** A person closed the issue: the session's thread is archived and the run is finished, with no command run and nothing written on GitHub. */
+  | { readonly kind: "abandoned" }
   /** This run has a gate running already: its lock is held. */
   | { readonly kind: "running" }
   /** `max_concurrent_gates` gates run already; the next call tries again. */
@@ -146,27 +153,6 @@ const stuckWith = (
     const opened = yield* out.open;
     yield* goStuck(ctx, issue, opened, at, code, stop);
     return { kind: "stuck", reason: recordedReason(stop) } as const;
-  });
-
-/**
- * Ends a run whose pull request was merged or closed: the session's thread is archived and its
- * worktree removed (once), then the summary line, the only other write. Nothing is posted on
- * GitHub. A pull request that is gone, or closed without a merge, was closed.
- */
-const endRun = (
-  ctx: GateContext,
-  out: Out,
-  at: Progress,
-  prUrl: string,
-  pull: PullRequest | null,
-): Effect.Effect<void, GateStepError> =>
-  Effect.gen(function* () {
-    const opened = yield* out.open;
-    yield* stopSession(ctx, opened, at);
-    const prEnd = pull !== null && pull.merged ? "merged" : "closed";
-    yield* ledger(() =>
-      opened.finish("pr-open", null, prUrl, makeCause("gate", "pull-request-ended"), prEnd),
-    );
   });
 
 /**
@@ -240,6 +226,12 @@ const finishPass = (
  * send and `gate_sent_back` after it. `gate_retries` failures since the last pass may go back;
  * the one after that goes `stuck` with `the gate failed after <n> attempts` and the output in
  * the comment (a conflict's paths stay in the ledger).
+ *
+ * Before any of that, a closed issue ends the run: a person's move is `abandoned` (the thread is
+ * archived, the run finished, nothing written on GitHub, no command run), and the run's own
+ * merged pull request closing it is `ended` unless a pass is recorded, which the rest of the
+ * gate finishes. A run an operator stopped by hand goes `stuck` as stopped by hand, with no
+ * checkout and no command.
  */
 export const gate = (ctx: GateContext, run: RunId): Effect.Effect<GateStep, GateStepError> =>
   withLedger(ctx, run, (out) =>
@@ -252,11 +244,27 @@ export const gate = (ctx: GateContext, run: RunId): Effect.Effect<GateStep, Gate
       const last = seen.lastPr;
       if (threadId === null || last === null || seen.finished) return NOT_READY;
       const issue = Number(run.issue);
+      // Before anything is decided or written: a closed issue is a person's move, or the run's
+      // own merged pull request, which ends the run here unless a recorded pass finishes it below.
+      const closing = yield* closedIssue(ctx, run, seen);
+      if (closing.kind === "persons-move") {
+        yield* abandon(ctx, yield* out.open, run, seen, "gate");
+        return { kind: "abandoned" } as const;
+      }
+      if (closing.kind === "own-merge" && seen.pass === null) {
+        yield* endOwnMerge(ctx, yield* out.open, run, seen, "gate", closing.pull);
+        return { kind: "ended" } as const;
+      }
       const at = progressFrom("gate", seen, "triage");
       // A decision to give up that is already in the ledger stands, and is carried out without
       // asking T3 or git anything.
       if (seen.stuck !== null) {
         return yield* stuckWith(ctx, out, issue, at, "stuck-resumed", { reason: seen.stuck });
+      }
+      // `stop-run.sh` ended the run: no attempt starts, and the run goes `stuck` as stopped by
+      // hand, its thread archived first.
+      if (seen.stopRequested && at.state === "building") {
+        return yield* stuckWith(ctx, out, issue, at, "stop-requested", { reason: STOPPED_BY_HAND });
       }
       // Every write is done: the run stays open while its pull request waits for a person.
       if (at.state === "pr-open") return { kind: "passed", pr: last.pr } as const;
@@ -338,7 +346,7 @@ const gateAttempts = (
     // The session's own pull request that a person merged or closed before the gate could run:
     // nothing is left to gate, and nothing is marked ready.
     if (!pull.open) {
-      yield* endRun(ctx, out, at, prUrl, pull);
+      yield* endRun(ctx, yield* out.open, at, prUrl, pull, "gate");
       return { kind: "ended" } as const;
     }
     // The commit the gate is about is the one the pull request holds now, and it is a commit
@@ -393,7 +401,7 @@ const gateAttempts = (
         // its pass recorded first, when it is a pass on the commit that was merged.
         const merged = !pullNow.open && pullNow.merged;
         if (!pullNow.open && !merged) {
-          yield* endRun(ctx, out, at, prUrl, pullNow);
+          yield* endRun(ctx, yield* out.open, at, prUrl, pullNow, "gate");
           return { kind: "ended" } as const;
         }
         if (pullNow.headSha.toLowerCase() !== head) return NOT_READY;
@@ -460,7 +468,7 @@ const gateAttempts = (
         at.gateResultsPosted = false;
         if (merged) {
           yield* finishPass(ctx, out, issue, at, pass, pr, false);
-          yield* endRun(ctx, out, at, prUrl, pullNow);
+          yield* endRun(ctx, yield* out.open, at, prUrl, pullNow, "gate");
           return { kind: "ended" } as const;
         }
         return yield* finishPass(ctx, out, issue, at, pass, pr, true);

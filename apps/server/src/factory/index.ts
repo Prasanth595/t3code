@@ -59,6 +59,7 @@ import { advance, timeLimit, watch, type BuildingContext } from "./runner/buildi
 import { gate as gateStep, type GateContext, type GateStep } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
+import { takeStopRequest } from "./runner/stop.ts";
 import * as Events from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
@@ -178,6 +179,8 @@ const gateWords = (run: string, step: GateStep): string => {
       return "nothing to gate";
     case "ended":
       return "the pull request was merged or closed, the run is finished";
+    case "abandoned":
+      return "the issue is closed, the run is closed";
     case "running":
       return "gate running";
     case "queued":
@@ -206,7 +209,8 @@ export const gateDecided = (step: GateStep | null): boolean =>
   (step.kind === "passed" ||
     step.kind === "sent-back" ||
     step.kind === "stuck" ||
-    step.kind === "ended");
+    step.kind === "ended" ||
+    step.kind === "abandoned");
 
 /** The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock. */
 export const liveWorld = (
@@ -381,6 +385,7 @@ export const liveWorld = (
       ),
     start: (repo: Repo, issue: number) => start(startContext(repo), issue),
     resume: (repo: Repo, issue: number) => resume(startContext(repo), issue),
+    takeStopRequest: (run) => takeStopRequest(dataDir, run, clock),
     timeLimit: (repo, run) => timeLimit(buildingContext(repo), run),
     watch: (repo, run) => watch(buildingContext(repo), run),
     advance: (repo, run) => advance(buildingContext(repo), run),
