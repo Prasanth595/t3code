@@ -1,0 +1,319 @@
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+
+import {
+  type EnvironmentManager,
+  type EnvironmentRequest,
+} from "@subpolar/environments";
+import { createEnvironmentManagerHttpClient } from "@subpolar/environments/manager-client";
+import * as AcpAgent from "effect-acp/agent";
+import * as AcpClient from "effect-acp/client";
+import * as AcpError from "effect-acp/errors";
+import * as AcpSchema from "effect-acp/schema";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
+import * as Stdio from "effect/Stdio";
+import * as Stream from "effect/Stream";
+import * as Layer from "effect/Layer";
+
+export interface ManagedAcpProxyOptions {
+  readonly environment: NodeJS.ProcessEnv;
+  readonly manager?: EnvironmentManager;
+  readonly fetch?: typeof fetch;
+}
+
+interface WorkerSession {
+  readonly environment: EnvironmentRequest;
+  readonly sessionId: string;
+  readonly scope: Scope.Scope;
+  readonly client: AcpClient.AcpClient["Service"];
+  readonly remoteSessionId: string;
+}
+
+const SAFE_WORKER_ENVIRONMENT_KEYS = new Set(["COLORTERM", "EDITOR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ"]);
+
+function workerEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {
+  const result: Record<string, string> = {
+    HOME: "/tmp/home",
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    SHELL: "/bin/sh",
+    TMPDIR: "/tmp",
+    USER: "subpolar",
+    SUBPOLAR_ACP_EXECUTION: "local",
+  };
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && SAFE_WORKER_ENVIRONMENT_KEYS.has(key)) result[key] = value;
+  }
+  return result;
+}
+
+function parseCommand(environment: NodeJS.ProcessEnv): readonly string[] {
+  const raw = environment.SUBPOLAR_ACP_WORKER_COMMAND;
+  if (!raw) throw new Error("Managed ACP requires SUBPOLAR_ACP_WORKER_COMMAND as a JSON argv array");
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch (cause) {
+    throw new Error("SUBPOLAR_ACP_WORKER_COMMAND must be a JSON argv array", { cause });
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || parsed.length > 64 || parsed.some((part) => typeof part !== "string" || part.length === 0 || part.includes("\0"))) {
+    throw new Error("SUBPOLAR_ACP_WORKER_COMMAND must be a non-empty JSON argv array of strings");
+  }
+  return parsed as string[];
+}
+
+function environmentFor(cwd: string, environment: NodeJS.ProcessEnv): EnvironmentRequest {
+  if (!path.isAbsolute(cwd)) throw new Error("Managed ACP requires an absolute session cwd");
+  const storageRoot = environment.SUBPOLAR_STORAGE_ROOT?.trim();
+  if (!storageRoot || !path.isAbsolute(storageRoot)) throw new Error("Managed ACP storage root is not configured");
+  const worktreePath = path.resolve(cwd);
+  return {
+    ownerId: environment.SUBPOLAR_OWNER_ID?.trim() || "t3-installation",
+    workspaceId: `ws_${createHash("sha256").update(worktreePath).digest("hex").slice(0, 24)}`,
+    storageRoot,
+    worktreePath,
+  };
+}
+
+export function makeManagedAcpManager(options: ManagedAcpProxyOptions): EnvironmentManager {
+  if (options.manager) return options.manager;
+  const { SUBPOLAR_MANAGER_URL: baseUrl, SUBPOLAR_MANAGER_TOKEN: token } = options.environment;
+  if (!baseUrl || !token) throw new Error("Managed ACP requires SUBPOLAR_MANAGER_URL and SUBPOLAR_MANAGER_TOKEN");
+  return createEnvironmentManagerHttpClient({ baseUrl, token, ...(options.fetch ? { fetch: options.fetch } : {}) });
+}
+
+const requestError = (error: unknown) => AcpError.AcpRequestError.internalError(
+  "Managed Subpolar worker failed",
+  undefined,
+  { cause: error },
+);
+
+/** ACP stdio proxy that starts one authenticated worker process for each new session. */
+function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions) {
+  return Effect.gen(function* () {
+    const agent = yield* AcpAgent.make(stdio);
+    const environment = options.environment;
+    const command = parseCommand(environment);
+    const manager = makeManagedAcpManager(options);
+    const workers = new Map<string, WorkerSession>();
+    let initializeRequest: AcpSchema.InitializeRequest | undefined;
+
+    const getWorker = (sessionId: string) => {
+      const worker = workers.get(sessionId);
+      return worker
+        ? Effect.succeed(worker)
+        : Effect.fail(AcpError.AcpRequestError.resourceNotFound("Managed Subpolar session was not found"));
+    };
+    const forward = <Request extends { readonly sessionId: string }, Response>(
+      method: string,
+      request: Request,
+    ): Effect.Effect<Response, AcpError.AcpError> => getWorker(request.sessionId).pipe(
+      Effect.flatMap((worker) => worker.client.raw.request(method, request)),
+      Effect.map((value) => value as Response),
+      Effect.mapError(requestError),
+    );
+    const forwardAny = <Response>(method: string, payload: unknown) => {
+      const requestedSessionId = typeof payload === "object" && payload !== null && "sessionId" in payload
+        ? String((payload as { readonly sessionId: unknown }).sessionId)
+        : workers.keys().next().value;
+      if (!requestedSessionId) return Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
+      return getWorker(requestedSessionId).pipe(
+        Effect.flatMap((worker) => worker.client.raw.request(method, payload)),
+        Effect.map((value) => value as Response),
+        Effect.mapError(requestError),
+      );
+    };
+
+    yield* agent.handleInitialize((request) => Effect.sync(() => {
+      initializeRequest = request;
+      return {
+        protocolVersion: request.protocolVersion,
+        info: { name: "subpolar-managed", version: "0.1.0" },
+        capabilities: { session: {} },
+      };
+    }));
+
+    yield* agent.handleCreateSession((request) => Effect.tryPromise({
+      try: async () => {
+        if (!initializeRequest) throw new Error("ACP initialize must be called before session/new");
+        const target = environmentFor(request.cwd, environment);
+        const started = await manager.startManagedSession(target, command, {
+          cwd: ".",
+          environment: workerEnvironment(environment),
+          clientSessionId: `t3-acp-${randomUUID()}`,
+        });
+        let workerScope: Scope.CloseableScope | undefined;
+        try {
+        const scope = workerScope = await Effect.runPromise(Scope.make());
+        const input = await Effect.runPromise(Queue.unbounded<Uint8Array, Cause.Done<void>>());
+        const stdioForWorker = Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.fromQueue(input),
+          stdout: () => Sink.forEach((chunk: string | Uint8Array) =>
+            Effect.promise(() => manager.writeManagedSession(
+              target,
+              started.sessionId,
+              typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk,
+            )),
+          ),
+          stderr: () => Sink.drain,
+        });
+        const workerClient = await Effect.runPromise(AcpClient.make(stdioForWorker).pipe(
+          Effect.provideService(Scope.Scope, scope),
+        ));
+        const pump = async () => {
+          for await (const event of manager.attachManagedSessionOutput(target, started.sessionId, started.outputSequence)) {
+            if (event.type === "exit") {
+              await Effect.runPromise(Queue.end(input));
+              return;
+            }
+            if (event.stream === "stdout") await Effect.runPromise(Queue.offer(input, event.data));
+          }
+          await Effect.runPromise(Queue.end(input));
+        };
+        void pump().catch(() => Effect.runPromise(Queue.end(input)));
+        await Effect.runPromise(workerClient.handleRequestPermission((permission) =>
+          agent.client.requestPermission(permission).pipe(Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleSessionUpdate((notification) =>
+          agent.client.sessionUpdate(notification).pipe(Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleElicitation((request) =>
+          agent.client.elicit(request).pipe(Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleMcpConnect((request) =>
+          agent.client.connectMcp(request).pipe(Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleMcpMessage((request) =>
+          agent.client.messageMcp(request).pipe(Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleMcpDisconnect((request) =>
+          agent.client.disconnectMcp(request).pipe(Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleMcpNotification((notification) =>
+          agent.client.notifyMcp(notification).pipe(Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleReadTextFile((request) =>
+          agent.client.extRequest("fs/read_text_file", request).pipe(Effect.map((value) => value as AcpSchema.ReadTextFileResponse), Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleWriteTextFile((request) =>
+          agent.client.extRequest("fs/write_text_file", request).pipe(Effect.map((value) => value as AcpSchema.WriteTextFileResponse), Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleCreateTerminal((request) =>
+          agent.client.extRequest("terminal/create", request).pipe(Effect.map((value) => value as AcpSchema.CreateTerminalResponse), Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleTerminalOutput((request) =>
+          agent.client.extRequest("terminal/output", request).pipe(Effect.map((value) => value as AcpSchema.TerminalOutputResponse), Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleTerminalWaitForExit((request) =>
+          agent.client.extRequest("terminal/wait_for_exit", request).pipe(Effect.map((value) => value as AcpSchema.WaitForTerminalExitResponse), Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleTerminalKill((request) =>
+          agent.client.extRequest("terminal/kill", request).pipe(Effect.map((value) => value as AcpSchema.KillTerminalResponse), Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleTerminalRelease((request) =>
+          agent.client.extRequest("terminal/release", request).pipe(Effect.map((value) => value as AcpSchema.ReleaseTerminalResponse), Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleElicitationComplete((notification) =>
+          agent.client.elicitationComplete(notification).pipe(Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleUnknownExtRequest((method, payload) =>
+          agent.client.extRequest(method, payload).pipe(Effect.mapError(requestError)),
+        ));
+        await Effect.runPromise(workerClient.handleUnknownExtNotification((method, payload) =>
+          agent.client.extNotification(method, payload).pipe(Effect.mapError(requestError)),
+        ));
+        const initialized = await Effect.runPromise(workerClient.agent.initialize(initializeRequest));
+        if (initialized.protocolVersion !== initializeRequest.protocolVersion) {
+          throw new Error("Managed ACP worker negotiated an incompatible protocol version");
+        }
+        const created = await Effect.runPromise(workerClient.agent.createSession(request));
+        const session: WorkerSession = {
+          environment: target,
+          sessionId: started.sessionId,
+          scope,
+          client: workerClient,
+          remoteSessionId: created.sessionId,
+        };
+        workers.set(created.sessionId, session);
+        return created;
+        } catch (error) {
+          await manager.terminateManagedSession(target, started.sessionId).catch(() => undefined);
+          if (workerScope) await Effect.runPromise(Scope.close(workerScope, Exit.void)).catch(() => undefined);
+          throw error;
+        }
+      },
+      catch: requestError,
+    }));
+
+    yield* agent.handlePrompt((request) => forward("session/prompt", request));
+    yield* agent.handleAuthenticate((request) => forwardAny("auth/login", request));
+    yield* agent.handleLogout((request) => forwardAny("auth/logout", request));
+    yield* agent.handleLoadSession((request) => forwardAny("session/resume", request));
+    yield* agent.handleResumeSession((request) => forwardAny("session/resume", request));
+    yield* agent.handleListSessions((request) => forwardAny("session/list", request));
+    yield* agent.handleForkSession((request) => forwardAny("session/fork", request));
+    yield* agent.handleDeleteSession((request) => forwardAny("session/delete", request));
+    yield* agent.handleListProviders((request) => forwardAny("providers/list", request));
+    yield* agent.handleSetProvider((request) => forwardAny("providers/set", request));
+    yield* agent.handleDisableProvider((request) => forwardAny("providers/disable", request));
+    yield* agent.handleSetSessionConfigOption((request) => forwardAny("session/set_config_option", request));
+    yield* agent.handleCancel((notification) => getWorker(notification.sessionId).pipe(
+      Effect.flatMap((worker) => worker.client.agent.cancel(notification)),
+      Effect.mapError(requestError),
+    ));
+    yield* agent.handleCloseSession((request) => Effect.gen(function* () {
+      const worker = yield* getWorker(request.sessionId);
+      const cleanup = Effect.sync(() => workers.delete(request.sessionId)).pipe(
+        Effect.andThen(Effect.promise(() => manager.terminateManagedSession(worker.environment, worker.sessionId)).pipe(
+          Effect.catch(() => Effect.void),
+        )),
+        Effect.andThen(Scope.close(worker.scope, Exit.void)),
+      );
+      return yield* worker.client.agent.closeSession({ sessionId: worker.remoteSessionId }).pipe(
+        Effect.mapError(requestError),
+        Effect.ensuring(cleanup),
+      );
+    }));
+
+    yield* agent.handleUnknownExtRequest((method, payload) => {
+      const sessionId = typeof payload === "object" && payload !== null && "sessionId" in payload
+        ? String((payload as { sessionId: unknown }).sessionId)
+        : workers.keys().next().value;
+      if (!sessionId) return Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
+      return getWorker(sessionId).pipe(
+        Effect.flatMap((worker) => worker.client.raw.request(method, payload)),
+        Effect.mapError(requestError),
+      );
+    });
+    yield* agent.handleUnknownExtNotification((method, payload) => {
+      const sessionId = typeof payload === "object" && payload !== null && "sessionId" in payload
+        ? String((payload as { sessionId: unknown }).sessionId)
+        : workers.keys().next().value;
+      if (!sessionId) return Effect.void;
+      return getWorker(sessionId).pipe(
+        Effect.flatMap((worker) => worker.client.raw.notify(method, payload)),
+        Effect.mapError(requestError),
+      );
+    });
+
+    yield* Effect.addFinalizer(() => Effect.forEach(workers.values(), (worker) =>
+      Effect.promise(() => manager.terminateManagedSession(worker.environment, worker.sessionId)).pipe(
+        Effect.catch(() => Effect.void),
+        Effect.andThen(Scope.close(worker.scope, Exit.void)),
+      ), { discard: true }));
+    return agent;
+  });
+}
+
+export function layerManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions) {
+  return Layer.scoped(AcpAgent.AcpAgent, makeManagedAcpProxy(stdio, options));
+}
+
+export const layerManagedStdio = (options: ManagedAcpProxyOptions) =>
+  Layer.scoped(AcpAgent.AcpAgent,
+    Effect.flatMap(Effect.service(Stdio.Stdio), (stdio) =>
+      makeManagedAcpProxy(stdio, options),
+    ));

@@ -1,0 +1,199 @@
+import { expect, test } from "bun:test";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
+import type { EnvironmentManager, EnvironmentRequest } from "@subpolar/environments";
+import { makeInMemoryStdio } from "../../effect-acp/src/_internal/stdio.ts";
+import { layerManagedAcpProxy } from "../src/managedProxy.ts";
+
+const baseEnvironment = {
+  SUBPOLAR_MANAGER_URL: "http://manager:8787",
+  SUBPOLAR_MANAGER_TOKEN: "managed-proxy-test-token-with-more-than-thirty-two-characters",
+  SUBPOLAR_STORAGE_ROOT: "/workspaces",
+  SUBPOLAR_ACP_WORKER_COMMAND: '["/usr/local/bin/subpolar-acp-worker"]',
+};
+const encoder = new TextEncoder();
+
+function fakeManager(options: { failStart?: boolean; requestPermission?: boolean } = {}) {
+  const calls: Array<{ method: string; request?: EnvironmentRequest; command?: readonly string[]; data?: string }> = [];
+  const output = yieldQueue();
+  let markCancelled!: () => void;
+  const cancelled = new Promise<void>((resolve) => { markCancelled = resolve; });
+  let sequence = 0;
+  const manager = {
+    startManagedSession: async (request: EnvironmentRequest, command: readonly string[]) => {
+      calls.push({ method: "start", request, command });
+      if (options.failStart) throw new Error("manager unavailable");
+      return { sessionId: "managed-1", outputSequence: 0 };
+    },
+    writeManagedSession: async (_request: EnvironmentRequest, _sessionId: string, data: Uint8Array) => {
+      const text = new TextDecoder().decode(data);
+      calls.push({ method: "write", data: text });
+      for (const line of text.trim().split("\n")) {
+        if (!line) continue;
+        const message = JSON.parse(line) as { id?: string | number; method?: string; params?: unknown };
+        if (message.id === 77) calls.push({ method: "permission-response", data: JSON.stringify(message) });
+        if (message.method === "session/cancel") markCancelled();
+        if (message.method === "initialize") {
+          output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {
+            protocolVersion: 2,
+            info: { name: "worker", version: "1" },
+            capabilities: { session: {} },
+          } }));
+        } else if (message.method === "session/new") {
+          output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { sessionId: "worker-session" } }));
+        } else if (message.method === "session/prompt") {
+          output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }));
+          if (options.requestPermission) {
+            output.push(JSON.stringify({ jsonrpc: "2.0", id: 77, method: "session/request_permission", params: {
+              sessionId: "worker-session",
+              toolCall: { toolCallId: "tool-1", kind: "other", status: "pending", title: "test", rawInput: { command: "pwd" } },
+              options: [{ optionId: "allow-once", name: "Allow", kind: "allow_once" }],
+            } }));
+          }
+          output.push(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: {
+            sessionId: "worker-session",
+            update: { sessionUpdate: "agent_message_chunk", messageId: "run-1", content: { type: "text", text: "from worker" } },
+          } }));
+          output.push(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: {
+            sessionId: "worker-session",
+            update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
+          } }));
+        }
+      }
+    },
+    attachManagedSessionOutput: async function* () {
+      while (true) {
+        const value = await output.take();
+        if (value === null) return;
+        const encoded = encoder.encode(`${value}\n`);
+        for (let offset = 0; offset < encoded.length; offset += 7) {
+          yield { type: "output" as const, sequence: ++sequence, stream: "stdout" as const, data: encoded.slice(offset, offset + 7) };
+        }
+      }
+    },
+    terminateManagedSession: async (request: EnvironmentRequest, sessionId: string) => {
+      calls.push({ method: "terminate", request, data: sessionId });
+      output.end();
+    },
+  } as unknown as EnvironmentManager;
+  return { manager, calls, cancelled };
+}
+
+function yieldQueue() {
+  const values: Array<string | null> = [];
+  const waiters: Array<(value: string | null) => void> = [];
+  let ended = false;
+  return {
+    push(value: string) {
+      const waiter = waiters.shift();
+      if (waiter) waiter(value);
+      else values.push(value);
+    },
+    take(): Promise<string | null> {
+      const value = values.shift();
+      if (value !== undefined) return Promise.resolve(value);
+      if (ended) return Promise.resolve(null);
+      return new Promise((resolve) => waiters.push(resolve));
+    },
+    end() {
+      ended = true;
+      for (const waiter of waiters.splice(0)) waiter(null);
+    },
+  };
+}
+
+const send = (input: Queue.Queue<Uint8Array, Cause.Done<void>>, message: unknown) =>
+  Queue.offer(input, encoder.encode(`${JSON.stringify(message)}\n`));
+
+async function readMessage(output: Queue.Queue<string>, matches: (message: Record<string, unknown>) => boolean) {
+  while (true) {
+    let line = "";
+    while (!line.includes("\n")) line += await Effect.runPromise(Queue.take(output));
+    const message = JSON.parse(line.slice(0, line.indexOf("\n"))) as Record<string, unknown>;
+    if (matches(message)) return message;
+  }
+}
+
+test("managed proxy starts a worker for the requested worktree and forwards ACP messages", async () => {
+  const { stdio, input, output } = await Effect.runPromise(makeInMemoryStdio());
+  const scope = await Effect.runPromise(Scope.make());
+  const fake = fakeManager();
+  await Effect.runPromise(Layer.buildWithScope(layerManagedAcpProxy(stdio, {
+    environment: baseEnvironment,
+    manager: fake.manager,
+  }), scope));
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2, info: { name: "t3", version: "1" }, capabilities: {} } }));
+  await readMessage(output, (message) => message.id === 1);
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/workspaces/project-a" } }));
+  const created = await readMessage(output, (message) => message.id === 2);
+  expect(created.result).toEqual({ sessionId: "worker-session" });
+  expect(fake.calls[0]).toMatchObject({
+    method: "start",
+    command: ["/usr/local/bin/subpolar-acp-worker"],
+    request: {
+      ownerId: "t3-installation",
+      storageRoot: "/workspaces",
+      worktreePath: "/workspaces/project-a",
+      workspaceId: expect.stringMatching(/^ws_[a-f0-9]{24}$/),
+    },
+  });
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-session", prompt: [{ type: "text", text: "hello" }] } }));
+  const update = await readMessage(output, (message) => message.method === "session/update" && JSON.stringify(message.params).includes("from worker"));
+  await readMessage(output, (message) => message.id === 3);
+  expect(update.params).toMatchObject({ sessionId: "worker-session", update: { content: { text: "from worker" } } });
+
+  await Effect.runPromise(Scope.close(scope, Exit.void));
+  expect(fake.calls.some((call) => call.method === "terminate")).toBe(true);
+});
+
+test("managed proxy returns startup errors without falling back to a local runtime", async () => {
+  const { stdio, input, output } = await Effect.runPromise(makeInMemoryStdio());
+  const scope = await Effect.runPromise(Scope.make());
+  const fake = fakeManager({ failStart: true });
+  await Effect.runPromise(Layer.buildWithScope(layerManagedAcpProxy(stdio, {
+    environment: baseEnvironment,
+    manager: fake.manager,
+  }), scope));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2, info: { name: "t3", version: "1" }, capabilities: {} } }));
+  await readMessage(output, (message) => message.id === 1);
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/workspaces/project-a" } }));
+  const failed = await readMessage(output, (message) => message.id === 2);
+  expect(failed.error).toBeDefined();
+  expect(fake.calls.map((call) => call.method)).toEqual(["start"]);
+  await Effect.runPromise(Scope.close(scope, Exit.void));
+});
+
+test("managed proxy sends worker permission requests to the T3 ACP client and forwards cancellation", async () => {
+  const { stdio, input, output } = await Effect.runPromise(makeInMemoryStdio());
+  const scope = await Effect.runPromise(Scope.make());
+  const fake = fakeManager({ requestPermission: true });
+  await Effect.runPromise(Layer.buildWithScope(layerManagedAcpProxy(stdio, {
+    environment: baseEnvironment,
+    manager: fake.manager,
+  }), scope));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2, info: { name: "t3", version: "1" }, capabilities: {} } }));
+  await readMessage(output, (message) => message.id === 1);
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/workspaces/project-a" } }));
+  await readMessage(output, (message) => message.id === 2);
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-session", prompt: [{ type: "text", text: "run a command" }] } }));
+  const permission = await readMessage(output, (message) => message.method === "session/request_permission");
+  expect(permission.params).toMatchObject({ sessionId: "worker-session", toolCall: { toolCallId: "tool-1" } });
+  await Effect.runPromise(send(input, {
+    jsonrpc: "2.0",
+    id: permission.id,
+    result: { outcome: { outcome: "selected", optionId: "allow-once" } },
+  }));
+  await readMessage(output, (message) => message.id === 3);
+  expect(fake.calls.some((call) => call.method === "permission-response" && call.data?.includes('"id":77'))).toBe(true);
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", method: "session/cancel", params: { sessionId: "worker-session" } }));
+  await fake.cancelled;
+  expect(fake.calls.some((call) => call.method === "write" && call.data?.includes('"method":"session/cancel"'))).toBe(true);
+  await Effect.runPromise(Scope.close(scope, Exit.void));
+});

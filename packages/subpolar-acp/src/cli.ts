@@ -6,7 +6,16 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import { createManagedExecutionOptions } from "./managedExecution.ts";
+import { layerManagedStdio } from "./managedProxy.ts";
 import { layerStdio } from "./index.ts";
 
-const program = Layer.launch(Layer.provide(layerStdio(createManagedExecutionOptions(process.env)), NodeServices.layer));
+const executionMode = process.env.SUBPOLAR_ACP_EXECUTION ?? "local";
+if (executionMode !== "local" && executionMode !== "managed") {
+  throw new Error("SUBPOLAR_ACP_EXECUTION must be either local or managed");
+}
+
+const selectedLayer = executionMode === "managed"
+  ? layerManagedStdio({ environment: process.env })
+  : layerStdio(createManagedExecutionOptions(process.env));
+const program = Layer.launch(Layer.provide(selectedLayer, NodeServices.layer));
 program.pipe(NodeRuntime.runMain);
