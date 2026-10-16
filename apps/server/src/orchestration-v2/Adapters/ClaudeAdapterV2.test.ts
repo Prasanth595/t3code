@@ -5919,10 +5919,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) =>
               event.type === "node.updated" && event.node.id === request.runtimeRequest.nodeId,
           );
-          assert.equal(
-            node?.type === "node.updated" ? node.node.parentNodeId : null,
-            node?.type === "node.updated" ? node.node.rootNodeId : undefined,
-          );
+          assert.equal(node?.type, "node.updated");
+          if (node?.type !== "node.updated") return;
+          assert.strictEqual(node.node.parentNodeId, node.node.rootNodeId);
           yield* harness.runtime.respondToRuntimeRequest({
             requestId: request.runtimeRequest.id,
             decision: scenario === "decline" ? "decline" : "accept",
