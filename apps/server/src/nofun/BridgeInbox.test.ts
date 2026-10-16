@@ -20,6 +20,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as Harness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -536,11 +537,14 @@ it.effect("quarantines malformed events and changed bodies without starving the 
   }).pipe(Effect.provide(serviceLayer())),
 );
 
-it.effect("retains divergent pages from two concurrent pulls while fencing the cursor", () =>
+it.effect("serializes concurrent pulls per owner and retains both pages", () =>
   Effect.gen(function* () {
     yield* createThread;
-    const bothReading = yield* Deferred.make<void>();
+    const firstRead = yield* Deferred.make<void>();
+    const releaseFirst = yield* Deferred.make<void>();
     let reads = 0;
+    let activeReads = 0;
+    let maxActiveReads = 0;
     const pulling = yield* Inbox.BridgeInbox.pipe(
       Effect.provide(
         Inbox.layerWithConfig(config).pipe(
@@ -548,23 +552,40 @@ it.effect("retains divergent pages from two concurrent pulls while fencing the c
             Layer.succeed(Source.BridgeInboxSource, {
               readPage: (previous) =>
                 Effect.gen(function* () {
-                  expect(previous).toBe(null);
                   const index = ++reads;
-                  if (index === 2) yield* Deferred.succeed(bothReading, undefined);
-                  yield* Deferred.await(bothReading);
+                  activeReads += 1;
+                  maxActiveReads = Math.max(maxActiveReads, activeReads);
+                  expect(previous).toBe(index === 1 ? null : "divergent:1");
+                  if (index === 1) {
+                    yield* Deferred.succeed(firstRead, undefined);
+                    yield* Deferred.await(releaseFirst);
+                  }
                   return {
                     events: [event(index === 1 ? "evt_X" : "evt_Y")],
                     cursor: `divergent:${index}`,
                     has_more: false,
                   };
-                }),
+                }).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      activeReads -= 1;
+                    }),
+                  ),
+                ),
             }),
           ),
         ),
       ),
     );
-    yield* Effect.all([pulling.pull, pulling.pull], { concurrency: 2 });
-    expect(["divergent:1", "divergent:2"]).toContain((yield* pulling.status).cursor);
+    const first = yield* pulling.pull.pipe(Effect.forkChild);
+    yield* Deferred.await(firstRead);
+    const second = yield* pulling.pull.pipe(Effect.forkChild);
+    yield* Deferred.succeed(releaseFirst, undefined);
+    yield* Fiber.join(first);
+    yield* Fiber.join(second);
+    expect(maxActiveReads).toBe(1);
+    expect(reads).toBe(2);
+    expect((yield* pulling.status).cursor).toBe("divergent:2");
     yield* pulling.drain;
     expect(yield* messages).toHaveLength(2);
     expect((yield* pulling.status).rows.map((r) => r.event_id).sort()).toEqual(["evt_X", "evt_Y"]);
@@ -614,12 +635,25 @@ it.effect("quarantines a changed eventId body and still commits Y in the same pa
   Effect.gen(function* () {
     const inbox = yield* Inbox.BridgeInbox;
     yield* inbox.ingestPage(null, { events: [event("evt_A")], cursor: "before", has_more: true });
+    const rawConflict = event("evt_A", {
+      raw_transport_field: "preserve these exact source bytes",
+      data: { ...event("x").data, text: "changed" },
+    });
     yield* inbox.ingestPage("before", {
-      events: [event("evt_A", { data: { ...event("x").data, text: "changed" } }), event("evt_Y")],
+      events: [rawConflict, event("evt_Y")],
       cursor: "after",
       has_more: false,
     });
     expect((yield* inbox.status).cursor).toBe("after");
     expect((yield* inbox.status).rows.map((r) => r.event_id).sort()).toEqual(["evt_A", "evt_Y"]);
+    const sql = yield* SqlClient.SqlClient;
+    const quarantined = yield* sql<{
+      event_id: string | null;
+      event_json: string;
+      reason: string;
+    }>`SELECT event_id, event_json, reason FROM bridge_inbox_quarantine`;
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]).toMatchObject({ event_id: "evt_A", reason: "event_conflict" });
+    expect(quarantined[0]!.event_json).toBe(stableStringify(rawConflict));
   }).pipe(Effect.provide(serviceLayer())),
 );

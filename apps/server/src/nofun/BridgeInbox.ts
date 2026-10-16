@@ -9,9 +9,22 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as Source from "./BridgeInboxSource.ts";
+
+// Separate inbox instances for the same owner must share one fetch + transaction lane.
+const pullLocks = new Map<string, Semaphore.Semaphore>();
+const pullLockFor = (owner: string) => {
+  let lock = pullLocks.get(owner);
+  if (!lock) {
+    lock = Semaphore.makeUnsafe(1);
+    pullLocks.set(owner, lock);
+  }
+  return lock;
+};
 
 const Id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
 const Timestamp = Schema.String.check(
@@ -89,6 +102,27 @@ export class BridgeInboxError extends Schema.TaggedError<BridgeInboxError>()("Br
 }) {}
 const failure = (operation: string) => (cause: unknown) =>
   new BridgeInboxError({ operation, cause });
+const isRetryableSqliteWrite = (error: BridgeInboxError) => {
+  if (error.operation !== "ingest_page") return false;
+  const seen = new Set<object>();
+  let current: unknown = error.cause;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const value = current as {
+      readonly code?: unknown;
+      readonly message?: unknown;
+      readonly cause?: unknown;
+    };
+    if (value.code === "SQLITE_BUSY" || value.code === "SQLITE_LOCKED") return true;
+    if (
+      typeof value.message === "string" &&
+      /database (?:is )?(?:busy|locked)|sqlite_busy|sqlite_locked/i.test(value.message)
+    )
+      return true;
+    current = value.cause;
+  }
+  return false;
+};
 type CallbackResult = { readonly status: number; readonly body: Readonly<Record<string, string>> };
 export class BridgeInbox extends Context.Service<
   BridgeInbox,
@@ -117,6 +151,7 @@ export class BridgeInbox extends Context.Service<
 const make = (config: Config | null, options: { readonly webhookSecret?: string }) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const pullLock = pullLockFor(config?.owner ?? "");
     const threads = yield* ThreadManagement.ThreadManagementService;
     const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
     const source = yield* Source.BridgeInboxSource;
@@ -162,14 +197,25 @@ const make = (config: Config | null, options: { readonly webhookSecret?: string 
       }
       return null;
     };
-    const quarantine = (rawEvent: unknown, reason: string, now: string) =>
+    const quarantine = (
+      rawEvent: unknown,
+      reason: string,
+      now: string,
+      eventId: string | null = null,
+    ) =>
       Effect.gen(function* () {
         const encoded = stableStringify(rawEvent);
         const digest = NodeCrypto.createHash("sha256").update(encoded).digest("hex");
-        yield* sql`INSERT INTO bridge_inbox_quarantine (owner, payload_digest, event_json, reason, received_at)
-          VALUES (${owner}, ${digest}, ${encoded}, ${reason}, ${now}) ON CONFLICT DO NOTHING`;
+        // The digest key deliberately preserves the reason and payload from the first sighting.
+        yield* sql`INSERT INTO bridge_inbox_quarantine (owner, payload_digest, event_id, event_json, reason, received_at)
+          VALUES (${owner}, ${digest}, ${eventId}, ${encoded}, ${reason}, ${now}) ON CONFLICT DO NOTHING`;
       });
-    const insert = (event: Message, now: string, quarantineConflict = false) =>
+    const insert = (
+      event: Message,
+      now: string,
+      quarantineConflict = false,
+      rawEvent: unknown = event,
+    ) =>
       Effect.gen(function* () {
         const route = routeFor(event);
         const rejected = disposition(event, false, now);
@@ -180,7 +226,8 @@ const make = (config: Config | null, options: { readonly webhookSecret?: string 
         }>`SELECT event_json FROM bridge_inbox WHERE owner = ${owner} AND event_id = ${event.eventId}`;
         // A changed body with the same ID is a conflict, never a second delivery.
         if (existing[0] && existing[0].event_json !== encoded) {
-          if (quarantineConflict) return yield* quarantine(event, "event_conflict", now);
+          if (quarantineConflict)
+            return yield* quarantine(rawEvent, "event_conflict", now, event.eventId);
           return yield* new BridgeInboxError({ operation: "event_conflict", cause: event.eventId });
         }
         yield* sql`INSERT INTO bridge_inbox (owner, event_id, event_json, route_json, status, reason, received_at, event_at)
@@ -227,7 +274,7 @@ const make = (config: Config | null, options: { readonly webhookSecret?: string 
                 yield* quarantine(rawEvent, "invalid_event", now);
                 continue;
               }
-              yield* insert(event.value, now, true);
+              yield* insert(event.value, now, true, rawEvent);
             }
             yield* sql`UPDATE bridge_inbox_consumers SET cursor = ${page.cursor} WHERE owner = ${owner} AND cursor IS ${previous}`;
           }),
@@ -372,8 +419,14 @@ const make = (config: Config | null, options: { readonly webhookSecret?: string 
         );
       const cursor = consumers[0]?.cursor ?? null;
       const page = yield* source.readPage(cursor);
-      yield* ingestPage(cursor, page);
-    });
+      yield* ingestPage(cursor, page).pipe(
+        Effect.retry({
+          schedule: Schedule.spaced("50 millis"),
+          times: 2,
+          while: isRetryableSqliteWrite,
+        }),
+      );
+    }).pipe(pullLock.withPermit);
     return BridgeInbox.of({ receiveCallback, ingestPage, pull, drain, status, summary });
   });
 
