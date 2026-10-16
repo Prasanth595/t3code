@@ -323,10 +323,10 @@ unreleased major and get its first beta build approved.
 `.github/workflows/mobile-android-apk.yml` checks Google Play hourly and publishes the newest
 builds on two tracks for users who can't join the Play testing group:
 
-- Alpha closed testing contains builds promoted for wider testing.
-- Internal testing contains newer, less-tested builds.
+- `beta` follows Alpha closed testing, with builds promoted for wider testing.
+- `internal` follows internal testing, with newer, less-tested builds.
 
-Both APKs live in the `android-nightly` release, with the track in each filename.
+Both APKs live in the `android-nightly` release, with `beta` or `internal` in each filename.
 Release notes describe their stability and link to each download. The mirror keeps only
 the newest available APK per track. Android submissions
 go to internal testing; the Alpha mirror updates after promotion to Alpha. The APK is the universal APK Play generates and signs from the

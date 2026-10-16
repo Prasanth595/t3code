@@ -141,20 +141,22 @@ async function main() {
   let release = readRelease(tag);
   const assets = release?.assets ?? [];
   const sections = [];
-  for (const { track, label, stability } of [
+  for (const { track, channel, label, stability } of [
     {
       track: "alpha",
-      label: "Alpha closed testing",
+      channel: "beta",
+      label: "Beta",
       stability:
         "Promoted for wider testing. Recommended over internal builds, but may still contain bugs.",
     },
     {
       track: "internal",
-      label: "Internal testing",
+      channel: "internal",
+      label: "Internal",
       stability: "Newest, less-tested builds. May contain serious bugs.",
     },
   ]) {
-    const prefix = `t3code-android-${track}-`;
+    const prefix = `t3code-android-${channel}-`;
     let available = assets.filter(
       (asset) => asset.name.startsWith(prefix) && asset.state === "uploaded" && asset.size > 0,
     );
@@ -182,11 +184,11 @@ async function main() {
         available = [{ name: apkName }];
         summary(`Published or verified \`${apkName}\` on \`${tag}\`.`);
         // Clean up only this track after its replacement is available. Retire
-        // the legacy unlabelled APK when the Alpha replacement is published.
+        // the legacy unlabelled APK when the beta replacement is published.
         for (const stale of assets) {
           const belongsToTrack =
             stale.name.startsWith(prefix) ||
-            (track === "alpha" && /^t3code-android-(?!alpha-|internal-).*\.apk$/.test(stale.name));
+            (track === "alpha" && /^t3code-android-(?!beta-|internal-).*\.apk$/.test(stale.name));
           if (belongsToTrack && stale.name.endsWith(".apk") && stale.name !== apkName) {
             gh("release", "delete-asset", tag, stale.name, "--yes");
           }
