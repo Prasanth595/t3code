@@ -1361,6 +1361,32 @@ describe("forward: dropped comments", () => {
     }),
   );
 
+  it.effect(
+    "an issue comment sent as feedback is not reported as dropped when someone else edits it",
+    () =>
+      Effect.gen(function* () {
+        // The session already has the instructor's words from the feedback relaunch.
+        const rig = rigFor([
+          ...STARTED,
+          {
+            event: "feedback_relaunching",
+            data: {
+              n: 1,
+              branch: "t3code/abc",
+              items: ["issue-comment:42"],
+              message: "Feedback 1 of 1",
+            },
+          },
+        ]);
+        const before = linesOf(rig);
+        scriptDropped(rig, [dropOf(42, "edited-by-other")]);
+        yield* forwardIn(rig);
+        assert.deepStrictEqual(rig.posted, []);
+        assert.deepStrictEqual(linesOf(rig), before);
+        assert.isFalse(linesOf(rig).some((l) => JSON.stringify(l).includes("comment-dropped 42")));
+      }),
+  );
+
   it.effect("a comment that is both dropped and listed twice is said once", () =>
     Effect.gen(function* () {
       const rig = rigFor();
