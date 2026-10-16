@@ -11,7 +11,14 @@ import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
 import { runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
-import { STOP_REQUESTS_DIR, stopRequestPath, takeStopRequest } from "./stop.ts";
+import { readProgress } from "./progress.ts";
+import {
+  STOP_REQUESTS_DIR,
+  notBuildingMessage,
+  requestStop,
+  stopRequestPath,
+  takeStopRequest,
+} from "./stop.ts";
 
 const tempDir = useTempDirs();
 
@@ -145,4 +152,109 @@ describe("takeStopRequest", () => {
       assert.strictEqual(NodeFS.existsSync(path), true);
     }),
   );
+});
+
+describe("requestStop", () => {
+  it("records a stop for a building run, once", () => {
+    const dataDir = tempDir();
+    seed(dataDir, BUILDING);
+    assert.strictEqual(
+      requestStop(dataDir, run10, () => T0 + 5),
+      "recorded",
+    );
+    const lines = readRun(dataDir, run10).entries;
+    const last = lines.at(-1)!;
+    assert.strictEqual(last.event, "stop_requested");
+    assert.deepStrictEqual(last.data, { by: "operator" });
+    assert.strictEqual(last.ms, T0 + 5);
+    assert.deepStrictEqual(last.cause, { step: "operator", reason: "stop-requested" });
+    const bytes = bytesOf(dataDir);
+    assert.strictEqual(
+      requestStop(dataDir, run10, () => T0 + 9),
+      "already-requested",
+    );
+    assert.strictEqual(bytesOf(dataDir), bytes);
+  });
+
+  it("writes nothing to a run that finished", () => {
+    const dataDir = tempDir();
+    seed(dataDir, [...BUILDING, FINISHED]);
+    const bytes = bytesOf(dataDir);
+    assert.strictEqual(
+      requestStop(dataDir, run10, () => T0 + 5),
+      "finished",
+    );
+    assert.strictEqual(bytesOf(dataDir), bytes);
+  });
+
+  for (const state of ["triage", "needs-info", "pr-open"] as const) {
+    it(`writes nothing to a run in ${state}`, () => {
+      const dataDir = tempDir();
+      seed(dataDir, [
+        { event: "claimed", data: { machine: "mac-mini", github_user: "rawphp" } },
+        { event: "state_changed", data: { from: "ready", to: state } },
+      ]);
+      const bytes = bytesOf(dataDir);
+      assert.strictEqual(
+        requestStop(dataDir, run10, () => T0 + 5),
+        "not-building",
+      );
+      assert.strictEqual(bytesOf(dataDir), bytes);
+    });
+  }
+
+  it("writes nothing to a run with no state yet", () => {
+    const dataDir = tempDir();
+    seed(dataDir, [BUILDING[0]!]);
+    assert.strictEqual(
+      requestStop(dataDir, run10, () => T0 + 5),
+      "not-building",
+    );
+  });
+
+  it("fails for a run with no ledger", () => {
+    assert.throws(() => requestStop(tempDir(), run10, () => T0), /not found|no such/i);
+  });
+});
+
+describe("notBuildingMessage", () => {
+  const messageFor = (events: ReadonlyArray<RunEvent>) => {
+    const dataDir = tempDir();
+    seed(dataDir, events);
+    return notBuildingMessage("ID", readProgress(readRun(dataDir, run10).entries));
+  };
+  const moved = (to: string): RunEvent =>
+    ({ event: "state_changed", data: { from: "ready", to } }) as RunEvent;
+
+  it("says a finished run is finished, with no way out", () => {
+    assert.strictEqual(
+      messageFor([...BUILDING, FINISHED]),
+      "run ID is not building: it is finished. Only a building run is stopped this way.",
+    );
+  });
+
+  it("says how a run in another state ends instead", () => {
+    const base = "run ID is not building: its state is";
+    const tail = "Only a building run is stopped this way.";
+    assert.strictEqual(
+      messageFor([BUILDING[0]!, moved("pr-open")]),
+      `${base} pr-open. ${tail} It ends when its pull request is merged or closed.`,
+    );
+    assert.strictEqual(
+      messageFor([BUILDING[0]!, moved("triage")]),
+      `${base} triage. ${tail} To end it, close its issue.`,
+    );
+    assert.strictEqual(
+      messageFor([BUILDING[0]!, moved("needs-info")]),
+      `${base} needs-info. ${tail} To end it, close its issue.`,
+    );
+    assert.strictEqual(messageFor([BUILDING[0]!, moved("stuck")]), `${base} stuck. ${tail}`);
+  });
+
+  it("says a run with no state has none yet", () => {
+    assert.strictEqual(
+      messageFor([BUILDING[0]!]),
+      "run ID is not building: it has no state yet. Only a building run is stopped this way. To end it, close its issue.",
+    );
+  });
 });
