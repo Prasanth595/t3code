@@ -162,6 +162,11 @@ export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill",
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
 
+export const MAX_ENVIRONMENT_ARTWORK_IMAGE_URL_LENGTH = 8_192;
+const EnvironmentArtworkImageUrl = TrimmedString.check(
+  Schema.isMaxLength(MAX_ENVIRONMENT_ARTWORK_IMAGE_URL_LENGTH),
+);
+
 export const SnapShotKeyChord = KeybindingShortcut.check(
   Schema.makeFilter(
     (shortcut) =>
@@ -401,7 +406,11 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
   /** Optional http(s) image shown in place of the built-in Dev/Nightly sidebar artwork. */
-  environmentArtworkImageUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  environmentArtworkImageUrl: EnvironmentArtworkImageUrl.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    // A stale oversized artwork value must not invalidate unrelated persisted preferences.
+    Schema.catchDecoding(() => Effect.succeedSome("")),
+  ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
   ),
@@ -1710,7 +1719,7 @@ export const ClientSettingsPatch = Schema.Struct({
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
-  environmentArtworkImageUrl: Schema.optionalKey(TrimmedString),
+  environmentArtworkImageUrl: Schema.optionalKey(EnvironmentArtworkImageUrl),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),

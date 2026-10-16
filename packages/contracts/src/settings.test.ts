@@ -8,6 +8,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  MAX_ENVIRONMENT_ARTWORK_IMAGE_URL_LENGTH,
   requiredScopesForProjectMutation,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
@@ -622,6 +623,18 @@ describe("ClientSettings environment artwork image", () => {
       decodeClientSettingsPatch({ environmentArtworkImageUrl: "  https://example.com/a.png  " })
         .environmentArtworkImageUrl,
     ).toBe("https://example.com/a.png");
+  });
+
+  it("bounds persisted artwork URLs so pasted image data cannot exhaust client storage", () => {
+    const oversized =
+      "data:image/png;base64," + "A".repeat(MAX_ENVIRONMENT_ARTWORK_IMAGE_URL_LENGTH);
+    expect(() => decodeClientSettingsPatch({ environmentArtworkImageUrl: oversized })).toThrow();
+    expect(
+      decodeClientSettings({ environmentArtworkImageUrl: oversized, timestampFormat: "12-hour" }),
+    ).toMatchObject({ environmentArtworkImageUrl: "", timestampFormat: "12-hour" });
+    expect(() =>
+      encodeClientSettings({ ...decodeClientSettings({}), environmentArtworkImageUrl: oversized }),
+    ).toThrow();
   });
 });
 

@@ -30,6 +30,7 @@ import {
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
+  MAX_ENVIRONMENT_ARTWORK_IMAGE_URL_LENGTH,
   MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PANEL_ANIMATION_DURATION_MS,
@@ -80,6 +81,7 @@ import {
   useTheme,
 } from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -1174,6 +1176,7 @@ export function AppearanceSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const environmentStageLabel = useEnvironmentStageLabel();
+  const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
   const glassOpacityRatio =
@@ -1358,14 +1361,14 @@ export function AppearanceSettingsPanel() {
           />
         ) : null}
 
-        {showEnvironmentIdentification && settings.environmentIdentificationMode === "artwork" ? (
+        {showEnvironmentIdentification && environmentIdentificationMode === "artwork" ? (
           <SettingsRow
             {...searchableSetting("environment-artwork-image")}
             description={
               settings.environmentArtworkImageUrl !== "" &&
               resolveCustomStageArtworkUrl(settings.environmentArtworkImageUrl) === null
-                ? "Not an http(s) URL, so the built-in artwork is shown."
-                : "Show an image from an http(s) URL in place of the built-in artwork. The built-in artwork returns if the image fails to load."
+                ? "Use an http(s) image URL; HTTPS pages require HTTPS images. Built-in artwork is shown."
+                : "Show a still frame from an http(s) image URL. HTTPS pages require HTTPS images. Built-in artwork returns if loading fails."
             }
             resetAction={
               settings.environmentArtworkImageUrl !==
@@ -1387,6 +1390,7 @@ export function AppearanceSettingsPanel() {
                 className="w-full sm:w-72"
                 value={settings.environmentArtworkImageUrl}
                 onCommit={(next) => updateSettings({ environmentArtworkImageUrl: next.trim() })}
+                maxLength={MAX_ENVIRONMENT_ARTWORK_IMAGE_URL_LENGTH}
                 placeholder="https://"
                 spellCheck={false}
                 aria-label="Environment artwork image URL"

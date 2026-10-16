@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
@@ -48,10 +48,12 @@ export function useSidebarStageBackdropVariant(enabled = true): SidebarStageBack
 
 /**
  * Returns the user's custom artwork URL when it is usable, otherwise null so the built-in art
- * renders. Only http(s) URLs are accepted: they are allowed by the desktop CSP's `img-src`, and
- * unlike pasted data URLs they keep persisted client settings small.
+ * renders. Secure web pages require HTTPS images; desktop and local HTTP pages can also use HTTP.
  */
-export function resolveCustomStageArtworkUrl(value: string): string | null {
+export function resolveCustomStageArtworkUrl(
+  value: string,
+  pageProtocol = typeof window === "undefined" ? "" : window.location.protocol,
+): string | null {
   const trimmed = value.trim();
   if (trimmed.length === 0) return null;
   let url: URL;
@@ -60,7 +62,9 @@ export function resolveCustomStageArtworkUrl(value: string): string | null {
   } catch {
     return null;
   }
-  return url.protocol === "https:" || url.protocol === "http:" ? trimmed : null;
+  return url.protocol === "https:" || (url.protocol === "http:" && pageProtocol !== "https:")
+    ? trimmed
+    : null;
 }
 
 /** Stage-channel header art; palettes mirror the per-channel app icons in `assets/`. */
@@ -71,32 +75,82 @@ export function SidebarStageBackdrop({
   variant: SidebarStageBackdropVariant;
   customImageUrl?: string | null;
 }) {
-  // Remember which URL failed rather than a boolean, so editing the URL retries automatically.
-  const [failedImageUrl, setFailedImageUrl] = useState<string | null>(null);
-  const showCustomImage = customImageUrl !== null && customImageUrl !== failedImageUrl;
-
   return (
     <div
       aria-hidden
       className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden"
     >
-      {showCustomImage ? (
-        <img
-          // Keyed by URL: a replaced image unmounts, so a late error from the previous URL can
-          // never mark the new one as failed.
-          key={customImageUrl}
-          alt=""
-          className="h-full w-full object-cover"
-          data-stage-art="custom"
-          decoding="async"
-          draggable={false}
-          onError={() => setFailedImageUrl(customImageUrl)}
-          src={customImageUrl}
-        />
+      {customImageUrl !== null ? (
+        <CustomStageBackdrop key={customImageUrl} imageUrl={customImageUrl} variant={variant} />
       ) : (
         <StageBackdropArt variant={variant} />
       )}
     </div>
+  );
+}
+
+function CustomStageBackdrop({
+  imageUrl,
+  variant,
+}: {
+  imageUrl: string;
+  variant: SidebarStageBackdropVariant;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const image = new Image();
+    let active = true;
+    const release = () => {
+      image.removeEventListener("load", onLoad);
+      image.removeEventListener("error", release);
+      image.removeAttribute("src");
+    };
+    image.decoding = "async";
+    const onLoad = () => {
+      const canvas = canvasRef.current;
+      if (!active || !canvas) return;
+      try {
+        const context = canvas.getContext("2d");
+        if (!context || image.naturalWidth === 0 || image.naturalHeight === 0) return;
+        const scale = Math.min(1, 2_048 / Math.max(image.naturalWidth, image.naturalHeight));
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        // Canvas draws an animated image's default/first frame. Draw once and release the source
+        // so decorative sidebar artwork never becomes a continuous animation/repaint loop.
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        setReady(true);
+      } catch {
+        // Unsupported images or canvas allocation failures keep the built-in artwork.
+      } finally {
+        release();
+      }
+    };
+    image.addEventListener("load", onLoad, { once: true });
+    image.addEventListener("error", release, { once: true });
+    image.src = imageUrl;
+    return () => {
+      active = false;
+      release();
+    };
+  }, [imageUrl]);
+
+  return (
+    <>
+      <canvas
+        ref={canvasRef}
+        className="h-full w-full object-cover"
+        data-stage-art={ready ? "custom" : undefined}
+        hidden={!ready}
+      />
+      {ready ? (
+        // The header's white brand and controls must remain legible over user-supplied images.
+        <div className="absolute inset-0 bg-black/70" />
+      ) : (
+        <StageBackdropArt variant={variant} />
+      )}
+    </>
   );
 }
 
