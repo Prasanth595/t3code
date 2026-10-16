@@ -160,10 +160,7 @@ describe("requestStop", () => {
   it("records a stop for a building run, once", () => {
     const dataDir = tempDir();
     seed(dataDir, BUILDING);
-    assert.strictEqual(
-      requestStop(dataDir, run10, () => T0 + 5),
-      "recorded",
-    );
+    assert.strictEqual(requestStop(dataDir, run10, () => T0 + 5).outcome, "recorded");
     const lines = readRun(dataDir, run10).entries;
     const last = lines.at(-1)!;
     assert.strictEqual(last.event, "stop_requested");
@@ -171,10 +168,7 @@ describe("requestStop", () => {
     assert.strictEqual(last.ms, T0 + 5);
     assert.deepStrictEqual(last.cause, { step: "operator", reason: "stop-requested" });
     const bytes = bytesOf(dataDir);
-    assert.strictEqual(
-      requestStop(dataDir, run10, () => T0 + 9),
-      "already-requested",
-    );
+    assert.strictEqual(requestStop(dataDir, run10, () => T0 + 9).outcome, "already-requested");
     assert.strictEqual(bytesOf(dataDir), bytes);
   });
 
@@ -182,10 +176,7 @@ describe("requestStop", () => {
     const dataDir = tempDir();
     seed(dataDir, [...BUILDING, FINISHED]);
     const bytes = bytesOf(dataDir);
-    assert.strictEqual(
-      requestStop(dataDir, run10, () => T0 + 5),
-      "finished",
-    );
+    assert.strictEqual(requestStop(dataDir, run10, () => T0 + 5).outcome, "finished");
     assert.strictEqual(bytesOf(dataDir), bytes);
   });
 
@@ -198,10 +189,7 @@ describe("requestStop", () => {
         { event: "state_changed", data: { from: "ready", to: state } },
       ]);
       const bytes = bytesOf(dataDir);
-      assert.strictEqual(
-        requestStop(dataDir, run10, () => T0 + 5),
-        "not-building",
-      );
+      assert.strictEqual(requestStop(dataDir, run10, () => T0 + 5).outcome, "not-building");
       assert.strictEqual(bytesOf(dataDir), bytes);
     },
   );
@@ -209,14 +197,23 @@ describe("requestStop", () => {
   it("writes nothing to a run with no state yet", () => {
     const dataDir = tempDir();
     seed(dataDir, [BUILDING[0]!]);
-    assert.strictEqual(
-      requestStop(dataDir, run10, () => T0 + 5),
-      "not-building",
-    );
+    assert.strictEqual(requestStop(dataDir, run10, () => T0 + 5).outcome, "not-building");
   });
 
   it("fails for a run with no ledger", () => {
     catchLedgerError(() => requestStop(tempDir(), run10, () => T0), LedgerNotFoundError);
+  });
+
+  it("returns the progress it read, so a refusal needs no second read", () => {
+    const dataDir = tempDir();
+    seed(dataDir, [
+      ...BUILDING,
+      { event: "state_changed", data: { from: "building", to: "pr-open" } },
+    ]);
+    const { outcome, seen } = requestStop(dataDir, run10, () => T0 + 5);
+    assert.strictEqual(outcome, "not-building");
+    assert.strictEqual(seen.state, "pr-open");
+    assert.match(notBuildingMessage("id", seen), /its state is pr-open/);
   });
 });
 

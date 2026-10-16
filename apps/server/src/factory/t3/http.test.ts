@@ -513,7 +513,11 @@ describe("GET /api/factory/runs/:id", () => {
     serving({}, async (call, { tokens }) => {
       const response = await call("GET", `/api/factory/runs/${ID}`, tokens.read);
       assert.strictEqual(response.status, 404);
-      assert.deepStrictEqual(await response.json(), { code: "run_not_found", id: ID });
+      assert.deepStrictEqual(await response.json(), {
+        code: "run_not_found",
+        id: ID,
+        message: `no run ${ID}`,
+      });
     }),
   );
 
@@ -619,7 +623,11 @@ describe("POST /api/factory/runs/:id/stop", () => {
     serving({}, async (call, { tokens, wakes }) => {
       const unknown = await stop(call, tokens.operate);
       assert.strictEqual(unknown.status, 404);
-      assert.deepStrictEqual(await unknown.json(), { code: "run_not_found", id: ID });
+      assert.deepStrictEqual(await unknown.json(), {
+        code: "run_not_found",
+        id: ID,
+        message: `no run ${ID}`,
+      });
       const bad = await stop(call, tokens.operate, "..%2F..%2Fetc%2Fpasswd");
       assert.strictEqual(bad.status, 400);
       assert.strictEqual((await json(bad)).code, "invalid_run_id");
@@ -670,7 +678,7 @@ describe("claims pause and resume", () => {
       assert.strictEqual(resumed.status, 200);
       assert.deepStrictEqual(await resumed.json(), {
         paused: false,
-        was_paused: true,
+        already: false,
         message: "claims resumed",
       });
       assert.isFalse(NodeFS.existsSync(pauseFile(dir)));
@@ -680,7 +688,7 @@ describe("claims pause and resume", () => {
       assert.strictEqual(again.status, 200);
       assert.deepStrictEqual(await again.json(), {
         paused: false,
-        was_paused: false,
+        already: true,
         message: "claims were not paused",
       });
     }),
