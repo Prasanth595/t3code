@@ -2,7 +2,7 @@
 
 ## T3 upstream merge
 
-The local `upstream/main` reference was refreshed on 2026-10-16 and merged through `a3e8cf69debae5942798cbe85845de49d6f84066`. `main` contains this upstream tip as an ancestor (`main...upstream/main` is 31 ahead, 0 behind). The upstream additions include the Clerk SDK refresh and orchestration queue-follow-up changes. The local branch retains its Docker deployment and Subpolar integration commits.
+The local `upstream/main` reference was refreshed on 2026-10-16 and merged through `a3e8cf69debae5942798cbe85845de49d6f84066`. `main` contains this upstream tip as an ancestor and is not behind it. The upstream additions include the Clerk SDK refresh and orchestration queue-follow-up changes. The local branch retains its Docker deployment and Subpolar integration commits.
 
 The fork's Docker deployment and image-publish workflow remain as local commits. The old SQLite layer change was superseded by upstream's current `apps/server/src/persistence/Sqlite.ts`, which already configures WAL, `busy_timeout`, and `synchronous = NORMAL`. The container readiness endpoint was ported into the current server HTTP route composition.
 
