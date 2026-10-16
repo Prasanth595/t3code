@@ -1,7 +1,6 @@
 import * as NodeZlib from "node:zlib";
 
-import react, { reactCompilerPreset } from "@vitejs/plugin-react";
-import babel from "@rolldown/plugin-babel";
+import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import compression from "compression";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
@@ -150,11 +149,7 @@ export default defineConfig(() => {
         ],
       }),
       tanstackRouter({ autoCodeSplitting: true }),
-      react(),
-      babel({
-        parserOpts: { plugins: ["typescript", "jsx"] },
-        presets: [reactCompilerPreset()],
-      }),
+      react({ compiler: true }),
       tailwindPlugins(bundledDev),
     ],
     optimizeDeps: {

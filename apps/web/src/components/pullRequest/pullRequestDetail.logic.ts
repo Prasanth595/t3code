@@ -948,7 +948,8 @@ export function buildPullRequestReferenceContext(
   input: PullRequestContextMetadata,
 ): ReviewCommentContext {
   const comment = pullRequestContextComment(input, []);
-  return { ...comment, id: `pr-reference:${input.number}` };
+  // Keyed by URL: the draft upserts by id, and two repositories can share a number.
+  return { ...comment, id: `pr-reference:${input.url}` };
 }
 
 const ANSWER_INSTRUCTIONS = [
