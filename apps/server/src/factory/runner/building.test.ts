@@ -2641,6 +2641,36 @@ describe("advance: a run stopped by hand", () => {
   );
 });
 
+describe("advance: a stop line that is there though the run is no longer building", () => {
+  it.effect("on a pr-open run reads the pull request as usual and never sticks the run", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...PR_OPEN_RUN, STOP_REQUESTED]);
+      rig.world.pr = { ...defaultPr(), isDraft: false };
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(rig.t3, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("on a needs-info run ends it as needs-info", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([
+        ...STARTED,
+        { event: "questions_posted", data: { questions: "Which one?" } },
+        moved("building", "needs-info"),
+        STOP_REQUESTED,
+      ]);
+      rig.world.issue = issueDetail("needs-info", []);
+      setStatus(rig, "completed", "Which one?\nFACTORY-STOP: needs-info");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED("needs-info"));
+    }),
+  );
+});
+
 describe("watch and timeLimit: the end of a run", () => {
   it.effect("watch leaves a stopped run to advance", () =>
     Effect.gen(function* () {

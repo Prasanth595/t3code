@@ -2398,16 +2398,27 @@ describe("following a building run", () => {
     }),
   );
 
-  it.effect("a stop request is recorded for a run whose gate is running too", () =>
+  it.effect("a stop request is not taken for a run whose gate is running", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       fake.gateLocks = [runIdToString(rid(40))];
       fake.stopRequests[`${REPO}#40`] = "recorded";
       const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.ok(!fake.calls.includes(`stop_request ${REPO}#40`), fake.calls.join("\n"));
+      assert.equal(runLine(lines, `${REPO}#40 `), `${REPO}#40 building: gate running`);
+    }),
+  );
+
+  it.effect("a stop request for a run that is not building is dropped, and the pass says so", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.stopRequests[`${REPO}#40`] = "not-building";
+      const { lines } = yield* pass(fake, machine([REPO], 3));
       assert.equal(
         runLine(lines, `${REPO}#40 `),
-        `${REPO}#40 building: stop requested by hand, gate running`,
+        `${REPO}#40 building: stop request dropped: the run is not building, session still running`,
       );
     }),
   );

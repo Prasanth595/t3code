@@ -112,6 +112,30 @@ describe("takeStopRequest", () => {
     }),
   );
 
+  for (const [name, events] of [
+    [
+      "pr-open",
+      [...BUILDING, { event: "state_changed", data: { from: "building", to: "pr-open" } }],
+    ],
+    [
+      "needs-info",
+      [...BUILDING, { event: "state_changed", data: { from: "building", to: "needs-info" } }],
+    ],
+    ["no state yet", [BUILDING[0]!]],
+  ] as ReadonlyArray<readonly [string, ReadonlyArray<RunEvent>]>) {
+    it.effect(`drops a request for a run at ${name}: no line, the file removed`, () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        seed(dataDir, events);
+        const path = request(dataDir);
+        const bytes = bytesOf(dataDir);
+        assert.strictEqual(yield* takeStopRequest(dataDir, run10, () => T0 + 5), "not-building");
+        assert.strictEqual(bytesOf(dataDir), bytes);
+        assert.strictEqual(NodeFS.existsSync(path), false);
+      }),
+    );
+  }
+
   it.effect("is an error when the run has no ledger, and the file is kept", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
