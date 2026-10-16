@@ -293,6 +293,33 @@ export interface UnassignedClaim {
   readonly state: State;
 }
 
+/**
+ * What cut-short scans remember for the life of the factory process: the issues a scan judged
+ * not the factory's, keyed by repo, issue, state label and GitHub's `updatedAt`. Any change to
+ * the issue moves `updatedAt`, so a remembered judgement stands only while nothing changed.
+ */
+export class ClaimMemo {
+  private readonly notOurs = new Set<string>();
+
+  private key(repo: string, issue: number, state: State, updatedAt: string): string {
+    return `${repo}#${issue}:${state}@${updatedAt}`;
+  }
+
+  judgedNotOurs(repo: string, issue: number, state: State, updatedAt: string): boolean {
+    return this.notOurs.has(this.key(repo, issue, state, updatedAt));
+  }
+
+  rememberNotOurs(repo: string, issue: number, state: State, updatedAt: string): void {
+    this.notOurs.add(this.key(repo, issue, state, updatedAt));
+  }
+}
+
+/** What a cut-short scan found: the claims, and the issues whose label history could not be read. */
+export interface ClaimScan {
+  readonly claims: Array<UnassignedClaim>;
+  readonly unread: Array<{ readonly issue: number; readonly error: GitHubError }>;
+}
+
 /** A comment the factory posted: its text without the marker, and when GitHub says it was created. */
 export interface FactoryComment {
   readonly body: string;
@@ -1175,12 +1202,20 @@ export const makeGitHub = (options: GitHubOptions) => {
    * machine's claims and is left out. `before` and GitHub's `updatedAt` are both
    * `YYYY-MM-DDTHH:MM:SSZ`, so they compare as text. An issue whose `updatedAt` is not in that
    * form is left out: an issue that cannot be dated is not moved. The label history is read
-   * only for an issue that passed the other two checks, and one that cannot be read is an error.
+   * only for an issue that passed the other two checks, is not in `known` (the issues the pass
+   * has a run for), and was not judged not ours by `memo` at the same `updatedAt`. A history
+   * that cannot be read is reported in `unread` for that issue; the scan goes on with the rest.
    */
-  const unassignedClaims = (before: string, user: string): GitHubEffect<Array<UnassignedClaim>> =>
+  const unassignedClaims = (
+    before: string,
+    user: string,
+    known: ReadonlySet<number>,
+    memo: ClaimMemo,
+  ): GitHubEffect<ClaimScan> =>
     Effect.gen(function* () {
       yield* requireUtcSecond(before);
       const found: Array<UnassignedClaim> = [];
+      const unread: ClaimScan["unread"] = [];
       for (const state of ["triage", "building"] as const) {
         const args = [
           ...repoArgs(["issue", "list"]),
@@ -1194,23 +1229,30 @@ export const makeGitHub = (options: GitHubOptions) => {
           "number,assignees,updatedAt",
         ];
         const raw = yield* ghJson(args, ClaimedRows, "a JSON array of issues");
-        const numbers = raw
+        const rows = raw
           .filter((i) => i.assignees.length === 0)
           .filter((i) => isUtcSecond(i.updatedAt) && i.updatedAt < before)
-          .map((i) => i.number)
-          .sort((a, b) => a - b);
-        for (const number of numbers) {
-          const history = yield* readHistory(number);
+          .toSorted((a, b) => a.number - b.number);
+        for (const { number, updatedAt } of rows) {
+          if (known.has(number) || memo.judgedNotOurs(repo, number, state, updatedAt)) continue;
+          const read = yield* Effect.result(readHistory(number));
+          if (read._tag === "Failure") {
+            unread.push({ issue: number, error: read.failure });
+            continue;
+          }
+          const history = read.success;
           const labelledBy = history.timelineItems.nodes
             .toReversed()
             .find((e) => e.__typename === "LabeledEvent" && e.label.name === stateLabel(state));
           const actor = labelledBy?.actor ?? null;
           if (actor !== null && actor.login.toLowerCase() === user.toLowerCase()) {
             found.push({ issue: number, state });
+          } else {
+            memo.rememberNotOurs(repo, number, state, updatedAt);
           }
         }
       }
-      return found;
+      return { claims: found, unread };
     });
 
   /**

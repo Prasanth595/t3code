@@ -41,6 +41,13 @@ export type Loaded =
   /** The name of a repo that could not be loaded, already reported. */
   | { readonly kind: "broken"; readonly name: string };
 
+/** What the tracker's cut-short scan found: see `unassignedClaims` on the tracker. */
+export interface ClaimScanResult {
+  readonly claims: ReadonlyArray<UnassignedClaim>;
+  /** Issues whose label history could not be read, each with the tracker's message. */
+  readonly unread: ReadonlyArray<{ readonly issue: number; readonly message: string }>;
+}
+
 /** Everything a pass reads and writes. */
 export interface PassWorld {
   /** The repo's project config, from `.dw/config.yml` at the tip of its default branch. */
@@ -56,10 +63,14 @@ export interface PassWorld {
   readonly readyIssues: (repo: Repo) => Effect.Effect<Listing<number>, PassError>;
   /** The open `factory:triage` issues the factory's login is the only assignee of. */
   readonly triageIssues: (repo: Repo) => Effect.Effect<Listing<number>, PassError>;
-  /** The claims of this factory's that were cut short: see `unassignedClaims` on the tracker. */
+  /**
+   * The claims of this factory's that were cut short: see `unassignedClaims` on the tracker.
+   * `known` is the issues the pass has a run for, whose label history is not read.
+   */
   readonly unassignedClaims: (
     repo: Repo,
-  ) => Effect.Effect<ReadonlyArray<UnassignedClaim>, PassError>;
+    known: ReadonlySet<number>,
+  ) => Effect.Effect<ClaimScanResult, PassError>;
   /** Moves a claim that was cut short to `factory:proposed`, with the cut-short comment. */
   readonly releaseClaim: (repo: Repo, issue: number, from: State) => Effect.Effect<void, PassError>;
   /** The open issues the tracker marks as blocking the issue. */
@@ -504,6 +515,13 @@ class Known {
     return this.infos.filter((i) => i.id.issue === String(issue) && sameRepo(i.id.repo, repo));
   }
 
+  /** The issues this pass knows a run for in the repo. */
+  issues(repo: string): ReadonlySet<number> {
+    return new Set(
+      this.infos.filter((i) => sameRepo(i.id.repo, repo)).map((i) => Number(i.id.issue)),
+    );
+  }
+
   /** Reads the issue's runs again. A ledger that cannot be read is an error line, once a pass. */
   refresh(world: PassWorld, pass: Pass, repo: string, issue: number): Effect.Effect<void> {
     return Effect.matchEffect(world.unfinishedRuns({ repo, issue }), {
@@ -579,7 +597,7 @@ const unassignedClaims = (
       if (loaded.kind !== "ready") continue;
       const repo = loaded.repo;
       const name = repo.watched.repo;
-      const issues = yield* Effect.result(world.unassignedClaims(repo));
+      const issues = yield* Effect.result(world.unassignedClaims(repo, known.issues(name)));
       if (issues._tag === "Failure") {
         yield* pass.fail(
           null,
@@ -591,7 +609,17 @@ const unassignedClaims = (
         );
         continue;
       }
-      for (const { issue, state } of issues.success) {
+      for (const { issue, message } of issues.success.unread) {
+        yield* pass.fail(
+          null,
+          passError(
+            "tracker",
+            `${name}${mention(issue)}: cannot read its label history: `,
+            message,
+          ),
+        );
+      }
+      for (const { issue, state } of issues.success.claims) {
         if (known.of(name, issue).length > 0) continue;
         const notes = pass.notes(`${name}${mention(issue)}`, state);
         const released = yield* Effect.result(world.releaseClaim(repo, issue, state));
