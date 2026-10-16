@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Points `current` at the version installed before it, restarts the LaunchAgent job and
-# checks it comes up. Exits 1 when there is no earlier version or the restored one is unhealthy.
+# checks it comes up. Also reinstalls the log rotation job. Exits 1 when there is no earlier
+# version or the restored one is unhealthy.
 set -euo pipefail
 
 source "$(dirname "$0")/lib/t3fac.sh"
@@ -15,6 +16,7 @@ target=$(readlink "$root/previous")
 from=$(readlink "$root/current" || true)
 ln -sfn "$target" "$root/current"
 
+restart_logrotate_job_or_warn
 restart_job
 
 # Only now is the rollback done; a failed restart above leaves `previous` for a rerun.

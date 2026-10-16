@@ -49,7 +49,7 @@ This is an experiment. The Rust softfac keeps running and keeps building its rep
       GitHub issues, labels, PRs              <base>/factory/runs/*.jsonl
 ```
 
-One process, one binary, one log. One LaunchAgent runs the server; #60 adds a second, small one that rotates the log (see "Decisions since the draft"). Agent sessions are ordinary T3 threads, so the T3 UI shows them next to a Factory page.
+One process, one binary, one log. One LaunchAgent runs the server; a second, `io.github.rawphp.t3fac.logrotate`, only rotates the log on a timer (see "Decisions since the draft"). Agent sessions are ordinary T3 threads, so the T3 UI shows them next to a Factory page.
 
 ## Code layout in the fork
 
@@ -107,7 +107,7 @@ The behaviour is softfac's, as written down in `docs/lifecycle.md` and pinned by
 | Ledger copies thread id, branch, worktree path and run ordinals                              | The ledger records factory events. Thread facts are read from `ProjectionStoreV2` when needed.                                                          |
 | `forward-wait`, `gate-sending` and similar steps survive a crash between "send" and "record" | Kept, but simpler: T3's command receipts dedupe a retried `softfac:<run>:…` command id in the same process                                              |
 | Gate runs as a detached `softfac gate` child that outlives the daemon                        | Gate runs through `process.ts` inside the server. A server restart kills it, and the next pass re-runs the gate from a fresh checkout.                  |
-| `t3 install`, `rollback`, pairing, Open T3 deadline, two LaunchAgents                        | One binary, versioned as a whole, installed by `install.sh` and rolled back by `rollback.sh`. One LaunchAgent, and a log-rotation one with #60 (below). |
+| `t3 install`, `rollback`, pairing, Open T3 deadline, two LaunchAgents                        | One binary, versioned as a whole, installed by `install.sh` and rolled back by `rollback.sh`. Two LaunchAgents: the server and the log rotator (below). |
 | `status`, `runs list/show/stop`, menubar                                                     | The Factory page and `/api/factory/*`. A small CLI can come later if needed.                                                                            |
 
 Kept exactly:
@@ -123,7 +123,7 @@ Persistence: JSONL files under `<base>/factory/`, the same layout as `~/.local/s
 - **Factory HTTP routes use T3's auth, with no RPC (#57).** `apps/server/src/factory/t3/http.ts` is a plain route layer merged into `layerMakeRoutes`, and `t3/auth.ts` authenticates each request through `EnvironmentAuth.authenticateHttpRequest` and checks scopes with `AuthHttp.requireEnvironmentScope`, so paired, relay and tunnel sessions sign in exactly as they do for T3's own HTTP API. Nothing is added to `ws.ts`, `rpc.ts` or `packages/contracts`; Decided 1 has the detail.
 - **Attention items and the macOS notification (#58).** An `Attention` service keeps the open items that need a person (ledger `attention` events, runs in `stuck` or `needs-info`, a config that fails to load, three pass errors in a row) in `<base>/factory/attention.json`, clears each when its condition clears, and posts one macOS notification per new item through `process.ts` running `osascript` with the text as argv. `notify: false` in the machine config keeps the list and turns the notification off.
 - **Install health check, auto-rollback and the hand-back runbook (#59).** After restarting the job, `install.sh` waits up to `T3FAC_HEALTH_WAIT` seconds (default 90) for the port to accept connections and for a `factory started` or `no factory config` log line written after the restart, and otherwise runs `rollback.sh` and exits 1. `factory/README.md` "Recovery" is the runbook for rolling back by hand, handing this repo back to the Rust factory and moving it back.
-- **A separate log-rotation LaunchAgent (#60, not built yet).** #60 adds `io.github.rawphp.t3fac.logrotate`, which runs `factory/scripts/rotate-log.sh` every 600 seconds and copytruncates `~/Library/Logs/t3fac/t3fac.log`, because a crash-looping server writes the most log and is the one that cannot rotate it. Once it lands, it replaces "one LaunchAgent" in Shape: the fork has two.
+- **A separate log-rotation LaunchAgent (#60).** `io.github.rawphp.t3fac.logrotate` runs `rotate-log.sh` every 600 seconds and copytruncates `~/Library/Logs/t3fac/t3fac.log`, because a crash-looping server writes the most log and is the one that cannot rotate it. `install.sh` and `rollback.sh` copy the script from `factory/scripts/` to `~/.local/share/t3fac/` and reload the job before restarting the server.
 - **Factory CI's `Lint` job, with the gate unchanged (#56).** `factory-ci.yml` has a `Lint` job beside `Check` that runs `vp check`, the command upstream's own Lint job runs. `check.sh`, and so the gate, do not run it.
 - **Remote and phone use through the fork's own served web, with no native mobile screen (#61, not built yet).** The Factory pages will be reached over the tailnet from the fork server's web, paired like any T3 browser, and work at phone widths. The T3 mobile app on phones is upstream's App Store build and never contains fork code, so there is no native factory screen.
 
@@ -146,14 +146,14 @@ The rule is the one softfac already has: one factory per repo.
 - The fork watches only repos that are removed from the Rust factory's `repos` list. Start with one low-stakes repo. Both factories use the same labels, assignee and comment markers, so sharing a repo would make them claim each other's issues.
 - Separate everything else:
 
-|              | Rust softfac                                        | Fork                                                                      |
-| ------------ | --------------------------------------------------- | ------------------------------------------------------------------------- |
-| T3 base dir  | `~/.config/softfac/t3`                              | `~/.config/t3fac`                                                         |
-| Port         | 3874                                                | 3876                                                                      |
-| LaunchAgent  | `io.github.rawphp.softfac`, `com.rawphp.softfac.t3` | `io.github.rawphp.t3fac`, and `io.github.rawphp.t3fac.logrotate` with #60 |
-| Factory data | `~/.local/share/softfac`                            | `~/.config/t3fac/factory`                                                 |
-| Repo clones  | `repos[].path`                                      | separate clones, never the same `path`                                    |
-| Logs         | `~/Library/Logs/softfac`                            | `~/Library/Logs/t3fac`                                                    |
+|              | Rust softfac                                        | Fork                                                         |
+| ------------ | --------------------------------------------------- | ------------------------------------------------------------ |
+| T3 base dir  | `~/.config/softfac/t3`                              | `~/.config/t3fac`                                            |
+| Port         | 3874                                                | 3876                                                         |
+| LaunchAgent  | `io.github.rawphp.softfac`, `com.rawphp.softfac.t3` | `io.github.rawphp.t3fac`, `io.github.rawphp.t3fac.logrotate` |
+| Factory data | `~/.local/share/softfac`                            | `~/.config/t3fac/factory`                                    |
+| Repo clones  | `repos[].path`                                      | separate clones, never the same `path`                       |
+| Logs         | `~/Library/Logs/softfac`                            | `~/Library/Logs/t3fac`                                       |
 
 `t3fac` is a working name.
 
