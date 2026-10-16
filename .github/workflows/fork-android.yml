@@ -1,0 +1,152 @@
+name: Fork Android
+
+# Builds the signed fork Android APK and adds it to the release that Fork
+# Release published for the same commit. It runs after Fork Release, outside
+# its concurrency group, so the slow Gradle build never delays the next
+# release. It never creates a release, and a failure only marks this workflow.
+# A run from a branch builds that branch and uploads the APK as a workflow
+# artifact instead. See docs/fork.md "Android app".
+
+on:
+  workflow_run:
+    workflows: [Fork Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit of main whose release gets the APK. Empty means the newest main. Ignored on a branch.
+        type: string
+        default: ""
+
+# A newer release makes an APK for an older one pointless.
+concurrency:
+  group: fork-android
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    name: Android APK
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      # `publish` is true for main. A branch run names the APK after the newest release.
+      - id: target
+        name: Resolve commit and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha || inputs.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != "workflow_run" && "$GITHUB_REF" != "refs/heads/main" ]]; then
+            build_sha="$GITHUB_SHA"
+            tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')"
+            publish=false
+          else
+            build_sha="${RUN_SHA:-$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)}"
+            # Fork Release names each release "... (<first 12 characters of the commit>)".
+            tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 50 --json tagName,name \
+              --jq "[.[] | select(.name | contains(\"(${build_sha:0:12})\"))][0].tagName // empty")"
+            publish=true
+          fi
+          if [[ -z "$tag" ]]; then
+            echo "::error title=No release::Fork Release has no release for ${build_sha}. This workflow only adds the APK to an existing release."
+            exit 1
+          fi
+          {
+            echo "sha=$build_sha"
+            echo "tag=$tag"
+            echo "version=${tag#v}"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.target.outputs.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      # `persist-credentials: false` makes checkout walk the submodules, and a
+      # submodule link under .repos/ has no URL. Drop the stored token here
+      # instead, before any build code runs. checkout v6 keeps it in a config
+      # file that .git/config includes.
+      - name: Remove the checkout token
+        run: |
+          set -euo pipefail
+          for key in $(git config --local --name-only --get-regexp '^includeif\.' || true); do
+            rm -f "$(git config --local --get "$key")"
+            git config --local --unset-all "$key"
+          done
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          if git config --get-regexp 'extraheader' >/dev/null; then
+            echo "The checkout token is still configured." >&2
+            exit 1
+          fi
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+      - run: vp install --filter=@t3tools/mobile...
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v5
+
+      # Android refuses an update with a lower version code, and a run number
+      # restarts with each new workflow. The commit time in minutes since
+      # 2026-01-01 only grows along main.
+      - name: Build unsigned APK
+        env:
+          T3CODE_MOBILE_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          T3CODE_ANDROID_VERSION_CODE="$(( ($(git show -s --format=%ct HEAD) - 1767225600) / 60 ))"
+          export T3CODE_ANDROID_VERSION_CODE
+          echo "Version code ${T3CODE_ANDROID_VERSION_CODE}, version name ${T3CODE_MOBILE_VERSION}."
+          scripts/fork-android-apk.sh build "$RUNNER_TEMP/unsigned.apk"
+
+      # The only step that sees the signing secrets.
+      - name: Sign APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_KEYSTORE_PASSWORD" || -z "$ANDROID_KEY_ALIAS" ]]; then
+            echo "ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS are required." >&2
+            exit 1
+          fi
+          export ANDROID_KEYSTORE="$RUNNER_TEMP/fork-release.jks"
+          trap 'rm -f "$ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE"
+          mkdir -p release-android
+          scripts/fork-android-apk.sh sign "$RUNNER_TEMP/unsigned.apk" \
+            "release-android/t3code-${{ steps.target.outputs.version }}-android.apk"
+
+      - name: Add the APK to the release
+        if: steps.target.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ steps.target.outputs.tag }}" release-android/* --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Upload the APK of a branch run
+        if: steps.target.outputs.publish != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-android
+          path: release-android/*
+          if-no-files-found: error
+          retention-days: 3

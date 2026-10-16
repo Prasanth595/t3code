@@ -108,6 +108,16 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
+// Fork builds (scripts/fork-android-apk.sh) install next to the store app and
+// update in place, so they set their own package and a growing version code.
+// They set the version name through upstream's T3CODE_MOBILE_VERSION.
+const androidPackage = repoEnv.T3CODE_ANDROID_PACKAGE?.trim() || variant.androidPackage;
+const androidVersionCode = repoEnv.T3CODE_ANDROID_VERSION_CODE
+  ? Number(repoEnv.T3CODE_ANDROID_VERSION_CODE)
+  : undefined;
+if (androidVersionCode !== undefined && !Number.isSafeInteger(androidVersionCode)) {
+  throw new Error("T3CODE_ANDROID_VERSION_CODE must be an integer.");
+}
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -293,7 +303,8 @@ const config: ExpoConfig = {
   },
   android: {
     icon: variant.assets.appIcon,
-    package: variant.androidPackage,
+    package: androidPackage,
+    ...(androidVersionCode !== undefined ? { versionCode: androidVersionCode } : {}),
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),

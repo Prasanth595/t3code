@@ -40,7 +40,7 @@ They replace the upstream Nightly app and keep its data.
 
 ## App icon
 
-The fork replaces the nightly icons with the Tick3d lightning icon. The source is `assets/fork/tick3d-macos.svg`. The desktop app, its notifications and the bundled web page use these files. The mobile app comes from upstream and keeps its icon. To change the icon, edit the SVG and run:
+The fork replaces the nightly icons with the Tick3d lightning icon. The source is `assets/fork/tick3d-macos.svg`. The desktop app, its notifications and the bundled web page use these files. The fork Android APK keeps the upstream nightly icon. To change the icon, edit the SVG and run:
 
 ```sh
 S=assets/fork/tick3d-macos.svg N=assets/nightly T=$(mktemp -d)
@@ -118,7 +118,7 @@ A headless server that runs as the upstream background service (`t3 service inst
 - A release is ready when it has `SHA256SUMS`. A version that rolled back or failed is not tried again. A newer release is tried.
 - The machine map command Install update (`installUpdate`) works on such a server too (MM-505). `whenIdle: false` installs the newest fork release now. `whenIdle: true` installs it at the first check with no running agent turn or background shell, also when `forkAutoUpdate` is off.
 - A restart stops the running turns. The upstream setting "Continue threads after restarts" (`continueThreadsAfterServerUpdate`, on by default) and "Recover interrupted agents" continue them after the update.
-- "Update everything" and `t3 update` also install fork releases. A self-update request for a version that has no fork release installs the newest fork release instead. The mobile app comes from upstream and offers upstream versions, so its "Check for updates" installs the newest fork release.
+- "Update everything" and `t3 update` also install fork releases. A self-update request for a version that has no fork release installs the newest fork release instead. The Play Store app checks upstream releases, so its "Check for updates" installs the newest fork release. The fork Android APK checks the fork releases.
 - The code is in `apps/server/src/fork/ForkUpdates.ts` and `apps/server/src/fork/forkReleases.ts`.
 
 ## Deploy a local build
@@ -439,11 +439,26 @@ The server setting `machineMap` connects this server to the machine map portal. 
 - Installed portal: the portal installs as an app with an offline page and an app badge. Turn on Web Push per device in Clients > "Notifications on this device". Pushes go out for health alerts, Inbox proposals, sign-ins that wait for approval and the pause (MM-1801 to MM-1809).
 - Deploy the portal: `.github/workflows/fork-machine-map-deploy.yml` tests and deploys it from main when `apps/machine-map` or its contracts change, with the GitHub secret `CLOUDFLARE_DEPLOY_TOKEN` (Workers Scripts and Workers Routes edit). Do not deploy by hand: a deploy from a branch rolls back main. The Worker needs the secrets `SECRET_KEY` and `CF_API_TOKEN`.
 
+## Android app
+
+`.github/workflows/fork-android.yml` ("Fork Android") adds `t3code-<version>-android.apk` to the release after each successful Fork Release of main. It is a local Gradle build with `scripts/fork-android-apk.sh`, so the fork needs no Expo or Google Play account.
+
+- It runs outside the Fork Release concurrency group, so the slow Gradle build never delays the next release. A newer run cancels an older one.
+- It only uploads to an existing release, never creates one. A failure marks only Fork Android and does not call the repair agent. A run from a branch uploads the APK as a workflow artifact.
+- The APK is the nightly ("Preview") app with the package `com.yardenzamir.t3code`. It installs next to the store app and speaks the protocol of fork main. It holds arm64 code only.
+- It takes no over-the-air updates, because those come from the upstream Expo project.
+- To install it, open the APK from the release on the phone and allow installs from that browser. Install a newer APK over it to update.
+- The version name is the fork release version. The version code is the commit time in minutes since 2026-01-01, so it only grows along main.
+- The fork key in `_shared/android-signing/` signs every APK. The repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS` hold the same key. Only the signing step sees them. Android refuses an update that has another key, so do not replace it.
+- Known gaps: no push notifications, because the build has no `google-services.json`. `t3code://` links open the Play Store app, because the APK uses the `t3code-preview` scheme.
+- Upstream's mobile workflows need Expo, Google Play or Blacksmith runners. They are disabled on the fork, like `ci.yml`.
+
 ## Secrets and variables
 
 | Name                                                                                    | Kind               | Use                                                                                                                                                                                       |
 | --------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CSC_LINK`, `CSC_KEY_PASSWORD`                                                          | secret             | macOS signing certificate.                                                                                                                                                                |
+| `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`             | secret             | Android signing key. See "Android app".                                                                                                                                                   |
 | `FORK_SYNC_TOKEN`                                                                       | secret             | Fine-grained token for this repository with Contents and Workflows read and write. Without it, the push fails when upstream changes a workflow file, and the push does not start Fork CI. |
 | `T3_AGENT_WEBHOOK_URL`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`                | secret, optional   | Webhook URL of the repair agent task, and the Cloudflare Access service token that the call needs. Without the URL, no agent is notified.                                                 |
 | `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_TEMPLATE`, `CLERK_CLI_OAUTH_CLIENT_ID`, `RELAY_URL` | variable, optional | T3 Connect config. Without them, the build has no T3 Connect.                                                                                                                             |
