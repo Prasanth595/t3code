@@ -71,6 +71,7 @@ SUBPOLAR_MANAGER_TOKEN=<random secret of at least 32 characters>
 SUBPOLAR_STORAGE_ROOT=/workspaces
 SUBPOLAR_DOCKER_HOST_STORAGE_ROOT=<volume Mountpoint from docker volume inspect>
 SUBPOLAR_DOCKER_GID=<numeric group that can access /var/run/docker.sock>
+SUBPOLAR_ACP_WORKER_COMMAND=["/usr/local/bin/subpolar-acp-worker"]
 ```
 
 The host directory must be the same backing storage mounted as `/workspaces`
@@ -84,17 +85,25 @@ Start the optional manager from the repository root with
 `docker compose --env-file docker/.env -f docker/compose.yaml --profile subpolar up -d --build`.
 Configure the Subpolar provider through T3's existing local ACP command setting,
 using the installed `subpolar-acp` executable or Bun with
-`packages/subpolar-acp/src/cli.ts` as its argument. The manager token is passed
-to the server process so the ACP bridge can authenticate; keep it out of client
-configuration and logs. The ACP bridge uses local mode by default; setting
-`SUBPOLAR_ACP_EXECUTION=managed` selects the authenticated worker-process proxy.
-Managed mode also requires `SUBPOLAR_ACP_WORKER_COMMAND` as a JSON argv array.
-The stock worker image does not contain the Subpolar ACP/Pi executable, model
-credentials, or an approved model-network path, so managed mode cannot run a
-real Pi turn until those are supplied in a custom worker image/runtime setup.
-The manager has focused unit coverage; the ACP proxy tests could not run in
-this checkout because workspace dependencies are missing, and no live Docker
-daemon verification has been performed.
+`packages/subpolar-acp/src/cli.ts` as its argument. Set
+`SUBPOLAR_ACP_EXECUTION=managed` in the server environment to select the
+authenticated worker-process proxy. The worker image includes the ACP bridge,
+Pi SDK, and `/usr/local/bin/subpolar-acp-worker`; set
+`SUBPOLAR_ACP_WORKER_COMMAND` to the JSON argv array shown above. The manager
+token is passed only to the server process so the ACP bridge can authenticate.
+The worker image contains no gateway token, T3 state, account credentials, or
+Docker socket.
+
+Workers currently run with Docker networking disabled. They therefore cannot
+reach a model API or a future credential broker, and the image does not include
+account credentials. The packaged Pi runtime is ready for the worker process,
+but a real Pi turn cannot complete until a filtered gateway provides the
+approved model path and T3-owned credential access. Do not enable direct worker
+networking as a workaround.
+
+The manager and worker protocol have focused unit coverage. A live Docker build
+and container verification have not been performed where no Docker daemon is
+available.
 
 ## Backup and restore
 
