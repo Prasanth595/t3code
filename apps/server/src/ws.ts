@@ -121,7 +121,6 @@ import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
-import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -239,11 +238,8 @@ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReact
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
-import * as MachineMap from "./fork/machineMap/MachineMap.ts";
-import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
-import { guardOwnerOnlyPatch, requireLocalDesktop } from "./fork/machineMap/browserAccess.ts";
-import * as WebPush from "./fork/webPush/WebPush.ts";
-import { isLocalDesktopSubject, isMachineSubject } from "./fork/machineMap/machineAccess.ts";
+import * as ForkWs from "./fork/forkWs.ts";
+import { guardOwnerOnlyPatch } from "./fork/machineMap/browserAccess.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -549,17 +545,8 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
-// Fork: one handler object for every RPC is too deep a type for tsc, so fork RPCs added after
-// this point get their own handler layers in `layerWsRpc`.
-const ServerWsRpcGroupCore = ServerWsRpcGroup.omit(
-  WS_METHODS.machineMapRead,
-  WS_METHODS.machineMapShareSettings,
-  WS_METHODS.forkChangelogSyncStatus,
-  WS_METHODS.forkChangelogStartSync,
-  WS_METHODS.webPushPublicKey,
-  WS_METHODS.webPushSubscribe,
-  WS_METHODS.webPushTest,
-);
+// Fork: the fork RPCs have their own handler layer, `ForkWs.layerForkWsRpc`.
+const ServerWsRpcGroupCore = ServerWsRpcGroup.omit(...ForkWs.FORK_WS_RPC_TAGS);
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
@@ -1299,10 +1286,6 @@ const layerWsRpc = (
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
-      const forkChangelog = yield* ForkChangelog.ForkChangelog;
-      // Fork: machine map. Only the local desktop app gets the token (MM-306, MM-1401).
-      const machineMap = yield* MachineMap.MachineMap;
-      const machineMapClient = { desktop: isLocalDesktopSubject(currentSession.subject) };
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -1704,18 +1687,7 @@ const layerWsRpc = (
               remoteOpenTargets.resolveTargets(),
             ),
             directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
-            // Fork: machine map (MM-1311). Peer machines join the explicit list.
-            ...(yield* Effect.serviceOption(MachineMapState.MachineMapState).pipe(
-              Effect.map((machineMap) => {
-                const origins = [
-                  ...new Set([
-                    ...(config.trustedBrowserOrigins ?? []),
-                    ...(Option.isSome(machineMap) ? machineMap.value.peerOrigins() : []),
-                  ]),
-                ];
-                return origins.length === 0 ? {} : { trustedBrowserOrigins: origins };
-              }),
-            )),
+            ...(yield* ForkWs.trustedBrowserOriginsConfig(config.trustedBrowserOrigins)),
             observability: {
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,
@@ -1957,30 +1929,7 @@ const layerWsRpc = (
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
-            // A launch is accepted before its worktree exists, so a branch
-            // that cannot be created is refused while the client can still act.
-            Effect.andThen(
-              input.workspaceStrategy.type === "worktree" &&
-                input.workspaceStrategy.branch !== undefined &&
-                !isTemporaryWorktreeBranch(input.workspaceStrategy.branch)
-                ? threadLaunch
-                    .checkWorktreeBase({
-                      projectId: input.projectId,
-                      workspaceStrategy: input.workspaceStrategy,
-                    })
-                    .pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new OrchestrationV2ThreadLaunchError({
-                            commandId: input.commandId,
-                            projectId: input.projectId,
-                            message: cause.message,
-                            cause,
-                          }),
-                      ),
-                    )
-                : Effect.void,
-            ),
+            Effect.andThen(ForkWs.checkLaunchWorktreeBranch(threadLaunch, input)),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -2459,16 +2408,6 @@ const layerWsRpc = (
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
-        [WS_METHODS.forkChangelogListReleases]: (_input) => forkChangelog.listReleases,
-        [WS_METHODS.forkChangelogReleaseChanges]: (input) => forkChangelog.releaseChanges(input),
-        [WS_METHODS.forkChangelogUpstreamPending]: (_input) => forkChangelog.upstreamPending,
-        [WS_METHODS.machineMapSubscribe]: (_input) => machineMap.clientStates(machineMapClient),
-        [WS_METHODS.machineMapJoin]: (input) =>
-          requireLocalDesktop(machineMapClient).pipe(Effect.andThen(machineMap.join(input))),
-        [WS_METHODS.machineMapLeave]: (_input) =>
-          requireLocalDesktop(machineMapClient).pipe(Effect.andThen(machineMap.leave)),
-        [WS_METHODS.machineMapReportDesktop]: (input) =>
-          machineMap.reportDesktop(input, machineMapClient).pipe(Effect.as({})),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
@@ -3163,75 +3102,7 @@ const layerWsRpc = (
       });
       return handlers;
     }),
-  ).pipe(
-    Layer.merge(
-      ServerWsRpcGroup.toLayerHandler(
-        WS_METHODS.machineMapRead,
-        MachineMap.MachineMap.pipe(
-          Effect.map(
-            (machineMap) => () =>
-              // MM-1701: another machine reaches this server through an arrow, not a map role.
-              // It must not read the map through the map role of this machine.
-              isMachineSubject(currentSession.subject)
-                ? Effect.succeed({
-                    _tag: "unavailable" as const,
-                    reason: "refused" as const,
-                    detail: "Other machines read the map with their own map role.",
-                  })
-                : machineMap.readPanel,
-          ),
-        ),
-      ),
-    ),
-    Layer.merge(
-      ServerWsRpcGroup.toLayerHandler(
-        WS_METHODS.machineMapShareSettings,
-        MachineMap.MachineMap.pipe(
-          Effect.map((machineMap) => (input) => machineMap.shareSettings(input)),
-        ),
-      ),
-    ),
-    Layer.merge(
-      ServerWsRpcGroup.toLayerHandler(
-        WS_METHODS.forkChangelogSyncStatus,
-        ForkChangelog.ForkChangelog.pipe(
-          Effect.map((forkChangelog) => () => forkChangelog.syncStatus),
-        ),
-      ),
-    ),
-    Layer.merge(
-      ServerWsRpcGroup.toLayerHandler(
-        WS_METHODS.webPushPublicKey,
-        WebPush.WebPush.pipe(
-          Effect.map(
-            (webPush) => () => webPush.publicKey.pipe(Effect.map((publicKey) => ({ publicKey }))),
-          ),
-        ),
-      ),
-    ),
-    Layer.merge(
-      ServerWsRpcGroup.toLayerHandler(
-        WS_METHODS.forkChangelogStartSync,
-        ForkChangelog.ForkChangelog.pipe(
-          Effect.map((forkChangelog) => () => forkChangelog.startSync),
-        ),
-      ),
-    ),
-    Layer.merge(
-      ServerWsRpcGroup.toLayerHandler(
-        WS_METHODS.webPushSubscribe,
-        WebPush.WebPush.pipe(
-          Effect.map((webPush) => (input) => webPush.subscribe(input).pipe(Effect.as({}))),
-        ),
-      ),
-    ),
-    Layer.merge(
-      ServerWsRpcGroup.toLayerHandler(
-        WS_METHODS.webPushTest,
-        WebPush.WebPush.pipe(Effect.map((webPush) => (input) => webPush.test(input.endpoint))),
-      ),
-    ),
-  );
+  ).pipe(Layer.merge(ForkWs.layerForkWsRpc(currentSession)));
 
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.
@@ -3268,7 +3139,6 @@ export const layer = Layer.unwrap(
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
         const analytics = yield* AnalyticsService.AnalyticsService;
-        const machineMapState = yield* Effect.serviceOption(MachineMapState.MachineMapState);
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
@@ -3351,16 +3221,7 @@ export const layer = Layer.unwrap(
                     failEnvironmentInternal("internal_error", error),
                 }),
               ),
-            ).pipe(
-              // Fork: MM-718. The pause closes the socket at once; the upgrade then refuses it.
-              Effect.raceFirst(
-                Option.isNone(machineMapState)
-                  ? Effect.never
-                  : machineMapState.value
-                      .awaitLockFor(session.subject)
-                      .pipe(Effect.as(HttpServerResponse.empty())),
-              ),
-            ),
+            ).pipe(Effect.raceFirst(ForkWs.awaitMachineMapLock(session.subject))),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(

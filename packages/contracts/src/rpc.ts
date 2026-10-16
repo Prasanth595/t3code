@@ -66,30 +66,7 @@ import {
   AcpRegistrySetProviderResult,
 } from "./acpRegistry.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
-import {
-  ForkChangelogError,
-  ForkReleaseChanges,
-  ForkReleaseChangesInput,
-  ForkReleaseList,
-  ForkSyncStatus,
-  ForkUpstreamPending,
-} from "./forkChangelog.ts";
-import {
-  MachineMapClientState,
-  MachineMapDesktopReport,
-  MachineMapShareSettingsInput,
-  MachineMapShareSettingsResult,
-  MachineMapJoinInput,
-  MachineMapPanelState,
-  MachineMapRequestError,
-} from "./machineMapClient.ts";
-import {
-  WebPushEndpointInput,
-  WebPushError,
-  WebPushPublicKey,
-  WebPushSubscribeInput,
-  WebPushTestResult,
-} from "./webPush.ts";
+import { FORK_WS_METHODS, ForkWsRpcGroup } from "./forkRpc.ts";
 import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
@@ -594,112 +571,8 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
-
-  // Fork changelog (fork feature)
-  forkChangelogListReleases: "forkChangelog.listReleases",
-  forkChangelogReleaseChanges: "forkChangelog.releaseChanges",
-  forkChangelogUpstreamPending: "forkChangelog.upstreamPending",
-  forkChangelogSyncStatus: "forkChangelog.syncStatus",
-  forkChangelogStartSync: "forkChangelog.startSync",
-
-  // Fork: machine map (apps/machine-map/SPEC.md)
-  machineMapSubscribe: "machineMap.subscribe",
-  machineMapJoin: "machineMap.join",
-  machineMapLeave: "machineMap.leave",
-  machineMapReportDesktop: "machineMap.reportDesktop",
-  machineMapShareSettings: "machineMap.shareSettings",
-  machineMapRead: "machineMap.read",
-
-  // Fork: Web Push (webPush.ts)
-  webPushPublicKey: "webPush.publicKey",
-  webPushSubscribe: "webPush.subscribe",
-  webPushTest: "webPush.test",
+  ...FORK_WS_METHODS,
 } as const;
-
-const forkChangelogError = Schema.Union([ForkChangelogError, EnvironmentAuthorizationError]);
-const WsForkChangelogListReleasesRpc = Rpc.make(WS_METHODS.forkChangelogListReleases, {
-  payload: Schema.Struct({}),
-  success: ForkReleaseList,
-  error: forkChangelogError,
-});
-const WsForkChangelogReleaseChangesRpc = Rpc.make(WS_METHODS.forkChangelogReleaseChanges, {
-  payload: ForkReleaseChangesInput,
-  success: ForkReleaseChanges,
-  error: forkChangelogError,
-});
-const WsForkChangelogUpstreamPendingRpc = Rpc.make(WS_METHODS.forkChangelogUpstreamPending, {
-  payload: Schema.Struct({}),
-  success: ForkUpstreamPending,
-  error: forkChangelogError,
-});
-const WsForkChangelogSyncStatusRpc = Rpc.make(WS_METHODS.forkChangelogSyncStatus, {
-  payload: Schema.Struct({}),
-  success: ForkSyncStatus,
-  error: forkChangelogError,
-});
-const WsForkChangelogStartSyncRpc = Rpc.make(WS_METHODS.forkChangelogStartSync, {
-  payload: Schema.Struct({}),
-  success: ForkSyncStatus,
-  error: forkChangelogError,
-});
-
-const machineMapError = Schema.Union([MachineMapRequestError, EnvironmentAuthorizationError]);
-/** Fork: the local machine map state, again on each change. See `machineMapClient.ts`. */
-const WsMachineMapSubscribeRpc = Rpc.make(WS_METHODS.machineMapSubscribe, {
-  payload: Schema.Struct({}),
-  success: MachineMapClientState,
-  error: machineMapError,
-  stream: true,
-});
-const WsMachineMapJoinRpc = Rpc.make(WS_METHODS.machineMapJoin, {
-  payload: MachineMapJoinInput,
-  success: MachineMapClientState,
-  error: machineMapError,
-});
-const WsMachineMapLeaveRpc = Rpc.make(WS_METHODS.machineMapLeave, {
-  payload: Schema.Struct({}),
-  success: MachineMapClientState,
-  error: machineMapError,
-});
-/** Fork: only the local desktop app reports. Other sessions get `desktop-only`. */
-const WsMachineMapReportDesktopRpc = Rpc.make(WS_METHODS.machineMapReportDesktop, {
-  payload: MachineMapDesktopReport,
-  success: Schema.Struct({}),
-  error: machineMapError,
-});
-
-/** Fork: MM-411. A change saved for all environments becomes the shared value of the map. */
-const WsMachineMapShareSettingsRpc = Rpc.make(WS_METHODS.machineMapShareSettings, {
-  payload: MachineMapShareSettingsInput,
-  success: MachineMapShareSettingsResult,
-  error: machineMapError,
-});
-
-/** Fork: MM-1701. `machines_read` through the portal connection, for the Machines panel. */
-const WsMachineMapReadRpc = Rpc.make(WS_METHODS.machineMapRead, {
-  payload: Schema.Struct({}),
-  success: MachineMapPanelState,
-  error: machineMapError,
-});
-
-const webPushError = Schema.Union([WebPushError, EnvironmentAuthorizationError]);
-/** Fork: the key that a browser subscribes with, so that this server can push to it. */
-const WsWebPushPublicKeyRpc = Rpc.make(WS_METHODS.webPushPublicKey, {
-  payload: Schema.Struct({}),
-  success: WebPushPublicKey,
-  error: webPushError,
-});
-const WsWebPushSubscribeRpc = Rpc.make(WS_METHODS.webPushSubscribe, {
-  payload: WebPushSubscribeInput,
-  success: Schema.Struct({}),
-  error: webPushError,
-});
-/** Fork: sends a test notification to one subscription of this server. */
-const WsWebPushTestRpc = Rpc.make(WS_METHODS.webPushTest, {
-  payload: WebPushEndpointInput,
-  success: WebPushTestResult,
-  error: webPushError,
-});
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -2173,19 +2046,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
-  WsForkChangelogListReleasesRpc,
-  WsForkChangelogReleaseChangesRpc,
-  WsForkChangelogUpstreamPendingRpc,
-  WsForkChangelogSyncStatusRpc,
-  WsForkChangelogStartSyncRpc,
-  WsMachineMapSubscribeRpc,
-  WsMachineMapJoinRpc,
-  WsMachineMapLeaveRpc,
-  WsMachineMapReportDesktopRpc,
-  WsMachineMapShareSettingsRpc,
-  WsMachineMapReadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
-  WsWebPushPublicKeyRpc,
-  WsWebPushSubscribeRpc,
-  WsWebPushTestRpc,
-).middleware(RpcScopeAuthorization);
+)
+  .merge(ForkWsRpcGroup)
+  .middleware(RpcScopeAuthorization);

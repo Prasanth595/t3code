@@ -1,12 +1,12 @@
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
-  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
+import { FORK_CLIENT_GUARDED_RPC_SCOPES } from "./forkRpc.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 
@@ -47,15 +47,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.scheduledTasksRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksRotateWebhookToken]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
-  // Fork: starts the Fork Sync workflow, which pushes to fork main on GitHub.
-  [WS_METHODS.forkChangelogStartSync]: AuthSourceControlWriteScope,
-  // Fork: joining or leaving the machine map turns the `machineMap` setting on or off.
-  [WS_METHODS.machineMapJoin]: AuthSettingsWriteScope,
-  [WS_METHODS.machineMapLeave]: AuthSettingsWriteScope,
-  // Fork: MM-411. Sets shared values of the map, like a settings change on every machine.
-  [WS_METHODS.machineMapShareSettings]: AuthSettingsWriteScope,
-  // Fork: the local desktop app reports desktop command results and its waiting update.
-  [WS_METHODS.machineMapReportDesktop]: AuthEnvironmentMaintainScope,
+  ...FORK_CLIENT_GUARDED_RPC_SCOPES,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
