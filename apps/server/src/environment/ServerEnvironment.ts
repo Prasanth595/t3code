@@ -237,6 +237,7 @@ export const make = Effect.gen(function* () {
       threadAutoSettlementScope: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
+      memoryGuard: hostPlatform === "darwin",
       projectProviderInstanceOverrides: true,
       threadSnooze: true,
       environmentThemes: true,

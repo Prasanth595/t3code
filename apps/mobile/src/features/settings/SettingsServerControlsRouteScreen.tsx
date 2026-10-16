@@ -229,6 +229,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     (target) =>
       target.environment.serverConfig.environment.capabilities.threadRestartContinuation === true,
   );
+  const supportsMemoryGuard =
+    targets.length > 0 &&
+    targets.every(
+      (target) => target.environment.serverConfig.environment.capabilities.memoryGuard === true,
+    );
   const disabledFor = (key: string) =>
     disabled ||
     (projectSelected &&
@@ -489,6 +494,22 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       />
                     </View>
                   </SettingsSection>
+                  {supportsMemoryGuard ? (
+                    <SettingsSection title="Memory">
+                      <SettingsSwitchRow
+                        icon="memorychip"
+                        label="Memory guard"
+                        subtitle={
+                          projectSelected
+                            ? "Environment-wide setting. Select All projects to change it."
+                            : "On macOS, stop the largest command an agent or terminal is running when memory pressure gets too high. The agent keeps running and, when T3 Code can tell its thread, is told why."
+                        }
+                        value={uniform("memoryGuardEnabled")}
+                        disabled={disabledFor("memoryGuardEnabled")}
+                        onValueChange={(value) => write({ memoryGuardEnabled: value })}
+                      />
+                    </SettingsSection>
+                  ) : null}
                 </>
               ) : null}
             </>

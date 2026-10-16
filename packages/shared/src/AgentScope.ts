@@ -48,6 +48,17 @@ export const RAISE_OOM_SCORE_LINE = `{ echo ${AGENT_OOM_SCORE_ADJ} >/proc/self/o
 
 const LAUNCH_SCRIPT = [RAISE_OOM_SCORE_LINE, 'exec "$@"'].join("\n");
 
+/** Inherited by everything an agent or terminal starts, so the server can recognise its own processes. */
+export const PROCESS_OWNER_ENV = "T3CODE_PROCESS_OWNER";
+
+// macOS strips DYLD_* when it starts the protected /bin/sh, so they travel as
+// arguments with the owner and are exported again before the exec.
+const OWNED_LAUNCH_SCRIPT = [
+  'while [ "$1" != -- ]; do export "$1"; shift; done',
+  "shift",
+  'exec "$@"',
+].join("\n");
+
 // systemd-run needs XDG_RUNTIME_DIR to reach the user manager. Fill it in when
 // the agent environment does not carry it; it is the same user either way.
 const SCOPED_LAUNCH_SCRIPT = [
@@ -75,8 +86,28 @@ export function agentScopeCommand(input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly scope?: AgentSystemdScope | undefined;
+  readonly owner?: string | undefined;
+  readonly env?: NodeJS.ProcessEnv | undefined;
 }): AgentScopeCommand {
-  const { command, args, scope } = input;
+  const { command, args, scope, owner, env } = input;
+  if (owner !== undefined) {
+    const dyld = Object.entries(env ?? {})
+      .filter(([name, value]) => name.startsWith("DYLD_") && value !== undefined)
+      .map(([name, value]) => `${name}=${value}`);
+    return {
+      command: "/bin/sh",
+      args: [
+        "-c",
+        OWNED_LAUNCH_SCRIPT,
+        "t3-agent",
+        `${PROCESS_OWNER_ENV}=${owner}`,
+        ...dyld,
+        "--",
+        command,
+        ...args,
+      ],
+    };
+  }
   if (scope === undefined) {
     return { command: "/bin/sh", args: ["-c", LAUNCH_SCRIPT, "t3-agent", command, ...args] };
   }

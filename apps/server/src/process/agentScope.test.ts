@@ -17,6 +17,7 @@ import {
   classifyScope,
   make,
   ownedAgentSlice,
+  processOwner,
   type ScopeState,
 } from "./agentScope.ts";
 
@@ -188,5 +189,34 @@ describe("AgentScope service", () => {
         expect(calls.filter(([, verb]) => verb === "stop")).toEqual([]);
       }),
     ),
+  );
+
+  it.effect("marks macOS launches with this server's owner and leaves missing commands bare", () =>
+    Effect.gen(function* () {
+      const scope = yield* make.pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provide(
+          Layer.mergeAll(
+            ProcessRunner.layer,
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-scope-" }),
+          ).pipe(Layer.provideMerge(NodeServices.layer)),
+        ),
+      );
+      const launch = yield* scope.wrap({
+        command: "/bin/echo",
+        args: ["hi"],
+        name: "codex",
+        threadId: "thread-1",
+      });
+      expect(launch.command).toBe("/bin/sh");
+      expect(launch.args).toContain(`T3CODE_PROCESS_OWNER=${processOwner("codex", "thread-1")}`);
+      expect(launch.args.slice(-3)).toEqual(["--", "/bin/echo", "hi"]);
+      const missing = yield* scope.wrap({
+        command: "t3-no-such-agent",
+        args: ["x"],
+        name: "codex",
+      });
+      expect(missing).toEqual({ command: "t3-no-such-agent", args: ["x"] });
+    }),
   );
 });

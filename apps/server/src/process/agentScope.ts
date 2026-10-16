@@ -20,6 +20,13 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const AGENT_SLICE = "app-t3code-agents.slice";
 
+/** Unique per server process, so a leftover from another server never matches. */
+export const PROCESS_OWNER_INSTANCE = NodeCrypto.randomUUID().slice(0, 8);
+
+export function processOwner(name: string, threadId: string | undefined): string {
+  return `${PROCESS_OWNER_INSTANCE}:${name}:${threadId ?? ""}`;
+}
+
 export function ownedAgentSlice(stateDir: string): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
   return `app-t3code-agents-${hash}.slice`;
@@ -93,7 +100,7 @@ const MAX_TRACKED_THREADS = 500;
 
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
-  if (platform !== "linux") return AgentScope.defaultValue();
+  if (platform !== "linux" && platform !== "darwin") return AgentScope.defaultValue();
 
   const runner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -109,6 +116,25 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcess.Platform, platform),
     );
+
+  if (platform === "darwin") {
+    return {
+      ...AgentScope.defaultValue(),
+      wrap: ({ command, args, name, threadId, env }) =>
+        resolve(command, env ?? hostEnvironment).pipe(
+          Effect.map((resolved) =>
+            resolved === null
+              ? { command, args }
+              : agentScopeCommand({
+                  command: resolved,
+                  args,
+                  owner: processOwner(name, threadId),
+                  env: env ?? hostEnvironment,
+                }),
+          ),
+        ),
+    } satisfies AgentScopeShape;
+  }
 
   const run = (command: string, args: ReadonlyArray<string>) =>
     runner.run({ command, args, timeout: "5 seconds" }).pipe(Effect.option);

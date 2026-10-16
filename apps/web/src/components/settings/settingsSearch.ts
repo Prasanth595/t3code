@@ -57,6 +57,7 @@ export interface SettingsSearchItem {
   readonly managedTunnelOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly requiresMemoryGuard?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -69,6 +70,7 @@ export interface SettingsSearchAvailability {
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
+  readonly hasMemoryGuard?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -432,6 +434,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["installed cli versions newer available codex claude cursor grok opencode"],
     scope: "environment-defaults",
+  },
+  {
+    id: "memory-guard",
+    title: "Memory guard",
+    to: "/settings/general",
+    searchTerms: ["ram memory pressure swap freeze crash kill tests macos"],
+    scope: "environment-defaults",
+    requiresMemoryGuard: true,
   },
   {
     id: "continue-threads-after-server-update",
@@ -1107,7 +1117,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
-      (!item.managedTunnelOnly || availability.managedTunnelActive === true),
+      (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
+      (!item.requiresMemoryGuard || availability.hasMemoryGuard === true),
   );
 }
 

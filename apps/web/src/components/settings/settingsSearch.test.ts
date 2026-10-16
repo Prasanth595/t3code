@@ -201,6 +201,7 @@ describe("searchSettings", () => {
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
+      "memory-guard",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
@@ -222,6 +223,24 @@ describe("searchSettings", () => {
       }).map((item) => item.id);
     expect(itemIds(false)).not.toContain("cursor-keychain-usage");
     expect(itemIds(true)).toContain("cursor-keychain-usage");
+  });
+
+  it("offers Memory guard only when a server runs the guard", () => {
+    const availability = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      hasMacProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const itemIds = (hasMemoryGuard: boolean) =>
+      filterAvailableSettingsSearchItems({ ...availability, hasMemoryGuard }).map(
+        (item) => item.id,
+      );
+    expect(itemIds(false)).not.toContain("memory-guard");
+    expect(itemIds(true)).toContain("memory-guard");
   });
 
   it("keeps the local toggle searchable without offering hidden host publishing controls", () => {

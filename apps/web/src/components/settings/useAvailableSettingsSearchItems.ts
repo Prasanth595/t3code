@@ -32,6 +32,20 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     cloudLinkState?.linkRevoked !== true &&
     (cloudLinkState?.managedTunnelActive ?? cloudLinkState?.linked ?? false);
 
+  const memoryGuardTargets = environments.filter(
+    (environment) =>
+      (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
+      isProviderSettingsEnvironmentAvailable({
+        connectionPhase: environment.connection.phase,
+        hasServerConfig: environment.serverConfig !== null,
+      }),
+  );
+  const hasMemoryGuard =
+    memoryGuardTargets.length > 0 &&
+    memoryGuardTargets.every(
+      (environment) => environment.serverConfig?.environment.capabilities.memoryGuard === true,
+    );
+
   return useMemo(
     () =>
       filterAvailableSettingsSearchItems({
@@ -54,6 +68,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
               hasServerConfig: true,
             }),
         ),
+        hasMemoryGuard,
         canManageLocalBackend,
         isWslSettingsRowVisible: isWslSettingsRowVisible({
           state: desktopWsl.data,
@@ -65,6 +80,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
       }),
     [
       managedTunnelActive,
+      hasMemoryGuard,
       canManageLocalBackend,
       desktopWsl.data,
       desktopWsl.error,
