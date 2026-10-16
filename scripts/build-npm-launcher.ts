@@ -41,7 +41,7 @@ export class NpmLauncherCommandFailedError extends Schema.TaggedError<NpmLaunche
   }
 }
 
-/** package.json for the launcher. `engines` asks for a Node with global `fetch`. */
+/** package.json for the launcher. `engines` asks for `import.meta.dirname` and `fetch`. */
 export function npmLauncherPackageManifest(version: string) {
   return {
     name: NPM_LAUNCHER_PACKAGE_NAME,
@@ -52,7 +52,7 @@ export function npmLauncherPackageManifest(version: string) {
     repository: serverPackageJson.repository,
     bin: { t3: "./bin/t3.mjs" },
     files: ["bin", "dist"],
-    engines: { node: ">=18" },
+    engines: { node: ">=20.11" },
   };
 }
 

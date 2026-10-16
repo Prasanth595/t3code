@@ -10,11 +10,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const launcherPath = fileURLToPath(import.meta.url);
 const { version } = JSON.parse(
-  fs.readFileSync(path.join(path.dirname(launcherPath), "../package.json"), "utf8"),
+  fs.readFileSync(path.join(import.meta.dirname, "../package.json"), "utf8"),
 );
 
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
@@ -46,13 +44,17 @@ async function download(url, file) {
   const out = fs.openSync(file, "w");
   const tty = process.stderr.isTTY;
   let received = 0;
+  let shown = -1;
   try {
     for await (const chunk of response.body) {
       hash.update(chunk);
       fs.writeSync(out, chunk);
       received += chunk.byteLength;
-      if (tty) {
-        const percent = total ? ` ${Math.floor((received * 100) / total)}%` : "";
+      // Redraw once per percent (or per MB without a length), not per chunk.
+      const step = total ? Math.floor((received * 100) / total) : Math.floor(received / 1048576);
+      if (tty && step !== shown) {
+        shown = step;
+        const percent = total ? ` ${step}%` : "";
         process.stderr.write(
           `\r\x1b[2Kt3: downloading T3 Code ${version}${percent} (${(received / 1048576).toFixed(1)} MB)`,
         );
@@ -128,7 +130,7 @@ async function main() {
     {
       stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
       // The executable lives in the T3 home, so this is how it knows npm launched it.
-      env: { ...process.env, T3CODE_NPM_LAUNCHER_PATH: launcherPath },
+      env: { ...process.env, T3CODE_NPM_LAUNCHER_PATH: import.meta.filename },
     },
   );
   if (ipc) {
