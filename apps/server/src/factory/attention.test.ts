@@ -224,6 +224,8 @@ it.effect("the text goes to osascript as argv and never into the script", () =>
       assert.strictEqual(issueCall!.args![2], "a/b#7");
       assert.strictEqual(issueCall!.args![3], message);
       assert.strictEqual(issueCall!.args!.length, 4);
+      assert.strictEqual(issueCall!.timeoutMs, 15_000);
+      assert.strictEqual(issueCall!.termGraceMs, 1_000);
       assert.strictEqual(machineCall!.args![2], "factory");
       assert.strictEqual(repoCall!.args![2], "a/b");
     }).pipe(Effect.provide(serviceOver(dir, process)));
@@ -253,6 +255,29 @@ it.effect("a missing osascript is logged once and no later item runs a process",
       assert.strictEqual(calls.length, 1);
       assert.strictEqual(warnings.length, 1);
       assert.include(warnings[0]!, "osascript not found");
+      assert.strictEqual((yield* attention.list()).length, 2);
+    }).pipe(Effect.provide(serviceOver(dir, process)));
+  }),
+);
+
+it.effect("an osascript that times out is logged once and no later item runs a process", () =>
+  withDir((dir, warnings) => {
+    const { calls, process } = recorder(() =>
+      Effect.succeed({
+        exitCode: null,
+        timedOut: true,
+        tail: "",
+        stderrTail: "",
+        truncated: false,
+      }),
+    );
+    return Effect.gen(function* () {
+      const attention = yield* Attention;
+      yield* attention.raise(item({ id: "a" }));
+      yield* attention.raise(item({ id: "b" }));
+      assert.strictEqual(calls.length, 1);
+      assert.strictEqual(warnings.length, 1);
+      assert.include(warnings[0]!, "osascript did not answer in 15 seconds");
       assert.strictEqual((yield* attention.list()).length, 2);
     }).pipe(Effect.provide(serviceOver(dir, process)));
   }),

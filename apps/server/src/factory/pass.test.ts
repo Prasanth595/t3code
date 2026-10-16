@@ -2291,6 +2291,24 @@ describe("attention items", () => {
     }),
   );
 
+  it.effect(
+    "a claim whose launch fails clears the issue's earlier items and keeps the new one",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        const oldRun = runIdToString(newRunId(REPO, "12", 1));
+        const newRun = newRunId(REPO, "12", 2);
+        fake.items = [
+          open({ id: `run:${oldRun}:stuck`, kind: "stuck", issue: 12, run: oldRun }),
+          open({ id: "other", kind: "needs-info", issue: 13 }),
+        ];
+        fake.ready[REPO] = [12];
+        fake.pushStart(`${REPO}#12`, { kind: "stuck", run: newRun, reason: "launch failed" });
+        yield* pass(fake, machine([REPO], 1));
+        assert.deepEqual(ids(fake), ["other", `run:${runIdToString(newRun)}:stuck`]);
+      }),
+  );
+
   it.effect("claiming an issue again clears every item of that issue and no other", () =>
     Effect.gen(function* () {
       const fake = new Fake();
