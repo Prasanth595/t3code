@@ -1014,13 +1014,27 @@ it.effect("stops rapid restart loops but allows repeated restarts after normal w
       ),
     } as unknown as OrchestrationV2ThreadProjection;
     assert.lengthOf(yield* continuationTexts(withThreeLinks), 0);
-    const afterNormalWork = {
+    const atRequestCutoff = {
       ...withThreeLinks,
       runs: withThreeLinks.runs.map((run, index) => ({
         ...run,
+        completedAt: null,
         requestedAt: DateTime.subtract(now, { minutes: [1, 2, 6][index] ?? 0 }),
       })),
     } as unknown as OrchestrationV2ThreadProjection;
+    assert.lengthOf(yield* continuationTexts(atRequestCutoff), 0);
+    const afterRequestWindow = {
+      ...atRequestCutoff,
+      runs: atRequestCutoff.runs.map((run, index) => ({
+        ...run,
+        requestedAt: DateTime.subtract(now, { minutes: [1, 2, 7][index] ?? 0 }),
+      })),
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.lengthOf(yield* continuationTexts(afterRequestWindow), 1);
+    const afterNormalWork = {
+      ...atRequestCutoff,
+      runs: atRequestCutoff.runs.map((run) => ({ ...run, completedAt: now })),
+    };
     assert.lengthOf(yield* continuationTexts(afterNormalWork), 1);
   }),
 );
