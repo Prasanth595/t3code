@@ -869,6 +869,10 @@ const noteStart = (
   Effect.gen(function* () {
     const name = repo.watched.repo;
     const before = newestRun(known.of(name, issue));
+    // The issue was claimed again, so what was open about its earlier runs is over.
+    const clearEarlier = world.attention.clear(
+      (item) => item.repo !== null && sameRepo(item.repo, name) && item.issue === issue,
+    );
     const outcome = yield* Effect.result(world[call](repo, issue));
     if (outcome._tag === "Failure" && outcome.failure._tag === "GateRunningError") {
       // Nothing was called or written.
@@ -885,10 +889,7 @@ const noteStart = (
         const run = runIdToString(outcome.success.run);
         notes.parts.push(words.claimed(run));
         if (notes.state === "ready") pass.report.claimed += 1;
-        // The issue was claimed again, so what was open about its earlier runs is over.
-        yield* world.attention.clear(
-          (item) => item.repo !== null && sameRepo(item.repo, name) && item.issue === issue,
-        );
+        yield* clearEarlier;
         return outcome.success.run;
       }
       case "skipped":
@@ -906,6 +907,8 @@ const noteStart = (
       case "stuck": {
         const run = runIdToString(outcome.success.run);
         notes.parts.push(words.stuck);
+        // The new run's item is raised when the pass flushes, so it outlives this clear.
+        yield* clearEarlier;
         pass.stuck(notes, run);
         return outcome.success.run;
       }

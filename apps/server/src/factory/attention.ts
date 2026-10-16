@@ -69,6 +69,8 @@ export const PASS_ERRORS_ITEM_ID = "pass-errors";
 /** The exit code of the `sh` wrapper that found no such command. */
 const COMMAND_NOT_FOUND = 127;
 const NOTIFY_TIMEOUT_MS = 15_000;
+/** A notifier that ignores SIGTERM is killed after this, not after the process runner's default. */
+const NOTIFY_TERM_GRACE_MS = 1_000;
 
 /**
  * The text arrives as argv, so nothing a repo, an issue title or a session wrote can become
@@ -162,15 +164,22 @@ const writeFile = (dir: string, items: ReadonlyArray<AttentionItem>): void => {
     NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_TRUNC,
     0o600,
   );
+  let open = true;
   try {
     NodeFS.writeFileSync(fd, `${body}\n`);
     NodeFS.fsyncSync(fd);
-  } finally {
+    open = false;
     NodeFS.closeSync(fd);
-  }
-  try {
     NodeFS.renameSync(temp, path);
   } catch (error) {
+    // No failure leaves the temp file behind.
+    if (open) {
+      try {
+        NodeFS.closeSync(fd);
+      } catch {
+        // The write error is the one to report.
+      }
+    }
     NodeFS.rmSync(temp, { force: true });
     throw error;
   }
@@ -187,7 +196,7 @@ const make = (options: { readonly clock?: () => number }) =>
     if ("warning" in loaded) yield* Effect.logWarning(loaded.warning);
     const items = new Map<string, AttentionItem>(loaded.items.map((item) => [item.id, item]));
     let notifying = true;
-    let osascriptMissing = false;
+    let notifierDown = false;
     let failedPasses = 0;
 
     const persist = Effect.suspend(() => {
@@ -203,12 +212,13 @@ const make = (options: { readonly clock?: () => number }) =>
 
     const post = (item: NewItem) =>
       Effect.gen(function* () {
-        if (!notifying || osascriptMissing) return;
+        if (!notifying || notifierDown) return;
         const result = yield* Effect.result(
           runner.run({
             command: "osascript",
             args: ["-e", SCRIPT, titleOf(item), item.message],
             timeoutMs: NOTIFY_TIMEOUT_MS,
+            termGraceMs: NOTIFY_TERM_GRACE_MS,
           }),
         );
         if (result._tag === "Failure") {
@@ -218,14 +228,21 @@ const make = (options: { readonly clock?: () => number }) =>
         }
         const ran = result.success;
         if (ran.exitCode === COMMAND_NOT_FOUND) {
-          osascriptMissing = true;
+          notifierDown = true;
           return yield* Effect.logWarning(
             "osascript not found, so attention items are not notified on this machine",
           );
         }
-        if (ran.exitCode !== 0 || ran.timedOut) {
+        if (ran.timedOut) {
+          // A hung notifier would cost its timeout again on every new item.
+          notifierDown = true;
           return yield* Effect.logWarning(
-            `cannot notify attention item ${item.id}: ${ran.timedOut ? "timed out" : `exit ${ran.exitCode}`}: ${ran.tail.trim()}`,
+            "osascript did not answer in 15 seconds, so attention items are not notified again until the server restarts",
+          );
+        }
+        if (ran.exitCode !== 0) {
+          return yield* Effect.logWarning(
+            `cannot notify attention item ${item.id}: exit ${ran.exitCode}: ${ran.tail.trim()}`,
           );
         }
       });
