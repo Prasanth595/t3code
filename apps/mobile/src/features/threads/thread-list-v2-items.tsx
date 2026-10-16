@@ -55,6 +55,7 @@ import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 
 interface StatusLabel {
   readonly label: string;
@@ -1050,7 +1051,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {pr ? (
           <View className="flex-row items-center gap-1" accessibilityLabel={pr.accessibilityLabel}>
             <SymbolView
-              name={pr.kind === "stack" ? PullRequestGlyph.stack : PullRequestGlyph.pullRequest}
+              name={
+                pr.kind === "stack"
+                  ? PullRequestGlyph.stack
+                  : pr.state === null
+                    ? PullRequestGlyph.pullRequest
+                    : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
+              }
               size={12}
               tintColorClassName={
                 pr.state === null || pr.isDraft

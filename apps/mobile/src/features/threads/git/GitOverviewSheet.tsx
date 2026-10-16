@@ -46,6 +46,7 @@ import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
 import { PullRequestGlyph } from "../../pull-requests/pullRequestGlyphs";
+import { pullRequestStatus } from "../../pull-requests/pullRequestStatus";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -385,7 +386,14 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
                     <View className="ml-12 h-px bg-border" />
                   ) : null}
                   <SheetListRow
-                    icon={PullRequestGlyph.pullRequest}
+                    icon={
+                      link.snapshot === null
+                        ? PullRequestGlyph.pullRequest
+                        : pullRequestStatus(link.snapshot).icon
+                    }
+                    iconTintClassName={
+                      link.snapshot ? pullRequestStatus(link.snapshot).tint : undefined
+                    }
                     title={`#${link.number} ${link.snapshot?.title ?? "Pull request"}`}
                     subtitle={`${link.repository} · ${link.snapshot === null ? "Status pending" : link.snapshot.isDraft && link.snapshot.state === "open" ? "Draft" : link.snapshot.state}${link.watch === undefined ? "" : " · Watching"}`}
                     onPress={() => {
