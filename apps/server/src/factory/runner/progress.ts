@@ -55,7 +55,7 @@ export interface Seen {
   readonly lastPr: { readonly pr: number; readonly url: string } | null;
   /** A `questions_posted` since the run last entered `building`: this stop's questions are on the issue. */
   readonly questionsPosted: boolean;
-  /** A `pr_opened` since the run last entered `building`: the session's pull request waits for the gate. */
+  /** A `pr_opened` since the run last entered `building` or had a gate sent back: the session's pull request waits for the gate. */
   readonly prReported: boolean;
   /** The ordinal in the newest `result-line-reminding` step: a reminder send was started. */
   readonly reminding: number | null;
@@ -338,6 +338,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (ordinal !== null) awaitRun(ordinal, false);
         // A pass that was sent back is no pass: the session runs again and the head is gated afresh.
         pass = null;
+        // The session is at work again: the run is a building run with no pull request reported
+        // until the session reports it again, so it is time-limited, watched and read.
+        prReported = false;
         break;
       }
       case "gate_regate":

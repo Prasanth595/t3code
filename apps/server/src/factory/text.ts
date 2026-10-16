@@ -24,3 +24,14 @@ export const sanitize = (text: string, keepLayout: boolean): string => {
   }
   return out;
 };
+
+/** The longest command shown in a gate message or a results table, in characters. */
+const MAX_COMMAND_CHARS = 300;
+
+/** A command as one short line: sanitised, newlines and tabs turned into spaces, cut at 300 characters. */
+export const commandLine = (command: string): string => {
+  const chars = Array.from(sanitize(command, false));
+  return chars.length > MAX_COMMAND_CHARS
+    ? `${chars.slice(0, MAX_COMMAND_CHARS).join("")}\u2026`
+    : chars.join("");
+};

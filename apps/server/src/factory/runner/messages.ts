@@ -6,7 +6,7 @@
 
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
-import { sanitize } from "../text.ts";
+import { commandLine, sanitize } from "../text.ts";
 
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
@@ -171,17 +171,6 @@ export const END_WITH_DONE =
 
 /** The public reason when the base branch moved again and again and the gate could not settle within `limits.regates`. */
 export const BASE_KEPT_MOVING = "the base branch kept moving and the gate could not settle";
-
-/** The longest command shown in a gate message, in characters. */
-const MAX_COMMAND_CHARS = 300;
-
-/** The command as one short line: sanitised, newlines and tabs turned into spaces, cut at 300 characters. */
-export const commandLine = (command: string): string => {
-  const chars = Array.from(sanitize(command, false));
-  return chars.length > MAX_COMMAND_CHARS
-    ? `${chars.slice(0, MAX_COMMAND_CHARS).join("")}\u2026`
-    : chars.join("");
-};
 
 /** `1234` as `1.234 s`, `30000` as `30 s`, `800` as `800 ms`: softfac's `format_duration`. */
 const formatDuration = (ms: number): string => {

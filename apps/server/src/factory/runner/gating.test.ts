@@ -1503,19 +1503,16 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
       const rig = rigFor();
       const ledger = Ledger.open(rig.dataDir, rig.run, { clock: () => 1_000 });
       const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
-      const at: Progress = {
-        ...progressFrom("advance", seen, "building"),
-        pr: 12,
-        gateComment: "the results",
-      };
+      const at: Progress = { ...progressFrom("advance", seen, "building"), pr: 12 };
       const actions = [
         { kind: "mark-pr-ready", pr: 12 },
         { kind: "post-gate-results", pr: 12 },
       ] as const;
       const cause = makeCause("gate", "claimed");
-      yield* applyActions(rig.ctx, 10, ledger, at, actions, cause);
+      const payload = { comment: "the results" };
+      yield* applyActions(rig.ctx, 10, ledger, at, actions, cause, payload);
       // Again, as a crash before the commit marker would: the results are not posted twice.
-      yield* applyActions(rig.ctx, 10, ledger, at, actions, cause);
+      yield* applyActions(rig.ctx, 10, ledger, at, actions, cause, payload);
       ledger.close();
       assert.deepStrictEqual(rig.gh.calls, [
         "markPrReady 12",
@@ -1698,10 +1695,7 @@ describe("gate: a failed attempt goes back into the session", () => {
       const rig = rigFor();
       const ledger = Ledger.open(rig.dataDir, rig.run, { clock: () => 1_000 });
       const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
-      const at: Progress = {
-        ...progressFrom("advance", seen, "building"),
-        gateCommandId: "softfac:x:gate:1",
-      };
+      const at: Progress = progressFrom("advance", seen, "building");
       yield* applyActions(
         rig.ctx,
         10,
@@ -1709,10 +1703,13 @@ describe("gate: a failed attempt goes back into the session", () => {
         at,
         [{ kind: "send-gate-failure", output: "red" }],
         makeCause("gate", "claimed"),
+        { send: { commandId: "softfac:x:gate:1", attempt: 1, runOrdinal: 3 } },
       );
       ledger.close();
       assert.deepStrictEqual(rig.t3.calls, ["send thread-1 softfac:x:gate:1 red"]);
       assert.deepStrictEqual(rig.gh.calls, []);
+      // The send is recorded right after it, for the attempt and the run it names.
+      assert.deepStrictEqual(rawLines(rig).slice(STARTED.length), [sentBack(1, 3)]);
     }),
   );
 
@@ -2743,11 +2740,7 @@ describe("apply: a failed re-gate's actions", () => {
         const rig = rigFor([...STARTED, PR_OPENED, moved("building", "pr-open")]);
         const ledger = Ledger.open(rig.dataDir, rig.run, { clock: () => 1_000 });
         const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
-        const at: Progress = {
-          ...progressFrom("advance", seen, "pr-open"),
-          gateCommandId: "softfac:x:gate:2:1",
-          gateSent: { attempt: 2, runOrdinal: 1 },
-        };
+        const at: Progress = progressFrom("advance", seen, "pr-open");
         const actions = [
           { kind: "mark-pr-draft", pr: 12 },
           { kind: "assign-to-machine" },
@@ -2755,7 +2748,9 @@ describe("apply: a failed re-gate's actions", () => {
           { kind: "send-gate-failure", output: "red" },
           { kind: "update-status-comment" },
         ] as const;
-        yield* applyActions(rig.ctx, 10, ledger, at, actions, makeCause("gate", "claimed"));
+        yield* applyActions(rig.ctx, 10, ledger, at, actions, makeCause("gate", "claimed"), {
+          send: { commandId: "softfac:x:gate:2:1", attempt: 2, runOrdinal: 1 },
+        });
         ledger.close();
         assert.deepStrictEqual(rig.gh.calls, [
           "markPrDraft 12",

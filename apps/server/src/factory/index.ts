@@ -33,7 +33,15 @@ import { readRun } from "./ledger/read.ts";
 import { runIdToString, type RunId } from "./ledger/runId.ts";
 import { MachineLog } from "./ledger/machineLog.ts";
 import { runLoop, type Loop } from "./loop.ts";
-import { runPass, type GateStart, type PassError, type PassWorld, type Repo } from "./pass.ts";
+import {
+  GATE_PASSED_LINE,
+  gateQueued,
+  runPass,
+  type GateStart,
+  type PassError,
+  type PassWorld,
+  type Repo,
+} from "./pass.ts";
 import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
 import { readProgress } from "./runner/progress.ts";
@@ -126,7 +134,7 @@ const projectFromBase = (
 /** What the live world runs its gates with, and what it does when one ends. */
 export interface LiveGate {
   readonly gate: FactoryGate["Service"];
-  /** Run when a gate ends, so the next pass carries on at once. */
+  /** Run when a gate ends with a decision (`gateDecided`), so the next pass carries on at once. */
   readonly wake: Effect.Effect<void>;
 }
 
@@ -134,7 +142,7 @@ export interface LiveGate {
 const gateWords = (run: string, step: GateStep): string => {
   switch (step.kind) {
     case "passed":
-      return "the gate passed and the pull request is ready for review";
+      return GATE_PASSED_LINE;
     case "sent-back":
       return `the gate failed on attempt ${step.attempt} and was sent back into the session`;
     case "stuck":
@@ -146,9 +154,21 @@ const gateWords = (run: string, step: GateStep): string => {
     case "running":
       return "gate running";
     case "queued":
-      return `gate queued: ${step.running} gates running, max_concurrent_gates is ${step.max}`;
+      return gateQueued(step);
   }
 };
+
+/**
+ * Whether a gate that ended changed something the next pass should act on at once. A gate that
+ * decided nothing (the session still at work, another gate running, an error such as a rate
+ * limit) waits for the normal poll, so the loop does not spin on it.
+ */
+export const gateDecided = (step: GateStep | null): boolean =>
+  step !== null &&
+  (step.kind === "passed" ||
+    step.kind === "sent-back" ||
+    step.kind === "stuck" ||
+    step.kind === "ended");
 
 /** What a gate error was about, for the run's `error` line. */
 const gateErrorKind = (error: GateStepError): ErrorKind => {
@@ -260,7 +280,8 @@ export const liveWorld = (
       const label = `${repo.watched.repo}#${run.issue}`;
       yield* gateStep(gateContext(repo), run).pipe(
         Effect.matchEffect({
-          onSuccess: (step) => Effect.logInfo(`${label} building: ${gateWords(id, step)}`),
+          onSuccess: (step) =>
+            Effect.logInfo(`${label} building: ${gateWords(id, step)}`).pipe(Effect.as(step)),
           onFailure: (error) =>
             Effect.logError(`error: ${label} gate: ${error.message}`).pipe(
               Effect.andThen(
@@ -272,10 +293,11 @@ export const liveWorld = (
                   ),
                 ),
               ),
+              Effect.as(null),
             ),
         }),
         Effect.ensuring(Effect.sync(() => gating.delete(id))),
-        Effect.andThen(live.wake),
+        Effect.flatMap((step) => (gateDecided(step) ? live.wake : Effect.void)),
         Effect.forkDetach,
       );
       return { kind: "started" } as const;

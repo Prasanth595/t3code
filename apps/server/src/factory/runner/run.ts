@@ -65,14 +65,23 @@ export interface Progress {
   stop: Stop | null;
   /** What the ledger said when the step began: the comment-once guards read it. */
   readonly seen: Seen;
-  /** The comment `post-gate-results` posts on the pull request. */
-  gateComment?: string;
   /** The ledger already says the gate results are on the pull request. */
   gateResultsPosted: boolean;
-  /** The command id of the message `send-gate-failure` sends, so a retry is the same command. */
-  gateCommandId?: string;
-  /** The attempt and run ordinal `send-gate-failure` records as sent back, right after the send. */
-  gateSent?: { readonly attempt: number; readonly runOrdinal: number };
+}
+
+/**
+ * What the gate's actions carry that the ledger does not: the results comment
+ * `post-gate-results` posts, and the send `send-gate-failure` makes, under a command id so a
+ * retry is the same command, with the attempt and session run ordinal it then records as sent
+ * back. An action whose part is missing is an `InvalidTransition`.
+ */
+export interface GatePayload {
+  readonly comment?: string;
+  readonly send?: {
+    readonly commandId: string;
+    readonly attempt: number;
+    readonly runOrdinal: number;
+  };
 }
 
 /** Where the issue stands, from what the ledger says. `fallback` is the state of a run that has none yet. */
@@ -123,9 +132,10 @@ export const finishBuilding = (
  * `state_changed` line is written last, after every action, so a ledger that still shows the old
  * state means the transition may be unfinished and is run again. `cause` is the cause of every
  * line written. The gate's actions: marking the pull request ready is repeated safely, its
- * results comment is posted once (`at.gateResultsPosted`, the `gate-results-posted` step), and
- * a failure is sent under `at.gateCommandId` and then recorded as sent back when `at.gateSent`
- * says which attempt and run. Actions that belong to later steps are an `InvalidTransition`.
+ * results comment (`gate.comment`) is posted once (`at.gateResultsPosted`, the
+ * `gate-results-posted` step), and a failure is sent under `gate.send.commandId` and then
+ * recorded as sent back for that attempt and run. Actions that belong to later steps, and gate
+ * actions with no payload, are an `InvalidTransition`.
  */
 export const applyActions = (
   ctx: RunContext,
@@ -134,6 +144,7 @@ export const applyActions = (
   at: Progress,
   actions: ReadonlyArray<Action>,
   cause: Cause,
+  gate: GatePayload = {},
 ): Effect.Effect<void, RunError> =>
   Effect.gen(function* () {
     let movedTo: State | undefined;
@@ -205,7 +216,7 @@ export const applyActions = (
           break;
         case "post-gate-results": {
           if (at.gateResultsPosted) break;
-          const body = at.gateComment;
+          const body = gate.comment;
           if (body === undefined) {
             return yield* new InvalidTransition({ state: at.state, event: action.kind });
           }
@@ -220,25 +231,22 @@ export const applyActions = (
           break;
         }
         case "send-gate-failure": {
-          const commandId = at.gateCommandId;
-          if (at.threadId === null || commandId === undefined) {
+          const send = gate.send;
+          if (at.threadId === null || send === undefined) {
             return yield* new InvalidTransition({ state: at.state, event: action.kind });
           }
           // The command id is the run's and the attempt's, so a send repeated after a crash is
           // the same command.
-          yield* ctx.sessions.send(at.threadId, commandId, action.output);
-          const sent = at.gateSent;
-          if (sent !== undefined) {
-            yield* ledger(() =>
-              out.append(
-                {
-                  event: "gate_sent_back",
-                  data: { attempt: sent.attempt, run_ordinal: sent.runOrdinal },
-                },
-                makeCause(at.step, cause.reason, { attempt: sent.attempt }),
-              ),
-            );
-          }
+          yield* ctx.sessions.send(at.threadId, send.commandId, action.output);
+          yield* ledger(() =>
+            out.append(
+              {
+                event: "gate_sent_back",
+                data: { attempt: send.attempt, run_ordinal: send.runOrdinal },
+              },
+              makeCause(at.step, cause.reason, { attempt: send.attempt }),
+            ),
+          );
           break;
         }
         case "update-status-comment":

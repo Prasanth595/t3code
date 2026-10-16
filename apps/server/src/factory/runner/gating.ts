@@ -197,8 +197,10 @@ const finishPass = (
       (action) =>
         stillOpen || (action.kind !== "mark-pr-ready" && action.kind !== "post-gate-results"),
     );
-    at.gateComment = gateResultsComment(resultsOf(pass), pass.attempt, pass.sha, pass.baseSha);
-    yield* applyActions(ctx, issue, opened, at, actions, makeCause("gate", "gate-passed"));
+    const comment = gateResultsComment(resultsOf(pass), pass.attempt, pass.sha, pass.baseSha);
+    yield* applyActions(ctx, issue, opened, at, actions, makeCause("gate", "gate-passed"), {
+      comment,
+    });
     return { kind: "passed", pr } as const;
   });
 
@@ -519,8 +521,7 @@ const gateAttempts = (
       );
       // The id holds the ordinal: a retry before the session ran again is the same command, and
       // a send after a newer run is a new one even if T3 dedupes by id.
-      at.gateCommandId = `softfac:${runIdToString(run)}:gate:${attempt}:${ordinal}`;
-      at.gateSent = { attempt, runOrdinal: ordinal };
+      const commandId = `softfac:${runIdToString(run)}:gate:${attempt}:${ordinal}`;
       yield* applyActions(
         ctx,
         issue,
@@ -528,6 +529,7 @@ const gateAttempts = (
         at,
         failed.actions,
         makeCause("gate", "gate-failed"),
+        { send: { commandId, attempt, runOrdinal: ordinal } },
       );
       return { kind: "sent-back", attempt } as const;
     }

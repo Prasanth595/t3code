@@ -16,8 +16,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, validateRunId, type RunId } from "./ledger/runId.ts";
 import { FactoryProcess, type RunInput, type RunResult, type RunSpawnError } from "./process.ts";
-import { commandLine } from "./runner/messages.ts";
-import { sanitize } from "./text.ts";
+import { commandLine, sanitize } from "./text.ts";
 
 /**
  * The gate: a fresh checkout of a pull request's head merged with the base branch tip, the

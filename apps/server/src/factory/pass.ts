@@ -194,8 +194,10 @@ const GATE_RUNNING = "gate running";
 /** The line of a building run whose gate this pass started. */
 const GATE_STARTED = "gate started in the background";
 /** The words for a gate that could not start: `max_concurrent_gates` are running. */
-const gateQueued = (start: Extract<GateStart, { kind: "queued" }>) =>
+export const gateQueued = (start: { readonly running: number; readonly max: number }) =>
   `gate queued: ${start.running} gates running, max_concurrent_gates is ${start.max}`;
+/** The line of a run whose gate passed. */
+export const GATE_PASSED_LINE = "the gate passed and the pull request is ready for review";
 
 const FROM_TEXT = " (from Depends on, add the GitHub link)";
 
@@ -602,7 +604,7 @@ const advanceRun = (
         yield* startGate(world, repo, info, notes);
         break;
       case "passed":
-        notes.parts.push("the gate passed and the pull request is ready for review");
+        notes.parts.push(GATE_PASSED_LINE);
         break;
       case "needs-info":
         notes.parts.push(
