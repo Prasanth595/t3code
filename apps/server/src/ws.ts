@@ -240,6 +240,7 @@ import * as ForkChangelog from "./fork/ForkChangelog.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
 import { guardOwnerOnlyPatch, requireLocalDesktop } from "./fork/machineMap/browserAccess.ts";
+import * as WebPush from "./fork/webPush/WebPush.ts";
 import { isLocalDesktopSubject, isMachineSubject } from "./fork/machineMap/machineAccess.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -560,6 +561,9 @@ const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const ServerWsRpcGroupCore = ServerWsRpcGroup.omit(
   WS_METHODS.machineMapRead,
   WS_METHODS.machineMapShareSettings,
+  WS_METHODS.webPushPublicKey,
+  WS_METHODS.webPushSubscribe,
+  WS_METHODS.webPushTest,
 );
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
@@ -3242,6 +3246,30 @@ const layerWsRpc = (
         MachineMap.MachineMap.pipe(
           Effect.map((machineMap) => (input) => machineMap.shareSettings(input)),
         ),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.webPushPublicKey,
+        WebPush.WebPush.pipe(
+          Effect.map(
+            (webPush) => () => webPush.publicKey.pipe(Effect.map((publicKey) => ({ publicKey }))),
+          ),
+        ),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.webPushSubscribe,
+        WebPush.WebPush.pipe(
+          Effect.map((webPush) => (input) => webPush.subscribe(input).pipe(Effect.as({}))),
+        ),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.webPushTest,
+        WebPush.WebPush.pipe(Effect.map((webPush) => (input) => webPush.test(input.endpoint))),
       ),
     ),
   );

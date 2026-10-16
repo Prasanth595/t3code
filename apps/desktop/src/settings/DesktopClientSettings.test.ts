@@ -38,6 +38,7 @@ const clientSettings: ClientSettings = {
   backgroundWorkDetails: false,
   forkChangelogEnabled: false,
   installedAppEnabled: true,
+  webPushEnabled: true,
   contextWindowMeterEnabled: false,
   composerCollapseOnScroll: true,
   dismissedProviderUpdateNotificationKeys: [],

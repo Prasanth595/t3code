@@ -497,6 +497,11 @@ export const ClientSettingsSchema = Schema.Struct({
    */
   installedAppEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
+   * Fork: with the installed app on and system notifications allowed, this browser subscribes to
+   * Web Push on each connected server, so thread notifications arrive while the app is closed.
+   */
+  webPushEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Fork: filter by repository owner (`repositoryOwnerOf`) on the pull request page and in the
    * sidebar. Remove when upstream T3 Code ships its own owner or organization filter.
    */
@@ -2008,6 +2013,7 @@ export const ClientSettingsPatch = Schema.Struct({
   backgroundWorkDetails: Schema.optionalKey(Schema.Boolean),
   forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
   installedAppEnabled: Schema.optionalKey(Schema.Boolean),
+  webPushEnabled: Schema.optionalKey(Schema.Boolean),
   repositoryOwnerFilters: Schema.optionalKey(Schema.Boolean),
   pullRequestFilterChips: Schema.optionalKey(Schema.Boolean),
   sidebarOwnerFilter: Schema.optionalKey(SidebarOwnerFilter),

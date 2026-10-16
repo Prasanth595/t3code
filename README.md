@@ -73,6 +73,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 **Web app and look**
 
 - **Installed web app:** each server web app installs as an app, with an offline page, worker notifications and an app badge (`installedAppEnabled`, on by default).
+- **Web Push:** a phone gets thread notifications while the app is closed, from each server that the page connects to (`webPushEnabled`, on by default).
 - **Thread card layouts:** build the thread card from its elements, for desktop and for mobile (`threadCardLayouts`).
 - **Theme style:** published themes can set shape, fonts, a canvas pattern and user CSS.
 - **Lightning icon:** the fork app uses its own icon on every nightly icon file.

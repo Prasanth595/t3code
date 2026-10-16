@@ -433,6 +433,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     webOnly: true,
   },
   {
+    id: "web-push",
+    title: "Web Push",
+    to: "/settings/general",
+    searchTerms: ["web push notification phone android closed app background"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",
