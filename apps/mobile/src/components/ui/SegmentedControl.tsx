@@ -1,50 +1,79 @@
-import { Picker } from "@expo/ui/swift-ui";
-import { View } from "react-native";
+import { useState } from "react";
+import { I18nManager, Platform, Pressable, View } from "react-native";
+import Animated, { useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
 
+import { AppText } from "./AppText";
 import { useControlTheme } from "./useControlTheme";
-import { NativeThemeHost } from "./NativeThemeHost";
 import type { SegmentedControlProps } from "./SegmentedControl.types";
 
 export type { SegmentedControlProps } from "./SegmentedControl.types";
 
-/** Let UIKit own segment sizing, selection, and accessibility through SwiftUI. */
+/** Shared capsule control with native press targets and a raised selection. */
 export function SegmentedControl<Value extends string | number>(
   props: SegmentedControlProps<Value>,
 ) {
-  const { colors } = useControlTheme();
+  const { colorScheme } = useControlTheme();
+  const [width, setWidth] = useState(0);
+  const reduceMotion = useReducedMotion();
+  const selectedIndex = props.options.findIndex((option) => option.value === props.selected);
+  const segmentWidth = props.options.length ? Math.max(0, width - 6) / props.options.length : 0;
+  const selectionOffset = selectedIndex * segmentWidth * (I18nManager.isRTL ? -1 : 1);
+  const selectionStyle = useAnimatedStyle(() => ({
+    width: segmentWidth,
+    transform: [{ translateX: withTiming(selectionOffset, { duration: reduceMotion ? 0 : 160 }) }],
+  }));
+  const dark = colorScheme === "dark";
+  const minHeight = props.size === "compact" ? 32 : Platform.OS === "android" ? 40 : 36;
+
   return (
-    <View className={props.className}>
-      <View accessibilityElementsHidden>
-        <NativeThemeHost matchContents={{ vertical: true }} style={{ width: "100%" }}>
-          <Picker
-            selection={props.selected}
-            onSelectionChange={props.onSelect}
-            segments={props.options.map((option) => ({
-              label: option.label,
-              value: option.value,
-            }))}
-            segmentColors={{
-              background: colors["--color-card"],
-              selectedBackground: colors["--color-secondary"],
-              text: colors["--color-foreground-muted"],
-              selectedText: colors["--color-secondary-foreground"],
-            }}
+    <View collapsable={false} className={props.className}>
+      <View
+        onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+        className="flex-row rounded-full border p-0.5"
+        style={{
+          minHeight,
+          backgroundColor: dark ? "#111111" : "#e9e9e9",
+          borderColor: dark ? "#303030" : "#d4d4d4",
+        }}
+      >
+        {selectedIndex >= 0 && width > 0 ? (
+          <Animated.View
+            pointerEvents="none"
+            className="absolute bottom-0.5 start-0.5 top-0.5 rounded-full border"
+            style={[
+              {
+                backgroundColor: dark ? "#242424" : "#ffffff",
+                borderColor: dark ? "#484848" : "#d4d4d4",
+                boxShadow: "0px 2px 3px rgba(0, 0, 0, 0.25)",
+              },
+              selectionStyle,
+            ]}
           />
-        </NativeThemeHost>
-      </View>
-      <View pointerEvents="none" className="absolute inset-0 flex-row">
-        {props.options.map((option) => (
-          <View
-            key={String(option.value)}
-            accessible
-            accessibilityRole={props.role ?? "button"}
-            accessibilityLabel={option.accessibilityLabel ?? option.label}
-            accessibilityState={{ selected: option.value === props.selected }}
-            accessibilityActions={[{ name: "activate" }]}
-            onAccessibilityAction={() => props.onSelect(option.value)}
-            className="flex-1"
-          />
-        ))}
+        ) : null}
+        {props.options.map((option) => {
+          const selected = option.value === props.selected;
+          return (
+            <Pressable
+              key={`${typeof option.value}:${option.value}`}
+              accessibilityRole={props.role ?? "button"}
+              accessibilityLabel={option.accessibilityLabel ?? option.label}
+              accessibilityState={{ selected }}
+              onPress={() => props.onSelect(option.value)}
+              className="flex-1 items-center justify-center rounded-full px-2 py-1 active:opacity-70"
+              style={{ minHeight: minHeight - 6 }}
+            >
+              <AppText
+                textRole="footnote"
+                className={selected ? "font-t3-bold" : "font-t3-medium"}
+                style={{
+                  color: selected ? (dark ? "#f5f5f5" : "#171717") : dark ? "#a3a3a3" : "#666666",
+                }}
+              >
+                {option.label}
+              </AppText>
+            </Pressable>
+          );
+        })}
       </View>
     </View>
   );
