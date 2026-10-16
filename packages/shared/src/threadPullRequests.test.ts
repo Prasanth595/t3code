@@ -481,6 +481,7 @@ describe("chain selection and badge state", () => {
     const links = [
       link(1, { snapshot: snapshot({ headBranch: "a" }) }),
       link(1, { snapshot: snapshot({ headBranch: "b", baseBranch: "a" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "c" }) }),
     ];
     expect(resolveThreadPullRequestChains(links).map((chain) => chain.layers)).toEqual([
       [links[0]],
