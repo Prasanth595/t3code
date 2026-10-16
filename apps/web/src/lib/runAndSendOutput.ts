@@ -14,7 +14,10 @@ export type RunAndSendOutputAction = { newExecution?: boolean; retrySendingOutpu
 export function createRunAndSendOutputRequests(maxRequests = 256) {
   const sessionId = randomUUID();
   // Retain compact execution identities when accepted payloads leave the bounded cache.
-  const generations = new Map<string, number>();
+  const executions = new Map<
+    string,
+    Pick<TerminalRunAndSendInput, "cwd" | "worktreePath"> & { generation: number }
+  >();
   const requests = new Map<
     string,
     { request: Request; pending?: Promise<boolean>; accepted: boolean }
@@ -29,8 +32,12 @@ export function createRunAndSendOutputRequests(maxRequests = 256) {
     const key = JSON.stringify([environmentId, input.threadId, sourceId, input.command]);
     let entry = requests.get(key);
     if (entry?.pending) return entry.pending;
-    if (action?.newExecution && (entry?.accepted || (!entry && generations.has(key)))) {
-      generations.set(key, (generations.get(key) ?? 0) + 1);
+    if (action?.newExecution && (entry?.accepted || (!entry && executions.has(key)))) {
+      executions.set(key, {
+        generation: (executions.get(key)?.generation ?? 0) + 1,
+        cwd: input.cwd,
+        worktreePath: input.worktreePath,
+      });
       requests.delete(key);
       entry = undefined;
     }
@@ -41,13 +48,22 @@ export function createRunAndSendOutputRequests(maxRequests = 256) {
         if (settledKey === undefined) return Promise.resolve(false);
         requests.delete(settledKey);
       }
-      // Reconstruct the same server identity even after evicting a successful request.
+      const execution = executions.get(key) ?? {
+        generation: 0,
+        cwd: input.cwd,
+        worktreePath: input.worktreePath,
+      };
+      executions.set(key, execution);
+      // The server binds workspace metadata to the identity, including after cache eviction.
       const digest = sha256(
-        new TextEncoder().encode(JSON.stringify([sessionId, key, generations.get(key) ?? 0])),
+        new TextEncoder().encode(JSON.stringify([sessionId, key, execution.generation])),
       );
       const terminalId = `run-${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
       entry = {
-        request: { environmentId, input: { ...input, terminalId } },
+        request: {
+          environmentId,
+          input: { ...input, cwd: execution.cwd, worktreePath: execution.worktreePath, terminalId },
+        },
         accepted: false,
       };
       requests.set(key, entry);
@@ -59,7 +75,6 @@ export function createRunAndSendOutputRequests(maxRequests = 256) {
       .then((accepted) => {
         // A failed dispatch retry does not undo the known shell acceptance.
         current.accepted ||= accepted;
-        if (accepted && !generations.has(key)) generations.set(key, 0);
         return accepted;
       })
       .finally(() => {

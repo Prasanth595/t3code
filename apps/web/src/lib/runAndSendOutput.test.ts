@@ -79,6 +79,37 @@ describe("run and send output requests", () => {
     );
   });
 
+  it("preserves workspace metadata through default-capacity eviction and repeated recovery", async () => {
+    const run = createRunAndSendOutputRequests();
+    const original = { ...input, worktreePath: "/original-worktree" };
+    const changed = { ...input, cwd: "/changed", worktreePath: "/changed-worktree" };
+    const start = vi.fn().mockResolvedValue(true);
+    await run(environmentId, "original", original, start);
+    const firstRequest = start.mock.calls[0]?.[0];
+    const evict = async (prefix: string) => {
+      for (let index = 0; index < 256; index++) {
+        await run(environmentId, `${prefix}-${index}`, input, start);
+      }
+    };
+    await evict("first");
+    await run(environmentId, "original", changed, start);
+    expect(start.mock.lastCall?.[0]).toEqual(firstRequest);
+    await evict("second");
+    await run(environmentId, "original", changed, start, { retrySendingOutput: true });
+    expect(start.mock.lastCall?.[0]).toEqual(firstRequest);
+    await run(environmentId, "original", changed, start, { retrySendingOutput: true });
+    expect(start.mock.lastCall?.[0]).toEqual(firstRequest);
+
+    await evict("third");
+    await run(environmentId, "original", changed, start, { newExecution: true });
+    const rerunRequest = start.mock.lastCall?.[0];
+    expect(rerunRequest.input).toMatchObject(changed);
+    expect(rerunRequest.input.terminalId).not.toBe(firstRequest.input.terminalId);
+    await evict("fourth");
+    await run(environmentId, "original", original, start, { retrySendingOutput: true });
+    expect(start.mock.lastCall?.[0]).toEqual(rerunRequest);
+  });
+
   it("does not evict uncertain or pending requests to make room for a new action", async () => {
     const run = createRunAndSendOutputRequests(1);
     const start = vi.fn().mockResolvedValue(false);
