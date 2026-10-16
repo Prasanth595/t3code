@@ -1463,14 +1463,33 @@ export const make = Effect.gen(function* () {
       remoteName,
     );
 
+    // With no origin to compare against, the only remote is the repository gh targets,
+    // so a branch on it is not a fork. With several remotes, it may still be a fork.
+    const isOnlyRemote =
+      remoteName !== null &&
+      remoteName !== "origin" &&
+      originRepository.remoteUrlKey === null &&
+      (yield* gitCore
+        .execute({
+          operation: "GitManager.resolveBranchHeadContext.remotes",
+          cwd,
+          args: ["remote"],
+          timeoutMs: 5_000,
+        })
+        .pipe(
+          Effect.map(
+            (result) => result.stdout.split("\n").filter((name) => name.trim().length > 0).length,
+          ),
+          Effect.orElseSucceed(() => 0),
+        )) === 1;
+    const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
+
     const isCrossRepository =
       remoteRepository.repositoryNameWithOwner !== null &&
       originRepository.repositoryNameWithOwner !== null
         ? remoteRepository.repositoryNameWithOwner.toLowerCase() !==
           originRepository.repositoryNameWithOwner.toLowerCase()
-        : remoteName !== null &&
-          remoteName !== "origin" &&
-          remoteRepository.repositoryNameWithOwner !== null;
+        : isForeignRemote && remoteRepository.repositoryNameWithOwner !== null;
 
     const ownerHeadSelector =
       remoteRepository.ownerLogin && headBranch.length > 0
@@ -1478,8 +1497,7 @@ export const make = Effect.gen(function* () {
         : null;
     const remoteAliasHeadSelector =
       remoteName && headBranch.length > 0 ? `${remoteName}:${headBranch}` : null;
-    const shouldProbeRemoteOwnedSelectors =
-      isCrossRepository || (remoteName !== null && remoteName !== "origin");
+    const shouldProbeRemoteOwnedSelectors = isCrossRepository || isForeignRemote;
 
     const headSelectors: string[] = [];
     if (isCrossRepository && shouldProbeRemoteOwnedSelectors) {

@@ -4455,6 +4455,124 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   );
 
   it.effect(
+    "reuses the open same-repository PR when the only remote is not named origin",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
+          "git@github.com:pingdotgg/codething-mvp.git",
+          remoteDir,
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              dev: encodeCliJson([
+                {
+                  number: 3,
+                  title: "Dev",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/3",
+                  baseRefName: "main",
+                  headRefName: "dev",
+                  state: "OPEN",
+                  isCrossRepository: false,
+                  headRepository: { nameWithOwner: "pingdotgg/codething-mvp" },
+                  headRepositoryOwner: { login: "pingdotgg" },
+                },
+              ]),
+            },
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.push.status).toBe("pushed");
+        expect(result.pr.status).toBe("opened_existing");
+        expect(result.pr.number).toBe(3);
+        expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+      }),
+    12_000,
+  );
+
+  it.effect(
+    "still treats a fork remote as cross-repository with an upstream remote but no origin",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
+          "https://github.com/contributor/demo.git",
+          forkDir,
+        );
+        const upstreamDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+        yield* runGit(repoDir, ["push", "upstream", "main"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "upstream",
+          "https://github.com/acme/demo.git",
+          upstreamDir,
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+
+        const sameRepositoryPr = {
+          number: 3,
+          title: "Same-repository decoy",
+          url: "https://github.com/contributor/demo/pull/3",
+          baseRefName: "main",
+          headRefName: "dev",
+          state: "OPEN",
+          isCrossRepository: false,
+          headRepository: { nameWithOwner: "contributor/demo" },
+          headRepositoryOwner: { login: "contributor" },
+        };
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListByHeadSelector: {
+              dev: encodeCliJson([
+                sameRepositoryPr,
+                {
+                  ...sameRepositoryPr,
+                  number: 4,
+                  title: "Fork PR",
+                  url: "https://github.com/acme/demo/pull/4",
+                  isCrossRepository: true,
+                },
+              ]),
+            },
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("opened_existing");
+        expect(result.pr.number).toBe(4);
+        expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+      }),
+    12_000,
+  );
+
+  it.effect(
     "returns the correct existing PR when a slash remote checks out to a synthetic local alias",
     () =>
       Effect.gen(function* () {
@@ -4537,6 +4655,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
         const forkDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        // Origin is the base repository; a lone remote would be the base itself.
+        yield* runGit(repoDir, [
+          "remote",
+          "add",
+          "origin",
+          "git@github.com:pingdotgg/codething-mvp.git",
+        ]);
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
         yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-142/statemachine"]);
         yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
@@ -4664,6 +4789,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
         const forkDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+        // Origin is the base repository; a lone remote would be the base itself.
+        yield* runGit(repoDir, [
+          "remote",
+          "add",
+          "origin",
+          "git@github.com:pingdotgg/codething-mvp.git",
+        ]);
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
         yield* runGit(repoDir, [
           "config",
@@ -5151,6 +5283,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* initRepo(repoDir);
       const forkDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+      // Origin is the base repository; a lone remote would be the base itself.
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:pingdotgg/codething-mvp.git",
+      ]);
       yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
       yield* runGit(repoDir, ["add", "changes.txt"]);
