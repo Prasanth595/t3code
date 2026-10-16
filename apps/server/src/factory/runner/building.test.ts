@@ -41,6 +41,7 @@ import {
 } from "../tracker/github.ts";
 import {
   advance,
+  checkBinding,
   timeLimit,
   watch,
   type AdvanceOutcome,
@@ -2777,4 +2778,30 @@ describe("watch and timeLimit: the end of a run", () => {
       assert.deepStrictEqual(noPr.reads, []);
     }),
   );
+});
+
+describe("checkBinding: a session relaunched from a pull request's branch", () => {
+  const pull = (headRef: string): PullRequest => ({ ...defaultPr(), headRef });
+  const NOT_ITS_BRANCH = "the session reported PR #12 but its branch is not this session's branch";
+
+  it("binds the pull request on the branch it was started from", () => {
+    assert.strictEqual(
+      checkBinding(pull("t3code/abc"), 12, "main", "t3code/def", false, "t3code/abc"),
+      null,
+    );
+    assert.strictEqual(
+      checkBinding(pull("t3code/abc"), 12, "main", null, false, "t3code/abc"),
+      null,
+    );
+  });
+
+  it("refuses a pull request on any other branch", () => {
+    for (const branch of ["t3code/def", null]) {
+      assert.strictEqual(
+        checkBinding(pull("someone/else"), 12, "main", branch, false, "t3code/abc")?.public,
+        NOT_ITS_BRANCH,
+        String(branch),
+      );
+    }
+  });
 });

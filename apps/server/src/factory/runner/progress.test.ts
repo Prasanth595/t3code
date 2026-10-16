@@ -2,7 +2,13 @@ import { assert, it } from "@effect/vitest";
 import { describe } from "vite-plus/test";
 
 import type { Entry } from "../ledger/read.ts";
-import { readProgress } from "./progress.ts";
+import {
+  movedSince,
+  pendingRelaunch,
+  readProgress,
+  regateAttempt,
+  relaunchCommandId,
+} from "./progress.ts";
 
 const MINUTE = 60_000;
 
@@ -328,5 +334,194 @@ describe("readProgress: the last wait marker", () => {
       assert.strictEqual(seen.lastWait, null, bad);
       assert.strictEqual(seen.waitingAfter, null, bad);
     }
+  });
+});
+
+describe("readProgress: gating again", () => {
+  const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+  const PUSHED = "7e6d5c4b3a291807f6e5d4c3b2a190817263a4b5";
+  const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
+  const MOVED = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
+  const RUN = { repo: "rawphp/softfac", issue: "10", attempt: 1 };
+
+  const checkout = (ms: number, base: string) =>
+    line(ms, "gate_checkout", { attempt: 1, dir: "/d", sha: HEAD, base_sha: base });
+  const command = (ms: number) =>
+    line(ms, "gate_command", { attempt: 1, command: "cargo test", exit_code: 0, duration_ms: 5 });
+  const passed = (ms: number) => ({
+    ...step(ms, `gate-passed ${HEAD} 1`),
+    cause: { step: "gate", reason: "gate-passed", attempt: 1 },
+  });
+  /** A pass on `HEAD` against `BASE`, then `pr-open`. */
+  const PASS: ReadonlyArray<Entry> = [
+    launched(1),
+    line(2, "pr_opened", { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" }),
+    checkout(3, BASE),
+    command(4),
+    passed(5),
+    step(6, "gate-results-posted"),
+    moved(7, "building", "pr-open"),
+  ];
+  const regated = (ms: number, sha: string, base: string, previous: string) =>
+    line(ms, "gate_regate", { sha, base_sha: base, previous_base_sha: previous });
+  const relaunching = (ms: number) =>
+    line(ms, "regate_relaunching", { attempt: 2, branch: "t3code/abc", message: "boom" });
+
+  it("has no re-gate under way before a gate_regate line", () => {
+    const seen = readProgress(PASS);
+    assert.strictEqual(seen.regating, false);
+    assert.strictEqual(seen.regateMoved, null);
+    assert.strictEqual(seen.regatePassed, false);
+    assert.strictEqual(seen.regateSentBack, false);
+    assert.strictEqual(seen.relaunch, null);
+    assert.strictEqual(seen.regates, 0);
+  });
+
+  it("is under way from a gate_regate line, and says what moved since the recorded pass", () => {
+    const seen = readProgress([...PASS, regated(8, HEAD, MOVED, BASE)]);
+    assert.strictEqual(seen.regating, true);
+    assert.strictEqual(seen.regateMoved, "base");
+    assert.strictEqual(seen.regates, 1);
+    assert.strictEqual(readProgress([...PASS, regated(8, PUSHED, BASE, BASE)]).regateMoved, "head");
+    assert.strictEqual(
+      readProgress([...PASS, regated(8, PUSHED, MOVED, BASE)]).regateMoved,
+      "both",
+    );
+  });
+
+  it("keeps the newest line's answer when the base moves again", () => {
+    const seen = readProgress([
+      ...PASS,
+      regated(8, HEAD, MOVED, BASE),
+      regated(9, HEAD, BASE, MOVED),
+    ]);
+    assert.strictEqual(seen.regates, 2);
+    assert.strictEqual(seen.regateMoved, "base");
+  });
+
+  it("records a pass of the re-gate, and drops it with the posted results", () => {
+    const again = [...PASS, regated(8, HEAD, MOVED, BASE), command(9), passed(10)];
+    assert.strictEqual(readProgress(again).regatePassed, true);
+    assert.strictEqual(readProgress(again).regating, true);
+    const posted = readProgress([...again, step(11, "gate-results-posted")]);
+    assert.strictEqual(posted.regating, false);
+    assert.strictEqual(posted.regatePassed, false);
+    // A pass that is not a re-gate's is not a regate pass.
+    assert.strictEqual(readProgress([launched(1), command(2), passed(3)]).regatePassed, false);
+  });
+
+  it("records a failure of the re-gate as sent back, until the state changes", () => {
+    const sent = [
+      ...PASS,
+      regated(8, HEAD, MOVED, BASE),
+      line(9, "gate_sent_back", { attempt: 2, run_ordinal: 0 }),
+    ];
+    assert.strictEqual(readProgress(sent).regateSentBack, true);
+    const back = readProgress([...sent, moved(10, "pr-open", "building")]);
+    assert.strictEqual(back.regateSentBack, false);
+    assert.strictEqual(back.regating, false);
+    assert.strictEqual(
+      readProgress([...PASS, line(8, "gate_sent_back", { attempt: 2, run_ordinal: 3 })])
+        .regateSentBack,
+      false,
+    );
+  });
+
+  it("holds a relaunch from its decision until the state changes", () => {
+    const seen = readProgress([...PASS, regated(8, HEAD, MOVED, BASE), relaunching(9)]);
+    assert.deepStrictEqual(seen.relaunch, {
+      fixes: { kind: "regate", attempt: 2 },
+      branch: "t3code/abc",
+      message: "boom",
+    });
+    assert.deepStrictEqual(seen.sending, { attempt: 2, runOrdinal: 0 });
+    assert.strictEqual(seen.launchedSinceSending, false);
+    assert.strictEqual(pendingRelaunch(seen), seen.relaunch);
+    assert.strictEqual(
+      readProgress([...PASS, relaunching(9), moved(10, "pr-open", "building")]).relaunch,
+      null,
+    );
+  });
+
+  it("is no longer pending once a session is launched after the decision", () => {
+    const seen = readProgress([...PASS, relaunching(9), launched(10)]);
+    assert.strictEqual(seen.launchedSinceSending, true);
+    assert.strictEqual(pendingRelaunch(seen), null);
+    assert.notStrictEqual(seen.relaunch, null);
+    assert.strictEqual(pendingRelaunch(readProgress(PASS)), null);
+  });
+
+  it("forgets a launch when a later gate-sending step or relaunch decision comes", () => {
+    const launchedAfter = [launched(1), step(2, "gate-sending 1 1"), launched(3)];
+    assert.strictEqual(readProgress(launchedAfter).launchedSinceSending, true);
+    assert.strictEqual(
+      readProgress([...launchedAfter, step(4, "gate-sending 2 1")]).launchedSinceSending,
+      false,
+    );
+    assert.strictEqual(
+      readProgress([...launchedAfter, relaunching(4)]).launchedSinceSending,
+      false,
+    );
+  });
+
+  it("reads a feedback relaunch, which is no attempt and no gate-sending", () => {
+    const seen = readProgress([
+      ...PASS,
+      line(8, "feedback_relaunching", {
+        n: 3,
+        branch: "t3code/abc",
+        items: ["review:1"],
+        message: "fix it",
+      }),
+    ]);
+    assert.deepStrictEqual(seen.relaunch, {
+      fixes: { kind: "feedback", n: 3 },
+      branch: "t3code/abc",
+      message: "fix it",
+    });
+    assert.strictEqual(seen.sending, null);
+    assert.strictEqual(regateAttempt(seen.relaunch!), null);
+    assert.strictEqual(
+      relaunchCommandId(seen.relaunch!, RUN),
+      "softfac:rawphp__softfac__10__1:feedback:3",
+    );
+  });
+
+  it("names a re-gate relaunch's attempt and command id", () => {
+    const seen = readProgress([...PASS, relaunching(8)]);
+    assert.strictEqual(regateAttempt(seen.relaunch!), 2);
+    assert.strictEqual(
+      relaunchCommandId(seen.relaunch!, RUN),
+      "softfac:rawphp__softfac__10__1:regate:2",
+    );
+  });
+});
+
+describe("movedSince: what differs from the recorded pass", () => {
+  const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+  const PUSHED = "7e6d5c4b3a291807f6e5d4c3b2a190817263a4b5";
+  const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
+  const MOVED = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
+
+  it("is nothing without a pass on record, whatever the head and tip are", () => {
+    assert.strictEqual(movedSince("", "", HEAD, BASE), null);
+  });
+  it("is the base when only the tip differs, with or without a head on record", () => {
+    assert.strictEqual(movedSince("", BASE, HEAD, MOVED), "base");
+    assert.strictEqual(movedSince(HEAD, BASE, HEAD, MOVED), "base");
+  });
+  it("is the head when only the head differs and no base is on record", () => {
+    assert.strictEqual(movedSince(HEAD, "", PUSHED, BASE), "head");
+    assert.strictEqual(movedSince(HEAD, BASE, PUSHED, BASE), "head");
+  });
+  it("is both when both differ", () => {
+    assert.strictEqual(movedSince(HEAD, BASE, PUSHED, MOVED), "both");
+  });
+  it("is unknown for a pass with a head and no base when the head did not move", () => {
+    assert.strictEqual(movedSince(HEAD, "", HEAD, MOVED), "unknown");
+    assert.strictEqual(movedSince(HEAD, "", HEAD, BASE), "unknown");
+  });
+  it("compares commit ids without regard to case", () => {
+    assert.strictEqual(movedSince(HEAD, BASE, HEAD.toUpperCase(), BASE.toUpperCase()), null);
   });
 });
