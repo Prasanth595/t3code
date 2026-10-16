@@ -19,6 +19,7 @@ import {
   linkedPullRequestKey,
   useLinkedPullRequestLines,
 } from "./LinkedPullRequestList";
+import { useLinkedPullRequestActions } from "./useLinkedPullRequestActions";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 const TITLE = "Linked pull requests";
@@ -29,7 +30,8 @@ export function ThreadPullRequestsSheet(
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { selectedThread, selectedEnvironmentRuntime } = useThreadSelection();
+  const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
+    useThreadSelection();
   const lines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
   const openCount = useMemo(
     () =>
@@ -41,19 +43,26 @@ export function ThreadPullRequestsSheet(
     replace: true,
     context: selectedThread ?? undefined,
   });
+  const actions = useLinkedPullRequestActions({
+    thread: selectedThread,
+    project: selectedThreadProject,
+    runtime: selectedEnvironmentRuntime,
+  });
+  const rowInputs = useMemo(() => ({ lines, actions }), [lines, actions]);
 
   const content = (
     <View className="flex-1 android:bg-sheet-solid ios:bg-screen">
       <LegendList
         data={lines}
         keyExtractor={linkedPullRequestKey}
-        extraData={lines}
+        extraData={rowInputs}
         renderItem={({ item, index }) => (
           <LinkedPullRequestRow
             line={item}
             separator={index < lines.length - 1}
             surfaceClassName={Platform.OS === "ios" ? "text-screen" : "text-sheet-solid"}
             openPullRequest={openPullRequest}
+            actions={actions}
           />
         )}
         estimatedItemSize={88}
@@ -62,7 +71,10 @@ export function ThreadPullRequestsSheet(
         style={{ flex: 1 }}
         contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+        contentContainerStyle={{
+          paddingBottom: Math.max(insets.bottom, 18) + 18,
+          paddingHorizontal: 8,
+        }}
         ListHeaderComponent={
           lines.length > 0 ? (
             <Text className="px-4 pt-2 pb-1 text-xs text-foreground-muted">
@@ -105,6 +117,19 @@ export function ThreadPullRequestsSheet(
               titleFontSize={18}
               titleFontWeight="800"
               translucent
+              headerRightBarButtonItems={
+                actions.canLink
+                  ? [
+                      {
+                        type: "button",
+                        accessibilityLabel: "Link pull request",
+                        icon: { name: "plus", type: "sfSymbol" },
+                        identifier: "thread-pull-requests-link",
+                        onPress: actions.promptLink,
+                      },
+                    ]
+                  : undefined
+              }
             />
           </NativeScreen>
         </ScreenStack>
@@ -115,7 +140,22 @@ export function ThreadPullRequestsSheet(
   return (
     <View collapsable={false} className="flex-1 bg-header">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AndroidSheetHeader title={TITLE} hideBottomBorder onBack={() => navigation.goBack()} />
+      <AndroidSheetHeader
+        title={TITLE}
+        hideBottomBorder
+        onBack={() => navigation.goBack()}
+        actions={
+          actions.canLink
+            ? [
+                {
+                  accessibilityLabel: "Link pull request",
+                  icon: "plus",
+                  onPress: actions.promptLink,
+                },
+              ]
+            : undefined
+        }
+      />
       <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
     </View>
   );

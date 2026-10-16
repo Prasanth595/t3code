@@ -11,11 +11,13 @@ import { Pressable, useWindowDimensions, View } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
+import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import type { EnvironmentRuntimeState } from "../../state/remote-runtime-types";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import type { LinkedPullRequestActions } from "./useLinkedPullRequestActions";
 import { pullRequestListReviewStatus } from "../pull-requests/pullRequestList";
 import {
   PullRequestAvatar,
@@ -55,6 +57,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   readonly separator: boolean;
   readonly surfaceClassName: string;
   readonly openPullRequest: (url: string) => Promise<boolean>;
+  readonly actions: LinkedPullRequestActions | null;
 }) {
   const { link, depth, stack } = props.line;
   const snapshot = link.snapshot;
@@ -74,10 +77,11 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   const additions = snapshot?.additions ?? 0;
   const deletions = snapshot?.deletions ?? 0;
   const metaLineHeight = useScaledTextRole("label").lineHeight * useWindowDimensions().fontScale;
-  return (
+  const row = (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Pull request ${link.number}, ${snapshot?.title ?? "waiting for host state"}${status ? `, ${status.label}` : ""}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, ${link.repository}${stack ? `, stack of ${stack.size}` : ""}${watching ? ", watching" : ""}${checks ? `, checks ${snapshot?.checksState}` : ""}${review ? `, ${review.accessibleLabel}` : ""}`}
+      accessibilityHint={props.actions ? "Touch and hold for actions." : undefined}
       onPress={() => {
         void props.openPullRequest(link.url).then((opened) => {
           if (!opened) Dialog.alert("Unable to open PR", "The pull request could not be opened.");
@@ -85,7 +89,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
       }}
       // Steps in per layer like the web list, capped so deep stacks keep their width.
       style={{ paddingLeft: 16 + Math.min(depth, 3) * 16 }}
-      className="flex-row gap-3 pr-4 active:bg-row-hover"
+      className="flex-row gap-3 rounded-xl pr-4 active:bg-row-hover"
     >
       {depth > 0 ? <View className="-ml-2 w-px self-stretch bg-border" /> : null}
       <View className="self-start pt-2.5">
@@ -154,5 +158,17 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
         </Text>
       </View>
     </Pressable>
+  );
+  const actions = props.actions;
+  if (actions === null) return row;
+  return (
+    <Menu
+      shouldOpenOnLongPress
+      title={`#${link.number} · ${link.repository}`}
+      actions={actions.menuActions(link)}
+      onPressAction={({ nativeEvent }) => actions.onMenuAction(link, nativeEvent.event)}
+    >
+      {row}
+    </Menu>
   );
 });

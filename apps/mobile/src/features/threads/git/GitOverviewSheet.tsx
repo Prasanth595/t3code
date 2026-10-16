@@ -46,6 +46,7 @@ import {
   linkedPullRequestKey,
   useLinkedPullRequestLines,
 } from "../LinkedPullRequestList";
+import { useLinkedPullRequestActions } from "../useLinkedPullRequestActions";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -76,13 +77,19 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const isInspector = presentation === "inspector";
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
-  const { selectedThread, selectedEnvironmentRuntime } = useThreadSelection();
+  const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
+    useThreadSelection();
   const openPullRequest = useOpenPullRequest({
     replace: presentation === "sheet",
     context: selectedThread ?? undefined,
   });
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const linkedPrLines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
+  const linkedPrActions = useLinkedPullRequestActions({
+    thread: selectedThread,
+    project: selectedThreadProject,
+    runtime: selectedEnvironmentRuntime,
+  });
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
@@ -345,6 +352,17 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             })
           }
         />
+        {linkedPrActions.canLink ? (
+          <>
+            {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
+            <SheetListRow
+              icon="link"
+              title="Link pull request"
+              subtitle="Attach a pull request by URL or number"
+              onPress={linkedPrActions.promptLink}
+            />
+          </>
+        ) : null}
       </View>
 
       {linkedPrLines.length > 0 ? (
@@ -360,6 +378,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
                 separator={index < linkedPrLines.length - 1}
                 surfaceClassName="text-card"
                 openPullRequest={openPullRequest}
+                actions={linkedPrActions}
               />
             ))}
           </View>
