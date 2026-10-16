@@ -2,7 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { State } from "../domain/lifecycle.ts";
 import { makeCause } from "./events.ts";
@@ -10,6 +10,12 @@ import { Ledger } from "./ledger.ts";
 import { holdsSlot, listUnfinishedRuns } from "./listRuns.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "./runId.ts";
 import { T0, ticking, useTempDirs } from "./testSupport.ts";
+
+// Records every full-file read; `node:fs` namespaces are frozen, so the module itself is wrapped.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 
 const tempDir = useTempDirs();
 
@@ -160,6 +166,79 @@ describe("listUnfinishedRuns: whether a session may be running", () => {
       ["2", true],
       ["3", true],
     ]);
+  });
+});
+
+const line = (event: string, data: unknown, ms = T0) =>
+  `${JSON.stringify({ ts: "2026-10-04T10:13:16.123Z", ms, event, data })}\n`;
+const stateLine = (to: string) => line("state_changed", { from: "ready", to });
+const finishedLine = line("finished", { outcome: "stuck" });
+
+const writeRun = (dataDir: string, id: RunId, content: string) => {
+  NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR), { recursive: true });
+  const path = NodePath.join(dataDir, RUNS_DIR, runIdFileName(id));
+  NodeFS.writeFileSync(path, content);
+  return path;
+};
+
+const fullReads = () => vi.mocked(NodeFS.readFileSync).mock.calls.map(([path]) => String(path));
+
+describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
+  it("never reads a large finished run whole, and still lists an unfinished sibling", () => {
+    const dataDir = tempDir();
+    const finished = writeRun(
+      dataDir,
+      rid(1),
+      stateLine("triage") +
+        line("step_changed", { step: "x".repeat(200) }).repeat(1000) +
+        finishedLine,
+    );
+    expect(NodeFS.statSync(finished).size).toBeGreaterThan(64 * 1024);
+    const open = writeRun(dataDir, rid(2), stateLine("building"));
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listUnfinishedRuns(dataDir)).toEqual([
+      { id: rid(2), state: "building", unreadable: false, confirmed: false, session: false },
+    ]);
+    expect(fullReads()).toContain(open);
+    expect(fullReads()).not.toContain(finished);
+  });
+
+  it("skips a small finished run, also after a trailing blank line or CRLF", () => {
+    const dataDir = tempDir();
+    const small = writeRun(dataDir, rid(1), stateLine("triage") + finishedLine);
+    const blank = writeRun(dataDir, rid(2), stateLine("triage") + finishedLine + "\n\n");
+    const crlf = writeRun(dataDir, rid(3), stateLine("triage") + finishedLine + "\r\n");
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listUnfinishedRuns(dataDir)).toEqual([]);
+    for (const path of [small, blank, crlf]) expect(fullReads()).not.toContain(path);
+  });
+
+  it("reads a file whose last line is cut off in full and lists it as unfinished", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, rid(1), stateLine("building") + finishedLine.slice(0, 40));
+    expect(listUnfinishedRuns(dataDir)).toEqual([
+      { id: rid(1), state: "building", unreadable: false, confirmed: false, session: false },
+    ]);
+  });
+
+  it("reads a file whose last complete line is not JSON in full and lists it as unfinished", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, rid(1), stateLine("building") + "garbage\n");
+    expect(listUnfinishedRuns(dataDir)).toEqual([
+      { id: rid(1), state: "building", unreadable: false, confirmed: false, session: false },
+    ]);
+  });
+
+  it("a finished line longer than the tail is still skipped, after a full read", () => {
+    const dataDir = tempDir();
+    const long = writeRun(
+      dataDir,
+      rid(1),
+      stateLine("triage") + line("finished", { outcome: "stuck", pad: "y".repeat(20_000) }),
+    );
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listUnfinishedRuns(dataDir)).toEqual([]);
+    expect(fullReads()).toContain(long);
   });
 });
 
