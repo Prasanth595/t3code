@@ -11,6 +11,8 @@ import {
   THREAD_GONE,
   TIME_LIMIT,
   WRONG_ACCOUNT,
+  bodyEditMessage,
+  commentMessage,
   failureMessage,
   fenced,
   launchMessage,
@@ -260,5 +262,101 @@ describe("failureMessage", () => {
       failureMessage({ ...failed, timedOut: false, exitCode: 101 }),
       "\nResult: exit code 101\n",
     );
+  });
+});
+
+describe("forwarded instructor text", () => {
+  const REPO = "rawphp/softfac";
+  const comment = (body: string, author = "tom", repo = REPO, issue = 11) =>
+    commentMessage(repo, issue, author, body);
+  const edit = (body: string, editor = "tom", repo = REPO, issue = 11) =>
+    bodyEditMessage(repo, issue, editor, body);
+  const COMMENT_HEAD =
+    "Forwarded instructor comment on rawphp/softfac#11 from tom. Apply it at your next step boundary.\n\n";
+  const EDIT_HEAD =
+    "The body of rawphp/softfac#11 was edited by tom. Go back to your Contract step and work from the new body:\n\n";
+
+  it("names the repo, the issue and the author of a comment", () => {
+    assert.strictEqual(
+      commentMessage("rawphp/softfac", 11, "tomkaczocha", "Use serde here.\nThanks."),
+      "Forwarded instructor comment on rawphp/softfac#11 from tomkaczocha. Apply it at your next step boundary.\n\nUse serde here.\nThanks.",
+    );
+  });
+
+  it("sends a body edit back to the contract step", () => {
+    assert.strictEqual(
+      bodyEditMessage("rawphp/softfac", 11, "tomkaczocha", "## Outcome\nnew"),
+      "The body of rawphp/softfac#11 was edited by tomkaczocha. Go back to your Contract step and work from the new body:\n\n## Outcome\nnew",
+    );
+  });
+
+  it("loses control and invisible characters but keeps newline and tab", () => {
+    const text =
+      "a\u0000b\u0007c\u001b[31m\u0085d\u007fe\tf\u2028g\u2029h\u202ai\u202ej\u2066k\u2069l\rm\u200bn\u200fo\ufeffp\nq";
+    const clean = "a b c [31m d e\tf g h i j k l m n o p\nq";
+    assert.strictEqual(comment(text), `${COMMENT_HEAD}${clean}`);
+    assert.strictEqual(edit(text), `${EDIT_HEAD}${clean}`);
+  });
+
+  it("has its line endings normalised", () => {
+    assert.ok(comment("one\r\ntwo\r\n\r\nthree").endsWith("\n\none\ntwo\n\nthree"));
+  });
+
+  it("is not escaped, because it is an instruction", () => {
+    const body = "ping @someone and <!-- softfac --> and `code`";
+    assert.ok(comment(body).endsWith(`\n\n${body}`));
+  });
+
+  it("over 20000 characters ends with a line that says where to read the rest", () => {
+    const cut =
+      "[The factory cut this text at 20000 characters. Read the full text with: gh issue view 11 --repo rawphp/softfac --comments]";
+    const long = "a".repeat(25_000);
+    assert.ok(comment(long).endsWith(`\n\n${"a".repeat(20_000)}\n${cut}`));
+    const exact = "b".repeat(20_000);
+    assert.ok(comment(exact).endsWith(`\n\n${exact}`));
+    assert.ok(!comment(exact).includes("factory cut"));
+    // Characters are counted as code points, not UTF-16 units.
+    assert.ok(edit("é".repeat(20_001)).endsWith(`\n\n${"é".repeat(20_000)}\n${cut}`));
+    assert.ok(edit("😀".repeat(20_001)).endsWith(`\n\n${"😀".repeat(20_000)}\n${cut}`));
+    assert.ok(!edit("😀".repeat(20_000)).includes("factory cut"));
+    // Another repo and issue name themselves.
+    assert.ok(
+      comment(long, "tom", "acme/widgets", 7).endsWith(
+        "\n[The factory cut this text at 20000 characters. Read the full text with: gh issue view 7 --repo acme/widgets --comments]",
+      ),
+    );
+  });
+
+  it("cleans a login to one line and cuts it at 100 characters, in both messages", () => {
+    const messages = [
+      {
+        build: commentMessage,
+        before: "Forwarded instructor comment on rawphp/softfac#11 from ",
+        after: ". Apply it at your next step boundary.",
+      },
+      {
+        build: bodyEditMessage,
+        before: "The body of rawphp/softfac#11 was edited by ",
+        after: ". Go back to your Contract step",
+      },
+    ];
+    for (const { build, before, after } of messages) {
+      const messy = build(REPO, 11, "to\u202em\nx\u001by\tz", "body");
+      assert.ok(messy.startsWith(`${before}to m x y z${after}`), messy);
+      const long = build(REPO, 11, "l".repeat(150), "body");
+      assert.ok(long.startsWith(`${before}${"l".repeat(100)}${after}`), long);
+      // No cut line for a login: it is cut, not marked.
+      assert.ok(!long.includes("cut"));
+    }
+  });
+
+  it("keeps the head of a long text and drops the tail", () => {
+    const text = `H${"a".repeat(24_998)}\u03a9`;
+    for (const message of [comment(text), edit(text)]) {
+      const body = message.slice(message.indexOf("\n\n") + 2);
+      assert.ok(body.startsWith(`H${"a".repeat(19_999)}`), "head");
+      assert.ok(!message.includes("\u03a9"), "tail");
+      assert.ok(body.includes("\n[The factory cut this text at 20000 characters."));
+    }
   });
 });

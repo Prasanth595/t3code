@@ -227,3 +227,82 @@ describe("readProgress: a stop by hand", () => {
     );
   });
 });
+
+describe("readProgress: forwarded comments and body edits", () => {
+  it("keeps the id of every comment_forwarded line", () => {
+    assert.deepStrictEqual([...readProgress([]).forwarded], []);
+    const seen = readProgress([
+      line(1, "comment_forwarded", { comment_id: "102" }),
+      line(2, "comment_forwarded", { comment_id: "101" }),
+      line(3, "comment_forwarded", { comment_id: "102" }),
+    ]);
+    assert.deepStrictEqual([...seen.forwarded].sort(), ["101", "102"]);
+  });
+
+  it("keeps the time of every body-edit-forwarded step, whatever follows the space", () => {
+    const seen = readProgress([
+      step(1, "body-edit-forwarded 2026-10-04T10:15:00Z"),
+      step(2, "body-edit-forwarded x"),
+    ]);
+    assert.deepStrictEqual([...seen.bodyEdits].sort(), ["2026-10-04T10:15:00Z", "x"]);
+  });
+
+  it("does not count a step that only looks like a forwarded edit", () => {
+    const seen = readProgress([
+      step(1, "body-edit-forwarded2026-10-04T10:15:00Z"),
+      step(2, "body-edit-forward 2026-10-04T10:15:00Z"),
+      step(3, "Body-edit-forwarded 2026-10-04T10:15:00Z"),
+      step(4, "xbody-edit-forwarded 2026-10-04T10:15:00Z"),
+    ]);
+    assert.deepStrictEqual([...seen.bodyEdits], []);
+  });
+});
+
+describe("readProgress: the last wait marker", () => {
+  const sentBack = (ms: number, ordinal: number) =>
+    line(ms, "gate_sent_back", { attempt: 1, run_ordinal: ordinal });
+  const command = (ms: number) =>
+    line(ms, "gate_command", { attempt: 1, command: "cargo test", exit_code: 0, duration_ms: 5 });
+
+  it("is none before any marker", () => {
+    assert.strictEqual(readProgress([launched(1)]).lastWait, null);
+  });
+
+  it("is the ordinal of a forward-wait, a reminder or a send-back, whichever is the newest", () => {
+    assert.strictEqual(readProgress([step(1, "forward-wait 3")]).lastWait, 3);
+    assert.strictEqual(readProgress([step(1, "result-line-reminding 2")]).lastWait, 2);
+    assert.strictEqual(readProgress([sentBack(1, 4)]).lastWait, 4);
+    assert.strictEqual(readProgress([step(1, "forward-wait 1"), sentBack(2, 2)]).lastWait, 2);
+  });
+
+  it("never goes down when a marker for an older run is written later", () => {
+    const seen = readProgress([step(1, "forward-wait 3"), sentBack(2, 2)]);
+    assert.strictEqual(seen.lastWait, 3);
+    assert.strictEqual(seen.waitingAfter, 3);
+  });
+
+  it("is kept after a gate_command drops a send-back's marker", () => {
+    const seen = readProgress([sentBack(1, 2), command(2)]);
+    assert.strictEqual(seen.waitingAfter, null);
+    assert.strictEqual(seen.lastWait, 2);
+  });
+
+  it("starts again with a new session", () => {
+    const seen = readProgress([step(1, "forward-wait 5"), launched(2)]);
+    assert.strictEqual(seen.lastWait, null);
+    assert.strictEqual(seen.waitingAfter, null);
+  });
+
+  it("ignores a step that only looks like a wait marker", () => {
+    for (const bad of [
+      "forward-wait 007",
+      "forward-wait -1",
+      "forward-wait 1 ",
+      "forward-wait x",
+    ]) {
+      const seen = readProgress([step(1, bad)]);
+      assert.strictEqual(seen.lastWait, null, bad);
+      assert.strictEqual(seen.waitingAfter, null, bad);
+    }
+  });
+});

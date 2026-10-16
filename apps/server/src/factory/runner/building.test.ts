@@ -345,6 +345,8 @@ const rigFor = (
     order.push(`read:${text}`);
   };
   const tracker: BuildingContext["tracker"] = {
+    // Forwarding's: `forward.test.ts` owns it.
+    activitySince: () => Effect.die("not the build's"),
     issue: (n) => {
       readCall(`issue ${n}`);
       const error = takeFailure("issue");
