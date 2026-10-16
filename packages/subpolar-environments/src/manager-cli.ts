@@ -37,6 +37,9 @@ const manager = createDockerEnvironmentManager({
       ? { gatewayGitRoot, hostGitRoot: dockerGitRoot }
       : {}),
     image: required("SUBPOLAR_WORKER_IMAGE"),
+    ...(process.env.SUBPOLAR_DEFAULT_DEVCONTAINER_CONFIG
+      ? { defaultDevContainerConfiguration: process.env.SUBPOLAR_DEFAULT_DEVCONTAINER_CONFIG }
+      : {}),
     ...(process.env.SUBPOLAR_MEMORY_BYTES ? { memoryBytes: integer("SUBPOLAR_MEMORY_BYTES", 0) } : {}),
     ...(process.env.SUBPOLAR_NANO_CPUS ? { nanoCpus: integer("SUBPOLAR_NANO_CPUS", 0) } : {}),
     ...(process.env.SUBPOLAR_PIDS_LIMIT ? { pidsLimit: integer("SUBPOLAR_PIDS_LIMIT", 0) } : {}),

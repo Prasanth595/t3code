@@ -183,6 +183,72 @@ describe("Docker environment backend", () => {
     expect(options.mounts).toHaveLength(1);
   });
 
+  test("discovers a JSONC image configuration while keeping manager isolation defaults", async () => {
+    const { client, manager, request, identity, config } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), `{
+      // A project image is supported without granting it host access.
+      "$schema": "https://containers.dev/schema/devContainer.schema.json",
+      "name": "worker",
+      "image": "registry.example/project@sha256:abcdef",
+    }`);
+
+    await manager.ensure(request);
+
+    expect(client.createCalls[0]).toMatchObject({
+      image: "registry.example/project@sha256:abcdef",
+      privileged: false,
+      networkMode: "none",
+      mounts: [{ source: await realpath(path.join(config.hostStorageRoot, "repo", "worktree-a")) }],
+    });
+  });
+
+  test("requires an explicit choice when several Dev Container configurations exist", async () => {
+    const { client, manager, request, identity } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer", "api"), { recursive: true });
+    await mkdir(path.join(identity.worktreePath, ".devcontainer", "web"), { recursive: true });
+    await Promise.all([
+      Bun.write(path.join(identity.worktreePath, ".devcontainer", "api", "devcontainer.json"), '{"image":"api:latest"}'),
+      Bun.write(path.join(identity.worktreePath, ".devcontainer", "web", "devcontainer.json"), '{"image":"web:latest"}'),
+    ]);
+
+    await expect(manager.ensure(request)).rejects.toMatchObject({
+      cause: { code: "DEV_CONTAINER_CONFIGURATION_SELECTION_REQUIRED" },
+    });
+    expect(client.createCalls).toEqual([]);
+  });
+
+  test("fails closed on Dev Container options that need additional lifecycle support", async () => {
+    const { client, manager, request, identity } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "project:latest",
+      features: { "ghcr.io/devcontainers/features/node:1": {} },
+    }));
+
+    await expect(manager.ensure(request)).rejects.toMatchObject({
+      cause: { code: "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED" },
+    });
+    expect(client.createCalls).toEqual([]);
+  });
+
+  test("uses the configured default selection for multiple Dev Container configurations", async () => {
+    const { client, request, identity, config } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer", "api"), { recursive: true });
+    await mkdir(path.join(identity.worktreePath, ".devcontainer", "web"), { recursive: true });
+    await Promise.all([
+      Bun.write(path.join(identity.worktreePath, ".devcontainer", "api", "devcontainer.json"), '{"image":"api:latest"}'),
+      Bun.write(path.join(identity.worktreePath, ".devcontainer", "web", "devcontainer.json"), '{"image":"web:latest"}'),
+    ]);
+    const selected = createDockerEnvironmentBackend(client, {
+      ...config,
+      defaultDevContainerConfiguration: ".devcontainer/api/devcontainer.json",
+    });
+
+    await createEnvironmentManager(selected).ensure(request);
+    expect(client.createCalls[0]?.image).toBe("api:latest");
+  });
+
   test("verifies owner labels before every lifecycle operation", async () => {
     const { backend, client, identity } = await fixture();
     const created = await backend.create(identity);

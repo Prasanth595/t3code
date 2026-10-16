@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -30,6 +30,9 @@ export class DockerEnvironmentError extends Error {
       | "UNSUPPORTED_GIT_LAYOUT"
       | "DOCKER_IDENTITY_MISMATCH"
       | "DOCKER_CONFIGURATION_MISMATCH"
+      | "DEV_CONTAINER_CONFIGURATION_INVALID"
+      | "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED"
+      | "DEV_CONTAINER_CONFIGURATION_SELECTION_REQUIRED"
       | "PROCESS_EXECUTION_UNAVAILABLE"
       | "PROCESS_REQUEST_INVALID",
     message: string,
@@ -52,6 +55,8 @@ export interface DockerEnvironmentConfig {
   readonly hostGitRoot?: string;
   /** Image reference selected by the operator. */
   readonly image: string;
+  /** Relative config path, such as `.devcontainer/node/devcontainer.json`, for multi-config worktrees. */
+  readonly defaultDevContainerConfiguration?: string;
   readonly memoryBytes?: number;
   readonly nanoCpus?: number;
   readonly pidsLimit?: number;
@@ -151,6 +156,133 @@ const TMPFS = Object.freeze({
   "/run": "rw,nosuid,nodev,size=16m",
 });
 const ENVIRONMENT = Object.freeze({ HOME: "/tmp/home", TMPDIR: "/tmp" });
+
+interface ResolvedDevContainerConfiguration {
+  readonly image: string;
+}
+
+function parseJsonc(source: string): unknown {
+  // Dev Container files are JSONC. Remove comments and trailing commas while
+  // respecting quoted strings, then let JSON.parse validate the structure.
+  let withoutComments = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const current = source[index]!;
+    const next = source[index + 1];
+    if (inString) {
+      withoutComments += current;
+      if (escaped) escaped = false;
+      else if (current === "\\") escaped = true;
+      else if (current === '"') inString = false;
+      continue;
+    }
+    if (current === '"') {
+      inString = true;
+      withoutComments += current;
+    } else if (current === "/" && next === "/") {
+      while (index < source.length && source[index] !== "\n") index += 1;
+      withoutComments += "\n";
+    } else if (current === "/" && next === "*") {
+      index += 2;
+      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) index += 1;
+      if (index >= source.length) throw new Error("Unterminated comment");
+      index += 1;
+      withoutComments += " ";
+    } else {
+      withoutComments += current;
+    }
+  }
+  let normalized = "";
+  inString = false;
+  escaped = false;
+  for (let index = 0; index < withoutComments.length; index += 1) {
+    const current = withoutComments[index]!;
+    if (inString) {
+      normalized += current;
+      if (escaped) escaped = false;
+      else if (current === "\\") escaped = true;
+      else if (current === '"') inString = false;
+    } else if (current === '"') {
+      inString = true;
+      normalized += current;
+    } else if (current === ",") {
+      let lookahead = index + 1;
+      while (/\s/.test(withoutComments[lookahead] ?? "")) lookahead += 1;
+      if (withoutComments[lookahead] !== "}" && withoutComments[lookahead] !== "]") normalized += current;
+    } else {
+      normalized += current;
+    }
+  }
+  return JSON.parse(normalized) as unknown;
+}
+
+async function resolveDevContainerConfiguration(
+  identity: EnvironmentIdentity,
+  config: DockerEnvironmentConfig,
+): Promise<ResolvedDevContainerConfiguration> {
+  const root = identity.worktreePath;
+  const candidates: string[] = [];
+  for (const relative of [".devcontainer.json", ".devcontainer/devcontainer.json"]) {
+    try {
+      if ((await lstat(path.join(root, relative))).isFile()) candidates.push(relative);
+    } catch { /* Missing conventional config. */ }
+  }
+  try {
+    const entries = await readdir(path.join(root, ".devcontainer"), { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const relative = path.posix.join(".devcontainer", entry.name, "devcontainer.json");
+      try {
+        if ((await lstat(path.join(root, relative))).isFile()) candidates.push(relative);
+      } catch { /* This directory is not a configuration. */ }
+    }
+  } catch { /* No .devcontainer directory. */ }
+
+  if (candidates.length === 0) return { image: config.image };
+  const selected = config.defaultDevContainerConfiguration
+    ? candidates.find((candidate) => candidate === config.defaultDevContainerConfiguration)
+    : candidates.length === 1 ? candidates[0] : undefined;
+  if (!selected) {
+    throw new DockerEnvironmentError(
+      "DEV_CONTAINER_CONFIGURATION_SELECTION_REQUIRED",
+      `Worktree has multiple Dev Container configurations; set defaultDevContainerConfiguration to one of: ${candidates.join(", ")}`,
+    );
+  }
+  let realConfiguration: string;
+  try {
+    realConfiguration = await realpath(path.join(root, selected));
+  } catch (cause) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", "Selected Dev Container configuration cannot be resolved", { cause });
+  }
+  if (!within(root, realConfiguration) || !(await lstat(realConfiguration)).isFile()) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", "Dev Container configuration must be a regular file inside the worktree");
+  }
+
+  let parsed: unknown;
+  try {
+    const source = await readFile(realConfiguration, "utf8");
+    if (Buffer.byteLength(source) > 64 * 1024) throw new Error("Configuration exceeds 64 KiB");
+    parsed = parseJsonc(source);
+  } catch (cause) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `Could not parse ${selected} as a Dev Container JSONC file`, { cause });
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must contain a JSON object`);
+  }
+  const value = parsed as Record<string, unknown>;
+  const unsupported = Object.keys(value).filter((key) => !["$schema", "name", "image"].includes(key));
+  if (unsupported.length > 0) {
+    throw new DockerEnvironmentError(
+      "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED",
+      `${selected} uses unsupported Dev Container options: ${unsupported.join(", ")}`,
+    );
+  }
+  if (value.image !== undefined && (typeof value.image !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/.test(value.image))) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must specify a literal Docker image reference`);
+  }
+  return { image: typeof value.image === "string" ? value.image : config.image };
+}
 
 function sameRecord(left: Readonly<Record<string, string>>, right: Readonly<Record<string, string>>): boolean {
   const leftKeys = Object.keys(left).sort();
@@ -358,9 +490,9 @@ export function createDockerEnvironmentBackend(
     [WORKTREE_LABEL]: hash(identity.worktreePath),
   });
 
-  const createOptions = async (identity: EnvironmentIdentity): Promise<DockerContainerCreateOptions> => ({
+  const createOptions = async (identity: EnvironmentIdentity, resolved: ResolvedDevContainerConfiguration): Promise<DockerContainerCreateOptions> => ({
     name: containerName(identity.id),
-    image: config.image,
+    image: resolved.image,
     labels: labelsFor(identity),
     user: "1000:1000",
     privileged: false,
@@ -374,7 +506,7 @@ export function createDockerEnvironmentBackend(
     environment: ENVIRONMENT,
   });
 
-  const recordFor = (identity: EnvironmentIdentity, inspection: DockerContainerInspection, mounts: readonly DockerBindMount[]): ManagedEnvironment => {
+  const recordFor = (identity: EnvironmentIdentity, inspection: DockerContainerInspection, mounts: readonly DockerBindMount[], image: string): ManagedEnvironment => {
     const expectedLabels = labelsFor(identity);
     if (inspection.name !== containerName(identity.id) || LABELS.some((label) => inspection.labels[label] !== expectedLabels[label])) {
       throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container identity or owner labels do not match the requested environment");
@@ -382,7 +514,7 @@ export function createDockerEnvironmentBackend(
     const observed = inspection.config;
     const observedMounts = observed.mounts;
     const safeConfiguration =
-      observed.image === config.image && observed.user === "1000:1000" && observed.privileged === false &&
+      observed.image === image && observed.user === "1000:1000" && observed.privileged === false &&
       observed.readOnlyRootfs === true && observed.networkMode === "none" &&
       observed.capDrop.length === 1 && observed.capDrop[0] === "ALL" &&
       observed.securityOpt.length === 1 && observed.securityOpt[0] === "no-new-privileges:true" &&
@@ -400,10 +532,10 @@ export function createDockerEnvironmentBackend(
   };
 
   const inspectVerified = async (identity: EnvironmentIdentity): Promise<{ record: ManagedEnvironment; inspection: DockerContainerInspection } | null> => {
-    const mounts = await resolveMounts(identity);
+    const [mounts, resolved] = await Promise.all([resolveMounts(identity), resolveDevContainerConfiguration(identity, config)]);
     const inspection = await client.inspectContainer(containerName(identity.id));
     if (!inspection) return null;
-    return { record: recordFor(identity, inspection, mounts), inspection };
+    return { record: recordFor(identity, inspection, mounts, resolved.image), inspection };
   };
 
   return {
@@ -414,7 +546,8 @@ export function createDockerEnvironmentBackend(
     async create(identity) {
       const existing = await inspectVerified(identity);
       if (existing) return existing.record;
-      const options = await createOptions(identity);
+      const resolved = await resolveDevContainerConfiguration(identity, config);
+      const options = await createOptions(identity, resolved);
       let createdId: string;
       try {
         ({ id: createdId } = await client.createContainer(options));
