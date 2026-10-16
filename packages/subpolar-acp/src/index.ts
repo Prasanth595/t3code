@@ -226,7 +226,7 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
                   status: data.isError === true ? "failed" : "completed",
                   rawOutput: data.result,
                 },
-        }).pipe(Effect.catchAll(() => Effect.void));
+        }).pipe(Effect.catch(() => Effect.void));
       }
       if (candidate?.type !== "text") return Effect.void;
       const text = eventText(candidate.data);
@@ -239,7 +239,7 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
           messageId: runId,
           content: { type: "text", text },
         },
-      }).pipe(Effect.catchAll(() => Effect.void));
+      }).pipe(Effect.catch(() => Effect.void));
     });
 
     yield* agent.handleInitialize((request) =>
@@ -340,7 +340,7 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
                 Effect.as({}),
               );
             }),
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               agent.client.sessionUpdate({
                 sessionId: request.sessionId,
                 update: {
