@@ -55,7 +55,7 @@ export function ComposerQuickPromptsSetting() {
     >
       {quickPrompts.length > 0 ? (
         <div className="flex flex-col gap-2 pt-3 pb-2">
-          {quickPrompts.map((entry) => (
+          {quickPrompts.map((entry, index) => (
             <div key={entry.id} className="flex items-start gap-2">
               <DraftInput
                 size="sm"
@@ -74,7 +74,7 @@ export function ComposerQuickPromptsSetting() {
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label={`Remove ${entry.label.trim() || "quick prompt"}`}
+                aria-label={`Remove ${entry.label.trim() || `quick prompt ${index + 1}`}`}
                 onClick={() => update((current) => current.filter((item) => item.id !== entry.id))}
               >
                 <XIcon />
