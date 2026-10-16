@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { I18nManager, Platform, Pressable, View } from "react-native";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import Animated, { useAnimatedStyle, useReducedMotion, withTiming } from "react-native-reanimated";
 
 import { AppText } from "./AppText";
@@ -13,7 +14,8 @@ export function SegmentedControl<Value extends string | number>(
   props: SegmentedControlProps<Value>,
 ) {
   const { colorScheme } = useControlTheme();
-  const [width, setWidth] = useState(0);
+  const [layout, setLayout] = useState({ width: 0, height: 0 });
+  const { width, height } = layout;
   const reduceMotion = useReducedMotion();
   const selectedIndex = props.options.findIndex((option) => option.value === props.selected);
   const segmentWidth = props.options.length ? Math.max(0, width - 6) / props.options.length : 0;
@@ -28,27 +30,27 @@ export function SegmentedControl<Value extends string | number>(
   return (
     <View collapsable={false} className={props.className}>
       <View
-        onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-        className="flex-row rounded-full border p-0.5"
+        onLayout={(event) => setLayout(event.nativeEvent.layout)}
+        className="flex-row rounded-full p-[3px]"
         style={{
           minHeight,
-          backgroundColor: dark ? "#111111" : "#e9e9e9",
-          borderColor: dark ? "#303030" : "#d4d4d4",
+          boxShadow: dark ? "0px 1px 2px #00000062" : "0px 1px 2px #00000014",
         }}
       >
+        <CapsuleSurface width={width} height={height} dark={dark} />
         {selectedIndex >= 0 && width > 0 ? (
           <Animated.View
             pointerEvents="none"
-            className="absolute bottom-0.5 start-0.5 top-0.5 rounded-full border"
+            className="absolute bottom-[3px] start-[3px] top-[3px] rounded-full"
             style={[
               {
-                backgroundColor: dark ? "#242424" : "#ffffff",
-                borderColor: dark ? "#484848" : "#d4d4d4",
-                boxShadow: "0px 2px 3px rgba(0, 0, 0, 0.25)",
+                boxShadow: dark ? "0px 1px 2px #00000046" : "0px 1px 2px #0000000e",
               },
               selectionStyle,
             ]}
-          />
+          >
+            <CapsuleSurface width={segmentWidth} height={height - 6} dark={dark} selected />
+          </Animated.View>
         ) : null}
         {props.options.map((option) => {
           const selected = option.value === props.selected;
@@ -76,5 +78,69 @@ export function SegmentedControl<Value extends string | number>(
         })}
       </View>
     </View>
+  );
+}
+
+/** Pen's inset well and raised selection use opposite vertical edge lighting. */
+function CapsuleSurface({
+  width,
+  height,
+  dark,
+  selected = false,
+}: {
+  width: number;
+  height: number;
+  dark: boolean;
+  selected?: boolean;
+}) {
+  if (width <= 0 || height <= 0) return null;
+  const fill = selected
+    ? [dark ? "#1e1e1e" : "#fffffe", dark ? "#1e1e1e" : "#fffffe"]
+    : dark
+      ? ["#131313", "#161616"]
+      : ["#f2f2f2", "#f6f6f6"];
+  const edge = selected
+    ? dark
+      ? ["#ffffff38", "#ffffff05"]
+      : ["#00000022", "#00000003"]
+    : dark
+      ? ["#00000099", "#ffffff29"]
+      : ["#00000045", "#00000019"];
+  return (
+    <Svg
+      pointerEvents="none"
+      width={width}
+      height={height}
+      style={{ position: "absolute", top: 0, left: 0 }}
+    >
+      <Defs>
+        <LinearGradient id="fill" x1="0" y1="0" x2="0%" y2="100%">
+          <Stop offset="0" stopColor={fill[0]} />
+          <Stop offset="1" stopColor={fill[1]} />
+        </LinearGradient>
+        <LinearGradient id="edge" x1="0" y1="0" x2="0%" y2="100%">
+          <Stop
+            offset="0"
+            stopColor={edge[0].slice(0, 7)}
+            stopOpacity={parseInt(edge[0].slice(7), 16) / 255}
+          />
+          <Stop
+            offset="1"
+            stopColor={edge[1].slice(0, 7)}
+            stopOpacity={parseInt(edge[1].slice(7), 16) / 255}
+          />
+        </LinearGradient>
+      </Defs>
+      <Rect
+        x={0.5}
+        y={0.5}
+        width={width - 1}
+        height={height - 1}
+        rx={(height - 1) / 2}
+        fill="url(#fill)"
+        stroke="url(#edge)"
+        strokeWidth={1}
+      />
+    </Svg>
   );
 }
