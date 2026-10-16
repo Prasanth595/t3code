@@ -33,6 +33,7 @@ import {
   type FactoryComment,
   type GitHubError,
   type IssueDetail,
+  type PullRequest,
 } from "../tracker/github.ts";
 import {
   CANNOT_CONFIRM,
@@ -100,6 +101,10 @@ const fakeTracker = (script: {
   unassignFails?: boolean;
   newestComment?: FactoryComment | null;
   textChecks?: Array<TextCheck | GitHubError>;
+  /** What each pull request reads as; one that is not listed does not exist. */
+  pulls?: Record<number, PullRequest | null | GitHubError>;
+  /** Who GitHub says closed the issue: a login, nobody, or a failed read. */
+  closedBy?: string | null | GitHubError;
 }) => {
   const calls: Array<string> = [];
   const issues = [...(script.issues ?? [detail("ready")])];
@@ -153,6 +158,18 @@ const fakeTracker = (script: {
     textCheck: (n, since, instructors) => {
       calls.push(`textCheck ${n} ${since} ${instructors.join(",")}`);
       return answer<TextCheck>(textChecks, "unchanged");
+    },
+    pullRequest: (n) => {
+      calls.push(`pullRequest ${n}`);
+      const pull = script.pulls?.[n] ?? null;
+      return pull instanceof Object && "_tag" in pull
+        ? Effect.fail(pull as GitHubError)
+        : Effect.succeed(pull as PullRequest | null);
+    },
+    closedBy: (n) => {
+      calls.push(`closedBy ${n}`);
+      const by = script.closedBy ?? null;
+      return typeof by === "object" && by !== null ? Effect.fail(by) : Effect.succeed(by);
     },
     // The gate's actions: the claim never performs them.
     markPrReady: () => Effect.die("not the claim's"),
@@ -1319,19 +1336,25 @@ describe("resume", () => {
     }),
   );
 
-  it.effect("says a closed issue was closed, and touches nothing", () =>
+  it.effect("ends the unfinished run of a closed issue and writes nothing on GitHub", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
       seedRun(dataDir, startedLines().slice(0, 3));
       const { tracker, calls } = fakeTracker({ issues: [detail("triage", [USER], true)] });
-      const outcome = yield* resumeIn(dataDir, tracker);
-      assert.deepStrictEqual(outcome, {
-        kind: "skipped",
-        reason: "issue #7 is closed",
-        moved: "closed",
-      });
-      assert.deepStrictEqual(calls, ["issue 7"]);
-      assert.deepStrictEqual(entriesOf(dataDir), startedEvents().slice(0, 3));
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* resumeIn(dataDir, tracker, t3.sessions);
+      // No launch was sent and no thread is named: there is no session to look for.
+      assert.deepStrictEqual(outcome, { kind: "abandoned", mayHaveSession: [] });
+      assert.deepStrictEqual(calls, ["issue 7", "closedBy 7"]);
+      assert.deepStrictEqual(t3.calls, []);
+      assert.deepStrictEqual(entriesOf(dataDir), [
+        ...startedEvents().slice(0, 3),
+        {
+          event: "finished",
+          data: FINISHED_SEEDED,
+          cause: makeCause("start", "issue-closed"),
+        },
+      ]);
     }),
   );
 
@@ -1386,6 +1409,240 @@ describe("resume", () => {
       assert.strictEqual((yield* resumeIn(finished, done.tracker)).kind, "skipped");
       assert.deepStrictEqual(done.calls, ["issue 7"]);
       assert.strictEqual(NodeFS.existsSync(runPath(finished, { ...run7, attempt: 2 })), false);
+    }),
+  );
+});
+
+// ---- a closed issue ends its unfinished runs (#20) ----------------------------------------------
+
+/** The summary line of a seeded run, whose first line is a second older than the clock. */
+const FINISHED_SEEDED = { ...FINISHED, total_ms: 1000 };
+
+/** A run of issue 7 in state `to`, with the session and pull request it names when asked. */
+const sessionRun = (
+  dataDir: string,
+  attempt: number,
+  to: State,
+  options: { thread?: string; launchSent?: boolean; pr?: number } = {},
+): RunId => {
+  const id: RunId = { ...run7, attempt };
+  const ledger = Ledger.create(dataDir, id, { clock: () => T0 - 1000 });
+  handles.push(ledger);
+  const why = makeCause("start", "claimed");
+  ledger.append({ event: "step_changed", data: { step: `approved ${LABELED}` } }, why);
+  ledger.append({ event: "claimed", data: { machine: "m", github_user: USER } }, why);
+  ledger.append({ event: "state_changed", data: { from: "ready", to: "triage" } }, why);
+  if (options.launchSent === true || options.thread !== undefined) {
+    ledger.append({ event: "step_changed", data: { step: "launch-sending" } }, why);
+  }
+  if (options.thread !== undefined) {
+    ledger.append(
+      {
+        event: "session_launched",
+        data: {
+          thread_id: options.thread,
+          worktree: WORKTREE,
+          branch: "t3code/abc",
+          model_instance: "claudeAgent",
+          model: "claude-opus-5-5",
+          resumed_from: null,
+        },
+      },
+      why,
+    );
+  }
+  if (options.pr !== undefined) {
+    ledger.append(
+      {
+        event: "pr_opened",
+        data: { pr: options.pr, url: `https://github.com/rawphp/softfac/pull/${options.pr}` },
+      },
+      why,
+    );
+  }
+  if (to !== "triage") {
+    ledger.append({ event: "state_changed", data: { from: "triage", to } }, why);
+  }
+  return id;
+};
+
+const pullOf = (number: number, over: Partial<PullRequest> = {}): PullRequest => ({
+  number,
+  isDraft: false,
+  open: false,
+  merged: true,
+  headRef: "t3code/abc",
+  crossRepository: false,
+  baseRef: "main",
+  headSha: "abc123",
+  ...over,
+});
+
+const finishedOf = (dataDir: string, id: RunId) => entriesOf(dataDir, id).at(-1)!;
+const isFinished = (dataDir: string, id: RunId) => finishedOf(dataDir, id).event === "finished";
+
+describe("start: a closed issue", () => {
+  it.effect("ends every unfinished run of it, oldest first, and writes nothing on GitHub", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const one = sessionRun(dataDir, 1, "needs-info", { thread: "thread-1" });
+      const two = sessionRun(dataDir, 2, "triage", { thread: "thread-2" });
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("ready", [], true)],
+        closedBy: "alice",
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* start(ctxFor(dataDir, tracker, t3.sessions), 7);
+      assert.deepStrictEqual(outcome, { kind: "abandoned", mayHaveSession: [] });
+      assert.deepStrictEqual(calls, ["issue 7", "closedBy 7", "closedBy 7"]);
+      assert.deepStrictEqual(t3.calls, [
+        "archive thread-1",
+        "thread thread-1",
+        `removeWorktree ${WORKTREE}`,
+        "archive thread-2",
+        "thread thread-2",
+        `removeWorktree ${WORKTREE}`,
+      ]);
+      const abandoned = makeCause("start", "issue-closed", { actor: "alice" });
+      assert.deepStrictEqual(finishedOf(dataDir, one), {
+        event: "finished",
+        data: { ...FINISHED_SEEDED, outcome: "needs-info" },
+        cause: abandoned,
+      });
+      assert.deepStrictEqual(finishedOf(dataDir, two), {
+        event: "finished",
+        data: FINISHED_SEEDED,
+        cause: abandoned,
+      });
+      // The worktree line is the second to last line of each run.
+      for (const id of [one, two]) {
+        assert.strictEqual(entriesOf(dataDir, id).at(-2)!.event, "worktree_removed");
+      }
+      // Nothing is claimed.
+      assert.strictEqual(NodeFS.existsSync(runPath(dataDir, { ...run7, attempt: 3 })), false);
+    }),
+  );
+
+  it.effect("is the same for resume", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const one = sessionRun(dataDir, 1, "triage", { thread: "thread-1" });
+      const { tracker } = fakeTracker({ issues: [detail("triage", [USER], true)] });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* resume(ctxFor(dataDir, tracker, t3.sessions), 7);
+      assert.deepStrictEqual(outcome, { kind: "abandoned", mayHaveSession: [] });
+      assert.deepStrictEqual(finishedOf(dataDir, one).data, FINISHED_SEEDED);
+    }),
+  );
+
+  it.effect("never ends a run whose gate is running, and then ends none of them", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const one = sessionRun(dataDir, 1, "triage", { thread: "thread-1" });
+      const two = sessionRun(dataDir, 2, "building", { thread: "thread-2" });
+      const lock = gateLockFile(dataDir, two);
+      NodeFS.mkdirSync(NodePath.dirname(lock), { recursive: true });
+      NodeFS.writeFileSync(lock, "");
+      const { tracker, calls } = fakeTracker({ issues: [detail("ready", [], true)] });
+      const t3 = fakeSessions(dataDir, {});
+      const error = yield* Effect.flip(start(ctxFor(dataDir, tracker, t3.sessions), 7));
+      assert.ok(isGateRunning(error));
+      assert.deepStrictEqual(error.run, two);
+      assert.deepStrictEqual(calls, ["issue 7"]);
+      assert.deepStrictEqual(t3.calls, []);
+      assert.strictEqual(isFinished(dataDir, one), false);
+      assert.strictEqual(isFinished(dataDir, two), false);
+    }),
+  );
+
+  it.effect("leaves a pr-open run and a run whose own merge closed it alone", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const open = sessionRun(dataDir, 1, "pr-open", { thread: "thread-1", pr: 12 });
+      const merged = sessionRun(dataDir, 2, "building", { thread: "thread-2", pr: 13 });
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("ready", [], true)],
+        pulls: { 13: pullOf(13) },
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* start(ctxFor(dataDir, tracker, t3.sessions), 7);
+      assert.deepStrictEqual(outcome, {
+        kind: "skipped",
+        reason: "issue #7 is closed",
+        moved: "closed",
+      });
+      // The pr-open run is not read at all; the building one is asked about its pull request.
+      assert.deepStrictEqual(calls, ["issue 7", "pullRequest 13"]);
+      assert.deepStrictEqual(t3.calls, []);
+      assert.strictEqual(isFinished(dataDir, open), false);
+      assert.strictEqual(isFinished(dataDir, merged), false);
+    }),
+  );
+
+  it.effect("ends a run whose pull request was closed unmerged", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const one = sessionRun(dataDir, 1, "building", { thread: "thread-1", pr: 12 });
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("ready", [], true)],
+        pulls: { 12: pullOf(12, { merged: false }) },
+      });
+      const outcome = yield* start(ctxFor(dataDir, tracker, fakeSessions(dataDir, {}).sessions), 7);
+      assert.deepStrictEqual(outcome, { kind: "abandoned", mayHaveSession: [] });
+      assert.deepStrictEqual(calls, ["issue 7", "pullRequest 12", "closedBy 7"]);
+      assert.deepStrictEqual(finishedOf(dataDir, one).data, FINISHED_SEEDED);
+    }),
+  );
+
+  it.effect("with a launch sent and no thread recorded says a session may exist", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const sent = sessionRun(dataDir, 1, "triage", { launchSent: true });
+      const never = sessionRun(dataDir, 2, "triage");
+      const { tracker } = fakeTracker({ issues: [detail("ready", [], true)] });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* start(ctxFor(dataDir, tracker, t3.sessions), 7);
+      // Only the run that sent a launch may have a session; neither has a thread to archive.
+      assert.deepStrictEqual(outcome, { kind: "abandoned", mayHaveSession: [sent] });
+      assert.deepStrictEqual(t3.calls, []);
+      assert.strictEqual(isFinished(dataDir, sent), true);
+      assert.strictEqual(isFinished(dataDir, never), true);
+    }),
+  );
+
+  it.effect("leaves the actor out when GitHub names none or cannot be asked", () =>
+    Effect.gen(function* () {
+      for (const closedBy of [null, ghFailure()]) {
+        const dataDir = tempDir();
+        const one = sessionRun(dataDir, 1, "triage", { thread: "thread-1" });
+        const { tracker } = fakeTracker({ issues: [detail("ready", [], true)], closedBy });
+        const outcome = yield* start(
+          ctxFor(dataDir, tracker, fakeSessions(dataDir, {}).sessions),
+          7,
+        );
+        assert.strictEqual(outcome.kind, "abandoned");
+        assert.deepStrictEqual(finishedOf(dataDir, one).cause, makeCause("start", "issue-closed"));
+      }
+    }),
+  );
+
+  it.effect("whose archive fails is an error with nothing written, and the next call ends it", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const one = sessionRun(dataDir, 1, "triage", { thread: "thread-1" });
+      const before = entriesOf(dataDir, one);
+      const failing = fakeSessions(dataDir, { archive: [sessionsError("archive", "boom")] });
+      const first = fakeTracker({ issues: [detail("ready", [], true)] });
+      const error = yield* Effect.flip(start(ctxFor(dataDir, first.tracker, failing.sessions), 7));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      assert.deepStrictEqual(entriesOf(dataDir, one), before);
+      const again = fakeTracker({ issues: [detail("ready", [], true)] });
+      const outcome = yield* start(
+        ctxFor(dataDir, again.tracker, fakeSessions(dataDir, {}).sessions),
+        7,
+      );
+      assert.strictEqual(outcome.kind, "abandoned");
+      assert.strictEqual(isFinished(dataDir, one), true);
     }),
   );
 });

@@ -7,6 +7,7 @@ import {
   RESULT_LINE_REMINDER,
   SESSION_TEXT_INTRO,
   SESSION_TEXT_LIMIT,
+  STOPPED_BY_HAND,
   THREAD_GONE,
   TIME_LIMIT,
   WRONG_ACCOUNT,
@@ -170,6 +171,7 @@ describe("the fixed reasons of a building run", () => {
     );
     assert.strictEqual(TIME_LIMIT, "the run passed its time limit");
     assert.strictEqual(THREAD_GONE, "the T3 thread no longer exists");
+    assert.strictEqual(STOPPED_BY_HAND, "stopped by hand");
     assert.strictEqual(
       CHANGED_DURING_BUILD,
       "the issue text was changed during the build by someone who is not an instructor",

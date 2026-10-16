@@ -5,9 +5,9 @@
  * session", "gate: the retries run out", "gate: every call can fail, and the gate is called
  * again", "gate: the base branch moves" and "gate: the decision that the gate passed is in the
  * ledger". Left out, for the issues that own them: required checks (#26), the re-gate of a
- * `pr-open` pull request and the legacy worktree sweep (#23), a closed issue abandoning the run
- * (#20), and the `.dw/config.yml` refusal of a repo with `project_config` (the fork has none).
- * The results comment's own tests are in `gate.test.ts`.
+ * `pr-open` pull request and the legacy worktree sweep (#23), and the `.dw/config.yml` refusal of a
+ * repo with `project_config` (the fork has none). The end of a run from #20 (a closed issue, a
+ * stop by hand) is at the end of the file. The results comment's own tests are in `gate.test.ts`.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -321,6 +321,14 @@ class FakeGh {
   unchanged: Array<boolean> = [];
   /** A `false` in `unchanged` says the histories cannot be judged. */
   unjudged = false;
+  /** The reads of the issue and of who closed it: kept out of `calls`, which the crash matrix indexes by position. */
+  readonly reads: Array<string> = [];
+  /** GitHub says the issue is closed. */
+  closed = false;
+  /** Who GitHub says closed it; `"fails"` is a read that fails. */
+  closedByAnswer: string | null | "fails" = null;
+  /** The next reads of the issue fail. */
+  issueFails = false;
   readyBy: string | null = "tom";
   readyByFails = false;
   readyByRateLimited = false;
@@ -338,10 +346,21 @@ class FakeGh {
   }
 
   readonly tracker: GateContext["tracker"] = {
-    issue: (n) =>
-      this.run(`issue ${n}`, () => {}).pipe(
-        Effect.map(() => issueDetail(this.world.state, this.world.assignees)),
-      ),
+    issue: (n) => {
+      this.reads.push(`issue ${n}`);
+      return this.issueFails
+        ? Effect.fail(ghFailure())
+        : Effect.succeed({
+            ...issueDetail(this.world.state, this.world.assignees),
+            closed: this.closed,
+          });
+    },
+    closedBy: (n) => {
+      this.reads.push(`closedBy ${n}`);
+      return this.closedByAnswer === "fails"
+        ? Effect.fail(ghFailure())
+        : Effect.succeed(this.closedByAnswer);
+    },
     pullRequest: (n) =>
       this.run(`pullRequest ${n}`, () => {}).pipe(
         Effect.map(() => {
@@ -788,6 +807,7 @@ const workspaceCalls = (rig: Rig, attempt: number, base = BASE, commands = [FMT,
 
 const clearCalls = (rig: Rig) => {
   rig.gh.calls.length = 0;
+  rig.gh.reads.length = 0;
   rig.t3.calls.length = 0;
   rig.ws.calls.length = 0;
 };
@@ -2840,5 +2860,247 @@ describe("apply: a failed re-gate's actions", () => {
           moved("pr-open", "building"),
         ]);
       }),
+  );
+});
+
+// ---- the end of a run (#20) ---------------------------------------------------------------------
+
+const STOP_REQUESTED: RunEvent = { event: "stop_requested", data: { by: "operator" } };
+const STOPPED_BY_HAND = "stopped by hand";
+
+/** The summary line of a run that ended `stuck` (or `needs-info`) with no gate attempt. */
+const finishedStuck = (gateAttempts = 0): Line => ({
+  event: "finished",
+  data: {
+    outcome: "stuck",
+    total_ms: 0,
+    gate_attempts: gateAttempts,
+    review_cycles: null,
+    pr_url: null,
+    pr_end: null,
+  },
+});
+
+const FINISHED_RUN: RunEvent = {
+  event: "finished",
+  data: {
+    outcome: "stuck",
+    total_ms: 0,
+    gate_attempts: 0,
+    review_cycles: null,
+    pr_url: null,
+    pr_end: null,
+  },
+};
+
+/** The calls a stop makes in T3 when it does not read the session's status. */
+const ARCHIVE_ONLY_CALLS = ["archive thread-1", "thread thread-1", "removeWorktree /t3/wt"];
+
+const appendLines = (rig: Rig, events: ReadonlyArray<RunEvent>) => {
+  const ledger = Ledger.open(rig.dataDir, rig.run, { clock: () => 1_000 });
+  try {
+    for (const event of events) ledger.append(event, makeCause("gate", "seed", { attempt: 1 }));
+  } finally {
+    ledger.close();
+  }
+};
+
+const mergedPull = (): PullRequest => ({
+  ...defaultPr(),
+  open: false,
+  merged: true,
+  isDraft: false,
+});
+
+describe("gate: a closed issue", () => {
+  it.effect("ends the run, writes nothing on GitHub, runs no command and archives once", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      rig.gh.closed = true;
+      rig.gh.closedByAnswer = "alice";
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.deepStrictEqual(rig.gh.reads, ["issue 10", "closedBy 10"]);
+      assert.deepStrictEqual(rig.ws.calls, []);
+      assert.deepStrictEqual(rig.t3.calls, ARCHIVE_ONLY_CALLS);
+      assert.deepStrictEqual(rig.t3.archived, ["thread-1"]);
+      assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, worktreeRemoved, finishedStuck()]);
+      const cause = readRun(rig.dataDir, rig.run).entries.at(-1)?.cause;
+      assert.deepStrictEqual(
+        { step: cause?.step, reason: cause?.reason, actor: cause?.actor },
+        { step: "gate", reason: "issue-closed", actor: "alice" },
+      );
+      // Finished for good: nothing is asked or written again.
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "not-ready" });
+      assert.deepStrictEqual(rig.gh.reads, []);
+      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.deepStrictEqual(rig.t3.calls, []);
+    }),
+  );
+
+  it.effect("whose archive fails is an error with nothing written, and the next call ends it", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      rig.gh.closed = true;
+      rig.t3.archiveFails = true;
+      const bytes = bytesOf(rig);
+      assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "FactorySessionsError");
+      assert.strictEqual(bytesOf(rig), bytes);
+      assert.deepStrictEqual(rig.gh.calls, []);
+      rig.t3.archiveFails = false;
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.t3.archived, ["thread-1"]);
+    }),
+  );
+
+  it.effect("that cannot be read is an error and never an abandon", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      rig.gh.issueFails = true;
+      const bytes = bytesOf(rig);
+      assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "GitHubFailed");
+      assert.strictEqual(bytesOf(rig), bytes);
+      assert.deepStrictEqual(rig.t3.calls, []);
+      assert.deepStrictEqual(rig.ws.calls, []);
+      rig.gh.issueFails = false;
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+    }),
+  );
+
+  it.effect("is not asked about for a run the gate would not look at", () =>
+    Effect.gen(function* () {
+      const noPr = rigFor();
+      noPr.gh.closed = true;
+      assert.deepStrictEqual(yield* gateIn(noPr), { kind: "not-ready" });
+      assert.deepStrictEqual(noPr.gh.reads, []);
+
+      const finished = rigFor([...BASE_EVENTS, FINISHED_RUN]);
+      finished.gh.closed = true;
+      assert.deepStrictEqual(yield* gateIn(finished), { kind: "not-ready" });
+      assert.deepStrictEqual(finished.gh.reads, []);
+    }),
+  );
+
+  it.effect(
+    "closed by a merge before the gate passed is the run's own finish, not an abandon",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyForGate();
+        rig.gh.closed = true;
+        rig.gh.pr = mergedPull();
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "ended" });
+        assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12"]);
+        // Nobody is asked who closed it.
+        assert.deepStrictEqual(rig.gh.reads, ["issue 10"]);
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.deepStrictEqual(rig.t3.calls, ARCHIVE_ONLY_CALLS);
+        assert.deepStrictEqual(linesOf(rig), [
+          ...BASE_EVENTS,
+          worktreeRemoved,
+          finishedPrEnded(0, "merged"),
+        ]);
+        assert.deepStrictEqual(causeOf(rig, finishedPrEnded(0, "merged")), {
+          step: "gate",
+          reason: "pull-request-ended",
+        });
+      }),
+  );
+
+  it.effect(
+    "closed by the merge of a pull request whose pass is recorded is finished in two steps",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* passedThenDied();
+        rig.gh.closed = true;
+        rig.gh.pr = mergedPull();
+        // The gate completes the move to `pr-open` without writing on the merged pull request.
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        assert.deepStrictEqual(rig.gh.calls, [
+          "pullRequest 12",
+          "pullRequest 12",
+          "setState 10 pr-open",
+          `status 10 rawphp ${PR_OPEN_BODY}`,
+        ]);
+        assert.deepStrictEqual(rig.gh.reads, ["issue 10"]);
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.deepStrictEqual(linesOf(rig), [
+          ...BASE_EVENTS,
+          ...passingAttempt(1),
+          PASSED_STEP,
+          worktreeRemoved,
+          moved("building", "pr-open"),
+        ]);
+        // Then the run in `pr-open` is ended as merged by `advance`, which asks about nothing.
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
+        assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12"]);
+        assert.deepStrictEqual(rig.gh.reads, []);
+        assert.deepStrictEqual(rig.t3.calls, ["archive thread-1"]);
+        assert.deepStrictEqual(linesOf(rig).at(-1), finishedPrEnded(1, "merged"));
+        assert.deepStrictEqual(causeOf(rig, finishedPrEnded(1, "merged")), {
+          step: "advance",
+          reason: "pull-request-ended",
+        });
+      }),
+  );
+
+  it.effect("while its pull request is closed unmerged is abandoned", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      rig.gh.closed = true;
+      rig.gh.pr = { ...defaultPr(), open: false };
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12"]);
+      assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, worktreeRemoved, finishedStuck()]);
+    }),
+  );
+});
+
+describe("gate: a run stopped by hand", () => {
+  it.effect("is finished as stuck by hand and runs no command", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      appendLines(rig, [STOP_REQUESTED]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
+      assert.deepStrictEqual(rig.ws.calls, []);
+      assert.deepStrictEqual(rig.gh.calls, stuckCalls(STOPPED_BY_HAND));
+      assert.deepStrictEqual(rig.t3.calls, ARCHIVE_ONLY_CALLS);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...BASE_EVENTS,
+        STOP_REQUESTED,
+        worktreeRemoved,
+        { event: "stuck", data: { reason: STOPPED_BY_HAND } },
+        moved("building", "stuck"),
+        finishedStuck(),
+      ]);
+      assert.deepStrictEqual(
+        readRun(rig.dataDir, rig.run)
+          .entries.slice(-3)
+          .map((entry) => `${entry.cause?.step} ${entry.cause?.reason}`),
+        Array(3).fill("gate stop-requested"),
+      );
+      assertStoppedFirst(rig);
+    }),
+  );
+
+  it.effect("is ended as a closed issue first when the issue was closed too", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      appendLines(rig, [STOP_REQUESTED]);
+      rig.gh.closed = true;
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.gh.calls, []);
+    }),
+  );
+
+  it.effect("is not stopped by the gate once its pull request is open and waiting", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, PR_OPENED, moved("building", "pr-open")]);
+      appendLines(rig, [STOP_REQUESTED]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.deepStrictEqual(rig.ws.calls, []);
+    }),
   );
 });
