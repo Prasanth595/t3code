@@ -1473,7 +1473,7 @@ export function subscribeToActiveThemeFonts(listener: () => void): () => void {
 
 /**
  * Root custom properties and attributes for each style field. The attribute
- * gates the matching rules in index.css, so a theme without the field gets
+ * gates the matching rules in fork-theme.css, so a theme without the field gets
  * none of them and renders as stock.
  */
 const THEME_STYLE_PROPERTIES = [
