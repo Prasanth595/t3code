@@ -4595,6 +4595,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
+          (command.modelSelection !== undefined &&
+            command.modelSelection.instanceId !== source.providerInstanceId) ||
           (command.retryOfRunId !== undefined &&
             command.creationSource === "server" &&
             (projection.thread.settledOverride === "settled" ||

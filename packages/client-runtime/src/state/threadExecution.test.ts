@@ -820,6 +820,12 @@ describe("Codex recovery action", () => {
       runId: failed.id,
       continueWork: false,
     });
+    expect(
+      deriveCodexRecoveryAction({
+        ...projection,
+        runs: [{ ...failed, providerInstanceId: ProviderInstanceId.make("previous-codex") }],
+      }),
+    ).toBeNull();
     expect(deriveCodexRecoveryAction(null)).toBeNull();
     expect(deriveCodexRecoveryAction({ ...projection, providerThreads: [] })).toBeNull();
     expect(

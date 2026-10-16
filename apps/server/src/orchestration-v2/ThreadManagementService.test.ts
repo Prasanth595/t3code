@@ -1089,6 +1089,8 @@ it.effect.each([
   "shared-busy",
   "open-failed",
   "resume-failed",
+  "disabled-reconnect",
+  "disabled-retry",
 ] as const)(
   "reconnects Codex in state %s without losing native history or replaying a turn",
   (state) =>
@@ -1217,7 +1219,17 @@ it.effect.each([
             }),
           ),
         ),
-        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          ServerSettings.layerTest({
+            projectSettingsOverrides: {
+              "retry-project": {
+                providerInstances: {
+                  codex: { enabled: state !== "disabled-reconnect" && state !== "disabled-retry" },
+                },
+              },
+            },
+          }),
+        ),
         Layer.provide(layerReceiptsTest),
       );
       yield* Effect.gen(function* () {
@@ -1226,7 +1238,7 @@ it.effect.each([
         const pending = yield* service
           .restartCodex({
             threadId,
-            ...(state === "open-failed" || state === "resume-failed"
+            ...(state === "open-failed" || state === "resume-failed" || state === "disabled-retry"
               ? { retryRunId: runId }
               : state === "stale-retry"
                 ? { retryRunId: RunId.make("older-run") }
@@ -1260,7 +1272,10 @@ it.effect.each([
               reason:
                 state === "unsupported"
                   ? "unsupported"
-                  : state === "stale-retry" || state === "request-pending"
+                  : state === "stale-retry" ||
+                      state === "request-pending" ||
+                      state === "disabled-reconnect" ||
+                      state === "disabled-retry"
                     ? "unavailable"
                     : "busy",
             },

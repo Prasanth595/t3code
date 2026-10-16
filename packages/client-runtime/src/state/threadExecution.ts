@@ -62,6 +62,7 @@ export function deriveCodexRecoveryAction(
     native.providerSessionId === null ||
     native.nativeThreadRef?.nativeId == null ||
     native.providerInstanceId !== thread.modelSelection.instanceId ||
+    run.providerInstanceId !== thread.providerInstanceId ||
     runs.some((candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ||
     runtimeRequests.some((request) => request.status === "pending")
   )

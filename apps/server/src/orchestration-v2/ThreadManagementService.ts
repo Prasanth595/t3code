@@ -1024,7 +1024,9 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       if (input.retryRunId !== undefined) {
         const receipt = yield* receipts.getByCommandId(
-          CommandId.make(`command:codex-retry:${input.retryRunId}`),
+          CommandId.make(
+            `command:codex-retry:${input.automatic ? "auto:" : ""}${input.retryRunId}`,
+          ),
         );
         if (Option.isSome(receipt)) {
           if (receipt.value.threadId !== input.threadId || receipt.value.status !== "accepted") {
@@ -1115,6 +1117,14 @@ const make = Effect.gen(function* () {
       ) {
         return yield* new OrchestrationV2RestartCodexError({ ...input, reason: "unavailable" });
       }
+      if (
+        !(yield* isProviderInstanceEnabledForProject({
+          projectId: records.thread.projectId,
+          instanceId: providerThread.providerInstanceId,
+        }))
+      ) {
+        return yield* new OrchestrationV2RestartCodexError({ ...input, reason: "unavailable" });
+      }
       const modelSelection = records.thread.modelSelection;
       // A live shared runtime can retry this thread without stopping its siblings.
       const shouldReconnect =
@@ -1185,7 +1195,9 @@ const make = Effect.gen(function* () {
       if (retrySource !== undefined && retryMessage !== undefined) {
         return {
           type: "message.dispatch",
-          commandId: CommandId.make(`command:codex-retry:${retrySource.id}`),
+          commandId: CommandId.make(
+            `command:codex-retry:${input.automatic ? "auto:" : ""}${retrySource.id}`,
+          ),
           messageId: MessageId.make(`message:codex-retry:${retrySource.id}`),
           threadId: input.threadId,
           retryOfRunId: retrySource.id,

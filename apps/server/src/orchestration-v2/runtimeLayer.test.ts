@@ -5058,16 +5058,22 @@ it.layer(layerSharedApplicationDataPlaneTest)("shared application data plane", (
 });
 
 it.layer(layerTest)("usage-limit recovery", (it) => {
-  it.effect.each([false, true])(
-    "retries through real admission without reentering the thread lock (live process: %s)",
-    (live) =>
+  it.effect.each([
+    { live: false, declined: null },
+    { live: true, declined: null },
+    { live: false, declined: "settled" },
+    { live: false, declined: "snoozed" },
+  ] as const)(
+    "retries through real admission (live: $live, automatic decline: $declined)",
+    ({ live, declined }) =>
       Effect.gen(function* () {
+        const scenario = `${live}:${declined}`;
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const events = yield* EventSink.EventSinkV2;
         const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const threads = yield* ThreadManagementService.ThreadManagementService;
-        const threadId = ThreadId.make(`reconnect-admission:${live}`);
-        const projectId = ProjectId.make(`reconnect-admission-project:${live}`);
+        const threadId = ThreadId.make(`reconnect-admission:${scenario}`);
+        const projectId = ProjectId.make(`reconnect-admission-project:${scenario}`);
         const now = yield* DateTime.now;
         yield* seedProject({
           projectId,
@@ -5078,7 +5084,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "thread.create",
-          commandId: CommandId.make(`retry:create:${live}`),
+          commandId: CommandId.make(`retry:create:${scenario}`),
           threadId,
           projectId,
           title: "Retry",
@@ -5118,9 +5124,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         };
         yield* orchestrator.dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make(`retry:first:${live}`),
+          commandId: CommandId.make(`retry:first:${scenario}`),
           threadId,
-          messageId: MessageId.make(`retry:first:${live}`),
+          messageId: MessageId.make(`retry:first:${scenario}`),
           ...message,
           dispatchMode: { type: "start_immediately" },
           createdBy: "user",
@@ -5130,7 +5136,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* events.write({
           events: [
             {
-              id: EventId.make(`retry:failed:${live}`),
+              id: EventId.make(`retry:failed:${scenario}`),
               type: "run.updated",
               threadId,
               occurredAt: now,
@@ -5144,11 +5150,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           ],
         });
         const native: OrchestrationV2ProviderThread = {
-          id: ProviderThreadId.make(`retry:native:${live}`),
+          id: ProviderThreadId.make(`retry:native:${scenario}`),
           appThreadId: threadId,
           driver,
           providerInstanceId: modelSelection.instanceId,
-          providerSessionId: ProviderSessionId.make(`retry:session:${live}`),
+          providerSessionId: ProviderSessionId.make(`retry:session:${scenario}`),
           nativeThreadRef: { driver, nativeId: "saved-native", strength: "strong" as const },
           ownerNodeId: null,
           nativeConversationHeadRef: null,
@@ -5164,12 +5170,12 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           events.write({
             events: [
               {
-                id: EventId.make(`retry:accepted:${ordinal}:${live}`),
+                id: EventId.make(`retry:accepted:${ordinal}:${scenario}`),
                 type: "provider-turn.updated",
                 threadId,
                 occurredAt: now,
                 payload: {
-                  id: ProviderTurnId.make(`retry:accepted:${ordinal}:${live}`),
+                  id: ProviderTurnId.make(`retry:accepted:${ordinal}:${scenario}`),
                   providerThreadId: native.id,
                   nodeId: run.rootNodeId!,
                   runAttemptId: run.activeAttemptId,
@@ -5216,7 +5222,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             yield* events.write({
               events: [
                 {
-                  id: EventId.make(`retry:stream-error:${live}`),
+                  id: EventId.make(`retry:stream-error:${scenario}`),
                   type: "turn-item.updated",
                   threadId,
                   occurredAt: now,
@@ -5239,8 +5245,57 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
                 },
               ],
             });
-            yield* continueProviderStream({ threadId, sourceRunId: source.id });
-            yield* continueProviderStream({ threadId, sourceRunId: source.id });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`retry:wrong-provider:${scenario}`),
+              messageId: MessageId.make(`retry:wrong-provider:${scenario}`),
+              threadId,
+              retryOfRunId: source.id,
+              restartContinuationOfRunId: source.id,
+              modelSelection: {
+                ...modelSelection,
+                instanceId: ProviderInstanceId.make("different-codex"),
+              },
+              text: "Continue",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const unchanged = yield* orchestrator.getThreadProjection(threadId);
+            assert.lengthOf(unchanged.runs, 1);
+            assert.lengthOf(unchanged.messages, 1);
+            assert.equal(unchanged.thread.providerInstanceId, source.providerInstanceId);
+            if (declined !== null) {
+              yield* events.write({
+                events: [
+                  {
+                    id: EventId.make(`retry:automatic-blocked:${scenario}`),
+                    type: "thread.metadata-updated",
+                    threadId,
+                    occurredAt: now,
+                    payload: {
+                      ...unchanged.thread,
+                      ...(declined === "settled"
+                        ? { settledOverride: "settled" as const, settledAt: now }
+                        : { snoozedUntil: DateTime.add(now, { days: 1 }), snoozedAt: now }),
+                    },
+                  },
+                ],
+              });
+              // Model the state changing after the automatic preflight, before admission.
+              yield* threads.restartCodex({ threadId, retryRunId: source.id, automatic: true });
+              yield* threads.restartCodex({ threadId, retryRunId: source.id, automatic: true });
+              const blocked = yield* orchestrator.getThreadProjection(threadId);
+              assert.lengthOf(blocked.runs, 1);
+              assert.lengthOf(blocked.messages, 1);
+              assert.equal(opens, 1, "the declined automatic command has an accepted receipt");
+              yield* threads.restartCodex({ threadId, retryRunId: source.id });
+              yield* threads.restartCodex({ threadId, retryRunId: source.id });
+            } else {
+              yield* continueProviderStream({ threadId, sourceRunId: source.id });
+              yield* continueProviderStream({ threadId, sourceRunId: source.id });
+            }
           } else {
             // App startedAt alone must not send Continue for an unaccepted prompt.
             yield* continueProviderStream({ threadId, sourceRunId: source.id });
@@ -5249,10 +5304,18 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             yield* threads.restartCodex({ threadId, retryRunId: source.id });
           }
           const after = yield* orchestrator.getThreadProjection(threadId);
-          assert.equal(opens, live ? 0 : 1);
-          assert.equal(releaseSpy.mock.calls.length, live ? 0 : 1);
+          const expectedOpens = live ? 0 : declined === null ? 1 : 2;
+          assert.equal(opens, expectedOpens);
+          assert.equal(releaseSpy.mock.calls.length, expectedOpens);
           assert.lengthOf(after.runs, 2);
           assert.equal(after.runs[1]?.status, "starting");
+          assert.isNull(after.thread.settledOverride);
+          assert.isNull(after.thread.snoozedUntil);
+          assert.lengthOf(after.messages, 2);
+          assert.equal(
+            after.runs[1]?.userMessageId,
+            MessageId.make(`message:codex-retry:${source.id}`),
+          );
           const retried = after.messages.at(-1);
           assert.deepEqual(
             { text: retried?.text, attachments: retried?.attachments, context: retried?.context },
@@ -5265,14 +5328,14 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             yield* events.write({
               events: [
                 {
-                  id: EventId.make("retry:continued-failed"),
+                  id: EventId.make(`retry:continued-failed:${scenario}`),
                   type: "run.updated",
                   threadId,
                   occurredAt: now,
                   payload: { ...continued, status: "failed", startedAt: now, completedAt: now },
                 },
                 {
-                  id: EventId.make("retry:continued-error"),
+                  id: EventId.make(`retry:continued-error:${scenario}`),
                   type: "turn-item.updated",
                   threadId,
                   occurredAt: now,
@@ -5297,12 +5360,16 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             });
             yield* continueProviderStream({ threadId, sourceRunId: continued.id });
             assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
-            assert.equal(opens, 1, "a failed automatic continuation must not restart endlessly");
+            assert.equal(
+              opens,
+              expectedOpens,
+              "a failed automatic continuation must not restart endlessly",
+            );
             yield* threads.restartCodex({ threadId, retryRunId: continued.id });
             const manual = (yield* orchestrator.getThreadProjection(threadId)).messages.at(-1);
             assert.equal(manual?.text, "Continue");
             assert.deepEqual(manual?.attachments, []);
-            assert.equal(opens, 2);
+            assert.equal(opens, expectedOpens + 1);
           }
         } finally {
           liveSpy.mockRestore();
