@@ -67,3 +67,25 @@ export function workspaceAssetResource(input: {
   }
   return { _tag: input.kind, threadId: input.threadRef.threadId, path: input.absolutePath };
 }
+
+/** The same workspace file, served as a download under its own name. Any file type may download. */
+export function workspaceFileDownloadResource(input: {
+  readonly threadRef: ScopedThreadRef;
+  readonly draft: boolean;
+  readonly workspaceRoot: string;
+  readonly absolutePath: string;
+}): AssetResource {
+  return input.draft
+    ? {
+        _tag: "draft-workspace-file",
+        cwd: input.workspaceRoot,
+        path: input.absolutePath,
+        disposition: "attachment",
+      }
+    : {
+        _tag: "workspace-file",
+        threadId: input.threadRef.threadId,
+        path: input.absolutePath,
+        disposition: "attachment",
+      };
+}

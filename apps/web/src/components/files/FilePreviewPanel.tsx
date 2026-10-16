@@ -37,7 +37,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
+import { DownloadIcon, FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -46,6 +46,7 @@ import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPre
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
+import { downloadMedia } from "~/components/media/mediaContent";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
@@ -57,7 +58,7 @@ import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import type { ChatFileAttachment } from "~/types";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { fileBasename, isAbsolutePath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -108,6 +109,7 @@ import {
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
   workspaceAssetResource,
+  workspaceFileDownloadResource,
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
@@ -373,6 +375,59 @@ function WorkspaceAudioPreview(props: {
   }
   if (url === null) return <FileSurfaceLoading />;
   return <AudioPreview src={url} name={props.name} onError={() => setFailedUrl(url)} />;
+}
+
+/**
+ * Saves a workspace file to the viewer's device. Remote and web clients have no
+ * other way to take an agent's output file, and types with no preview need it most.
+ */
+function WorkspaceFileDownloadAction(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly draft: boolean;
+  readonly absolutePath: string;
+  readonly workspaceRoot: string;
+}) {
+  const resource = useMemo(
+    () =>
+      workspaceFileDownloadResource({
+        threadRef: props.threadRef,
+        draft: props.draft,
+        workspaceRoot: props.workspaceRoot,
+        absolutePath: props.absolutePath,
+      }),
+    [props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
+  );
+  // Mint per click: a cached URL may have expired while the panel stayed open.
+  const prepareDownload = useAssetUrlRefresh(props.environmentId, resource);
+  const [saving, setSaving] = useState(false);
+  const save = () => {
+    setSaving(true);
+    void (async () => {
+      try {
+        const url = await prepareDownload();
+        if (!url) throw new Error("Reconnect to the environment and try again.");
+        await downloadMedia(url, fileBasename(props.absolutePath));
+      } catch (cause) {
+        toastManager.add({
+          type: "error",
+          title: "Could not save file",
+          description: cause instanceof Error ? cause.message : "Please try again.",
+        });
+      } finally {
+        setSaving(false);
+      }
+    })();
+  };
+  return (
+    <FileSurfaceAction
+      label={saving ? "Preparing file…" : "Save file"}
+      disabled={saving}
+      onPress={save}
+    >
+      <DownloadIcon className="size-3.5" />
+    </FileSurfaceAction>
+  );
 }
 
 function clampFileLine(contents: string, requestedLine: number): number {
@@ -1323,6 +1378,16 @@ export default function FilePreviewPanel({
             <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
               <Globe2 className="size-3.5" />
             </FileSurfaceAction>
+          ) : null}
+          {previewPath !== null && !isHostFile && absolutePath ? (
+            <WorkspaceFileDownloadAction
+              key={absolutePath}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              draft={draft}
+              absolutePath={absolutePath}
+              workspaceRoot={cwd}
+            />
           ) : null}
           {!isHostFile && previewPath !== null ? (
             <FileSurfaceAction

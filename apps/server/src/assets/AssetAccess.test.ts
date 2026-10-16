@@ -957,6 +957,140 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("downloads any workspace file as an attachment under its own name", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-download-" });
+      const outputDirectory = path.join(root, "output");
+      yield* fileSystem.makeDirectory(outputDirectory);
+
+      for (const [name, contentDisposition] of [
+        ["budget.xlsx", 'attachment; filename="budget.xlsx"'],
+        [
+          "Relatório.docx",
+          `attachment; filename="Relat_rio.docx"; filename*=UTF-8''Relat%C3%B3rio.docx`,
+        ],
+        // A previewable type still downloads, and is never rendered in place.
+        ["page.html", 'attachment; filename="page.html"'],
+      ] as const) {
+        const filePath = path.join(outputDirectory, name);
+        yield* fileSystem.writeFileString(filePath, `${name} bytes`);
+        const canonicalFile = yield* fileSystem.realPath(filePath);
+        const resource = {
+          _tag: "workspace-file" as const,
+          threadId: ThreadId.make("thread-1"),
+          path: filePath,
+        };
+        const result = yield* issueAssetUrl({
+          resource: { ...resource, disposition: "attachment" },
+          workspaceRoot: root,
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        const asset = yield* resolveAsset(token, suffix.slice(separator + 1));
+        expect(asset).toEqual({
+          kind: "file",
+          path: canonicalFile,
+          download: true,
+          fileName: name,
+        });
+        if (asset?.kind !== "file") throw new Error("Expected a workspace download");
+        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+        expect(response.headers.get("content-disposition")).toBe(contentDisposition);
+        expect(response.headers.get("content-type")).toBe("application/octet-stream");
+        expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(yield* Effect.promise(() => response.text())).toBe(`${name} bytes`);
+        // The capability names one file, never its siblings.
+        expect(yield* resolveAsset(token, "other.xlsx")).toBeNull();
+      }
+
+      // Without a download disposition, a type the panel cannot preview stays refused.
+      const previewError = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: path.join(outputDirectory, "budget.xlsx"),
+        },
+        workspaceRoot: root,
+      }).pipe(Effect.flip);
+      expect(previewError).toBeInstanceOf(AssetPreviewTypeValidationError);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)("keeps workspace downloads inside the workspace root", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-download-root-" });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-download-outside-",
+      });
+      const secretPath = path.join(outside, "secret.xlsx");
+      yield* fileSystem.writeFileString(secretPath, "private");
+      const download = (resourcePath: string) =>
+        issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: resourcePath,
+            disposition: "attachment",
+          },
+          workspaceRoot: root,
+        }).pipe(Effect.flip);
+
+      expect(yield* download(secretPath)).toMatchObject({
+        _tag: "AssetWorkspacePathValidationError",
+      });
+      expect(yield* download("../secret.xlsx")).toMatchObject({
+        _tag: "AssetWorkspacePathValidationError",
+      });
+      // A draft download is a workspace file too, not an absolute host path.
+      expect(
+        yield* issueAssetUrl({
+          resource: {
+            _tag: "draft-workspace-file",
+            cwd: root,
+            path: secretPath,
+            disposition: "attachment",
+          },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "AssetWorkspacePathValidationError" });
+
+      const linkPath = path.join(root, "link.xlsx");
+      yield* fileSystem.symlink(secretPath, linkPath);
+      expect(yield* download(linkPath)).toMatchObject({
+        _tag: "AssetWorkspaceAssetNotFoundError",
+      });
+      const directoryPath = path.join(root, "folder.xlsx");
+      yield* fileSystem.makeDirectory(directoryPath);
+      expect(yield* download(directoryPath)).toMatchObject({
+        _tag: "AssetWorkspaceAssetNotFoundError",
+      });
+
+      // A file that turns into an escaping symlink after minting stops resolving.
+      const reportPath = path.join(root, "report.xlsx");
+      yield* fileSystem.writeFileString(reportPath, "report");
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: reportPath,
+          disposition: "attachment",
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      yield* fileSystem.remove(reportPath);
+      yield* fileSystem.symlink(secretPath, reportPath);
+      expect(
+        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+      ).toBeNull();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("signs MCP render intent only for inline HTML attachments", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
