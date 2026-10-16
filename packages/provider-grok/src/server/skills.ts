@@ -26,6 +26,22 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 
 const GROK_SKILLS_PROBE_TIMEOUT_MS = 4_000;
+const LEADING_SKILL_MENTION_PATTERN = /^(\s*)\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/;
+
+/** The composer token a message starts with, such as `deploy` for `$deploy ship it`. */
+export function leadingGrokSkillMention(prompt: string): string | undefined {
+  return LEADING_SKILL_MENTION_PATTERN.exec(prompt)?.[2];
+}
+
+/**
+ * Grok expands only a leading `/name`; T3 composers insert `$name`. Rewrite
+ * that leading token when it names a skill and leave all other text alone.
+ */
+export function rewriteGrokSkillMention(prompt: string, skillNames: ReadonlySet<string>): string {
+  return prompt.replace(LEADING_SKILL_MENTION_PATTERN, (match, indent: string, name: string) =>
+    skillNames.has(name) ? `${indent}/${name}` : match,
+  );
+}
 
 class GrokSkillsProbeError extends Schema.TaggedError<GrokSkillsProbeError>()(
   "GrokSkillsProbeError",
