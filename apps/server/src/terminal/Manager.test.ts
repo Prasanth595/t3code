@@ -2760,7 +2760,114 @@ it.layer(
     }
   }
 
-  for (const source of ["inherited", "request", "provider", "empty", "unset"] as const) {
+  for (const source of ["inherited", "request", "provider"] as const) {
+    for (const home of ["~/legacy", "~//legacy"] as const) {
+      for (const selectedUnsafe of [true, false]) {
+        it.effect.skipIf(!symlinksSupported)(
+          `checks one-pass native HOME expansion for ${source} (${home}, ${selectedUnsafe ? "selected unsafe" : "unused unsafe"})`,
+          () =>
+            Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-tilde-" });
+              const selected = path.join(root, "~", "legacy", "legacy", ".codex");
+              const unexpanded = path.join(root, "~", "legacy", ".codex");
+              for (const directory of [selected, unexpanded]) {
+                yield* fs.makeDirectory(directory, { recursive: true });
+              }
+              const unsafe = selectedUnsafe ? selected : unexpanded;
+              const database = path.join(root, "database.sqlite");
+              const link = path.join(unsafe, "state_5.sqlite");
+              yield* fs.writeFileString(database, "preserved database");
+              yield* fs.symlink(database, link);
+              for (const sidecar of ["wal", "shm", "journal"]) {
+                yield* fs.writeFileString(path.join(unsafe, `state_5.sqlite-${sidecar}`), sidecar);
+              }
+              const providerInstanceId = ProviderInstanceId.make("codex_native_tilde");
+              const environment =
+                source === "provider" ? [{ name: "HOME", value: home, sensitive: false }] : [];
+              const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+                Effect.provide(
+                  ServerSettings.layerTest({
+                    providerInstances: {
+                      [providerInstanceId]: {
+                        driver: ProviderDriverKind.make("codex"),
+                        config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
+                        environment,
+                      },
+                    },
+                  }),
+                ),
+              );
+              const inherited = source === "inherited" ? { HOME: home } : {};
+              const { manager, ptyAdapter } = yield* createManager(5, {
+                env: inherited,
+                resolveProviderInstanceEnvironment: (
+                  rawProviderInstanceId,
+                  env,
+                  inheritedEnvironment,
+                  cwd,
+                ) =>
+                  TerminalManager.resolveProviderInstanceTerminalEnvironment({
+                    serverSettings,
+                    path,
+                    rawProviderInstanceId,
+                    stateDir: root,
+                    cwd,
+                    env,
+                    inheritedEnvironment,
+                  }).pipe(
+                    Effect.provideService(HostProcess.HomeDirectory, path.join(root, "server")),
+                  ),
+              });
+              const input = openInput({
+                providerInstanceId,
+                cwd: root,
+                env: source === "request" ? { HOME: home } : undefined,
+              });
+              const original = JSON.stringify([input, inherited, environment]);
+              for (let attempt = 0; attempt < 2; attempt += 1) {
+                const result = yield* manager.open(input).pipe(Effect.result);
+                expect(result._tag).toBe(selectedUnsafe ? "Failure" : "Success");
+                if (result._tag === "Failure") {
+                  expect(result.failure).toMatchObject({
+                    _tag: "TerminalProviderEnvironmentError",
+                    cause: { _tag: "CodexShadowHomeSqliteRecoveryRequiredError", linkPath: link },
+                  });
+                  expect(result.failure.message).not.toContain(root);
+                  expect(ptyAdapter.spawnInputs).toHaveLength(0);
+                } else {
+                  expect(ptyAdapter.spawnInputs).toHaveLength(1);
+                  expect(ptyAdapter.spawnInputs[0]?.env.HOME).toBe(home);
+                  expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBeUndefined();
+                  expect(ptyAdapter.spawnInputs[0]?.env.CODEX_SQLITE_HOME).toBeUndefined();
+                }
+                expect(yield* fs.readLink(link)).toBe(database);
+                expect(yield* fs.readFileString(database)).toBe("preserved database");
+                for (const sidecar of ["wal", "shm", "journal"]) {
+                  expect(
+                    yield* fs.readFileString(path.join(unsafe, `state_5.sqlite-${sidecar}`)),
+                  ).toBe(sidecar);
+                }
+                expect(JSON.stringify([input, inherited, environment])).toBe(original);
+                expect(yield* fs.exists(path.join(root, "providers"))).toBe(false);
+              }
+            }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+        );
+      }
+    }
+  }
+
+  for (const source of [
+    "inherited",
+    "request",
+    "provider",
+    "empty",
+    "unset",
+    "tilde-inherited",
+    "tilde-request",
+    "tilde-provider",
+  ] as const) {
     it.effect.skipIf(!symlinksSupported)(
       `refuses restart before killing an existing terminal selected through ${source} HOME`,
       () =>
@@ -2768,9 +2875,13 @@ it.layer(
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-native-home-" });
-          const home = path.join(root, "terminal-home");
-          const codexHome = path.join(home, ".codex");
-          const accountFallback = source === "empty" || source === "unset";
+          const tilde = source.startsWith("tilde-");
+          const homeSource = tilde ? source.slice(6) : source;
+          const home = tilde ? "~/legacy" : path.join(root, "terminal-home");
+          const codexHome = tilde
+            ? path.join(root, "~", "legacy", "legacy", ".codex")
+            : path.join(home, ".codex");
+          const accountFallback = homeSource === "empty" || homeSource === "unset";
           yield* fs.makeDirectory(codexHome, { recursive: true });
           const providerInstanceId = ProviderInstanceId.make("codex_native_home");
           const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
@@ -2781,7 +2892,7 @@ it.layer(
                     driver: ProviderDriverKind.make("codex"),
                     config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
                     environment:
-                      source === "provider"
+                      homeSource === "provider"
                         ? [{ name: "HOME", value: home, sensitive: false }]
                         : [],
                   },
@@ -2791,9 +2902,9 @@ it.layer(
           );
           const { manager, ptyAdapter } = yield* createManager(5, {
             env:
-              source === "unset"
+              homeSource === "unset"
                 ? {}
-                : { HOME: source === "inherited" ? home : path.join(root, "server-home") },
+                : { HOME: homeSource === "inherited" ? home : path.join(root, "server-home") },
             resolveProviderInstanceEnvironment: (
               rawProviderInstanceId,
               env,
@@ -2820,12 +2931,16 @@ it.layer(
             providerInstanceId,
             cwd: root,
             env:
-              source === "empty" ? { HOME: "" } : source === "request" ? { HOME: home } : undefined,
+              homeSource === "empty"
+                ? { HOME: "" }
+                : homeSource === "request"
+                  ? { HOME: home }
+                  : undefined,
           });
           yield* manager.open(input);
           expect(ptyAdapter.spawnInputs).toHaveLength(1);
           expect(ptyAdapter.spawnInputs[0]?.env.HOME).toBe(
-            source === "empty" ? "" : source === "unset" ? undefined : home,
+            homeSource === "empty" ? "" : homeSource === "unset" ? undefined : home,
           );
           expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBeUndefined();
           expect(ptyAdapter.spawnInputs[0]?.env.CODEX_SQLITE_HOME).toBeUndefined();

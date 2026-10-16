@@ -1422,11 +1422,13 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
           !explicitHome && platform !== "win32"
             ? terminalEnvironment.HOME || (yield* HostProcess.AccountHomeDirectory)
             : undefined;
-        // Native HOME goes through Codex's lexical AbsolutePathBuf normalization;
-        // explicit CODEX_HOME is canonicalized first and must keep filesystem semantics.
+        // Native HOME's AbsolutePathBuf expands '~/' once against HOME itself,
+        // then normalizes lexically. Explicit CODEX_HOME is canonicalized first.
         const terminalHome =
           explicitHome ||
-          (nativeHome ? input.path.normalize(`${nativeHome}${input.path.sep}.codex`) : undefined);
+          (nativeHome
+            ? input.path.normalize(`${nativeHome}/.codex`.replace(/^~\/+/u, () => `${nativeHome}/`))
+            : undefined);
         // Keep the cwd and explicit CODEX_HOME spelling: POSIX traverses symlinks
         // before '..'. Even fs.realpath's JS implementation normalizes lexically.
         // Windows resolves drive-relative paths using Win32 semantics.
