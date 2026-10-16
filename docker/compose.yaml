@@ -29,6 +29,9 @@ services:
     network_mode: service:tailscale
     environment:
       DOCKER_HOST: tcp://docker-proxy:2375
+      SUBPOLAR_MANAGER_URL: ${SUBPOLAR_MANAGER_URL:-}
+      SUBPOLAR_MANAGER_TOKEN: ${SUBPOLAR_MANAGER_TOKEN:-}
+      SUBPOLAR_STORAGE_ROOT: ${SUBPOLAR_STORAGE_ROOT:-}
     volumes:
       - codewise-state:/var/lib/codewise
       - codewise-workspaces:/workspaces
@@ -69,6 +72,39 @@ services:
       retries: 3
     restart: unless-stopped
 
+  subpolar-manager:
+    profiles: [subpolar]
+    build:
+      context: ..
+      dockerfile: docker/subpolar-manager.Dockerfile
+    environment:
+      SUBPOLAR_MANAGER_HOST: 0.0.0.0
+      SUBPOLAR_MANAGER_PORT: 8787
+      SUBPOLAR_MANAGER_TOKEN: ${SUBPOLAR_MANAGER_TOKEN:-}
+      SUBPOLAR_GATEWAY_STORAGE_ROOT: /workspaces
+      SUBPOLAR_DOCKER_HOST_STORAGE_ROOT: ${SUBPOLAR_DOCKER_HOST_STORAGE_ROOT:-/var/lib/docker/volumes/codewise_codewise-workspaces/_data}
+      SUBPOLAR_CONTAINER_STORAGE_ROOT: /workspaces
+      SUBPOLAR_WORKER_IMAGE: ${SUBPOLAR_WORKER_IMAGE:-codewise-subpolar-worker:local}
+      SUBPOLAR_DOCKER_SOCKET: /var/run/docker.sock
+      SUBPOLAR_REGISTRATION_FILE: /var/lib/subpolar/environments.json
+      SUBPOLAR_GATEWAY_GIT_ROOT: ${SUBPOLAR_GATEWAY_GIT_ROOT:-}
+      SUBPOLAR_DOCKER_HOST_GIT_ROOT: ${SUBPOLAR_DOCKER_HOST_GIT_ROOT:-}
+    volumes:
+      - codewise-workspaces:/workspaces
+      - ${SUBPOLAR_DOCKER_HOST_STORAGE_ROOT:-/var/lib/docker/volumes/codewise_codewise-workspaces/_data}:${SUBPOLAR_DOCKER_HOST_STORAGE_ROOT:-/var/lib/docker/volumes/codewise_codewise-workspaces/_data}:ro
+      - subpolar-manager-state:/var/lib/subpolar
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [docker-control]
+    group_add:
+      - ${SUBPOLAR_DOCKER_GID:-999}
+    healthcheck:
+      test: [CMD, bun, -e, "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
 networks:
   docker-control:
     internal: true
@@ -76,11 +112,13 @@ networks:
 volumes:
   codewise-state:
   codewise-workspaces:
+    name: codewise_codewise-workspaces
   codex-home:
   opencode-config:
   gh-config:
   ssh-config:
   tailscale-state:
+  subpolar-manager-state:
 
 secrets:
   tailscale-authkey:

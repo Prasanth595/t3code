@@ -46,6 +46,14 @@ function makeRequest(path: string, body?: unknown, token: string | null = TOKEN)
   });
 }
 
+test("manager API exposes a minimal health check without manager details", async () => {
+  const { manager } = managerFixture();
+  const handle = createEnvironmentManagerHttpHandler(manager, TOKEN);
+  const response = await handle(new Request("http://manager/healthz"));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ok: true });
+});
+
 test("manager API rejects missing or invalid bearer credentials before dispatch", async () => {
   const { manager, calls } = managerFixture();
   const handle = createEnvironmentManagerHttpHandler(manager, TOKEN);

@@ -69,3 +69,17 @@ test("managed execution fails closed when T3 does not supply an absolute worktre
   });
   expect(response).toMatchObject({ ok: false, error: { code: "WORKTREE_UNAVAILABLE" } });
 });
+
+test("manager unavailability returns an error without host process fallback", async () => {
+  const options = createManagedExecutionOptions(environment, (async () => { throw new Error("manager unavailable"); }) as typeof fetch);
+  const response = await options.executeTool!({
+    callId: "call-1",
+    toolId: "internal/managed/execute",
+    input: { command: ["touch", "/tmp/should-not-run"] },
+  }, options.toolDefinitions![0], {
+    requestId: "request-1",
+    principal: { id: environment.SUBPOLAR_OWNER_ID, kind: "local" },
+    cwd: "/workspaces/project-a",
+  });
+  expect(response).toMatchObject({ ok: false, error: { code: "MANAGED_PROCESS_FAILED" } });
+});

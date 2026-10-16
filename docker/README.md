@@ -46,6 +46,48 @@ Projects must use container paths (for example `/workspaces/project-a`), never
 the host path backing a bind mount. Deleting a Codewise project record does not
 delete its workspace; delete files separately and deliberately.
 
+## Optional Subpolar execution
+
+Managed execution is disabled unless the three `SUBPOLAR_MANAGER_*`/storage
+settings are configured. The Compose profile adds a separate `subpolar-manager`
+service with direct Docker socket access, while the existing read-only
+`docker-proxy` remains available to Codewise. Codewise reaches the authenticated
+manager API over the private `docker-control` network, and worker containers
+receive neither the socket nor Docker CLI.
+
+On a Linux Docker host, prepare the worker image and discover the actual backing
+directory for the existing named workspace volume:
+
+```sh
+docker build -f docker/subpolar-worker.Dockerfile -t codewise-subpolar-worker:local .
+docker volume inspect codewise_codewise-workspaces
+```
+
+Set these values in `docker/.env` before enabling the profile:
+
+```dotenv
+SUBPOLAR_MANAGER_URL=http://subpolar-manager:8787
+SUBPOLAR_MANAGER_TOKEN=<random secret of at least 32 characters>
+SUBPOLAR_STORAGE_ROOT=/workspaces
+SUBPOLAR_DOCKER_HOST_STORAGE_ROOT=<volume Mountpoint from docker volume inspect>
+SUBPOLAR_DOCKER_GID=<numeric group that can access /var/run/docker.sock>
+```
+
+The host directory must be the same backing storage mounted as `/workspaces`
+inside Codewise. Compose mounts it read-only at its host path inside the manager
+so the manager can validate it; Docker then mounts only the selected worktree
+into each worker. Linked Git worktrees also need matching gateway and host Git
+metadata roots configured. If the host path cannot be made visible at the same
+absolute path inside the manager, leave managed execution disabled.
+
+Start the optional manager with
+`docker compose --env-file .env --profile subpolar up -d --build`. Configure the
+Subpolar provider through T3's existing local ACP command setting, using the
+installed `subpolar-acp` executable or Bun with
+`packages/subpolar-acp/src/cli.ts`. The manager token is inherited only by the
+ACP bridge; keep it out of client configuration and logs. This deployment path
+has unit coverage but has not been verified against a live Docker daemon.
+
 ## Backup and restore
 
 Stop Codewise before a host-level volume backup. For an online backup, mount a
@@ -67,11 +109,15 @@ the pre-upgrade backup when migrations are not backward compatible.
 
 ## Security model
 
-The Docker socket is mounted only into `docker-proxy`; Codewise reaches its
-read-only endpoint through `DOCKER_HOST`. The proxy is on an internal network,
-not exposed to the host or tailnet. This is defense in depth, not a sandbox:
-enabling Docker create/build/exec operations grants coding agents material host
-power and needs a typed policy worker before it is enabled.
+The Docker socket is mounted into `docker-proxy` for Codewise's existing
+read-only Docker access. When the optional Subpolar profile is enabled, a
+separate manager also receives the Docker socket and exposes only authenticated
+environment lifecycle and process operations to Codewise. The manager's socket
+access is still root-like; keep the service on the internal network, protect the
+bearer token, and do not expose its port publicly. Worker containers receive
+neither the Docker socket nor Docker CLI, run as UID 1000, drop capabilities,
+disable networking, and mount only the selected worktree (plus explicitly
+configured linked-Git metadata).
 
 Do not bind mount the deployer's home, `.ssh`, or `.config`. Use the named
 `ssh-config` volume or read-only Docker secrets for key files, and keep

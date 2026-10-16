@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "subpolar-manager": "./src/manager-cli.ts"
+  },
   "devDependencies": {
     "@types/node": "catalog:"
   },
@@ -12,6 +15,7 @@
     "./docker-engine": "./src/docker-engine.ts",
     "./manager-client": "./src/manager-client.ts",
     "./manager-http": "./src/manager-http.ts",
+    "./manager": "./src/manager.ts",
     "./persistence": "./src/persistence.ts"
   },
   "scripts": {

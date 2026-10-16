@@ -122,6 +122,9 @@ export function createEnvironmentManagerHttpHandler(manager: EnvironmentManager,
   if (token.length < 32 || token.includes("\0")) throw new Error("Manager API token must contain at least 32 characters");
 
   return async (request: Request): Promise<Response> => {
+    if (request.method === "GET" && new URL(request.url).pathname === "/healthz") {
+      return jsonResponse({ ok: true });
+    }
     if (!isAuthorized(request, token)) return jsonResponse({ error: "UNAUTHORIZED" }, 401, { "www-authenticate": "Bearer" });
     if (request.method !== "POST") return jsonResponse({ error: "METHOD_NOT_ALLOWED" }, 405, { allow: "POST" });
 
