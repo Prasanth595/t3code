@@ -4373,8 +4373,8 @@ describe("regate: a failed re-gate of a ready pull request", () => {
         clearCalls(rig);
         rig.t3.launches.length = 0;
         assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
-        assert.deepStrictEqual(rig.t3.launches.length, 1, "the same command id is sent again");
-        assert.strictEqual(rig.t3.made.size, 1, "T3 starts one thread for the two launch calls");
+        assert.deepStrictEqual(rig.t3.launches, [], "the session is not launched again");
+        assert.strictEqual(rig.t3.made.size, 1, "T3 made one thread for the one launch call");
         assert.deepStrictEqual(rig.ws.calls, [], "nothing is run again");
         assertRelaunched(rig);
       }),
@@ -4555,9 +4555,12 @@ describe("regate: a relaunch that an earlier call decided", () => {
       const step = yield* regateStep(rig);
       assert.strictEqual(step.kind, "stuck");
       const reason = step.kind === "stuck" ? step.reason : "";
-      assert.ok(reason.includes("the factory could not launch a session"), reason);
       assert.ok(reason.includes(`(launch command id softfac:${RUN}:regate:2)`), reason);
       assert.deepStrictEqual(rig.gh.world.comments.length, 1);
+      assert.ok(
+        rig.gh.world.comments[0]!.includes("Reason: the factory could not launch a session"),
+        rig.gh.world.comments[0],
+      );
       assert.ok(!rig.gh.world.comments[0]!.includes("command id"), rig.gh.world.comments[0]);
       assert.strictEqual(rig.gh.world.state, "stuck");
     }),
