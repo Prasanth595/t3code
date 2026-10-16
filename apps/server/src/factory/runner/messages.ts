@@ -7,28 +7,7 @@
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
 import { commandLine, sanitize } from "../text.ts";
-import type { DropReason } from "../tracker/github.ts";
-
-// TEMPORARY: the same shapes as the ones the tracker packet adds to `tracker/github.ts`; the
-// orchestrator replaces these with `import type { Feedback, InlineComment } from "../tracker/github.ts"`.
-export interface InlineComment {
-  readonly path: string;
-  readonly line: number | null;
-  readonly body: string;
-}
-export type FeedbackKind =
-  | { readonly kind: "review"; readonly state: string }
-  | { readonly kind: "pr-comment" }
-  | { readonly kind: "issue-comment" };
-export interface Feedback {
-  readonly id: string;
-  readonly author: string;
-  readonly kind: FeedbackKind;
-  readonly createdAt: string;
-  readonly body: string;
-  readonly inline: ReadonlyArray<InlineComment>;
-  readonly inlineUnread: number;
-}
+import type { DropReason, Feedback, FeedbackKind, InlineComment } from "../tracker/github.ts";
 
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
