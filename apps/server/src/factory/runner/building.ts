@@ -820,7 +820,8 @@ const sinceRunStart = (firstMs: number): string => `${formatTs(firstMs).slice(0,
 /**
  * What `forward` still has to send from one read of the instructors' activity: the comments the
  * ledger has no `comment_forwarded` for, oldest first and each id once, and the body edit whose
- * time has no `body-edit-forwarded` step. A comment the issue was told about as dropped is never
+ * time has no `body-edit-forwarded` step. A comment the issue was told about as dropped, or that went
+ * to the session as instructor feedback, is never
  * sent later, whatever a later read says: the instructor was asked to post it again. A body edit
  * time that is not GitHub's form is refused before anything is sent or written: it ends up in the
  * ledger and in a command id.
@@ -836,7 +837,9 @@ const unsent = (seen: Seen, activity: Activity) =>
     }
     const told = new Set([...seen.forwarded, ...seen.dropped]);
     const comments = activity.comments.filter((comment) => {
-      if (told.has(comment.id)) return false;
+      // Nor one that went into the session as instructor feedback, when the run was waiting for review.
+      if (told.has(comment.id) || seen.feedbackSent.has(`issue-comment:${comment.id}`))
+        return false;
       told.add(comment.id);
       return true;
     });
