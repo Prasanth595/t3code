@@ -6,6 +6,7 @@ import {
   createOfficeDocumentClient,
   OFFICE_PREVIEW_MAX_BYTES,
   OFFICE_PREVIEW_TRANSFER_TIMEOUT_MS,
+  OFFICE_PREVIEW_STARTUP_TIMEOUT_MS,
   OFFICE_PREVIEW_TIMEOUT_MS,
   readOfficeDocumentBytes,
 } from "./officeDocumentClient";
@@ -13,6 +14,8 @@ import {
 class TestWorker extends EventTarget {
   static instances: TestWorker[] = [];
   static onPosted: ((worker: TestWorker) => void) | undefined;
+  static onCreated: ((worker: TestWorker) => void) | undefined;
+  static autoReady = true;
   terminate = vi.fn();
   postMessage = vi.fn<
     (message: { id: number; buffer: ArrayBuffer }, transfer: ArrayBuffer[]) => void
@@ -20,6 +23,11 @@ class TestWorker extends EventTarget {
   constructor() {
     super();
     TestWorker.instances.push(this);
+    TestWorker.onCreated?.(this);
+    if (TestWorker.autoReady) queueMicrotask(() => this.ready());
+  }
+  ready() {
+    this.dispatchEvent(new MessageEvent("message", { data: { type: "ready" } }));
   }
 }
 
@@ -28,6 +36,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   TestWorker.instances = [];
   TestWorker.onPosted = undefined;
+  TestWorker.onCreated = undefined;
+  TestWorker.autoReady = true;
 });
 
 const source = { name: "book.xlsx", format: "xlsx" as const, file: new Blob(["bytes"]) };
@@ -39,6 +49,10 @@ const remoteSource = {
 const workerPosted = () =>
   new Promise<TestWorker>((resolve) => {
     TestWorker.onPosted = resolve;
+  });
+const workerCreated = () =>
+  new Promise<TestWorker>((resolve) => {
+    TestWorker.onCreated = resolve;
   });
 
 function controlledRemoteBody() {
@@ -148,12 +162,14 @@ describe("bounded Office document loading", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("allows a transfer beyond fifteen seconds before starting the parser's full watchdog", async () => {
+  it("gives parsing its full watchdog after both transfer and worker startup exceed fifteen seconds", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("Worker", TestWorker);
+    TestWorker.autoReady = false;
     const response = controlledRemoteBody();
     const client = createOfficeDocumentClient(remoteSource);
     const posted = workerPosted();
+    const created = workerCreated();
     const unsubscribe = client.subscribe(vi.fn());
     await response.readStarted;
     await vi.advanceTimersByTimeAsync(OFFICE_PREVIEW_TIMEOUT_MS + 1000);
@@ -161,12 +177,22 @@ describe("bounded Office document loading", () => {
     expect(TestWorker.instances).toHaveLength(0);
     expect(vi.mocked(fetch).mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
     response.complete();
-    const worker = await posted;
+    const worker = await created;
+    expect(worker.postMessage).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(OFFICE_PREVIEW_TIMEOUT_MS + 1000);
+    expect(client.getSnapshot()).toEqual({ status: "loading" });
+    expect(worker.terminate).not.toHaveBeenCalled();
+    expect(worker.postMessage).not.toHaveBeenCalled();
+    worker.ready();
+    await posted;
     expect(new Uint8Array(worker.postMessage.mock.calls[0]![0].buffer)).toEqual(
       new Uint8Array([1, 2, 3]),
     );
     expect(vi.getTimerCount()).toBe(1);
-    await vi.advanceTimersByTimeAsync(OFFICE_PREVIEW_TIMEOUT_MS - 1);
+    await vi.advanceTimersByTimeAsync(5000);
+    worker.ready();
+    expect(worker.postMessage).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(OFFICE_PREVIEW_TIMEOUT_MS - 5001);
     expect(client.getSnapshot()).toEqual({ status: "loading" });
     expect(worker.terminate).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -174,6 +200,73 @@ describe("bounded Office document loading", () => {
       status: "error",
       message: expect.stringContaining("preview timed out"),
     });
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    unsubscribe();
+  });
+
+  it("terminates an unready worker at the finite startup deadline without sending document bytes", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("Worker", TestWorker);
+    TestWorker.autoReady = false;
+    const client = createOfficeDocumentClient(source);
+    const created = workerCreated();
+    const unsubscribe = client.subscribe(vi.fn());
+    const worker = await created;
+    await vi.advanceTimersByTimeAsync(OFFICE_PREVIEW_STARTUP_TIMEOUT_MS - 1);
+    expect(client.getSnapshot()).toEqual({ status: "loading" });
+    expect(worker.postMessage).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(client.getSnapshot()).toMatchObject({
+      status: "error",
+      message: expect.stringContaining("startup timed out"),
+    });
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    worker.ready();
+    expect(worker.postMessage).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    unsubscribe();
+  });
+
+  it.each(["error", "messageerror", "unsubscribe"])(
+    "cleans up worker startup on %s and ignores late readiness",
+    async (event: string) => {
+      vi.useFakeTimers();
+      vi.stubGlobal("Worker", TestWorker);
+      TestWorker.autoReady = false;
+      const client = createOfficeDocumentClient(source);
+      const listener = vi.fn();
+      const created = workerCreated();
+      const unsubscribe = client.subscribe(listener);
+      const worker = await created;
+      if (event === "unsubscribe") unsubscribe();
+      else worker.dispatchEvent(new Event(event));
+      const calls = listener.mock.calls.length;
+      expect(worker.terminate).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+      worker.ready();
+      await vi.advanceTimersByTimeAsync(OFFICE_PREVIEW_STARTUP_TIMEOUT_MS);
+      expect(worker.postMessage).not.toHaveBeenCalled();
+      expect(listener).toHaveBeenCalledTimes(calls);
+      expect(vi.getTimerCount()).toBe(0);
+      unsubscribe();
+    },
+  );
+
+  it("cleans up when posting bytes after readiness fails", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("Worker", TestWorker);
+    TestWorker.autoReady = false;
+    const client = createOfficeDocumentClient(source);
+    const created = workerCreated();
+    const unsubscribe = client.subscribe(vi.fn());
+    const worker = await created;
+    worker.postMessage.mockImplementation(() => {
+      throw new Error("Cannot transfer bytes");
+    });
+    worker.ready();
+    expect(client.getSnapshot()).toEqual({ status: "error", message: "Cannot transfer bytes" });
     expect(worker.terminate).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
     unsubscribe();

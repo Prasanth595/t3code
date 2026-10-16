@@ -6,6 +6,7 @@ import type {
 
 export const OFFICE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
 export const OFFICE_PREVIEW_TRANSFER_TIMEOUT_MS = 120_000;
+export const OFFICE_PREVIEW_STARTUP_TIMEOUT_MS = 120_000;
 export const OFFICE_PREVIEW_TIMEOUT_MS = 15_000;
 
 export interface OfficeDocumentSource {
@@ -127,14 +128,41 @@ export function createOfficeDocumentClient(source: OfficeDocumentSource, initial
         timeout = setTimeout(() => {
           finish({
             status: "error",
-            message: "Office preview timed out. Save this file to open it in another app.",
+            message: "Office preview startup timed out. Save this file to open it in another app.",
           });
-        }, OFFICE_PREVIEW_TIMEOUT_MS);
+        }, OFFICE_PREVIEW_STARTUP_TIMEOUT_MS);
         worker = new Worker(new URL("./officeDocument.worker.ts", import.meta.url), {
           type: "module",
         });
+        const readyWorker = worker;
+        let documentPosted = false;
         worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResponse>) => {
-          if (event.data.id !== current) return;
+          if (finished || current !== generation) return;
+          if ("type" in event.data) {
+            if (event.data.type !== "ready" || documentPosted) return;
+            documentPosted = true;
+            clearTimeout(timeout);
+            timeout = setTimeout(() => {
+              finish({
+                status: "error",
+                message: "Office preview timed out. Save this file to open it in another app.",
+              });
+            }, OFFICE_PREVIEW_TIMEOUT_MS);
+            try {
+              readyWorker.postMessage(
+                { id: current, name: source.name, format: source.format, buffer },
+                [buffer],
+              );
+            } catch (cause) {
+              finish({
+                status: "error",
+                message:
+                  cause instanceof Error ? cause.message : "Unable to load this Office document.",
+              });
+            }
+            return;
+          }
+          if (!documentPosted || event.data.id !== current) return;
           finish(
             event.data.ok
               ? { status: "success", document: event.data.document }
@@ -150,9 +178,6 @@ export function createOfficeDocumentClient(source: OfficeDocumentSource, initial
         worker.addEventListener("messageerror", () =>
           finish({ status: "error", message: "Unable to read the Office preview result." }),
         );
-        worker.postMessage({ id: current, name: source.name, format: source.format, buffer }, [
-          buffer,
-        ]);
       })
       .catch((cause: unknown) => {
         if (!finished && current === generation) {

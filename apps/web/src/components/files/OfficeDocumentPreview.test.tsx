@@ -208,6 +208,12 @@ describe("Office document controls", () => {
       "Worker",
       class extends EventTarget {
         terminate = terminate;
+        constructor() {
+          super();
+          queueMicrotask(() =>
+            this.dispatchEvent(new MessageEvent("message", { data: { type: "ready" } })),
+          );
+        }
         postMessage(request: OfficeWorkerRequest) {
           attempts++;
           this.dispatchEvent(

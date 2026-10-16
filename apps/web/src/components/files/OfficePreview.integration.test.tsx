@@ -67,6 +67,11 @@ class ParserWorker extends EventTarget {
   constructor() {
     super();
     ParserWorker.instances.push(this);
+    queueMicrotask(() =>
+      this.dispatchEvent(
+        new MessageEvent<OfficeWorkerResponse>("message", { data: { type: "ready" } }),
+      ),
+    );
   }
   postMessage(request: OfficeWorkerRequest) {
     this.request = request;

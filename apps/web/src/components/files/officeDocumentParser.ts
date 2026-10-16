@@ -65,6 +65,7 @@ export interface OfficeWorkerRequest {
 }
 
 export type OfficeWorkerResponse =
+  | { readonly type: "ready" }
   | { id: number; ok: true; document: OfficeDocument }
   | { id: number; ok: false; error: string };
 
@@ -985,8 +986,6 @@ function imageSource(bytes: Uint8Array, path: string): string | undefined {
 }
 
 function parsePresentation(parts: Map<string, Uint8Array>): OfficeDocument {
-  const presentationBytes = parts.get("ppt/presentation.xml");
-  if (!presentationBytes) fail("The presentation is missing its slide index.");
   const trees = new Map<string, XmlNode>();
   const tree = (path: string | undefined) => {
     if (!path) return undefined;
@@ -1001,23 +1000,44 @@ function parsePresentation(parts: Map<string, Uint8Array>): OfficeDocument {
   };
   function relationships(path: string) {
     const split = path.lastIndexOf("/");
-    const relPath = `${path.slice(0, split)}/_rels/${path.slice(split + 1)}.rels`;
+    const relPath = `${path.slice(0, split + 1)}_rels/${path.slice(split + 1)}.rels`;
     const relationships = new Map<string, { type: string; path: string }>();
+    const ids = new Set<string>();
     for (const node of children(tree(relPath), "Relationship", PACKAGE_REL_NS)) {
       const id = nodeAttribute(node, "Id");
       const target = nodeAttribute(node, "Target");
       const type = nodeAttribute(node, "Type");
-      if (id && target && type && nodeAttribute(node, "TargetMode") !== "External") {
-        if (relationships.has(id)) fail("Duplicate presentation relationship.");
-        relationships.set(id, { type: normalizeOfficeUri(type), path: resolvePart(path, target) });
+      if (!id || !target || !type) fail("Invalid presentation relationship.");
+      if (ids.has(id)) fail("Duplicate presentation relationship.");
+      ids.add(id);
+      const normalizedType = normalizeOfficeUri(type);
+      const mode = nodeAttribute(node, "TargetMode");
+      if (mode === "External") {
+        if (!path && normalizedType === `${DOCUMENT_REL_NS}/officeDocument`)
+          fail("The presentation office document relationship must be internal.");
+        continue;
       }
+      if (mode && mode !== "Internal") fail("Invalid presentation relationship target mode.");
+      relationships.set(id, { type: normalizedType, path: resolvePart(path, target) });
     }
     return relationships;
   }
   const related = (path: string, type: string) =>
     [...relationships(path).values()].find((rel) => rel.type === `${DOCUMENT_REL_NS}/${type}`)
       ?.path;
-  const presentation = tree("ppt/presentation.xml")!;
+  const officeDocuments = [...relationships("").values()].filter(
+    (rel) => rel.type === `${DOCUMENT_REL_NS}/officeDocument`,
+  );
+  if (officeDocuments.length !== 1)
+    fail("The presentation must have exactly one internal office document relationship.");
+  const presentationPath = officeDocuments[0]!.path;
+  const presentation = tree(presentationPath);
+  if (
+    !presentation ||
+    presentation.tag.local !== "presentation" ||
+    presentation.tag.uri !== PRESENTATION_NS
+  )
+    fail("The presentation is missing its slide index.");
   const slideSize = child(presentation, "sldSz", PRESENTATION_NS);
   const width = Number(nodeAttribute(slideSize, "cx") ?? 9_144_000);
   const height = Number(nodeAttribute(slideSize, "cy") ?? 5_143_500);
@@ -1027,7 +1047,7 @@ function parsePresentation(parts: Map<string, Uint8Array>): OfficeDocument {
     )
   )
     fail("Unsupported slide dimensions.");
-  const slideRelationships = relationships("ppt/presentation.xml");
+  const slideRelationships = relationships(presentationPath);
   const paths = descendants(presentation, "sldId", PRESENTATION_NS).map((node) => {
     const id = nodeAttribute(node, "id", DOCUMENT_REL_NS);
     const rel = id ? slideRelationships.get(id) : undefined;

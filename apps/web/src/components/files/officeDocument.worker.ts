@@ -27,3 +27,5 @@ self.addEventListener("message", (event: MessageEvent<OfficeWorkerRequest>) => {
   }
   sendResponse(response);
 });
+
+sendResponse({ type: "ready" });

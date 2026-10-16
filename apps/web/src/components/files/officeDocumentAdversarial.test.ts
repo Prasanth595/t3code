@@ -10,6 +10,9 @@ const relationshipNamespace = "http://schemas.openxmlformats.org/officeDocument/
 
 function oneSlide(shape: string, additions: Record<string, string> = {}) {
   return zipSync({
+    "_rels/.rels": strToU8(
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="officeDocument" Type="${relationshipNamespace}/officeDocument" Target="ppt/presentation.xml"/></Relationships>`,
+    ),
     "ppt/presentation.xml": strToU8(
       `<p:presentation xmlns:p="${presentationNamespace}" xmlns:r="${relationshipNamespace}"><p:sldIdLst><p:sldId id="256" r:id="slide"/></p:sldIdLst></p:presentation>`,
     ),

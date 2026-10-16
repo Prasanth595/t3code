@@ -25,6 +25,9 @@ const REL = "http://schemas.openxmlformats.org/package/2006/relationships";
 
 function presentationParts() {
   return {
+    "_rels/.rels": strToU8(
+      `<Relationships xmlns="${REL}"><Relationship Id="presentation" Type="${R}/officeDocument" Target="ppt/presentation.xml"/></Relationships>`,
+    ),
     "[Content_Types].xml": strToU8(
       '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
     ),
@@ -544,6 +547,99 @@ describe("parseOfficeDocument spreadsheets", () => {
 });
 
 describe("parseOfficeDocument presentation outlines", () => {
+  it.each([
+    { location: "deck/main.xml", strict: false },
+    { location: "main.xml", strict: false },
+    { location: "deck/main.xml", strict: true },
+    { location: "main.xml", strict: true },
+  ])("resolves the $strict Strict package entry at $location", ({ location, strict }) => {
+    const source = strict ? strictPresentationParts() : visualPresentationParts();
+    const prefix = location.slice(0, location.lastIndexOf("/") + 1);
+    const parts = Object.fromEntries(
+      Object.entries(source).map(([name, bytes]) => {
+        const relocated =
+          name === "ppt/presentation.xml"
+            ? location
+            : name === "ppt/_rels/presentation.xml.rels"
+              ? `${prefix}_rels/main.xml.rels`
+              : name.startsWith("ppt/")
+                ? prefix + name.slice(4)
+                : name;
+        return [relocated, bytes];
+      }),
+    );
+    const relationshipNamespace = strict
+      ? "http://purl.oclc.org/ooxml/officeDocument/relationships"
+      : R;
+    parts["_rels/.rels"] = strToU8(
+      `<Relationships xmlns="${REL}"><Relationship Id="presentation" Type="${relationshipNamespace}/officeDocument" Target="${strict ? "/" : ""}${location}"/></Relationships>`,
+    );
+    const document = parseOfficeDocument(zipSync(parts), "pptx");
+    expect(document).toEqual(parseOfficeDocument(zipSync(source), "pptx"));
+    if (document.kind !== "presentation") throw new Error("Expected presentation");
+    expect(document.slides.map((slide) => slide.text)).toEqual([
+      ["日本語の見出し", "本文はマスターから継承"],
+      ["Second & final"],
+    ]);
+    expect(document.slides[0]?.elements).toContainEqual(
+      expect.objectContaining({
+        kind: "text",
+        text: "本文はマスターから継承",
+        x: 600000,
+        y: 2000000,
+      }),
+    );
+    expect(
+      document.slides[0]?.elements.some(
+        (element) => element.kind === "image" && element.src.startsWith("data:image/png;base64,"),
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    { label: "missing", entries: "", error: "exactly one internal office document" },
+    {
+      label: "multiple",
+      entries: `<Relationship Id="first" Type="${R}/officeDocument" Target="ppt/presentation.xml"/><Relationship Id="second" Type="${R}/officeDocument" Target="ppt/presentation.xml"/>`,
+      error: "exactly one internal office document",
+    },
+    {
+      label: "duplicate IDs",
+      entries: `<Relationship Id="same" Type="${R}/officeDocument" Target="ppt/presentation.xml"/><Relationship Id="same" Type="${R}/metadata" Target="metadata.xml"/>`,
+      error: "Duplicate presentation relationship",
+    },
+    {
+      label: "external",
+      entries: `<Relationship Id="presentation" Type="${R}/officeDocument" Target="https://example.com/deck.xml" TargetMode="External"/>`,
+      error: "must be internal",
+    },
+    {
+      label: "missing part",
+      entries: `<Relationship Id="presentation" Type="${R}/officeDocument" Target="missing.xml"/>`,
+      error: "missing its slide index",
+    },
+  ])("rejects a $label root office document relationship", ({ entries, error }) => {
+    const parts = presentationParts();
+    parts["_rels/.rels"] = strToU8(`<Relationships xmlns="${REL}">${entries}</Relationships>`);
+    expect(() => parseOfficeDocument(zipSync(parts), "pptx")).toThrow(error);
+  });
+
+  it("omits external images while preserving internal slide relationships", () => {
+    const parts = visualPresentationParts();
+    const path = "ppt/slides/_rels/slide2.xml.rels";
+    parts[path] = strToU8(
+      strFromU8(parts[path]!).replace(
+        'Target="../media/picture.png"',
+        'Target="https://example.com/picture.png" TargetMode="External"',
+      ),
+    );
+    const document = parseOfficeDocument(zipSync(parts), "pptx");
+    if (document.kind !== "presentation") throw new Error("Expected presentation");
+    expect(document.slides[0]?.text).toEqual(["日本語の見出し", "本文はマスターから継承"]);
+    expect(document.slides[0]?.elements.some((element) => element.kind === "image")).toBe(false);
+    expect(document.slides[1]?.text).toEqual(["Second & final"]);
+  });
+
   it.each([
     { type: "ctrTitle", y: 100000 },
     { type: "subTitle", y: 2000000 },
