@@ -16,7 +16,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, validateRunId, type RunId } from "./ledger/runId.ts";
 import { FactoryProcess, type RunInput, type RunResult, type RunSpawnError } from "./process.ts";
-import { sanitize } from "./text.ts";
+import { commandLine, isCommitId, sanitize } from "./text.ts";
 
 /**
  * The gate: a fresh checkout of a pull request's head merged with the base branch tip, the
@@ -34,8 +34,6 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 const DEFAULT_CHECKOUT_TIMEOUT_MS = 10 * 60 * 1000;
 const GIT_TAIL_BYTES = 1024 * 1024;
-/** The longest command shown in the results comment, in characters. */
-const MAX_COMMAND_CHARS = 300;
 /** The `gate_command` line of an attempt that ran no command because the head conflicts with the base. */
 const MERGE_COMMAND = "softfac: merge the base branch into the head";
 
@@ -136,20 +134,17 @@ export type GateError = WorkspaceError | GateCommandSpawnError | GateRecordError
 
 // ---- text -----------------------------------------------------------------------------------
 
-/** The command as one short line: sanitised, newlines and tabs turned into spaces, cut at 300 characters. */
-const commandLine = (command: string): string => {
-  const chars = Array.from(sanitize(command, false));
-  return chars.length > MAX_COMMAND_CHARS
-    ? `${chars.slice(0, MAX_COMMAND_CHARS).join("")}…`
-    : chars.join("");
-};
-
 /**
  * `command` as one line in a code span for a table cell: the span's backticks are longer than any
  * run in the command, and `|` is escaped so it does not end the cell.
  */
-const tableCode = (command: string): string => {
-  const line = commandLine(command).replaceAll("|", "\\|");
+const tableCode = (command: string): string =>
+  codeSpan(commandLine(command).replaceAll("|", "\\|"));
+
+/** A command as {@link commandLine} cleans it, in a code span nothing can leave. For prose outside a table. */
+export const commandCode = (command: string): string => codeSpan(commandLine(command));
+
+const codeSpan = (line: string): string => {
   const longest = Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length));
   const ticks = "`".repeat(longest + 1);
   // A span may not start or end with a backtick of its own, so a space goes in between.
@@ -244,6 +239,10 @@ export interface CommandResult {
   readonly timedOut: boolean;
   /** The tail of the combined stdout and stderr. */
   readonly output: string;
+  /** The time limit the command had, when it timed out. */
+  readonly timeoutMs?: number;
+  /** Output was dropped from the front of `output`. */
+  readonly truncated?: boolean;
 }
 
 export type GateResult =
@@ -401,9 +400,6 @@ interface GitCall {
   /** Its stdout is read, so output cut at the cap is refused. The other calls' output is only shown. */
   readonly parsed?: boolean;
 }
-
-/** Whether `text` is a full commit id: 40 hex digits (64 in a SHA-256 repo). */
-const isCommitId = (text: string): boolean => /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/.test(text);
 
 /**
  * An `owner/name` of plain characters: both parts non-empty, not `.` or `..`, not starting with
@@ -878,12 +874,15 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
                 ),
               );
             const ended = yield* Clock.currentTimeMillis;
+            const timeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
             const result: CommandResult = {
               command,
               exitCode: ran.timedOut || ran.exitCode === null ? -1 : ran.exitCode,
               durationMs: Math.max(0, ended - started),
               timedOut: ran.timedOut,
               output: ran.tail,
+              ...(ran.timedOut && { timeoutMs }),
+              ...(ran.truncated && { truncated: true }),
             };
             commands.push(result);
             if (!provision) gateCount += 1;

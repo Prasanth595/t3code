@@ -25,6 +25,7 @@ import type {
   LimitOutcome,
   WatchOutcome,
 } from "./runner/building.ts";
+import type { GateStepError } from "./runner/gating.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import { sanitize } from "./text.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
@@ -102,6 +103,11 @@ export interface PassWorld {
   readonly advance: (repo: Repo, run: RunId) => Effect.Effect<AdvanceOutcome, BuildingError>;
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
+  /**
+   * Starts the run's gate (`runner/gating.ts`) in the background and returns at once: a pass
+   * never waits for a gate. The ledger has the result, and the next pass carries on from there.
+   */
+  readonly gate: (repo: Repo, run: RunId) => Effect.Effect<GateStart>;
   /** Appends an `error` line to the run's own ledger. */
   readonly recordError: (
     run: RunId,
@@ -117,6 +123,25 @@ export interface PassWorld {
   /** The open attention items: what the pass raises when it needs a person, and what it clears. */
   readonly attention: Pick<Attention["Service"], "raise" | "clear">;
 }
+
+/** What starting a gate did: it runs now, or `max_concurrent_gates` are running already. */
+export type GateStart =
+  | { readonly kind: "started" }
+  | { readonly kind: "queued"; readonly running: number; readonly max: number };
+
+/** The line of a run that ended in `stuck`. The reason is not printed: it can hold text the session or GitHub wrote. */
+export const stuckLine = (run: string): string =>
+  `stuck, the reason is in the ledger of run ${run}`;
+
+/** The attention item of a run that ended in `stuck`, whether a pass or a background gate saw it end. */
+export const stuckItem = (repo: string, issue: number, run: string): NewItem => ({
+  id: `run:${run}:stuck`,
+  kind: "stuck",
+  repo,
+  issue,
+  run,
+  message: `${plain(repo)}${mention(issue)} ${stuckLine(run)}`,
+});
 
 /** The counts the pass prints in its last line. */
 export interface Report {
@@ -149,7 +174,7 @@ interface NoteError {
 }
 
 /** `text` with nothing in it that could drive a terminal or hide text. */
-const plain = (text: string): string => sanitize(text, false);
+export const plain = (text: string): string => sanitize(text, false);
 
 /** An error of the pass's own, in the words `what` and `detail`. */
 const passError = (kind: ErrorKind, what: string, detail: string): NoteError => ({
@@ -159,9 +184,18 @@ const passError = (kind: ErrorKind, what: string, detail: string): NoteError => 
   message: `${what}${detail}`,
 });
 
-/** Every call `start` makes is a tracker call, whatever host the tracker runs on. */
-const errorKind = (error: StartError | BuildingError): ErrorKind => {
+/**
+ * What an error of a run's step was about, for its `error` line. Every call `start` makes is a
+ * tracker call, whatever host the tracker runs on; the gate's checkout is git.
+ */
+export const errorKind = (error: StartError | BuildingError | GateStepError): ErrorKind => {
   switch (error._tag) {
+    case "WorkspaceFailedError":
+    case "WorkspaceUnexpectedError":
+    case "WorkspaceCleanupError":
+    case "WorkspaceIoError":
+    case "WorkspaceSpawnError":
+      return "git";
     case "GitHubSpawnError":
     case "GitHubInvalidArgument":
     case "GitHubFailed":
@@ -171,12 +205,15 @@ const errorKind = (error: StartError | BuildingError): ErrorKind => {
     case "GitHubRateLimited":
       return "tracker";
     case "GateRunningError":
+    case "GateCommandSpawnError":
+    case "GateRecordError":
       return "gate";
     case "FactorySessionsError":
     case "FactoryThreadNotFoundError":
     case "FactoryMessageRejectedError":
       return "t3";
     case "WrongRepoError":
+    case "NoGateCommandsError":
       return "config";
     default:
       // The run's own record disagrees with what the step expected.
@@ -188,8 +225,13 @@ const errorKind = (error: StartError | BuildingError): ErrorKind => {
 const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
 const GATE_RUNNING = "gate running";
-/** The line of a building run whose session reported its pull request. */
-const READY_FOR_GATE = "session finished, ready for the gate";
+/** The line of a building run whose gate this pass started. */
+const GATE_STARTED = "gate started in the background";
+/** The words for a gate that could not start: `max_concurrent_gates` are running. */
+export const gateQueued = (start: { readonly running: number; readonly max: number }) =>
+  `gate queued: ${start.running} gates running, max_concurrent_gates is ${start.max}`;
+/** The line of a run whose gate passed. */
+export const GATE_PASSED_LINE = "the gate passed and the pull request is ready for review";
 
 const FROM_TEXT = " (from Depends on, add the GitHub link)";
 
@@ -323,17 +365,10 @@ class Pass {
     notes.errors.push({ ...error, line: `${notes.label} ${error.line}` });
   }
 
-  /** The run ended in `stuck`. The reason is not printed: it can hold text the session or GitHub wrote. */
+  /** The run ended in `stuck`. */
   stuck(notes: Notes, run: string): void {
-    notes.parts.push(`stuck, the reason is in the ledger of run ${run}`);
-    notes.raises.push({
-      id: `run:${run}:stuck`,
-      kind: "stuck",
-      repo: notes.repo,
-      issue: notes.issue,
-      run,
-      message: `${notes.label} stuck, the reason is in the ledger of run ${run}`,
-    });
+    notes.parts.push(stuckLine(run));
+    notes.raises.push(stuckItem(notes.repo, notes.issue, run));
   }
 
   flush(notes: Notes, run: RunId | null): Effect.Effect<void> {
@@ -480,11 +515,13 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
  * Works each confirmed run: the time limit first, for every state (the runner decides which
  * runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
  * its ledger, so a run cut short after the launch was sent is finished and its session never runs
- * on untracked. A building run has its text watched and its session's result read by `advance`,
- * until its session reports its pull request: the build is then done, and the run waits for the
- * gate (#19) with no tracker or T3 call. A run left in `needs-info` or `stuck` (an end cut short)
- * is finished by `advance`, so its thread is archived and its slot freed. The gate and the states
- * after it are later steps. A run of a repo that is not loaded is left alone. None of it is a new
+ * on untracked. A building run has its text watched and its session's result read by `advance`
+ * on every pass, as softfac's `building` does, also once its session has reported its pull
+ * request: `advance` puts a pull request someone took out of draft back to draft and judges the
+ * session's latest run, and only when it says `ready-for-gate` is the gate started, in the
+ * background (softfac's `softfac gate` child). A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
+ * thread is archived and its slot freed. The states after `pr-open` are later steps. A run of a
+ * repo that is not loaded is left alone. None of it is a new
  * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
  * finishes its run when it claims the issue.
  */
@@ -510,8 +547,6 @@ const workRuns = (
         notes.parts.push(GATE_RUNNING);
       } else if (yield* withinLimit(world, repo, info, notes, pass)) {
         if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
-        // The session's pull request waits for the gate: nothing is left to read or decide.
-        else if (info.state === "building" && info.prReported) notes.parts.push(READY_FOR_GATE);
         else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
         // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
         else if (info.state === "needs-info" || info.state === "stuck") {
@@ -596,6 +631,17 @@ const followBuilding = (
     yield* advanceRun(world, repo, info, notes, pass);
   });
 
+/** Starts the run's gate in the background, and says so, or that it is queued. */
+const startGate = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+): Effect.Effect<void> =>
+  Effect.map(world.gate(repo, info.id), (start) => {
+    notes.parts.push(start.kind === "started" ? GATE_STARTED : gateQueued(start));
+  });
+
 /** `advance` for a run, and what it did in a line. */
 const advanceRun = (
   world: PassWorld,
@@ -623,7 +669,11 @@ const advanceRun = (
         );
         break;
       case "ready-for-gate":
-        notes.parts.push(READY_FOR_GATE);
+        notes.parts.push("session finished");
+        yield* startGate(world, repo, info, notes);
+        break;
+      case "passed":
+        notes.parts.push(GATE_PASSED_LINE);
         break;
       case "needs-info":
         notes.parts.push(

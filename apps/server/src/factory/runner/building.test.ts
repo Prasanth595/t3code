@@ -350,6 +350,13 @@ const rigFor = (
       if (world.pr !== null) world.pr = { ...world.pr, isDraft: true };
       return Effect.void;
     },
+    // The gate's: the build never performs them.
+    markPrReady: () => Effect.die("not the build's"),
+    commentOnPr: () => Effect.die("not the build's"),
+    assign: (n, user) => {
+      ghCall(`assign ${n} ${user}`);
+      return Effect.void;
+    },
     setState: (n, state) => {
       ghCall(`setState ${n} ${state}`);
       world.issue = { ...world.issue, state, labels: [`factory:${state}`] };
