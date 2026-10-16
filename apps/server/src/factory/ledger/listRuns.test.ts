@@ -221,6 +221,32 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
     ]);
   });
 
+  it("reads a file in full when its last line names finished but is not a valid entry", () => {
+    const dataDir = tempDir();
+    const path = writeRun(
+      dataDir,
+      rid(1),
+      stateLine("building") + '{"event":"finished","data":{}}\n',
+    );
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listUnfinishedRuns(dataDir)).toEqual([
+      { id: rid(1), state: "building", unreadable: false, confirmed: false, session: false },
+    ]);
+    expect(fullReads()).toContain(path);
+  });
+
+  it("reads a file in full when a cut-off fragment follows the finished line", () => {
+    const dataDir = tempDir();
+    const path = writeRun(
+      dataDir,
+      rid(1),
+      stateLine("triage") + finishedLine + finishedLine.slice(0, 40),
+    );
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listUnfinishedRuns(dataDir)).toEqual([]);
+    expect(fullReads()).toContain(path);
+  });
+
   it("reads a file whose last complete line is not JSON in full and lists it as unfinished", () => {
     const dataDir = tempDir();
     writeRun(dataDir, rid(1), stateLine("building") + "garbage\n");
