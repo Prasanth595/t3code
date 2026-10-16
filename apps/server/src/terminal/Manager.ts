@@ -1420,7 +1420,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
         // Windows uses the Known Folder API, not HOME/USERPROFILE overrides.
         const nativeHome =
           !explicitHome && platform !== "win32"
-            ? terminalEnvironment.HOME || (yield* HostProcess.AccountHomeDirectory)
+            ? terminalEnvironment.HOME || (yield* Effect.flatten(HostProcess.AccountHomeDirectory))
             : undefined;
         // Native HOME's AbsolutePathBuf expands '~/' once against HOME itself,
         // then normalizes lexically. Explicit CODEX_HOME is canonicalized first.

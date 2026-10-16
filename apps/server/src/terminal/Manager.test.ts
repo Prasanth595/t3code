@@ -35,7 +35,9 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
-import { expect } from "vite-plus/test";
+import * as NodeModule from "node:module";
+import * as NodeOS from "node:os";
+import { expect, vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -44,6 +46,9 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+
+// Builtin namespace exports are read-only; synchronize mutable OS spies into them.
+const mutableOS: typeof NodeOS = NodeModule.createRequire(import.meta.url)("node:os");
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -2398,7 +2403,7 @@ it.layer(
                   Effect.provideService(HostProcess.HomeDirectory, path.join(root, "server-home")),
                   Effect.provideService(
                     HostProcess.AccountHomeDirectory,
-                    path.join(root, "account"),
+                    Effect.succeed(path.join(root, "account")),
                   ),
                   Effect.result,
                 );
@@ -2570,7 +2575,7 @@ it.layer(
             .open(input)
             .pipe(
               Effect.provideService(HostProcess.HomeDirectory, home),
-              Effect.provideService(HostProcess.AccountHomeDirectory, home),
+              Effect.provideService(HostProcess.AccountHomeDirectory, Effect.succeed(home)),
               Effect.provideService(
                 HostProcess.Platform,
                 mode.startsWith("native-")
@@ -2923,7 +2928,7 @@ it.layer(
                 Effect.provideService(HostProcess.HomeDirectory, path.join(root, "server-home")),
                 Effect.provideService(
                   HostProcess.AccountHomeDirectory,
-                  accountFallback ? home : path.join(root, "account"),
+                  Effect.succeed(accountFallback ? home : path.join(root, "account")),
                 ),
               ),
           });
@@ -3313,6 +3318,274 @@ it.layer(
       );
     }
   }
+
+  it.effect.each(["empty", "unset", "explicit", "home", "windows"] as const)(
+    "keeps %s home selection safe on account-home failure",
+    (selection) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-account-home-" });
+        const serverHome = path.join(root, "server");
+        const sharedHome = path.join(serverHome, ".codex");
+        yield* fs.makeDirectory(sharedHome, { recursive: true });
+        const entries = [
+          "state_5.sqlite",
+          "state_5.sqlite-wal",
+          "state_5.sqlite-shm",
+          "state_5.sqlite-journal",
+        ];
+        for (const entry of entries) yield* fs.writeFileString(path.join(sharedHome, entry), entry);
+        const providerInstanceId = ProviderInstanceId.make("codex_account_home");
+        const generatedHome = path.join(root, "providers", "codex", providerInstanceId, "shadow");
+        const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+          Effect.provide(
+            ServerSettings.layerTest({
+              providerInstances: {
+                [providerInstanceId]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
+                },
+              },
+            }),
+          ),
+        );
+        const inherited = selection === "empty" ? { HOME: serverHome } : {};
+        const env =
+          selection === "empty"
+            ? { HOME: "" }
+            : selection === "explicit"
+              ? { CODEX_HOME: path.join(root, "explicit") }
+              : selection === "home"
+                ? { HOME: path.join(root, "native") }
+                : {};
+        const originalEnv = { ...env };
+        const originalInherited = { ...inherited };
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: inherited,
+          shellResolver: () => "/bin/bash",
+          resolveProviderInstanceEnvironment: (
+            rawProviderInstanceId,
+            env,
+            inheritedEnvironment,
+            cwd,
+          ) =>
+            TerminalManager.resolveProviderInstanceTerminalEnvironment({
+              serverSettings,
+              path,
+              rawProviderInstanceId,
+              stateDir: root,
+              cwd,
+              env,
+              inheritedEnvironment,
+            }).pipe(Effect.provideService(HostProcess.HomeDirectory, serverHome)),
+        });
+        const cause = Object.assign(new Error(`private account diagnostic at ${root}`), {
+          code: "ERR_SYSTEM_ERROR",
+        });
+        const userInfo = vi.spyOn(mutableOS, "userInfo").mockImplementation(() => {
+          throw cause;
+        });
+        NodeModule.syncBuiltinESMExports();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            userInfo.mockRestore();
+            NodeModule.syncBuiltinESMExports();
+          }),
+        );
+        const input = openInput({ providerInstanceId, cwd: root, env });
+        const needsAccount = selection === "empty" || selection === "unset";
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const result = yield* manager.open(input).pipe(Effect.result);
+          if (needsAccount) {
+            expect(result._tag).toBe("Failure");
+            if (result._tag !== "Failure") return;
+            expect(result.failure).toMatchObject({
+              _tag: "TerminalProviderEnvironmentError",
+              cause: { _tag: "AccountHomeDirectoryError", cause },
+            });
+            if (result.failure._tag !== "TerminalProviderEnvironmentError") return;
+            expect(result.failure.cause).toHaveProperty("cause", cause);
+            expect(result.failure.message).not.toContain(root);
+            expect(result.failure.message).not.toContain(cause.message);
+            expect(result.failure.detail).toBeUndefined();
+            expect(ptyAdapter.spawnInputs).toHaveLength(0);
+          } else {
+            expect(result._tag).toBe("Success");
+            expect(ptyAdapter.spawnInputs).toHaveLength(1);
+            expect(ptyAdapter.spawnInputs[0]?.env.HOME).toBe(env.HOME);
+            expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBe(env.CODEX_HOME);
+          }
+          expect(env).toEqual(originalEnv);
+          expect(inherited).toEqual(originalInherited);
+          expect(yield* fs.exists(generatedHome)).toBe(false);
+          for (const entry of entries)
+            expect(yield* fs.readFileString(path.join(sharedHome, entry))).toBe(entry);
+        }
+        expect(userInfo).toHaveBeenCalledTimes(needsAccount ? 2 : 0);
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, selection === "windows" ? "win32" : "linux"),
+      ),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps generated inspection ahead of an account-home failure",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-account-home-first-" });
+        const providerInstanceId = ProviderInstanceId.make("codex_account_home");
+        const generatedHome = path.join(root, "providers", "codex", providerInstanceId, "shadow");
+        yield* fs.makeDirectory(generatedHome, { recursive: true });
+        const target = path.join(root, "missing-shm");
+        const linkPath = path.join(generatedHome, "STATE_5.SQLITE-SHM");
+        yield* fs.symlink(target, linkPath);
+        const walPath = path.join(generatedHome, "state_5.sqlite-wal");
+        yield* fs.writeFileString(walPath, "private WAL");
+        const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+          Effect.provide(
+            ServerSettings.layerTest({
+              providerInstances: {
+                [providerInstanceId]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
+                },
+              },
+            }),
+          ),
+        );
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: {},
+          resolveProviderInstanceEnvironment: (
+            rawProviderInstanceId,
+            env,
+            inheritedEnvironment,
+            cwd,
+          ) =>
+            TerminalManager.resolveProviderInstanceTerminalEnvironment({
+              serverSettings,
+              path,
+              rawProviderInstanceId,
+              stateDir: root,
+              cwd,
+              env,
+              inheritedEnvironment,
+            }),
+        });
+        const userInfo = vi.spyOn(mutableOS, "userInfo").mockImplementation(() => {
+          throw new Error("account lookup must not run");
+        });
+        NodeModule.syncBuiltinESMExports();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            userInfo.mockRestore();
+            NodeModule.syncBuiltinESMExports();
+          }),
+        );
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const result = yield* manager
+            .open(openInput({ providerInstanceId, cwd: root }))
+            .pipe(Effect.result);
+          expect(result).toMatchObject({
+            _tag: "Failure",
+            failure: {
+              _tag: "TerminalProviderEnvironmentError",
+              cause: { _tag: "CodexShadowHomeSqliteRecoveryRequiredError", linkPath },
+            },
+          });
+          expect(ptyAdapter.spawnInputs).toHaveLength(0);
+          expect(userInfo).not.toHaveBeenCalled();
+          expect(yield* fs.readLink(linkPath)).toBe(target);
+          expect(yield* fs.readFileString(walPath)).toBe("private WAL");
+          expect(yield* fs.exists(target)).toBe(false);
+        }
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect(
+    "refuses restart on account-home failure without killing or re-resolving on attach",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-account-home-restart-" });
+        const nativeHome = path.join(root, "native");
+        const codexHome = path.join(nativeHome, ".codex");
+        yield* fs.makeDirectory(codexHome, { recursive: true });
+        const database = path.join(codexHome, "state_5.sqlite");
+        yield* fs.writeFileString(database, "database bytes");
+        const providerInstanceId = ProviderInstanceId.make("codex_account_home");
+        const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+          Effect.provide(
+            ServerSettings.layerTest({
+              providerInstances: {
+                [providerInstanceId]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
+                },
+              },
+            }),
+          ),
+        );
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: {},
+          shellResolver: () => "/bin/bash",
+          resolveProviderInstanceEnvironment: (
+            rawProviderInstanceId,
+            env,
+            inheritedEnvironment,
+            cwd,
+          ) =>
+            TerminalManager.resolveProviderInstanceTerminalEnvironment({
+              serverSettings,
+              path,
+              rawProviderInstanceId,
+              stateDir: root,
+              cwd,
+              env,
+              inheritedEnvironment,
+            }).pipe(Effect.provideService(HostProcess.HomeDirectory, path.join(root, "server"))),
+        });
+        const cause = Object.assign(new Error(`private account diagnostic at ${root}`), {
+          code: "ERR_SYSTEM_ERROR",
+        });
+        const userInfo = vi.spyOn(mutableOS, "userInfo").mockImplementation(() => {
+          throw cause;
+        });
+        NodeModule.syncBuiltinESMExports();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            userInfo.mockRestore();
+            NodeModule.syncBuiltinESMExports();
+          }),
+        );
+        const input = openInput({ providerInstanceId, cwd: root, env: { HOME: nativeHome } });
+        yield* manager.open(input);
+        const unavailable = { ...input, env: { HOME: "" } };
+        const unsubscribe = yield* manager.attachStream(unavailable, () => Effect.void);
+        yield* Effect.sync(unsubscribe);
+        expect(userInfo).not.toHaveBeenCalled();
+        expect(ptyAdapter.spawnInputs).toHaveLength(1);
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const result = yield* manager
+            .restart({ ...unavailable, cols: 100, rows: 24 })
+            .pipe(Effect.result);
+          expect(result).toMatchObject({
+            _tag: "Failure",
+            failure: {
+              _tag: "TerminalProviderEnvironmentError",
+              cause: { _tag: "AccountHomeDirectoryError", cause },
+            },
+          });
+          expect(ptyAdapter.spawnInputs).toHaveLength(1);
+          expect(ptyAdapter.processes[0]?.killed).toBe(false);
+          expect(yield* fs.readFileString(database)).toBe("database bytes");
+          expect(unavailable.env).toEqual({ HOME: "" });
+        }
+        expect(userInfo).toHaveBeenCalledTimes(2);
+      }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+  );
 
   it.effect("fails closed when a provider instance is missing", () =>
     Effect.gen(function* () {
