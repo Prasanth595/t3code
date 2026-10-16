@@ -6,7 +6,9 @@ the authenticated Subpolar environment manager. The proxy keeps ACP on stdio,
 starts a separate worker process for each `session/new` cwd, forwards session
 requests and notifications through `effect-acp`, and forwards worker permission
 requests to the T3 ACP client. The worker's ACP session ID is returned unchanged
-to T3 and remains the ID used for subsequent calls and updates.
+to T3 and remains the ID used for subsequent calls and updates. Requests that
+need a worker must carry that session ID; unscoped requests fail instead of
+being sent to an arbitrary session's worktree.
 
 Managed mode requires `SUBPOLAR_MANAGER_URL`, `SUBPOLAR_MANAGER_TOKEN`,
 `SUBPOLAR_STORAGE_ROOT`, and `SUBPOLAR_ACP_WORKER_COMMAND`. The worker command

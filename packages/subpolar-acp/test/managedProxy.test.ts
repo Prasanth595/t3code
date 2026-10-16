@@ -18,20 +18,24 @@ const baseEnvironment = {
 const encoder = new TextEncoder();
 
 function fakeManager(options: { failStart?: boolean; requestPermission?: boolean } = {}) {
-  const calls: Array<{ method: string; request?: EnvironmentRequest; command?: readonly string[]; data?: string }> = [];
-  const output = yieldQueue();
+  const calls: Array<{ method: string; request?: EnvironmentRequest; command?: readonly string[]; sessionId?: string; data?: string }> = [];
+  const outputs = new Map<string, ReturnType<typeof yieldQueue>>();
   let markCancelled!: () => void;
   const cancelled = new Promise<void>((resolve) => { markCancelled = resolve; });
-  let sequence = 0;
+  let nextSession = 0;
   const manager = {
     startManagedSession: async (request: EnvironmentRequest, command: readonly string[]) => {
       calls.push({ method: "start", request, command });
       if (options.failStart) throw new Error("manager unavailable");
-      return { sessionId: "managed-1", outputSequence: 0 };
+      const sessionId = `managed-${++nextSession}`;
+      outputs.set(sessionId, yieldQueue());
+      return { sessionId, outputSequence: 0 };
     },
-    writeManagedSession: async (_request: EnvironmentRequest, _sessionId: string, data: Uint8Array) => {
+    writeManagedSession: async (_request: EnvironmentRequest, sessionId: string, data: Uint8Array) => {
       const text = new TextDecoder().decode(data);
-      calls.push({ method: "write", data: text });
+      calls.push({ method: "write", sessionId, data: text });
+      const output = outputs.get(sessionId);
+      if (!output) throw new Error(`unknown fake session ${sessionId}`);
       for (const line of text.trim().split("\n")) {
         if (!line) continue;
         const message = JSON.parse(line) as { id?: string | number; method?: string; params?: unknown };
@@ -44,28 +48,31 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
             capabilities: { session: {} },
           } }));
         } else if (message.method === "session/new") {
-          output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { sessionId: "worker-session" } }));
+          output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { sessionId: `worker-${sessionId}` } }));
         } else if (message.method === "session/prompt") {
           output.push(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }));
           if (options.requestPermission) {
             output.push(JSON.stringify({ jsonrpc: "2.0", id: 77, method: "session/request_permission", params: {
-              sessionId: "worker-session",
+              sessionId: `worker-${sessionId}`,
               toolCall: { toolCallId: "tool-1", kind: "other", status: "pending", title: "test", rawInput: { command: "pwd" } },
               options: [{ optionId: "allow-once", name: "Allow", kind: "allow_once" }],
             } }));
           }
           output.push(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: {
-            sessionId: "worker-session",
+            sessionId: `worker-${sessionId}`,
             update: { sessionUpdate: "agent_message_chunk", messageId: "run-1", content: { type: "text", text: "from worker" } },
           } }));
           output.push(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: {
-            sessionId: "worker-session",
+            sessionId: `worker-${sessionId}`,
             update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
           } }));
         }
       }
     },
-    attachManagedSessionOutput: async function* () {
+    attachManagedSessionOutput: async function* (_request: EnvironmentRequest, sessionId: string) {
+      const output = outputs.get(sessionId);
+      if (!output) throw new Error(`unknown fake session ${sessionId}`);
+      let sequence = 0;
       while (true) {
         const value = await output.take();
         if (value === null) return;
@@ -77,7 +84,7 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
     },
     terminateManagedSession: async (request: EnvironmentRequest, sessionId: string) => {
       calls.push({ method: "terminate", request, data: sessionId });
-      output.end();
+      outputs.get(sessionId)?.end();
     },
   } as unknown as EnvironmentManager;
   return { manager, calls, cancelled };
@@ -131,7 +138,7 @@ test("managed proxy starts a worker for the requested worktree and forwards ACP 
   await readMessage(output, (message) => message.id === 1);
   await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/workspaces/project-a" } }));
   const created = await readMessage(output, (message) => message.id === 2);
-  expect(created.result).toEqual({ sessionId: "worker-session" });
+  expect(created.result).toEqual({ sessionId: "worker-managed-1" });
   expect(fake.calls[0]).toMatchObject({
     method: "start",
     command: ["/usr/local/bin/subpolar-acp-worker"],
@@ -143,10 +150,10 @@ test("managed proxy starts a worker for the requested worktree and forwards ACP 
     },
   });
 
-  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-session", prompt: [{ type: "text", text: "hello" }] } }));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-managed-1", prompt: [{ type: "text", text: "hello" }] } }));
   const update = await readMessage(output, (message) => message.method === "session/update" && JSON.stringify(message.params).includes("from worker"));
   await readMessage(output, (message) => message.id === 3);
-  expect(update.params).toMatchObject({ sessionId: "worker-session", update: { content: { text: "from worker" } } });
+  expect(update.params).toMatchObject({ sessionId: "worker-managed-1", update: { content: { text: "from worker" } } });
 
   await Effect.runPromise(Scope.close(scope, Exit.void));
   expect(fake.calls.some((call) => call.method === "terminate")).toBe(true);
@@ -181,9 +188,9 @@ test("managed proxy sends worker permission requests to the T3 ACP client and fo
   await readMessage(output, (message) => message.id === 1);
   await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/workspaces/project-a" } }));
   await readMessage(output, (message) => message.id === 2);
-  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-session", prompt: [{ type: "text", text: "run a command" }] } }));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "worker-managed-1", prompt: [{ type: "text", text: "run a command" }] } }));
   const permission = await readMessage(output, (message) => message.method === "session/request_permission");
-  expect(permission.params).toMatchObject({ sessionId: "worker-session", toolCall: { toolCallId: "tool-1" } });
+  expect(permission.params).toMatchObject({ sessionId: "worker-managed-1", toolCall: { toolCallId: "tool-1" } });
   await Effect.runPromise(send(input, {
     jsonrpc: "2.0",
     id: permission.id,
@@ -192,8 +199,36 @@ test("managed proxy sends worker permission requests to the T3 ACP client and fo
   await readMessage(output, (message) => message.id === 3);
   expect(fake.calls.some((call) => call.method === "permission-response" && call.data?.includes('"id":77'))).toBe(true);
 
-  await Effect.runPromise(send(input, { jsonrpc: "2.0", method: "session/cancel", params: { sessionId: "worker-session" } }));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", method: "session/cancel", params: { sessionId: "worker-managed-1" } }));
   await fake.cancelled;
   expect(fake.calls.some((call) => call.method === "write" && call.data?.includes('"method":"session/cancel"'))).toBe(true);
+  await Effect.runPromise(Scope.close(scope, Exit.void));
+});
+
+test("managed proxy never routes an unscoped request to an arbitrary worker", async () => {
+  const { stdio, input, output } = await Effect.runPromise(makeInMemoryStdio());
+  const scope = await Effect.runPromise(Scope.make());
+  const fake = fakeManager();
+  await Effect.runPromise(Layer.buildWithScope(layerManagedAcpProxy(stdio, {
+    environment: baseEnvironment,
+    manager: fake.manager,
+  }), scope));
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2, info: { name: "t3", version: "1" }, capabilities: {} } }));
+  await readMessage(output, (message) => message.id === 1);
+  for (const [id, cwd] of [[2, "/workspaces/project-a"], [3, "/workspaces/project-b"]] as const) {
+    await Effect.runPromise(send(input, { jsonrpc: "2.0", id, method: "session/new", params: { cwd } }));
+    await readMessage(output, (message) => message.id === id);
+  }
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 4, method: "providers/list", params: {} }));
+  const response = await readMessage(output, (message) => message.id === 4);
+  expect(response.error).toBeDefined();
+  expect(fake.calls.filter((call) => call.method === "write").every((call) => !call.data?.includes('"method":"providers/list"'))).toBe(true);
+  expect(new Set(fake.calls.filter((call) => call.method === "start").map((call) => call.request?.worktreePath))).toEqual(new Set([
+    "/workspaces/project-a",
+    "/workspaces/project-b",
+  ]));
+
   await Effect.runPromise(Scope.close(scope, Exit.void));
 });

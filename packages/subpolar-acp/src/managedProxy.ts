@@ -117,7 +117,7 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
     const forwardAny = <Response>(method: string, payload: unknown) => {
       const requestedSessionId = typeof payload === "object" && payload !== null && "sessionId" in payload
         ? String((payload as { readonly sessionId: unknown }).sessionId)
-        : workers.keys().next().value;
+        : undefined;
       if (!requestedSessionId) return Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
       return getWorker(requestedSessionId).pipe(
         Effect.flatMap((worker) => worker.client.raw.request(method, payload)),
@@ -281,7 +281,7 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
     yield* agent.handleUnknownExtRequest((method, payload) => {
       const sessionId = typeof payload === "object" && payload !== null && "sessionId" in payload
         ? String((payload as { sessionId: unknown }).sessionId)
-        : workers.keys().next().value;
+        : undefined;
       if (!sessionId) return Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
       return getWorker(sessionId).pipe(
         Effect.flatMap((worker) => worker.client.raw.request(method, payload)),
@@ -291,7 +291,7 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
     yield* agent.handleUnknownExtNotification((method, payload) => {
       const sessionId = typeof payload === "object" && payload !== null && "sessionId" in payload
         ? String((payload as { sessionId: unknown }).sessionId)
-        : workers.keys().next().value;
+        : undefined;
       if (!sessionId) return Effect.void;
       return getWorker(sessionId).pipe(
         Effect.flatMap((worker) => worker.client.raw.notify(method, payload)),
