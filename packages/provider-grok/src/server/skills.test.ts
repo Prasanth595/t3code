@@ -4,7 +4,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { discoverGrokSkills } from "./skills.ts";
+import { discoverGrokSkills, rewriteGrokSkillMention } from "./skills.ts";
 
 const inspectPayload = (skills: ReadonlyArray<unknown>) => JSON.stringify({ skills });
 
@@ -170,5 +170,16 @@ describe("discoverGrokSkills", () => {
       );
       expect(failed._tag).toBe("Failure");
     });
+  });
+});
+
+describe("rewriteGrokSkillMention", () => {
+  it("sends only a leading mention of a known skill as a slash command", () => {
+    const skills = new Set(["deploy"]);
+    expect(rewriteGrokSkillMention("$deploy ship it", skills)).toBe("/deploy ship it");
+    expect(rewriteGrokSkillMention("  $deploy", skills)).toBe("  /deploy");
+    for (const text of ["$other ship it", "$HOME is set", "$25 total", "ship $deploy", "/deploy"]) {
+      expect(rewriteGrokSkillMention(text, skills)).toBe(text);
+    }
   });
 });

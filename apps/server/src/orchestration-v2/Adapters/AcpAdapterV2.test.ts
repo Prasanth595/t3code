@@ -3503,6 +3503,71 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("Grok sends a leading picked $skill as the /skill command it expands", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      // Stands in for `grok inspect --json`, the catalog behind the $ picker.
+      const grokPath = path.join(yield* fileSystem.makeTempDirectoryScoped(), "grok");
+      const catalog = { skills: [{ name: "deploy", source: { path: "/s/deploy/SKILL.md" } }] };
+      yield* fileSystem.writeFileString(grokPath, `#!/bin/sh\necho '${JSON.stringify(catalog)}'\n`);
+      yield* fileSystem.chmod(grokPath, 0o755);
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("grok-test-skill-mention");
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: { ...DEFAULT_GROK_SETTINGS, binaryPath: grokPath },
+        environment: {},
+        hostPlatform: yield* HostProcess.Platform,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents })(input).pipe(
+            Effect.flatMap(makeXAiPromptCompletionRuntime),
+          ),
+      });
+      const threadId = ThreadId.make("grok-skill-mention");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("grok-skill-mention"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          messageText: "$deploy ship it",
+        }),
+      );
+      const prompt = yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        ),
+        Stream.runHead,
+      );
+      assert.match(rawProtocolPromptText(Option.getOrThrow(prompt)), /^\/deploy ship it/);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("skips requested options that the active ACP session does not expose", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
