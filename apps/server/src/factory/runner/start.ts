@@ -162,8 +162,7 @@ export const start = (
  * `start` for a claim already made, which never makes one: what the pass calls for a run it
  * knows of and for a `triage` issue of ours with no run. An issue someone put back to
  * `factory:ready` is left to the claim step, which checks the pause, the limit and the blockers
- * first. Until it claims the issue, which finishes the older runs, an unfinished run of the
- * issue holds its slot.
+ * first, and which finishes the issue's older runs when it claims it.
  */
 export const resume = (
   ctx: StartContext,

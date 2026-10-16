@@ -398,7 +398,7 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
  * from its ledger, so a run cut short after the launch was sent is finished and its session
  * never runs on untracked. A run of a repo that is not loaded is left alone. The other states
  * are worked by later steps. It is not a new claim, so it is not counted as one. An issue put
- * back to `ready` is left to the claim step, and its run holds a slot until a claim finishes it.
+ * back to `ready` is left to the claim step, which finishes its run when it claims the issue.
  */
 const workRuns = (
   world: PassWorld,
@@ -408,8 +408,7 @@ const workRuns = (
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     for (const info of [...known.infos]) {
-      if (info.unreadable || !info.confirmed) continue;
-      if (info.state !== null && info.state !== "triage") continue;
+      if (!inTriage(info)) continue;
       const loaded = repos.find(
         (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
       );

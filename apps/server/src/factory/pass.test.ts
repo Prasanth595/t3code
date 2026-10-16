@@ -746,6 +746,38 @@ describe("runs that are confirmed and still in triage", () => {
       }),
   );
 
+  it.effect("a ready-again issue's freed slot does not beat the limit other runs fill", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING);
+      fake.runIn(12, "triage");
+      fake.ready[REPO] = [12];
+      fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
+      yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped").map((e) => e.data),
+        [{ repo: REPO, issue: "12", reason: "limit" }],
+      );
+    }),
+  );
+
+  it.effect("a ready-again issue claimed past its own run takes the slot from the next issue", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.ready[REPO] = [12, 13];
+      fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
+      fake.pushStart(`${REPO}#12`, started(12));
+      yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), [`resume ${REPO}#12`, `start ${REPO}#12`]);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped").map((e) => e.data),
+        [{ repo: REPO, issue: "13", reason: "limit" }],
+      );
+    }),
+  );
+
   it.effect("a ready-again issue whose own run's session holds the only slot is attention", () =>
     Effect.gen(function* () {
       const fake = new Fake();
