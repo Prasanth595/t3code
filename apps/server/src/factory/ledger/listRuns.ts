@@ -2,6 +2,8 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import * as Schema from "effect/Schema";
+
 import { type State } from "../domain/lifecycle.ts";
 import { readProgress, type Seen } from "../runner/progress.ts";
 import { errnoCode, LedgerIoError, LedgerNotFoundError } from "./errors.ts";
@@ -142,7 +144,7 @@ const scanRuns = (
     } catch (error) {
       // Gone between the listing and the read (the lstat's ENOENT, or the read's not-found): not
       // a run any more.
-      if (errnoCode(error) === "ENOENT" || error instanceof LedgerNotFoundError) continue;
+      if (errnoCode(error) === "ENOENT" || Schema.is(LedgerNotFoundError)(error)) continue;
       runs.push({ id, firstMs: null, record: null, seen: null });
     }
   }
