@@ -10,7 +10,7 @@
  */
 import type { AttentionItem } from "./attention.ts";
 import { loadHandPause } from "./claims.ts";
-import { scanMachineLog, type MachineEntry } from "./ledger/machineLog.ts";
+import { scanMachineLogBack, type MachineEntry } from "./ledger/machineLog.ts";
 import { holdsSlot, listUnfinishedRuns, readRuns, type RunRead } from "./ledger/listRuns.ts";
 import { asciiLower, runIdToString } from "./ledger/runId.ts";
 import { formatTs } from "./ledger/time.ts";
@@ -128,18 +128,54 @@ const machineProblem = (entry: MachineEntry): Problem => ({
   ms: entry.ms,
 });
 
+/** What the report takes from the machine log. */
+export interface MachineRead {
+  /** The last pass that ended or failed its checks. */
+  readonly lastPass: MachineEntry | null;
+  /** When the last pass began. */
+  readonly lastStart: number | null;
+  /** The recent `error` and `attention` lines, in file order. */
+  readonly problems: ReadonlyArray<MachineEntry>;
+  /** How much of the file was read; a test checks the log is not read to its start. */
+  readonly bytesRead: number;
+}
+
+/**
+ * Reads the machine log from its end, which is all the report shows of it: the last pass, the
+ * last start and the problems in the window. The log is never rotated, so the read stops once it
+ * has a pass and a start and has read a line from before the window; a log with no pass in it is
+ * read to the start. It takes the lines to be in time order.
+ */
+export const readMachineLog = (dataDir: string, nowMs: number): MachineRead => {
+  let lastPass: MachineEntry | null = null;
+  let lastStart: number | null = null;
+  const problems: Array<MachineEntry> = [];
+  const bytesRead = scanMachineLogBack(dataDir, (entry) => {
+    if (entry.event === "pass_started") lastStart ??= entry.ms;
+    else if (entry.event === "pass_finished" || entry.event === "preflight_failed") {
+      lastPass ??= entry;
+    } else if (
+      (entry.event === "error" || entry.event === "attention") &&
+      recent(entry.ms, nowMs)
+    ) {
+      problems.push(entry);
+    }
+    return lastPass !== null && lastStart !== null && !recent(entry.ms, nowMs)
+      ? "stop"
+      : "continue";
+  });
+  // Collected newest first; the report takes them in file order.
+  problems.reverse();
+  return { lastPass, lastStart, problems, bytesRead };
+};
+
 const passesOf = (
-  log: ReadonlyArray<MachineEntry>,
+  log: Pick<MachineRead, "lastPass" | "lastStart">,
   settings: StatusSettings | null,
   running: boolean,
   nowMs: number,
 ): StatusReport["passes"] => {
-  let last: MachineEntry | null = null;
-  let lastStart: number | null = null;
-  for (const entry of log) {
-    if (entry.event === "pass_started") lastStart = entry.ms;
-    if (entry.event === "pass_finished" || entry.event === "preflight_failed") last = entry;
-  }
+  const { lastPass: last, lastStart } = log;
   const pollSeconds = settings === null ? null : settings.pollSeconds;
   // The running pass began after the last one ended, so a start that `last` came after is not it.
   const runningForMs =
@@ -208,7 +244,7 @@ export const buildStatus = (input: {
 }): StatusReport => {
   const { dataDir, nowMs } = input;
   const settings = input.status.state === "running" ? input.status.settings : null;
-  const log = scanMachineLog(dataDir);
+  const log = readMachineLog(dataDir, nowMs);
   const reads = readRuns(dataDir);
   const open = reads.filter((read) => !read.summary.finished);
 
@@ -219,11 +255,7 @@ export const buildStatus = (input: {
   // Oldest first: the machine log, then the runs. Reversed and stably sorted by time, a later
   // line comes before an earlier one of the same time.
   const problems: Array<Problem> = [];
-  for (const entry of log) {
-    if ((entry.event === "error" || entry.event === "attention") && recent(entry.ms, nowMs)) {
-      problems.push(machineProblem(entry));
-    }
-  }
+  for (const entry of log.problems) problems.push(machineProblem(entry));
   for (const read of reads) {
     for (const entry of read.record?.entries ?? []) {
       if (entry.event !== "error" || !recent(entry.ms, nowMs)) continue;

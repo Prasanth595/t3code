@@ -14,7 +14,7 @@ import {
   type AppendIo,
   type SyncDir,
 } from "./appendFile.ts";
-import { LedgerUnknownEventError, LedgerIoError, errnoCode } from "./errors.ts";
+import { LedgerUnknownEventError, LedgerIoError, errnoCode, isLedgerError } from "./errors.ts";
 import { MACHINE_EVENT_FIELDS, buildData, issueKeyJson, type MachineEvent } from "./events.ts";
 import { NEWLINE } from "./limits.ts";
 import { decodeLine, isBlankLine, lineHead } from "./read.ts";
@@ -145,14 +145,12 @@ export type MachineEntry = {
 };
 
 /**
- * Every line of the machine log, oldest first. A line that is not valid (such as the last one,
- * when a crash cut it off) is skipped, and a last line with no newline is still read if it
- * parses. A missing file is an empty log. A symlink or anything else that is not a regular file
- * is refused, as the log refuses to append to one: the file is opened without following a
- * symlink and without blocking, and checked on the open handle, so a swap after the check is
- * not followed.
+ * Opens the log for reading and runs `use` on the handle, closing it after. A missing file is
+ * `empty`. A symlink or anything else that is not a regular file is refused: the file is opened
+ * without following a symlink and without blocking, and checked on the open handle, so a swap
+ * after the check is not followed.
  */
-export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
+const withLogFd = <A>(dataDir: string, empty: A, use: (fd: number, path: string) => A): A => {
   const path = NodePath.join(dataDir, MACHINE_LOG);
   let fd: number;
   try {
@@ -161,30 +159,95 @@ export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
       NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
     );
   } catch (error) {
-    if (errnoCode(error) === "ENOENT") return [];
+    if (errnoCode(error) === "ENOENT") return empty;
     throw new LedgerIoError({ path, cause: error });
   }
-  let bytes: Buffer;
   try {
     if (!NodeFS.fstatSync(fd).isFile()) throw new Error(NOT_REGULAR);
-    bytes = NodeFS.readFileSync(fd);
+    return use(fd, path);
   } catch (error) {
-    throw new LedgerIoError({ path, cause: error });
+    throw isLedgerError(error) ? error : new LedgerIoError({ path, cause: error });
   } finally {
     NodeFS.closeSync(fd);
   }
+};
 
+/** The entry on one line (without its newline), or `null` for a blank or invalid line. */
+const entryOfLine = (line: Uint8Array): MachineEntry | null => {
+  if (isBlankLine(line)) return null;
+  const object = decodeLine(line);
+  return object === null ? null : lineHead(object);
+};
+
+/**
+ * Every line of the machine log, oldest first. A line that is not valid (such as the last one,
+ * when a crash cut it off) is skipped, and a last line with no newline is still read if it
+ * parses. A missing file is an empty log. A symlink or anything else that is not a regular file
+ * is refused, as the log refuses to append to one.
+ */
+export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
+  const bytes = withLogFd(dataDir, Buffer.alloc(0), (fd) => NodeFS.readFileSync(fd));
   const entries: Array<MachineEntry> = [];
   let start = 0;
   while (start < bytes.length) {
     const newline = bytes.indexOf(NEWLINE, start);
     const end = newline === -1 ? bytes.length : newline;
-    const line = bytes.subarray(start, end);
+    const entry = entryOfLine(bytes.subarray(start, end));
     start = end + 1;
-    if (isBlankLine(line)) continue;
-    const object = decodeLine(line);
-    const head = object === null ? null : lineHead(object);
-    if (head !== null) entries.push(head);
+    if (entry !== null) entries.push(entry);
   }
   return entries;
 };
+
+/** How much of the machine log `scanMachineLogBack` reads first; each read after it doubles. */
+const FIRST_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * Calls `visit` with the lines of the machine log, newest first, until it answers `"stop"` or the
+ * start of the file is reached, and returns how many bytes it read. The log is never rotated, so a
+ * reader that needs only its end reads only its end: the file is read backwards in chunks (the
+ * first is `firstChunk` bytes, each after it twice the one before), and a line cut by a chunk
+ * edge is completed by the next one. The file is opened and a line skipped exactly as
+ * {@link scanMachineLog} does it, so the same entries come in the opposite order.
+ */
+export const scanMachineLogBack = (
+  dataDir: string,
+  visit: (entry: MachineEntry) => "continue" | "stop",
+  firstChunk: number = FIRST_CHUNK_BYTES,
+): number =>
+  withLogFd(dataDir, 0, (fd) => {
+    let pos = NodeFS.fstatSync(fd).size;
+    let bytesRead = 0;
+    let chunk = Math.max(1, firstChunk);
+    // The start of a line whose beginning is in an earlier chunk.
+    let head: Buffer = Buffer.alloc(0);
+    const visitLine = (line: Uint8Array): "continue" | "stop" => {
+      const entry = entryOfLine(line);
+      return entry === null ? "continue" : visit(entry);
+    };
+    while (pos > 0) {
+      const size = Math.min(pos, chunk);
+      pos -= size;
+      const bytes = Buffer.alloc(size + head.length);
+      let filled = 0;
+      while (filled < size) {
+        const n = NodeFS.readSync(fd, bytes, filled, size - filled, pos + filled);
+        if (n === 0) break;
+        filled += n;
+      }
+      head.copy(bytes, size);
+      bytesRead += size;
+      chunk *= 2;
+      let end = bytes.length;
+      while (end > 0) {
+        const newline = bytes.lastIndexOf(NEWLINE, end - 1);
+        if (newline === -1) break;
+        if (visitLine(bytes.subarray(newline + 1, end)) === "stop") return bytesRead;
+        end = newline;
+      }
+      head = bytes.subarray(0, end);
+    }
+    // What is left has no line before it: it is the first line of the file.
+    visitLine(head);
+    return bytesRead;
+  });

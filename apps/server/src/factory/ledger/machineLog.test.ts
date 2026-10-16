@@ -694,7 +694,7 @@ describe("scan machine log back", () => {
       [10, 20, 30].map((ms) => machineLine(ms, "pass_started", `n${ms}`)).join(""),
     );
     const { seen, bytes } = back(dataDir);
-    expect(seen).toEqual(scanMachineLog(dataDir).reverse());
+    expect(seen).toEqual(scanMachineLog(dataDir).toReversed());
     expect(bytes).toBe(NodeFS.statSync(logFile(dataDir)).size);
   });
 
@@ -702,7 +702,7 @@ describe("scan machine log back", () => {
     const dataDir = tempDir();
     const lines = Array.from({ length: 40 }, (_, i) => machineLine(i, "pass_started", `n${i}`));
     NodeFS.writeFileSync(logFile(dataDir), lines.join(""));
-    const forward = scanMachineLog(dataDir).reverse();
+    const forward = scanMachineLog(dataDir).toReversed();
     for (const chunk of [1, 7, 64, 101, 5000]) {
       expect(back(dataDir, chunk).seen).toEqual(forward);
     }
