@@ -85,7 +85,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   pendingAction,
   isRunning,
   canInterrupt,
-  followUpBehavior = "steer",
+  followUpBehavior = "queue",
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
   promptHasText,
