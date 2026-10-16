@@ -328,7 +328,10 @@ builds on two tracks for users who can't join the Play testing group:
 
 Both APKs live in the `android-nightly` release, with `beta` or `internal` in each filename.
 Release notes describe their stability and link to each download. The mirror keeps only
-the newest available APK per track. Android submissions
+the newest available APK per track. Whenever that pair changes, the mirror also publishes
+an `android-testing-*` prerelease with both available APKs and the same stability guidance.
+Those snapshots retain older downloads. Unchanged hourly checks create no release;
+interrupted snapshot uploads resume as drafts before publication. Android submissions
 go to internal testing; the Alpha mirror updates after promotion to Alpha. The APK is the universal APK Play generates and signs from the
 uploaded bundle, so no signing key lives in GitHub. The job skips itself until
 `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` holds a Play service account key with the "Release to

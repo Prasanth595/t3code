@@ -1,5 +1,5 @@
-// Mirrors the newest build on a Google Play track to a rolling GitHub
-// prerelease as a universal APK. Play generates and signs that APK from the
+// Mirrors Google Play testing tracks to a rolling GitHub prerelease and
+// preserves each changed APK set in a separate prerelease. Play generates and signs that APK from the
 // uploaded bundle with the app signing key, so it carries the same signature
 // as the Play Store install. Run by .github/workflows/mobile-android-apk.yml.
 const { execFileSync } = require("node:child_process");
@@ -77,7 +77,7 @@ function gh(...args) {
 
 function readRelease(tag) {
   try {
-    return JSON.parse(gh("release", "view", tag, "--json", "assets,body"));
+    return JSON.parse(gh("release", "view", tag, "--json", "assets,body,isDraft"));
   } catch {
     return undefined;
   }
@@ -127,6 +127,55 @@ async function uploadApk({ token, appUrl, build, tag, apkName, notes, title, rel
   return true;
 }
 
+// The asset set determines the tag, so retries and unchanged polls reuse it.
+// Publish only after every APK is uploaded; interrupted drafts resume next run.
+function archiveRelease(rollingTag, assets, notes) {
+  const names = assets.map((asset) => asset.name).sort();
+  if (names.length === 0) return;
+  const digest = crypto.createHash("sha256").update(names.join("\n")).digest("hex").slice(0, 16);
+  const tag = `android-testing-${digest}`;
+  const existing = readRelease(tag);
+  if (existing && !existing.isDraft) return;
+  const archiveNotes = notes.replaceAll(
+    `/releases/download/${rollingTag}/`,
+    `/releases/download/${tag}/`,
+  );
+  const title = `Android testing (${new Date().toISOString().slice(0, 10)})`;
+  if (!existing) {
+    gh(
+      "release",
+      "create",
+      tag,
+      "--draft",
+      "--prerelease",
+      "--latest=false",
+      "--title",
+      title,
+      "--notes",
+      archiveNotes,
+    );
+  }
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "apk-snapshot-"));
+  try {
+    for (const name of names) {
+      gh("release", "download", rollingTag, "--pattern", name, "--dir", directory);
+      gh("release", "upload", tag, path.join(directory, name), "--clobber");
+    }
+    gh(
+      "release",
+      "edit",
+      tag,
+      "--draft=false",
+      "--prerelease",
+      "--latest=false",
+      "--notes",
+      archiveNotes,
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const packageName = requireEnv("PACKAGE_NAME");
   const tag = requireEnv("RELEASE_TAG");
@@ -141,6 +190,7 @@ async function main() {
   let release = readRelease(tag);
   const assets = release?.assets ?? [];
   const sections = [];
+  const mirroredAssets = [];
   for (const { track, channel, label, stability } of [
     {
       track: "alpha",
@@ -199,6 +249,7 @@ async function main() {
         );
       }
     }
+    mirroredAssets.push(...available);
     sections.push(
       `## ${label}`,
       "",
@@ -220,6 +271,7 @@ async function main() {
   ]
     .join("\n")
     .trim();
+  archiveRelease(tag, mirroredAssets, notes);
   if (release.body.replace(/\r\n/g, "\n").trim() !== notes) {
     gh("release", "edit", tag, "--title", title, "--notes", notes);
   }
