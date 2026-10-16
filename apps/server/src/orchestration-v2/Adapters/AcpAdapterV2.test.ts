@@ -3526,7 +3526,8 @@ describe("AcpAdapterV2", () => {
       const adapter = yield* makeGrokAdapterV2({
         instanceId,
         settings: { ...DEFAULT_GROK_SETTINGS, binaryPath: grokPath },
-        environment: {},
+        // `grok inspect` runs with this env, and the fake CLI needs `node` on its PATH.
+        environment: { ...process.env },
         hostPlatform,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
