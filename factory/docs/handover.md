@@ -6,7 +6,7 @@ A person does this switch, once, after the handover issue (#21) merges. Nothing 
 
 Today the Rust factory (softfac, LaunchAgent `io.github.rawphp.softfac`, T3 server on port 3874) watches `original-solutions/t3code-factory` from the clone `~/factory/original-solutions/t3code-factory` and builds the fork's issues. After the switch the fork's own factory (LaunchAgent `io.github.rawphp.t3fac`, port 3876, data in `~/.config/t3fac/factory`) watches the repo from a separate clone, `~/EA/projects/t3code-factory-fac`, and builds its own issues.
 
-The rule is one factory per repo. Both factories use the same `factory:*` labels, the same assignee and the same comment markers, so two factories watching one repo would claim each other's issues. Between step 5 and step 6 neither factory watches the repo. That gap is safe: a `factory:ready` issue waits.
+The rule is one factory per repo. Both factories use the same `factory:*` labels, the same assignee and the same comment markers, so two factories watching one repo would claim each other's issues. Between step 4 and step 6 neither factory watches the repo. That gap is safe: a `factory:ready` issue waits. The machine config is written in step 5, after the repo has left the Rust factory's config in step 4, because the fork's server reads that file on every start and launchd restarts the server by itself: with the file in place earlier, the fork would watch the repo alongside the Rust factory.
 
 `apps/server/src/factory/e2e.test.ts` runs one issue from `factory:ready` to `factory:pr-open`, and one whose gate fails once, against a fake GitHub and a replayed model. Step 7 proves it against the real ones, on this machine.
 
@@ -37,7 +37,7 @@ or copy the Rust factory's login: `cp -R ~/.config/softfac/gh ~/.config/t3fac/gh
 GH_CONFIG_DIR=~/.config/t3fac/gh gh api user --jq .login
 ```
 
-It must print `rawphp`. The machine config's `gh_config_dir` (step 2) names the same directory. A session that finds another login stops the run with `the session ran as the wrong GitHub account`.
+It must print `rawphp`. The machine config's `gh_config_dir` (step 5) names the same directory. A session that finds another login stops the run with `the session ran as the wrong GitHub account`.
 
 ### `vp` and `claude` on the server's PATH
 
@@ -59,16 +59,7 @@ The template ends the `PATH` with `~/.local/share/vite-plus/bin`, where `vp` is.
 
 The Rust factory's T3 server (`~/.config/softfac/t3-serve.sh`) also sets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, so its sessions' model calls go through a proxy. The fork's server sets neither and uses the machine's own Claude login. To use the proxy, those two variables would have to go into the plist template's `EnvironmentVariables`, and the template is committed to the repo, so the token must not be written there. Decide how the fork gets it before relying on the proxy.
 
-## 2. Write the machine config
-
-```sh
-mkdir -p ~/.config/t3fac/factory
-cp factory/config.example.yml ~/.config/t3fac/factory/config.yml
-```
-
-The example watches `original-solutions/t3code-factory` from `/Users/tomkaczocha/EA/projects/t3code-factory-fac` and runs one session at a time. Change a value if this machine differs. No path is expanded, so there is no `~` in the file. The server reads the file when it starts.
-
-## 3. Make the separate clone and its T3 project
+## 2. Make the separate clone and its T3 project
 
 ```sh
 git clone https://github.com/original-solutions/t3code-factory ~/EA/projects/t3code-factory-fac
@@ -80,7 +71,7 @@ The path must be a clone of its own, never the Rust factory's. Then add it as a 
 
 If the project is missing when the factory claims an issue, the launch fails (`no T3 project for this repo on this machine` in the run's ledger) and the issue goes to `factory:stuck`.
 
-## 4. Check that no run holds an issue of this repo
+## 3. Check that no run holds an issue of this repo
 
 Every one of these must show nothing for `original-solutions/t3code-factory` that is working:
 
@@ -92,13 +83,22 @@ gh issue list --repo original-solutions/t3code-factory --label factory:triage
 
 In `runs list`, a run of `original-solutions__t3code-factory__<issue>__<attempt>` with status `running` is still working: wait for it or stop it (`softfac runs stop <run>`). A `watching` run is a draft pull request that waits for a person. It does not block the switch, but the fork's factory does not know the run: merge or close that pull request by hand as before.
 
-## 5. Take the repo out of the Rust factory
+## 4. Take the repo out of the Rust factory
 
 Remove the `original-solutions/t3code-factory` entry (`repo`, `path` and `user`) from `repos` in `~/.config/softfac/config.yml`, then restart the Rust factory so it rereads the file:
 
 ```sh
 launchctl kickstart -k gui/$(id -u)/io.github.rawphp.softfac
 ```
+
+## 5. Write the machine config
+
+```sh
+mkdir -p ~/.config/t3fac/factory
+cp factory/config.example.yml ~/.config/t3fac/factory/config.yml
+```
+
+The example watches `original-solutions/t3code-factory` from `/Users/tomkaczocha/EA/projects/t3code-factory-fac` and runs one session at a time. Change a value if this machine differs. No path is expanded, so there is no `~` in the file. Do this only now, after the repo has left the Rust factory's config (step 4). The server reads the file whenever it starts, and launchd restarts it on its own (a crash, a login, a reboot, `install.sh`, `rollback.sh`), so a live config written earlier would have the fork watching the repo while the Rust factory still does.
 
 ## 6. Start the fork's factory
 

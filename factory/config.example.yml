@@ -1,7 +1,8 @@
 # The fork's machine config for this Mac: what the factory watches and how it runs.
-# Copy this file to ~/.config/t3fac/factory/config.yml, then restart the t3fac server
-# (see factory/docs/handover.md). The server reads it at start. No path here is expanded,
-# so there is no `~`: write each one out in full.
+# Copy this file to ~/.config/t3fac/factory/config.yml once the repo has left the Rust
+# factory's config, then restart the t3fac server (see factory/docs/handover.md). The
+# server reads it at start. No path here is expanded, so there is no `~`: write each
+# one out in full.
 
 # The gh login directory the factory acts on GitHub as (rawphp). Log in to it once with
 # GH_CONFIG_DIR=<this directory> gh auth login. The launchd job sets the same directory
