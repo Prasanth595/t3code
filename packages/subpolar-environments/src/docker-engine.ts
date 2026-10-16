@@ -1,12 +1,23 @@
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
-import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection } from "./docker.ts";
+import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest } from "./docker.ts";
+import type { EnvironmentProcessResult } from "./index.ts";
 
 export interface DockerEngineClientOptions {
   readonly socketPath: string;
   readonly apiVersion?: string;
   readonly timeoutMs?: number;
   readonly transport?: DockerEngineTransport;
+  readonly dockerBinary?: string;
+  readonly workerCommand?: readonly string[];
+  readonly processRunner?: DockerContainerProcessRunner;
 }
+
+export type DockerContainerProcessRunner = (
+  containerId: string,
+  request: DockerContainerProcessRequest,
+) => Promise<EnvironmentProcessResult>;
 
 export interface DockerEngineTransportRequest {
   readonly method: string;
@@ -155,6 +166,76 @@ function readResponse(response: IncomingMessage, maxBytes: number): Promise<Uint
   });
 }
 
+async function runDockerWorker(
+  dockerBinary: string,
+  workerCommand: readonly string[],
+  containerId: string,
+  request: DockerContainerProcessRequest,
+): Promise<EnvironmentProcessResult> {
+  if (request.signal?.aborted) return { exitCode: null, cancelled: true };
+  const docker = spawn(dockerBinary, ["exec", "-i", containerId, ...workerCommand], {
+    shell: false,
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const reader = createInterface({ input: docker.stdout, crlfDelay: Infinity });
+  const childClosed = new Promise<void>((resolve) => docker.once("close", () => resolve()));
+  let protocolResult: EnvironmentProcessResult | undefined;
+  let processId: string | undefined;
+  let spawnError = false;
+  let stderrBytes = 0;
+  docker.stderr.on("data", (chunk: Buffer) => { stderrBytes += chunk.byteLength; });
+  docker.once("error", () => { spawnError = true; });
+  const abort = () => {
+    if (!docker.stdin.destroyed) docker.stdin.write(`${JSON.stringify({ type: "terminate" })}\n`);
+  };
+  request.signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const startMessage = `${JSON.stringify({
+      type: "execute",
+      command: request.command,
+      worktreeDirectory: request.worktreeDirectory,
+      workingDirectory: request.workingDirectory,
+      environment: request.environment,
+    })}\n`;
+    if (!docker.stdin.write(startMessage)) await new Promise<void>((resolve) => docker.stdin.once("drain", resolve));
+    if (request.signal?.aborted) abort();
+    for await (const line of reader) {
+      let event: Record<string, unknown>;
+      try {
+        event = record(JSON.parse(line));
+      } catch {
+        throw new DockerEngineClientError(undefined, "Managed process returned an invalid protocol message");
+      }
+      if (event.type === "started" && typeof event.processId === "string") processId = event.processId;
+      else if (event.type === "output" && (event.stream === "stdout" || event.stream === "stderr") && typeof event.data === "string") {
+        await request.onOutput?.({ stream: event.stream, data: Buffer.from(event.data, "base64") });
+      } else if (event.type === "error") {
+        throw new DockerEngineClientError(undefined, "Managed process could not be started");
+      } else if (event.type === "exit") {
+        protocolResult = {
+          ...(processId === undefined ? {} : { processId }),
+          exitCode: typeof event.exitCode === "number" ? event.exitCode : null,
+          cancelled: event.cancelled === true || request.signal?.aborted === true,
+        };
+      }
+    }
+    await childClosed;
+    if (spawnError || !protocolResult) {
+      const message = stderrBytes > 0 ? "Docker exec failed" : "Managed process ended without a result";
+      throw new DockerEngineClientError(undefined, message);
+    }
+    return protocolResult;
+  } catch (error) {
+    docker.kill("SIGTERM");
+    throw error instanceof DockerEngineClientError ? error : new DockerEngineClientError(undefined, "Managed process transport failed", { cause: error });
+  } finally {
+    request.signal?.removeEventListener("abort", abort);
+    if (!docker.stdin.destroyed) docker.stdin.end();
+    reader.close();
+  }
+}
+
 /**
  * Docker Engine lifecycle client for a dedicated manager process. Do not
  * construct this inside the T3 gateway; possession of the socket is root-like.
@@ -165,6 +246,12 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
   if (!/^v\d+\.\d+$/.test(version)) throw new Error("Docker Engine API version is invalid");
   const timeoutMs = options.timeoutMs ?? 15_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120_000) throw new Error("Docker Engine timeout is invalid");
+  const dockerBinary = options.dockerBinary ?? "docker";
+  const workerCommand = options.workerCommand ?? ["node", "/usr/local/lib/subpolar/worker.mjs"];
+  if (!dockerBinary || dockerBinary.includes("\0") || workerCommand.length === 0 || workerCommand.some((part) => !part || part.includes("\0"))) {
+    throw new Error("Docker worker command configuration is invalid");
+  }
+  const processRunner = options.processRunner ?? ((containerId, request) => runDockerWorker(dockerBinary, workerCommand, containerId, request));
 
   const request = async (
     method: string,
@@ -244,6 +331,9 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
     },
     async removeContainer(id, removeOptions) {
       await request("DELETE", `${idPath(id)}?force=${removeOptions.force}&v=${removeOptions.removeVolumes}`, undefined, [204]);
+    },
+    async executeContainer(id, processRequest) {
+      return processRunner(id, processRequest);
     },
   };
 }

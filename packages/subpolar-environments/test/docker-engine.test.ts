@@ -1,10 +1,14 @@
 import { expect, test } from "bun:test";
 import { createDockerEngineClient } from "../src/docker-engine.ts";
-import type { DockerContainerCreateOptions } from "../src/docker.ts";
+import type { DockerContainerCreateOptions, DockerContainerProcessRequest } from "../src/docker.ts";
 
-function engineFixture(handler: (request: { method: string; url: string; body: string }) => { status: number; body?: unknown }) {
+function engineFixture(
+  handler: (request: { method: string; url: string; body: string }) => { status: number; body?: unknown },
+  processRunner?: (containerId: string, request: DockerContainerProcessRequest) => Promise<{ processId?: string; exitCode: number | null; cancelled: boolean }>,
+) {
   return createDockerEngineClient({
     socketPath: "/var/run/docker.sock",
+    ...(processRunner === undefined ? {} : { processRunner }),
     transport: async (request) => {
       const result = handler({
         method: request.method,
@@ -94,4 +98,32 @@ test("returns null for an unknown container and does not leak daemon error detai
     name: "DockerEngineClientError",
     message: "Docker Engine request failed with HTTP 404",
   });
+});
+
+test("routes container process requests through the worker runner", async () => {
+  let seen: { id: string; request: DockerContainerProcessRequest } | undefined;
+  const client = engineFixture(
+    () => ({ status: 404 }),
+    async (id, request) => {
+      seen = { id, request };
+      await request.onOutput?.({ stream: "stderr", data: new TextEncoder().encode("warning") });
+      return { processId: "worker-process-1", exitCode: 0, cancelled: false };
+    },
+  );
+  const output: string[] = [];
+  const request = {
+    command: ["node", "-e", "console.log('hello')"],
+    worktreeDirectory: "/workspaces/repo",
+    workingDirectory: "/workspaces/repo/packages",
+    environment: { MODE: "test" },
+    onOutput: ({ stream, data }: { stream: string; data: Uint8Array }) => output.push(`${stream}:${new TextDecoder().decode(data)}`),
+  };
+
+  await expect(client.executeContainer!("container-9", request)).resolves.toEqual({
+    processId: "worker-process-1",
+    exitCode: 0,
+    cancelled: false,
+  });
+  expect(seen).toEqual({ id: "container-9", request });
+  expect(output).toEqual(["stderr:warning"]);
 });

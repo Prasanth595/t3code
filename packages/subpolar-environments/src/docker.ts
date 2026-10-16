@@ -82,6 +82,7 @@ export interface DockerContainerCreateOptions {
 
 export interface DockerContainerProcessRequest {
   readonly command: readonly string[];
+  readonly worktreeDirectory: string;
   readonly workingDirectory: string;
   readonly environment: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
@@ -490,6 +491,7 @@ export function createDockerEnvironmentBackend(
       if (request.signal?.aborted) return { exitCode: null, cancelled: true };
       return client.executeContainer(current.inspection.id, {
         command: [...command],
+        worktreeDirectory: worktreeTarget,
         workingDirectory,
         environment: { ...environmentVariables },
         ...(request.signal === undefined ? {} : { signal: request.signal }),
