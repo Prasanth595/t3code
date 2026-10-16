@@ -225,8 +225,10 @@ export const mergeConflictMessage = (base: string, paths: ReadonlyArray<string>)
   for (const path of paths.slice(0, MAX_LISTED_PATHS)) {
     const clean = Array.from(sanitize(path, false));
     const shown =
-      clean.length > MAX_PATH_CHARS ? `${clean.slice(0, MAX_PATH_CHARS).join("")}\u2026` : path;
-    text += `\n  ${clean.length > MAX_PATH_CHARS ? shown : clean.join("")}`;
+      clean.length > MAX_PATH_CHARS
+        ? `${clean.slice(0, MAX_PATH_CHARS).join("")}\u2026`
+        : clean.join("");
+    text += `\n  ${shown}`;
   }
   if (paths.length > MAX_LISTED_PATHS) text += `\n  and ${paths.length - MAX_LISTED_PATHS} more`;
   return text;
