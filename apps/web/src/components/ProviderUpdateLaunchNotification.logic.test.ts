@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
-  type EnvironmentId,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -986,12 +986,6 @@ describe("provider update launch notification logic", () => {
     });
 
     it("treats running/initial as non-terminal so they are not persisted", () => {
-      // The per-environment update row uses this to decide what to store. A
-      // "running"/"initial" snapshot never re-polls, so persisting it would pin
-      // the row's spinner forever once pending clears (see the
-      // resolveEnvironmentUpdateRowStatus "keeps a non-terminal result on
-      // loading even after pending clears" case). Dropping these lets the live
-      // per-environment provider state drive the row so it self-heals.
       expect(isTerminalProviderUpdatePhase("running")).toBe(false);
       expect(isTerminalProviderUpdatePhase("initial")).toBe(false);
     });
@@ -1050,8 +1044,6 @@ describe("provider update launch notification logic", () => {
     });
 
     it("falls through a non-terminal result to live server state", () => {
-      // The dispatch snapshot is still "running", but server state already
-      // reports success — the row must not stay pinned on "Updating…".
       expect(
         resolveEnvironmentUpdateRowStatus({
           group,
@@ -1076,8 +1068,6 @@ describe("provider update launch notification logic", () => {
     });
 
     it("keeps a non-terminal result on loading even after pending clears", () => {
-      // The dispatch returned an incomplete ("running") snapshot and pending was
-      // cleared in finally — the row must not revert to the idle Update button.
       expect(
         resolveEnvironmentUpdateRowStatus({
           group,
@@ -1138,6 +1128,7 @@ describe("getProviderUpdateRunToastView", () => {
     providerDriver: string,
     result: Parameters<typeof getProviderUpdateRunToastView>[0][number]["result"],
   ) => ({
+    environmentId: EnvironmentId.make(machineLabel),
     machineLabel,
     driver: driver(providerDriver),
     instanceId: instanceId(providerDriver),
