@@ -3,6 +3,7 @@ import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
   resolvePathLinkTarget,
+  splitFilePathPosition,
 } from "@t3tools/shared/fileLinks";
 import {
   isWindowsDrivePathHref,
@@ -269,15 +270,20 @@ export function hasMarkdownFilePrimaryAction(input: {
 export function markdownFileCopyMenuItems(input: {
   targetPath: string;
   workspaceRelativePath: string | null;
-  displayPath: string;
 }) {
+  const { path } = splitFilePathPosition(input.targetPath);
+  const position = input.targetPath.slice(path.length);
   return [
-    {
-      id: "copy-relative",
-      label: "Copy relative path",
-      value: input.displayPath,
-      title: "Relative path",
-    },
+    ...(input.workspaceRelativePath === null
+      ? []
+      : [
+          {
+            id: "copy-relative",
+            label: "Copy relative path",
+            value: `${input.workspaceRelativePath}${position}`,
+            title: "Relative path",
+          } as const,
+        ]),
     {
       id: "copy-full",
       label: "Copy full path",
@@ -1180,8 +1186,8 @@ interface MarkdownFileLinkProps {
   href: string;
   targetPath: string;
   iconPath: string;
-  displayPath: string;
   panelPath: string | null;
+  workspaceRelativePath: string | null;
   line?: number | undefined;
   label: string;
   copyMarkdown: string;
@@ -1885,8 +1891,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
   iconPath,
-  displayPath,
   panelPath,
+  workspaceRelativePath,
   line,
   label,
   copyMarkdown,
@@ -2074,7 +2080,6 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         const copyItems = markdownFileCopyMenuItems({
           targetPath,
           workspaceRelativePath,
-          displayPath,
         });
         const clicked = await api.contextMenu.show(
           [
@@ -2117,7 +2122,6 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       }
     },
     [
-      displayPath,
       handleCopy,
       handleOpenInBrowser,
       handleOpenInEditor,
@@ -2236,8 +2240,8 @@ function areMarkdownFileLinkPropsEqual(
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
     previous.environmentId === next.environmentId &&
-    previous.displayPath === next.displayPath &&
     previous.panelPath === next.panelPath &&
+    previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.line === next.line &&
     previous.label === next.label &&
     previous.copyMarkdown === next.copyMarkdown &&
@@ -2604,8 +2608,8 @@ function useChatMarkdownState({
           href={fileLinkMeta.targetPath}
           targetPath={fileLinkMeta.targetPath}
           iconPath={fileLinkMeta.filePath}
-          displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
+          workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
           line={fileLinkMeta.line}
           label={fileLinkLabel(
             {
