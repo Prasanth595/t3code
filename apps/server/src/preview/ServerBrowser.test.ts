@@ -299,6 +299,71 @@ beforeEach(() => {
   desktopConnections.length = 0;
 });
 
+it.live("an expired open still drains its initial navigation before human input", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const committed = Promise.withResolvers<void>();
+      const events: string[] = [];
+      const clock = vi.spyOn(performance, "now").mockReturnValue(0);
+      yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
+      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+      const original = ServerBrowserContexts.ServerBrowserContexts.prototype.contextFor;
+      const create = vi
+        .spyOn(ServerBrowserContexts.ServerBrowserContexts.prototype, "contextFor")
+        .mockImplementation(async function (
+          this: ServerBrowserContexts.ServerBrowserContexts,
+          profileId,
+          isolationKey,
+        ) {
+          const context = await original.call(this, profileId, isolationKey);
+          contexts.at(-1)!.page.goto.mockImplementationOnce(async () => {
+            clock.mockReturnValue(1000);
+            await committed.promise;
+            events.push("navigation committed");
+          });
+          return context;
+        });
+      yield* Effect.addFinalizer(() => Effect.sync(() => create.mockRestore()));
+      const expired = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { url: "http://localhost:5173/slow", reuseExistingTab: false, show: false },
+          timeoutMs: 1000,
+        })
+        .pipe(Effect.flip);
+      expect(expired).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions).toHaveLength(1);
+      const tabId = PreviewTabId.make(sessions[0]!.tabId);
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* Queue.clear(viewer.output);
+      const takeover = yield* viewer.input({ type: "takeControl" }).pipe(Effect.forkScoped);
+      let control = yield* Queue.take(viewer.output);
+      while (control._tag !== "control" || control.controller !== "you") {
+        control = yield* Queue.take(viewer.output);
+      }
+      const cdp = contexts[0]!.sessions.at(-1)!;
+      const send = cdp.send.getMockImplementation()!;
+      cdp.send.mockImplementation(async (operation, input) => {
+        if (operation === "Input.insertText") events.push("human typed");
+        return send(operation, input);
+      });
+      const typing = yield* viewer.input({ type: "text", text: "hello" }).pipe(Effect.forkScoped);
+      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+      expect(events).toEqual([]);
+      committed.resolve();
+      yield* Fiber.join(takeover);
+      yield* Fiber.join(typing);
+      expect(events).toEqual(["navigation committed", "human typed"]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("readiness none responds immediately but takeover input waits for navigation commit", () =>
   Effect.scoped(
     Effect.gen(function* () {

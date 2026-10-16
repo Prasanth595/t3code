@@ -873,7 +873,7 @@ const make = Effect.gen(function* () {
         .goto(snapshot.navStatus.url, { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS })
         .then(constVoid);
 
-      void tab.initialNavigation.catch(constVoid);
+      tab.control.track(tab.initialNavigation);
     }
     return tab;
   };
