@@ -56,12 +56,17 @@ restart_job() {
 # bash reads a script incrementally and a rotation running now would see a mix of old and new text.
 restart_logrotate_job() {
   local tmp_script
-  mkdir -p "$root" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/t3fac" &&
-    tmp_script=$(mktemp "$root/.rotate-log.XXXXXX") &&
+  mkdir -p "$root" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/t3fac" || return 1
+  tmp_script=$(mktemp "$root/.rotate-log.XXXXXX") || return 1
+  if ! {
     cp "$(dirname "${BASH_SOURCE[0]}")/../rotate-log.sh" "$tmp_script" &&
-    chmod 755 "$tmp_script" &&
-    mv -f "$tmp_script" "$root/rotate-log.sh" &&
-    sed "s|@HOME@|$HOME|g" "$logrotate_template" > "$logrotate_plist" &&
+      chmod 755 "$tmp_script" &&
+      mv -f "$tmp_script" "$root/rotate-log.sh"
+  }; then
+    rm -f "$tmp_script"
+    return 1
+  fi
+  sed "s|@HOME@|$HOME|g" "$logrotate_template" > "$logrotate_plist" &&
     reload_job "$logrotate_label" "$logrotate_plist"
 }
 
