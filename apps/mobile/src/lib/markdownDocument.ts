@@ -141,6 +141,44 @@ export function markdownWithHtml(markdown: string): string {
   return markdown;
 }
 
+// A delimiter row such as `|---|:--:|`, possibly inside a blockquote or list item.
+const TABLE_DELIMITER_ROW = /^[ \t>]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-*:?[ \t]*)*$/m;
+
+/**
+ * GFM lets a table interrupt a paragraph, but the native parser (md4c) only starts a table
+ * on a paragraph's first line, so a table right under a line of text renders as one
+ * run-on paragraph. Insert the blank line md4c needs before each such table.
+ */
+export function markdownWithTableBreaks(markdown: string): string {
+  if (!markdown.includes("|") || !TABLE_DELIMITER_ROW.test(markdown)) return markdown;
+  const lineStarts: number[] = [];
+  const visit = (node: MarkdownNode) => {
+    if (!("children" in node)) return;
+    node.children.forEach((child, index) => {
+      const previous = node.children[index - 1];
+      const start = child.position?.start;
+      if (
+        child.type === "table" &&
+        previous?.type === "paragraph" &&
+        start?.offset !== undefined &&
+        previous.position?.end.line === start.line - 1
+      )
+        lineStarts.push(markdown.lastIndexOf("\n", start.offset - 1) + 1);
+      visit(child);
+    });
+  };
+  visit(parser.parse(markdown));
+  for (const lineStart of lineStarts.reverse()) {
+    // Keep container markers such as `>` so the blank line stays inside a blockquote.
+    const prefix = markdown
+      .slice(lineStart)
+      .match(/^[ \t>]*/)![0]
+      .trimEnd();
+    markdown = `${markdown.slice(0, lineStart)}${prefix}\n${markdown.slice(lineStart)}`;
+  }
+  return markdown;
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownWithHtml(markdown));
 }
