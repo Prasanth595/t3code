@@ -6,8 +6,10 @@ Source: Subpolar commit `2ddbce8` (`automations`, 2026-10-11). This matrix recor
 | --- | --- | --- |
 | `subpolar-contracts` (`@subpolar/shared`) | Import first | Runtime contracts and schemas are useful; package also contains executable Skills logic that must not be confused with T3's schema-only `packages/contracts`. |
 | `subpolar-core` (`@subpolar/runtime`) | Import first | Runtime composition, policy and approval gateway; stateless with respect to T3 threads. |
-| `subpolar-core-pi` (`@subpolar/runtime-pi`) | Import first | Transient Pi adapter. Declare its dynamically loaded Pi SDK dependency explicitly at the host boundary. |
+| `subpolar-core-pi` (`@subpolar/runtime-pi`) | Import first | Transient Pi adapter. Its dynamically loaded Pi SDK is declared as an optional peer; the host supplies installation and credentials. |
 | `subpolar-tools` (`@subpolar/tools`) | Import first | Persistence-neutral tool registry and CLI surface. |
+| `subpolar-acp` (`@subpolar/acp`) | Import initial bridge | Uses T3's existing ACP provider path; current bridge is prompt/response text only with Pi tools disabled. |
+| `subpolar-environments` (`@subpolar/environments`) | Import initial contract | Backend-neutral stable identity, path containment, and lifecycle coordinator; no Docker driver or durable manager yet. |
 | `subpolar-operations` (`@subpolar/shared-operations`) | Defer | Source/tests import undeclared `@subpolar/contracts`; repair package identity and tests before migration. |
 | `subpolar-persistance-local` (`@subpolar/db-local`) | Defer | Session and runtime persistence must not become a second authority for T3 threads/events. |
 | `subpolar-persistance-pocketbase` (`@subpolar/db`) | Defer | PocketBase dependency is undeclared; requires an explicit persistence adapter boundary. |

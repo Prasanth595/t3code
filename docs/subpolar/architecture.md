@@ -11,13 +11,13 @@
 
 T3 owns threads, conversation history, orchestration events, provider lifecycle, project worktrees, Git operations, checkpoints, terminals, previews, and client protocol. Subpolar may supply runtime composition, Pi execution, tools, policies, and approvals. A Subpolar runtime session is referenced by a T3 provider session; it does not replace T3's thread or event state.
 
-The first migration increment imports the runtime contracts, policy gateway, transient Pi adapter, and tool registry under `packages/subpolar-*`. It does not add client UI, RPC methods, event schemas, a new provider kind, or a competing persistence store. T3's native Pi provider remains available. Managed execution must be opt-in and fail closed if its runtime is unavailable.
+The first migration increments import the runtime contracts, policy gateway, transient Pi adapter, tool registry, ACP bridge, and a backend-neutral environment manager contract under `packages/subpolar-*`. They do not add client UI, RPC methods, event schemas, a new provider kind, or a competing persistence store. T3's native Pi provider remains available. Managed execution must be opt-in and fail closed if its runtime is unavailable.
 
 ## Integration boundary
 
-T3's refreshed server uses the `provider-acp` and `provider-acp-registry` packages and orchestration-v2. Its existing ACP registry provider already accepts a local executable path and arguments, so a Subpolar ACP executable can use that path without a new provider kind or driver registration. It must keep the existing ACP wire contract and T3 provider-session lifecycle. The execution target must be explicit; an unavailable managed runtime must not fall back to a host process.
+T3's refreshed server uses the `provider-acp` and `provider-acp-registry` packages and orchestration-v2. Its existing ACP registry provider already accepts a local executable path and arguments, so `@subpolar/acp` can use that path without a new provider kind or driver registration. The bridge keeps session routing in process memory and delegates prompts through the Subpolar runtime and Pi adapter. It currently accepts text/resource-link prompts and returns text responses only; Pi tools are disabled, so it does not yet expose tool calls, approvals, or filesystem operations. It must keep the existing ACP wire contract and T3 provider-session lifecycle. The execution target must be explicit; an unavailable managed runtime must not fall back to a host process.
 
-T3 terminals and Git currently use server-side host process services. Container execution, terminal routing, worktree sharing, previews, and cleanup need separate design and tests before being enabled. The initial package import does not claim those capabilities.
+`@subpolar/environments` currently provides stable owner/workspace/worktree identities, canonical path containment checks, same-process lifecycle request coalescing, and an injected backend contract. It has no Docker driver, persistent registration store, manager service, container reconciliation, or process execution API implementation. T3 terminals and Git currently use server-side host process services. Container execution, terminal routing, worktree sharing, previews, and cleanup need separate implementation and tests before being enabled. These packages do not claim those capabilities.
 
 ## Source disposition
 

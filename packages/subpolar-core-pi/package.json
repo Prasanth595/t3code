@@ -9,6 +9,14 @@
   "dependencies": {
     "@subpolar/shared": "workspace:*"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.0.2"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
   "scripts": {
     "test": "bun test test"
   }

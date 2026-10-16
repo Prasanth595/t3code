@@ -185,6 +185,22 @@ describe("browser API CORS", () => {
   });
 });
 
+describe("container health route", () => {
+  it("returns a minimal readiness response", async () => {
+    const layerApp = ServerHttp.layerHealthRoute.pipe(Layer.provide(NodeServices.layer));
+    const { handler, dispose } = HttpRouter.toWebHandler(layerApp, { disableLogger: true });
+
+    try {
+      const response = await handler(new Request("http://localhost/healthz"));
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ status: "ok" });
+    } finally {
+      await dispose();
+    }
+  });
+});
+
 const layerFileResponse = Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.layer);
 
 const makeStaticRequest = Effect.fn("HttpTest.makeStaticRequest")(function* (staticDir: string) {
