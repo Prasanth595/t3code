@@ -1,7 +1,7 @@
 name: Mobile Android APK
 
 # Publishes the newest Alpha and internal-testing Android builds as a sideloadable APK
-# on separate rolling prereleases for users who can't join
+# on the rolling "android-nightly" prerelease for users who can't join
 # the Play testing group. Play re-signs uploaded bundles with the app signing
 # key, so its universal APK matches the Play Store install and needs no signing
 # secrets here. EAS submits asynchronously (--no-wait), so this polls Play
@@ -19,29 +19,14 @@ concurrency:
 
 jobs:
   mirror:
-    name: Mirror Play APK (${{ matrix.track }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - track: alpha
-            tag: android-nightly
-            title: T3 Code for Android (Alpha)
-            stability: Alpha closed testing. These builds have been promoted for wider testing, but may still contain bugs.
-          - track: internal
-            tag: android-internal
-            title: T3 Code for Android (internal)
-            stability: Internal testing. These are the newest, less-tested builds and may contain serious bugs. Prefer the Alpha release for everyday use.
+    name: Mirror Play APKs
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: write
     env:
       PACKAGE_NAME: com.t3tools.t3code
-      PLAY_TRACK: ${{ matrix.track }}
-      RELEASE_TAG: ${{ matrix.tag }}
-      RELEASE_TITLE: ${{ matrix.title }}
-      RELEASE_STABILITY: ${{ matrix.stability }}
+      RELEASE_TAG: android-nightly
     steps:
       - id: credentials
         name: Check for Play credentials
