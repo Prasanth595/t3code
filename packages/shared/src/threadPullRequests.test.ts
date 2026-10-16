@@ -477,6 +477,16 @@ describe("chain selection and badge state", () => {
     });
   });
 
+  it("lists a pull request once when two links share its identity", () => {
+    const links = [
+      link(1, { snapshot: snapshot({ headBranch: "a" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "b", baseBranch: "a" }) }),
+    ];
+    expect(resolveThreadPullRequestChains(links).map((chain) => chain.layers)).toEqual([
+      [links[0]],
+    ]);
+  });
+
   it("does not guess a parent when a head branch was reused", () => {
     const links = [
       link(1, { snapshot: snapshot({ state: "merged", headBranch: "reused" }) }),

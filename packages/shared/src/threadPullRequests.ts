@@ -284,6 +284,8 @@ export function resolveThreadPullRequestChains(
     ];
     for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
       const key = threadPullRequestKeyOf(next.link);
+      // Two links with one identity would otherwise share a child list and expand forever.
+      if (placed.has(key)) continue;
       placed.add(key);
       layers.push(next.link);
       depths.push(next.depth);
