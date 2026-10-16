@@ -1,4 +1,5 @@
 // HTTP boundary for structural activity snapshots and owner-scoped list_events readback.
+import * as Effect from "effect/Effect";
 import { z } from "zod";
 import {
   ActivityConflictError,
@@ -110,15 +111,16 @@ export function makeStudioActivityHttpSink(options: {
     allowConflict = false,
   ): Promise<{ value: unknown; status: number; text: string }> => {
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadlineController = new AbortController();
     let activeReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let status: number | null = null;
     let text = "";
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new StudioActivityTransportError("timeout", status, excerpt(text)));
-      }, timeoutMs);
+    // One cancellable deadline covers both fetching and reading the response body.
+    const deadline = Effect.runPromise(Effect.sleep(timeoutMs), {
+      signal: deadlineController.signal,
+    }).then(() => {
+      controller.abort();
+      throw new StudioActivityTransportError("timeout", status, excerpt(text));
     });
     try {
       return await Promise.race([
@@ -177,7 +179,7 @@ export function makeStudioActivityHttpSink(options: {
         excerpt(text),
       );
     } finally {
-      clearTimeout(timer);
+      deadlineController.abort();
       controller.abort();
       if (activeReader) void activeReader.cancel().catch(() => {});
     }
