@@ -125,7 +125,7 @@ export function createEnvironmentManagerHttpHandler(manager: EnvironmentManager,
     if (!isAuthorized(request, token)) return jsonResponse({ error: "UNAUTHORIZED" }, 401, { "www-authenticate": "Bearer" });
     if (request.method !== "POST") return jsonResponse({ error: "METHOD_NOT_ALLOWED" }, 405, { allow: "POST" });
 
-    const route = new URL(request.url).pathname.match(/^\/v1\/environments\/(ensure|start|stop|remove|execute|reconcile)$/)?.[1];
+    const route = new URL(request.url).pathname.match(/^\/v1\/environments\/(identity|ensure|start|stop|remove|execute|reconcile)$/)?.[1];
     if (!route) return jsonResponse({ error: "NOT_FOUND" }, 404);
 
     try {
@@ -133,6 +133,7 @@ export function createEnvironmentManagerHttpHandler(manager: EnvironmentManager,
       const body = await readJson(request);
       if (!isRecord(body)) throw new EnvironmentManagerError("INVALID_REQUEST", "Request body must be a JSON object");
       const environment = environmentRequest(body.environment);
+      if (route === "identity") return jsonResponse(await manager.identity(environment));
       if (route === "ensure") return jsonResponse(await manager.ensure(environment));
       if (route === "start") return jsonResponse(await manager.start(environment));
       if (route === "stop") return jsonResponse(await manager.stop(environment));

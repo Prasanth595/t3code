@@ -17,6 +17,7 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@subpolar/environments": "workspace:*",
     "@subpolar/shared": "workspace:*",
     "@subpolar/tools": "workspace:*",
     "@subpolar/runtime": "workspace:*",

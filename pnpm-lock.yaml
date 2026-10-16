@@ -1831,6 +1831,9 @@ importers:
 
   packages/subpolar-acp:
     dependencies:
+      '@subpolar/environments':
+        specifier: workspace:*
+        version: link:../subpolar-environments
       '@subpolar/shared':
         specifier: workspace:*
         version: link:../subpolar-contracts

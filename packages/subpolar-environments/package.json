@@ -10,6 +10,7 @@
     ".": "./src/index.ts",
     "./docker": "./src/docker.ts",
     "./docker-engine": "./src/docker-engine.ts",
+    "./manager-client": "./src/manager-client.ts",
     "./manager-http": "./src/manager-http.ts",
     "./persistence": "./src/persistence.ts"
   },
