@@ -537,7 +537,7 @@ export const layer: Layer.Layer<
       Effect.gen(function* () {
         switch (input.event.type) {
           case "app_thread.created": {
-            const offered = input.event.appThread;
+            let offered = input.event.appThread;
             const existing = yield* projections.getThread(offered.id).pipe(
               Effect.catchTags({
                 ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
@@ -549,6 +549,21 @@ export const layer: Layer.Layer<
               modelSelectionsEqual(existing.modelSelection, offered.modelSelection)
             )
               return [];
+            if (
+              existing === null &&
+              offered.lineage.parentThreadId !== null &&
+              offered.worktreePath !== null
+            ) {
+              const parent = yield* projections.getThread(offered.lineage.parentThreadId).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+              );
+              // Native adapters may still hold the parent's turn-start branch snapshot.
+              if (parent !== null && parent.worktreePath === offered.worktreePath) {
+                offered = { ...offered, branch: parent.branch, worktreePath: parent.worktreePath };
+              }
+            }
             const now = yield* DateTime.now;
             return [
               yield* makeDomainEvent(input, {

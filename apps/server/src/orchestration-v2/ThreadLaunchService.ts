@@ -533,7 +533,7 @@ const make = Effect.gen(function* () {
               const visited = new Set([threadId]);
               while (true) {
                 const snapshot = yield* threads.getShellSnapshot();
-                const sharing = snapshot.threads.filter(
+                const sharing = [...snapshot.threads, ...snapshot.archivedThreads].filter(
                   (thread) =>
                     !visited.has(thread.id) &&
                     thread.worktreePath === worktreeCwd &&

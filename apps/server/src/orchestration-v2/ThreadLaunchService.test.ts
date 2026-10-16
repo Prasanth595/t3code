@@ -1147,7 +1147,7 @@ it.effect("names the worktree itself when the client provides no branch", () =>
   }),
 );
 
-it.effect("renames a temporary t3/<hash> branch off the provisioning critical path", () =>
+it.effect.each([false, true])("renames shared temporary branches with archived=%s", (archived) =>
   Effect.gen(function* () {
     const branchNameStarted = yield* Deferred.make<void>();
     const allowBranchName = yield* Deferred.make<void>();
@@ -1228,8 +1228,17 @@ it.effect("renames a temporary t3/<hash> branch off the provisioning critical pa
           creationSource: "web",
         });
       }
-      const unrelated = yield* threads.getThreadProjection(otherThreadId);
-      const otherPath = yield* threads.getThreadProjection(otherPathThreadId);
+      if (archived) {
+        for (const threadId of [childThreadId, otherThreadId, otherPathThreadId]) {
+          yield* threads.dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make(`command:archive:${threadId}`),
+            threadId,
+          });
+        }
+      }
+      const unrelatedBeforeRename = yield* threads.getThreadProjection(otherThreadId);
+      const otherPathBeforeRename = yield* threads.getThreadProjection(otherPathThreadId);
       yield* Deferred.succeed(allowBranchName, undefined);
       yield* threads.streamStoredEventsFrom({ threadId: childThreadId }).pipe(
         Stream.filter(
@@ -1249,11 +1258,11 @@ it.effect("renames a temporary t3/<hash> branch off the provisioning critical pa
       );
       assert.deepEqual(
         (yield* threads.getThreadProjection(otherThreadId)).thread,
-        unrelated.thread,
+        unrelatedBeforeRename.thread,
       );
       assert.deepEqual(
         (yield* threads.getThreadProjection(otherPathThreadId)).thread,
-        otherPath.thread,
+        otherPathBeforeRename.thread,
       );
       const staleUpdate = yield* threads
         .dispatch({
@@ -1268,7 +1277,7 @@ it.effect("renames a temporary t3/<hash> branch off the provisioning critical pa
       assert.equal(staleUpdate._tag, "OrchestratorDispatchError");
       assert.deepEqual(
         (yield* threads.getThreadProjection(otherThreadId)).thread,
-        unrelated.thread,
+        unrelatedBeforeRename.thread,
       );
       assert.deepEqual(harness.renameBranch.mock.calls[0]?.[0], {
         cwd: "/repo-worktrees/temp",

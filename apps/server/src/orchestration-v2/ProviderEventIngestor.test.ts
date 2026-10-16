@@ -1729,6 +1729,70 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect.each(
+    ["codex", "claude"].flatMap((driver) =>
+      ["/repo/shared", "/repo/isolated", null].map((worktreePath) => ({ driver, worktreePath })),
+    ),
+  )("records a native child with current shared workspace: %j", ({ driver, worktreePath }) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+      const childThreadId = idAllocator.derive.threadFromProviderThread({
+        driver: ProviderDriverKind.make(driver),
+        nativeThreadId: `late-native-subagent:${worktreePath}`,
+      });
+      const offered: OrchestrationV2AppThread = {
+        ...rootEvent.payload,
+        id: childThreadId,
+        branch: "t3/abcd1234",
+        worktreePath,
+        lineage: {
+          parentThreadId: rootEvent.threadId,
+          relationshipToParent: "subagent",
+          rootThreadId: rootEvent.threadId,
+        },
+      };
+      yield* eventSink.write({
+        events: [
+          {
+            ...rootEvent,
+            payload: {
+              ...rootEvent.payload,
+              branch: "generated-branch",
+              worktreePath: "/repo/shared",
+            },
+          },
+        ],
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+      });
+      yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+        event: {
+          type: "app_thread.created",
+          driver: ProviderDriverKind.make(driver),
+          appThread: offered,
+        },
+      });
+      const child = yield* projectionStore.getThread(childThreadId);
+      assert.equal(
+        child.branch,
+        worktreePath === "/repo/shared" ? "generated-branch" : offered.branch,
+      );
+      assert.equal(child.worktreePath, worktreePath);
+      assert.deepEqual(child.lineage, offered.lineage);
+    }),
+  );
+
   it.effect("updates provider child metadata without recreating its saved thread", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
