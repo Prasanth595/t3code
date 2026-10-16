@@ -33,6 +33,8 @@ export interface CommandLine {
 
 export interface Seen {
   readonly claimed: boolean;
+  /** The `github_user` of the first `claimed` line; null when there is none or it is not text. */
+  readonly githubUser: string | null;
   /** The moment in the first `approved <time>` step: when an instructor applied the label the run was approved on. */
   readonly approvedAt: string | null;
   /** From the last `state_changed`; null before any. */
@@ -174,6 +176,7 @@ export const parseGatePassed = (
 
 export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let claimed = false;
+  let githubUser: string | null = null;
   let approvedAt: string | null = null;
   let state: State | null = null;
   let threadId: string | null = null;
@@ -222,9 +225,14 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   const number = (value: unknown): number | null => (typeof value === "number" ? value : null);
   for (const entry of entries) {
     switch (entry.event) {
-      case "claimed":
+      case "claimed": {
+        if (!claimed) {
+          const user = field(entry.data, "github_user");
+          githubUser = typeof user === "string" ? user : null;
+        }
         claimed = true;
         break;
+      }
       case "step_changed": {
         const step = field(entry.data, "step");
         if (typeof step !== "string") break;
@@ -402,6 +410,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   }
   return {
     claimed,
+    githubUser,
     approvedAt,
     state,
     threadId,

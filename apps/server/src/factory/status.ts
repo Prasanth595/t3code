@@ -11,7 +11,7 @@
 import type { AttentionItem } from "./attention.ts";
 import { loadHandPause } from "./claims.ts";
 import { scanMachineLogBack, type MachineEntry } from "./ledger/machineLog.ts";
-import { holdsSlot, listUnfinishedRuns, readRuns, type RunRead } from "./ledger/listRuns.ts";
+import { holdsSlot, readRuns, runInfoOf, type RunRead } from "./ledger/listRuns.ts";
 import { asciiLower, runIdToString } from "./ledger/runId.ts";
 import { formatTs } from "./ledger/time.ts";
 
@@ -209,18 +209,15 @@ const passesOf = (
 };
 
 const runRow = (read: RunRead, nowMs: number): StatusReport["runs"][number] => {
-  const { summary } = read;
-  const entries = read.record?.entries ?? [];
-  const lastChange = entries.findLast((entry) => entry.event === "state_changed");
-  const launch = entries.findLast((entry) => entry.event === "session_launched");
-  const claim = entries.find((entry) => entry.event === "claimed");
+  const { summary, seen } = read;
+  const lastChange = read.record?.entries.findLast((entry) => entry.event === "state_changed");
   return {
     id: runIdToString(summary.id),
     state: summary.state,
-    user: claim === undefined ? null : text(claim.data, "github_user"),
+    user: seen?.githubUser ?? null,
     for_ms: lastChange === undefined ? null : Math.max(0, nowMs - lastChange.ms),
     pr_url: summary.prUrl,
-    thread_id: launch === undefined ? null : text(launch.data, "thread_id"),
+    thread_id: seen?.threadId ?? null,
     unreadable: summary.unreadable,
   };
 };
@@ -245,12 +242,14 @@ export const buildStatus = (input: {
   const { dataDir, nowMs } = input;
   const settings = input.status.state === "running" ? input.status.settings : null;
   const log = readMachineLog(dataDir, nowMs);
-  const reads = readRuns(dataDir);
+  // One read of the runs gives the rows, the slots and the problems. A finished run last written
+  // before the window cannot hold a line inside it, so it is not read.
+  const reads = readRuns(dataDir, { skipFinishedBefore: nowMs - PROBLEM_WINDOW_MS });
   const open = reads.filter((read) => !read.summary.finished);
 
   // The one place the port follows the fork's pass, not softfac's `holds_slot`: a run counts as
   // the pass counts it, so an unconfirmed run and one whose pull request is reported hold none.
-  const used = listUnfinishedRuns(dataDir).filter(holdsSlot).length;
+  const used = open.filter((read) => holdsSlot(runInfoOf(read.summary.id, read.seen))).length;
 
   // Oldest first: the machine log, then the runs. Reversed and stably sorted by time, a later
   // line comes before an earlier one of the same time.

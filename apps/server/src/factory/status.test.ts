@@ -65,6 +65,14 @@ const writeRun = (dir: string, id: string, lines: ReadonlyArray<string>) => {
   NodeFS.mkdirSync(NodePath.join(dir, "runs"), { recursive: true });
   NodeFS.writeFileSync(NodePath.join(dir, "runs", `${id}.jsonl`), lines.join(""));
 };
+/**
+ * A regular run file that cannot be read, whoever runs the test: a sparse file over the 2 GiB a
+ * Node read allows, which fails at once without reading it.
+ */
+const writeUnreadableRun = (path: string) => {
+  NodeFS.writeFileSync(path, "");
+  NodeFS.truncateSync(path, 3 * 2 ** 30);
+};
 const writeEvents = (dir: string, lines: ReadonlyArray<string>) =>
   NodeFS.writeFileSync(NodePath.join(dir, "events.jsonl"), lines.join(""));
 
@@ -359,8 +367,8 @@ describe("buildStatus: one read of the runs", () => {
     // A finished file is never appended to, so a stale mtime means none of its lines are in the
     // window: the report does not open it. The mtime is real time and the clock of the report is
     // `NOW`, so age the file from `NOW`.
-    const at = new Date(NOW - 2 * 86_400_000);
-    NodeFS.utimesSync(NodePath.join(dir, "runs", "rawphp__softfac__12__1.jsonl"), at, at);
+    const seconds = (NOW - 2 * 86_400_000) / 1000;
+    NodeFS.utimesSync(NodePath.join(dir, "runs", "rawphp__softfac__12__1.jsonl"), seconds, seconds);
     writeRun(dir, "rawphp__softfac__13__1", [
       claimed(ago(5 * HOUR)),
       runError(ago(4 * HOUR), "advance", "github", "recent"),
@@ -793,7 +801,7 @@ describe("buildStatus: runs of repos the machine config leaves out", () => {
     expect(report(dir, { status: running(60, []) }).left_out).toEqual([
       { id: "acme__widgets__9__1", state: "starting", pr_url: null },
     ]);
-    NodeFS.mkdirSync(NodePath.join(dir, "runs", "acme__widgets__8__1.jsonl"));
+    writeUnreadableRun(NodePath.join(dir, "runs", "acme__widgets__8__1.jsonl"));
     expect(
       report(dir, { status: running(60, []) }).left_out.find((run) => run.id.endsWith("__8__1")),
     ).toEqual({ id: "acme__widgets__8__1", state: "unreadable", pr_url: null });

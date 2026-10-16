@@ -640,8 +640,8 @@ describe("readRuns: skipFinishedBefore", () => {
   const DAY = 86_400_000;
   /** Sets the file's mtime to `ageMs` before `nowMs`. */
   const age = (path: string, nowMs: number, ageMs: number) => {
-    const at = new Date(nowMs - ageMs);
-    NodeFS.utimesSync(path, at, at);
+    const seconds = (nowMs - ageMs) / 1000;
+    NodeFS.utimesSync(path, seconds, seconds);
   };
 
   it("neither reads nor returns a finished file older than the cutoff", () => {

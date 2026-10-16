@@ -441,7 +441,10 @@ describe("GET /api/factory/runs", () => {
   it.effect("lists a run file that cannot be read as unreadable", () =>
     serving({}, async (call, { tokens, dir }) => {
       seed(dir, run10, BUILDING);
-      NodeFS.mkdirSync(NodePath.join(dir, "runs", "rawphp__broken__2__1.jsonl"));
+      // A regular file over the 2 GiB a Node read allows: it fails at once, whoever runs the test.
+      const broken = NodePath.join(dir, "runs", "rawphp__broken__2__1.jsonl");
+      NodeFS.writeFileSync(broken, "");
+      NodeFS.truncateSync(broken, 3 * 2 ** 30);
       const body = (await json(await call("GET", "/api/factory/runs", tokens.read))) as {
         runs: Array<Record<string, unknown>>;
       };
