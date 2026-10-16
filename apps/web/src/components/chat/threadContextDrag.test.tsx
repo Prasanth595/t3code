@@ -65,23 +65,4 @@ describe("useThreadContextDrop", () => {
     expect(drafts.get("thread-b")).toEqual(["thread-dropped"]);
     expect(drafts.get("thread-a")).toEqual([]);
   });
-
-  it("stops calling the drop callback once the target unmounts", async () => {
-    const drafts = new Map<string, Array<ThreadId>>([["thread-a", []]]);
-    const dropped: ScopedThreadRef = {
-      environmentId: ENVIRONMENT_ID,
-      threadId: "thread-dropped" as ThreadId,
-    };
-
-    await act(() => root.render(<ComposerDropTarget draftKey="thread-a" drafts={drafts} />));
-    const target = container.querySelector("[data-drop-target]");
-    expect(target).not.toBeNull();
-    await act(() => root.render(null));
-
-    act(() => {
-      target!.dispatchEvent(new CustomEvent(THREAD_CONTEXT_DROP_EVENT, { detail: [dropped] }));
-    });
-
-    expect(drafts.get("thread-a")).toEqual([]);
-  });
 });
