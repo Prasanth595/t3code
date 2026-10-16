@@ -1411,6 +1411,54 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("settles a tracked background call when later revisions omit the flag", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { runtime, providerThread } = harness;
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("item/started", {
+        turnId: nativeId,
+        item: toolCall(nativeId, "background-1", 1, "inProgress", { background: true }),
+      });
+      yield* fake.emit("item/updated", {
+        turnId: nativeId,
+        item: toolCall(nativeId, "background-1", 2, "inProgress"),
+      });
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      assert.isFalse(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "background-1" &&
+            event.turnItem.status === "completed",
+        ),
+      );
+      yield* fake.emit("item/completed", {
+        turnId: nativeId,
+        item: toolCall(nativeId, "background-1", 3, "completed"),
+      });
+      yield* harness.takeEvent(
+        "turn_item.updated",
+        (event) => event.turnItem.status === "completed",
+      );
+      const settled = harness.allEvents.findLast(
+        (event) => event.type === "provider_thread.updated",
+      );
+      assert.deepStrictEqual(
+        settled?.type === "provider_thread.updated"
+          ? settled.providerThread.pendingBackgroundTasks
+          : undefined,
+        [],
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("clears background tool calls and task list rows when the host fails", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();

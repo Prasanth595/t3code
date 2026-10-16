@@ -669,7 +669,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           }
         }
       });
+      // Later revisions can omit the flag; keep tracking the call until it settles.
       const isBackgroundItem = (item: MuseItem) =>
+        observedChildren.has(item.itemId) ||
         item.kind === "subagent" ||
         item.kind === "workflow" ||
         (item.kind === "toolCall" && item.background === true);
