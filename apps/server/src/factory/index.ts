@@ -122,7 +122,7 @@ export const liveWorld = (
     project: (watched) => withProcess(projectFromBase(githubFor(watched))),
     trackerUser: (watched) =>
       withProcess(githubFor(watched).login()).pipe(Effect.mapError(asPassError("tracker"))),
-    unfinishedRuns: () => ledger(() => listUnfinishedRuns(dataDir)),
+    unfinishedRuns: (only) => ledger(() => listUnfinishedRuns(dataDir, only)),
     readyIssues: (repo: Repo) =>
       withProcess(githubFor(repo.watched).listIssues("ready")).pipe(
         Effect.map((listing) => ({ items: unassignedByNumber(listing.items), cut: listing.cut })),
@@ -228,10 +228,10 @@ const startFactory = Effect.gen(function* () {
   const process = yield* FactoryProcess;
   const world = liveWorld(machine, factoryDir, process, () => Date.now(), hostName());
   const onePass = Effect.gen(function* () {
-    const lines: Array<string> = [];
-    const report = yield* runPass(world, machine, (line) => lines.push(line));
-    for (const line of lines) yield* Effect.logInfo(line);
-    return report;
+    // Each line is logged as it is decided, so a pass that hangs or dies has said what it did.
+    const context = yield* Effect.context<never>();
+    const log = Effect.runSyncWith(context);
+    return yield* runPass(world, machine, (line) => log(Effect.logInfo(line)));
   });
   return yield* runLoop(onePass, machine.pollSeconds);
 });

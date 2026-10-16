@@ -47,8 +47,11 @@ export interface PassWorld {
   readonly project: (repo: WatchedRepo) => Effect.Effect<ProjectConfig, PassError>;
   /** The login the repo's tracker knows the factory by. */
   readonly trackerUser: (repo: WatchedRepo) => Effect.Effect<string, PassError>;
-  /** Every run that is not finished, oldest first. */
-  readonly unfinishedRuns: () => Effect.Effect<ReadonlyArray<RunInfo>, LedgerError>;
+  /** Every run that is not finished, oldest first; with `only`, the runs of that one issue. */
+  readonly unfinishedRuns: (only?: {
+    readonly repo: string;
+    readonly issue: number;
+  }) => Effect.Effect<ReadonlyArray<RunInfo>, LedgerError>;
   /** The open `factory:ready` issues nobody is assigned to, and whether the listing was cut. */
   readonly readyIssues: (repo: Repo) => Effect.Effect<Listing<number>, PassError>;
   /** The open `factory:triage` issues the factory's login is the only assignee of. */
@@ -286,9 +289,10 @@ export const runPass = (
     // Without the ledger there is no telling how many runs are active, so nothing is claimed.
     const infos = yield* runs(world, repos, pass);
     if (infos !== null) {
-      yield* untrackedClaims(world, repos, infos, pass);
-      yield* unassignedClaims(world, repos, infos, pass);
-      yield* claim(world, repos, infos, machine, pass);
+      const known = new Known(infos);
+      yield* untrackedClaims(world, repos, known, pass);
+      yield* unassignedClaims(world, repos, known, pass);
+      yield* claim(world, repos, known, machine, pass);
     }
     const report = pass.report;
     pass.line(
@@ -381,19 +385,53 @@ const runs = (
     return listed.success;
   });
 
-const hasRun = (infos: ReadonlyArray<RunInfo>, repo: string, issue: number) =>
-  infos.some((i) => i.id.issue === String(issue) && sameRepo(i.id.repo, repo));
+/**
+ * The unfinished runs as this pass knows them: listed once at the start of the pass, then the
+ * runs of an issue read again after each `start` for it, so the ledger is not listed whole again.
+ */
+class Known {
+  infos: ReadonlyArray<RunInfo>;
+  /** An issue's runs could not be read again, so how many runs are active is not known. */
+  lost = false;
+
+  constructor(infos: ReadonlyArray<RunInfo>) {
+    this.infos = infos;
+  }
+
+  of(repo: string, issue: number): ReadonlyArray<RunInfo> {
+    return this.infos.filter((i) => i.id.issue === String(issue) && sameRepo(i.id.repo, repo));
+  }
+
+  /** Reads the issue's runs again. A ledger that cannot be read is an error line, once a pass. */
+  refresh(world: PassWorld, pass: Pass, repo: string, issue: number): Effect.Effect<void> {
+    return Effect.matchEffect(world.unfinishedRuns({ repo, issue }), {
+      onSuccess: (fresh) =>
+        Effect.sync(() => {
+          const others = this.infos.filter(
+            (i) => !(i.id.issue === String(issue) && sameRepo(i.id.repo, repo)),
+          );
+          this.infos = [...others, ...fresh];
+        }),
+      onFailure: (error) => {
+        if (this.lost) return Effect.void;
+        this.lost = true;
+        return pass.fail(null, passError("ledger", "cannot read the run ledger: ", error.message));
+      },
+    });
+  }
+}
 
 /**
- * Claims `start` began that left no run in the ledger: the issue is `factory:triage` and
- * assigned to the factory's login alone, and no unfinished run is for it. `start` finishes such
- * an issue (the design sends it to `stuck`). They are claims already made, so the limit on new
- * claims does not apply to them.
+ * Claims `start` began that left no run it can go on from: the issue is `factory:triage` and
+ * assigned to the factory's login alone, and no unfinished run for it is confirmed (`RunInfo`).
+ * `start` finishes such an issue (the design sends it to `stuck`), in the run it left when there
+ * is one, so a stuck path cut short is tried again on every pass. They are claims already made,
+ * so the limit on new claims does not apply to them.
  */
 const untrackedClaims = (
   world: PassWorld,
   repos: ReadonlyArray<Loaded>,
-  infos: ReadonlyArray<RunInfo>,
+  known: Known,
   pass: Pass,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -411,9 +449,9 @@ const untrackedClaims = (
       }
       pass.sayIfCut(name, "triage", listing.success.cut);
       for (const issue of listing.success.items) {
-        if (hasRun(infos, name, issue)) continue;
+        if (known.of(name, issue).some((i) => i.unreadable || i.confirmed)) continue;
         const notes = pass.notes(`${name}${mention(issue)}`, "triage");
-        const run = yield* noteStart(world, pass, notes, repo, issue, {
+        const run = yield* noteStart(world, pass, known, notes, repo, issue, {
           claimed: (run) => `no run on record, claimed in run ${run}`,
           notTaken: "no run on record, not ours to resume",
           stuck: "no run on record",
@@ -431,7 +469,7 @@ const untrackedClaims = (
 const unassignedClaims = (
   world: PassWorld,
   repos: ReadonlyArray<Loaded>,
-  infos: ReadonlyArray<RunInfo>,
+  known: Known,
   pass: Pass,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
@@ -452,7 +490,7 @@ const unassignedClaims = (
         continue;
       }
       for (const { issue, state } of issues.success) {
-        if (hasRun(infos, name, issue)) continue;
+        if (known.of(name, issue).length > 0) continue;
         const notes = pass.notes(`${name}${mention(issue)}`, state);
         const released = yield* Effect.result(world.releaseClaim(repo, issue, state));
         if (released._tag === "Success") {
@@ -469,35 +507,22 @@ const unassignedClaims = (
     }
   });
 
-/** The newest unfinished run of the issue, or null when there is none or the ledger cannot be listed. */
-const newestRun = (world: PassWorld, repo: string, issue: number): Effect.Effect<RunId | null> =>
-  world.unfinishedRuns().pipe(
-    Effect.map((runs) =>
-      runs
-        .map((info) => info.id)
-        .filter((id) => id.issue === String(issue) && sameRepo(id.repo, repo))
-        .reduce<RunId | null>(
-          (best, id) => (best === null || id.attempt > best.attempt ? id : best),
-          null,
-        ),
-    ),
-    Effect.orElseSucceed(() => null),
-  );
+/** The newest of the issue's unfinished runs, or null when there is none. */
+const newestRun = (runs: ReadonlyArray<RunInfo>): RunId | null =>
+  runs
+    .map((info) => info.id)
+    .reduce<RunId | null>(
+      (best, id) => (best === null || id.attempt > best.attempt ? id : best),
+      null,
+    );
 
 /**
- * The run a `start` that failed made, for the issue: the newest unfinished one when it is a newer
- * attempt than `before`, the newest unfinished run before the call. A failed start may have made a
- * run or reopened the newest, so only a run that is new belongs to the failure.
+ * The run a `start` that failed made: the newest unfinished one after the call when it is a newer
+ * attempt than `before`, the newest before the call. A failed start may have made a run or
+ * reopened the newest, so only a run that is new belongs to the failure.
  */
-const madeSince = (
-  world: PassWorld,
-  repo: string,
-  issue: number,
-  before: RunId | null,
-): Effect.Effect<RunId | null> =>
-  Effect.map(newestRun(world, repo, issue), (after) =>
-    after !== null && (before === null || after.attempt > before.attempt) ? after : null,
-  );
+const madeSince = (after: RunId | null, before: RunId | null): RunId | null =>
+  after !== null && (before === null || after.attempt > before.attempt) ? after : null;
 
 /** The words a start's outcome puts on the issue's line, by outcome. */
 interface StartWords {
@@ -508,12 +533,14 @@ interface StartWords {
 
 /**
  * Calls `start` for the issue and puts what it did on `notes`: the run it names, when it made
- * one, is the run the notes' errors belong to. A refused claim is a `claim_skipped`; a claim
- * counts only when the issue was `ready`.
+ * one, is the run the notes' errors belong to. The issue's runs are read again into `known`
+ * after the call. A refused claim is a `claim_skipped`; a claim counts only when the issue was
+ * `ready`.
  */
 const noteStart = (
   world: PassWorld,
   pass: Pass,
+  known: Known,
   notes: Notes,
   repo: Repo,
   issue: number,
@@ -521,15 +548,17 @@ const noteStart = (
 ): Effect.Effect<RunId | null> =>
   Effect.gen(function* () {
     const name = repo.watched.repo;
-    const before = yield* newestRun(world, name, issue);
+    const before = newestRun(known.of(name, issue));
     const outcome = yield* Effect.result(world.start(repo, issue));
+    if (outcome._tag === "Failure" && outcome.failure._tag === "GateRunningError") {
+      // Nothing was called or written.
+      notes.parts.push(GATE_RUNNING);
+      return null;
+    }
+    yield* known.refresh(world, pass, name, issue);
     if (outcome._tag === "Failure") {
-      if (outcome.failure._tag === "GateRunningError") {
-        notes.parts.push(GATE_RUNNING);
-        return null;
-      }
       pass.failed(notes, "start", outcome.failure);
-      return yield* madeSince(world, name, issue, before);
+      return madeSince(newestRun(known.of(name, issue)), before);
     }
     switch (outcome.success.kind) {
       case "claimed": {
@@ -559,12 +588,6 @@ const noteStart = (
     }
   });
 
-/** The repo of each run that holds a slot: not finished, and not waiting on a pull request. */
-const holding = (world: PassWorld): Effect.Effect<Array<string>, LedgerError> =>
-  Effect.map(world.unfinishedRuns(), (runs) =>
-    runs.filter((run) => holdsSlot(run.unreadable, run.state)).map((run) => run.id.repo),
-  );
-
 /** A watched repo's ready issues still to try this pass, oldest first, and how many of its runs hold a slot. */
 interface Queue {
   readonly repo: Repo;
@@ -572,8 +595,9 @@ interface Queue {
   held: number;
 }
 
-/** Sets each queue's `held` from `holding`, and returns the machine's count. */
-const count = (holding: ReadonlyArray<string>, queues: ReadonlyArray<Queue>): number => {
+/** Sets each queue's `held` from the runs that hold a slot, and returns the machine's count. */
+const count = (known: Known, queues: ReadonlyArray<Queue>): number => {
+  const holding = known.infos.filter(holdsSlot).map((run) => run.id.repo);
   for (const queue of queues) {
     queue.held = holding.filter((repo) => sameRepo(repo, queue.repo.watched.repo)).length;
   }
@@ -590,19 +614,13 @@ const count = (holding: ReadonlyArray<string>, queues: ReadonlyArray<Queue>): nu
 const claim = (
   world: PassWorld,
   repos: ReadonlyArray<Loaded>,
-  infos: ReadonlyArray<RunInfo>,
+  known: Known,
   machine: MachineConfig,
   pass: Pass,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const first = yield* Effect.result(holding(world));
-    if (first._tag === "Failure") {
-      yield* pass.fail(
-        null,
-        passError("ledger", "cannot read the run ledger: ", first.failure.message),
-      );
-      return;
-    }
+    // A start before this step left runs that could not be read again.
+    if (known.lost) return;
     const paused = world.handPause();
     // Ready issues that were not tried because the limit was reached. Every repo is still
     // listed, so the count is the whole machine's.
@@ -625,7 +643,7 @@ const claim = (
       const issues = [...new Set(listing.success.items)].sort((a, b) => a - b);
       queues.push({ repo, issues, held: 0 });
     }
-    let active = count(first.success, queues);
+    let active = count(known, queues);
     // A blocked issue takes no slot, so its repo stays the one with the fewest and its next
     // issue is tried.
     for (;;) {
@@ -639,12 +657,7 @@ const claim = (
       const notes = pass.notes(`${name}${mention(issue)}`, "ready");
       // An issue with a run whose gate is running waits: `start` would finish that run under
       // its gate. It takes no slot, no blocker read, and is not counted as left over.
-      const gating = infos.some(
-        (info) =>
-          info.id.issue === String(issue) &&
-          sameRepo(info.id.repo, name) &&
-          world.gateRunning(info.id),
-      );
+      const gating = known.of(name, issue).some((info) => world.gateRunning(info.id));
       if (gating) {
         notes.parts.push(GATE_RUNNING);
         yield* pass.flush(notes, null);
@@ -653,9 +666,18 @@ const claim = (
       // Checked before the blockers: a person paused claims, so no claim is started. The pause is
       // the machine's, said once after the loop.
       if (paused !== null) continue;
-      // Before the limit, so a blocked issue takes no slot and is not counted as left over.
-      // Nothing is written for it, and a read that fails holds it back too. The `## Depends on`
-      // text is read only when no linked blocker is open.
+      // Before the blockers: with no slot free nothing is claimed, so they are not read. Every
+      // issue left is counted as left over, blocked or not.
+      if (active >= machine.maxConcurrentRuns) {
+        left += 1;
+        yield* pass.record({
+          event: "claim_skipped",
+          data: { repo: name, issue: String(issue), reason: "limit" },
+        });
+        continue;
+      }
+      // A blocked issue takes no slot. Nothing is written for it, and a read that fails holds it
+      // back too. The `## Depends on` text is read only when no linked blocker is open.
       const linked = yield* Effect.result(world.openBlockers(repo, issue));
       if (linked._tag === "Failure") {
         pass.trouble(
@@ -693,31 +715,16 @@ const claim = (
         });
         continue;
       }
-      if (active >= machine.maxConcurrentRuns) {
-        left += 1;
-        yield* pass.record({
-          event: "claim_skipped",
-          data: { repo: name, issue: String(issue), reason: "limit" },
-        });
-        continue;
-      }
-      const run = yield* noteStart(world, pass, notes, repo, issue, {
+      const run = yield* noteStart(world, pass, known, notes, repo, issue, {
         claimed: (run) => `claimed in run ${run}`,
         notTaken: "not claimed",
         stuck: "claimed, then",
       });
       yield* pass.flush(notes, run);
+      if (known.lost) return;
       // Count again: a claim that ended in `stuck`, or in an error that left the issue in
       // `triage`, changes how many runs are active, and which repo has the fewest.
-      const again = yield* Effect.result(holding(world));
-      if (again._tag === "Failure") {
-        yield* pass.fail(
-          null,
-          passError("ledger", "cannot read the run ledger: ", again.failure.message),
-        );
-        return;
-      }
-      active = count(again.success, queues);
+      active = count(known, queues);
     }
     if (paused !== null) {
       pass.line(

@@ -25,7 +25,9 @@ export interface HandPause {
 /**
  * The pause on disk. The file is a pause whenever it is a regular file, whatever it holds: a
  * file that is missing, a symlink or a FIFO is no pause. A text that is not a time falls back to
- * the modification time, and to 0 when that cannot be read either.
+ * the modification time, and to 0 when that cannot be read either. A file that is there but
+ * cannot be opened (its mode, a disk error, no file descriptors left) is a pause: a person who
+ * made it meant claims to stop.
  */
 export const loadHandPause = (dataDir: string): HandPause | null => {
   const path = NodePath.join(dataDir, PAUSE_FILE);
@@ -36,8 +38,11 @@ export const loadHandPause = (dataDir: string): HandPause | null => {
       path,
       NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
     );
-  } catch {
-    return null;
+  } catch (error) {
+    // ELOOP is a symlink refused by O_NOFOLLOW.
+    const code = errnoCode(error);
+    if (code === "ENOENT" || code === "ELOOP") return null;
+    return unopenedPause(path);
   }
   try {
     const stat = NodeFS.fstatSync(fd);
@@ -52,6 +57,18 @@ export const loadHandPause = (dataDir: string): HandPause | null => {
   } finally {
     NodeFS.closeSync(fd);
   }
+};
+
+/** A pause file that is there but could not be opened, by what `lstat` says of it. */
+const unopenedPause = (path: string): HandPause | null => {
+  let stat: NodeFS.Stats;
+  try {
+    stat = NodeFS.lstatSync(path);
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return null;
+    return { sinceMs: 0 };
+  }
+  return stat.isFile() ? { sinceMs: Math.floor(stat.mtimeMs) } : null;
 };
 
 /** What {@link pauseClaims} found. */

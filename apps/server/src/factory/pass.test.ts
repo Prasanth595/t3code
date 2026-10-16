@@ -97,7 +97,7 @@ class Fake implements PassWorld {
   events: Array<MachineEvent> = [];
 
   runIn(issue: number, state: State | null, repo = REPO) {
-    this.runs.push({ id: rid(issue, repo), state, unreadable: false });
+    this.runs.push({ id: rid(issue, repo), state, unreadable: false, confirmed: true });
   }
 
   pushStart(key: string, answer: StartOutcome | StartError) {
@@ -122,12 +122,19 @@ class Fake implements PassWorld {
     return Effect.succeed(found ?? "rawphp");
   }
 
-  unfinishedRuns() {
-    this.calls.push("runs");
+  unfinishedRuns(only?: { repo: string; issue: number }) {
+    this.calls.push(only === undefined ? "runs" : `runs ${only.repo}#${only.issue}`);
     if (this.runsError) {
       return Effect.fail(new LedgerIoError({ path: "/data/runs", cause: new Error("unreadable") }));
     }
-    return Effect.succeed([...this.runs]);
+    return Effect.succeed(
+      this.runs.filter(
+        (run) =>
+          only === undefined ||
+          (run.id.issue === String(only.issue) &&
+            run.id.repo.toLowerCase() === only.repo.toLowerCase()),
+      ),
+    );
   }
 
   private listing(answers: Answers<Array<number>>, cut: Array<string>, repo: Repo) {
@@ -178,10 +185,15 @@ class Fake implements PassWorld {
     this.calls.push(`start ${key}`);
     const answer = this.starts[key]?.shift() ?? { kind: "skipped", reason: "scripted" };
     if (this.startLeavesRun.includes(issue)) {
-      this.runs.push({ id: rid(issue, repo.watched.repo), state: "triage", unreadable: false });
+      this.runs.push({
+        id: rid(issue, repo.watched.repo),
+        state: "triage",
+        unreadable: false,
+        confirmed: true,
+      });
     }
     if ("kind" in answer && answer.kind === "claimed") {
-      this.runs.push({ id: answer.run, state: "triage", unreadable: false });
+      this.runs.push({ id: answer.run, state: "triage", unreadable: false, confirmed: true });
       return Effect.succeed(answer);
     }
     if ("kind" in answer) return Effect.succeed(answer);
@@ -470,7 +482,7 @@ describe("claiming new issues", () => {
   it.effect("a run whose file cannot be read is an error line and counts as active", () =>
     Effect.gen(function* () {
       const fake = new Fake();
-      fake.runs.push({ id: rid(40), state: null, unreadable: true });
+      fake.runs.push({ id: rid(40), state: null, unreadable: true, confirmed: false });
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
@@ -640,6 +652,30 @@ describe("claims that have no run in the ledger", () => {
       fake.triage[REPO] = [12];
       yield* pass(fake, machine([REPO], 3));
       assert.deepEqual(starts(fake), []);
+    }),
+  );
+
+  it.effect("a triage issue whose only run is not confirmed gets start again", () =>
+    Effect.gen(function* () {
+      // A stuck path that failed half way leaves a run with no approval behind; start finishes it.
+      const fake = new Fake();
+      fake.runs.push({ id: rid(12), state: "triage", unreadable: false, confirmed: false });
+      fake.triage[REPO] = [12];
+      fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "could not confirm" });
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(starts(fake), [`start ${REPO}#12`]);
+      assert.ok(runLine(lines, "rawphp/softfac#12 ").includes("stuck"), lines.join("\n"));
+    }),
+  );
+
+  it.effect("a run that is not confirmed takes no slot", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runs.push({ id: rid(12), state: "triage", unreadable: false, confirmed: false });
+      fake.ready[REPO] = [3];
+      fake.pushStart(`${REPO}#3`, started(3));
+      yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), [`start ${REPO}#3`]);
     }),
   );
 
@@ -864,7 +900,7 @@ describe("issues blocked by an open issue", () => {
     }),
   );
 
-  it.effect("a blocked issue is not counted in the limit line", () =>
+  it.effect("with no slot free no blockers are read and every issue left is counted", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(40, BUILDING);
@@ -872,12 +908,32 @@ describe("issues blocked by an open issue", () => {
       fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
       const { lines } = yield* pass(fake, machine([REPO], 1));
       assert.ok(
-        lines.includes("limit reached: 1 ready issue was not claimed, max_concurrent_runs is 1"),
+        lines.includes("limit reached: 2 ready issues were not claimed, max_concurrent_runs is 1"),
         lines.join("\n"),
       );
-      assert.ok(
-        !fake.events.some((e) => JSON.stringify(e) === JSON.stringify(claimSkipped(14, "limit"))),
+      assert.deepEqual(
+        fake.calls.filter((c) => c.startsWith("blockers ") || c.startsWith("depends ")),
+        [],
       );
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [claimSkipped(14, "limit"), claimSkipped(15, "limit")],
+      );
+    }),
+  );
+
+  it.effect("blockers are read only until the last slot is taken", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [14, 15, 16];
+      fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
+      fake.pushStart(`${REPO}#15`, started(15));
+      yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(
+        fake.calls.filter((c) => c.startsWith("blockers ")),
+        [`blockers ${REPO}#14`, `blockers ${REPO}#15`],
+      );
+      assert.deepEqual(starts(fake), [`start ${REPO}#15`]);
     }),
   );
 
@@ -1149,7 +1205,7 @@ describe("what the pass records", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(12, BUILDING);
-      fake.runs.push({ id: rid(13), state: null, unreadable: true });
+      fake.runs.push({ id: rid(13), state: null, unreadable: true, confirmed: false });
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
       assert.deepEqual(fake.events[0], { event: "pass_started", data: {} });
       assert.deepEqual(fake.events.at(-1), {
@@ -1318,6 +1374,65 @@ describe("what the pass records", () => {
       assert.equal(data.step, "start");
       assert.equal(data.kind, "ledger");
       assert.ok(data.message.includes("disk full"), data.message);
+    }),
+  );
+});
+
+// ---- reading the ledger ----
+
+describe("reading the ledger", () => {
+  it.effect(
+    "the ledger is listed whole once a pass, and an issue's runs again after its start",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.triage[REPO] = [7];
+        fake.ready[REPO] = [1, 2, 3];
+        fake.pushStart(`${REPO}#7`, started(7));
+        fake.pushStart(`${REPO}#1`, started(1));
+        fake.pushStart(`${REPO}#2`, started(2));
+        fake.pushStart(`${REPO}#3`, started(3));
+        yield* pass(fake, machine([REPO], 5));
+        assert.deepEqual(
+          fake.calls.filter((c) => c.startsWith("runs")),
+          ["runs", `runs ${REPO}#7`, `runs ${REPO}#1`, `runs ${REPO}#2`, `runs ${REPO}#3`],
+        );
+      }),
+  );
+
+  it.effect("a claim read again counts against the limit", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1, 2];
+      fake.pushStart(`${REPO}#1`, started(1));
+      fake.pushStart(`${REPO}#2`, started(2));
+      const { lines } = yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.ok(
+        lines.includes("limit reached: 1 ready issue was not claimed, max_concurrent_runs is 1"),
+        lines.join("\n"),
+      );
+    }),
+  );
+
+  it.effect("runs that cannot be read again after a start stop the claims, said once", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.triage[REPO] = [7, 8];
+      fake.ready[REPO] = [1];
+      const listed = fake.unfinishedRuns.bind(fake);
+      fake.unfinishedRuns = (only) => {
+        if (only !== undefined) fake.runsError = true;
+        return listed(only);
+      };
+      const { report, lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(starts(fake), [`start ${REPO}#7`, `start ${REPO}#8`]);
+      assert.equal(
+        lines.filter((l) => l.startsWith("error: cannot read the run ledger")).length,
+        1,
+        lines.join("\n"),
+      );
+      assert.equal(report.errors, 1);
     }),
   );
 });

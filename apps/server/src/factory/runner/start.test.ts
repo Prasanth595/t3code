@@ -148,12 +148,21 @@ const entriesOf = (dataDir: string, id: RunId = run7) =>
 const stepsOf = (dataDir: string, id: RunId = run7) =>
   readRun(dataDir, id).entries.map((e) => e.event);
 
-/** An older unfinished run of issue 7 whose last state is `to`. */
-const olderRun = (dataDir: string, attempt: number, to: State, finish = false) => {
+/** An older run of issue 7 whose last state is `to`, with the approval it was claimed on when `approved`. */
+const olderRun = (
+  dataDir: string,
+  attempt: number,
+  to: State,
+  finish = false,
+  approved = false,
+) => {
   const id = { ...run7, attempt };
   const ledger = Ledger.create(dataDir, id, { clock: () => T0 - 1000 });
   handles.push(ledger);
   const cause = makeCause("start", "claimed");
+  if (approved) {
+    ledger.append({ event: "step_changed", data: { step: `approved ${LABELED}` } }, cause);
+  }
   ledger.append({ event: "claimed", data: { machine: "m", github_user: USER } }, cause);
   ledger.append({ event: "state_changed", data: { from: "ready", to } }, cause);
   if (finish) ledger.finish("stuck", null, null, cause);
@@ -372,6 +381,53 @@ describe("start: a claim call that fails", () => {
     }),
   );
 
+  it.effect("sets the label when the issue is ours but still labelled ready", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("ready"), detail("ready", [USER])],
+        claims: [ghFailure()],
+      });
+      assert.deepStrictEqual(yield* startIn(dataDir, tracker), { kind: "claimed", run: run7 });
+      assert.deepStrictEqual(calls.slice(3), ["issue 7", "setState 7 triage"]);
+      assert.deepStrictEqual(
+        scanMachineLog(dataDir).map((e) => [e.event, e.data]),
+        [["claim_repaired", { repo: REPO, issue: 7, outcome: "finished" }]],
+      );
+    }),
+  );
+
+  it.effect("assigns and labels when both factory labels are gone and nobody is assigned", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("ready"), detail(null, [])],
+        claims: [ghFailure()],
+      });
+      assert.deepStrictEqual(yield* startIn(dataDir, tracker), { kind: "claimed", run: run7 });
+      assert.deepStrictEqual(calls.slice(3), ["issue 7", "assign 7 rawphp", "setState 7 triage"]);
+      assert.deepStrictEqual(
+        scanMachineLog(dataDir).map((e) => [e.event, e.data]),
+        [["claim_repaired", { repo: REPO, issue: 7, outcome: "finished" }]],
+      );
+    }),
+  );
+
+  it.effect("is the error, with nothing written, when someone else is assigned", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("ready"), detail("triage", ["eve"])],
+        claims: [ghFailure()],
+      });
+      const error = yield* Effect.flip(startIn(dataDir, tracker));
+      assert.strictEqual(error._tag, "GitHubFailed");
+      assert.deepStrictEqual(calls.slice(3), ["issue 7"]);
+      assert.deepStrictEqual(scanMachineLog(dataDir), []);
+      assert.strictEqual(NodeFS.existsSync(runPath(dataDir, run7)), false);
+    }),
+  );
+
   it.effect("is the error, untouched, when the issue cannot be read again", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
@@ -446,15 +502,66 @@ describe("start: an issue in triage that is ours", () => {
       }),
   );
 
-  it.effect("with an unfinished run is left to that run", () =>
+  it.effect("with an unfinished run that was approved is left to that run", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
-      olderRun(dataDir, 1, "triage");
+      olderRun(dataDir, 1, "triage", false, true);
       const { tracker, calls } = fakeTracker({ issues: [detail("triage", [USER])] });
       const outcome = yield* startIn(dataDir, tracker);
       assert.strictEqual(outcome.kind, "skipped");
       assert.deepStrictEqual(calls, ["issue 7"]);
-      assert.deepStrictEqual(stepsOf(dataDir), ["claimed", "state_changed"]);
+      assert.deepStrictEqual(stepsOf(dataDir), ["step_changed", "claimed", "state_changed"]);
+    }),
+  );
+
+  it.effect("with an unfinished run that records no approval, goes stuck in that run", () =>
+    Effect.gen(function* () {
+      // An earlier stuck path posted the comment, then failed on the label.
+      const dataDir = tempDir();
+      olderRun(dataDir, 1, "triage");
+      const ledger = Ledger.open(dataDir, run7, { clock: () => T0 });
+      handles.push(ledger);
+      const code = makeCause("start", "approval-unconfirmed");
+      ledger.append({ event: "stuck", data: { reason: CANNOT_CONFIRM } }, code);
+      const { tracker, calls } = fakeTracker({ issues: [detail("triage", [USER])] });
+      const outcome = yield* startIn(dataDir, tracker);
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: CANNOT_CONFIRM });
+      // The comment is on the issue already, so only the label, release and status follow.
+      assert.deepStrictEqual(calls, [
+        "issue 7",
+        "setState 7 stuck",
+        "unassign 7 rawphp",
+        `status 7 rawphp ${statusBody("stuck", "mac-mini", null, null)}`,
+      ]);
+      assert.deepStrictEqual(stepsOf(dataDir), [
+        "claimed",
+        "state_changed",
+        "stuck",
+        "state_changed",
+        "finished",
+      ]);
+      assert.strictEqual(NodeFS.existsSync(runPath(dataDir, { ...run7, attempt: 2 })), false);
+    }),
+  );
+
+  it.effect("with an unfinished run in stuck, finishes it and goes stuck in a new attempt", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      olderRun(dataDir, 1, "stuck");
+      const { tracker } = fakeTracker({ issues: [detail("triage", [USER])] });
+      const outcome = yield* startIn(dataDir, tracker);
+      assert.deepStrictEqual(outcome, {
+        kind: "stuck",
+        run: { ...run7, attempt: 2 },
+        reason: CANNOT_CONFIRM,
+      });
+      const last = readRun(dataDir, run7).entries.at(-1)!;
+      assert.strictEqual(last.event, "finished");
+      assert.deepStrictEqual(last.cause, { step: "start", reason: "new-attempt-started" });
+      assert.strictEqual(
+        readRun(dataDir, { ...run7, attempt: 2 }).entries.at(-1)!.event,
+        "finished",
+      );
     }),
   );
 });

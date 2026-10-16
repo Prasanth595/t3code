@@ -14,6 +14,8 @@ const tempDir = useTempDirs();
 
 const pauseFile = (dataDir: string) => NodePath.join(dataDir, PAUSE_FILE);
 
+const WHOLE_SECOND = T0 - (T0 % 1000);
+
 describe("claims paused by hand", () => {
   it("pause writes the time privately", () => {
     const dataDir = tempDir();
@@ -42,9 +44,9 @@ describe("claims paused by hand", () => {
   it("a file a person wrote is still a pause, since its mtime", () => {
     const dataDir = tempDir();
     NodeFS.writeFileSync(pauseFile(dataDir), "paused by tom\n");
-    const mtime = new Date(T0);
-    NodeFS.utimesSync(pauseFile(dataDir), mtime, mtime);
-    expect(loadHandPause(dataDir)).toEqual({ sinceMs: T0 });
+    // A whole second: `utimes` takes seconds as a float, which cannot hold every millisecond.
+    NodeFS.utimesSync(pauseFile(dataDir), new Date(WHOLE_SECOND), new Date(WHOLE_SECOND));
+    expect(loadHandPause(dataDir)).toEqual({ sinceMs: WHOLE_SECOND });
   });
 
   it("the time in the file is trimmed and parsed", () => {
@@ -60,6 +62,19 @@ describe("claims paused by hand", () => {
     NodeFS.writeFileSync(target, formatTs(T0));
     NodeFS.symlinkSync(target, pauseFile(dataDir));
     expect(loadHandPause(dataDir)).toBeNull();
+  });
+
+  it("a file that cannot be opened is still a pause, since its mtime", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(pauseFile(dataDir), formatTs(T0 + 5));
+    NodeFS.utimesSync(pauseFile(dataDir), new Date(WHOLE_SECOND), new Date(WHOLE_SECOND));
+    NodeFS.chmodSync(pauseFile(dataDir), 0o000);
+    try {
+      expect(() => NodeFS.readFileSync(pauseFile(dataDir))).toThrow();
+      expect(loadHandPause(dataDir)).toEqual({ sinceMs: WHOLE_SECOND });
+    } finally {
+      NodeFS.chmodSync(pauseFile(dataDir), 0o600);
+    }
   });
 
   it("a FIFO is no pause, and does not block the read", () => {

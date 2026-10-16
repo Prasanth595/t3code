@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import type { State } from "../domain/lifecycle.ts";
 import { makeCause } from "./events.ts";
 import { Ledger } from "./ledger.ts";
 import { holdsSlot, listUnfinishedRuns } from "./listRuns.ts";
@@ -32,9 +33,16 @@ const runAt = (
   startMs: number,
   to: "triage" | "building" | "pr-open" | "needs-info" | null,
   finish = false,
+  approved = true,
 ) => {
   const ledger = Ledger.create(dataDir, id, { clock: ticking(startMs, 1000) });
   handles.push(ledger);
+  if (approved) {
+    ledger.append(
+      { event: "step_changed", data: { step: "approved 2026-10-04T10:00:00Z" } },
+      cause,
+    );
+  }
   ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
   if (to !== null) ledger.append({ event: "state_changed", data: { from: "ready", to } }, cause);
   if (finish) ledger.finish("stuck", null, null, cause);
@@ -52,9 +60,9 @@ describe("listUnfinishedRuns", () => {
     runAt(dataDir, rid(2), T0 + 10_000, "pr-open", true);
     runAt(dataDir, rid(4), T0 + 30_000, null);
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(1), state: "triage", unreadable: false },
-      { id: rid(3), state: "building", unreadable: false },
-      { id: rid(4), state: null, unreadable: false },
+      { id: rid(1), state: "triage", unreadable: false, confirmed: true },
+      { id: rid(3), state: "building", unreadable: false, confirmed: true },
+      { id: rid(4), state: null, unreadable: false, confirmed: true },
     ]);
   });
 
@@ -70,8 +78,8 @@ describe("listUnfinishedRuns", () => {
     // A directory named like a run file is a run whose file cannot be read.
     NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(6))));
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(7), state: "building", unreadable: false },
-      { id: rid(6), state: null, unreadable: true },
+      { id: rid(7), state: "building", unreadable: false, confirmed: true },
+      { id: rid(6), state: null, unreadable: true, confirmed: false },
     ]);
   });
 
@@ -90,20 +98,56 @@ describe("listUnfinishedRuns", () => {
       NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(9))),
       `{"ts":"2026-10-04T10:13:16.123Z","ms":${T0},"event":"state_changed","data":{"from":"ready","to":"later"}}\n`,
     );
-    expect(listUnfinishedRuns(dataDir)).toEqual([{ id: rid(9), state: null, unreadable: false }]);
+    expect(listUnfinishedRuns(dataDir)).toEqual([
+      { id: rid(9), state: null, unreadable: false, confirmed: false },
+    ]);
+  });
+
+  it("a run with no approval and no session is listed as not confirmed", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(8), T0, "triage", false, false);
+    expect(listUnfinishedRuns(dataDir)).toEqual([
+      { id: rid(8), state: "triage", unreadable: false, confirmed: false },
+    ]);
+  });
+
+  it("with one issue named, lists only that issue's runs, whatever the repo's case", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(1), T0, "triage");
+    runAt(dataDir, rid(1, "rawphp/softfac", 2), T0 + 1_000, "building");
+    runAt(dataDir, rid(2), T0 + 2_000, "triage");
+    runAt(dataDir, rid(1, "rawphp/other"), T0 + 3_000, "triage");
+    // A file of another issue that cannot be read is not opened, so it is not listed.
+    NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(3))));
+    expect(listUnfinishedRuns(dataDir, { repo: "RawPhp/Softfac", issue: 1 })).toEqual([
+      { id: rid(1), state: "triage", unreadable: false, confirmed: true },
+      { id: rid(1, "rawphp/softfac", 2), state: "building", unreadable: false, confirmed: true },
+    ]);
   });
 });
 
 describe("holdsSlot", () => {
-  it("every unfinished run holds a slot but one waiting in pr-open", () => {
-    expect(holdsSlot(false, "building")).toBe(true);
-    expect(holdsSlot(false, "triage")).toBe(true);
-    expect(holdsSlot(false, null)).toBe(true);
-    expect(holdsSlot(false, "pr-open")).toBe(false);
+  const run = (state: State | null, confirmed: boolean, unreadable = false) => ({
+    id: rid(1),
+    state,
+    unreadable,
+    confirmed,
+  });
+
+  it("every confirmed unfinished run holds a slot but one waiting in pr-open", () => {
+    expect(holdsSlot(run("building", true))).toBe(true);
+    expect(holdsSlot(run("triage", true))).toBe(true);
+    expect(holdsSlot(run(null, true))).toBe(true);
+    expect(holdsSlot(run("pr-open", true))).toBe(false);
+  });
+
+  it("a run that is not confirmed holds no slot: it never launches a session", () => {
+    expect(holdsSlot(run("triage", false))).toBe(false);
+    expect(holdsSlot(run(null, false))).toBe(false);
   });
 
   it("a run whose file cannot be read holds a slot", () => {
-    expect(holdsSlot(true, null)).toBe(true);
-    expect(holdsSlot(true, "pr-open")).toBe(true);
+    expect(holdsSlot(run(null, false, true))).toBe(true);
+    expect(holdsSlot(run("pr-open", false, true))).toBe(true);
   });
 });

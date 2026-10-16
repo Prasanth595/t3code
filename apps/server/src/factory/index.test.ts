@@ -7,9 +7,14 @@ import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 
-import { FactoryRuntime } from "./index.ts";
+import { describe } from "vite-plus/test";
+
+import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
+import { FactoryRuntime, liveWorld } from "./index.ts";
 import { scanMachineLog } from "./ledger/machineLog.ts";
-import { FactoryProcess, RunSpawnError } from "./process.ts";
+import type { Repo } from "./pass.ts";
+import { utcSecond } from "./runner/start.ts";
+import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
 import * as Paths from "./t3/paths.ts";
 
 /** A process runner on a machine with no `gh`: every call fails to start. */
@@ -39,6 +44,7 @@ const logsFor = (
   setup: (
     factoryDir: string,
   ) => Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> = () => Effect.void,
+  gh: Layer.Layer<FactoryProcess> = noGh,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -67,7 +73,7 @@ const logsFor = (
                 machineConfigPath,
               }),
             ),
-            Layer.provide(noGh),
+            Layer.provide(gh),
           ),
         ),
       ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
@@ -128,3 +134,191 @@ it.effect("clears the gate locks a dead server left and nothing else under gates
     assert.deepStrictEqual(gates, ["notes.txt"]);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("logs each pass line as it is decided, so a pass that dies has said what it did", () =>
+  Effect.gen(function* () {
+    // The first repo's gh fails, which is a pass line; the second's call is a defect, which ends the pass.
+    let calls = 0;
+    const dying = Layer.succeed(
+      FactoryProcess,
+      FactoryProcess.of({
+        run: () => {
+          calls += 1;
+          return calls === 1
+            ? Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") }))
+            : Effect.die(new Error("boom"));
+        },
+      }),
+    );
+    const { logs } = yield* logsFor(
+      `${VALID}  - repo: c/d
+    path: /d
+`,
+      () => Effect.void,
+      dying,
+    );
+    assert.ok(
+      logs.some((line) => line.startsWith("error: a/b: project config not loaded")),
+      logs.join("\n"),
+    );
+    assert.ok(logs.includes("factory pass failed"), logs.join("\n"));
+  }),
+);
+
+// ---- the live world over gh ----
+
+describe("liveWorld", () => {
+  const REPO = "rawphp/softfac";
+  const NOW = Date.UTC(2026, 9, 8, 2, 0, 0);
+  const MINUTE = 60 * 1000;
+
+  /** A process that answers gh by its arguments and records every call. */
+  const ghWith = (answer: (args: ReadonlyArray<string>) => string | null) => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const process = FactoryProcess.of({
+      run: (input: RunInput) => {
+        const args = input.args ?? [];
+        calls.push(args);
+        const stdout = answer(args);
+        return Effect.succeed({
+          exitCode: stdout === null ? 1 : 0,
+          timedOut: false,
+          tail: stdout ?? "",
+          stderrTail: stdout === null ? "gh: Server Error (HTTP 502)" : "",
+          truncated: false,
+        } satisfies RunResult);
+      },
+    });
+    return { process, calls };
+  };
+
+  const machine: MachineConfig = {
+    ghConfigDir: "/gh/rawphp",
+    pollSeconds: 60,
+    maxConcurrentRuns: 1,
+    maxConcurrentGates: 1,
+    modelInstance: "claudeAgent",
+    model: "claude-sonnet-5-5",
+    repos: [{ repo: REPO, path: "/p" }],
+  };
+
+  const worldOf = (process: FactoryProcess["Service"]) =>
+    liveWorld(machine, "/factory-test/data", process, () => NOW, "mac-mini");
+
+  const repo: Repo = {
+    watched: machine.repos[0]!,
+    project: timeLimitOnlyProjectConfig(),
+    trackerUser: "rawphp",
+  };
+
+  const isList = (args: ReadonlyArray<string>, label: string) =>
+    args[0] === "issue" && args[1] === "list" && args.includes(label);
+
+  const ago = (ms: number) => utcSecond(NOW - ms);
+
+  it.effect("a ready issue anyone is assigned to is not listed", () =>
+    Effect.gen(function* () {
+      const { process } = ghWith((args) =>
+        isList(args, "factory:ready")
+          ? '[{"number":3,"title":"c","assignees":[]},{"number":2,"title":"b","assignees":[{"login":"eve"}]},{"number":1,"title":"a","assignees":[]}]'
+          : null,
+      );
+      const listing = yield* worldOf(process).readyIssues(repo);
+      assert.deepStrictEqual(listing, { items: [1, 3], cut: false });
+    }),
+  );
+
+  it.effect(
+    "a triage issue is listed only when the factory's login, in any case, is its only assignee",
+    () =>
+      Effect.gen(function* () {
+        const { process } = ghWith((args) =>
+          isList(args, "factory:triage")
+            ? JSON.stringify([
+                { number: 4, title: "d", assignees: [{ login: "RawPhp" }] },
+                { number: 5, title: "e", assignees: [{ login: "rawphp" }, { login: "eve" }] },
+                { number: 6, title: "f", assignees: [{ login: "eve" }] },
+                { number: 7, title: "g", assignees: [] },
+              ])
+            : null,
+        );
+        const listing = yield* worldOf(process).triageIssues(repo);
+        assert.deepStrictEqual(listing, { items: [4], cut: false });
+      }),
+  );
+
+  /** The unassigned triage issue `updatedAt` ago; its history read fails, so a read shows as a failure. */
+  const unassignedUpdated = (updated: number) =>
+    Effect.gen(function* () {
+      const { process, calls } = ghWith((args) =>
+        isList(args, "factory:triage")
+          ? JSON.stringify([{ number: 9, assignees: [], updatedAt: ago(updated) }])
+          : isList(args, "factory:building")
+            ? "[]"
+            : null,
+      );
+      const result = yield* Effect.result(worldOf(process).unassignedClaims(repo));
+      const historyRead = calls.some((args) => args[0] === "api" && args[1] === "graphql");
+      return { result, historyRead };
+    });
+
+  it.effect("a claim changed within the last 15 minutes is not looked at", () =>
+    Effect.gen(function* () {
+      const { result, historyRead } = yield* unassignedUpdated(14 * MINUTE);
+      assert.ok(result._tag === "Success" && result.success.length === 0);
+      assert.isFalse(historyRead);
+    }),
+  );
+
+  it.effect("a claim unchanged for more than 15 minutes has its history read", () =>
+    Effect.gen(function* () {
+      const { historyRead } = yield* unassignedUpdated(16 * MINUTE);
+      assert.isTrue(historyRead);
+    }),
+  );
+
+  /** gh answers for `.dw/config.yml` on a default branch `main` whose config names `base`. */
+  const baseConfigGh = (base: string) => {
+    const sha = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
+    const text = `factory:\n  instructors: [tomkaczocha]\n  base: ${base}\n  provision: []\n  gate: [make]\n  limits: { minutes: 1, gate_retries: 0 }\n  autonomy: pr\n`;
+    const content = Buffer.from(text).toString("base64");
+    return ghWith((args) => {
+      const path = args[1] ?? "";
+      if (args[0] !== "api") return null;
+      if (path === `repos/${REPO}`) return '{"default_branch":"main"}';
+      if (path === `repos/${REPO}/git/ref/heads/main`) {
+        return JSON.stringify({ ref: "refs/heads/main", object: { sha, type: "commit" } });
+      }
+      if (path.startsWith(`repos/${REPO}/contents/`)) {
+        return JSON.stringify({
+          name: "config.yml",
+          path: ".dw/config.yml",
+          sha: "abc",
+          size: text.length,
+          type: "file",
+          content,
+          encoding: "base64",
+        });
+      }
+      return null;
+    });
+  };
+
+  it.effect("a project config committed on its own base branch is loaded", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh("main");
+      const project = yield* worldOf(process).project(machine.repos[0]!);
+      assert.strictEqual(project.base, "main");
+    }),
+  );
+
+  it.effect("a project config that names another base is a config error naming both", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh("develop");
+      const error = yield* Effect.flip(worldOf(process).project(machine.repos[0]!));
+      assert.strictEqual(error.kind, "config");
+      assert.include(error.message, "`develop`");
+      assert.include(error.message, "`main`");
+    }),
+  );
+});

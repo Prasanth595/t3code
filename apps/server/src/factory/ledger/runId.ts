@@ -32,7 +32,7 @@ export type RunId = {
 };
 
 /** Lowercase the ASCII letters only: `toLowerCase` would fold U+212A (Kelvin) into a `k`. */
-const asciiLower = (text: string) => text.replace(/[A-Z]/g, (c) => c.toLowerCase());
+export const asciiLower = (text: string) => text.replace(/[A-Z]/g, (c) => c.toLowerCase());
 
 /** A number the way we write it: digits, no sign, no leading zeros, no padding. */
 const CANONICAL = /^(?:0|[1-9][0-9]*)$/;

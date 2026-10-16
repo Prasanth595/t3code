@@ -292,10 +292,21 @@ const resumeStart = (ctx: StartContext, issue: number): Effect.Effect<StartOutco
     if (next > 1) {
       const newest = newRunId(ctx.repo, String(issue), next - 1);
       const seen = readProgress((yield* ledger(() => readRun(ctx.dataDir, newest))).entries);
-      // A run already in `stuck` is over; it is finished below with the others. Any other
+      // A run already in `stuck` is over; it is finished below with the others. A run cut short
+      // before it recorded an approval or a session never launched one, so `begin` goes on from
+      // it to `stuck`: a stuck path that failed half way is finished in its own run. Any other
       // unfinished run is left to the step that owns its state: launching a claimed run is
       // issue #16's.
       if (!seen.finished && seen.state !== "stuck") {
+        const unconfirmed = seen.approvedAt === null && seen.threadId === null;
+        if (unconfirmed && (seen.state === null || seen.state === "triage")) {
+          const out = yield* ledger(() => Ledger.open(ctx.dataDir, newest, { clock: ctx.clock }));
+          try {
+            return yield* begin(ctx, issue, newest, out);
+          } finally {
+            out.close();
+          }
+        }
         return {
           kind: "skipped",
           reason: `issue ${mention(issue)} has an unfinished run in state ${seen.state ?? "none"}`,
