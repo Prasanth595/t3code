@@ -345,6 +345,12 @@ export const DesktopUpdateCheckResultSchema = Schema.Struct({
   state: DesktopUpdateStateSchema,
 });
 
+// Fork: a release newer than the downloaded one, found by a check right before an install.
+export const DesktopUpdateInstallCheckSchema = Schema.Struct({
+  newerVersion: Schema.NullOr(Schema.String),
+});
+export type DesktopUpdateInstallCheck = typeof DesktopUpdateInstallCheckSchema.Type;
+
 export const PRIMARY_LOCAL_ENVIRONMENT_ID = "primary";
 
 export interface DesktopEnvironmentBootstrap {
@@ -1153,6 +1159,8 @@ export interface DesktopBridge {
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
+  // Fork: see apps/desktop/src/updates/forkUpdateInstall.ts.
+  checkBeforeUpdateInstall: () => Promise<DesktopUpdateInstallCheck>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   cliCommand?: {
     getState: () => Promise<DesktopCliCommandState>;

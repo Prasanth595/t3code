@@ -186,6 +186,41 @@ export function BackgroundWorkDetailsSettingsRow() {
   );
 }
 
+/** Fork: `checkNewerBeforeUpdateInstall`. Only the desktop app installs downloaded updates. */
+export function CheckNewerBeforeUpdateInstallSettingsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("check-newer-before-update-install")}
+      description="Desktop app: before it installs a downloaded update, check for a newer release and offer to download that one instead. Install when idle and the machine map take the newer release."
+      resetAction={
+        settings.checkNewerBeforeUpdateInstall !==
+        DEFAULT_UNIFIED_SETTINGS.checkNewerBeforeUpdateInstall ? (
+          <SettingResetButton
+            label="check for a newer update before install"
+            onClick={() =>
+              updateSettings({
+                checkNewerBeforeUpdateInstall:
+                  DEFAULT_UNIFIED_SETTINGS.checkNewerBeforeUpdateInstall,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.checkNewerBeforeUpdateInstall}
+          onCheckedChange={(checked) =>
+            updateSettings({ checkNewerBeforeUpdateInstall: Boolean(checked) })
+          }
+          aria-label="Check for a newer update before install"
+        />
+      }
+    />
+  );
+}
+
 /** Fork: `forkAutoUpdate`. Only a server that runs as the background service uses it. */
 export function ForkAutoUpdateSettingsRow() {
   const settings = useScopedSettings();

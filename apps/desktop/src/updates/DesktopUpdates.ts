@@ -5,6 +5,7 @@ import {
   type DesktopUpdateActionResult,
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
+  type DesktopUpdateInstallCheck,
   type DesktopUpdateState,
 } from "@t3tools/contracts";
 import { errorTag } from "@t3tools/shared/observability";
@@ -34,6 +35,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
+import * as ForkUpdateInstall from "./forkUpdateInstall.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
   createInitialDesktopUpdateState,
@@ -193,6 +195,8 @@ export class DesktopUpdates extends Context.Service<
     readonly installPrepared: (
       expectedVersion: string,
     ) => Effect.Effect<DesktopPreparedUpdateInstallResult>;
+    // Fork: see forkUpdateInstall.ts.
+    readonly checkBeforeInstall: Effect.Effect<DesktopUpdateInstallCheck>;
   }
 >()("@t3tools/desktop/updates/DesktopUpdates") {}
 
@@ -1170,6 +1174,13 @@ export const make = Effect.gen(function* () {
       Effect.map(({ accepted, completed, state }) => ({ accepted, completed, state })),
     ),
     installPrepared: (expectedVersion) => installWithExpectedVersion(expectedVersion),
+    checkBeforeInstall: ForkUpdateInstall.makeCheckBeforeInstall({
+      getState: Ref.get(updateStateRef),
+      updateState,
+      check: Effect.suspend(() => checkForUpdates("install")),
+      stateChanges,
+      checkWait: PREPARED_INSTALL_CHECK_WAIT,
+    }),
   });
 });
 

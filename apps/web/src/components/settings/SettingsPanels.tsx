@@ -68,6 +68,7 @@ import { SidebarGroupsSettingsRow } from "./SidebarGroupsSettingsRow";
 import {
   AgentSessionImportSettingsRows,
   BackgroundWorkDetailsSettingsRow,
+  CheckNewerBeforeUpdateInstallSettingsRow,
   ForkAutoUpdateSettingsRow,
   TerminalAppShortcutsFirstSettingsRow,
   TerminalCloseConfirmationSettingsRow,
@@ -110,6 +111,7 @@ import {
   openIdleInstallPromptIfAgentsRun,
   useIdleInstallArmed,
 } from "../desktop/DesktopUpdateIdleInstall";
+import { prepareNewestUpdateInstall } from "../desktop/DesktopUpdateNewerCheck";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -383,7 +385,7 @@ export function AboutVersionSection() {
         );
         return;
       }
-      if (!confirmed) {
+      if (!confirmed || !(await prepareNewestUpdateInstall(bridge))) {
         setIsUpdateActionPending(false);
         return;
       }
@@ -3375,6 +3377,7 @@ export function GeneralSettingsPanel() {
         )}
         <ForkChangelogSettingsRow />
         <ForkAutoUpdateSettingsRow />
+        <CheckNewerBeforeUpdateInstallSettingsRow />
         <SettingsRow
           {...searchableSetting("privacy-policy")}
           description="How we handle your data, including the anonymous usage data T3 Code collects."

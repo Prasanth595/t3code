@@ -7,6 +7,7 @@ import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
 import {
   AgentSessionImportSettingsRows,
   BackgroundWorkDetailsSettingsRow,
+  CheckNewerBeforeUpdateInstallSettingsRow,
   ForkAutoUpdateSettingsRow,
   TerminalAppShortcutsFirstSettingsRow,
   TerminalCloseConfirmationSettingsRow,
@@ -50,6 +51,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "update-track": AboutVersionSection,
   "fork-auto-update": ForkAutoUpdateSettingsRow,
   "fork-changelog": ForkChangelogSettingsRow,
+  "check-newer-before-update-install": CheckNewerBeforeUpdateInstallSettingsRow,
   "recover-interrupted-turns": RecoverInterruptedTurnsSettings,
   "background-work-details": BackgroundWorkDetailsSettingsRow,
   "prefer-origin-remote": PreferOriginRemoteSettingsRow,

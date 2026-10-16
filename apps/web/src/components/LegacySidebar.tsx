@@ -147,6 +147,7 @@ import {
 } from "./desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "./desktopUpdate.toast";
 import { openIdleInstallPromptIfAgentsRun } from "./desktop/DesktopUpdateIdleInstall";
+import { prepareNewestUpdateInstall } from "./desktop/DesktopUpdateNewerCheck";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import {
@@ -3762,7 +3763,7 @@ export default function LegacySidebar() {
         );
         return;
       }
-      if (!confirmed) {
+      if (!confirmed || !(await prepareNewestUpdateInstall(bridge))) {
         setDesktopUpdateActionPending(false);
         return;
       }

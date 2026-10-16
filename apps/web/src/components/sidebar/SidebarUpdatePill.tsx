@@ -26,6 +26,7 @@ import {
   openIdleInstallPromptIfAgentsRun,
   useIdleInstallArmed,
 } from "../desktop/DesktopUpdateIdleInstall";
+import { prepareNewestUpdateInstall } from "../desktop/DesktopUpdateNewerCheck";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -171,7 +172,10 @@ async function downloadLocalUpdate(
 export async function installLocalUpdate(
   bridge: DesktopBridge,
   reportError: ReportLocalUpdateError = toastUpdateError,
+  { unattended = false }: { readonly unattended?: boolean } = {},
 ): Promise<boolean> {
+  // Fork: a newer release can replace the download first.
+  if (!(await prepareNewestUpdateInstall(bridge, { unattended, reportError }))) return false;
   try {
     const result = await bridge.installUpdate();
     if (!result.accepted) {

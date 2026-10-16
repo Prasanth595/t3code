@@ -38,6 +38,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Fork installers:** one command installs the fork from the fork releases on macOS, Windows or Linux and joins the machine map. The installer has no source build.
 - **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now".
 - **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`).
+- **Newer update before install:** before the desktop app installs a downloaded update, it checks for a newer release. If one exists, it asks "Download newer" or "Install this one". Install when idle and the machine map take the newer release (`checkNewerBeforeUpdateInstall`, off by default).
 - **Local deploy:** `scripts/fork-deploy-local.sh <ssh-host>` builds this checkout for a headless Linux server and switches its service to it.
 - **Changelog:** a timeline of fork releases and commits, also in the update popover for the offered update, the pending upstream commits, a "Start Fork Sync" button and an "Ask agent" menu (`forkChangelogEnabled`, on by default).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.

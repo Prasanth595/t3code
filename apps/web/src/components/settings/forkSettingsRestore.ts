@@ -16,6 +16,7 @@ const FORK_RESTORED_SETTINGS = [
   ["webPushEnabled", "Web Push"],
   ["forkAutoUpdate", "Server auto-update"],
   ["forkChangelogEnabled", "Fork changelog"],
+  ["checkNewerBeforeUpdateInstall", "Check for a newer update before install"],
   ["recoverInterruptedTurns", "Recover interrupted agents"],
   ["recoverInterruptedTurnsMessage", "Recover interrupted agents message"],
   ["recoverInterruptedTurnsSubagentMessage", "Recover interrupted subagents message"],
