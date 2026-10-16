@@ -174,11 +174,33 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  type RecoverySession = ProjectionStore.ProjectionRuntimeRecoveryState["providerSessions"][number];
+  /**
+   * A session shared by several threads (one Codex app server) is stopped by the
+   * first thread recovery reaches. It was live when the server went down, so a
+   * later thread still decides its wake as if it were.
+   */
+  const sessionsLiveAtStart = (
+    projection: ProjectionStore.ProjectionRuntimeRecoveryState,
+    stoppedThisPass: ReadonlyMap<string, RecoverySession>,
+  ) => {
+    const sessions = new Map(projection.providerSessions.map((session) => [session.id, session]));
+    for (const providerThread of projection.providerThreads) {
+      const stopped =
+        providerThread.providerSessionId === null
+          ? undefined
+          : stoppedThisPass.get(providerThread.providerSessionId);
+      if (stopped !== undefined) sessions.set(stopped.id, stopped);
+    }
+    return [...sessions.values()];
+  };
+
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
       projection: ProjectionStore.ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
+      stoppedThisPass: ReadonlyMap<string, RecoverySession> = new Map(),
     ) {
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
@@ -601,7 +623,10 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection, now)
+          ? restartContinuationRun(
+              { ...projection, providerSessions: sessionsLiveAtStart(projection, stoppedThisPass) },
+              now,
+            )
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -687,6 +712,7 @@ export const make = Effect.gen(function* () {
       let stoppedSessions = 0;
       let closedRequests = 0;
       let retiredEffects = 0;
+      const stoppedThisPass = new Map<string, RecoverySession>();
       for (const threadId of threadIds) {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
           Effect.mapError(
@@ -702,7 +728,12 @@ export const make = Effect.gen(function* () {
           continueAfterRestart !== null &&
           resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
             .continueThreadsAfterServerUpdate;
-        const result = yield* reconcileProjection(projection, trigger, enabled);
+        const result = yield* reconcileProjection(projection, trigger, enabled, stoppedThisPass);
+        for (const session of projection.providerSessions) {
+          if (session.status !== "stopped" && session.status !== "error") {
+            stoppedThisPass.set(session.id, session);
+          }
+        }
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;

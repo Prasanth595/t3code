@@ -812,26 +812,31 @@ it.effect("wakes a settled run whose native subagent ran on its own provider thr
     const childProviderThreadId = ProviderThreadId.make(`provider-thread:${threadId}:child`);
     const providerSessionId = ProviderSessionId.make(`session:${threadId}`);
     const subagentId = NodeId.make(`node:${threadId}:subagent`);
-    yield* projections.apply({
-      id: EventId.make(`event:${threadId}:session`),
-      type: "provider-session.attached",
-      threadId,
-      driver,
-      providerInstanceId,
-      occurredAt: now,
-      payload: {
-        id: providerSessionId,
+    // An older thread on the same Codex session is recovered first and stops it.
+    const sibling = yield* createThread("a-shared-session");
+    yield* createRun(sibling, "completed");
+    for (const boundThreadId of [sibling, threadId]) {
+      yield* projections.apply({
+        id: EventId.make(`event:${boundThreadId}:session`),
+        type: "provider-session.attached",
+        threadId: boundThreadId,
         driver,
         providerInstanceId,
-        status: "ready",
-        cwd: "/workspace",
-        model: modelSelection.model,
-        capabilities: CodexProviderCapabilitiesV2,
-        createdAt: now,
-        updatedAt: now,
-        lastError: null,
-      },
-    });
+        occurredAt: now,
+        payload: {
+          id: providerSessionId,
+          driver,
+          providerInstanceId,
+          status: "ready",
+          cwd: "/workspace",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+    }
     const settledRun = yield* createRun(threadId, "completed", {
       providerThreadId: parentProviderThreadId,
     });
