@@ -19,6 +19,7 @@ import {
   MARKER,
   MAX_DEPENDS_ON,
   MAX_FILE_BYTES,
+  READY_BY_QUERY,
   STATUS_MARKER,
   type Blocker,
   type GitHubError,
@@ -4051,4 +4052,49 @@ it.effect(
         createdAt: "",
       });
     }),
+);
+
+// ---- who marked a pull request ready (from softfac's github tests) ----
+
+const readyByReply = (nodes: string) =>
+  `{"data":{"repository":{"pullRequest":{"timelineItems":{"nodes":[${nodes}]}}}}}`;
+
+it.effect("readyBy names the actor of the newest ready-for-review with one call", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(readyByReply('{"actor":{"login":"alice"}}')));
+    assert.strictEqual(yield* t.ok(t.github.readyBy(6)), "alice");
+    assert.deepStrictEqual(t.calls(), [
+      [
+        "api",
+        "graphql",
+        "-f",
+        `query=${READY_BY_QUERY}`,
+        "-f",
+        "owner=rawphp",
+        "-f",
+        "name=softfac",
+        "-F",
+        "number=6",
+      ],
+    ]);
+  }),
+);
+
+it.effect("readyBy is null when it was never ready or has no actor", () =>
+  Effect.gen(function* () {
+    for (const nodes of ["", '{"actor":null}', "{}"]) {
+      const t = setup(reply(readyByReply(nodes)));
+      assert.strictEqual(yield* t.ok(t.github.readyBy(6)), null, nodes);
+    }
+  }),
+);
+
+it.effect("readyBy refuses an answer it cannot read", () =>
+  Effect.gen(function* () {
+    for (const text of ["", "no", "{}", '{"data":{"repository":{"pullRequest":null}}}']) {
+      const t = setup(reply(text));
+      const error = yield* t.err(t.github.readyBy(6));
+      assert.strictEqual(error._tag, "GitHubParse", text);
+    }
+  }),
 );

@@ -21,6 +21,7 @@ import {
   runPass,
   type Loaded,
   type PassError,
+  type GateStart,
   type PassWorld,
   type Repo,
   type Report,
@@ -107,6 +108,8 @@ class Fake implements PassWorld {
   runErrorFails = false;
   /** The runs whose gate lock is held, by run id. */
   gateLocks: Array<string> = [];
+  /** What `gate` answers per `"<repo>#<issue>"`; started otherwise. */
+  gateStarts: Record<string, GateStart> = {};
   now = T0;
   calls: Array<string> = [];
   events: Array<MachineEvent> = [];
@@ -324,6 +327,12 @@ class Fake implements PassWorld {
 
   gateRunning(run: RunId) {
     return this.gateLocks.includes(runIdToString(run));
+  }
+
+  gate(repo: Repo, run: RunId) {
+    const key = `${repo.watched.repo}#${run.issue}`;
+    this.calls.push(`gate ${key}`);
+    return Effect.succeed(this.gateStarts[key] ?? ({ kind: "started" } as const));
   }
 
   record(event: MachineEvent) {
@@ -992,7 +1001,9 @@ describe("runs that are confirmed and still in triage", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       const { lines } = yield* pass(fake, machine([REPO], 3));
-      const calls = fake.calls.filter((c) => /^(time_limit|watch|advance|start|resume) /.test(c));
+      const calls = fake.calls.filter((c) =>
+        /^(time_limit|watch|advance|start|resume|gate) /.test(c),
+      );
       assert.deepEqual(calls, [`time_limit ${REPO}#40`, `watch ${REPO}#40`, `advance ${REPO}#40`]);
       assert.equal(
         runLine(lines, `${REPO}#40 building:`),
@@ -1019,7 +1030,9 @@ describe("runs that are confirmed and still in triage", () => {
         });
       }
       const { lines } = yield* pass(fake, machine([REPO], 3));
-      const calls = fake.calls.filter((c) => /^(time_limit|watch|advance|start|resume) /.test(c));
+      const calls = fake.calls.filter((c) =>
+        /^(time_limit|watch|advance|start|resume|gate) /.test(c),
+      );
       assert.deepEqual(calls, []);
       for (const issue of [12, 40, 41]) {
         assert.ok(!lines.some((l) => l.startsWith(`${REPO}#${issue} `)), lines.join("\n"));
@@ -1936,7 +1949,7 @@ void runIdToString;
 describe("following a building run", () => {
   const stopped = (reason = "the reason") => ({ kind: "stopped" as const, reason });
   const callsOf = (fake: Fake) =>
-    fake.calls.filter((c) => /^(time_limit|watch|advance|start|resume) /.test(c));
+    fake.calls.filter((c) => /^(time_limit|watch|advance|start|resume|gate) /.test(c));
 
   it.effect("a triage run gets the time limit before resume", () =>
     Effect.gen(function* () {
@@ -1961,7 +1974,39 @@ describe("following a building run", () => {
     }),
   );
 
-  it.effect("a building run whose pull request waits for the gate gets no watch or advance", () =>
+  it.effect(
+    "a building run whose pull request waits for the gate is watched and advanced before the gate",
+    () =>
+      Effect.gen(function* () {
+        // `advance` puts a pull request a person took out of draft back to draft and judges the
+        // session's latest run (it may have asked questions since), as softfac's pass does.
+        const fake = new Fake();
+        fake.runs.push({
+          id: rid(40),
+          state: BUILDING,
+          unreadable: false,
+          confirmed: true,
+          session: true,
+          prReported: true,
+        });
+        fake.advances[`${REPO}#40`] = [
+          { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+        ];
+        const { lines } = yield* pass(fake, machine([REPO], 3));
+        assert.deepEqual(callsOf(fake), [
+          `time_limit ${REPO}#40`,
+          `watch ${REPO}#40`,
+          `advance ${REPO}#40`,
+          `gate ${REPO}#40`,
+        ]);
+        assert.equal(
+          runLine(lines, `${REPO}#40 `),
+          `${REPO}#40 building: session finished, gate started in the background`,
+        );
+      }),
+  );
+
+  it.effect("a reported pull request whose session asked questions since gets no gate", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runs.push({
@@ -1972,11 +2017,56 @@ describe("following a building run", () => {
         session: true,
         prReported: true,
       });
+      fake.advances[`${REPO}#40`] = [{ kind: "needs-info" }];
+      yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), [
+        `time_limit ${REPO}#40`,
+        `watch ${REPO}#40`,
+        `advance ${REPO}#40`,
+      ]);
+    }),
+  );
+
+  it.effect("a building run whose gate would pass the gate limit says it is queued", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runs.push({
+        id: rid(40),
+        state: BUILDING,
+        unreadable: false,
+        confirmed: true,
+        session: true,
+        prReported: true,
+      });
+      fake.advances[`${REPO}#40`] = [
+        { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+      ];
+      fake.gateStarts[`${REPO}#40`] = { kind: "queued", running: 2, max: 2 };
       const { lines } = yield* pass(fake, machine([REPO], 3));
-      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#40`]);
       assert.equal(
         runLine(lines, `${REPO}#40 `),
-        `${REPO}#40 building: session finished, ready for the gate`,
+        `${REPO}#40 building: session finished, gate queued: 2 gates running, max_concurrent_gates is 2`,
+      );
+    }),
+  );
+
+  it.effect("a session that reports its pull request has its gate started in the same pass", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.advances[`${REPO}#40`] = [
+        { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+      ];
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), [
+        `time_limit ${REPO}#40`,
+        `watch ${REPO}#40`,
+        `advance ${REPO}#40`,
+        `gate ${REPO}#40`,
+      ]);
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: session finished, gate started in the background`,
       );
     }),
   );
@@ -2012,8 +2102,9 @@ describe("following a building run", () => {
     ],
     [
       { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
-      "session finished, ready for the gate",
+      "session finished, gate started in the background",
     ],
+    [{ kind: "passed", pr: 3 }, "the gate passed and the pull request is ready for review"],
     [
       { kind: "needs-info" },
       "session asked questions, the issue is now needs-info and the run is finished",

@@ -3,7 +3,8 @@
  * reads how the session ended and moves the issue on, `watch` stops a run whose issue text was
  * changed by someone who is not an instructor, `timeLimit` stops a run that took too long. The
  * rest of `building.rs` (interruptions and relaunches, forwarding comments, ending a run whose
- * pull request was merged or closed) belongs to later issues.
+ * pull request was merged or closed before the gate looked at it) belongs to later issues; the
+ * gate itself is `gating.ts`.
  *
  * Each step reads the ledger first and does only what it does not record, so calling it again
  * resumes whatever an earlier call left half done. A failure of the tracker or of T3 is an
@@ -74,11 +75,14 @@ export interface BuildingContext extends RunContext {
   readonly tracker: Pick<
     BoundGitHub,
     | "setState"
+    | "assign"
     | "unassign"
     | "postComment"
     | "upsertStatusComment"
     | "pullRequest"
+    | "markPrReady"
     | "markPrDraft"
+    | "commentOnPr"
     | "textCheck"
     | "issue"
   >;
@@ -136,8 +140,14 @@ export type AdvanceOutcome =
   | { readonly kind: "reminded" }
   /** A person stopped the session's run in T3: nothing is sent and the issue is not touched. */
   | { readonly kind: "paused" }
-  /** The session's draft pull request is bound to the run and waits for the gate. */
+  /**
+   * The session's draft pull request is bound to the run and waits for the gate. Also what
+   * `advance` says when the ledger already records that the gate passed and the move to
+   * `pr-open` is not finished: the gate finishes it.
+   */
   | { readonly kind: "ready-for-gate"; readonly pr: number; readonly prUrl: string }
+  /** The gate passed and everything is written. The run stays open while its pull request waits for a person. */
+  | { readonly kind: "passed"; readonly pr: number }
   /** The session asked its questions: they are on the issue and the run is ended. */
   | { readonly kind: "needs-info" }
   /** The issue went to `stuck`. `reason` is the one the ledger records. */
@@ -149,7 +159,10 @@ export type WatchOutcome =
   | { readonly kind: "unchanged" }
   /** The run went to `stuck`. `reason` is the one the ledger records. */
   | { readonly kind: "stopped"; readonly reason: string }
-  | { readonly kind: "skipped"; readonly why: "finished" | "no-session" | "not-building" };
+  | {
+      readonly kind: "skipped";
+      readonly why: "finished" | "no-session" | "not-building" | "gate-passed";
+    };
 
 /** What `timeLimit` did. */
 export type LimitOutcome =
@@ -176,12 +189,12 @@ const readSeen = (ctx: BuildingContext, run: RunId) =>
   );
 
 /** The run file, opened for append the first time a step writes to it and closed when the step ends. */
-interface Out {
+export interface Out {
   readonly open: Effect.Effect<Ledger, LedgerError>;
   readonly close: () => void;
 }
 
-const lazyLedger = (ctx: BuildingContext, run: RunId): Out => {
+export const lazyLedger = (ctx: BuildingContext, run: RunId): Out => {
   let handle: Ledger | null = null;
   return {
     open: ledger(() => (handle ??= Ledger.open(ctx.dataDir, run, { clock: ctx.clock }))),
@@ -189,7 +202,7 @@ const lazyLedger = (ctx: BuildingContext, run: RunId): Out => {
   };
 };
 
-const withLedger = <A, E>(
+export const withLedger = <A, E>(
   ctx: BuildingContext,
   run: RunId,
   body: (out: Out) => Effect.Effect<A, E>,
@@ -199,11 +212,19 @@ const withLedger = <A, E>(
     return body(out).pipe(Effect.ensuring(Effect.sync(out.close)));
   });
 
-const append = (out: Out, event: RunEvent, step: CauseStep, reason: string) =>
-  Effect.flatMap(out.open, (opened) => ledger(() => opened.append(event, makeCause(step, reason))));
+export const append = (
+  out: Out,
+  event: RunEvent,
+  step: CauseStep,
+  reason: string,
+  extras: { readonly attempt?: number; readonly command?: string } = {},
+) =>
+  Effect.flatMap(out.open, (opened) =>
+    ledger(() => opened.append(event, makeCause(step, reason, extras))),
+  );
 
 /** A stop with the session's text, prepared once and left out when empty. */
-const stopOf = (
+export const stopOf = (
   reason: string,
   sessionText: string | null | undefined,
   extra: { readonly detail?: string } = {},
@@ -222,7 +243,7 @@ const isEndedBadly = (status: RunStatus): boolean =>
   status === "failed" || status === "cancelled" || status === "rolled_back";
 
 /** Whether a run status is one the run has finished with. An active status is not. */
-const isTerminal = (status: RunStatus): boolean =>
+export const isTerminal = (status: RunStatus): boolean =>
   status === "completed" || status === "interrupted" || isEndedBadly(status);
 
 /**
@@ -238,7 +259,7 @@ const lacksResultLine = (result: SessionResult): boolean =>
  * asked for a newer run (the reminder), that run must be a newer one than the run the marker
  * names. A newer run is enough, whichever message started it.
  */
-const sessionBusy = (seen: Seen, status: ThreadStatus): boolean => {
+export const sessionBusy = (seen: Seen, status: ThreadStatus): boolean => {
   const ended = status.run !== null && isTerminal(status.run);
   const newer =
     seen.waitingAfter === null ||
@@ -259,7 +280,7 @@ const saysWrongAccount = (sessionText: string | undefined): boolean => {
 const isThreadNotFound = Schema.is(ThreadNotFoundError);
 
 /** The thread's status. A thread that is archived counts as one T3 no longer has: `null`. */
-const threadStatus = (
+export const threadStatus = (
   ctx: BuildingContext,
   threadId: string,
 ): Effect.Effect<ThreadStatus | null, BuildingError> =>
@@ -269,7 +290,7 @@ const threadStatus = (
   );
 
 /** Why a pull request is not the session's own. `public` is one of the factory's fixed lines. */
-interface Unbound {
+export interface Unbound {
   /** What the comment says. */
   readonly public: string;
   /** Set when the public line must leave out something that came from the pull request: the ledger and the caller get this instead. */
@@ -282,14 +303,16 @@ interface Unbound {
  * can steer, so it must not be able to name someone else's pull request. Whether it is a draft
  * is asked after, so only a bound one is ever put back to draft.
  */
-const checkBinding = (
+export const checkBinding = (
   pull: PullRequest | null,
   pr: number,
   base: string,
   branch: string | null,
+  mustBeDraft = false,
 ): Unbound | null => {
   const reported = `the session reported PR #${pr} but`;
   if (pull === null) return { public: `${reported} it does not exist` };
+  if (pull.open && mustBeDraft && !pull.isDraft) return { public: `${reported} it is not a draft` };
   if (pull.crossRepository) return { public: `${reported} it comes from a fork` };
   if (pull.baseRef !== base) {
     return {
@@ -368,6 +391,15 @@ export const advance = (
         yield* releaseOldClaim(ctx, issue);
         yield* endNeedsInfo(ctx, out, at);
         return { kind: "needs-info" } as const;
+      }
+      // Every write is done: the run stays open while its pull request waits for a person.
+      if (at.state === "pr-open" && seen.lastPr !== null) {
+        return { kind: "passed", pr: seen.lastPr.pr } as const;
+      }
+      // The gate passed and died before the move to `pr-open` was finished: the gate finishes
+      // it, and nothing here looks at the session or the pull request again.
+      if (seen.pass !== null && seen.lastPr !== null) {
+        return { kind: "ready-for-gate", pr: seen.lastPr.pr, prUrl: seen.lastPr.url } as const;
       }
       if (at.state === "triage") {
         // `start` looks at the issue text again after the launch. A launch it has not done that
@@ -605,7 +637,7 @@ const refusedStop = (
  * A history that cannot be judged counts as changed. A read that fails is an error, never an
  * answer.
  */
-const textStop = (
+export const textStop = (
   ctx: BuildingContext,
   issue: number,
   seen: Seen,
@@ -650,6 +682,8 @@ export const watch = (
     if (seen.state !== "building" || seen.stuck !== null || seen.questionsPosted) {
       return { kind: "skipped", why: "not-building" } as const;
     }
+    // The gate checks the text itself before it records a pass, and after one the session is done.
+    if (seen.pass !== null) return { kind: "skipped", why: "gate-passed" } as const;
     const issue = issueOf(run);
     const why = yield* textStop(ctx, issue, seen);
     if (why === null) return { kind: "unchanged" } as const;
