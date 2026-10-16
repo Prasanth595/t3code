@@ -1988,18 +1988,67 @@ describe("following a building run", () => {
     }),
   );
 
-  it.effect("pr-open, needs-info and stuck runs are not worked", () =>
+  it.effect("a needs-info run is advanced, with no watch and no resume", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(42, "needs-info", REPO, true);
+      fake.advances[`${REPO}#42`] = [{ kind: "needs-info" }];
+      const { lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#42`, `advance ${REPO}#42`]);
+      assert.equal(
+        runLine(lines, `${REPO}#42 `),
+        `${REPO}#42 needs-info: session asked questions, the issue is now needs-info and the run is finished`,
+      );
+    }),
+  );
+
+  it.effect("a stuck run is advanced, with no watch and no resume", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(43, "stuck", REPO, true);
+      fake.advances[`${REPO}#43`] = [{ kind: "stuck", reason: "r" }];
+      const { lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#43`, `advance ${REPO}#43`]);
+      assert.equal(
+        runLine(lines, `${REPO}#43 `),
+        `${REPO}#43 stuck: stuck, the reason is in the ledger of run ${runIdToString(rid(43))}`,
+      );
+    }),
+  );
+
+  it.effect("a failing advance of a needs-info run is recorded with step advance", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(42, "needs-info", REPO, true);
+      fake.advances[`${REPO}#42`] = [
+        new SessionsError({ operation: "archive", cause: new Error("x") }),
+      ];
+      const { report } = yield* pass(fake, machine([REPO], 5));
+      assert.equal(report.errors, 1);
+      assert.equal(fake.runErrors[0]?.step, "advance");
+    }),
+  );
+
+  it.effect("a pr-open run gets only the time limit", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(41, "pr-open", REPO, true);
-      fake.runIn(42, "needs-info", REPO, true);
-      fake.runIn(43, "stuck", REPO, true);
       const { lines } = yield* pass(fake, machine([REPO], 5));
-      assert.deepEqual(
-        callsOf(fake).filter((c) => !c.startsWith("time_limit ")),
-        [],
-      );
-      assert.ok(!lines.some((l) => l.startsWith(`${REPO}#4`)), lines.join("\n"));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#41`]);
+      assert.ok(!lines.some((l) => l.startsWith(`${REPO}#41`)), lines.join("\n"));
+    }),
+  );
+
+  it.effect("a needs-info run that its advance finishes frees its slot for a claim", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(42, "needs-info", REPO, true);
+      fake.advances[`${REPO}#42`] = [{ kind: "needs-info" }];
+      fake.ready[REPO] = [7];
+      fake.pushStart(`${REPO}#7`, started(7));
+      const { report } = yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
+      assert.equal(report.claimed, 1);
     }),
   );
 

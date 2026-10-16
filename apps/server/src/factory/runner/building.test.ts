@@ -1609,20 +1609,45 @@ describe("advance: the result-line reminder", () => {
     }),
   );
 
-  it.effect("is the error, with the marker written, when T3 refuses the message", () =>
+  const refusal = () =>
+    new MessageRejectedError({
+      threadId: "thread-1",
+      commandId: "softfac:rawphp__softfac__10__1:remind:1",
+      cause: "no",
+    });
+
+  /** A refused reminder is final: T3 keeps its refusal under the command id, so the run goes stuck at once. */
+  const assertRefusedReminderIsStuck = (rig: Rig, outcome: AdvanceOutcome) =>
+    Effect.gen(function* () {
+      const recorded = `${NO_RESULT_LINE}; T3 refused the reminder: ${refusal().message}\n\n${WORKING_MESSAGE}`;
+      assert.deepStrictEqual(outcome, { kind: "stuck", reason: recorded });
+      assert.deepStrictEqual(rig.gh, stuckCalls(NO_RESULT_LINE, WORKING_MESSAGE));
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([reminding(1)], recorded));
+      assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
+      assert.strictEqual(stuckCauses(rig)[0], "advance session-stuck");
+      // The run is finished: a second call sends nothing.
+      clearCalls(rig);
+      assert.strictEqual((yield* Effect.flip(advanceIn(rig)))._tag, "NotBuildingError");
+      assert.deepStrictEqual(sends(rig), []);
+    });
+
+  it.effect("goes stuck at once, with the marker written, when T3 refuses the message", () =>
     Effect.gen(function* () {
       const rig = rigFor();
       setEnded(rig, 1, WORKING_MESSAGE);
-      rig.world.sendFailure = {
-        error: new MessageRejectedError({
-          threadId: "thread-1",
-          commandId: "softfac:rawphp__softfac__10__1:remind:1",
-          cause: "no",
-        }),
-        delivered: false,
-      };
-      assert.strictEqual((yield* Effect.flip(advanceIn(rig)))._tag, "FactoryMessageRejectedError");
-      assert.deepStrictEqual(linesOf(rig), [...STARTED, reminding(1)]);
+      rig.world.sendFailure = { error: refusal(), delivered: false };
+      const outcome = yield* advanceIn(rig);
+      yield* assertRefusedReminderIsStuck(rig, outcome);
+    }),
+  );
+
+  it.effect("goes stuck at once when T3 refuses the message of a reminder cut short", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, reminding(1)]);
+      setEnded(rig, 1, WORKING_MESSAGE);
+      rig.world.sendFailure = { error: refusal(), delivered: false };
+      const outcome = yield* advanceIn(rig);
+      yield* assertRefusedReminderIsStuck(rig, outcome);
     }),
   );
 
