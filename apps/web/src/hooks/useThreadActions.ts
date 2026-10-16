@@ -23,7 +23,12 @@ import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
-import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import {
+  getFallbackThreadIdAfterDelete,
+  pinOrderKeyBetween,
+  planSidebarThreadEdgeMove,
+  type SidebarThreadEdge,
+} from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
@@ -117,6 +122,26 @@ function topOfPinnedRunOrderKey(): string | undefined {
     if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
   }
   return pinOrderKeyBetween(null, firstKey) ?? undefined;
+}
+
+function planThreadEdgeMove(
+  target: ScopedThreadRef,
+  edge: SidebarThreadEdge,
+  activeTimeOrdered: boolean,
+) {
+  return planSidebarThreadEdgeMove({
+    threads: readThreadShells(),
+    threadKey: scopedThreadKey(target),
+    edge,
+    now: new Date().toISOString(),
+    supports: (environmentId) => ({
+      settlement: readEnvironmentSupportsSettlement(environmentId),
+      snooze: readEnvironmentSupportsSnooze(environmentId),
+      pinReorder: readEnvironmentSupportsPinReorder(environmentId),
+      activeReorder: readEnvironmentSupportsActiveReorder(environmentId),
+    }),
+    activeTimeOrdered,
+  });
 }
 
 export class ThreadAutoSettleOptOutUnsupportedError extends Schema.TaggedError<ThreadAutoSettleOptOutUnsupportedError>()(
@@ -302,6 +327,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
+  const sidebarWorkingShelfEnabled = useClientSettings(
+    (settings) => settings.sidebarWorkingShelfEnabled,
+  );
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
@@ -879,6 +907,35 @@ export function useThreadActions() {
     [reorderActiveThreadMutation],
   );
 
+  const canMoveThreadToEdge = useCallback(
+    (target: ScopedThreadRef, edge: SidebarThreadEdge) =>
+      planThreadEdgeMove(target, edge, sidebarWorkingShelfEnabled) !== null,
+    [sidebarWorkingShelfEnabled],
+  );
+
+  const moveThreadToEdge = useCallback(
+    async (target: ScopedThreadRef, edge: SidebarThreadEdge) => {
+      const plan = planThreadEdgeMove(target, edge, sidebarWorkingShelfEnabled);
+      if (plan === null) return AsyncResult.success(undefined);
+      const writes = plan.assignments.map(({ thread, orderKey }) => ({
+        threadRef: scopeThreadRef(thread.environmentId, thread.id),
+        orderKey,
+      }));
+      // A key rewrite can touch other threads; refuse before the first write.
+      for (const { threadRef } of writes) {
+        const permissionFailure = threadOperationFailure(threadRef);
+        if (permissionFailure) return permissionFailure;
+      }
+      const reorder = plan.section === "pinned" ? reorderPinnedThread : reorderActiveThread;
+      for (const { threadRef, orderKey } of writes) {
+        const result = await reorder(threadRef, orderKey);
+        if (result._tag !== "Success") return result;
+      }
+      return AsyncResult.success(undefined);
+    },
+    [reorderActiveThread, reorderPinnedThread, sidebarWorkingShelfEnabled],
+  );
+
   const unsnoozeThread = useCallback(
     async (target: ScopedThreadRef) => {
       if (!readEnvironmentSupportsSnooze(target.environmentId)) {
@@ -989,15 +1046,19 @@ export function useThreadActions() {
       confirmAndUnpinThread,
       reorderPinnedThread,
       reorderActiveThread,
+      canMoveThreadToEdge,
+      moveThreadToEdge,
       markThreadUnread,
       setThreadAutoSettle,
     }),
     [
       archiveThread,
+      canMoveThreadToEdge,
       confirmAndDeleteThread,
       confirmAndUnpinThread,
       deleteThread,
       markThreadUnread,
+      moveThreadToEdge,
       pinThread,
       reorderPinnedThread,
       reorderActiveThread,

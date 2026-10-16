@@ -2263,6 +2263,8 @@ export default function Sidebar() {
     setThreadAutoSettle,
     reorderPinnedThread,
     reorderActiveThread,
+    canMoveThreadToEdge,
+    moveThreadToEdge,
     markThreadUnread,
     archiveThread,
     deleteThread,
@@ -4309,6 +4311,8 @@ export default function Sidebar() {
                   }
                 : null,
               isPinned,
+              canMoveToTop: canMoveThreadToEdge(threadRef, "top"),
+              canMoveToBottom: canMoveThreadToEdge(threadRef, "bottom"),
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
@@ -4390,6 +4394,24 @@ export default function Sidebar() {
           case "unpin":
             attemptUnpin(threadRef);
             return;
+          case "move-to-top":
+          case "move-to-bottom": {
+            const result = await moveThreadToEdge(
+              threadRef,
+              clicked.value === "move-to-top" ? "top" : "bottom",
+            );
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to move thread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
           case "auto-settle:enabled":
           case "auto-settle:disabled": {
             const result = await setThreadAutoSettle(

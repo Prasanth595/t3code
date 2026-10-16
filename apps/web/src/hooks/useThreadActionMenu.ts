@@ -84,6 +84,8 @@ export function useThreadActionMenu(input: {
     unsnoozeThread,
     pinThread,
     confirmAndUnpinThread,
+    canMoveThreadToEdge,
+    moveThreadToEdge,
     setThreadAutoSettle,
     archiveThread,
     deleteThread,
@@ -139,6 +141,8 @@ export function useThreadActionMenu(input: {
           branch: thread.branch ?? null,
           projectFilter: null,
           isPinned: thread.pinnedAt != null,
+          canMoveToTop: canMoveThreadToEdge(threadRef, "top"),
+          canMoveToBottom: canMoveThreadToEdge(threadRef, "bottom"),
           isSettled: supports.settlement && thread.settledOverride === "settled",
           autoSettleEnabled: thread.autoSettleDisabledAt == null,
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
@@ -229,6 +233,12 @@ export function useThreadActionMenu(input: {
             await reportFailure("Failed to unpin thread", () => confirmAndUnpinThread(threadRef));
             return;
           }
+          case "move-to-top":
+          case "move-to-bottom":
+            await reportFailure("Failed to move thread", () =>
+              moveThreadToEdge(threadRef, action === "move-to-top" ? "top" : "bottom"),
+            );
+            return;
           case "auto-settle:enabled":
           case "auto-settle:disabled":
             await reportFailure("Failed to update auto-settle", () =>
@@ -327,6 +337,7 @@ export function useThreadActionMenu(input: {
     },
     [
       archiveThread,
+      canMoveThreadToEdge,
       confirmThreadArchive,
       confirmThreadDelete,
       confirmAndUnpinThread,
@@ -337,6 +348,7 @@ export function useThreadActionMenu(input: {
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
+      moveThreadToEdge,
       onStartRename,
       pinThread,
       projectCwd,

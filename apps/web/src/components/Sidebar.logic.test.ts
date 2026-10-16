@@ -49,6 +49,7 @@ import {
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
+  planSidebarThreadEdgeMove,
   sortPinnedThreadsForSidebar,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
@@ -61,6 +62,7 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
@@ -2318,5 +2320,66 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+  });
+});
+
+describe("planSidebarThreadEdgeMove", () => {
+  const supported = () => ({
+    settlement: true,
+    snooze: true,
+    pinReorder: true,
+    activeReorder: true,
+  });
+  const thread = (id: string, overrides: ThreadFixtureOverrides = {}) =>
+    makeThread({ id: ThreadId.make(id), ...overrides });
+  const plan = (
+    threads: readonly Thread[],
+    id: string,
+    edge: "top" | "bottom",
+    overrides: Partial<Parameters<typeof planSidebarThreadEdgeMove>[0]> = {},
+  ) =>
+    planSidebarThreadEdgeMove({
+      threads,
+      threadKey: scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make(id))),
+      edge,
+      now: "2026-03-09T12:00:00.000Z",
+      supports: supported,
+      activeTimeOrdered: false,
+      ...overrides,
+    });
+  const pinnedAt = "2026-03-09T08:00:00.000Z";
+  const pinned = [
+    thread("p1", { pinnedAt, pinOrderKey: "g" }),
+    thread("p2", { pinnedAt, pinOrderKey: "m", projectId: ProjectId.make("project-2") }),
+    thread("p3", { pinnedAt, pinOrderKey: "t" }),
+  ];
+
+  it("moves a pinned thread past every pin, whichever project it belongs to", () => {
+    const top = plan(pinned, "p3", "top");
+    expect(top?.section).toBe("pinned");
+    expect(top?.assignments.map((assignment) => assignment.thread.id)).toEqual(["p3"]);
+    expect(top!.assignments[0]!.orderKey < "g").toBe(true);
+    expect(plan(pinned, "p1", "bottom")!.assignments[0]!.orderKey > "t").toBe(true);
+  });
+
+  it("offers nothing when the thread is already at that edge", () => {
+    expect(plan(pinned, "p1", "top")).toBeNull();
+    expect(plan(pinned, "p3", "bottom")).toBeNull();
+  });
+
+  it("orders the active list only while it is arranged by hand", () => {
+    const active = [thread("a1", { activeOrderKey: "g" }), thread("a2", { activeOrderKey: "t" })];
+    const top = plan(active, "a2", "top");
+    expect(top?.section).toBe("active");
+    expect(top!.assignments[0]!.orderKey < "g").toBe(true);
+    expect(plan(active, "a2", "top", { activeTimeOrdered: true })).toBeNull();
+  });
+
+  it("leaves settled threads and servers that cannot store an order alone", () => {
+    const settled = thread("s1", { settledOverride: "settled" });
+    expect(plan([...pinned, settled], "s1", "top")).toBeNull();
+    expect(
+      plan(pinned, "p3", "top", { supports: () => ({ ...supported(), pinReorder: false }) }),
+    ).toBeNull();
   });
 });

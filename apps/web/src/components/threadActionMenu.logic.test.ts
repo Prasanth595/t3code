@@ -11,6 +11,8 @@ const baseState: ThreadActionMenuState = {
   branch: null,
   projectFilter: null,
   isPinned: false,
+  canMoveToTop: false,
+  canMoveToBottom: false,
   isSettled: false,
   autoSettleEnabled: true,
   isSnoozed: false,
@@ -151,6 +153,16 @@ describe("buildThreadActionMenuItems", () => {
       expect.arrayContaining(["unpin", "unsettle", "unsnooze"]),
     );
     expect(ids(baseState)).toEqual(expect.arrayContaining(["pin", "settle", "snooze"]));
+  });
+
+  it("offers moving to either end beside the pin, disabling the end the thread is at", () => {
+    expect(ids(baseState)).not.toContain("move-to-top");
+    const items = buildThreadActionMenuItems({ ...baseState, isPinned: true, canMoveToTop: true });
+    const unpinIndex = items.findIndex((item) => item.id === "unpin");
+    expect(items.slice(unpinIndex + 1, unpinIndex + 3)).toMatchObject([
+      { id: "move-to-top", label: "Move to top", disabled: false },
+      { id: "move-to-bottom", label: "Move to bottom", disabled: true },
+    ]);
   });
 
   it("offers auto-settle as a submenu with the current option checked", () => {

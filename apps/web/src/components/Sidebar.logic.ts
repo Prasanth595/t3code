@@ -11,7 +11,12 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
-import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  planPinnedReorder,
+  sortActiveThreadsByOrderKey,
+  sortPinnedThreadsByOrderKey,
+} from "@t3tools/client-runtime/state/thread-sort";
 import {
   effectiveSnoozed,
   type ThreadSnoozeShell,
@@ -370,6 +375,91 @@ export function planSidebarThreadDrop(input: {
       };
     }
   }
+}
+
+export type SidebarThreadEdge = "top" | "bottom";
+
+/**
+ * Order-key writes for the thread menu's "Move to top/bottom", planned as a
+ * drag to the first or last slot of the thread's pinned or active section.
+ * The order spans every project and environment, so the thread stays at that
+ * edge under any project filter. Null when it is already there or its section
+ * has no manual order (settled, snoozed, a time-ordered inbox, or a server
+ * that cannot store one).
+ */
+export function planSidebarThreadEdgeMove<T extends SidebarThreadSummary>(input: {
+  readonly threads: readonly T[];
+  readonly threadKey: string;
+  readonly edge: SidebarThreadEdge;
+  readonly now: string;
+  readonly supports: (environmentId: EnvironmentId) => {
+    readonly settlement: boolean;
+    readonly snooze: boolean;
+    readonly pinReorder: boolean;
+    readonly activeReorder: boolean;
+  };
+  readonly activeTimeOrdered: boolean;
+}): {
+  readonly section: "pinned" | "active";
+  readonly assignments: ReadonlyArray<{ readonly thread: T; readonly orderKey: string }>;
+} | null {
+  const keyOf = (thread: T) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const supportsByEnvironment = new Map<EnvironmentId, ReturnType<typeof input.supports>>();
+  const threadByKey = new Map<string, T>();
+  const pinned: T[] = [];
+  const active: T[] = [];
+  const reorderableKeys = new Set<string>();
+  const activeReorderableKeys = new Set<string>();
+  let section: SidebarSection | null = null;
+  for (const thread of filterSidebarV2VisibleThreads(input.threads, null)) {
+    let supports = supportsByEnvironment.get(thread.environmentId);
+    if (supports === undefined) {
+      supports = input.supports(thread.environmentId);
+      supportsByEnvironment.set(thread.environmentId, supports);
+    }
+    const key = keyOf(thread);
+    const threadSection = resolveSidebarThreadSection({
+      snoozed: supports.snooze && effectiveSnoozed(thread, { now: input.now }),
+      settled: supports.settlement && thread.settledOverride === "settled",
+      pinned: thread.pinnedAt != null,
+    });
+    threadByKey.set(key, thread);
+    if (threadSection === "pinned") pinned.push(thread);
+    else if (threadSection === "active") active.push(thread);
+    if (supports.pinReorder) reorderableKeys.add(key);
+    if (supports.activeReorder) activeReorderableKeys.add(key);
+    if (key === input.threadKey) section = threadSection;
+  }
+  if (section !== "pinned" && section !== "active") return null;
+  const pinnedOrder = sortPinnedThreadsByOrderKey(pinned).map(keyOf);
+  const activeOrder = sortActiveThreadsByOrderKey(active).map(keyOf);
+  const toEdge = (order: readonly string[]) => {
+    const rest = order.filter((key) => key !== input.threadKey);
+    return input.edge === "top" ? [input.threadKey, ...rest] : [...rest, input.threadKey];
+  };
+  const plan = planSidebarThreadDrop({
+    activeKey: input.threadKey,
+    activeSection: section,
+    target: {
+      section,
+      pinnedOrder: section === "pinned" ? toEdge(pinnedOrder) : pinnedOrder,
+      activeOrder: section === "active" ? toEdge(activeOrder) : activeOrder,
+    },
+    pinnedOrder,
+    // Rows outside the section keep their keys reserved, as in a drag.
+    pinnedKeysById: new Map(input.threads.map((thread) => [keyOf(thread), thread.pinOrderKey])),
+    reorderableKeys,
+    activeOrder,
+    activeKeysById: new Map(input.threads.map((thread) => [keyOf(thread), thread.activeOrderKey])),
+    activeReorderableKeys,
+    activeTimeOrdered: input.activeTimeOrdered,
+  });
+  if (plan.kind !== "reorder-pinned" && plan.kind !== "move-active") return null;
+  const assignments = plan.assignments.flatMap(({ id, orderKey }) => {
+    const thread = threadByKey.get(id);
+    return thread === undefined ? [] : [{ thread, orderKey }];
+  });
+  return assignments.length === 0 ? null : { section, assignments };
 }
 
 export function applySidebarThreadDrop<

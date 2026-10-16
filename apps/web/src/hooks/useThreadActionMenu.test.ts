@@ -122,8 +122,8 @@ vi.mock("./useSettings", () => ({
     }),
 }));
 vi.mock("./useThreadActions", () => ({
-  useThreadActions: () =>
-    Object.fromEntries(
+  useThreadActions: () => ({
+    ...Object.fromEntries(
       [
         "markThreadUnread",
         "settleThread",
@@ -132,6 +132,7 @@ vi.mock("./useThreadActions", () => ({
         "unsnoozeThread",
         "pinThread",
         "confirmAndUnpinThread",
+        "moveThreadToEdge",
         "archiveThread",
         "deleteThread",
       ].map((action) => [
@@ -142,6 +143,8 @@ vi.mock("./useThreadActions", () => ({
         },
       ]),
     ),
+    canMoveThreadToEdge: () => true,
+  }),
 }));
 
 import { useThreadActionMenu } from "./useThreadActionMenu";
@@ -193,19 +196,24 @@ describe("thread menu permissions", () => {
     );
   });
 
-  it.each(["rename", "regenerate-title", "delete", "pin", "settle", "archive"] as const)(
-    "%s rechecks after the native menu closes",
-    async (action) => {
-      state.granted.add("secondary");
-      const choice = deferred<ThreadActionMenuId | null>();
-      state.show.mockReturnValue(choice.promise);
-      createMenu().openMenu(position);
-      state.granted.delete("secondary");
-      choice.resolve(action);
-      await state.completed.promise;
-      expect(state.effects).toEqual([]);
-    },
-  );
+  it.each([
+    "rename",
+    "regenerate-title",
+    "delete",
+    "pin",
+    "move-to-top",
+    "settle",
+    "archive",
+  ] as const)("%s rechecks after the native menu closes", async (action) => {
+    state.granted.add("secondary");
+    const choice = deferred<ThreadActionMenuId | null>();
+    state.show.mockReturnValue(choice.promise);
+    createMenu().openMenu(position);
+    state.granted.delete("secondary");
+    choice.resolve(action);
+    await state.completed.promise;
+    expect(state.effects).toEqual([]);
+  });
 
   it.each([
     ["new-thread-on-branch", "draft"],

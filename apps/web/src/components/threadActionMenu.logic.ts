@@ -7,6 +7,8 @@ export type ThreadActionMenuId =
   | "project-settings"
   | "pin"
   | "unpin"
+  | "move-to-top"
+  | "move-to-bottom"
   | "settle"
   | "unsettle"
   | "auto-settle"
@@ -71,6 +73,9 @@ export interface ThreadActionMenuState {
     readonly isActive: boolean;
   } | null;
   readonly isPinned: boolean;
+  /** Both false hides the move items: the thread's section has no manual order. */
+  readonly canMoveToTop: boolean;
+  readonly canMoveToBottom: boolean;
   readonly isSettled: boolean;
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
@@ -119,6 +124,22 @@ export function buildThreadActionMenuItems(
           state.isPinned
             ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
             : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+        ]
+      : []),
+    ...(state.canMoveToTop || state.canMoveToBottom
+      ? [
+          {
+            id: "move-to-top" as const,
+            label: "Move to top",
+            icon: "arrow-up-to-line",
+            disabled: !state.canMoveToTop,
+          },
+          {
+            id: "move-to-bottom" as const,
+            label: "Move to bottom",
+            icon: "arrow-down-to-line",
+            disabled: !state.canMoveToBottom,
+          },
         ]
       : []),
     ...(state.supports.settlement
