@@ -19,6 +19,7 @@ import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
+  isRightPanelNewTerminalShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
@@ -246,6 +247,28 @@ describe("isTerminalToggleShortcut", () => {
         context: { terminalFocus: true },
       }),
     );
+  });
+});
+
+describe("isRightPanelNewTerminalShortcut", () => {
+  it("has no default binding", () => {
+    assert.isFalse(
+      DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === "rightPanel.newTerminal"),
+    );
+  });
+
+  it("takes Cmd+J from terminal.toggle when the user binds it", () => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([{ key: "mod+j", command: "rightPanel.newTerminal" }]),
+    );
+
+    for (const terminalFocus of [false, true]) {
+      const options = { platform: "MacIntel", context: { terminalFocus } };
+      assert.isTrue(
+        isRightPanelNewTerminalShortcut(event({ metaKey: true }), keybindings, options),
+      );
+      assert.isFalse(isTerminalToggleShortcut(event({ metaKey: true }), keybindings, options));
+    }
   });
 });
 

@@ -141,6 +141,11 @@ a shortcut.
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
+`rightPanel.newTerminal` opens a new terminal tab in the right panel, even when
+the panel is closed or no terminal has focus. It has no default shortcut. To put
+it on `mod+j` instead of the bottom terminal, add
+`{ "key": "mod+j", "command": "rightPanel.newTerminal" }`.
+
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
 draft. Consecutive

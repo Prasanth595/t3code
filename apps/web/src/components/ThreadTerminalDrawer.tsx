@@ -64,6 +64,7 @@ import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isTerminalUrl } from "../terminal-links";
 import {
   isDiffToggleShortcut,
+  isRightPanelNewTerminalShortcut,
   isTerminalClearShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
@@ -852,6 +853,7 @@ export function TerminalViewport({
           isTerminalSplitShortcut(event, currentKeybindings, options) ||
           isTerminalSplitVerticalShortcut(event, currentKeybindings, options) ||
           isTerminalNewShortcut(event, currentKeybindings, options) ||
+          isRightPanelNewTerminalShortcut(event, currentKeybindings, options) ||
           isDiffToggleShortcut(event, currentKeybindings, options)
         ) {
           return false;

@@ -7819,6 +7819,14 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "rightPanel.newTerminal") {
+        if (!canOperateTerminal) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) addTerminalSurfaceStable();
+        return;
+      }
+
       if (command === "diff.toggle") {
         event.preventDefault();
         event.stopPropagation();
