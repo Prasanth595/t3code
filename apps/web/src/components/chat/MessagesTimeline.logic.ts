@@ -2267,3 +2267,108 @@ export function shouldCollapseUserMessage(text: string): boolean {
     visible.split("\n").length > MAX_COLLAPSED_USER_MESSAGE_LINES
   );
 }
+
+const isWorkLogTimelineRow = (row: MessagesTimelineRow) =>
+  row.kind === "work" ||
+  row.kind === "work-live" ||
+  row.kind === "work-toggle" ||
+  row.kind === "thinking";
+
+const workLogRowIsExpanded = (row: MessagesTimelineRow) =>
+  row.kind === "work"
+    ? row.isExpandedToolGroup
+    : (row.kind === "work-live" || row.kind === "work-toggle" || row.kind === "thinking") &&
+      row.expanded === true;
+
+/**
+ * Display-only pass over derived rows for the `hideReasoning` and
+ * `compactWorkLog` client settings. Runs after derivation so the incremental
+ * projection state stays untouched.
+ */
+export function applyTimelineDensity(
+  rows: MessagesTimelineRow[],
+  options: { compactWorkLog: boolean; hideReasoning: boolean },
+): MessagesTimelineRow[] {
+  if (!options.compactWorkLog && !options.hideReasoning) return rows;
+  let result = rows;
+
+  if (options.hideReasoning) {
+    // Commentary = a non-terminal assistant message that is followed, within
+    // the same turn, by more work or another assistant message. The trailing
+    // message (final answer, or the commentary still streaming) stays visible.
+    // Terminal answers whose meta moved below trailing tools are still terminal.
+    const relocatedMetaMessageIds = new Set(
+      result.flatMap((row) => (row.kind === "assistant-meta" ? [row.message.id] : [])),
+    );
+    const hiddenCommentaryIds = new Set<string>();
+    let laterActivityInTurn = false;
+    for (let index = result.length - 1; index >= 0; index -= 1) {
+      const row = result[index]!;
+      if (row.kind === "message" && row.message.role === "user") {
+        laterActivityInTurn = false;
+        continue;
+      }
+      if (row.kind === "message" && row.message.role === "assistant") {
+        const isTerminal = row.showAssistantMeta || relocatedMetaMessageIds.has(row.message.id);
+        if (!isTerminal && laterActivityInTurn) hiddenCommentaryIds.add(row.id);
+        laterActivityInTurn = true;
+      } else if (isWorkLogTimelineRow(row)) {
+        laterActivityInTurn = true;
+      }
+    }
+    result = result.flatMap((row): MessagesTimelineRow[] => {
+      if (hiddenCommentaryIds.has(row.id)) return [];
+      if (row.kind === "work") {
+        const groupedEntries = row.groupedEntries.filter((entry) => entry.itemType !== "reasoning");
+        if (groupedEntries.length === 0) return [];
+        return groupedEntries.length === row.groupedEntries.length
+          ? [row]
+          : [{ ...row, groupedEntries }];
+      }
+      if (row.kind === "work-live") {
+        if (row.entry.itemType === "reasoning") {
+          return row.active ? [{ kind: "thinking", id: row.id, createdAt: row.createdAt }] : [];
+        }
+        if (row.thought === undefined) return [row];
+        const { thought: _thought, ...rest } = row;
+        return [rest];
+      }
+      return [row];
+    });
+  }
+
+  if (options.compactWorkLog) {
+    // Each run of consecutive work-log rows collapses to its last row, and a
+    // work group to its last entry, so the line updates instead of growing.
+    // A run the user expanded stays intact so its disclosure still works.
+    const expandedRunRowIds = new Set<string>();
+    let run: MessagesTimelineRow[] = [];
+    for (const row of [...result, null]) {
+      if (row !== null && isWorkLogTimelineRow(row)) {
+        run.push(row);
+        continue;
+      }
+      if (run.some(workLogRowIsExpanded))
+        for (const runRow of run) expandedRunRowIds.add(runRow.id);
+      run = [];
+    }
+    result = result.flatMap((row, index): MessagesTimelineRow[] => {
+      if (!isWorkLogTimelineRow(row) || expandedRunRowIds.has(row.id)) return [row];
+      const next = result[index + 1];
+      if (next !== undefined && isWorkLogTimelineRow(next)) return [];
+      const compactRow: MessagesTimelineRow = { ...row, continuesWorkLog: false };
+      if (compactRow.kind === "work") {
+        return [
+          {
+            ...compactRow,
+            groupedEntries: compactRow.groupedEntries.slice(-1),
+            isExpandedToolGroup: false,
+          },
+        ];
+      }
+      return [compactRow];
+    });
+  }
+
+  return result;
+}

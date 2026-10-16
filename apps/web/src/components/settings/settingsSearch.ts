@@ -288,6 +288,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["long lines code blocks tables diffs file previews"],
   },
   {
+    id: "compact-work-log",
+    title: "Compact work log",
+    to: "/settings/appearance",
+    searchTerms: ["working tool calls activity single line dense"],
+  },
+  {
+    id: "hide-reasoning",
+    title: "Hide reasoning",
+    to: "/settings/appearance",
+    searchTerms: ["thinking thoughts commentary final answer only"],
+  },
+  {
     id: "composer-context",
     title: "Composer context",
     to: "/settings/appearance",

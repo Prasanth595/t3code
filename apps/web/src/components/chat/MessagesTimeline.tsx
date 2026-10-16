@@ -200,6 +200,7 @@ import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssis
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
+  applyTimelineDensity,
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
   resolveAssistantMessageCopyState,
@@ -889,7 +890,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     supportsConversationRollback,
     worktreeSetup,
   ]);
-  const rows = useStableRows(rawRows, listIdentityKey);
+  const compactWorkLog = useClientSettings((settings) => settings.compactWorkLog);
+  const hideReasoning = useClientSettings((settings) => settings.hideReasoning);
+  // Find must reach every row, so density only applies while it is closed.
+  const densityRows = useMemo(
+    () => (findActive ? rawRows : applyTimelineDensity(rawRows, { compactWorkLog, hideReasoning })),
+    [findActive, rawRows, compactWorkLog, hideReasoning],
+  );
+  const rows = useStableRows(densityRows, listIdentityKey);
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);

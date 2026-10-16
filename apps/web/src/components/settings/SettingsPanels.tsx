@@ -592,6 +592,12 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Snooze limited threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.compactWorkLog !== DEFAULT_UNIFIED_SETTINGS.compactWorkLog
+        ? ["Compact work log"]
+        : []),
+      ...(settings.hideReasoning !== DEFAULT_UNIFIED_SETTINGS.hideReasoning
+        ? ["Hide reasoning"]
+        : []),
       ...(settings.persistComposerContextStrip !==
       DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
         ? ["Composer context"]
@@ -722,6 +728,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
       settings.wordWrap,
+      settings.compactWorkLog,
+      settings.hideReasoning,
       followSystem,
       theme,
       themeHalves,
@@ -792,6 +800,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      compactWorkLog: DEFAULT_UNIFIED_SETTINGS.compactWorkLog,
+      hideReasoning: DEFAULT_UNIFIED_SETTINGS.hideReasoning,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -1729,6 +1739,42 @@ function WordWrapRow() {
   );
 }
 
+function ChatDensityToggleRow({
+  settingKey,
+  searchId,
+  label,
+  description,
+}: {
+  settingKey: "compactWorkLog" | "hideReasoning";
+  searchId: "compact-work-log" | "hide-reasoning";
+  label: string;
+  description: string;
+}) {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting(searchId)}
+      description={description}
+      resetAction={
+        settings[settingKey] !== DEFAULT_UNIFIED_SETTINGS[settingKey] ? (
+          <SettingResetButton
+            label={label}
+            onClick={() => updateSettings({ [settingKey]: DEFAULT_UNIFIED_SETTINGS[settingKey] })}
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings[settingKey]}
+          onCheckedChange={(checked) => updateSettings({ [settingKey]: Boolean(checked) })}
+          aria-label={label}
+        />
+      }
+    />
+  );
+}
+
 function FontSettingsGroup() {
   return (
     <>
@@ -1812,6 +1858,18 @@ function TypographySection() {
     >
       {advanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
+      <ChatDensityToggleRow
+        settingKey="compactWorkLog"
+        searchId="compact-work-log"
+        label="Compact work log"
+        description="Collapse each run of tool calls into a single line that updates with the latest step."
+      />
+      <ChatDensityToggleRow
+        settingKey="hideReasoning"
+        searchId="hide-reasoning"
+        label="Hide reasoning"
+        description="Hide model reasoning and intermediate commentary. Tool activity and the final answer stay visible."
+      />
     </SettingsSection>
   );
 }
