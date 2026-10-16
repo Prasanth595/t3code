@@ -389,7 +389,8 @@ export const recordedReason = (stop: Stop): string =>
  * comment says `stop.reason`, quotes `stop.sessionText` and names `stop.branch`; the ledger's
  * `stuck` line says `stop.detail` when there is one, then the session text, and the branch. A
  * comment is skipped when the ledger already records it; the label, the release and the status
- * comment are repeated safely. `code` is the reason of every line it writes.
+ * comment are repeated safely. A pull request that was ready (the issue is `pr-open`) goes back to
+ * draft first. `code` is the reason of every line it writes.
  */
 export const goStuck = (
   ctx: RunContext,
@@ -406,6 +407,9 @@ export const goStuck = (
       return;
     }
     yield* stopSession(ctx, out, at);
+    // A pull request that was ready for review is not left looking ready: the factory no longer
+    // vouches for it. Safe to repeat.
+    if (at.state === "pr-open" && at.pr !== null) yield* ctx.tracker.markPrDraft(at.pr);
     const failed = yield* Effect.fromResult(
       transition(at.state, { kind: "failed", reason: recordedReason(stop) }),
     );

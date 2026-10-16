@@ -167,6 +167,12 @@ export interface Seen {
   readonly relaunch: Relaunch | null;
   /** A `session_launched` line follows the newest `gate-sending` step or relaunch decision. */
   readonly launchedSinceSending: boolean;
+  /**
+   * The branch the newest `session_launched` line says its worktree was made from (a relaunch
+   * for a failed re-gate); null for a first launch. That session works on a branch of T3's own
+   * and pushes to this one, so a pull request from it is the session's.
+   */
+  readonly resumedFrom: string | null;
 }
 
 /** A relaunch that was decided and whose session the ledger does not name: the launch may have reached T3. */
@@ -282,6 +288,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let regateSentBack = false;
   let relaunch: Relaunch | null = null;
   let launchedSinceSending = false;
+  let resumedFrom: string | null = null;
   // A wait marker names run `k`: the awaited ordinal never goes down.
   const awaitRun = (k: number, forward: boolean) => {
     if (waitingAfter === null || k >= waitingAfter) {
@@ -386,6 +393,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         worktree = typeof path === "string" ? path : null;
         worktreeDone = false;
         launchedSinceSending = true;
+        const from = field(entry.data, "resumed_from");
+        const fromBranch = field(from, "branch");
+        resumedFrom = typeof fromBranch === "string" ? fromBranch : null;
         // A new session has run numbers of its own, one reminder, and no stop by hand yet.
         waitingAfter = null;
         waitIsForward = false;
@@ -563,6 +573,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     regateSentBack,
     relaunch,
     launchedSinceSending,
+    resumedFrom,
   };
 };
 

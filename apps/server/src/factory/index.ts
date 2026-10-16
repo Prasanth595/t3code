@@ -193,6 +193,8 @@ const gateWords = (run: string, step: GateStep): string => {
       return "gate running";
     case "queued":
       return gateQueued(step);
+    case "unchanged":
+      return "nothing moved";
   }
 };
 
@@ -279,6 +281,10 @@ export const liveWorld = (
   const gateContext = (repo: Repo): GateContext => ({
     ...buildingContext(repo),
     tracker: trackerFor(repo.watched),
+    repoPath: repo.watched.path,
+    ghConfigDir: machine.ghConfigDir,
+    model: { instanceId: machine.modelInstance, model: machine.model },
+    sessions,
     gate: live.gate,
     maxConcurrentGates: machine.maxConcurrentGates,
     gateOptions: {

@@ -349,7 +349,8 @@ export interface Unbound {
  * Binds a pull request to a run: it exists, is in this repo and not a fork, merges into `base`,
  * and has as its head the session's own `branch`. The text came from a session that issue text
  * can steer, so it must not be able to name someone else's pull request. Whether it is a draft
- * is asked after, so only a bound one is ever put back to draft.
+ * is asked after, so only a bound one is ever put back to draft. `resumedFrom` is the branch a
+ * relaunched session was started from: its pull request is the session's too.
  */
 export const checkBinding = (
   pull: PullRequest | null,
@@ -357,6 +358,7 @@ export const checkBinding = (
   base: string,
   branch: string | null,
   mustBeDraft = false,
+  resumedFrom: string | null = null,
 ): Unbound | null => {
   const reported = `the session reported PR #${pr} but`;
   if (pull === null) return { public: `${reported} it does not exist` };
@@ -368,8 +370,12 @@ export const checkBinding = (
       detail: `${reported} its base ${prepareSessionText(pull.baseRef)} is not the configured base branch`,
     };
   }
-  if (branch === null) return { public: `${reported} the session has no branch` };
-  if (pull.headRef !== branch) {
+  if (branch === null && resumedFrom === null) {
+    return { public: `${reported} the session has no branch` };
+  }
+  // A session relaunched for a failed re-gate works on a branch of T3's own and pushes to the
+  // pull request's, which its `session_launched` line names.
+  if (pull.headRef !== branch && pull.headRef !== resumedFrom) {
     return {
       public: `${reported} its branch is not this session's branch`,
       detail: `${reported} its branch ${prepareSessionText(pull.headRef)} is not this session's branch`,
@@ -562,7 +568,14 @@ export const advance = (
         case "done": {
           const { pr, prUrl } = result;
           const pull = yield* ctx.tracker.pullRequest(pr);
-          const unbound = checkBinding(pull, pr, ctx.project.base, status.branch);
+          const unbound = checkBinding(
+            pull,
+            pr,
+            ctx.project.base,
+            status.branch,
+            false,
+            seen.resumedFrom,
+          );
           if (unbound !== null) {
             return yield* stuck(
               "pr-not-bound",
