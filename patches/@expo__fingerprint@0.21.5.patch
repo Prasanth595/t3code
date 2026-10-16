@@ -1,0 +1,17 @@
+diff --git a/build/sourcer/Expo.js b/build/sourcer/Expo.js
+index 785ec516921af68ea5922462a0177112e15c6bb1..6e9c848f4ff7ae1a849994a84c0c7a038aed70c8 100644
+--- a/build/sourcer/Expo.js
++++ b/build/sourcer/Expo.js
+@@ -368,6 +368,12 @@ async function getExpoAutolinkingAndroidSourcesAsync(projectRoot, options, expoA
+             }
+             if (module1.plugins) {
+                 for (const plugin of module1.plugins){
++                    // Maven-only Gradle plugins (expo-widgets) have no sourceDir. Their id, group and
++                    // version are hashed through expoAutolinkingConfig:android below. Without this
++                    // skip, path.relative throws and the catch drops every Expo module from the hash.
++                    if (typeof plugin.sourceDir !== 'string') {
++                        continue;
++                    }
+                     const filePath = (0, _Path.toPosixPath)(_path().default.relative(realProjectRoot, plugin.sourceDir));
+                     plugin.sourceDir = filePath; // use relative path for the dir
+                     debug(`Adding expo-modules-autolinking android dir - ${_chalk().default.dim(filePath)}`);
