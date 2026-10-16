@@ -608,7 +608,8 @@ const workRuns = (
 /**
  * The gate started for every run whose issue is `pr-open`, once each, after the claims (softfac's
  * `pr_open_runs`), unless nothing moved since its last pass (see `unchanged`): such a run costs
- * no process and no gate slot, and the pass says nothing of it. The gate (`regate`) deals with a merged or closed pull request, a re-gate under
+ * no process and no gate slot, and the pass says nothing of it. A stop request left for the run
+ * is dropped first, and the pass says so. The gate (`regate`) deals with a merged or closed pull request, a re-gate under
  * way, a relaunch not yet recorded, a run whose worktree line is not written yet, a checkout an
  * earlier gate left on disk, and a read that fails. A run of a repo that is not loaded is left
  * alone.
@@ -631,8 +632,13 @@ const prOpenRuns = (
       const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
       if (world.gateRunning(info.id)) {
         notes.parts.push(GATE_RUNNING);
-      } else if (!(yield* unchanged(world, repo, info.id, tips))) {
-        yield* startGate(world, repo, info, notes);
+      } else {
+        // A stop asked for while the run was building waits for its gate (see `workRuns`). Once
+        // the gate passed it is dropped here, before a failed re-gate relaunches a session.
+        yield* takeStopRequest(world, pass, info, notes);
+        if (!(yield* unchanged(world, repo, info.id, tips))) {
+          yield* startGate(world, repo, info, notes);
+        }
       }
       yield* pass.flush(notes, info.id);
     }

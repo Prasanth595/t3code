@@ -3031,20 +3031,46 @@ describe("pr-open runs: gated again only when something moved", () => {
     }),
   );
 
-  it.effect(
-    "a pr-open run is not worked as a building run: no stop request, limit or advance",
-    () =>
-      Effect.gen(function* () {
-        const fake = new Fake();
-        pr(fake, 41);
-        yield* pass(fake, machine([REPO], 5));
-        assert.deepEqual(
-          fake.calls.filter((c) =>
-            /^(stop_request|time_limit|watch|forward|advance|start|resume) /.test(c),
-          ),
-          [],
-        );
-      }),
+  it.effect("a pr-open run is not worked as a building run: no limit or advance", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(
+        fake.calls.filter((c) => /^(time_limit|watch|forward|advance|start|resume) /.test(c)),
+        [],
+      );
+    }),
+  );
+
+  // A stop asked for while a building run's gate ran waits for the gate; once the gate passed the
+  // run is pr-open, and the request is dropped before a re-gate could relaunch a session it stops.
+  it.effect("a stop request left from before the gate passed is dropped before the gate", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.baseTips[REPO] = MOVED;
+      fake.stopRequests[`${REPO}#41`] = "not-building";
+      const { lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(
+        fake.calls.filter((c) => /^(stop_request|last_pass|gate) /.test(c)),
+        [`stop_request ${REPO}#41`, `last_pass ${REPO}#41`, `gate ${REPO}#41`],
+      );
+      assert.deepEqual(lineOf(lines, 41), [
+        `${REPO}#41 pr-open: stop request dropped: the run is not building, gate started in the background`,
+      ]);
+    }),
+  );
+
+  it.effect("a stop request is not taken while the run's gate is running", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.gateLocks = [runIdToString(rid(41))];
+      fake.stopRequests[`${REPO}#41`] = "not-building";
+      yield* pass(fake, machine([REPO], 5));
+      assert.ok(!fake.calls.includes(`stop_request ${REPO}#41`), fake.calls.join("\n"));
+    }),
   );
 
   it.effect("a head that moved starts the gate", () =>

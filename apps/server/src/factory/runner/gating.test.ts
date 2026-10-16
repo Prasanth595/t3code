@@ -4769,3 +4769,82 @@ describe("regate: a failed regate cut short and then passing", () => {
       }),
   );
 });
+
+// ---- regate: the port's own cases ---------------------------------------------------------------
+//
+// Not in softfac's sections: a closed issue on each re-gate path, and a first launch refused.
+
+describe("regate: a person closed the issue", () => {
+  /** Ended for a closed issue: nothing run, nothing posted, one thread archived, the run finished. */
+  const assertAbandoned = (rig: Rig, comments: number) => {
+    assert.deepStrictEqual(rig.ws.calls, []);
+    assert.strictEqual(rig.gh.world.prComments.length, comments);
+    assert.deepStrictEqual(rig.t3.launches, []);
+    assert.strictEqual(eventsOf(rig, "regate_relaunching").length, 0);
+    assert.strictEqual(linesOf(rig).at(-1)?.event, "finished");
+  };
+
+  it.effect("before a moved base is gated, the run is abandoned and nothing is gated", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      baseMoved(rig, 0);
+      rig.gh.closed = true;
+      const comments = rig.gh.world.prComments.length;
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(eventsOf(rig, "gate_regate"), []);
+      assertAbandoned(rig, comments);
+    }),
+  );
+
+  it.effect(
+    "while a re-gate is under way, the run is abandoned and the gate is not run again",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* prOpenRun();
+        baseMoved(rig, 0);
+        appendLines(rig, [regateLine(BASE, MOVED)] as ReadonlyArray<RunEvent>);
+        rig.gh.closed = true;
+        const comments = rig.gh.world.prComments.length;
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "abandoned" });
+        assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
+        assertAbandoned(rig, comments);
+      }),
+  );
+});
+
+describe("regate: the relaunched session's pull request", () => {
+  it.effect("on another branch than the one it was started from is not bound", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      baseMoved(rig, 0);
+      passThenFail(rig);
+      yield* regateIn(rig);
+      clearCalls(rig);
+      rig.gh.pr = { ...rig.gh.pr!, headRef: "someone/else" };
+      rig.t3.status = () => statusOf("completed", DONE_MESSAGE, { branch: "t3code/def" });
+      const outcome = yield* advanceIn(rig);
+      assert.strictEqual(outcome.kind, "stuck");
+      const reason = outcome.kind === "stuck" ? outcome.reason : "";
+      assert.ok(reason.includes("its branch someone/else is not this session's branch"), reason);
+      assert.strictEqual(rig.gh.world.state, "stuck");
+    }),
+  );
+});
+
+describe("regate: a first relaunch with no T3 project", () => {
+  it.effect("goes stuck without saying a session may exist, and launches nothing", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      baseMoved(rig, 0);
+      passThenFail(rig);
+      rig.t3.project = null;
+      const step = yield* regateStep(rig);
+      assert.strictEqual(step.kind, "stuck");
+      const reason = step.kind === "stuck" ? step.reason : "";
+      assert.ok(reason.includes("no T3 project for this repo on this machine"), reason);
+      assert.ok(!reason.includes(SESSION_MAY_EXIST), reason);
+      assert.deepStrictEqual(rig.t3.launches, []);
+      assert.strictEqual(rig.gh.world.state, "stuck");
+    }),
+  );
+});

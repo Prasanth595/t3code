@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - a checkout an earlier call left on disk is a directory under the data dir.
 /**
  * The gate of a building run, ported from softfac's `runner/gating.rs` `gate`: a fresh checkout
  * of the pull request's head merged with the base tip, the project's commands in it, and the
@@ -12,8 +11,6 @@
  * resumes whatever an earlier call left half done. A failure of the tracker, of T3 or of the
  * checkout is an error, with nothing final written, and the next call decides again.
  */
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -24,7 +21,10 @@ import {
   commandCode,
   gateResultsComment,
   gateRoot,
+  leftoverCheckouts,
   regateResultsComment,
+  removeEmptyGateRoot,
+  removeLeftoverCheckouts,
   type CommandResult,
   type FactoryGate,
   type GateError,
@@ -32,7 +32,6 @@ import {
 } from "../gate.ts";
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause } from "../ledger/events.ts";
-import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
 import type { FactorySessions, Model, ThreadStatus } from "../t3/sessions.ts";
@@ -860,60 +859,32 @@ export interface Regated {
   readonly moved: Moved | null;
 }
 
-/** The directories under the run's gate directory, in name order; none when it is not there. */
-const checkoutNames = (root: string): ReadonlyArray<string> => {
-  try {
-    return NodeFS.readdirSync(root).sort();
-  } catch {
-    return [];
-  }
-};
-
 /**
- * Removes the checkouts of this run that are still on disk, in name order: an earlier call died
- * between making one and removing it. One gate runs at a time for a run, so every one is a
- * leftover. A checkout that cannot be removed is noted in the ledger, once for each directory
- * (unless the run is finished, which takes no more lines), and is tried again by the next call.
+ * Removes the checkouts of this run that are still on disk: an earlier call died between making
+ * one and removing it. One gate runs at a time for a run, so every one is a leftover. A checkout
+ * that cannot be removed is noted in the ledger, once for each directory (unless the run is
+ * finished, which takes no more lines), and is tried again by the next call.
  */
 const removeLeftovers = (
   ctx: GateContext,
+  out: Out,
   run: RunId,
   seen: Seen,
 ): Effect.Effect<void, LedgerError> =>
   Effect.gen(function* () {
     const root = yield* ledger(() => gateRoot(ctx.dataDir, run));
-    for (const name of checkoutNames(root)) {
-      const dir = NodePath.join(root, name);
-      const removed = yield* Effect.result(
-        Effect.tryPromise({
-          try: () => NodeFS.promises.rm(dir, { recursive: true, force: true }),
-          catch: describeCause,
-        }),
-      );
-      if (removed._tag === "Success" || seen.finished || seen.cleanupFailed.has(dir)) continue;
-      const error = removed.failure;
-      yield* ledger(() => {
-        const opened = Ledger.open(ctx.dataDir, run, { clock: ctx.clock });
-        try {
-          opened.append(
+    yield* removeLeftoverCheckouts(root, (dir, error) =>
+      seen.finished || seen.cleanupFailed.has(dir)
+        ? Effect.void
+        : append(
+            out,
             { event: "gate_cleanup_failed", data: { dir, error } },
-            makeCause("gate", "gate-cleanup-failed"),
-          );
-        } finally {
-          opened.close();
-        }
-      });
-    }
-    // Only an empty directory goes.
-    try {
-      NodeFS.rmdirSync(root);
-    } catch {
-      // Not empty, or not there.
-    }
+            "gate",
+            "gate-cleanup-failed",
+          ),
+    );
+    yield* removeEmptyGateRoot(root);
   });
-
-const describeCause = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /**
  * Whether a pull request's `head` and its base branch's `tip` are the ones a recorded pass ran
@@ -928,8 +899,7 @@ export const unchangedSince = (
 ): boolean =>
   passedHead !== "" &&
   passedAgainst !== "" &&
-  head.toLowerCase() === passedHead.toLowerCase() &&
-  tip.toLowerCase() === passedAgainst.toLowerCase();
+  movedSince(passedHead, passedAgainst, head, tip) === null;
 
 /**
  * The pull request of a `pr-open` run and what its last recorded pass ran against, for the pass
@@ -965,7 +935,7 @@ export const lastPass = (
       !seen.regating &&
       seen.worktreeDone;
     if (seen.lastPr === null || seen.pass === null) return null;
-    if (!ready || checkoutNames(gateRoot(dataDir, run)).length > 0) return null;
+    if (!ready || leftoverCheckouts(dataDir, run).length > 0) return null;
     return { pr: seen.lastPr.pr, head: seen.pass.sha, base: seen.pass.baseSha };
   });
 
@@ -1015,7 +985,7 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
         return yield* new WrongRepoError({ run, repo: ctx.repo });
       }
       const seen = readProgress((yield* ledger(() => readRun(ctx.dataDir, run))).entries);
-      yield* removeLeftovers(ctx, run, seen);
+      yield* removeLeftovers(ctx, out, run, seen);
       const last = seen.lastPr;
       if (seen.threadId === null || last === null || seen.finished) {
         return { step: NOT_READY, moved: null };

@@ -233,18 +233,10 @@ export const regateWords = (
       return `${said}, the gate passed again, PR https://github.com/${repo}/pull/${step.pr} stays ready for review`;
     case "sent-back":
       return `${said}, the gate failed on attempt ${step.attempt}, the PR is a draft again and the session was told`;
-    case "stuck":
-      return stuckLine(run);
-    case "ended":
-      return "the pull request was merged or closed, the run is finished";
-    case "abandoned":
-      return "the issue is closed, the run is closed";
     case "not-ready":
       return "the gate waits for the session";
-    case "running":
-      return "gate running";
-    case "queued":
-      return gateQueued(step);
+    default:
+      return gateWords(run, step);
   }
 };
 
