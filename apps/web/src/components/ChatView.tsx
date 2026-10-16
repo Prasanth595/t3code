@@ -109,7 +109,10 @@ import {
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  isMaintenanceCommandMessage,
+  threadSupportsProviderHandoff,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
@@ -3585,6 +3588,14 @@ export default function ChatView(props: ChatViewProps) {
     (isSendBusy || phase === "connecting" || phase === "running") &&
     compactRequestIsActive &&
     !compactionSettled;
+  // Stays on until the /compact or /logout run settles, which can be after the
+  // compaction item completes, so a follow-up never targets it with a steer.
+  const activeTurnIsMaintenance =
+    isCompacting ||
+    (latestServerUserItem?.type === "user_message" &&
+      isMaintenanceCommandMessage(latestServerUserItem) &&
+      latestServerUserItem.runId === activeActivityRun?.runId &&
+      !isLatestRunSettled(activeActivityRun, activeRuntime));
   const isWorking =
     phase === "running" ||
     isSendBusy ||
@@ -11193,7 +11204,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               phase={phase}
                               canInterrupt={canInterruptRunningThread}
-                              activeTurnIsCompaction={isCompacting}
+                              activeTurnIsMaintenance={activeTurnIsMaintenance}
                               isConnecting={isConnecting}
                               isSendBusy={
                                 (isSendBusy && !sendQueuesBehindSetup) ||

@@ -78,7 +78,7 @@ describe("resolveComposerDispatchMode", () => {
             running: true,
             alternateModifier,
             activeTurnDefault,
-            activeTurnIsCompaction: true,
+            activeTurnIsMaintenance: true,
           }),
         ).toBe("queue");
       }

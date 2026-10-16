@@ -31,7 +31,7 @@ interface ComposerPrimaryActionsProps {
   pendingAction: PendingActionState | null;
   isRunning: boolean;
   canInterrupt: boolean;
-  activeTurnIsCompaction?: boolean;
+  activeTurnIsMaintenance?: boolean;
   followUpBehavior?: "queue" | "steer";
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
@@ -86,7 +86,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   pendingAction,
   isRunning,
   canInterrupt,
-  activeTurnIsCompaction = false,
+  activeTurnIsMaintenance = false,
   followUpBehavior = "steer",
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
@@ -119,11 +119,14 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     resolveComposerDispatchMode({
       running: isRunning,
       activeTurnDefault: followUpBehavior,
-      activeTurnIsCompaction,
+      activeTurnIsMaintenance,
       alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
     }) === "queue";
-  const alternateAction = alternateComposerDispatchAction(followUpBehavior, activeTurnIsCompaction);
-  const defaultAction = activeTurnIsCompaction ? "queue" : followUpBehavior;
+  const alternateAction = alternateComposerDispatchAction(
+    followUpBehavior,
+    activeTurnIsMaintenance,
+  );
+  const defaultAction = activeTurnIsMaintenance ? "queue" : followUpBehavior;
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",

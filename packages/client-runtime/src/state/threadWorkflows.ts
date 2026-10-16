@@ -35,6 +35,18 @@ export interface ThreadQueueWorkflowState {
   readonly canPromoteToSteer: boolean;
 }
 
+// A /compact or /logout run is provider maintenance: it cannot take a steer,
+// so follow-ups sent while it runs queue behind it.
+export function isMaintenanceCommandMessage(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<unknown>;
+}): boolean {
+  return (
+    message.attachments.length === 0 &&
+    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
+  );
+}
+
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
   return projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
 }
@@ -126,8 +138,12 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
+  const activeMessage = projection.messages.find(
+    (message) => message.id === activeRun?.userMessageId,
+  );
   const hasSteerableProviderTurn =
     activeRun?.status === "running" &&
+    (activeMessage === undefined || !isMaintenanceCommandMessage(activeMessage)) &&
     activeRun.activeAttemptId !== null &&
     projection.providerTurns.some(
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",

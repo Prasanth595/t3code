@@ -325,6 +325,50 @@ describe("thread workflows", () => {
     expect(state.canPromoteToSteer).toBe(false);
   });
 
+  it.each([
+    ["/compact", false],
+    [" /Logout ", false],
+    ["ship it", true],
+  ] as const)("promotes into a running %j run: %s", (text, expected) => {
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+      runs: [
+        {
+          id: "active",
+          status: "running",
+          userMessageId: "active-message",
+          providerThreadId: "provider-thread",
+          activeAttemptId: "attempt-active",
+          ordinal: 1,
+        },
+        { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
+      ],
+      messages: [
+        { id: "active-message", text, attachments: [] },
+        { id: "message", text: "Queued", attachments: [] },
+      ],
+      providerTurns: [
+        { id: "provider-turn-active", runAttemptId: "attempt-active", status: "running" },
+      ],
+      providerThreads: [
+        {
+          id: "provider-thread",
+          appThreadId: "thread",
+          providerSessionId: "provider-session",
+        },
+      ],
+      providerSessions: [
+        {
+          id: "provider-session",
+          status: "running",
+          capabilities: capabilities({ queued: true, steer: true }),
+        },
+      ],
+    } as never);
+
+    expect(state.canPromoteToSteer).toBe(expected);
+  });
+
   it("does not expose known unsupported queue or fork actions", () => {
     const projection = {
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },
