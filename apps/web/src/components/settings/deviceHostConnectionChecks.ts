@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { redactSshAddresses } from "@t3tools/client-runtime/connection";
+import { parseManualDesktopSshTarget } from "./sshTarget";
 
 export interface DeviceHostCheckTarget {
   environmentId: EnvironmentId;
@@ -45,7 +46,21 @@ export async function checkDeviceHostConnections(
   await Promise.all(
     targets.map(async (target) => {
       report(target.environmentId, { status: "pending" });
+      let sshTarget: ReturnType<typeof parseManualDesktopSshTarget> = {
+        alias: host.target,
+        hostname: host.target,
+        username: null,
+        port: host.port ?? null,
+      };
       try {
+        sshTarget = {
+          ...parseManualDesktopSshTarget({
+            host: host.target,
+            username: "",
+            port: host.port?.toString() ?? "",
+          }),
+          alias: host.target,
+        };
         if (!target.connected) throw new Error("Environment disconnected");
         const result = await probe(target.environmentId, host);
         report(
@@ -61,12 +76,10 @@ export async function checkDeviceHostConnections(
       } catch (error) {
         report(target.environmentId, {
           status: "failed",
-          error: redactSshAddresses(error instanceof Error ? error.message : String(error), {
-            alias: host.target,
-            hostname: host.target,
-            username: null,
-            port: host.port ?? null,
-          }),
+          error: redactSshAddresses(
+            error instanceof Error ? error.message : String(error),
+            sshTarget,
+          ),
         });
       }
     }),

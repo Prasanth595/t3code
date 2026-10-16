@@ -413,7 +413,7 @@ describe("SSH addresses", () => {
     ).toBe("connect to host ••• port 22 via •••: refused");
   });
 
-  it.each(["2001:db8::", "[2001:db8::]", "2001::", "::1", "2001:db8::5"])(
+  it.each(["2001:db8::", "[2001:db8::]", "2001::", "::1", "2001:db8::5", "fdab::cafe", "a::b"])(
     "masks the resolved IPv6 address %s",
     (address) => {
       expect(
@@ -425,7 +425,7 @@ describe("SSH addresses", () => {
     },
   );
 
-  it.each(["::", "a::b", "std::", "std::bad_alloc", "crate::dead::beef", "/tmp/a::b/file"])(
+  it.each(["::", "std::", "std::vector", "std::bad_alloc", "crate::dead::beef"])(
     "preserves unrelated error text containing %s",
     (text) => {
       expect(redactSshAddresses(`SSH failed: ${text}`, devbox)).toBe(`SSH failed: ${text}`);

@@ -36,6 +36,21 @@ describe("device host connection checks", () => {
       "Could not resolve hostname build.example.com",
       "Could not resolve hostname •••",
     ],
+    [
+      "deploy@build.example.com",
+      "Could not resolve hostname build.example.com",
+      "Could not resolve hostname •••",
+    ],
+    [
+      "deploy@build.example.com:2222",
+      "Could not resolve hostname build.example.com",
+      "Could not resolve hostname •••",
+    ],
+    [
+      "deploy@build.example.com",
+      "deploy@build.example.com: Permission denied",
+      "•••: Permission denied",
+    ],
     ["devbox", "Could not resolve hostname devbox", "Could not resolve hostname devbox"],
     [
       "devbox",

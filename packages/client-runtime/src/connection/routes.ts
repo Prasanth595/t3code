@@ -386,7 +386,7 @@ export function redactSshAddresses(text: string, target: DesktopSshEnvironmentTa
   return secrets
     .reduce((redacted, secret) => redacted.split(secret).join(replacement), text)
     .replace(IPV4_LITERAL, "•••")
-    .replace(IPV6_LITERAL, (address) => (/^[a-f]+::[a-f]+$/iu.test(address) ? address : "•••"));
+    .replace(IPV6_LITERAL, "•••");
 }
 
 export function sshTargetKey(target: DesktopSshEnvironmentTarget): string {
