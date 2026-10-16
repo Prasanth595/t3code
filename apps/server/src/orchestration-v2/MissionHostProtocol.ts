@@ -26,9 +26,10 @@ import {
 
 /**
  * Pure verifier for the two-host readiness / claim / artifact ACK evidence
- * (P4 source slice). It is dormant: future dispatch adapters call it; it
- * activates nothing, stores nothing, reads no clock, and touches no network
- * or filesystem. It invents no transport API.
+ * (P4 source slice). `MissionHostTransport.ts` calls it after the canonical
+ * mission still owns the admission. It activates nothing, stores nothing,
+ * reads no clock, and touches no network or filesystem. It invents no
+ * transport API.
  *
  * Trust boundary. Receiver messages are claims. They are checked against
  * facts the source established separately and injects here: the persisted
