@@ -814,9 +814,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         );
 
     const completionMarker =
-      input.requestCompletionMarker === true
-        ? Stream.make({ kind: "synchronized" as const })
-        : Stream.empty;
+      input.requestCompletionMarker === true ? { kind: "synchronized" as const } : undefined;
 
     const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* () {
       const useBoundedSnapshot = shouldUseBoundedThreadSnapshot(input);
@@ -849,7 +847,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             projection: projectThreadProjectionForWire(snapshot.projection),
           };
       return Stream.concat(
-        Stream.concat(rpcInitialItems([snapshotItem]), completionMarker),
+        rpcInitialItems([snapshotItem], completionMarker),
         eventStreamFrom(snapshotSequence),
       );
     });
@@ -921,10 +919,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       if (plan.mode === "snapshot") {
         return yield* snapshotThenLive();
       }
-      return Stream.concat(
-        Stream.concat(rpcInitialItems(replay), completionMarker),
-        eventStreamFrom(highWater),
-      );
+      return Stream.concat(rpcInitialItems(replay, completionMarker), eventStreamFrom(highWater));
     }
 
     return yield* snapshotThenLive();
