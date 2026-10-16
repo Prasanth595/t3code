@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- bounded deterministic mission command identities.
+import * as NodeCrypto from "node:crypto";
 import {
   CommandId,
   type OrchestrationV2Run,
@@ -80,7 +82,10 @@ export const missionBoundCommandId = (input: {
   readonly dispatchKey: string;
   readonly threadId: ThreadId;
   readonly commandType: string;
-}): CommandId => CommandId.make(`mission-dispatch:${stableStringify(input)}`);
+}): CommandId =>
+  CommandId.make(
+    `mission-dispatch:${NodeCrypto.createHash("sha256").update(stableStringify(input)).digest("hex")}`,
+  );
 
 class MissionAdmissionGateError extends Schema.TaggedError<MissionAdmissionGateError>()(
   "MissionAdmissionGateError",

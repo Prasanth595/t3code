@@ -152,7 +152,13 @@ describe("planMissionCommand", () => {
       execution: { admissions: [], writerClaims: [], consumedExceptionIds: ["ex-1"] },
     };
     assert.equal(
-      code(planMissionCommand(decodeCreate({ type: "mission.create", commandId: "cmd-1", mission }), null, ctx)),
+      code(
+        planMissionCommand(
+          decodeCreate({ type: "mission.create", commandId: "cmd-1", mission }),
+          null,
+          ctx,
+        ),
+      ),
       "forged_execution_state",
     );
   });
@@ -506,6 +512,81 @@ describe("planMissionCommand", () => {
     );
   });
 
+  it("grants an unassigned retro role through a current delivery CAS revision", () => {
+    const base = missionFixture();
+    const next = {
+      ...base,
+      revision: 1,
+      managers: { ...base.managers, retro: { threadId: "retro-1", epoch: 1 } },
+    };
+    const planned = ok(planMissionCommand(replace(next), decodeMission(base), ctx));
+    assert.equal(planned.mission.managers.retro?.threadId, "retro-1");
+    assert.equal(planned.mission.managers.retro?.epoch, 1);
+  });
+
+  it("denies partial grants, role removal, owner replacement and epoch jumps", () => {
+    const base = missionFixture();
+    for (const retro of [
+      { threadId: "retro-1" },
+      { epoch: 1 },
+      { threadId: "retro-1", epoch: 9 },
+    ]) {
+      assert.equal(
+        code(
+          planMissionCommand(
+            replace({ ...base, revision: 1, managers: { ...base.managers, retro } }),
+            decodeMission(base),
+            ctx,
+          ),
+        ),
+        "manager_assignment_immutable",
+      );
+    }
+    const assigned = decodeMission({
+      ...base,
+      managers: { ...base.managers, retro: { threadId: "retro-1", epoch: 1 } },
+    });
+    for (const retro of [
+      undefined,
+      { threadId: "retro-2", epoch: 2 },
+      { threadId: "retro-1", epoch: 2 },
+    ]) {
+      assert.equal(
+        code(
+          planMissionCommand(
+            replace({
+              ...base,
+              revision: 1,
+              managers: { ...base.managers, ...(retro ? { retro } : {}) },
+            }),
+            assigned,
+            ctx,
+          ),
+        ),
+        "manager_assignment_immutable",
+      );
+    }
+  });
+
+  it("rejects role grants from stale revisions, stale delivery epochs and foreign authority", () => {
+    const base = missionFixture();
+    const next = {
+      ...base,
+      revision: 1,
+      managers: { ...base.managers, retro: { threadId: "retro-1", epoch: 1 } },
+    };
+    for (const [override, expected] of [
+      [{ expectedRevision: 9 }, "stale_revision"],
+      [{ epoch: 2 }, "epoch_mismatch"],
+      [{ authority: { source: "stranger", ref: "nope" } }, "authority_mismatch"],
+    ] as const) {
+      assert.equal(
+        code(planMissionCommand(replace(next, override), decodeMission(base), ctx)),
+        expected,
+      );
+    }
+  });
+
   it("denies generic role-owner replacement and stale manager epoch", () => {
     const current = decodeMission(missionFixture());
     const base = missionFixture();
@@ -533,7 +614,6 @@ describe("planMissionCommand", () => {
     );
   });
 });
-
 
 describe("canonical manager reservation preservation", () => {
   const reservation = { reservationId: "reserve-1", successorThreadId: "successor-1", role: "delivery", currentThreadId: "thread-1", currentEpoch: 3, observedRevision: 0, timezone: "America/Denver", localDate: "2026-10-14", ordinal: 0, reason: "first_slot", artifactRef: `manager-handoff:${"a".repeat(64)}`, artifactSha256: "a".repeat(64), commandId: "reserve-cmd", requestDigest: "b".repeat(64), reservedAt: OCCURRED_AT };

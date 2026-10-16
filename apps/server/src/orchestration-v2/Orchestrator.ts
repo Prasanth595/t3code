@@ -83,6 +83,7 @@ import { notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import * as MissionWorkerResults from "./MissionWorkerResults.ts";
 import * as MissionRetroDispatchBinding from "./MissionRetroDispatchBinding.ts";
 import * as MissionRetroAnalysisStore from "./MissionRetroAnalysisStore.ts";
 import type { PreparedMissionAdmission } from "./MissionAdmissionStore.ts";
@@ -809,6 +810,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessions = yield* ProviderSessionManagerV2;
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const runtimePolicy = yield* RuntimePolicyV2;
+  const missionResults = yield* Effect.serviceOption(MissionWorkerResults.MissionWorkerResults);
   const retroBinding = yield* Effect.serviceOption(
     MissionRetroDispatchBinding.MissionRetroDispatchBinding,
   );
@@ -9621,6 +9623,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           transfer.sourceThreadId === childThreadId &&
           transfer.targetThreadId === parentThreadId,
       );
+      if (Option.isSome(missionResults)) yield* missionResults.value.reconcile(childThreadId);
       if (existingResultTransfer !== undefined) {
         return;
       }
@@ -9826,6 +9829,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: resultTransfer,
         },
       ]);
+
+      if (Option.isSome(missionResults)) yield* missionResults.value.reconcile(childThreadId);
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
@@ -10793,6 +10798,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
+    if (
+      command.type === "delegated_task.completion-delivery.acknowledge" &&
+      Option.isSome(missionResults)
+    ) {
+      const parent = yield* mapDispatchError(command)(
+        projectionStore.getThreadRecords(command.parentThreadId, ["subagents"]),
+      );
+      const childId = parent.subagents.find((task) => task.id === command.taskId)?.childThreadId;
+      if (childId) yield* mapDispatchError(command)(missionResults.value.reconcile(childId));
+    }
     if (command.type === "queue.resume") {
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
     }
@@ -10882,6 +10897,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // worker. Queue recovery instead holds unstarted runs until an explicit
   // queue.resume command arrives.
   const recoverDelegatedTasks = Effect.gen(function* () {
+    if (Option.isSome(missionResults))
+      yield* missionResults.value.recover.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to recover admitted mission results", { cause }),
+        ),
+      );
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
       Effect.flatMap((threadIds) =>
         Effect.forEach(

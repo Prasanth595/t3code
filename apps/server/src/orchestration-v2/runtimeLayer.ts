@@ -1,3 +1,4 @@
+import * as MissionWorkerResults from "./MissionWorkerResults.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -199,11 +200,16 @@ const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
   Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
 );
 
+const layerMissionWorkerResults = MissionWorkerResults.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerStores, IdAllocator.layer)),
+);
+
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerCheckpointServiceProvided,
       CommandPolicy.layer,
+      layerMissionWorkerResults,
       layerStores,
       layerEventSinkProvided,
       layerCommandReceiptStoreProvided,

@@ -122,6 +122,14 @@ const obsFor = (o: Record<string, unknown> = {}) =>
   }) as never;
 
 describe("MissionResultReconciliation", () => {
+  it("does not claim git integration for an accepted scratch result without commits", () => {
+    const accepted = acceptedRecord();
+    const result = integrateMissionResult({
+      record: { ...accepted, provenance: { ...accepted.provenance, commitSet: [] } },
+      receipt: receipt({ kind: "integration", evidenceKind: "git_integration", commitSet: [] }),
+    });
+    assert.isTrue(Result.isFailure(result));
+  });
   it("keeps context merge-back and unknown installed builds from passing delivery gates", () => {
     const context = integrateMissionResult({
       record: acceptedRecord(),
