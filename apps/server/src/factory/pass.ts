@@ -140,6 +140,8 @@ const errorKind = (error: StartError): ErrorKind => {
       return "tracker";
     case "GateRunningError":
       return "gate";
+    case "FactorySessionsError":
+      return "t3";
     default:
       // The run's own record disagrees with what the step expected.
       return "ledger";
