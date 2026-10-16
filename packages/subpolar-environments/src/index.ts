@@ -258,7 +258,7 @@ export function createEnvironmentManager(
   };
 
   const execute: EnvironmentManager["execute"] = async (request, command, process = {}) => {
-    if (!Array.isArray(command) || command.length === 0 || command.some((part) => typeof part !== "string" || part.includes("\0"))) {
+    if (!Array.isArray(command) || command.length === 0 || command.some((part) => typeof part !== "string" || part.length === 0 || part.includes("\0"))) {
       throw new EnvironmentManagerError("INVALID_REQUEST", "Process command must be a non-empty argv array without NUL bytes");
     }
     if (process.signal?.aborted) {

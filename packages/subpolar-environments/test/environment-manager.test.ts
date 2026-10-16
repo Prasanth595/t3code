@@ -133,6 +133,18 @@ describe("environment lifecycle coordinator", () => {
     expect(backend.calls.filter((call) => call === "start")).toHaveLength(2);
   });
 
+  test("fails closed when a backend does not implement managed process execution", async () => {
+    const { request } = await fixture();
+    const backend = new FakeBackend();
+    const manager = createEnvironmentManager(backend);
+
+    await expect(manager.execute(request, ["echo", "hello"])).rejects.toMatchObject({
+      code: "BACKEND_FAILURE",
+      message: "Environment backend does not support managed process execution",
+    });
+    expect(backend.calls).toEqual([]);
+  });
+
   test("rejects lexical and symlink escapes from the configured storage root", async () => {
     const { request, root } = await fixture();
     const outside = path.join(root, "outside");

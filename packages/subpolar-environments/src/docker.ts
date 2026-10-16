@@ -124,6 +124,7 @@ export interface DockerClient {
   startContainer(id: string): Promise<void>;
   stopContainer(id: string, options: { readonly timeoutSeconds: 10 }): Promise<void>;
   removeContainer(id: string, options: { readonly force: false; readonly removeVolumes: false }): Promise<void>;
+  /** Must preserve argv boundaries, stream both output channels, and terminate the owned process on abort. */
   executeContainer?(id: string, request: DockerContainerProcessRequest): Promise<EnvironmentProcessResult>;
 }
 
