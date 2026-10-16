@@ -132,15 +132,7 @@ export function synchronizeTerminalOutput(
 ): TerminalOutputCursor {
   if (session.version === 0) return cursor;
   const update = readTerminalOutputUpdate(session.output, cursor);
-  if (
-    update.type === "reset" &&
-    cursor.generation === update.cursor.generation &&
-    cursor.resetVersion === update.cursor.resetVersion
-  ) {
-    terminal.resetAndWrite(update.data, true);
-  } else {
-    writeTerminalOutputUpdate(terminal, update);
-  }
+  writeTerminalOutputUpdate(terminal, update);
   terminal.clearSelection();
   return update.cursor;
 }
