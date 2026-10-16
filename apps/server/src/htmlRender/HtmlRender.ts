@@ -375,7 +375,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const executable = yield* previewBrowser.installed;
       if (Option.isNone(executable)) return undefined;
-      const heights = yield* launching(executable.value, (noSandbox) =>
+      const { heights, outline } = yield* launching(executable.value, (noSandbox) =>
         HeadlessChrome.measureHtmlHeights({
           executable: executable.value,
           noSandbox,
@@ -394,7 +394,7 @@ const make = Effect.gen(function* () {
             ),
         }),
       );
-      return heights.toSorted(([left], [right]) => left - right);
+      return { heights: heights.toSorted(([left], [right]) => left - right), outline };
     }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Could not measure an HTML render; publishing it without heights.", {
@@ -435,7 +435,7 @@ const make = Effect.gen(function* () {
     if (attachmentId === null || filePath === null) {
       return yield* new HtmlRenderStoreError({ cause: new Error("Invalid thread id.") });
     }
-    const heights = yield* fileSystem.writeFileString(filePath, html).pipe(
+    const measured = yield* fileSystem.writeFileString(filePath, html).pipe(
       Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
       Effect.andThen(measure(html)),
       // Only the returned reference lets thread deletion find the page, so a
@@ -446,7 +446,8 @@ const make = Effect.gen(function* () {
       attachmentId,
       title: input.title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
       height: clampHtmlRenderHeight(input.height),
-      ...(heights === undefined ? {} : { heights }),
+      ...(measured === undefined ? {} : { heights: measured.heights }),
+      ...(measured?.outline === undefined ? {} : { outline: measured.outline }),
     };
     yield* mcpSessions.recordHtmlRender(input.threadId, input, reference);
     return reference;
