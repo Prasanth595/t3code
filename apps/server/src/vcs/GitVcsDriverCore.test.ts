@@ -1334,6 +1334,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       // Git cannot tell a missing revision from a missing file in these.
       { label: "an argument that may be a path", args: ["log", "-1", "missing"] },
       { label: "a pathspec", args: ["checkout", "missing"] },
+      {
+        label: "a pathspec worded like a diagnostic",
+        args: ["checkout", "HEAD", "--", "fatal: invalid reference: missing"],
+      },
       // The tag exists; it names a tree, which git reports in the same words.
       { label: "a worktree from a non-commit", args: ["worktree", "add", "../tree", "tree-tag"] },
       { label: "a non-commit revision", args: ["rev-parse", "--verify", "tree-tag^{commit}"] },

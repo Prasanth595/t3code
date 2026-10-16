@@ -473,9 +473,10 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   [/fatal: '[^']+' already exists|destination path .+ already exists/i, "path_already_exists"],
   // Wordings git uses for a ref or revision that does not resolve. `unknown
   // revision or path not in the working tree` and `pathspec ... did not match`
-  // are left out: they also cover a missing file.
+  // are left out: they also cover a missing file. Anchored because a quoted
+  // path in another diagnostic can contain these words.
   [
-    /fatal: (?:invalid reference: |not a valid object name|needed a single revision|bad revision |'.+' is not a commit and a branch '.+' cannot be created from it)/i,
+    /^fatal: (?:invalid reference: |not a valid object name|needed a single revision|bad revision |'.+' is not a commit and a branch '.+' cannot be created from it)/im,
     "ref_not_found",
   ],
 ];
