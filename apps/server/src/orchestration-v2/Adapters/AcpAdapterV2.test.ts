@@ -1614,7 +1614,7 @@ describe("AcpAdapterV2", () => {
             ),
             wrapRuntime: (runtime) => ({
               ...runtime,
-              prompt: () => Effect.succeed({ stopReason: "end_turn" as const, usage: undefined }),
+              prompt: () => Effect.succeed({ stopReason: "end_turn" as const }),
             }),
           }),
         },
