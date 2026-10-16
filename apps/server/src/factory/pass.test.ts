@@ -194,7 +194,11 @@ class Fake implements PassWorld {
       });
     }
     if ("kind" in answer && answer.kind === "started") {
-      this.runs.push({ id: answer.run, state: "triage", unreadable: false, confirmed: true });
+      const existing = this.runs.find((r) => runIdToString(r.id) === runIdToString(answer.run));
+      // A run the pass already knew moves on to building; a new claim leaves a triage run.
+      if (existing !== undefined)
+        this.runs[this.runs.indexOf(existing)] = { ...existing, state: "building" };
+      else this.runs.push({ id: answer.run, state: "triage", unreadable: false, confirmed: true });
       return Effect.succeed(answer);
     }
     if ("kind" in answer) return Effect.succeed(answer);
@@ -630,6 +634,90 @@ describe("which repo gets a free slot", () => {
   );
 });
 
+// ---- runs that are confirmed and still in triage ----
+
+describe("runs that are confirmed and still in triage", () => {
+  it.effect("a confirmed triage run gets start on the next pass, and the line says so", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.pushStart(`${REPO}#12`, started(12));
+      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(starts(fake), [`start ${REPO}#12`]);
+      const line = runLine(lines, "rawphp/softfac#12 triage:");
+      assert.ok(line.includes("session started, the issue is building"), line);
+      assert.equal(report.claimed, 0);
+    }),
+  );
+
+  it.effect("a confirmed run with no state yet is started too", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runs.push({ id: rid(13), state: null, unreadable: false, confirmed: true });
+      fake.pushStart(`${REPO}#13`, started(13));
+      yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(starts(fake), [`start ${REPO}#13`]);
+    }),
+  );
+
+  it.effect("a triage run whose start fails records the error on that run", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.pushStart(`${REPO}#12`, githubFailure());
+      const { report } = yield* pass(fake, machine([REPO], 3));
+      assert.equal(report.errors, 1);
+      assert.equal(fake.runErrors.length, 1);
+      assert.deepEqual(fake.runErrors[0]!.run, rid(12));
+      assert.equal(fake.runErrors[0]!.step, "start");
+    }),
+  );
+
+  it.effect("a triage run that went stuck says so and names the run", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "secret detail" });
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const line = runLine(lines, "rawphp/softfac#12 ");
+      assert.ok(line.includes("stuck"), line);
+      assert.ok(line.includes("rawphp__softfac__12__1"), line);
+      assert.ok(!line.includes("secret detail"), line);
+    }),
+  );
+
+  it.effect("a triage run is worked before new issues are claimed", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.ready[REPO] = [3];
+      fake.pushStart(`${REPO}#12`, started(12));
+      fake.pushStart(`${REPO}#3`, started(3));
+      yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(starts(fake), [`start ${REPO}#12`, `start ${REPO}#3`]);
+    }),
+  );
+
+  it.effect("a building run is left alone", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING);
+      yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(starts(fake), []);
+    }),
+  );
+
+  it.effect("a run of a repo that is not loaded is left alone", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage", "acme/other");
+      const { report } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(starts(fake), []);
+      assert.equal(report.errors, 0);
+    }),
+  );
+});
+
 // ---- claims that have no run in the ledger ----
 
 describe("claims that have no run in the ledger", () => {
@@ -647,13 +735,13 @@ describe("claims that have no run in the ledger", () => {
     }),
   );
 
-  it.effect("a triage issue that has an unfinished run is left to that run", () =>
+  it.effect("a triage issue that has an unfinished run is started by the run step alone", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.triage[REPO] = [12];
       yield* pass(fake, machine([REPO], 3));
-      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(starts(fake), [`start ${REPO}#12`]);
     }),
   );
 
