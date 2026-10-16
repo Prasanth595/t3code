@@ -5,13 +5,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import type { ServerInstallation } from "@t3tools/contracts";
-import {
-  HostProcessArguments,
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessIsExecutable,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -60,10 +54,10 @@ const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(I
 export const resolveServerInstallation = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const args = yield* HostProcessArguments;
-  const executable = yield* HostProcessIsExecutable;
-  const executablePath = yield* HostProcessExecutablePath;
-  const platform = yield* HostProcessPlatform;
+  const args = yield* HostProcess.Arguments;
+  const executable = yield* HostProcess.IsExecutable;
+  const executablePath = yield* HostProcess.ExecutablePath;
+  const platform = yield* HostProcess.Platform;
   const entry = yield* fs.realPath(executable ? executablePath : (args[1] ?? ""));
   const match =
     /^(.*)\/lib\/node_modules\/t3\/(?:dist\/bin\.mjs|bin\/t3\.js|node_modules\/@t3code\/t3-[^/]+\/t3)$/.exec(
@@ -141,7 +135,7 @@ export function formatCliCommand(input: {
 
 /** `formatCliCommand` against this process's real entry path and version. */
 export const resolveCliCommand = (subcommand: string) =>
-  Effect.map(HostProcessArguments, (processArguments) =>
+  Effect.map(HostProcess.Arguments, (processArguments) =>
     formatCliCommand({
       subcommand,
       entryPath: processArguments[1] ?? "",
@@ -154,6 +148,22 @@ const shellWord = (value: string) =>
   /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
+ * Quotes `value` for PowerShell, the default Windows terminal. Always quoted,
+ * so a path reads the same whether or not it holds a space. Inside double
+ * quotes `"` and its typographic forms (which also end the string) double,
+ * and `$` and the backtick are escaped so nothing expands.
+ */
+const powershellWord = (value: string) =>
+  `"${value
+    .replaceAll("`", "``")
+    .replaceAll("$", "`$")
+    .replace(/["\u201C\u201D\u201E]/g, "$&$&")}"`;
+
+/** Quotes a word for the host's shell: POSIX, or PowerShell on Windows. */
+const hostShellWord = (platform: NodeJS.Platform, value: string) =>
+  platform === "win32" ? powershellWord(value) : shellWord(value);
+
+/**
  * The launcher a person can type to run this install when `t3` is not on
  * PATH: the desktop app's `t3` shim, which the app and the shim itself name in
  * `T3CODE_CLI_PATH`, or a standalone binary's own path. Script installs (a
@@ -161,29 +171,36 @@ const shellWord = (value: string) =>
  */
 const resolveInstallLauncher = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const shim = (yield* HostProcessEnvironment).T3CODE_CLI_PATH?.trim();
+  const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
   if (shim && (yield* fs.exists(shim).pipe(Effect.orElseSucceed(() => false)))) {
     return Option.some(shim);
   }
-  return (yield* HostProcessIsExecutable)
-    ? Option.some(yield* HostProcessExecutablePath)
+  return (yield* HostProcess.IsExecutable)
+    ? Option.some(yield* HostProcess.ExecutablePath)
     : Option.none<string>();
 });
 
 /**
- * `t3 <subcommand>` for a person to run on this host: `t3` when it is on PATH,
- * the package runner this process came from, or else the absolute path of the
- * launcher for this install, such as the one the desktop app installs.
+ * `t3 <subcommand> <args>` for a person to run on this host: `t3` when it is
+ * on PATH, the package runner this process came from, or else the absolute
+ * path of the launcher for this install, such as the one the desktop app
+ * installs. `args` are quoted for the host's shell: POSIX, or PowerShell on
+ * Windows.
  */
-const resolveHostCliCommand = (subcommand: string) =>
+export const resolveHostCliCommand = (subcommand: string, args: ReadonlyArray<string> = []) =>
   Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    const withArgs = (prefix: string) =>
+      [prefix, ...args.map((arg) => hostShellWord(platform, arg))].join(" ");
     const command = yield* resolveCliCommand(subcommand);
-    if (command !== `t3 ${subcommand}`) return { command, launcher: false };
-    if (yield* isCommandAvailable("t3")) return { command, launcher: false };
+    if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
+    if (yield* isCommandAvailable("t3")) return { command: withArgs(command), launcher: false };
     const launcher = yield* resolveInstallLauncher;
-    return Option.isSome(launcher)
-      ? { command: `${shellWord(launcher.value)} ${subcommand}`, launcher: true }
-      : { command, launcher: false };
+    if (Option.isNone(launcher)) return { command: withArgs(command), launcher: false };
+    // PowerShell runs a quoted path only through the call operator.
+    const quoted = hostShellWord(platform, launcher.value);
+    const call = platform === "win32" ? `& ${quoted}` : quoted;
+    return { command: withArgs(`${call} ${subcommand}`), launcher: true };
   });
 
 /**
@@ -197,7 +214,7 @@ export const resolveRootCliCommand = (subcommand: string) =>
   Effect.gen(function* () {
     const { command, launcher } = yield* resolveHostCliCommand(subcommand);
     if (launcher) return `sudo ${command}`;
-    const executablePath = yield* HostProcessExecutablePath;
+    const executablePath = yield* HostProcess.ExecutablePath;
     const systemNode = ROOT_PATH_DIRECTORIES.some((directory) =>
       executablePath.startsWith(`${directory}/`),
     );

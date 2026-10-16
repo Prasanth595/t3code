@@ -5,7 +5,7 @@ import { revertCodexThread } from "../src/provider/CodexThreadRevert.ts";
 import { buildCodexInitializeParams } from "../src/provider/CodexProvider.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Deferred from "effect/Deferred";
@@ -58,6 +58,7 @@ import {
   TODO_LIST_PROMPT,
   TOOL_CALL_WRITE_PROMPT,
   TURN_INTERRUPT_MID_TOOL_PROMPT,
+  COMMAND_OUTPUT_STREAMING_PROMPT,
   TURN_INTERRUPT_PROMPT,
   WEB_SEARCH_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
@@ -98,6 +99,7 @@ const SCENARIO_NAMES = [
   "message_steering",
   "turn_interrupt",
   "turn_interrupt_mid_tool",
+  "command_output_streaming",
   "thread_rollback",
   "thread_rollback_after_restart",
   "thread_rollback_to_stopped_turn",
@@ -769,6 +771,29 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
       ],
     },
     {
+      name: "command_output_streaming",
+      fileName: "command_output_streaming.ndjson",
+      description: "One command prints over several seconds, so Codex streams its output deltas.",
+      runs: [
+        {
+          name: "command-output-streaming",
+          description: "Run a foreground command that prints a line a second.",
+          prompt: COMMAND_OUTPUT_STREAMING_PROMPT,
+          turnDefaults: {
+            approvalPolicy: "never",
+            sandboxPolicy: workspaceWriteSandbox(),
+          },
+          steps: [
+            {
+              type: "turn",
+              label: "command-output-streaming",
+              prompt: COMMAND_OUTPUT_STREAMING_PROMPT,
+            },
+          ],
+        },
+      ],
+    },
+    {
       name: "thread_rollback",
       fileName: "thread_rollback.ndjson",
       description:
@@ -1211,7 +1236,8 @@ function layerCodex({ recorder }: { readonly recorder: Recorder }) {
     Effect.gen(function* () {
       // The vp node shim marks its children with VP_TOOL_RECURSION, which makes every
       // `node` the agent runs through a shell fail. Codex must not inherit it.
-      const { VP_TOOL_RECURSION: _vpToolRecursion, ...environment } = yield* HostProcessEnvironment;
+      const { VP_TOOL_RECURSION: _vpToolRecursion, ...environment } =
+        yield* HostProcess.Environment;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const commandName = environment.T3_CODEX_BIN ?? environment.CODEX_BIN ?? "codex";
       const spawnCommand = yield* resolveSpawnCommand(commandName, ["app-server"], {
