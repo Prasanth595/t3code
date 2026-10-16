@@ -1097,9 +1097,8 @@ export function readableFailure(failure: unknown, hint: string): string {
 }
 
 /**
- * What to say under a refused merge when the host gave no reason. `gh` reports a blocked merge
- * only as "the base branch policy prohibits the merge", so this names the blocker from what the
- * page already knows. Null when mergeability is unknown, which leaves the generic hint.
+ * `gh` reports a blocked merge only as "the base branch policy prohibits the merge", so this names
+ * the blocker from what the page already knows.
  */
 export function mergeRefusalHint(state: {
   readonly mergeability: PullRequestMergeability;
