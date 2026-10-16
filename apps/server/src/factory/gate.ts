@@ -16,7 +16,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, validateRunId, type RunId } from "./ledger/runId.ts";
 import { FactoryProcess, type RunInput, type RunResult, type RunSpawnError } from "./process.ts";
-import { commandLine, isCommitId, sanitize } from "./text.ts";
+import { commandLine, isCommitId, sanitize, shortSha } from "./text.ts";
 
 /**
  * The gate: a fresh checkout of a pull request's head merged with the base branch tip, the
@@ -151,13 +151,6 @@ const codeSpan = (line: string): string => {
   const pad = line.startsWith("`") || line.endsWith("`") ? " " : "";
   return `${ticks}${pad}${line}${pad}${ticks}`;
 };
-
-/** The first seven hex digits of a commit id, for people. */
-const shortSha = (sha: string): string =>
-  Array.from(sha)
-    .filter((char) => /[0-9a-fA-F]/.test(char))
-    .slice(0, 7)
-    .join("");
 
 /**
  * The comment for a pull request whose gate ended with `verdict`. `headSha` is the commit the gate

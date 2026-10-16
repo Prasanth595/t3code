@@ -2919,6 +2919,10 @@ const finishedWithResults = (middle: ReadonlyArray<Line>): Array<Line> => [
 const CHECK_FAILED_MESSAGE =
   "The factory gate failed. A required check did not pass on commit 4f1c2d3. Fix the cause, commit, push, and reply when done. Do not weaken or skip the check.\n\nCheck: gate\nResult: failure\nDetails: https://github.com/rawphp/softfac/actions/runs/1/job/gate";
 
+/** The failure as the ledger records it: the check's name, with no result or link. */
+const CHECK_FAILED_FROM_LEDGER =
+  "The factory gate failed. A required check did not pass on commit 4f1c2d3. Fix the cause, commit, push, and reply when done. Do not weaken or skip the check.\n\nCheck: gate";
+
 const CHECKS_HEAD_MOVED_REASON =
   "the pull request's head changed while the factory waited for the required checks";
 
@@ -2953,7 +2957,12 @@ describe("gate: required CI checks", () => {
       const rig = yield* readyWithChecks(["gate", "lint"]);
       scriptChecks(rig, [["passed", "passed"]]);
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
-      assert.deepStrictEqual(rig.gh.calls, [...passingReads(["gate", "lint"]), ...readyCalls(1)]);
+      // The issue text is judged again once the checks have passed, before anything is ready.
+      assert.deepStrictEqual(rig.gh.calls, [
+        ...passingReads(["gate", "lint"]),
+        UNCHANGED_READ,
+        ...readyCalls(1),
+      ]);
       assert.deepStrictEqual(
         linesOf(rig),
         finishedWithResults([
@@ -3009,6 +3018,7 @@ describe("gate: required CI checks", () => {
         assert.deepStrictEqual(rig.gh.calls, [
           "pullRequest 12",
           checksCall(["gate", "lint"]),
+          UNCHANGED_READ,
           ...readyCalls(1),
         ]);
         assert.deepStrictEqual(rig.ws.calls, []);
@@ -3060,7 +3070,11 @@ describe("gate: required CI checks", () => {
       assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
       clearCalls(rig);
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
-      assert.deepStrictEqual(rig.gh.calls, [...passingReads(["gate"]), ...readyCalls(2)]);
+      assert.deepStrictEqual(rig.gh.calls, [
+        ...passingReads(["gate"]),
+        UNCHANGED_READ,
+        ...readyCalls(2),
+      ]);
       assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 2));
       assert.deepStrictEqual(
         linesOf(rig),
@@ -3249,8 +3263,8 @@ describe("gate: required CI checks", () => {
     () =>
       Effect.gen(function* () {
         const rig = yield* readyWithChecks(["gate"]);
-        // The eighth call is `markPrReady`: the checks were read and recorded just before.
-        rig.gh.failAt = 7;
+        // The ninth call is `markPrReady`: the checks were read and recorded just before.
+        rig.gh.failAt = 8;
         assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "GitHubFailed");
         rig.gh.failAt = null;
         clearCalls(rig);
@@ -3339,14 +3353,16 @@ describe("gate: required CI checks", () => {
         scriptChecks(rig, [["failed"]]);
         rig.t3.failAt = 2;
         assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "FactorySessionsError");
-        // The session has not run again since: the send is made again, with one `gate-sending`.
+        // The session has not run again since: the send is made again, with one `gate-sending`,
+        // from the failure the ledger records, so the checks are not read again.
         rig.t3.failAt = null;
         clearCalls(rig);
         assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+        assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12"]);
         assert.deepStrictEqual(rig.t3.calls, [
           "status thread-1",
           "status thread-1",
-          sendCall(1, 1, CHECK_FAILED_MESSAGE),
+          sendCall(1, 1, CHECK_FAILED_FROM_LEDGER),
         ]);
         const lines = linesOf(rig);
         assert.strictEqual(
@@ -3396,6 +3412,107 @@ describe("gate: required CI checks", () => {
         linesOf(rig),
         finishedWithResults([...passingAttempt(1), PASSED_STEP, checksRead([["gate", "passed"]])]),
       );
+    }),
+  );
+  it.effect(
+    "a failed check read before a lost send is the decision even if the check passes on a rerun",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyWithChecks(["gate"]);
+        scriptChecks(rig, [["failed"], ["passed"]]);
+        rig.t3.failAt = 2;
+        assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "FactorySessionsError");
+        // Someone ran the check again and it passed; the session has not run since.
+        rig.t3.failAt = null;
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+        assert.ok(!rig.gh.calls.some((c) => c.startsWith("checks ")));
+        assert.ok(!rig.gh.world.prReady);
+        assert.strictEqual(rig.gh.world.state, "building");
+        assert.strictEqual(linesOf(rig).filter((l) => l.event === "checks_read").length, 1);
+      }),
+  );
+
+  it.effect("a failed check read before a lost send is not timed out while the session waits", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      withLimits(rig, { checksMinutes: 1 });
+      scriptChecks(rig, [["failed"], ["pending"]]);
+      setNow(rig, 1_000);
+      rig.t3.failAt = 2;
+      assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "FactorySessionsError");
+      rig.t3.failAt = null;
+      setNow(rig, 1_000 + 60_000 * 5);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+      assert.strictEqual(rig.gh.world.state, "building");
+    }),
+  );
+
+  it.effect("the issue text is judged again once the checks pass and a change stops the run", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      scriptChecks(rig, [["pending"], ["passed"]]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+      // Someone who is not an instructor edited the issue while the checks ran.
+      rig.gh.unchanged.push(false);
+      clearCalls(rig);
+      const step = yield* gateIn(rig);
+      assertGateStuck(
+        rig,
+        step,
+        ["pullRequest 12", checksCall(["gate"]), UNCHANGED_READ],
+        { publicReason: CHANGED_DURING_BUILD_TEXT },
+        [...passingAttempt(1), PASSED_STEP],
+      );
+      assert.ok(!rig.gh.world.prReady);
+    }),
+  );
+
+  it.effect(
+    "a failed check puts a PR someone marked ready while the checks ran back to draft",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyWithChecks(["gate"]);
+        scriptChecks(rig, [["pending"], ["failed"]]);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+        rig.gh.pr = { ...rig.gh.pr!, isDraft: false };
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+        assert.deepStrictEqual(rig.gh.calls, [
+          "pullRequest 12",
+          checksCall(["gate"]),
+          "markPrDraft 12",
+        ]);
+        assert.deepStrictEqual(linesOf(rig), [
+          ...BASE_EVENTS,
+          ...passingAttempt(1),
+          PASSED_STEP,
+          checksRead([["gate", "failed"]]),
+          { event: "pr_set_draft", data: { pr: 12 } },
+          sending(1, 1),
+          sentBack(1, 1),
+        ]);
+        assert.ok(rig.gh.world.prDrafted);
+      }),
+  );
+
+  it.effect("a failed check whose PR cannot be put back to draft sends the issue to stuck", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      scriptChecks(rig, [["pending"], ["failed"]]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+      rig.gh.pr = { ...rig.gh.pr!, isDraft: false };
+      rig.gh.markDraftFails = true;
+      clearCalls(rig);
+      const step = yield* gateIn(rig);
+      assertGateStuck(
+        rig,
+        step,
+        ["pullRequest 12", checksCall(["gate"]), "markPrDraft 12"],
+        { publicReason: "the session reported PR #12 but it is not a draft", text: DONE_MESSAGE },
+        [...passingAttempt(1), PASSED_STEP, checksRead([["gate", "failed"]])],
+      );
+      assert.deepStrictEqual(sendsOf(rig), []);
     }),
   );
 });

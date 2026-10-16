@@ -6,7 +6,7 @@
 
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
-import { commandLine, sanitize } from "../text.ts";
+import { commandLine, sanitize, shortSha } from "../text.ts";
 import type { CheckStatus, DropReason } from "../tracker/github.ts";
 
 /** The public reason when a run has no record of what approved it. */
@@ -319,22 +319,16 @@ export const mergeConflictMessage = (base: string, paths: ReadonlyArray<string>)
 export const CHECKS_HEAD_MOVED =
   "the pull request's head changed while the factory waited for the required checks";
 
-/** The first seven hex digits of a commit id, as the words for the session name it. */
-const shortSha = (sha: string): string =>
-  Array.from(sha)
-    .filter((char) => /^[0-9a-fA-F]$/.test(char))
-    .slice(0, 7)
-    .join("");
-
 /**
  * What to tell the session when required checks failed on the commit that was gated. The check
  * names come from the project config and the rest from GitHub, so all of it is cleaned like
- * other untrusted text.
+ * other untrusted text. A check with no result or link has no line for it.
  */
 export const checksFailureMessage = (sha: string, failed: ReadonlyArray<CheckStatus>): string => {
   let text = `The factory gate failed. A required check did not pass on commit ${shortSha(sha)}. Fix the cause, commit, push, and reply when done. Do not weaken or skip the check.`;
   for (const check of failed) {
-    text += `\n\nCheck: ${sanitize(check.name, false)}\nResult: ${sanitize(check.conclusion, false)}`;
+    text += `\n\nCheck: ${sanitize(check.name, false)}`;
+    if (check.conclusion !== "") text += `\nResult: ${sanitize(check.conclusion, false)}`;
     if (check.url !== null) text += `\nDetails: ${sanitize(check.url, false)}`;
   }
   return text;

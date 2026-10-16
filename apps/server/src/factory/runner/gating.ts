@@ -25,11 +25,12 @@ import {
   type GateOptions,
 } from "../gate.ts";
 import { ledgerCall as ledger } from "../ledger/errors.ts";
-import { makeCause } from "../ledger/events.ts";
+import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
 import { isCommitId, sanitize } from "../text.ts";
-import type { BoundGitHub, CheckStatus } from "../tracker/github.ts";
+import type { ThreadStatus } from "../t3/sessions.ts";
+import type { BoundGitHub, CheckStatus, PullRequest } from "../tracker/github.ts";
 import {
   WrongRepoError,
   append,
@@ -204,6 +205,66 @@ const checksWanted = (ctx: GateContext, seen: Seen, sha: string): boolean =>
   ctx.project.requiredChecks.length > 0 && seen.checksPassed !== sha;
 
 /**
+ * The `gate-sending` step of `attempt` when its `gate_sent_back` is missing: the send was started
+ * and may or may not have reached the session.
+ */
+const owedSend = (seen: Seen, attempt: number): Seen["sending"] =>
+  seen.sending !== null &&
+  seen.sending.attempt === attempt &&
+  seen.commandAttempts.has(attempt) &&
+  !seen.sentBackAttempts.has(attempt)
+    ? seen.sending
+    : null;
+
+/**
+ * Writes the missing `gate_sent_back` of an `owed` send when the session has run since it: the
+ * send did reach it, so the attempt is used. True when it was written.
+ */
+const recoverSend = (
+  out: Out,
+  attempt: number,
+  owed: NonNullable<Seen["sending"]>,
+  status: ThreadStatus,
+): Effect.Effect<boolean, GateStepError> =>
+  status.runOrdinal !== null && status.runOrdinal > owed.runOrdinal
+    ? append(
+        out,
+        { event: "gate_sent_back", data: { attempt, run_ordinal: owed.runOrdinal } },
+        "gate",
+        "gate-send-recovered",
+        { attempt },
+      ).pipe(Effect.as(true))
+    : Effect.succeed(false);
+
+/**
+ * Puts a pull request someone else took out of draft back to draft before a failure is handled,
+ * as `advance` does: only the gate marks it ready. Null when there was nothing to do or it went
+ * back; a call that fails leaves it as it is, and stuck, while a rate limit is an error, so the
+ * next call asks again. `message` is the session's last message, for the stuck comment.
+ */
+const backToDraft = (
+  ctx: GateContext,
+  out: Out,
+  pr: number,
+  pull: PullRequest | null,
+  stuck: (code: string, stop: Stop) => Effect.Effect<GateStep, GateStepError>,
+  message: string | null,
+): Effect.Effect<GateStep | null, GateStepError> =>
+  Effect.gen(function* () {
+    if (pull === null || !pull.open || pull.isDraft) return null;
+    const drafted = yield* Effect.result(ctx.tracker.markPrDraft(pr));
+    if (drafted._tag === "Failure") {
+      if (drafted.failure._tag === "GitHubRateLimited") return yield* drafted.failure;
+      return yield* stuck(
+        "pr-not-bound",
+        stopOf(`the session reported PR #${pr} but it is not a draft`, message),
+      );
+    }
+    yield* append(out, { event: "pr_set_draft", data: { pr } }, "gate", "pr-set-draft");
+    return null;
+  });
+
+/**
  * Sends a failed attempt (`ordinal` is that of the session run it was gated on) back into the
  * session under the command id `softfac:<run>:gate:<attempt>:<ordinal>`, and records that it
  * went. The `gate-sending` step comes first: with it a later call knows which run this attempt
@@ -256,9 +317,15 @@ const sendBack = (
  * line is written whatever the pull request looks like now. Then the pull request is read: one
  * that is no longer open gets nothing marked ready, as for any recorded pass, and one whose head
  * is not the gated commit goes `stuck`, because no check on another commit says anything about
- * this pass. Then the checks are read for the gated commit. All passed: the read is recorded
- * (`checks_read`, the decision) and the pass is finished. One failed, even while others are
- * pending: the read is recorded and the failure goes back into the session like a gate failure,
+ * this pass. Then the checks are read for the gated commit, unless a read already found one
+ * failed: that decision stands, so a check run again since cannot mark ready a pull request
+ * whose failure may already be in the session. The ledger keeps only the names of the checks
+ * that failed, so a failure sent again names them without GitHub's result or link.
+ *
+ * All passed: the issue text is judged again, as before the pass was recorded, since the wait can
+ * be long; then the read is recorded (`checks_read`, the decision) and the pass is finished. One
+ * failed, even while others are pending: the read is recorded, a pull request someone took out
+ * of draft goes back to draft, and the failure goes back into the session like a gate failure,
  * using the pass's attempt (the last one goes `stuck`); the pass is then void, and a new run is
  * gated afresh. Pending or missing: `checks-pending` and nothing is written, until
  * `limits.checks_minutes` after the pass, when the read is recorded and the issue goes `stuck`
@@ -278,21 +345,11 @@ const awaitChecks = (
     const issue = Number(run.issue);
     const attempt = pass.attempt;
     const stuck = (code: string, stop: Stop) => stuckWith(ctx, out, issue, at, code, stop);
-    if (
-      seen.sending !== null &&
-      seen.sending.attempt === attempt &&
-      !seen.sentBackAttempts.has(attempt)
-    ) {
+    const owed = owedSend(seen, attempt);
+    if (owed !== null) {
       const status = yield* threadStatus(ctx, threadId);
-      if (status === null) return yield* stuck("thread-gone", { reason: THREAD_GONE });
-      if (status.runOrdinal !== null && status.runOrdinal > seen.sending.runOrdinal) {
-        yield* append(
-          out,
-          { event: "gate_sent_back", data: { attempt, run_ordinal: seen.sending.runOrdinal } },
-          "gate",
-          "gate-send-recovered",
-          { attempt },
-        );
+      if (status === null) return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
+      if (yield* recoverSend(out, attempt, owed, status)) {
         return { kind: "sent-back", attempt } as const;
       }
     }
@@ -301,56 +358,71 @@ const awaitChecks = (
     if (pull.headSha.toLowerCase() !== pass.sha) {
       return yield* stuck("checks-head-moved", { reason: CHECKS_HEAD_MOVED });
     }
-    const checks = yield* ctx.tracker.checks(pass.sha, ctx.project.requiredChecks);
-    const read = {
-      event: "checks_read",
-      data: { sha: pass.sha, checks: checks.map((c) => ({ name: c.name, state: c.state })) },
-    } as const;
-    const failed: ReadonlyArray<CheckStatus> = checks.filter((c) => c.state === "failed");
-    if (failed.length > 0) {
-      const status = yield* threadStatus(ctx, threadId);
-      if (status === null) return yield* stuck("thread-gone", { reason: THREAD_GONE });
-      // Without an ordinal the run cannot be told from another one, and a failure is not sent
-      // into a run that is still going: nothing is decided, and the session is what is waited
-      // for, not the checks.
-      if (status.runOrdinal === null) return NOT_READY;
-      if (sessionBusy(seen, status)) return NOT_READY;
-      yield* append(out, read, "gate", "required-checks-failed", { attempt });
-      const message = checksFailureMessage(pass.sha, failed);
-      const since = attemptsSincePass(seen, attempt);
-      if (since > ctx.project.limits.gateRetries) {
-        const sessionText = prepareOutputTail(message);
-        return yield* stuck("checks-retries-used-up", {
-          reason: `the required checks failed after ${attempts(since)}`,
-          ...(sessionText !== "" && { sessionText }),
-        });
+    const recorded =
+      seen.checksFailed !== null && seen.checksFailed.sha === pass.sha
+        ? seen.checksFailed.failed
+        : null;
+    let failed: ReadonlyArray<CheckStatus>;
+    let read: RunEvent | null = null;
+    if (recorded !== null) {
+      failed = recorded;
+    } else {
+      const checks = yield* ctx.tracker.checks(pass.sha, ctx.project.requiredChecks);
+      read = {
+        event: "checks_read",
+        data: {
+          sha: pass.sha,
+          checks: checks.map((c) => ({ name: c.name, state: c.state })),
+        },
+      };
+      failed = checks.filter((c) => c.state === "failed");
+      if (failed.length === 0) {
+        if (checks.every((c) => c.state === "passed")) {
+          const why = yield* textStop(ctx, issue, seen);
+          if (why !== null) return yield* stuck(why.code, { reason: why.reason });
+          yield* append(out, read, "gate", "required-checks-read", { attempt });
+          return yield* finishPass(ctx, out, issue, at, pass, pr, true);
+        }
+        const minutes = ctx.project.limits.checksMinutes;
+        const waited = ctx.clock() - pass.atMs;
+        if (waited < minutes * 60_000) return { kind: "checks-pending" } as const;
+        yield* append(out, read, "gate", "checks-timed-out", { attempt });
+        const reason = checks.some((c) => c.state === "missing")
+          ? `a required check was not reported within ${minutes} minutes`
+          : `the required checks did not finish within ${minutes} minutes`;
+        return yield* stuck("checks-timed-out", { reason });
       }
-      return yield* sendBack(
-        ctx,
-        out,
-        run,
-        seen,
-        at,
-        attempt,
-        status.runOrdinal,
-        message,
-        "required-checks-failed",
-      );
     }
-    if (checks.every((c) => c.state === "passed")) {
-      yield* append(out, read, "gate", "required-checks-read", { attempt });
-      return yield* finishPass(ctx, out, issue, at, pass, pr, true);
+    const status = yield* threadStatus(ctx, threadId);
+    if (status === null) return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
+    // Without an ordinal the run cannot be told from another one, and a failure is not sent
+    // into a run that is still going: nothing is decided, and the session is what is waited
+    // for, not the checks.
+    if (status.runOrdinal === null) return NOT_READY;
+    if (sessionBusy(seen, status)) return NOT_READY;
+    if (read !== null) yield* append(out, read, "gate", "required-checks-failed", { attempt });
+    const drafted = yield* backToDraft(ctx, out, pr, pull, stuck, status.lastAssistantMessage);
+    if (drafted !== null) return drafted;
+    const message = checksFailureMessage(pass.sha, failed);
+    const since = attemptsSincePass(seen, attempt);
+    if (since > ctx.project.limits.gateRetries) {
+      const sessionText = prepareOutputTail(message);
+      return yield* stuck("checks-retries-used-up", {
+        reason: `the required checks failed after ${attempts(since)}`,
+        ...(sessionText !== "" && { sessionText }),
+      });
     }
-    const minutes = ctx.project.limits.checksMinutes;
-    const waited = ctx.clock() - pass.atMs;
-    if (waited >= minutes * 60_000) {
-      yield* append(out, read, "gate", "checks-timed-out", { attempt });
-      const reason = checks.some((c) => c.state === "missing")
-        ? `a required check was not reported within ${minutes} minutes`
-        : `the required checks did not finish within ${minutes} minutes`;
-      return yield* stuck("checks-timed-out", { reason });
-    }
-    return { kind: "checks-pending" } as const;
+    return yield* sendBack(
+      ctx,
+      out,
+      run,
+      seen,
+      at,
+      attempt,
+      status.runOrdinal,
+      message,
+      "required-checks-failed",
+    );
   });
 
 /**
@@ -475,23 +547,11 @@ const gateAttempts = (
     const status = yield* threadStatus(ctx, threadId);
     if (status === null) return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
     let attempt = nextGateAttempt(seen);
-    // An attempt that was sent (the `gate-sending` step is in the ledger) whose `gate_sent_back`
-    // is missing, and a newer run is now visible: the send did reach the session, so the attempt
-    // is used. Record that at once, and gate afresh as the next attempt once the run has ended.
-    const owed =
-      seen.sending !== null && seen.sending.attempt === attempt && seen.commandAttempts.has(attempt)
-        ? seen.sending
-        : null;
-    if (owed !== null && status.runOrdinal !== null && status.runOrdinal > owed.runOrdinal) {
-      yield* append(
-        out,
-        { event: "gate_sent_back", data: { attempt, run_ordinal: owed.runOrdinal } },
-        "gate",
-        "gate-send-recovered",
-        { attempt },
-      );
-      attempt += 1;
-    }
+    // An attempt that was sent whose `gate_sent_back` is missing, and a newer run is now visible:
+    // the send did reach the session, so the attempt is used. Record that at once, and gate
+    // afresh as the next attempt once the run has ended.
+    const owed = owedSend(seen, attempt);
+    if (owed !== null && (yield* recoverSend(out, attempt, owed, status))) attempt += 1;
     // Wait for the session to have finished a run to gate, which has an ordinal.
     if (sessionBusy(seen, status)) return NOT_READY;
     const ordinal = status.runOrdinal;
@@ -643,8 +703,10 @@ const gateAttempts = (
           yield* endRun(ctx, yield* out.open, at, prUrl, pullNow, "gate");
           return { kind: "ended" } as const;
         }
-        if (checksWanted(ctx, seen, pass.sha)) {
-          return yield* awaitChecks(ctx, out, run, seen, at, pass, { threadId, pr });
+        // `seen` was read before this pass: a read of the checks in it was about an earlier one.
+        const unread: Seen = { ...seen, checksPassed: null, checksFailed: null };
+        if (checksWanted(ctx, unread, pass.sha)) {
+          return yield* awaitChecks(ctx, out, run, unread, at, pass, { threadId, pr });
         }
         return yield* finishPass(ctx, out, issue, at, pass, pr, true);
       }
@@ -653,22 +715,9 @@ const gateAttempts = (
       const text = conflict
         ? mergeConflictMessage(ctx.project.base, ran.paths)
         : failureMessage(ran.failure);
-      // A pull request someone else took out of draft goes back to draft before the failure is
-      // handled, as `advance` does: only the gate marks it ready. A call that fails leaves it
-      // as it is, and stuck.
       const pullNow = yield* ctx.tracker.pullRequest(pr);
-      if (pullNow !== null && pullNow.open && !pullNow.isDraft) {
-        const drafted = yield* Effect.result(ctx.tracker.markPrDraft(pr));
-        if (drafted._tag === "Failure") {
-          // A rate limit says nothing about the pull request: ask again next pass.
-          if (drafted.failure._tag === "GitHubRateLimited") return yield* drafted.failure;
-          return yield* stuck(
-            "pr-not-bound",
-            stopOf(`the session reported PR #${pr} but it is not a draft`, message),
-          );
-        }
-        yield* append(out, { event: "pr_set_draft", data: { pr } }, "gate", "pr-set-draft");
-      }
+      const drafted = yield* backToDraft(ctx, out, pr, pullNow, stuck, message);
+      if (drafted !== null) return drafted;
       // Every attempt since the last pass failed. `gate_retries` of them may go back into the
       // session; the one after that is the end.
       const since = attemptsSincePass(seen, attempt);
