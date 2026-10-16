@@ -511,21 +511,29 @@ const scenario = (spec: Spec) =>
           const loop = Context.get(built, FactoryLoop);
           assert.deepStrictEqual(loop.status, { state: "running" });
 
-          // The thread's run settling wakes the loop; a settle that lands between a pass and
-          // the next one is not replayed, so each pass that decides nothing is followed by
-          // another at once.
+          // No wake of our own: the thread's run settling and a finished gate wake the loop, as
+          // they do in the server, so the loop is never faster than that. Waiting only on the
+          // 10 s poll would fail the 60 s test timeout, so the wait is cut short with the
+          // ledger and the gh calls in the failure.
           const drive = Effect.gen(function* () {
             for (;;) {
               const entries = yield* ledger;
               if (isDone(entries)) return;
-              yield* loop.wake;
               yield* loop.awaitPass;
             }
           });
-          const finished = yield* drive.pipe(Effect.timeoutOption("100 seconds"));
+          const finished = yield* drive.pipe(Effect.timeoutOption("40 seconds"));
           const entries = yield* ledger;
-          if (Option.isNone(finished))
-            assert.fail(`the loop did not finish\n${diagnosis(entries)}`);
+          if (Option.isNone(finished)) {
+            const launchedEarly = entries.find((entry) => entry.event === "session_launched");
+            const early = (launchedEarly?.data as { thread_id?: string } | undefined)?.thread_id;
+            const sessionsEarly = yield* Sessions.FactorySessions;
+            const threadNow =
+              early === undefined
+                ? "no thread"
+                : JSON.stringify(yield* Effect.result(sessionsEarly.status(early)));
+            assert.fail(`the loop did not finish\nthread: ${threadNow}\n${diagnosis(entries)}`);
+          }
 
           const sessions = yield* Sessions.FactorySessions;
           const launched = entries.find((entry) => entry.event === "session_launched");

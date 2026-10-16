@@ -7,7 +7,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EventId, ProjectId, type Project, type ThreadId } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
+import {
+  decodeProviderReplayNdjson,
+  readProviderReplayTranscript,
+} from "@t3tools/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -115,18 +118,22 @@ export const MULTI_TURN_TRANSCRIPT = new URL(
 
 /**
  * The real orchestration runtime plus the launch service over a real repo,
- * with `transcript` (the simple one unless given) as the provider.
+ * with `transcript` (the simple one unless given) as the provider: a fixture's
+ * URL, or the transcript's ndjson text for one a test builds in memory.
  */
 export const layerRuntime = (input: {
   readonly repo: string;
   readonly worktreesDir: string;
-  readonly transcript?: URL;
+  readonly transcript?: URL | string;
 }) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const path = yield* Path.Path;
+      const source = input.transcript ?? SIMPLE_TRANSCRIPT;
       const transcript = yield* ClaudeOrchestratorReplayHarness.decodeTranscript(
-        yield* readProviderReplayTranscript(input.transcript ?? SIMPLE_TRANSCRIPT),
+        typeof source === "string"
+          ? yield* decodeProviderReplayNdjson(source)
+          : yield* readProviderReplayTranscript(source),
       );
       const project: Project = {
         id: projectId,
