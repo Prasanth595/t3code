@@ -27,6 +27,7 @@ import type {
 } from "./runner/building.ts";
 import type { GateStepError } from "./runner/gating.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
+import type { StopRequestOutcome } from "./runner/stop.ts";
 import { sanitize } from "./text.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
 
@@ -95,6 +96,11 @@ export interface PassWorld {
   readonly start: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
   /** The claim gone on with, never made: `resume` in `runner/start.ts`. */
   readonly resume: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
+  /**
+   * Takes the stop request an operator left for the run (`factory/scripts/stop-run.sh`) into its
+   * ledger: `runner/stop.ts` `takeStopRequest`.
+   */
+  readonly takeStopRequest: (run: RunId) => Effect.Effect<StopRequestOutcome, LedgerError>;
   /** The time limit: `runner/building.ts` `timeLimit`. */
   readonly timeLimit: (repo: Repo, run: RunId) => Effect.Effect<LimitOutcome, BuildingError>;
   /** The text watch: `watch`. */
@@ -141,6 +147,23 @@ export const stuckItem = (repo: string, issue: number, run: string): NewItem => 
   issue,
   run,
   message: `${plain(repo)}${mention(issue)} ${stuckLine(run)}`,
+});
+
+/** The attention line for a run whose issue a person closed, after the issue's label. */
+const abandonedText = (label: string): string =>
+  `${label} Abandoned: the issue was closed, so the factory stopped the session and closed the run`;
+
+/**
+ * The item `abandoned` raises for a run whose issue a person closed, which the background gate
+ * raises too when it is the step that finds the issue closed.
+ */
+export const abandonedItem = (repo: string, issue: number, run: string): NewItem => ({
+  id: `attention:${run}:abandoned`,
+  kind: "attention",
+  repo,
+  issue,
+  run,
+  message: abandonedText(`${plain(repo)}${mention(issue)}`),
 });
 
 /** The counts the pass prints in its last line. */
@@ -512,16 +535,17 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
   });
 
 /**
- * Works each confirmed run: the time limit first, for every state (the runner decides which
- * runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
+ * Works each confirmed run: a stop request an operator left for it is taken into its ledger, then
+ * the time limit, for every state (the runner decides which runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
  * its ledger, so a run cut short after the launch was sent is finished and its session never runs
  * on untracked. A building run has its text watched and its session's result read by `advance`
  * on every pass, as softfac's `building` does, also once its session has reported its pull
  * request: `advance` puts a pull request someone took out of draft back to draft and judges the
  * session's latest run, and only when it says `ready-for-gate` is the gate started, in the
  * background (softfac's `softfac gate` child). A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
- * thread is archived and its slot freed. The states after `pr-open` are later steps. A run of a
- * repo that is not loaded is left alone. None of it is a new
+ * thread is archived and its slot freed. A run in `pr-open` is advanced too, so one whose pull
+ * request was merged or closed is finished (`advance` reads nothing else for it). A run of a repo
+ * that is not loaded is left alone. None of it is a new
  * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
  * finishes its run when it claims the issue.
  */
@@ -543,20 +567,58 @@ const workRuns = (
       const issue = Number(info.id.issue);
       const notes = pass.notes(name, issue, info.state);
       if (world.gateRunning(info.id)) {
-        // The gate has the run: nothing else is done for it (softfac's `work_runs`).
+        // The gate has the run: nothing else is done for it (softfac's `work_runs`). A stop
+        // request waits, so the gate's own result decides the state first.
         notes.parts.push(GATE_RUNNING);
-      } else if (yield* withinLimit(world, repo, info, notes, pass)) {
+      } else if (yield* takeStopRequestThenWithin(world, repo, info, notes, pass)) {
         if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
         else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
         // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
-        else if (info.state === "needs-info" || info.state === "stuck") {
+        else if (
+          info.state === "needs-info" ||
+          info.state === "stuck" ||
+          info.state === "pr-open"
+        ) {
           yield* advanceRun(world, repo, info, notes, pass);
         }
-        // `pr-open` waits for the gate, a later step.
       }
       yield* known.refresh(world, pass, name, issue);
       yield* pass.flush(notes, info.id);
     }
+  });
+
+/**
+ * Takes the run's stop request into its ledger, and says so. A request that cannot be taken is an
+ * error line and the file stays for the next pass; the run is worked all the same.
+ */
+const takeStopRequest = (
+  world: PassWorld,
+  pass: Pass,
+  info: RunInfo,
+  notes: Notes,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const taken = yield* Effect.result(world.takeStopRequest(info.id));
+    if (taken._tag === "Failure") {
+      pass.failed(notes, "stop request", "pass", taken.failure);
+    } else if (taken.success === "recorded") {
+      notes.parts.push("stop requested by hand");
+    } else if (taken.success === "not-building") {
+      notes.parts.push("stop request dropped: the run is not building");
+    }
+  });
+
+/** Takes the stop request, then checks the time limit: true when the run is still to be worked. */
+const takeStopRequestThenWithin = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+  pass: Pass,
+): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    yield* takeStopRequest(world, pass, info, notes);
+    return yield* withinLimit(world, repo, info, notes, pass);
   });
 
 /** The time limit for the run. False when the run was stopped or the call failed: it is done for this pass. */
@@ -602,6 +664,15 @@ const resumeRun = (
         break;
       case "stuck":
         pass.stuck(notes, runIdToString(outcome.success.run));
+        break;
+      case "abandoned":
+        yield* abandoned(
+          pass,
+          notes,
+          runIdToString(info.id),
+          outcome.success.mayHaveSession,
+          outcome.success.error,
+        );
         break;
       case "skipped":
       case "refused": {
@@ -691,6 +762,43 @@ const advanceRun = (
       case "stuck":
         pass.stuck(notes, run);
         break;
+      case "ended":
+        notes.parts.push("its pull request was merged or closed, the run is finished");
+        break;
+      case "abandoned":
+        yield* abandoned(pass, notes, run, []);
+        break;
+    }
+  });
+
+/**
+ * The run's issue was closed by a person, so the run is over and its session stopped. Says so,
+ * and asks for a person to look: that the issue was closed on purpose is their call to check.
+ * `mayHaveSession` names the runs that sent a launch and never got a thread, whose session this
+ * could not archive; each is raised with the command id to look for. `error` is why `start` could
+ * not end a later run of the issue, which the next pass tries again.
+ */
+const abandoned = (
+  pass: Pass,
+  notes: Notes,
+  run: string | null,
+  mayHaveSession: ReadonlyArray<RunId>,
+  error?: StartError,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    notes.parts.push("the issue is closed, the run is closed");
+    if (error !== undefined) pass.failed(notes, "start", "start", error);
+    if (run !== null) {
+      yield* pass.attention(notes, abandonedText(notes.label), run, "abandoned");
+    }
+    for (const id of mayHaveSession) {
+      const name = runIdToString(id);
+      yield* pass.attention(
+        notes,
+        `${notes.label} the issue was closed, and a session may exist for ${name}: look for launch command id softfac:${name}:launch in T3 Code and archive that thread by hand`,
+        name,
+        "session-may-exist",
+      );
     }
   });
 
@@ -715,7 +823,8 @@ const inTriage = (run: RunInfo): boolean =>
 /**
  * A confirmed run in `triage` that `resume` would not take, for `why`: a person moved or closed
  * its issue, so nothing in the pass will move it, and it holds a slot. softfac's `stalled` words.
- * Nothing finishes a closed issue's run yet, so its line says how to let the start finish it.
+ * A closed issue's run is ended by `start` when it finds the issue closed (`abandoned`); this is
+ * for the run it left alone, so its line says how to let the start finish it.
  */
 const stalled = (
   pass: Pass,
@@ -941,6 +1050,12 @@ const noteStart = (
         if (notes.state === "ready") pass.report.claimed += 1;
         yield* clearEarlier;
         return outcome.success.run;
+      }
+      case "abandoned": {
+        // The runs the call ended are not told apart; the newest one known before it stands for them.
+        const run = before === null ? null : runIdToString(before);
+        yield* abandoned(pass, notes, run, outcome.success.mayHaveSession, outcome.success.error);
+        return null;
       }
       case "skipped":
         notes.parts.push(words.notTaken);

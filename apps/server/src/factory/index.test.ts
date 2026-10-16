@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - the stop request is a file in the data dir.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -38,6 +42,7 @@ import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import type { Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
+import { stopRequestPath } from "./runner/stop.ts";
 import { utcSecond } from "./runner/start.ts";
 import { MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
@@ -1052,7 +1057,28 @@ describe("the gate in the background", () => {
     }),
   );
 
-  /** A building run whose session reported its pull request: the gate reads the thread first. */
+  /** What `gh issue view` answers for the open `factory:building` issue the gate reads before anything else. */
+  const OPEN_ISSUE = JSON.stringify({
+    number: 10,
+    title: "Build step",
+    body: "",
+    labels: [{ name: "factory:building" }],
+    assignees: [{ login: "rawphp" }],
+    state: "OPEN",
+    author: { login: "tomkaczocha" },
+  });
+  const readsIssue = (input: RunInput) =>
+    input.args?.includes("number,title,body,labels,assignees,state,author") === true;
+  const answered = (tail: string) =>
+    Effect.succeed({
+      exitCode: 0,
+      timedOut: false,
+      tail,
+      stderrTail: "",
+      truncated: false,
+    } satisfies RunResult);
+
+  /** A building run whose session reported its pull request: the gate reads the issue, then the thread. */
   const reportedRun = (dataDir: string): RunId => {
     const run = newRunId(REPO, "10", 1);
     const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
@@ -1097,8 +1123,12 @@ describe("the gate in the background", () => {
     project: timeLimitOnlyProjectConfig(),
     trackerUser: "rawphp",
   };
+  /** `gh` answers the read of the open issue and is not found for anything else. */
   const deadGh: FactoryProcess["Service"] = {
-    run: () => Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
+    run: (input) =>
+      readsIssue(input)
+        ? answered(OPEN_ISSUE)
+        : Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
   };
 
   it.effect(
@@ -1152,17 +1182,15 @@ describe("the gate in the background", () => {
       // answers every write.
       const quietGh: FactoryProcess["Service"] = {
         run: (input) =>
-          Effect.succeed({
-            exitCode: 0,
-            timedOut: false,
-            tail: input.args?.includes("labels")
-              ? JSON.stringify({ labels: [{ name: "factory:building" }] })
-              : input.args?.some((arg) => arg.endsWith("/comments"))
-                ? "[]"
-                : "",
-            stderrTail: "",
-            truncated: false,
-          } satisfies RunResult),
+          answered(
+            readsIssue(input)
+              ? OPEN_ISSUE
+              : input.args?.includes("labels")
+                ? JSON.stringify({ labels: [{ name: "factory:building" }] })
+                : input.args?.some((arg) => arg.endsWith("/comments"))
+                  ? "[]"
+                  : "",
+          ),
       };
       const sessions = Sessions.FactorySessions.of({
         ...stubSessions,
@@ -1250,6 +1278,7 @@ describe("the gate in the background", () => {
     assert.strictEqual(gateDecided({ kind: "sent-back", attempt: 1 }), true);
     assert.strictEqual(gateDecided({ kind: "stuck", reason: "r" }), true);
     assert.strictEqual(gateDecided({ kind: "ended" }), true);
+    assert.strictEqual(gateDecided({ kind: "abandoned" }), true);
     // Nothing changed: the normal poll carries the next try, so a session still at work or a
     // rate limit does not spin the loop.
     assert.strictEqual(gateDecided({ kind: "not-ready" }), false);
@@ -1272,4 +1301,59 @@ describe("the gate in the background", () => {
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "ended" }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", null), null);
   });
+
+  it("raises the abandoned item for a gate that found the issue closed, as the pass does", () => {
+    assert.deepStrictEqual(gateItem(REPO, 10, "run-1", { kind: "abandoned" }), {
+      id: "attention:run-1:abandoned",
+      kind: "attention",
+      repo: REPO,
+      issue: 10,
+      run: "run-1",
+      message: `${REPO}#10 Abandoned: the issue was closed, so the factory stopped the session and closed the run`,
+    });
+  });
+
+  it.effect("takes a stop request the operator left in the data dir", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = newRunId(REPO, "10", 1);
+      const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+      ledger.append(
+        { event: "state_changed", data: { from: "triage", to: "building" } },
+        makeCause("start", "seed"),
+      );
+      ledger.close();
+      const machine: MachineConfig = {
+        ghConfigDir: "/gh/rawphp",
+        pollSeconds: 60,
+        maxConcurrentRuns: 1,
+        maxConcurrentGates: 1,
+        modelInstance: "claudeAgent",
+        model: "claude-sonnet-5-5",
+        notify: true,
+        repos: [{ repo: REPO, path: "/p" }],
+      };
+      const world = liveWorld(
+        machine,
+        dataDir,
+        { run: () => Effect.die("no gh") },
+        stubSessions,
+        () => 2_000,
+        "mac-mini",
+        noAttention,
+        {
+          gate: { run: () => Effect.die("no gate") },
+          wake: Effect.void,
+          scope: yield* Scope.make(),
+        },
+      );
+      assert.strictEqual(yield* world.takeStopRequest(run), "none");
+      const path = stopRequestPath(dataDir, run);
+      NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+      NodeFS.writeFileSync(path, "operator\n");
+      assert.strictEqual(yield* world.takeStopRequest(run), "recorded");
+      assert.strictEqual(readRun(dataDir, run).entries.at(-1)?.event, "stop_requested");
+      assert.strictEqual(yield* world.takeStopRequest(run), "none");
+    }),
+  );
 });

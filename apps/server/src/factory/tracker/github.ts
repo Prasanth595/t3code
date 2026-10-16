@@ -44,10 +44,29 @@ export const STATUS_MARKER = "<!-- softfac:status -->";
 export const READY_BY_QUERY =
   "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { actor { login } } } } } } }";
 
+/** Who closed an issue last: the newest closed event's actor. */
+export const CLOSED_BY_QUERY =
+  "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { actor { login } } } } } } }";
+
 const ReadyByAnswer = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.Struct({
       pullRequest: Schema.Struct({
+        timelineItems: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({
+              actor: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
+const ClosedByAnswer = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      issue: Schema.Struct({
         timelineItems: Schema.Struct({
           nodes: Schema.Array(
             Schema.Struct({
@@ -965,6 +984,22 @@ export const makeGitHub = (options: GitHubOptions) => {
     });
 
   /**
+   * The login of whoever closed issue `issue` last. `null` when it was never closed or GitHub
+   * names no actor (a deleted account). One GraphQL call.
+   */
+  const closedBy = (issue: number): GitHubEffect<string | null> =>
+    Effect.gen(function* () {
+      const args = yield* issueQueryArgs(CLOSED_BY_QUERY, issue);
+      const answer = yield* ghJson(
+        args,
+        ClosedByAnswer,
+        "a GraphQL response with the issue's timeline",
+      );
+      const last = answer.data.repository.issue.timelineItems.nodes.at(-1);
+      return last?.actor?.login ?? null;
+    });
+
+  /**
    * How `head` stands against `base`, by GitHub's compare API (`status` of `base...head`).
    * A ref that GitHub does not know (a 404) is null. Only the status is read, so a long
    * history costs one small answer. Each ref goes into the API path the way `branchTip`
@@ -1367,6 +1402,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     markPrDraft,
     commentOnPr,
     readyBy,
+    closedBy,
     compare,
     checks,
     openBlockers,

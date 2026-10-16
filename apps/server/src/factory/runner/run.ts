@@ -1,6 +1,8 @@
 /**
  * What every step that stops or finishes a run shares, ported from softfac's `runner.rs`: the
- * stuck path with its session stop, and the move to `factory:building`. Each step passes its own
+ * stuck path with its session stop, the move to `factory:building`, and the three ways a run ends
+ * without a gate: its pull request was merged or closed (`endRun`), its issue was closed
+ * (`abandon`), or an operator stopped it by hand (the stuck path). Each step passes its own
  * `Progress.step`, which names it in the ledger's causes.
  */
 import * as Effect from "effect/Effect";
@@ -10,7 +12,8 @@ import { InvalidTransition, transition, type Action, type State } from "../domai
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type Cause, type CauseStep } from "../ledger/events.ts";
 import type { Ledger } from "../ledger/ledger.ts";
-import type { BoundGitHub, GitHubError } from "../tracker/github.ts";
+import type { RunId } from "../ledger/runId.ts";
+import type { BoundGitHub, GitHubError, IssueDetail, PullRequest } from "../tracker/github.ts";
 import { ThreadNotFoundError } from "../t3/sessions.ts";
 import type { FactorySessions, MessageRejectedError, SessionsError } from "../t3/sessions.ts";
 import { questionsComment, statusBody, stuckComment, type WorkLeft } from "./messages.ts";
@@ -41,6 +44,9 @@ export interface RunContext {
     | "markPrReady"
     | "markPrDraft"
     | "commentOnPr"
+    | "issue"
+    | "pullRequest"
+    | "closedBy"
   >;
   readonly sessions: Pick<
     FactorySessions["Service"],
@@ -365,3 +371,129 @@ export const goStuck = (
     yield* applyActions(ctx, issue, out, at, failed.actions, cause);
     yield* ledger(() => out.finish("stuck", null, null, cause));
   });
+
+/**
+ * Ends a run whose pull request was merged or closed, from `pr-open` or, for the session's own
+ * pull request that a person ended before the gate could mark it ready, from `building`. Nothing
+ * will use its session again, so the thread is archived first (an error other than T3 not having
+ * the thread is returned with nothing written, and the next call archives again; a run whose
+ * ledger never got a thread has nothing to archive); then the summary line, the only write,
+ * caused by `step`. Nothing is posted on GitHub. A pull request that is gone, or closed without a
+ * merge, was closed.
+ */
+export const endRun = (
+  ctx: RunContext,
+  out: Ledger,
+  at: Progress,
+  prUrl: string,
+  pull: PullRequest | null,
+  step: CauseStep,
+): Effect.Effect<void, RunError> =>
+  Effect.gen(function* () {
+    yield* stopSession(ctx, out, at);
+    const prEnd = pull !== null && pull.merged ? "merged" : "closed";
+    yield* ledger(() =>
+      out.finish("pr-open", null, prUrl, makeCause(step, "pull-request-ended"), prEnd),
+    );
+  });
+
+/** What a closed issue means for a run. */
+export type Closing =
+  /** The issue is open, or the run has nothing left to write and was not asked. */
+  | { readonly kind: "open" }
+  /** A person closed it: a move, and the run is abandoned. */
+  | { readonly kind: "persons-move" }
+  /** The run's own pull request was merged, which closed the issue. The pull request as GitHub shows it. */
+  | { readonly kind: "own-merge"; readonly pull: PullRequest };
+
+const OPEN: Closing = { kind: "open" };
+
+/**
+ * Whether a closed issue is a person's move for this run, or the run's own finish. It is the run's
+ * own when a pull request the run reported (`pr_opened` lines) is merged, whether or not the gate
+ * had passed: with a pass recorded the gate completes it without writing on the pull request;
+ * before one, the step that finds it ends the run with `pr_end: merged` at once. A pull request
+ * the run has not reported yet cannot be known here, so a merge before the first `advance` after
+ * the session's report still reads as a person's move. `closed` is what GitHub says about the
+ * issue. A read that fails is an error, never an answer.
+ */
+export const movedOnByClosing = (
+  ctx: RunContext,
+  seen: Seen,
+  closed: boolean,
+): Effect.Effect<Closing, RunError> =>
+  Effect.gen(function* () {
+    if (!closed) return OPEN;
+    for (const pr of seen.opened) {
+      const pull = yield* ctx.tracker.pullRequest(pr);
+      if (pull !== null && pull.merged) return { kind: "own-merge", pull } as const;
+    }
+    return { kind: "persons-move" } as const;
+  });
+
+/**
+ * What the run's issue being closed means for it, with the issue as read for that (`detail`, null
+ * when it was not read), so a caller that needs the issue too does not read it again. A run that
+ * has nothing left to write (`pr-open`, `stuck`) asks nothing of GitHub, and neither does a step
+ * that would skip the run (the caller checks that first).
+ */
+export const closedIssue = (
+  ctx: RunContext,
+  run: RunId,
+  seen: Seen,
+): Effect.Effect<{ readonly closing: Closing; readonly detail: IssueDetail | null }, RunError> =>
+  Effect.gen(function* () {
+    if (seen.state === "pr-open" || seen.state === "stuck") return { closing: OPEN, detail: null };
+    const detail = yield* ctx.tracker.issue(Number(run.issue));
+    return { closing: yield* movedOnByClosing(ctx, seen, detail.closed), detail };
+  });
+
+/**
+ * Finishes a run whose issue a person closed: the session's thread is archived first (an archive
+ * error other than T3 not having the thread is an error with nothing written, so the next call
+ * decides again), then the ledger is finished, as `needs-info` for a run that was left in that
+ * state and as `stuck` for any other. Nothing is written on GitHub: the person owns the issue now.
+ *
+ * The summary line says which step noticed, with the login of the person who closed the issue
+ * when GitHub says whose it was. The login is a courtesy: a read that fails ends the run the same.
+ *
+ * True when a session may exist that this could not archive: a launch was sent and the ledger
+ * never got its thread, so the caller says so (the launch command id is `softfac:<run>:launch`).
+ */
+export const abandon = (
+  ctx: RunContext,
+  out: Ledger,
+  run: RunId,
+  seen: Seen,
+  step: CauseStep,
+): Effect.Effect<boolean, RunError> =>
+  Effect.gen(function* () {
+    yield* stopSession(ctx, out, progressFrom(step, seen, "triage"));
+    const actor = yield* ctx.tracker
+      .closedBy(Number(run.issue))
+      .pipe(Effect.orElseSucceed(() => null));
+    const cause = makeCause(step, "issue-closed", actor === null ? {} : { actor });
+    const outcome = seen.state === "needs-info" ? "needs-info" : "stuck";
+    yield* ledger(() => out.finish(outcome, null, null, cause));
+    return seen.launchSent && seen.threadId === null;
+  });
+
+/**
+ * Ends a run whose own merged pull request closed its issue before a gate pass was recorded:
+ * `endRun` with the URL the session wrote for that pull request (or the one GitHub would give it,
+ * for a pull request the ledger holds under another number). `step` is the step that found it.
+ */
+export const endOwnMerge = (
+  ctx: RunContext,
+  out: Ledger,
+  run: RunId,
+  seen: Seen,
+  step: CauseStep,
+  pull: PullRequest,
+): Effect.Effect<void, RunError> => {
+  const url =
+    seen.lastPr !== null && seen.lastPr.pr === pull.number
+      ? seen.lastPr.url
+      : `https://github.com/${run.repo}/pull/${pull.number}`;
+  return endRun(ctx, out, progressFrom(step, seen, "triage"), url, pull, step);
+};

@@ -40,6 +40,7 @@ import { MachineLog } from "./ledger/machineLog.ts";
 import { runLoop, type Loop } from "./loop.ts";
 import {
   GATE_PASSED_LINE,
+  abandonedItem,
   errorKind,
   gateQueued,
   plain,
@@ -59,6 +60,7 @@ import { advance, timeLimit, watch, type BuildingContext } from "./runner/buildi
 import { gate as gateStep, type GateContext, type GateStep } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
+import { takeStopRequest } from "./runner/stop.ts";
 import * as Events from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
@@ -178,6 +180,8 @@ const gateWords = (run: string, step: GateStep): string => {
       return "nothing to gate";
     case "ended":
       return "the pull request was merged or closed, the run is finished";
+    case "abandoned":
+      return "the issue is closed, the run is closed";
     case "running":
       return "gate running";
     case "queued":
@@ -186,15 +190,24 @@ const gateWords = (run: string, step: GateStep): string => {
 };
 
 /**
- * The attention item for a gate that ended, or null: a gate that ended `stuck` needs a person,
- * the same item `pass.ts` raises when `advance` finds a run stuck.
+ * The attention item for a gate that ended, or null: a gate that ended `stuck` or `abandoned`
+ * needs a person, the same item `pass.ts` raises when `advance` finds the run so.
  */
 export const gateItem = (
   repo: string,
   issue: number,
   run: string,
   step: GateStep | null,
-): NewItem | null => (step?.kind === "stuck" ? stuckItem(repo, issue, run) : null);
+): NewItem | null => {
+  switch (step?.kind) {
+    case "stuck":
+      return stuckItem(repo, issue, run);
+    case "abandoned":
+      return abandonedItem(repo, issue, run);
+    default:
+      return null;
+  }
+};
 
 /**
  * Whether a gate that ended changed something the next pass should act on at once. A gate that
@@ -206,7 +219,8 @@ export const gateDecided = (step: GateStep | null): boolean =>
   (step.kind === "passed" ||
     step.kind === "sent-back" ||
     step.kind === "stuck" ||
-    step.kind === "ended");
+    step.kind === "ended" ||
+    step.kind === "abandoned");
 
 /** The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock. */
 export const liveWorld = (
@@ -275,7 +289,7 @@ export const liveWorld = (
     });
   /**
    * The gate as a background fiber: its line is logged when it ends, as the pass's lines are, an
-   * error goes to the run's ledger, a `stuck` end raises its attention item, and the loop is
+   * error goes to the run's ledger, a `stuck` or `abandoned` end raises its attention item, and the loop is
    * woken so the next pass carries on at once.
    */
   const startGate = (repo: Repo, run: RunId): Effect.Effect<GateStart> =>
@@ -381,6 +395,7 @@ export const liveWorld = (
       ),
     start: (repo: Repo, issue: number) => start(startContext(repo), issue),
     resume: (repo: Repo, issue: number) => resume(startContext(repo), issue),
+    takeStopRequest: (run) => takeStopRequest(dataDir, run, clock),
     timeLimit: (repo, run) => timeLimit(buildingContext(repo), run),
     watch: (repo, run) => watch(buildingContext(repo), run),
     advance: (repo, run) => advance(buildingContext(repo), run),

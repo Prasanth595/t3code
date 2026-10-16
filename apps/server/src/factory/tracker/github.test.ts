@@ -19,6 +19,7 @@ import {
   MARKER,
   MAX_DEPENDS_ON,
   MAX_FILE_BYTES,
+  CLOSED_BY_QUERY,
   READY_BY_QUERY,
   STATUS_MARKER,
   type Blocker,
@@ -4094,6 +4095,51 @@ it.effect("readyBy refuses an answer it cannot read", () =>
     for (const text of ["", "no", "{}", '{"data":{"repository":{"pullRequest":null}}}']) {
       const t = setup(reply(text));
       const error = yield* t.err(t.github.readyBy(6));
+      assert.strictEqual(error._tag, "GitHubParse", text);
+    }
+  }),
+);
+
+// ---- who closed an issue ----
+
+const closedByReply = (nodes: string) =>
+  `{"data":{"repository":{"issue":{"timelineItems":{"nodes":[${nodes}]}}}}}`;
+
+it.effect("closedBy names the actor of the newest closed event with one call", () =>
+  Effect.gen(function* () {
+    const t = setup(reply(closedByReply('{"actor":{"login":"alice"}}')));
+    assert.strictEqual(yield* t.ok(t.github.closedBy(6)), "alice");
+    assert.deepStrictEqual(t.calls(), [
+      [
+        "api",
+        "graphql",
+        "-f",
+        `query=${CLOSED_BY_QUERY}`,
+        "-f",
+        "owner=rawphp",
+        "-f",
+        "name=softfac",
+        "-F",
+        "number=6",
+      ],
+    ]);
+  }),
+);
+
+it.effect("closedBy is null when it was never closed or has no actor", () =>
+  Effect.gen(function* () {
+    for (const nodes of ["", '{"actor":null}', "{}"]) {
+      const t = setup(reply(closedByReply(nodes)));
+      assert.strictEqual(yield* t.ok(t.github.closedBy(6)), null, nodes);
+    }
+  }),
+);
+
+it.effect("closedBy refuses an answer it cannot read", () =>
+  Effect.gen(function* () {
+    for (const text of ["", "no", "{}", '{"data":{"repository":{"issue":null}}}']) {
+      const t = setup(reply(text));
+      const error = yield* t.err(t.github.closedBy(6));
       assert.strictEqual(error._tag, "GitHubParse", text);
     }
   }),

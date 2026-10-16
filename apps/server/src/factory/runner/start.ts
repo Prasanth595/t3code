@@ -13,7 +13,8 @@
  * relabelled issue with no explanation. A refusal is commented once per label.
  *
  * A new attempt first finishes every older unfinished run of the issue in the ledger, so a run
- * a person has moved on from stops being polled.
+ * a person has moved on from stops being polled. A closed issue is never claimed: its unfinished
+ * runs are abandoned instead, each with its session archived (see `abandonClosed`).
  *
  * The session is launched under a command id derived from the run, after the ledger says a
  * launch is about to be sent, so a launch that fails on our side is found again by sending the
@@ -59,7 +60,14 @@ import {
   sessionMayExistNote,
 } from "./messages.ts";
 import { APPROVAL_RECHECKED, LAUNCH_SENDING, readProgress, type Seen } from "./progress.ts";
-import { describe, finishBuilding, goStuck, progressFrom } from "./run.ts";
+import {
+  abandon,
+  describe,
+  finishBuilding,
+  goStuck,
+  movedOnByClosing,
+  progressFrom,
+} from "./run.ts";
 
 /**
  * What the claim asks of the tracker: the subset of `makeGitHub` it calls, with the process
@@ -81,6 +89,8 @@ export type Tracker = Pick<
   | "markPrReady"
   | "markPrDraft"
   | "commentOnPr"
+  | "pullRequest"
+  | "closedBy"
 >;
 
 /** The subset of `FactorySessions` the claim calls. */
@@ -121,7 +131,19 @@ export type StartOutcome =
   /** The issue was `ready` but not approved, so it went back to `factory:proposed` with one fixed comment, and no run was made. */
   | { readonly kind: "refused"; readonly reason: string }
   /** The issue went to `stuck`. */
-  | { readonly kind: "stuck"; readonly run: RunId; readonly reason: string };
+  | { readonly kind: "stuck"; readonly run: RunId; readonly reason: string }
+  /**
+   * The issue is closed and a person closed it: its unfinished runs are finished and their
+   * sessions archived. `mayHaveSession` names the runs that sent a launch the ledger never got a
+   * thread for: a session may exist that this could not archive. `error` is why a later run could
+   * not be ended after earlier ones were, which the next call tries again; the runs it names are
+   * finished, so this is the only time they are named.
+   */
+  | {
+      readonly kind: "abandoned";
+      readonly mayHaveSession: ReadonlyArray<RunId>;
+      readonly error?: StartError;
+    };
 
 /** An older unfinished run of the issue has its gate running, so nothing was called or written. */
 export class GateRunningError extends Schema.TaggedError<GateRunningError>()("GateRunningError", {
@@ -159,9 +181,8 @@ export const start = (
 ): Effect.Effect<StartOutcome, StartError, never> =>
   Effect.gen(function* () {
     const detail = yield* ctx.tracker.issue(issue);
-    // A closed issue is never claimed, whatever its label says. Issue #20 ports what softfac
-    // does with its unfinished runs; until then they are left alone.
-    if (detail.closed) return closed(issue);
+    // A closed issue is never claimed, whatever its label says: its unfinished runs are ended.
+    if (detail.closed) return yield* abandonClosed(ctx, issue);
     if (detail.state === "ready" && detail.assignees.length === 0) {
       return yield* startFresh(ctx, issue, detail);
     }
@@ -181,7 +202,7 @@ export const resume = (
 ): Effect.Effect<StartOutcome, StartError, never> =>
   Effect.gen(function* () {
     const detail = yield* ctx.tracker.issue(issue);
-    if (detail.closed) return closed(issue);
+    if (detail.closed) return yield* abandonClosed(ctx, issue);
     if (detail.state === "ready" && detail.assignees.length === 0) {
       return { kind: "skipped", reason: `issue ${mention(issue)} is ready again`, moved: "ready" };
     }
@@ -194,6 +215,51 @@ const closed = (issue: number): StartOutcome => ({
   reason: `issue ${mention(issue)} is closed`,
   moved: "closed",
 });
+
+/**
+ * What `start` does with a closed issue: every unfinished run of it that a person's closing ended
+ * is abandoned (see `abandon`), oldest first, so a run stops being polled and its session stops.
+ * Nothing is claimed or written on GitHub. A run in `pr-open` or `stuck` has nothing left to
+ * write and is left alone, as is a run whose own merged pull request closed the issue: `advance`
+ * or `gate` ends that one. While the gate of any of those runs is running, none of them is
+ * touched (`GateRunningError`). With no run to abandon the issue is `skipped` as closed. A run
+ * that cannot be ended stops the walk: with no run ended before it that is the error, and after
+ * one it is `abandoned` with the error, so the runs already finished are still named.
+ */
+const abandonClosed = (ctx: StartContext, issue: number): Effect.Effect<StartOutcome, StartError> =>
+  Effect.gen(function* () {
+    const next = nextAttempt(ctx.dataDir, ctx.repo, String(issue));
+    const unfinished = yield* unfinishedRuns(
+      ctx,
+      issue,
+      next,
+      (seen) => seen.state !== "pr-open" && seen.state !== "stuck",
+    );
+    let abandoned = false;
+    const mayHaveSession: Array<RunId> = [];
+    for (const { id, seen } of unfinished) {
+      const ended = yield* Effect.result(
+        Effect.gen(function* () {
+          const closing = yield* movedOnByClosing(ctx, seen, true);
+          if (closing.kind !== "persons-move") return "left" as const;
+          const out = yield* ledger(() => Ledger.open(ctx.dataDir, id, { clock: ctx.clock }));
+          try {
+            return (yield* abandon(ctx, out, id, seen, "start")) ? "may-have-session" : "ended";
+          } finally {
+            out.close();
+          }
+        }),
+      );
+      if (ended._tag === "Failure") {
+        if (!abandoned) return yield* Effect.fail(ended.failure);
+        return { kind: "abandoned", mayHaveSession, error: ended.failure };
+      }
+      if (ended.success === "left") continue;
+      if (ended.success === "may-have-session") mayHaveSession.push(id);
+      abandoned = true;
+    }
+    return abandoned ? { kind: "abandoned", mayHaveSession } : closed(issue);
+  });
 
 /**
  * Goes on from the ledger with an issue that is not `ready`: a `triage` issue of ours, or a
@@ -630,10 +696,39 @@ const launchSession = (
   });
 
 /**
+ * The unfinished runs of the issue before attempt `below` that `wanted` keeps, oldest first
+ * (softfac's `unfinished_runs`). While the gate of any run it keeps is running, none of them is
+ * touched (`GateRunningError`).
+ */
+const unfinishedRuns = (
+  ctx: StartContext,
+  issue: number,
+  below: number,
+  wanted: (seen: Seen) => boolean,
+): Effect.Effect<Array<{ id: RunId; seen: Seen }>, LedgerError | GateRunningError> =>
+  Effect.gen(function* () {
+    const runs: Array<{ id: RunId; seen: Seen }> = [];
+    for (let attempt = 1; attempt < below; attempt += 1) {
+      const id = newRunId(ctx.repo, String(issue), attempt);
+      const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
+        Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
+      );
+      if (record === null) continue;
+      const seen = readProgress(record.entries);
+      if (seen.finished || !wanted(seen)) continue;
+      if (NodeFS.existsSync(gateLockFile(ctx.dataDir, id))) {
+        return yield* new GateRunningError({ run: id });
+      }
+      runs.push({ id, seen });
+    }
+    return runs;
+  });
+
+/**
  * Finishes every unfinished run of the issue before attempt `below`, by its last state, so it is
  * not polled again and cannot write to an issue a newer attempt now owns. While the gate of any
- * of them is running, none of them is finished. Until issue #20 ports the stop, a run that names
- * a session or a pull request is finished in the ledger only: nothing is archived or drafted.
+ * of them is running, none of them is finished. A run that names a session or a pull request is
+ * finished in the ledger only: nothing is archived or drafted.
  */
 const finishOlderRuns = (
   ctx: StartContext,
@@ -642,20 +737,7 @@ const finishOlderRuns = (
   appliedBy: string | null,
 ): Effect.Effect<void, LedgerError | GateRunningError> =>
   Effect.gen(function* () {
-    const older: Array<{ id: RunId; seen: Seen }> = [];
-    for (let attempt = 1; attempt < below; attempt += 1) {
-      const id = newRunId(ctx.repo, String(issue), attempt);
-      const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
-        Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
-      );
-      if (record === null) continue;
-      const seen = readProgress(record.entries);
-      if (seen.finished) continue;
-      if (NodeFS.existsSync(gateLockFile(ctx.dataDir, id))) {
-        return yield* new GateRunningError({ run: id });
-      }
-      older.push({ id, seen });
-    }
+    const older = yield* unfinishedRuns(ctx, issue, below, () => true);
     for (const { id, seen } of older) {
       const outcome: Outcome =
         seen.state === "needs-info" ? "needs-info" : seen.state === "pr-open" ? "pr-open" : "stuck";

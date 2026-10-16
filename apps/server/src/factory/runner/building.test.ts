@@ -1,14 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests read the bytes of real run files.
 /**
  * `advance` of a building run, ported from softfac's `runner/tests.rs` ("advance" and "advance:
- * the result-line reminder"). Left out, for the issues that own them: a merged or closed pull
- * request ending the run (`done_with_a_merged_pull_request_ends_the_run_as_merged`,
- * `done_with_a_pull_request_closed_without_a_merge_ends_the_run_as_closed`, #20), a closed issue
- * abandoning the run (#20), the "a new attempt ..." tests (`start.ts`, covered by its own tests),
- * `apply()` internals (`a_stuck_comment_without_a_stop_never_shows_the_lifecycle_reason`), the
- * gate and forward interplay, and the crash matrix. For `watch` and `timeLimit` also left out: a
- * recorded gate pass (#19), a run whose own merge closed the issue (#20), a relaunch decided by
- * an interruption, and the tests over the real `gh` client (`tracker/github.test.ts` owns them).
+ * the result-line reminder"), with the end of a run from #20: a merged or closed pull request, a
+ * closed issue and a stop by hand. Left out, for the issues that own them: the "a new attempt ..."
+ * tests (`start.ts`, covered by its own tests), `apply()` internals
+ * (`a_stuck_comment_without_a_stop_never_shows_the_lifecycle_reason`), the gate and forward
+ * interplay, the crash matrix and the interruption tests of the stop-by-hand section. For `watch`
+ * and `timeLimit` also left out: a recorded gate pass (#19), a relaunch decided by an
+ * interruption, and the tests over the real `gh` client (`tracker/github.test.ts` owns them).
  */
 import * as NodeFS from "node:fs";
 
@@ -228,7 +227,11 @@ interface World {
     markPrDraft?: GitHubError;
     postComment?: GitHubError;
     textCheck?: GitHubError;
+    issue?: GitHubError;
+    closedBy?: GitHubError;
   };
+  /** Who GitHub says closed the issue: a login, nobody, or a failed read. */
+  closedBy: string | null | GitHubError;
   /** The next send fails; `delivered` says T3 took the message all the same. */
   sendFailure: {
     error: SessionsError | MessageRejectedError | ThreadNotFoundError;
@@ -289,8 +292,10 @@ interface Rig {
   readonly dataDir: string;
   readonly run: RunId;
   readonly world: World;
-  /** The calls to the tracker and to T3, in order, and the two interleaved. */
+  /** The calls to the tracker (its writes and the pull request reads) and to T3, in order, and the two interleaved. */
   readonly gh: Array<string>;
+  /** The reads of the issue (`issue n`) and of who closed it (`closedBy n`): kept out of `gh`, which a closed-issue check must not change. */
+  readonly reads: Array<string>;
   readonly t3: Array<string>;
   readonly order: Array<string>;
   readonly clock: { now: number };
@@ -310,6 +315,7 @@ const rigFor = (
     status: statusOf("completed", DONE_MESSAGE),
     thread: { worktreePath: "/t3/wt", branch: "t3code/abc", archived: false },
     failNext: {},
+    closedBy: null,
     sendFailure: null,
     archiveFails: null,
     threadOnce: null,
@@ -317,6 +323,7 @@ const rigFor = (
     archived: [],
   };
   const gh: Array<string> = [];
+  const reads: Array<string> = [];
   const t3: Array<string> = [];
   const order: Array<string> = [];
   const clock = { now: T0 };
@@ -333,10 +340,24 @@ const rigFor = (
     delete world.failNext[key];
     return error;
   };
+  const readCall = (text: string) => {
+    reads.push(text);
+    order.push(`read:${text}`);
+  };
   const tracker: BuildingContext["tracker"] = {
     issue: (n) => {
-      ghCall(`issue ${n}`);
-      return Effect.succeed(world.issue);
+      readCall(`issue ${n}`);
+      const error = takeFailure("issue");
+      return error === undefined ? Effect.succeed(world.issue) : Effect.fail(error);
+    },
+    closedBy: (n) => {
+      readCall(`closedBy ${n}`);
+      const error = takeFailure("closedBy");
+      if (error !== undefined) return Effect.fail(error);
+      const answer = world.closedBy;
+      return typeof answer === "object" && answer !== null
+        ? Effect.fail(answer)
+        : Effect.succeed(answer);
     },
     pullRequest: (n) => {
       ghCall(`pullRequest ${n}`);
@@ -435,10 +456,16 @@ const rigFor = (
     sessions,
     clock: () => clock.now,
   };
-  return { dataDir, run: run10, world, gh, t3, order, clock, ctx };
+  return { dataDir, run: run10, world, gh, reads, t3, order, clock, ctx };
 };
 
 const advanceIn = (rig: Rig) => advance(rig.ctx, rig.run);
+
+/** GitHub says the run's issue is closed, by `by` when it names someone. */
+const closeIssue = (rig: Rig, by: string | null | GitHubError = null) => {
+  rig.world.issue = { ...rig.world.issue, closed: true };
+  rig.world.closedBy = by;
+};
 
 const linesOf = (rig: Rig, id: RunId = rig.run): Array<Line> =>
   readRun(rig.dataDir, id).entries.map(({ event, data }) => ({ event, data }));
@@ -458,6 +485,7 @@ const stuckCauses = (rig: Rig) =>
 
 const clearCalls = (rig: Rig) => {
   rig.gh.length = 0;
+  rig.reads.length = 0;
   rig.t3.length = 0;
   rig.order.length = 0;
 };
@@ -964,8 +992,10 @@ describe("advance: a run left in needs-info", () => {
     Effect.gen(function* () {
       const rig = waitingInNeedsInfo();
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" });
-      // Nothing is written on GitHub: the label stays factory:needs-info.
-      assert.deepStrictEqual(rig.gh, ["issue 10"]);
+      // Nothing is written on GitHub: the label stays factory:needs-info. The issue is read once,
+      // for whether it is closed and for an old claim.
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.reads, ["issue 10"]);
       assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
       assert.deepStrictEqual(rig.t3.slice(0, 3), [
         "archive thread-1",
@@ -993,7 +1023,8 @@ describe("advance: a run left in needs-info", () => {
       ]);
       rig.world.issue = issueDetail("needs-info", []);
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" });
-      assert.deepStrictEqual(rig.gh, ["issue 10"]);
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.reads, ["issue 10"]);
       assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED("needs-info"));
     }),
   );
@@ -1012,7 +1043,8 @@ describe("advance: a run left in needs-info", () => {
         const rig = waitingInNeedsInfo();
         rig.world.issue = issueDetail(state, assignees);
         assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" }, `${state}`);
-        assert.deepStrictEqual(rig.gh, ["issue 10"], `${state} ${assignees}`);
+        assert.deepStrictEqual(rig.gh, [], `${state} ${assignees}`);
+        assert.deepStrictEqual(rig.reads, ["issue 10"], `${state} ${assignees}`);
         assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED("needs-info"));
       }
     }),
@@ -1023,7 +1055,8 @@ describe("advance: a run left in needs-info", () => {
       const rig = waitingInNeedsInfo();
       rig.world.issue = issueDetail("building", ["RawPHP"]);
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" });
-      assert.deepStrictEqual(rig.gh, ["issue 10", "setState 10 needs-info", "unassign 10 rawphp"]);
+      assert.deepStrictEqual(rig.gh, ["setState 10 needs-info", "unassign 10 rawphp"]);
+      assert.deepStrictEqual(rig.reads, ["issue 10"]);
       assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
       assert.deepStrictEqual(linesOf(rig).slice(-2), [worktreeRemoved, FINISHED("needs-info")]);
     }),
@@ -2146,6 +2179,602 @@ describe("timeLimit", () => {
       assert.strictEqual(error._tag, "WrongRepoError");
       assert.deepStrictEqual(rig.gh, []);
       assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+});
+
+// ---- the end of a run (#20) -------------------------------------------------------------------------
+
+const HEAD_SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+const STOPPED_BY_HAND = "stopped by hand";
+const STOP_REQUESTED: RunEvent = { event: "stop_requested", data: { by: "operator" } };
+
+const mergedPr = (): PullRequest => ({ ...defaultPr(), open: false, merged: true, isDraft: false });
+const closedPr = (): PullRequest => ({ ...defaultPr(), open: false, merged: false });
+
+const finishedPrEnd = (prEnd: "merged" | "closed"): Line => ({
+  event: "finished",
+  data: {
+    outcome: "pr-open",
+    total_ms: 0,
+    gate_attempts: 0,
+    review_cycles: null,
+    pr_url: URL12,
+    pr_end: prEnd,
+  },
+});
+
+/** A run whose gate passed: the issue is `pr-open`, its session stopped, its worktree removed. */
+const PR_OPEN_RUN: ReadonlyArray<RunEvent> = [
+  ...STARTED,
+  PR_OPENED,
+  { event: "worktree_removed", data: { path: "/t3/wt" } },
+  moved("building", "pr-open"),
+];
+
+/** A run whose gate recorded a pass for the pull request but did not finish the move to `pr-open`. */
+const PASS_RECORDED: ReadonlyArray<RunEvent> = [
+  ...STARTED,
+  PR_OPENED,
+  {
+    event: "gate_command",
+    data: { attempt: 1, command: "cargo test", exit_code: 0, duration_ms: 5 },
+  },
+  step(`gate-passed ${HEAD_SHA} 1`),
+];
+
+const causeOf = (rig: Rig) => {
+  const cause = readRun(rig.dataDir, rig.run).entries.at(-1)?.cause;
+  return { step: cause?.step, reason: cause?.reason, actor: cause?.actor };
+};
+
+const expectNotBuilding = (rig: Rig) =>
+  Effect.gen(function* () {
+    clearCalls(rig);
+    const error = yield* Effect.flip(advanceIn(rig));
+    assert.strictEqual(error._tag, "NotBuildingError");
+    assert.deepStrictEqual(rig.gh, []);
+    assert.deepStrictEqual(rig.reads, []);
+    assert.deepStrictEqual(rig.t3, []);
+  });
+
+describe("advance: a merged or closed pull request ends the run", () => {
+  it.effect("done with a merged pull request ends the run as merged", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.pr = mergedPr();
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
+      // Only a read: nothing is posted, no label moves.
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(rig.t3, STOP_CALLS);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        PR_OPENED,
+        worktreeRemoved,
+        finishedPrEnd("merged"),
+      ]);
+      assert.strictEqual(rig.world.issue.state, "building");
+      assert.deepStrictEqual(lastCause(rig), { step: "advance", reason: "pull-request-ended" });
+      yield* expectNotBuilding(rig);
+    }),
+  );
+
+  it.effect("done with a pull request closed without a merge ends the run as closed", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.pr = closedPr();
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(linesOf(rig).at(-1), finishedPrEnd("closed"));
+      assert.deepStrictEqual(lastCause(rig), { step: "advance", reason: "pull-request-ended" });
+      yield* expectNotBuilding(rig);
+    }),
+  );
+
+  it.effect(
+    "done with a merged pull request that a failed archive cannot stop writes nothing",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        rig.world.pr = mergedPr();
+        rig.world.archiveFails = sessionsFailure("archive");
+        const error = yield* Effect.flip(advanceIn(rig));
+        assert.strictEqual(error._tag, "FactorySessionsError");
+        // The pull request is recorded; the end is not.
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, PR_OPENED]);
+        rig.world.archiveFails = null;
+        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
+        assert.deepStrictEqual(linesOf(rig).at(-1), finishedPrEnd("merged"));
+      }),
+  );
+
+  for (const [label, pull, prEnd] of [
+    ["merged", mergedPr(), "merged"],
+    ["closed", closedPr(), "closed"],
+    ["gone", null, "closed"],
+  ] as const) {
+    it.effect(`a pr-open run whose pull request is ${label} is ended as ${prEnd}`, () =>
+      Effect.gen(function* () {
+        const rig = rigFor(PR_OPEN_RUN);
+        rig.world.pr = pull;
+        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
+        // The only read is the pull request; the issue is not read for a run with nothing to write.
+        assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+        assert.deepStrictEqual(rig.reads, []);
+        // The thread is archived again; its worktree line is not written twice.
+        assert.deepStrictEqual(rig.t3, ["archive thread-1"]);
+        assert.deepStrictEqual(linesOf(rig), [...PR_OPEN_RUN, finishedPrEnd(prEnd)]);
+        assert.deepStrictEqual(lastCause(rig), { step: "advance", reason: "pull-request-ended" });
+        yield* expectNotBuilding(rig);
+      }),
+    );
+  }
+
+  it.effect("a pr-open run whose pull request is still open stays open and writes nothing", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(PR_OPEN_RUN);
+      rig.world.pr = { ...defaultPr(), isDraft: false };
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(rig.reads, []);
+      assert.deepStrictEqual(rig.t3, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("a pr-open run whose pull request cannot be read is an error and stays open", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(PR_OPEN_RUN);
+      rig.world.failNext.pullRequest = ghFailure();
+      const bytes = bytesOf(rig);
+      assert.strictEqual((yield* Effect.flip(advanceIn(rig)))._tag, "GitHubFailed");
+      assert.strictEqual(bytesOf(rig), bytes);
+      assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+});
+
+describe("advance: a closed issue", () => {
+  it.effect("ends the run in advance, writes nothing on GitHub and archives once", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      closeIssue(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.reads, ["issue 10", "closedBy 10"]);
+      // The session's status is never read; the thread is archived, then its worktree removed.
+      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
+      // The worktree line is the second to last: the summary line comes after it.
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, worktreeRemoved, FINISHED("stuck")]);
+      assert.deepStrictEqual(causeOf(rig), {
+        step: "advance",
+        reason: "issue-closed",
+        actor: undefined,
+      });
+      yield* expectNotBuilding(rig);
+    }),
+  );
+
+  it.effect("ends a run left in needs-info as a person's move, finished as needs-info", () =>
+    Effect.gen(function* () {
+      const rig = waitingInNeedsInfo();
+      closeIssue(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        ...WAITING_LINES,
+        worktreeRemoved,
+        FINISHED("needs-info"),
+      ]);
+      assert.deepStrictEqual(causeOf(rig), {
+        step: "advance",
+        reason: "issue-closed",
+        actor: undefined,
+      });
+    }),
+  );
+
+  it.effect("whose archive fails is an error with nothing written, and the next call retries", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      closeIssue(rig);
+      rig.world.archiveFails = sessionsFailure("archive");
+      const bytes = bytesOf(rig);
+      assert.strictEqual((yield* Effect.flip(advanceIn(rig)))._tag, "FactorySessionsError");
+      assert.strictEqual(bytesOf(rig), bytes);
+      assert.deepStrictEqual(rig.gh, []);
+      rig.world.archiveFails = null;
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED("stuck"));
+    }),
+  );
+
+  it.effect("on a thread T3 no longer has still ends the run, removing the ledger's worktree", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      closeIssue(rig);
+      rig.world.thread = new ThreadNotFoundError({ threadId: "thread-1" });
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, worktreeRemoved, FINISHED("stuck")]);
+    }),
+  );
+
+  it.effect("that cannot be read is an error and never an abandon", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.failNext.issue = ghFailure();
+      const bytes = bytesOf(rig);
+      assert.strictEqual((yield* Effect.flip(advanceIn(rig)))._tag, "GitHubFailed");
+      assert.strictEqual(bytesOf(rig), bytes);
+      assert.deepStrictEqual(rig.t3, []);
+      // The next call reads it, finds it open, and goes on.
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+    }),
+  );
+
+  it.effect("that is open is not touched by the check", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      assert.deepStrictEqual(rig.reads, ["issue 10"]);
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, PR_OPENED]);
+    }),
+  );
+
+  it.effect("is not asked about by a step that would skip the run or has nothing to write", () =>
+    Effect.gen(function* () {
+      const finished = rigFor([...STARTED, FINISHED_EVENT]);
+      closeIssue(finished);
+      assert.strictEqual((yield* Effect.flip(advanceIn(finished)))._tag, "NotBuildingError");
+      assert.deepStrictEqual(finished.reads, []);
+
+      // `pr-open` and `stuck` runs have every write done.
+      const open = rigFor(PR_OPEN_RUN);
+      closeIssue(open);
+      assert.deepStrictEqual(yield* advanceIn(open), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(open.reads, []);
+
+      const stuck = rigFor([
+        ...STARTED,
+        { event: "stuck", data: { reason: "gave up" } },
+        moved("building", "stuck"),
+      ]);
+      closeIssue(stuck);
+      assert.strictEqual((yield* advanceIn(stuck)).kind, "stuck");
+      assert.deepStrictEqual(stuck.reads, []);
+    }),
+  );
+
+  it.effect("ends the run with the person who closed it", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      closeIssue(rig, "alice");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(causeOf(rig), {
+        step: "advance",
+        reason: "issue-closed",
+        actor: "alice",
+      });
+    }),
+  );
+
+  it.effect("leaves the actor out when GitHub names none or cannot be asked", () =>
+    Effect.gen(function* () {
+      const nobody = rigFor();
+      closeIssue(nobody, null);
+      assert.deepStrictEqual(yield* advanceIn(nobody), { kind: "abandoned" });
+      assert.strictEqual(causeOf(nobody).actor, undefined);
+
+      const failing = rigFor();
+      closeIssue(failing, ghFailure());
+      assert.deepStrictEqual(yield* advanceIn(failing), { kind: "abandoned" });
+      assert.deepStrictEqual(causeOf(failing), {
+        step: "advance",
+        reason: "issue-closed",
+        actor: undefined,
+      });
+      assert.deepStrictEqual(linesOf(failing).at(-1), FINISHED("stuck"));
+    }),
+  );
+
+  it.effect("closed by the run's own merged pull request, before a pass, is its own finish", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, PR_OPENED]);
+      closeIssue(rig, "alice");
+      rig.world.pr = mergedPr();
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      // Nobody is asked who closed it: a merge is not a person's move.
+      assert.deepStrictEqual(rig.reads, ["issue 10"]);
+      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        PR_OPENED,
+        worktreeRemoved,
+        finishedPrEnd("merged"),
+      ]);
+      assert.deepStrictEqual(lastCause(rig), { step: "advance", reason: "pull-request-ended" });
+    }),
+  );
+
+  it.effect(
+    "closed by a merged pull request the ledger holds under another number names its url",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor([
+          ...STARTED,
+          { event: "pr_opened", data: { pr: 14, url: "https://example.test/x/14" } },
+          { event: "pr_opened", data: { pr: 13, url: "https://example.test/x/13" } },
+        ]);
+        closeIssue(rig);
+        rig.world.pr = { ...mergedPr(), number: 14 };
+        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
+        assert.deepStrictEqual(rig.gh, ["pullRequest 14"]);
+        assert.deepStrictEqual(
+          (linesOf(rig).at(-1)?.data as { pr_url: string }).pr_url,
+          "https://github.com/rawphp/softfac/pull/14",
+        );
+      }),
+  );
+
+  it.effect("closed by a merge after a recorded pass leaves the end to the gate", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(PASS_RECORDED);
+      closeIssue(rig);
+      rig.world.pr = mergedPr();
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(rig.t3, []);
+      assert.deepStrictEqual(linesOf(rig), [...PASS_RECORDED]);
+    }),
+  );
+
+  it.effect("while its pull request is closed unmerged is abandoned", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, PR_OPENED]);
+      closeIssue(rig);
+      rig.world.pr = closedPr();
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        PR_OPENED,
+        worktreeRemoved,
+        FINISHED("stuck"),
+      ]);
+    }),
+  );
+
+  it.effect("while its pull request cannot be read is an error, never an abandon", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, PR_OPENED]);
+      closeIssue(rig);
+      rig.world.failNext.pullRequest = ghFailure();
+      const bytes = bytesOf(rig);
+      assert.strictEqual((yield* Effect.flip(advanceIn(rig)))._tag, "GitHubFailed");
+      assert.strictEqual(bytesOf(rig), bytes);
+      assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+});
+
+describe("advance: a run stopped by hand", () => {
+  const stoppedLines = [{ event: "stop_requested", data: { by: "operator" } }] as const;
+
+  it.effect("whose thread is gone finishes as stuck by hand", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      rig.world.thread = new ThreadNotFoundError({ threadId: "thread-1" });
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
+      // The ledger's worktree path is used when T3 cannot name one.
+      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(rig.gh, stuckCalls(STOPPED_BY_HAND));
+      assert.deepStrictEqual(linesOf(rig), stuckEvents(stoppedLines, STOPPED_BY_HAND));
+      // Every line after the request, the worktree line aside, has the reason of the request.
+      assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("advance stop-requested"));
+      assert.strictEqual(rig.world.issue.state, "stuck");
+    }),
+  );
+
+  it.effect("whose thread is still there is archived and its worktree removed, status unread", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
+      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.ok(!rig.t3.includes("status thread-1"));
+      assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
+      // The session is stopped before anything is written on the issue.
+      assert.ok(
+        rig.order.indexOf("t3:archive thread-1") <
+          rig.order.findIndex((call) => call.startsWith("gh:comment")),
+        rig.order.join("\n"),
+      );
+    }),
+  );
+
+  it.effect("with a failing archive writes nothing, and the next call archives again", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      rig.world.archiveFails = sessionsFailure("archive");
+      const bytes = bytesOf(rig);
+      assert.strictEqual((yield* Effect.flip(advanceIn(rig)))._tag, "FactorySessionsError");
+      assert.strictEqual(bytesOf(rig), bytes);
+      assert.deepStrictEqual(rig.gh, []);
+      rig.world.archiveFails = null;
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
+      assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
+    }),
+  );
+
+  it.effect("is never said to have ended badly", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      setStatus(rig, "cancelled", "I was stopped");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
+      assert.strictEqual(rig.t3[0], "archive thread-1");
+      assert.deepStrictEqual(linesOf(rig), stuckEvents(stoppedLines, STOPPED_BY_HAND));
+    }),
+  );
+
+  it.effect("is ended as a closed issue first when the issue was closed too", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      closeIssue(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "abandoned" });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(causeOf(rig), {
+        step: "advance",
+        reason: "issue-closed",
+        actor: undefined,
+      });
+    }),
+  );
+});
+
+describe("advance: a stop line that is there though the run is no longer building", () => {
+  it.effect("on a pr-open run reads the pull request as usual and never sticks the run", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...PR_OPEN_RUN, STOP_REQUESTED]);
+      rig.world.pr = { ...defaultPr(), isDraft: false };
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(rig.t3, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("on a needs-info run ends it as needs-info", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([
+        ...STARTED,
+        { event: "questions_posted", data: { questions: "Which one?" } },
+        moved("building", "needs-info"),
+        STOP_REQUESTED,
+      ]);
+      rig.world.issue = issueDetail("needs-info", []);
+      setStatus(rig, "completed", "Which one?\nFACTORY-STOP: needs-info");
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED("needs-info"));
+    }),
+  );
+});
+
+describe("watch and timeLimit: the end of a run", () => {
+  it.effect("watch leaves a stopped run to advance", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      rig.world.textCheck = "changed";
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), {
+        kind: "skipped",
+        why: "not-building",
+      });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+
+  it.effect("watch skips a run whose own merged pull request closed the issue", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, PR_OPENED]);
+      rig.world.textCheck = "changed";
+      closeIssue(rig);
+      rig.world.pr = mergedPr();
+      assert.deepStrictEqual(yield* watch(rig.ctx, rig.run), {
+        kind: "skipped",
+        why: "pr-merged",
+      });
+      assert.deepStrictEqual(rig.gh, [TEXT_READ, "pullRequest 12"]);
+      assert.deepStrictEqual(rig.t3, []);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, PR_OPENED]);
+    }),
+  );
+
+  it.effect("watch goes on to stop a run whose issue a person closed", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, PR_OPENED]);
+      rig.world.textCheck = "changed";
+      closeIssue(rig);
+      rig.world.pr = closedPr();
+      assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
+      assert.strictEqual(rig.world.issue.state, "stuck");
+    }),
+  );
+
+  it.effect("watch asks about the issue only for a run that reported a pull request", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.textCheck = "changed";
+      closeIssue(rig);
+      assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
+      assert.deepStrictEqual(rig.reads, []);
+    }),
+  );
+
+  it.effect("the time limit leaves a stopped run to advance", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED], { ms: startedAtT0 });
+      rig.clock.now = T0 + LIMIT_MS + 1;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "skipped",
+        why: "not-running",
+      });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+
+  const SENT_BACK: RunEvent = { event: "gate_sent_back", data: { attempt: 1, run_ordinal: 1 } };
+
+  it.effect("the time limit skips a run past its limit whose own merge closed the issue", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, PR_OPENED, SENT_BACK], { ms: startedAtT0 });
+      closeIssue(rig);
+      rig.world.pr = mergedPr();
+      rig.clock.now = T0 + LIMIT_MS + 1;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "skipped",
+        why: "pr-merged",
+      });
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(rig.t3, []);
+    }),
+  );
+
+  it.effect("the time limit goes on to stop a run past its limit whose issue a person closed", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, PR_OPENED, SENT_BACK], { ms: startedAtT0 });
+      closeIssue(rig);
+      rig.world.pr = closedPr();
+      rig.clock.now = T0 + LIMIT_MS + 1;
+      assert.strictEqual((yield* timeLimit(rig.ctx, rig.run)).kind, "stopped");
+    }),
+  );
+
+  it.effect("the time limit asks about the issue only past the limit and with a pull request", () =>
+    Effect.gen(function* () {
+      const within = rigFor([...STARTED, PR_OPENED, SENT_BACK], { ms: startedAtT0 });
+      closeIssue(within);
+      within.clock.now = T0 + 1;
+      assert.deepStrictEqual(yield* timeLimit(within.ctx, within.run), { kind: "within" });
+      assert.deepStrictEqual(within.reads, []);
+
+      const noPr = limitedRig();
+      closeIssue(noPr);
+      noPr.clock.now = T0 + LIMIT_MS + 1;
+      assert.strictEqual((yield* timeLimit(noPr.ctx, noPr.run)).kind, "stopped");
+      assert.deepStrictEqual(noPr.reads, []);
     }),
   );
 });

@@ -18,6 +18,7 @@ import type { RunInfo } from "./ledger/listRuns.ts";
 import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
+  GATE_PASSED_LINE,
   runPass,
   type Loaded,
   type PassError,
@@ -34,6 +35,7 @@ import {
   type WatchOutcome,
 } from "./runner/building.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
+import type { StopRequestOutcome } from "./runner/stop.ts";
 import { SessionsError } from "./t3/sessions.ts";
 import { GitHubFailed, type Blocker } from "./tracker/github.ts";
 
@@ -100,6 +102,8 @@ class Fake implements PassWorld {
   timeLimits: Record<string, Array<LimitOutcome | BuildingError>> = {};
   watches: Record<string, Array<WatchOutcome | BuildingError>> = {};
   advances: Record<string, Array<AdvanceOutcome | BuildingError>> = {};
+  /** What `takeStopRequest` answers per `"<repo>#<issue>"`; `none` otherwise. */
+  stopRequests: Record<string, StopRequestOutcome | LedgerIoError> = {};
   pause: HandPause | null = null;
   machineLogFails = false;
   /** What the pass wrote to a run's ledger as an `error` line. */
@@ -283,6 +287,13 @@ class Fake implements PassWorld {
     return "kind" in answer ? Effect.succeed(answer as T) : Effect.fail(answer);
   }
 
+  takeStopRequest(run: RunId) {
+    const key = `${run.repo}#${run.issue}`;
+    this.calls.push(`stop_request ${key}`);
+    const answer = this.stopRequests[key] ?? "none";
+    return typeof answer === "string" ? Effect.succeed(answer) : Effect.fail(answer);
+  }
+
   timeLimit(repo: Repo, run: RunId) {
     return this.scripted(this.timeLimits, "time_limit", repo, Number(run.issue), {
       kind: "within",
@@ -300,7 +311,12 @@ class Fake implements PassWorld {
     });
     return Effect.tap(answered, (outcome) =>
       Effect.sync(() => {
-        if (outcome.kind === "needs-info" || outcome.kind === "stuck") {
+        if (
+          outcome.kind === "needs-info" ||
+          outcome.kind === "stuck" ||
+          outcome.kind === "ended" ||
+          outcome.kind === "abandoned"
+        ) {
           this.runs = this.runs.filter((r) => runIdToString(r.id) !== runIdToString(run));
         }
       }),
@@ -2113,6 +2129,8 @@ describe("following a building run", () => {
       { kind: "stuck", reason: "r" },
       `stuck, the reason is in the ledger of run ${runIdToString(rid(40))}`,
     ],
+    [{ kind: "ended" }, "its pull request was merged or closed, the run is finished"],
+    [{ kind: "abandoned" }, "the issue is closed, the run is closed"],
   ];
 
   it.effect("each advance outcome has its line", () =>
@@ -2252,14 +2270,256 @@ describe("following a building run", () => {
     }),
   );
 
-  it.effect("a pr-open run gets only the time limit", () =>
+  it.effect("a pr-open run is worked: the time limit, then advance, with no watch", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(41, "pr-open", REPO, true);
+      fake.advances[`${REPO}#41`] = [{ kind: "passed", pr: 3 }];
       const { lines } = yield* pass(fake, machine([REPO], 5));
-      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#41`]);
-      assert.ok(!lines.some((l) => l.startsWith(`${REPO}#41`)), lines.join("\n"));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#41`, `advance ${REPO}#41`]);
+      assert.equal(runLine(lines, `${REPO}#41 `), `${REPO}#41 pr-open: ${GATE_PASSED_LINE}`);
     }),
+  );
+
+  it.effect("a pr-open run whose pull request ended says so and needs nobody", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(41, "pr-open", REPO, true);
+      fake.advances[`${REPO}#41`] = [{ kind: "ended" }];
+      const { report, lines } = yield* pass(fake, machine([REPO], 5));
+      assert.equal(
+        runLine(lines, `${REPO}#41 `),
+        `${REPO}#41 pr-open: its pull request was merged or closed, the run is finished`,
+      );
+      assert.equal(report.attention, 0);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "attention"),
+        [],
+      );
+    }),
+  );
+
+  it.effect("an abandoned run says so, raises an attention line and is recorded", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.advances[`${REPO}#40`] = [{ kind: "abandoned" }];
+      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: the issue is closed, the run is closed`,
+      );
+      assert.equal(
+        runLine(lines, "ATTENTION: "),
+        `ATTENTION: ${REPO}#40 Abandoned: the issue was closed, so the factory stopped the session and closed the run`,
+      );
+      assert.equal(report.attention, 1);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "attention"),
+        [{ event: "attention", data: { run: runIdToString(rid(40)), reason: "abandoned" } }],
+      );
+    }),
+  );
+
+  it.effect("a triage run that start abandons says so, and where a session may be", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.pushStart(`${REPO}#12`, { kind: "abandoned", mayHaveSession: [rid(12)] });
+      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const run = runIdToString(rid(12));
+      assert.equal(
+        runLine(lines, `${REPO}#12 `),
+        `${REPO}#12 triage: the issue is closed, the run is closed`,
+      );
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("ATTENTION: ")),
+        [
+          `ATTENTION: ${REPO}#12 Abandoned: the issue was closed, so the factory stopped the session and closed the run`,
+          `ATTENTION: ${REPO}#12 the issue was closed, and a session may exist for ${run}: look for launch command id softfac:${run}:launch in T3 Code and archive that thread by hand`,
+        ],
+      );
+      assert.equal(report.attention, 2);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "attention"),
+        [
+          { event: "attention", data: { run, reason: "abandoned" } },
+          { event: "attention", data: { run, reason: "session-may-exist" } },
+        ],
+      );
+    }),
+  );
+
+  it.effect("a triage run that start abandons with no session to look for needs one line", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.pushStart(`${REPO}#12`, { kind: "abandoned", mayHaveSession: [] });
+      const { report } = yield* pass(fake, machine([REPO], 3));
+      assert.equal(report.attention, 1);
+    }),
+  );
+
+  it.effect(
+    "a claim whose start or resume abandons an earlier run says so and claims nothing",
+    () =>
+      Effect.gen(function* () {
+        for (const [listing, call] of [
+          ["ready", "start"],
+          ["triage", "resume"],
+        ] as const) {
+          // The earlier run is not confirmed, so the run step leaves it to the claim.
+          const fake = new Fake();
+          fake.runs.push({
+            id: rid(12),
+            state: "triage",
+            unreadable: false,
+            confirmed: false,
+            session: false,
+            prReported: false,
+          });
+          fake[listing][REPO] = [12];
+          fake.pushStart(`${REPO}#12`, { kind: "abandoned", mayHaveSession: [rid(12)] });
+          const { report, lines } = yield* pass(fake, machine([REPO], 3));
+          const run = runIdToString(rid(12));
+          assert.deepEqual(starts(fake), [`${call} ${REPO}#12`], listing);
+          assert.equal(
+            runLine(lines, `${REPO}#12 `),
+            `${REPO}#12 ${listing}: the issue is closed, the run is closed`,
+          );
+          assert.deepEqual(
+            lines.filter((l) => l.startsWith("ATTENTION: ")),
+            [
+              `ATTENTION: ${REPO}#12 Abandoned: the issue was closed, so the factory stopped the session and closed the run`,
+              `ATTENTION: ${REPO}#12 the issue was closed, and a session may exist for ${run}: look for launch command id softfac:${run}:launch in T3 Code and archive that thread by hand`,
+            ],
+            listing,
+          );
+          assert.deepEqual([report.attention, report.claimed], [2, 0], listing);
+          assert.deepEqual(
+            fake.items.map((item) => item.id),
+            [`attention:${run}:abandoned`, `attention:${run}:session-may-exist`],
+            listing,
+          );
+          assert.deepEqual(
+            fake.events.filter((e) => e.event === "attention"),
+            [
+              { event: "attention", data: { run, reason: "abandoned" } },
+              { event: "attention", data: { run, reason: "session-may-exist" } },
+            ],
+            listing,
+          );
+        }
+      }),
+  );
+
+  it.effect("an abandon cut short by an error still says the session that may exist", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.pushStart(`${REPO}#12`, {
+        kind: "abandoned",
+        mayHaveSession: [rid(12)],
+        error: githubFailure(),
+      });
+      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const older = runIdToString(rid(12));
+      assert.ok(
+        lines.some((l) => l.includes(`a session may exist for ${older}`)),
+        lines.join("\n"),
+      );
+      assert.equal(report.attention, 2);
+      assert.equal(report.errors, 1);
+      assert.ok(
+        lines.some((l) => l.startsWith(`error: ${REPO}#12 start:`)),
+        lines.join("\n"),
+      );
+    }),
+  );
+
+  it.effect("a stop request is taken for every confirmed run, before the time limit", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.stopRequests[`${REPO}#40`] = "recorded";
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(
+        fake.calls.filter((c) => /^(stop_request|time_limit|watch|advance) /.test(c)),
+        [
+          `stop_request ${REPO}#40`,
+          `time_limit ${REPO}#40`,
+          `watch ${REPO}#40`,
+          `advance ${REPO}#40`,
+        ],
+      );
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: stop requested by hand, session still running`,
+      );
+    }),
+  );
+
+  it.effect("a stop request found already recorded, finished or absent adds nothing", () =>
+    Effect.gen(function* () {
+      for (const answer of ["already-requested", "finished", "none"] as const) {
+        const fake = new Fake();
+        fake.runIn(40, BUILDING, REPO, true);
+        fake.stopRequests[`${REPO}#40`] = answer;
+        const { lines } = yield* pass(fake, machine([REPO], 3));
+        assert.equal(
+          runLine(lines, `${REPO}#40 `),
+          `${REPO}#40 building: session still running`,
+          answer,
+        );
+      }
+    }),
+  );
+
+  it.effect("a stop request is not taken for a run whose gate is running", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.gateLocks = [runIdToString(rid(40))];
+      fake.stopRequests[`${REPO}#40`] = "recorded";
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.ok(!fake.calls.includes(`stop_request ${REPO}#40`), fake.calls.join("\n"));
+      assert.equal(runLine(lines, `${REPO}#40 `), `${REPO}#40 building: gate running`);
+    }),
+  );
+
+  it.effect("a stop request for a run that is not building is dropped, and the pass says so", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.stopRequests[`${REPO}#40`] = "not-building";
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: stop request dropped: the run is not building, session still running`,
+      );
+    }),
+  );
+
+  it.effect(
+    "a stop request that cannot be taken is an error line and the run is still worked",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.runIn(40, BUILDING, REPO, true);
+        fake.stopRequests[`${REPO}#40`] = new LedgerIoError({
+          path: "/data/stop-requests/x",
+          cause: new Error("denied"),
+        });
+        const { report, lines } = yield* pass(fake, machine([REPO], 3));
+        assert.equal(report.errors, 1);
+        assert.ok(
+          lines.some((l) => l.startsWith(`error: ${REPO}#40 stop request: `)),
+          lines.join("\n"),
+        );
+        assert.equal(fake.runErrors[0]?.step, "pass");
+        assert.equal(fake.runErrors[0]?.kind, "ledger");
+        assert.ok(fake.calls.includes(`advance ${REPO}#40`));
+      }),
   );
 
   it.effect("a needs-info run that its advance finishes frees its slot for a claim", () =>

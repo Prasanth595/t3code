@@ -214,3 +214,16 @@ describe("readProgress: the time worked", () => {
     assert.strictEqual(seen.workedMs, 0);
   });
 });
+
+describe("readProgress: a stop by hand", () => {
+  it("is requested from the stop_requested line on, whatever follows", () => {
+    assert.strictEqual(readProgress([]).stopRequested, false);
+    const requested = line(1, "stop_requested", { by: "operator" });
+    assert.strictEqual(readProgress([requested]).stopRequested, true);
+    assert.strictEqual(
+      readProgress([requested, step(2, "launch-sending"), moved(3, "triage", "building")])
+        .stopRequested,
+      true,
+    );
+  });
+});

@@ -2,9 +2,9 @@
  * The steps that work a building run, ported from softfac's `runner/building.rs`: `advance`
  * reads how the session ended and moves the issue on, `watch` stops a run whose issue text was
  * changed by someone who is not an instructor, `timeLimit` stops a run that took too long. The
- * rest of `building.rs` (interruptions and relaunches, forwarding comments, ending a run whose
- * pull request was merged or closed before the gate looked at it) belongs to later issues; the
- * gate itself is `gating.ts`.
+ * rest of `building.rs` (interruptions and relaunches, forwarding comments) belongs to later
+ * issues; the gate itself is `gating.ts`. `advance` also ends a run whose pull request was merged
+ * or closed, whose issue a person closed, or that an operator stopped by hand (#20).
  *
  * Each step reads the ledger first and does only what it does not record, so calling it again
  * resumes whatever an earlier call left half done. A failure of the tracker or of T3 is an
@@ -27,7 +27,7 @@ import { makeCause, type CauseStep, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
-import type { BoundGitHub, PullRequest } from "../tracker/github.ts";
+import type { BoundGitHub, IssueDetail, PullRequest } from "../tracker/github.ts";
 import {
   MessageRejectedError,
   ThreadNotFoundError,
@@ -40,6 +40,7 @@ import {
   CANNOT_VERIFY_DURING_BUILD,
   CHANGED_DURING_BUILD,
   RESULT_LINE_REMINDER,
+  STOPPED_BY_HAND,
   THREAD_GONE,
   TIME_LIMIT,
   WRONG_ACCOUNT,
@@ -53,8 +54,12 @@ import {
   type Seen,
 } from "./progress.ts";
 import {
+  abandon,
   applyActions,
+  closedIssue,
   describe,
+  endOwnMerge,
+  endRun,
   finishBuilding,
   goStuck,
   progressFrom,
@@ -85,6 +90,7 @@ export interface BuildingContext extends RunContext {
     | "commentOnPr"
     | "textCheck"
     | "issue"
+    | "closedBy"
   >;
   readonly sessions: Pick<
     FactorySessions["Service"],
@@ -148,6 +154,10 @@ export type AdvanceOutcome =
   | { readonly kind: "ready-for-gate"; readonly pr: number; readonly prUrl: string }
   /** The gate passed and everything is written. The run stays open while its pull request waits for a person. */
   | { readonly kind: "passed"; readonly pr: number }
+  /** The pull request was merged or closed, or it was merged and closed the issue: the run is finished. Nothing was written on GitHub. */
+  | { readonly kind: "ended" }
+  /** A person closed the issue: the session's thread is archived and the run is finished. Nothing was written on GitHub. */
+  | { readonly kind: "abandoned" }
   /** The session asked its questions: they are on the issue and the run is ended. */
   | { readonly kind: "needs-info" }
   /** The issue went to `stuck`. `reason` is the one the ledger records. */
@@ -161,7 +171,7 @@ export type WatchOutcome =
   | { readonly kind: "stopped"; readonly reason: string }
   | {
       readonly kind: "skipped";
-      readonly why: "finished" | "no-session" | "not-building" | "gate-passed";
+      readonly why: "finished" | "no-session" | "not-building" | "gate-passed" | "pr-merged";
     };
 
 /** What `timeLimit` did. */
@@ -171,7 +181,7 @@ export type LimitOutcome =
   | { readonly kind: "stopped"; readonly reason: string }
   | {
       readonly kind: "skipped";
-      readonly why: "finished" | "not-running" | "launch-unrecorded" | "pr-reported";
+      readonly why: "finished" | "not-running" | "launch-unrecorded" | "pr-reported" | "pr-merged";
     };
 
 const MINUTE_MS = 60_000;
@@ -360,6 +370,13 @@ const stuckOutcome = (stop: Stop): AdvanceOutcome => ({
  * `state_changed` to `needs-info` is written has nothing left on GitHub: the thread is archived,
  * the worktree removed and the run finished. Comments are at-least-once; everything else
  * happens once.
+ *
+ * A pull request that was merged or closed ends the run (`ended`): the thread is archived and the
+ * run finished with `pr_end`, with nothing written on GitHub; for a run in `pr-open` that is all
+ * `advance` does. An issue a person closed ends it too (`abandoned`), as does the run's own merged
+ * pull request closing it, unless a gate pass is recorded, which the gate finishes. An operator's
+ * stop (`stop_requested`) sends the run to `stuck` as stopped by hand, whatever the session is
+ * doing and without reading it.
  */
 export const advance = (
   ctx: BuildingContext,
@@ -371,6 +388,18 @@ export const advance = (
       const seen = yield* readSeen(ctx, run);
       if (seen.finished) return yield* new NotBuildingError({ run });
       const issue = issueOf(run);
+      // Before anything is decided or written: a closed issue is a person's move, or the run's
+      // own merged pull request, which ends the run here unless a recorded pass has the gate
+      // finish it.
+      const { closing, detail } = yield* closedIssue(ctx, run, seen);
+      if (closing.kind === "persons-move") {
+        yield* abandon(ctx, yield* out.open, run, seen, "advance");
+        return { kind: "abandoned" } as const;
+      }
+      if (closing.kind === "own-merge" && seen.pass === null) {
+        yield* endOwnMerge(ctx, yield* out.open, run, seen, "advance", closing.pull);
+        return { kind: "ended" } as const;
+      }
       const at = progressFrom("advance", seen, "triage");
       const stuck = (code: string, stop: Stop) =>
         Effect.gen(function* () {
@@ -383,17 +412,30 @@ export const advance = (
       if (seen.stuck !== null && at.state !== "needs-info") {
         return yield* stuck("stuck-resumed", { reason: seen.stuck });
       }
+      // `stop-run.sh` ended the run on purpose. The thread is archived, or found gone, by the
+      // stuck path and its status is never read: whatever the session is doing, the run goes
+      // `stuck` as stopped by hand.
+      // Only a building run: a line that is there for a run past `building` is stale.
+      if (seen.stopRequested && at.state === "building") {
+        return yield* stuck("stop-requested", { reason: STOPPED_BY_HAND });
+      }
       const threadId = seen.threadId;
       if (threadId === null) return yield* new NoSessionError({ run });
       // `state_changed` is the commit marker: a run in `needs-info` has had every write done, and
       // a person may have changed the issue since, so it is ended and nothing is written on GitHub.
       if (at.state === "needs-info") {
-        yield* releaseOldClaim(ctx, issue);
+        yield* releaseOldClaim(ctx, issue, detail);
         yield* endNeedsInfo(ctx, out, at);
         return { kind: "needs-info" } as const;
       }
-      // Every write is done: the run stays open while its pull request waits for a person.
+      // Every write is done: the run stays open while its pull request waits for a person, and
+      // ends when a person merges or closes it (or it is gone).
       if (at.state === "pr-open" && seen.lastPr !== null) {
+        const pull = yield* ctx.tracker.pullRequest(seen.lastPr.pr);
+        if (pull === null || !pull.open) {
+          yield* endRun(ctx, yield* out.open, at, seen.lastPr.url, pull, "advance");
+          return { kind: "ended" } as const;
+        }
         return { kind: "passed", pr: seen.lastPr.pr } as const;
       }
       // The gate passed and died before the move to `pr-open` was finished: the gate finishes
@@ -515,8 +557,12 @@ export const advance = (
               "pr-opened",
             );
           }
-          // A pull request a person merged or closed before the gate looked at it is ended by
-          // #20; until then it goes to the gate like any other.
+          // A pull request a person merged or closed before the gate looked at it ends the run:
+          // nothing is left to gate.
+          if (pull !== null && !pull.open) {
+            yield* endRun(ctx, yield* out.open, at, prUrl, pull, "advance");
+            return { kind: "ended" } as const;
+          }
           return { kind: "ready-for-gate", pr, prUrl } as const;
         }
         case "needs-info": {
@@ -553,11 +599,11 @@ const remindedStep: RunEvent = { event: "step_changed", data: { step: RESULT_LIN
  * its `state_changed` marker, so a crash between the two leaves the issue claimed with no
  * unfinished run. Only that exact shape is touched: the label is `factory:building` and the
  * machine's user is the only assignee. Any other label or assignee is a person's, and is left
- * alone. Both calls are safe to repeat.
+ * alone. Both calls are safe to repeat. `read` is the issue as this step already read it, if it did.
  */
-const releaseOldClaim = (ctx: BuildingContext, issue: number) =>
+const releaseOldClaim = (ctx: BuildingContext, issue: number, read: IssueDetail | null) =>
   Effect.gen(function* () {
-    const detail = yield* ctx.tracker.issue(issue);
+    const detail = read ?? (yield* ctx.tracker.issue(issue));
     const ours =
       detail.assignees.length === 1 &&
       asciiLower(detail.assignees[0]!) === asciiLower(ctx.trackerUser);
@@ -679,7 +725,12 @@ export const watch = (
     const seen = yield* readSeen(ctx, run);
     if (seen.finished) return { kind: "skipped", why: "finished" } as const;
     if (seen.threadId === null) return { kind: "skipped", why: "no-session" } as const;
-    if (seen.state !== "building" || seen.stuck !== null || seen.questionsPosted) {
+    if (
+      seen.state !== "building" ||
+      seen.stuck !== null ||
+      seen.stopRequested ||
+      seen.questionsPosted
+    ) {
       return { kind: "skipped", why: "not-building" } as const;
     }
     // The gate checks the text itself before it records a pass, and after one the session is done.
@@ -687,6 +738,12 @@ export const watch = (
     const issue = issueOf(run);
     const why = yield* textStop(ctx, issue, seen);
     if (why === null) return { kind: "unchanged" } as const;
+    // Only a run that has reported a pull request can have been closed by its own merge: no read
+    // for any other. `advance` ends that run; a closed issue otherwise changes nothing here.
+    if (seen.opened.length > 0) {
+      const { closing } = yield* closedIssue(ctx, run, seen);
+      if (closing.kind === "own-merge") return { kind: "skipped", why: "pr-merged" } as const;
+    }
     const at = progressFrom("watch", seen, "building");
     const stop: Stop = { reason: why.reason };
     yield* withLedger(ctx, run, (out) =>
@@ -735,7 +792,7 @@ export const timeLimit = (
       seen.state === "ready" ||
       seen.state === "triage" ||
       seen.state === "building";
-    if (!working || seen.stuck !== null || seen.questionsPosted) {
+    if (!working || seen.stuck !== null || seen.stopRequested || seen.questionsPosted) {
       return { kind: "skipped", why: "not-running" } as const;
     }
     if (seen.prReported) return { kind: "skipped", why: "pr-reported" } as const;
@@ -746,6 +803,12 @@ export const timeLimit = (
       seen.workedMs +
       (seen.workingSince === null ? 0 : Math.max(0, ctx.clock() - seen.workingSince));
     if (worked <= ctx.project.limits.minutes * MINUTE_MS) return { kind: "within" } as const;
+    // Only a run that has reported a pull request can have been closed by its own merge: no read
+    // for any other.
+    if (seen.opened.length > 0) {
+      const { closing } = yield* closedIssue(ctx, run, seen);
+      if (closing.kind === "own-merge") return { kind: "skipped", why: "pr-merged" } as const;
+    }
     // Read before the archive: the next attempt is told where the work is.
     const branch = seen.threadId === null ? undefined : yield* branchOf(ctx, seen.threadId);
     const prepared = branch === undefined ? "" : prepareSessionText(branch);
