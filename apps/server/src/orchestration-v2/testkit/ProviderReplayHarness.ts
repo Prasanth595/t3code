@@ -62,6 +62,7 @@ import { makeProviderReplayGate, type ProviderReplayGate } from "./ProviderRepla
 
 export function makeReplayServerConfig(
   scenario: string,
+  baseDirectory?: string,
 ): Effect.Effect<
   ServerConfig.ServerConfig["Service"],
   PlatformError.PlatformError,
@@ -71,9 +72,11 @@ export function makeReplayServerConfig(
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectory({
-      prefix: `t3-orchestration-v2-replay-${safeScenario}-`,
-    });
+    const baseDir =
+      baseDirectory ??
+      (yield* fs.makeTempDirectory({
+        prefix: `t3-orchestration-v2-replay-${safeScenario}-`,
+      }));
     const stateDir = path.join(baseDir, "userdata");
     const logsDir = path.join(stateDir, "logs");
     const providerLogsDir = path.join(logsDir, "provider");
@@ -247,6 +250,8 @@ export function layerWithRegistry<Error>(
   scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
   registryLayer: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2, Error>,
   options: {
+    /** Explicit sandbox root for offline fixtures that must retain restart evidence. */
+    readonly baseDirectory?: string;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
@@ -269,7 +274,7 @@ export function layerWithRegistry<Error>(
 > {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
-    makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
+    makeReplayServerConfig(scenario.name, options.baseDirectory).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
   const layerRuntime =
     scenario.runtimePolicyOverride === undefined
