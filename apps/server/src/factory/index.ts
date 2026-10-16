@@ -33,6 +33,7 @@ import { FactoryProcess } from "./process.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import {
   isOurs,
+  newestSays,
   resume,
   start,
   utcSecond,
@@ -42,7 +43,6 @@ import {
 } from "./runner/start.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
-import { isUtcSecond } from "./tracker/approvalHistory.ts";
 import { bindProcess, makeGitHub, type GitHubError, type IssueSummary } from "./tracker/github.ts";
 
 /** The running factory, for the code that wakes it (a thread's run changing, a person's request). */
@@ -177,7 +177,7 @@ export const liveWorld = (
         Effect.gen(function* () {
           const newest = yield* gh.newestFactoryComment(issue);
           let explained = false;
-          if (newest?.body === CUT_SHORT_COMMENT && isUtcSecond(newest.createdAt)) {
+          if (newestSays(newest, CUT_SHORT_COMMENT)) {
             const labeled = yield* Effect.result(gh.labeledAt(issue, from));
             explained =
               Result.isSuccess(labeled) &&

@@ -1168,6 +1168,15 @@ export const makeGitHub = (options: GitHubOptions) => {
     });
 
   /**
+   * The newest event that added the label for `state`: the one that began the claim the issue is
+   * in, as `unassignedClaims` and `labeledAt` both read it. Undefined when there is none.
+   */
+  const newestLabelEvent = (history: ApprovalIssue, state: State) =>
+    history.timelineItems.nodes
+      .toReversed()
+      .find((e) => e.__typename === "LabeledEvent" && e.label.name === stateLabel(state));
+
+  /**
    * The open `factory:triage` then `factory:building` issues (at most 200 of each) that no one
    * is assigned to, that were last updated before `before`, and whose label was last added by
    * `user` (case-insensitive), with the state each is in, by number within each state. An issue
@@ -1200,10 +1209,7 @@ export const makeGitHub = (options: GitHubOptions) => {
           .map((i) => i.number)
           .sort((a, b) => a - b);
         for (const number of numbers) {
-          const history = yield* readHistory(number);
-          const labelledBy = history.timelineItems.nodes
-            .toReversed()
-            .find((e) => e.__typename === "LabeledEvent" && e.label.name === stateLabel(state));
+          const labelledBy = newestLabelEvent(yield* readHistory(number), state);
           const actor = labelledBy?.actor ?? null;
           if (actor !== null && actor.login.toLowerCase() === user.toLowerCase()) {
             found.push({ issue: number, state });
@@ -1215,17 +1221,15 @@ export const makeGitHub = (options: GitHubOptions) => {
 
   /**
    * When the label for `state` was last added to the issue, or null when its history has no such
-   * event. The newest `LabeledEvent` of that label, as `unassignedClaims` picks it: the label
-   * that began the claim the issue is in. `readHistory` already checks every timestamp is
-   * `YYYY-MM-DDTHH:MM:SSZ`. One GraphQL call; a history that cannot be read is an error.
+   * event: the event `unassignedClaims` reads as the one that began the claim. `readHistory`
+   * already checks every timestamp is `YYYY-MM-DDTHH:MM:SSZ`. One GraphQL call; a history that
+   * cannot be read is an error.
    */
   const labeledAt = (number: number, state: State): GitHubEffect<string | null> =>
-    Effect.map(readHistory(number), (history) => {
-      const event = history.timelineItems.nodes
-        .toReversed()
-        .find((e) => e.__typename === "LabeledEvent" && e.label.name === stateLabel(state));
-      return event?.createdAt ?? null;
-    });
+    Effect.map(
+      readHistory(number),
+      (history) => newestLabelEvent(history, state)?.createdAt ?? null,
+    );
 
   /**
    * The newest comment the factory posted on the issue, or null when it has posted none. A
