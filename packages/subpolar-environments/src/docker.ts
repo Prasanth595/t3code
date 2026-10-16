@@ -36,7 +36,8 @@ export class DockerEnvironmentError extends Error {
       | "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED"
       | "DEV_CONTAINER_CONFIGURATION_SELECTION_REQUIRED"
       | "PROCESS_EXECUTION_UNAVAILABLE"
-      | "PROCESS_REQUEST_INVALID",
+      | "PROCESS_REQUEST_INVALID"
+      | "EGRESS_UNAVAILABLE",
     message: string,
     options?: ErrorOptions,
   ) {
@@ -62,6 +63,8 @@ export interface DockerEnvironmentConfig {
   readonly memoryBytes?: number;
   readonly nanoCpus?: number;
   readonly pidsLimit?: number;
+  /** Reserved for manager-owned provider egress; currently rejected fail-closed. */
+  readonly egress?: { readonly allowHosts: readonly string[] };
 }
 
 export interface DockerBindMount {
@@ -363,6 +366,12 @@ export function createDockerEnvironmentBackend(
   }
   if (config.gatewayGitRoot && (!path.isAbsolute(config.gatewayGitRoot) || !path.isAbsolute(config.hostGitRoot!))) {
     throw new DockerEnvironmentError("INVALID_DOCKER_CONFIG", "Gateway and Docker-host Git metadata roots must be absolute paths");
+  }
+  if (config.egress !== undefined) {
+    throw new DockerEnvironmentError(
+      "EGRESS_UNAVAILABLE",
+      "Provider egress is disabled: Docker internal networks can still reach host services, and this manager has no Docker-host firewall enforcement.",
+    );
   }
   if (!path.isAbsolute(config.gatewayStorageRoot) || !path.isAbsolute(config.hostStorageRoot) || !path.posix.isAbsolute(config.containerStorageRoot)) {
     throw new DockerEnvironmentError("INVALID_DOCKER_CONFIG", "Gateway, host, and container storage roots must be absolute");

@@ -138,6 +138,22 @@ class FakeDockerClient implements DockerClient {
 }
 
 describe("Docker environment backend", () => {
+  test("rejects provider egress until Docker-host firewall enforcement is available", async () => {
+    const { client, config } = await fixture();
+
+    let error: unknown;
+    try {
+      createDockerEnvironmentBackend(client, { ...config, egress: { allowHosts: ["api.example"] } });
+    } catch (cause) {
+      error = cause;
+    }
+    expect(error).toMatchObject({
+      code: "EGRESS_UNAVAILABLE",
+      message: expect.stringContaining("Docker-host firewall enforcement"),
+    });
+    expect(client.createCalls).toEqual([]);
+  });
+
   test("executes argv in the verified mounted worktree and streams output", async () => {
     const { backend, identity, client } = await fixture();
     const created = await backend.create(identity);
