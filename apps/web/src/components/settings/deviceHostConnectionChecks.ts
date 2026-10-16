@@ -59,12 +59,21 @@ export async function checkDeviceHostConnections(
               },
         );
       } catch (error) {
+        const atIndex = host.target.lastIndexOf("@");
+        const username = atIndex > 0 ? host.target.slice(0, atIndex) : null;
+        let hostname = atIndex > 0 ? host.target.slice(atIndex + 1) : host.target;
+        const bracketedHost = /^\[([^\]]+)\](?::\d+)?$/u.exec(hostname);
+        if (bracketedHost) {
+          hostname = bracketedHost[1]!;
+        } else {
+          hostname = hostname.replace(/:\d+$/u, "");
+        }
         report(target.environmentId, {
           status: "failed",
           error: redactSshAddresses(error instanceof Error ? error.message : String(error), {
             alias: host.target,
-            hostname: host.target,
-            username: null,
+            hostname,
+            username,
             port: host.port ?? null,
           }),
         });

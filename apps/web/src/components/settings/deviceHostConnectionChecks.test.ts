@@ -36,6 +36,11 @@ describe("device host connection checks", () => {
       "Could not resolve hostname build.example.com",
       "Could not resolve hostname •••",
     ],
+    [
+      "deploy@build.example.com",
+      "Could not resolve hostname build.example.com",
+      "Could not resolve hostname •••",
+    ],
     ["devbox", "Could not resolve hostname devbox", "Could not resolve hostname devbox"],
     [
       "devbox",

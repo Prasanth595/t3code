@@ -425,10 +425,16 @@ describe("SSH addresses", () => {
     },
   );
 
-  it.each(["::", "a::b", "std::", "std::bad_alloc", "crate::dead::beef", "/tmp/a::b/file"])(
+  it.each(["::", "std::", "std::bad_alloc", "crate::dead::beef"])(
     "preserves unrelated error text containing %s",
     (text) => {
       expect(redactSshAddresses(`SSH failed: ${text}`, devbox)).toBe(`SSH failed: ${text}`);
     },
   );
+
+  it("masks all-letter IPv6 addresses without masking C++ namespace separators", () => {
+    expect(redactSshAddresses("SSH failed: fdab::cafe", devbox)).toBe("SSH failed: •••");
+    expect(redactSshAddresses("SSH failed: std::vector", devbox)).toBe("SSH failed: std::vector");
+    expect(redactSshAddresses("SSH failed: ::", devbox)).toBe("SSH failed: ::");
+  });
 });
