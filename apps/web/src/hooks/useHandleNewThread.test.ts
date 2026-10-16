@@ -4,6 +4,7 @@ import type { RuntimeMode } from "@t3tools/contracts";
 const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: null) => void = () => undefined;
   let projectFileRead = Promise.resolve<null>(null);
+  let projectRemoved = false;
   let targetSettings = {
     defaultThreadEnvMode: "local" as "local" | "worktree",
     newWorktreesStartFromOrigin: false,
@@ -47,6 +48,12 @@ const testState = vi.hoisted(() => {
     get projectFileRead() {
       return projectFileRead;
     },
+    get projectRemoved() {
+      return projectRemoved;
+    },
+    removeProject() {
+      projectRemoved = true;
+    },
     get targetSettings() {
       return targetSettings;
     },
@@ -58,6 +65,7 @@ const testState = vi.hoisted(() => {
       },
     ) {
       storedDraft = nextStoredDraft;
+      projectRemoved = false;
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
@@ -101,9 +109,6 @@ vi.mock("@effect/atom-react", () => ({
         ]),
 }));
 vi.mock("@t3tools/shared/projectSettings", () => ({
-  // Environment settings pass through; the tests set project fields on the
-  // project record, which the hook still honors until the server folds them.
-  // With a file argument the env mode resolves like the real chain.
   resolveProjectSettings: (
     settings: Record<string, unknown>,
     _projectId: unknown,
@@ -121,7 +126,6 @@ vi.mock("@t3tools/shared/projectSettings", () => ({
     sources: { defaultModelSelection: "environment", defaultThreadEnvMode: "environment" },
     overrides: {},
   }),
-  // The new-project rule has its own tests in projectSettings.test.ts.
   resolveNewThreadEnvMode: (input: {
     projectSettings: { settings: { defaultThreadEnvMode: "local" | "worktree" } };
   }) => input.projectSettings.settings.defaultThreadEnvMode,
@@ -183,7 +187,14 @@ vi.mock("../state/entities", () => {
     updatedAt: "2026-08-01T00:00:00.000Z",
   }));
   return {
-    readProjects: () => projects,
+    readProject: (ref: { environmentId: string; projectId: string }) =>
+      testState.projectRemoved
+        ? null
+        : projects.find(
+            (project) =>
+              project.environmentId === ref.environmentId && project.id === ref.projectId,
+          ),
+    readProjects: () => (testState.projectRemoved ? [] : projects),
     readThreadShell: () => null,
     readThreadShells: () => [],
     useProjects: () => projects,
@@ -264,6 +275,21 @@ describe.each([
     await pendingOpen;
 
     expect(testState.router.state.location.href).toBe("/usage");
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+
+  it("abandons a delayed draft open when the project is removed meanwhile", async () => {
+    testState.reset(draft);
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { replace: true },
+    );
+
+    testState.removeProject();
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toBeNull();
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
