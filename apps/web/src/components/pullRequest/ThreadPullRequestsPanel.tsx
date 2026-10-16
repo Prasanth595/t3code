@@ -1,4 +1,9 @@
-import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
+import type {
+  ProjectId,
+  PullRequestContextMetadata,
+  ScopedThreadRef,
+  ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import {
   sourceControlClients,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
@@ -17,6 +22,7 @@ import {
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
+import { COMPOSER_PULL_REQUEST_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { findProjectForChangeRequest, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
@@ -159,6 +165,25 @@ function LinkRow({
       <a
         href={link.url}
         onClick={(event) => openPrLink(event, link.url, threadRef)}
+        // The link's own URL still rides along for drops outside the app; the composer takes
+        // this payload instead and adds the pull request as a context chip.
+        onDragStart={
+          snapshot === null
+            ? undefined
+            : (event) =>
+                event.dataTransfer.setData(
+                  COMPOSER_PULL_REQUEST_DRAG_TYPE,
+                  JSON.stringify({
+                    number: link.number,
+                    title: snapshot.title,
+                    url: link.url,
+                    headBranch: snapshot.headBranch,
+                    baseBranch: snapshot.baseBranch,
+                    state: snapshot.state,
+                    isDraft: snapshot.isDraft,
+                  } satisfies PullRequestContextMetadata),
+                )
+        }
         className="flex min-w-0 flex-1"
       >
         <PullRequestRowLines
