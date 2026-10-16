@@ -194,7 +194,6 @@ function hexToGhosttyColor(hex: string): GhosttyColor {
   return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
 }
 
-// VS Code's default ANSI colors.
 const TERMINAL_PALETTES = {
   light: [
     "#000000",
@@ -260,7 +259,6 @@ function readThemeColor(styles: CSSStyleDeclaration, variable: string, fallback:
   return normalizeComputedColor(styles.getPropertyValue(variable), fallback);
 }
 
-/** The surface treats an omitted family or size as "use the built-in default". */
 function terminalFontOptions(family: string, size: number): { family?: string; size: number } {
   const trimmed = family.trim();
   return trimmed.length > 0 ? { family: trimmed, size } : { size };
@@ -348,7 +346,6 @@ export type TerminalContextMenuAction =
   | "select-all"
   | "scroll-to-bottom";
 
-/** Post-selection popup: available selection actions, always enabled. */
 export function terminalSelectionMenuItems(options?: {
   canAddToChat?: boolean;
 }): ContextMenuItem<"add-to-chat" | "copy">[] {
@@ -360,12 +357,6 @@ export function terminalSelectionMenuItems(options?: {
   ];
 }
 
-/**
- * Right-click menu for selection, clipboard, and local scrollback actions.
- * Paste is always offered: the browser
- * (and Electron's default editing menu) can only paste into an editable
- * element, so a canvas terminal never gets a usable entry from them.
- */
 export function terminalContextMenuItems(options: {
   hasSelection: boolean;
   canAddToChat?: boolean;
@@ -384,11 +375,9 @@ export function terminalContextMenuItems(options: {
 }
 
 /**
- * An empty selection change may only cancel a selection-action flow that is
- * still current: a pending popup timer, or an open popup whose request id has
- * not been superseded. A popup already superseded by a right-click keeps its
- * menu promise unsettled for a moment; treating it as active would cancel the
- * newer context-menu flow instead.
+ * A popup already superseded by a right-click keeps its menu promise unsettled
+ * for a moment; treating it as active would cancel the newer context-menu flow
+ * instead.
  */
 export function shouldClearTerminalSelectionAction(options: {
   actionPending: boolean;
@@ -487,9 +476,6 @@ export function TerminalViewport({
   });
   const hasHandledExitRef = useRef(false);
   const selectionActionRequestIdRef = useRef(0);
-  // Holds the request id of the selection popup currently on screen, so a
-  // popup that was superseded (but whose menu promise has not settled yet)
-  // cannot be mistaken for the active flow.
   const openSelectionMenuRequestIdRef = useRef<number | null>(null);
   const keybindingsRef = useRef(keybindings);
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
@@ -590,7 +576,6 @@ export function TerminalViewport({
     if (terminalRef.current) terminalRef.current.input.readOnly = !canOperateTerminal;
   }, [canOperateTerminal]);
 
-  // A grant can change while the pointer remains over a link.
   useEffect(() => {
     terminalRef.current?.refreshLinkActivation();
   }, [canOpenHostEditor]);
@@ -641,7 +626,7 @@ export function TerminalViewport({
         canActivateLink: (text) => canActivateTerminalLink(text),
         // The surface listens from construction, so a right-click can land
         // while `create` is still awaiting WASM — before the handler below it
-        // exists. The ref is only assigned once that setup has run.
+        // exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
         },
@@ -660,7 +645,7 @@ export function TerminalViewport({
       terminal.input.readOnly = !hasTerminalWriteAccess();
       // Client settings hydrate asynchronously; a font preference that landed
       // while the surface was loading found terminalRef null, so its setFont
-      // was dropped. Re-apply whatever is current once the terminal exists.
+      // was dropped.
       const currentFont = terminalFontRef.current;
       if (currentFont.family !== setupFont.family || currentFont.size !== setupFont.size) {
         void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size));
@@ -676,13 +661,8 @@ export function TerminalViewport({
       }
       outputCursorRef.current = initialOutput.cursor;
       if (latestSession.error !== null) writeSystemMessage(terminal, latestSession.error);
-      // Attaching to a session that already exited must still run exit handling
-      // once, so mount synchronization starts from the empty "closed" state.
-      // (A session that is "closed" at mount is indistinguishable from one that
-      // never started, so only "exited" triggers the message — as with xterm.)
       synchronizedStatusRef.current = "closed";
       synchronizeTerminalStatus(terminal, latestSession.status, latestSession.version);
-      // Startup may finish after the user has returned to the composer.
       if (
         hasTerminalWriteAccess() &&
         visibleRef.current &&
@@ -694,7 +674,6 @@ export function TerminalViewport({
       const dismissSelectionAction = (supersede = false) => {
         const ownsMenu =
           openSelectionMenuRequestIdRef.current === selectionActionRequestIdRef.current;
-        // Passive cancellation must not invalidate a newer right-click flow.
         if (supersede || ownsMenu) selectionActionRequestIdRef.current += 1;
         if (ownsMenu) void localApi?.contextMenu.close();
       };
@@ -749,8 +728,6 @@ export function TerminalViewport({
         terminalRef.current?.focus();
       };
 
-      // A selection-action flow that was superseded while its async work ran
-      // must go silent: no error message, no focus steal.
       const reportIfCurrent = (requestId: number, error: unknown, fallback: string) => {
         if (requestId !== selectionActionRequestIdRef.current) return;
         const activeTerminal = terminalRef.current;
@@ -799,7 +776,6 @@ export function TerminalViewport({
         // the browser (or Electron's editing menu) answer with a Paste entry
         // that is permanently disabled over the terminal canvas.
         event.preventDefault();
-        // A right-click supersedes a selection popup that is pending or open.
         clearSelectionAction();
         const selectionAction = readSelectionAction();
         const requestId = selectionActionRequestIdRef.current;
@@ -1114,8 +1090,6 @@ export function TerminalViewport({
 
   useEffect(() => {
     if (!autoFocus || !canOperateTerminal || !visible) return;
-    // Claim focus when requested, then hand it to the terminal once ready only
-    // if the user has not focused something else in the meantime.
     (terminalRef.current ?? containerRef.current)?.focus();
   }, [autoFocus, canOperateTerminal, focusRequestId, visible]);
 
@@ -1172,9 +1146,7 @@ interface ThreadTerminalDrawerProps {
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
-  /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
   terminalLabelsById?: ReadonlyMap<string, string>;
-  /** Prefer per-session launch locations when the server already knows a terminal. */
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
 }
 
@@ -1264,7 +1236,6 @@ export default function ThreadTerminalDrawer({
     false,
     Schema.Boolean,
   );
-  // The stored height is the user's preference; available space only clamps what renders.
   const controlledDrawerHeight = height;
   const [drawerMaxHeight, setDrawerMaxHeight] = useState(maxDrawerHeight);
   const [drawerHeightState, setDrawerHeightState] = useState(() => ({
@@ -1480,7 +1451,6 @@ export default function ThreadTerminalDrawer({
   }, [onHeightChange]);
 
   useLayoutEffect(() => {
-    // A render mid-drag (the window cap moved) must not replace the live height.
     const resizeState = resizeStateRef.current;
     if (resizeState) {
       resizeState.drawer?.style.setProperty("height", `${drawerHeightRef.current}px`);
@@ -1516,8 +1486,6 @@ export default function ThreadTerminalDrawer({
     };
   }, []);
 
-  // Writes the height straight to the drawer while dragging so the edge lands in
-  // the pointer's frame; React state commits once on release.
   const handleResizePointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const resizeState = resizeStateRef.current;
@@ -1572,7 +1540,6 @@ export default function ThreadTerminalDrawer({
 
     const onWindowResize = () => {
       const maxHeight = measureMaxDrawerHeight();
-      // React only renders the stored preference, so clamp a live drag height here.
       const resizeState = resizeStateRef.current;
       const liveHeight = clampDrawerHeight(drawerHeightRef.current, maxHeight);
       if (resizeState && liveHeight !== drawerHeightRef.current) {
