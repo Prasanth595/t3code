@@ -5002,6 +5002,87 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect(
+    "commit_push_pr merges the latest base into the current worktree branch",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        const localMain = (yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim();
+
+        const worktreeParent = yield* makeTempDir("t3code-git-worktree-");
+        const worktreeDir = NodePath.join(worktreeParent, "thread");
+        yield* runGit(repoDir, ["worktree", "add", "-b", "feature/thread", worktreeDir, "main"]);
+        NodeFS.writeFileSync(NodePath.join(worktreeDir, "feature.txt"), "first\n");
+        yield* runGit(worktreeDir, ["add", "feature.txt"]);
+        yield* runGit(worktreeDir, ["commit", "-m", "First change"]);
+        yield* runGit(worktreeDir, ["push", "-u", "origin", "feature/thread"]);
+        yield* runGit(repoDir, ["config", "branch.feature/thread.gh-merge-base", "main"]);
+
+        const peerDir = yield* makeTempDir("t3code-git-peer-");
+        yield* runGit(peerDir, ["clone", remoteDir, "."]);
+        yield* runGit(peerDir, ["config", "user.email", "peer@example.com"]);
+        yield* runGit(peerDir, ["config", "user.name", "Peer User"]);
+        NodeFS.writeFileSync(NodePath.join(peerDir, "feature.txt"), "first\n");
+        NodeFS.writeFileSync(NodePath.join(peerDir, "main-only.txt"), "from main\n");
+        yield* runGit(peerDir, ["add", "feature.txt", "main-only.txt"]);
+        yield* runGit(peerDir, ["commit", "-m", "Squash first change"]);
+        yield* runGit(peerDir, ["push", "origin", "main"]);
+
+        NodeFS.writeFileSync(NodePath.join(worktreeDir, "feature.txt"), "first\nsecond\n");
+
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              "[]",
+              JSON.stringify([
+                {
+                  number: 77,
+                  title: "Follow-up",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/77",
+                  baseRefName: "main",
+                  headRefName: "feature/thread",
+                },
+              ]),
+            ],
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: worktreeDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.commit.status).toBe("created");
+        expect(result.pr.status).toBe("created");
+        expect(result.pr.baseBranch).toBe("main");
+        expect(
+          (yield* runGit(worktreeDir, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim(),
+        ).toBe("feature/thread");
+        expect((yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()).toBe(
+          "main",
+        );
+        expect((yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim()).toBe(localMain);
+        expect(
+          (yield* runGit(worktreeDir, ["merge-base", "--is-ancestor", "origin/main", "HEAD"], true))
+            .exitCode,
+        ).toBe(0);
+        expect(NodeFS.readFileSync(NodePath.join(worktreeDir, "feature.txt"), "utf8")).toBe(
+          "first\nsecond\n",
+        );
+        expect(NodeFS.readFileSync(NodePath.join(worktreeDir, "main-only.txt"), "utf8")).toBe(
+          "from main\n",
+        );
+        expect(
+          (yield* runGit(worktreeDir, ["diff", "--name-only", "origin/main...HEAD"])).stdout.trim(),
+        ).toBe("feature.txt");
+      }),
+    20_000,
+  );
+
   it.effect("generates PR content from branch changes when the remote base advances", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

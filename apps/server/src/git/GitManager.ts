@@ -1960,6 +1960,126 @@ export const make = Effect.gen(function* () {
       );
   });
 
+  // A later commit stays in this checkout. Fetch the pull request base and
+  // merge it here so the new work sits on the latest base, not the commit
+  // this branch was cut from.
+  const integrateLatestBase = Effect.fn("integrateLatestBase")(function* (
+    cwd: string,
+    branch: string,
+    onProgress: (label: string) => Effect.Effect<void>,
+  ) {
+    const remoteName = yield* gitCore
+      .resolvePrimaryRemoteName(cwd)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (remoteName === null) return;
+
+    const [branchRemote, branchMerge] = yield* Effect.all(
+      [
+        gitCore.readConfigValue(cwd, `branch.${branch}.remote`),
+        gitCore.readConfigValue(cwd, `branch.${branch}.merge`),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const upstreamRef =
+      branchRemote !== null && branchMerge?.startsWith("refs/heads/")
+        ? `${branchRemote}/${branchMerge.slice("refs/heads/".length)}`
+        : null;
+    const headContext = yield* resolveBranchHeadContext(cwd, { branch, upstreamRef });
+    const baseBranch = yield* resolveBaseBranch(cwd, branch, upstreamRef, headContext);
+
+    const runGit = (operation: string, args: ReadonlyArray<string>, allowNonZeroExit = false) =>
+      gitCore.execute({
+        operation: `GitManager.integrateLatestBase.${operation}`,
+        cwd,
+        args,
+        allowNonZeroExit,
+      });
+
+    const fetched = yield* runGit(
+      "fetch",
+      [
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        remoteName,
+        `+refs/heads/${baseBranch}:refs/remotes/${remoteName}/${baseBranch}`,
+      ],
+      true,
+    );
+    // Missing refs and unreachable remotes leave this checkout as it is.
+    // The commit and pull request still run here.
+    if (fetched.exitCode !== 0) return;
+
+    const baseRef = `${remoteName}/${baseBranch}`;
+    const ancestor = yield* runGit(
+      "ancestor",
+      ["merge-base", "--is-ancestor", baseRef, "HEAD"],
+      true,
+    );
+    if (ancestor.exitCode === 0) return;
+    if (ancestor.exitCode !== 1) {
+      return yield* new GitManagerError({
+        operation: "integrateLatestBase",
+        cwd,
+        detail: `Could not compare ${branch} with latest ${baseBranch}.`,
+      });
+    }
+
+    yield* onProgress(`Updating from latest ${baseBranch}...`);
+    const headBefore = (yield* runGit("head", ["rev-parse", "HEAD"])).stdout.trim();
+    const dirty = (yield* runGit("status", ["status", "--porcelain"])).stdout.trim().length > 0;
+    if (dirty) {
+      yield* runGit("stash", [
+        "stash",
+        "push",
+        "--include-untracked",
+        "-m",
+        `t3code: update from ${baseBranch}`,
+      ]);
+    }
+
+    const popStash = () => runGit("stashPop", ["stash", "pop"], true);
+    const restoreCheckout = Effect.gen(function* () {
+      yield* runGit("mergeAbort", ["merge", "--abort"], true);
+      yield* runGit("reset", ["reset", "--hard", headBefore], true);
+      if (!dirty) return true;
+      return (yield* popStash()).exitCode === 0;
+    });
+
+    const merged = yield* runGit(
+      "merge",
+      branch === baseBranch
+        ? ["merge", "--ff-only", baseRef]
+        : ["merge", "--no-edit", "-m", `Merge latest ${baseBranch} into ${branch}`, baseRef],
+      true,
+    );
+    if (merged.exitCode !== 0) {
+      const restored = yield* restoreCheckout;
+      return yield* new GitManagerError({
+        operation: "integrateLatestBase",
+        cwd,
+        detail: restored
+          ? `Could not update ${branch} onto the latest ${baseBranch}. This checkout is still on ${branch}.`
+          : `Could not update ${branch} onto the latest ${baseBranch}. Uncommitted changes are still in the stash.`,
+      });
+    }
+
+    if (!dirty) return;
+    const restored = yield* popStash();
+    if (restored.exitCode === 0) return;
+
+    yield* runGit("resetAfterPop", ["reset", "--hard", headBefore]);
+    const restoredAgain = yield* popStash();
+    return yield* new GitManagerError({
+      operation: "integrateLatestBase",
+      cwd,
+      detail:
+        restoredAgain.exitCode === 0
+          ? `Could not update ${branch} onto the latest ${baseBranch} because the uncommitted changes conflict with it. This checkout is still on ${branch}.`
+          : `Could not update ${branch} onto the latest ${baseBranch}. Uncommitted changes are still in the stash.`,
+    });
+  });
+
   const resolveCommitAndBranchSuggestion = Effect.fn("resolveCommitAndBranchSuggestion")(
     function* (input: {
       cwd: string;
@@ -2991,6 +3111,20 @@ export const make = Effect.gen(function* () {
         }
 
         const currentBranch = branchStep.name ?? initialStatus.branch;
+        if (wantsPr && currentBranch) {
+          const phase = wantsCommit ? "commit" : "pr";
+          yield* integrateLatestBase(input.cwd, currentBranch, (label) =>
+            Ref.set(currentPhase, Option.some(phase)).pipe(
+              Effect.andThen(
+                progress.emit({
+                  kind: "phase_started",
+                  phase,
+                  label,
+                }),
+              ),
+            ),
+          );
+        }
         const commitAction = isCommitAction(input.action) ? input.action : null;
         const changeRequestTerms = wantsPr
           ? yield* sourceControlProvider(input.cwd).pipe(
