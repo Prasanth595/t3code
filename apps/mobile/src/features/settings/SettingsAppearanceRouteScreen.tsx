@@ -1,11 +1,11 @@
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { Pressable } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useUsageLimitDisplayMode } from "../usage/useUsageLimitDisplayMode";
 import { SettingsSection } from "./components/SettingsSection";
