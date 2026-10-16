@@ -243,24 +243,22 @@ describe("every factory route", () => {
     assert.strictEqual(STATUS_PATH, "/api/factory/status");
   });
 
-  for (const [method, path] of FACTORY_ROUTES) {
-    it.effect(`${method} ${path.replace(ID, ":id")} answers 401 without credentials`, () =>
-      serving({}, async (call) => {
-        const response = await call(method, path);
-        assert.strictEqual(response.status, 401);
-        assert.strictEqual((await json(response)).code, "auth_invalid");
-      }),
-    );
+  it.effect.each(FACTORY_ROUTES)("%s %s answers 401 without credentials", ([method, path]) =>
+    serving({}, async (call) => {
+      const response = await call(method, path);
+      assert.strictEqual(response.status, 401);
+      assert.strictEqual((await json(response)).code, "auth_invalid");
+    }),
+  );
 
-    it.effect(
-      `${method} ${path.replace(ID, ":id")} answers 401 for a token that is not a session`,
-      () =>
-        serving({}, async (call) => {
-          const response = await call(method, path, "not-a-session-token");
-          assert.strictEqual(response.status, 401);
-        }),
-    );
-  }
+  it.effect.each(FACTORY_ROUTES)(
+    "%s %s answers 401 for a token that is not a session",
+    ([method, path]) =>
+      serving({}, async (call) => {
+        const response = await call(method, path, "not-a-session-token");
+        assert.strictEqual(response.status, 401);
+      }),
+  );
 
   it.effect("a GET needs orchestration:read, and a session with only operate is refused", () =>
     serving({}, async (call, { tokens }) => {

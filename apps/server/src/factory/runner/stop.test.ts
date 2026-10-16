@@ -188,8 +188,9 @@ describe("requestStop", () => {
     assert.strictEqual(bytesOf(dataDir), bytes);
   });
 
-  for (const state of ["triage", "needs-info", "pr-open"] as const) {
-    it(`writes nothing to a run in ${state}`, () => {
+  it.each(["triage", "needs-info", "pr-open"] as const)(
+    "writes nothing to a run in %s",
+    (state) => {
       const dataDir = tempDir();
       seed(dataDir, [
         { event: "claimed", data: { machine: "mac-mini", github_user: "rawphp" } },
@@ -201,8 +202,8 @@ describe("requestStop", () => {
         "not-building",
       );
       assert.strictEqual(bytesOf(dataDir), bytes);
-    });
-  }
+    },
+  );
 
   it("writes nothing to a run with no state yet", () => {
     const dataDir = tempDir();
