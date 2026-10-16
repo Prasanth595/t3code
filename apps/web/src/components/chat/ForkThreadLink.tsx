@@ -56,25 +56,32 @@ function ThreadLinkChip(props: {
   );
 }
 
-const OFF_ATOM = Atom.make(false);
-const NO_ENVIRONMENTS_ATOM = Atom.make<ReadonlyArray<EnvironmentId>>([]);
+/**
+ * Fork: the environments that this client knows, while the message environment has
+ * `threadLinkChips` on, else null. One shared atom for each message environment: every link reads
+ * it, and the connection catalog is read only while the setting is on.
+ */
+const knownThreadEnvironmentIdsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): ReadonlyArray<EnvironmentId> | null =>
+    get(threadLinkChipsAtom(environmentId)) ? get(environmentSummaries.environmentIdsAtom) : null,
+  ),
+);
+const NO_ENVIRONMENT_ATOM = Atom.make<ReadonlyArray<EnvironmentId> | null>(null);
 
 /**
  * Fork: the thread that `href` names by its web address (`parseThreadAddress`), when the message's
  * environment has `threadLinkChips` on and this client knows the thread's environment. Null for
- * every other link, which then renders as usual. Other links subscribe to nothing.
+ * every other link, which then renders as usual. With the setting off it returns before it parses.
  */
 export function useForkKnownThreadAddress(
   href: string | undefined,
   environmentId: EnvironmentId | null | undefined,
 ): ThreadAddress | null {
-  const address = href && environmentId ? parseThreadAddress(href) : null;
-  const chips = useAtomValue(
-    address && environmentId ? threadLinkChipsAtom(environmentId) : OFF_ATOM,
-  );
   const knownIds = useAtomValue(
-    chips ? environmentSummaries.environmentIdsAtom : NO_ENVIRONMENTS_ATOM,
+    environmentId ? knownThreadEnvironmentIdsAtom(environmentId) : NO_ENVIRONMENT_ATOM,
   );
+  if (knownIds === null || !href) return null;
+  const address = parseThreadAddress(href);
   return address && knownIds.includes(address.environmentId) ? address : null;
 }
 
