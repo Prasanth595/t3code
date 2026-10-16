@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { State } from "../domain/lifecycle.ts";
 import { makeCause } from "./events.ts";
 import { Ledger } from "./ledger.ts";
-import { holdsSlot, listRuns, listUnfinishedRuns, readRuns } from "./listRuns.ts";
+import { holdsSlot, listRuns, listUnfinishedRuns, readRuns, runInfoOf } from "./listRuns.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "./runId.ts";
 import { T0, ticking, useTempDirs } from "./testSupport.ts";
 
@@ -19,9 +19,12 @@ vi.mock("node:fs", async (importOriginal) => {
 
 const tempDir = useTempDirs();
 
+const actualFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+
 const handles: Array<Ledger> = [];
 afterEach(() => {
   for (const ledger of handles.splice(0)) ledger.close();
+  vi.mocked(NodeFS.readFileSync).mockImplementation(actualFs.readFileSync);
 });
 
 const rid = (issue: number, repo = "rawphp/softfac", attempt = 1): RunId => ({
@@ -102,8 +105,7 @@ describe("listUnfinishedRuns", () => {
   it("a run whose file cannot be read is still listed, flagged unreadable, after the others", () => {
     const dataDir = tempDir();
     runAt(dataDir, rid(7), T0 + 5_000, "building");
-    // A directory named like a run file is a run whose file cannot be read.
-    NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(6))));
+    unreadableRun(dataDir, rid(6));
     expect(listUnfinishedRuns(dataDir)).toEqual([
       {
         id: rid(7),
@@ -239,6 +241,24 @@ const writeRun = (dataDir: string, id: RunId, content: string) => {
 };
 
 const fullReads = () => vi.mocked(NodeFS.readFileSync).mock.calls.map(([path]) => String(path));
+
+/** A regular run file whose bytes cannot be read: the read of it fails, whoever runs the test. */
+const unreadableRun = (dataDir: string, id: RunId) => {
+  const path = writeRun(dataDir, id, "x\n");
+  vi.mocked(NodeFS.readFileSync).mockImplementation(((target: never, ...rest: never[]) => {
+    if (String(target) === path) throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    return (actualFs.readFileSync as (...args: never[]) => unknown)(target, ...rest);
+  }) as typeof NodeFS.readFileSync);
+  return path;
+};
+
+/** A directory and a symlink named like run files, which are not runs. */
+const notFiles = (dataDir: string, directory: RunId, link: RunId) => {
+  NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(directory)), { recursive: true });
+  const target = NodePath.join(dataDir, "elsewhere.jsonl");
+  NodeFS.writeFileSync(target, stateLine("building"));
+  NodeFS.symlinkSync(target, NodePath.join(dataDir, RUNS_DIR, runIdFileName(link)));
+};
 
 describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
   it("never reads a large finished run whole, and still lists an unfinished sibling", () => {
@@ -513,7 +533,7 @@ describe("listRuns", () => {
   it("an unreadable run file is listed with no record, and the others still are", () => {
     const dataDir = tempDir();
     runAt(dataDir, rid(8), T0, "building");
-    NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(2, "rawphp/broken"))));
+    unreadableRun(dataDir, rid(2, "rawphp/broken"));
     const reads = readRuns(dataDir);
     expect(reads.map((read) => [read.summary.id.repo, read.summary.unreadable])).toEqual([
       ["rawphp/softfac", false],
@@ -538,5 +558,124 @@ describe("listRuns", () => {
     writeRun(dataDir, rid(1), "not json\n");
     runAt(dataDir, rid(2), T0, "building");
     expect(listRuns(dataDir).map((run) => run.id.issue)).toEqual(["2", "1"]);
+  });
+});
+
+describe("the run scanner", () => {
+  it("skips a directory and a symlink named like a run, in both listings", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(1), T0, "building");
+    notFiles(dataDir, rid(2), rid(3));
+    expect(listUnfinishedRuns(dataDir).map((info) => info.id.issue)).toEqual(["1"]);
+    expect(readRuns(dataDir).map((read) => read.summary.id.issue)).toEqual(["1"]);
+  });
+
+  it("a regular file that cannot be read stays a row, flagged unreadable", () => {
+    const dataDir = tempDir();
+    unreadableRun(dataDir, rid(1));
+    expect(listRuns(dataDir).map((run) => [run.id.issue, run.unreadable])).toEqual([["1", true]]);
+    expect(listUnfinishedRuns(dataDir).map((info) => [info.id.issue, info.unreadable])).toEqual([
+      ["1", true],
+    ]);
+  });
+
+  it("orders runs with the same start by repo, then issue and attempt as numbers", () => {
+    const dataDir = tempDir();
+    const ids = [
+      rid(10),
+      rid(9),
+      rid(10, "rawphp/softfac", 10),
+      rid(10, "rawphp/softfac", 2),
+      rid(1, "a_b/x"),
+      rid(1, "a-b/x"),
+    ];
+    // Runs with no readable line all sort on the tie-break alone.
+    for (const id of ids) writeRun(dataDir, id, "not json\n");
+    const expected = [
+      "a-b/x#1#1",
+      "a_b/x#1#1",
+      "rawphp/softfac#9#1",
+      "rawphp/softfac#10#1",
+      "rawphp/softfac#10#2",
+      "rawphp/softfac#10#10",
+    ];
+    const key = (id: RunId) => `${id.repo}#${id.issue}#${id.attempt}`;
+    expect(readRuns(dataDir).map((read) => key(read.summary.id))).toEqual(expected);
+    expect(listUnfinishedRuns(dataDir).map((info) => key(info.id))).toEqual(expected);
+  });
+
+  it("gives each read the progress it was summarised from", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(1), T0, "building");
+    unreadableRun(dataDir, rid(2, "rawphp/other"));
+    const reads = readRuns(dataDir);
+    expect(reads[0]?.seen?.state).toBe("building");
+    expect(reads[1]?.seen).toBeNull();
+  });
+
+  it("runInfoOf reads the slot facts from progress, and no progress is an unreadable run", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(1), T0, "pr-open");
+    const seen = readRuns(dataDir)[0]?.seen ?? null;
+    expect(runInfoOf(rid(1), seen)).toEqual({
+      id: rid(1),
+      state: "pr-open",
+      unreadable: false,
+      confirmed: true,
+      session: false,
+      prReported: false,
+    });
+    expect(runInfoOf(rid(1), null)).toEqual({
+      id: rid(1),
+      state: null,
+      unreadable: true,
+      confirmed: false,
+      session: false,
+      prReported: false,
+    });
+  });
+});
+
+describe("readRuns: skipFinishedBefore", () => {
+  const DAY = 86_400_000;
+  /** Sets the file's mtime to `ageMs` before `nowMs`. */
+  const age = (path: string, nowMs: number, ageMs: number) => {
+    const at = new Date(nowMs - ageMs);
+    NodeFS.utimesSync(path, at, at);
+  };
+
+  it("neither reads nor returns a finished file older than the cutoff", () => {
+    const dataDir = tempDir();
+    const nowMs = Date.parse("2026-10-17T00:00:00Z");
+    const oldFinished = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);
+    const newFinished = writeRun(dataDir, rid(2), stateLine("building") + finishedLine);
+    age(oldFinished, nowMs, 3 * DAY);
+    age(newFinished, nowMs, DAY / 2);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    const reads = readRuns(dataDir, { skipFinishedBefore: nowMs - DAY });
+    expect(reads.map((read) => read.summary.id.issue)).toEqual(["2"]);
+    expect(fullReads()).not.toContain(oldFinished);
+    expect(fullReads()).toContain(newFinished);
+  });
+
+  it("reads an old file that is not finished, however old, and a cut-off finished line in full", () => {
+    const dataDir = tempDir();
+    const nowMs = Date.parse("2026-10-17T00:00:00Z");
+    const open = writeRun(dataDir, rid(1), stateLine("building"));
+    const cut = writeRun(dataDir, rid(2), stateLine("building") + finishedLine.slice(0, 30));
+    age(open, nowMs, 30 * DAY);
+    age(cut, nowMs, 30 * DAY);
+    const reads = readRuns(dataDir, { skipFinishedBefore: nowMs - DAY });
+    expect(reads.map((read) => [read.summary.id.issue, read.summary.finished])).toEqual([
+      ["1", false],
+      ["2", false],
+    ]);
+  });
+
+  it("without the option every file is read, finished and old ones included", () => {
+    const dataDir = tempDir();
+    const old = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);
+    age(old, Date.parse("2026-10-17T00:00:00Z"), 30 * DAY);
+    expect(readRuns(dataDir).map((read) => read.summary.finished)).toEqual([true]);
   });
 });

@@ -331,6 +331,46 @@ describe("buildStatus: runs and slots", () => {
   });
 });
 
+describe("buildStatus: one read of the runs", () => {
+  it("a directory or symlink named like a run is no row and no slot", () => {
+    const dir = tempDir();
+    writeRun(dir, "rawphp__softfac__59__1", [
+      claimed(ago(HOUR)),
+      state(ago(MIN), "ready", "building"),
+    ]);
+    NodeFS.mkdirSync(NodePath.join(dir, "runs", "rawphp__softfac__60__1.jsonl"));
+    NodeFS.writeFileSync(NodePath.join(dir, "elsewhere"), claimed(ago(HOUR)));
+    NodeFS.symlinkSync(
+      NodePath.join(dir, "elsewhere"),
+      NodePath.join(dir, "runs", "rawphp__softfac__61__1.jsonl"),
+    );
+    const status = report(dir);
+    expect(status.runs.map((run) => run.id)).toEqual(["rawphp__softfac__59__1"]);
+    expect(status.slots.used).toBe(0);
+  });
+
+  it("a finished run whose file has not been written for over a day is not read", () => {
+    const dir = tempDir();
+    writeRun(dir, "rawphp__softfac__12__1", [
+      claimed(ago(40 * HOUR)),
+      runError(ago(HOUR), "advance", "github", "inside the window, in a file that says it is old"),
+      finished(ago(MIN)),
+    ]);
+    // A finished file is never appended to, so a stale mtime means none of its lines are in the
+    // window: the report does not open it. The mtime is real time and the clock of the report is
+    // `NOW`, so age the file from `NOW`.
+    const at = new Date(NOW - 2 * 86_400_000);
+    NodeFS.utimesSync(NodePath.join(dir, "runs", "rawphp__softfac__12__1.jsonl"), at, at);
+    writeRun(dir, "rawphp__softfac__13__1", [
+      claimed(ago(5 * HOUR)),
+      runError(ago(4 * HOUR), "advance", "github", "recent"),
+      finished(ago(3 * HOUR)),
+    ]);
+    const status = report(dir);
+    expect(status.problems.map((problem) => problem.message)).toEqual(["recent"]);
+  });
+});
+
 describe("buildStatus: passes", () => {
   it("the last pass is read from the machine log", () => {
     const dir = tempDir();
