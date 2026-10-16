@@ -1028,6 +1028,45 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect("leaves stacks in other repositories alone when their ids match", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        // Without a host id the GitHub decoder falls back to the stack number, so two
+        // repositories can both report stack "3".
+        const otherLink = makeLink(7, null, {
+          repository: "owner/other",
+          url: "https://github.com/owner/other/pull/7",
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(1), otherLink] })]),
+          stack: (input) =>
+            Effect.succeed({
+              id: "3",
+              number: 3,
+              url: `https://github.com/${input.repository}/stack/3`,
+              base: "main",
+              layers: [
+                { number: input.number, headBranch: "layer-1", state: "open" },
+                { number: input.number + 1, headBranch: "layer-2", state: "open" },
+              ],
+            }),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const firstSweep = yield* Ref.get(fixture.syncCommands);
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));
+          assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 2);
+
+          yield* sweepAgain(fixture, reactor);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 2);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("keeps existing snapshots and continues when the host fails", () =>
     Effect.scoped(
       Effect.gen(function* () {

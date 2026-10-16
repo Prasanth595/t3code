@@ -112,6 +112,12 @@ function stacksEqual(
   );
 }
 
+/** Stack ids are unique only within a repository, e.g. GitHub's fallback to the stack number. */
+function nativeStackKeyOf(link: ThreadPullRequestLink, stack: ThreadPullRequestStack): string {
+  const key = normalizeThreadPullRequestKey(link);
+  return `${key.host}/${key.repository}#stack:${stack.id}`;
+}
+
 function sameLayerNumbers(left: ThreadPullRequestStack, right: ThreadPullRequestStack): boolean {
   return (
     left.layers.length === right.layers.length &&
@@ -326,12 +332,17 @@ export const make = Effect.gen(function* () {
         // would keep its shorter layer list. Members of this stack whose layer list differs read
         // their stack once, in this sweep if still pending or the next; agreeing ones read none.
         if (fetched !== null) {
+          const fetchedKey = nativeStackKeyOf(first.link, fetched);
           for (const [siblingKey, siblingEntries] of groups) {
             if (siblingKey === key) continue;
             const readThisSweep = stacksReadThisSweep.get(siblingKey);
             const stale = siblingEntries.some(({ link }) => {
               const stack = readThisSweep === undefined ? link.stack : readThisSweep;
-              return stack?.id === fetched.id && !sameLayerNumbers(stack, fetched);
+              return (
+                stack !== null &&
+                nativeStackKeyOf(link, stack) === fetchedKey &&
+                !sameLayerNumbers(stack, fetched)
+              );
             });
             if (stale) retryStacks.add(siblingKey);
           }
