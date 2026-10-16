@@ -60,6 +60,7 @@ class FakeDockerClient implements DockerClient {
   readonly removeCalls: string[] = [];
   readonly processCalls: Array<{ id: string; request: DockerContainerProcessRequest }> = [];
   readonly managedSessionCalls: Array<{ id: string; request: DockerContainerManagedSessionRequest }> = [];
+  readonly imageBuildCalls: Array<{ contextPath: string; dockerfilePath: string; image: string }> = [];
   wrongOwner = false;
 
   async inspectContainer(name: string) {
@@ -95,6 +96,10 @@ class FakeDockerClient implements DockerClient {
     };
     this.containers.set(options.name, inspection);
     return { id };
+  }
+
+  async buildImage(request: { contextPath: string; dockerfilePath: string; image: string }) {
+    this.imageBuildCalls.push(request);
   }
 
   async startContainer(id: string) {
@@ -268,6 +273,64 @@ describe("Docker environment backend", () => {
       networkMode: "none",
       mounts: [{ source: await realpath(path.join(config.hostStorageRoot, "repo", "worktree-a")) }],
     });
+  });
+
+  test("builds a contained Dev Container Dockerfile in the manager mapped context", async () => {
+    const { client, manager, request, identity, config, hostWorktree } = await fixture();
+    const gatewayDevContainer = path.join(identity.worktreePath, ".devcontainer");
+    const hostDevContainer = path.join(hostWorktree, ".devcontainer");
+    await Promise.all([
+      mkdir(gatewayDevContainer, { recursive: true }),
+      mkdir(hostDevContainer, { recursive: true }),
+    ]);
+    await Promise.all([
+      Bun.write(path.join(gatewayDevContainer, "devcontainer.json"), JSON.stringify({ build: { dockerfile: "Dockerfile", context: "." } })),
+      Bun.write(path.join(hostDevContainer, "devcontainer.json"), JSON.stringify({ build: { dockerfile: "Dockerfile", context: "." } })),
+      Bun.write(path.join(gatewayDevContainer, "Dockerfile"), "FROM node:22\n"),
+      Bun.write(path.join(hostDevContainer, "Dockerfile"), "FROM node:22\n"),
+    ]);
+
+    await manager.ensure(request);
+
+    expect(client.imageBuildCalls).toHaveLength(1);
+    expect(client.imageBuildCalls[0]).toEqual({
+      contextPath: await realpath(hostDevContainer),
+      dockerfilePath: await realpath(path.join(hostDevContainer, "Dockerfile")),
+      image: client.createCalls[0]?.image,
+    });
+    expect(client.createCalls[0]?.image).toMatch(/^subpolar-devcontainer:[a-f0-9]{32}$/);
+    expect(client.createCalls[0]?.privileged).toBe(false);
+    expect(client.createCalls[0]?.networkMode).toBe("none");
+  });
+
+  test("rejects Dockerfile contexts or files that escape their mapped worktree", async () => {
+    const { client, manager, request, identity } = await fixture();
+    const devContainer = path.join(identity.worktreePath, ".devcontainer");
+    await mkdir(devContainer, { recursive: true });
+    await Bun.write(path.join(devContainer, "devcontainer.json"), JSON.stringify({ build: { dockerfile: "Dockerfile", context: "../../outside" } }));
+
+    await expect(manager.ensure(request)).rejects.toMatchObject({ cause: { code: "DEV_CONTAINER_CONFIGURATION_INVALID" } });
+    expect(client.imageBuildCalls).toEqual([]);
+    expect(client.createCalls).toEqual([]);
+  });
+
+  test("does not create an environment if its Dev Container image build fails", async () => {
+    const { client, manager, request, identity, hostWorktree } = await fixture();
+    const gatewayDevContainer = path.join(identity.worktreePath, ".devcontainer");
+    const hostDevContainer = path.join(hostWorktree, ".devcontainer");
+    await Promise.all([
+      mkdir(gatewayDevContainer, { recursive: true }),
+      mkdir(hostDevContainer, { recursive: true }),
+    ]);
+    await Promise.all([
+      Bun.write(path.join(gatewayDevContainer, "devcontainer.json"), '{"build":{"dockerfile":"Dockerfile"}}'),
+      Bun.write(path.join(gatewayDevContainer, "Dockerfile"), "FROM node:22\n"),
+      Bun.write(path.join(hostDevContainer, "Dockerfile"), "FROM node:22\n"),
+    ]);
+    client.buildImage = async () => { throw new Error("builder failed"); };
+
+    await expect(manager.ensure(request)).rejects.toMatchObject({ cause: { code: "DEV_CONTAINER_BUILD_FAILED" } });
+    expect(client.createCalls).toEqual([]);
   });
 
   test("requires an explicit choice when several Dev Container configurations exist", async () => {

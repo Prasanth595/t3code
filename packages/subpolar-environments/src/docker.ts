@@ -35,6 +35,8 @@ export class DockerEnvironmentError extends Error {
       | "DEV_CONTAINER_CONFIGURATION_INVALID"
       | "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED"
       | "DEV_CONTAINER_CONFIGURATION_SELECTION_REQUIRED"
+      | "DEV_CONTAINER_BUILD_UNAVAILABLE"
+      | "DEV_CONTAINER_BUILD_FAILED"
       | "PROCESS_EXECUTION_UNAVAILABLE"
       | "PROCESS_REQUEST_INVALID"
       | "EGRESS_UNAVAILABLE",
@@ -90,6 +92,12 @@ export interface DockerContainerCreateOptions {
   readonly mounts: readonly DockerBindMount[];
   readonly tmpfs: Readonly<Record<string, string>>;
   readonly environment: Readonly<Record<string, string>>;
+}
+
+export interface DockerImageBuildRequest {
+  readonly contextPath: string;
+  readonly dockerfilePath: string;
+  readonly image: string;
 }
 
 export interface DockerContainerProcessRequest {
@@ -156,6 +164,8 @@ export interface DockerClient {
   executeContainer?(id: string, request: DockerContainerProcessRequest): Promise<EnvironmentProcessResult>;
   startInteractiveContainer?(id: string, request: DockerContainerInteractiveRequest): Promise<EnvironmentInteractiveSession>;
   startManagedSessionContainer?(id: string, request: DockerContainerManagedSessionRequest): Promise<EnvironmentManagedProcessSession>;
+  /** Build repository supplied Dockerfiles in the manager process, never in the gateway. */
+  buildImage?(request: DockerImageBuildRequest): Promise<void>;
 }
 
 export const DOCKER_RESOURCE_DEFAULTS = Object.freeze({
@@ -172,6 +182,7 @@ const ENVIRONMENT = Object.freeze({ HOME: "/tmp/home", TMPDIR: "/tmp" });
 
 interface ResolvedDevContainerConfiguration {
   readonly image: string;
+  readonly build?: DockerImageBuildRequest;
 }
 
 function parseJsonc(source: string): unknown {
@@ -284,7 +295,7 @@ async function resolveDevContainerConfiguration(
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must contain a JSON object`);
   }
   const value = parsed as Record<string, unknown>;
-  const unsupported = Object.keys(value).filter((key) => !["$schema", "name", "image"].includes(key));
+  const unsupported = Object.keys(value).filter((key) => !["$schema", "name", "image", "build"].includes(key));
   if (unsupported.length > 0) {
     throw new DockerEnvironmentError(
       "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED",
@@ -294,7 +305,88 @@ async function resolveDevContainerConfiguration(
   if (value.image !== undefined && (typeof value.image !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/.test(value.image))) {
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must specify a literal Docker image reference`);
   }
-  return { image: typeof value.image === "string" ? value.image : config.image };
+  if (value.build === undefined) return { image: typeof value.image === "string" ? value.image : config.image };
+  if (value.image !== undefined || typeof value.build !== "object" || value.build === null || Array.isArray(value.build)) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must specify either image or build, not both`);
+  }
+  const build = value.build as Record<string, unknown>;
+  const unsupportedBuildOptions = Object.keys(build).filter((key) => key !== "dockerfile" && key !== "context");
+  if (unsupportedBuildOptions.length > 0 || typeof build.dockerfile !== "string" ||
+      (build.context !== undefined && typeof build.context !== "string")) {
+    throw new DockerEnvironmentError(
+      "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED",
+      `${selected} uses unsupported or invalid build options${unsupportedBuildOptions.length ? `: ${unsupportedBuildOptions.join(", ")}` : ""}`,
+    );
+  }
+  const configurationDirectory = path.dirname(realConfiguration);
+  const hostWorktree = await mapGatewayPathToDockerHost(root, root, config);
+  const hostConfigurationDirectory = path.resolve(hostWorktree, path.relative(root, configurationDirectory));
+  const contextValue = build.context ?? ".";
+  if (path.isAbsolute(contextValue) || contextValue.includes("\0")) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} build context must be a relative path`);
+  }
+  const gatewayContext = path.resolve(configurationDirectory, contextValue);
+  let realGatewayContext: string;
+  try {
+    realGatewayContext = await realpath(gatewayContext);
+  } catch (cause) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} build context does not exist`, { cause });
+  }
+  if (!within(root, realGatewayContext) || !(await lstat(realGatewayContext)).isDirectory()) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} build context must be a directory inside the worktree`);
+  }
+  const contextRelativeToConfiguration = path.relative(configurationDirectory, realGatewayContext);
+  const hostContext = await realpath(path.resolve(hostConfigurationDirectory, contextRelativeToConfiguration));
+  if (!within(hostWorktree, hostContext)) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} build context resolves outside the Docker host worktree`);
+  }
+  const gatewayDockerfile = path.resolve(configurationDirectory, build.dockerfile);
+  let realGatewayDockerfile: string;
+  try {
+    realGatewayDockerfile = await realpath(gatewayDockerfile);
+  } catch (cause) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} Dockerfile does not exist`, { cause });
+  }
+  if (!within(realGatewayContext, realGatewayDockerfile) || !(await lstat(realGatewayDockerfile)).isFile()) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} Dockerfile must be a file inside its build context`);
+  }
+  const dockerfileRelativeToConfiguration = path.relative(configurationDirectory, realGatewayDockerfile);
+  const dockerfilePath = await realpath(path.resolve(hostConfigurationDirectory, dockerfileRelativeToConfiguration));
+  if (!within(hostContext, dockerfilePath)) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} Dockerfile resolves outside the Docker host build context`);
+  }
+  const image = `subpolar-devcontainer:${hash(`${identity.id}\0${selected}\0${realGatewayDockerfile}\0${realGatewayContext}`).slice(0, 32)}`;
+  return { image, build: { contextPath: hostContext, dockerfilePath, image } };
+}
+
+async function mapGatewayPathToDockerHost(
+  gatewayWorktree: string,
+  gatewayPath: string,
+  config: DockerEnvironmentConfig,
+): Promise<string> {
+  const [gatewayRoot, hostRoot, realWorktree, realPath] = await Promise.all([
+    realpath(config.gatewayStorageRoot),
+    realpath(config.hostStorageRoot),
+    realpath(gatewayWorktree),
+    realpath(gatewayPath),
+  ]);
+  if (!within(gatewayRoot, realWorktree) || !within(realWorktree, realPath)) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", "Dev Container build paths must resolve inside the worktree");
+  }
+  const relativeWorktree = path.relative(gatewayRoot, realWorktree);
+  if (!relativeWorktree || relativeWorktree === ".." || relativeWorktree.startsWith(`..${path.sep}`) || path.isAbsolute(relativeWorktree)) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", "Dev Container worktree cannot be mapped to the configured Docker host root");
+  }
+  const hostWorktree = await realpath(path.resolve(hostRoot, relativeWorktree));
+  if (!within(hostRoot, hostWorktree)) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", "Dev Container worktree resolves outside the Docker host workspace root");
+  }
+  const relativePath = path.relative(realWorktree, realPath);
+  const hostPath = await realpath(path.resolve(hostWorktree, relativePath));
+  if (!within(hostWorktree, hostPath)) {
+    throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", "Dev Container build path resolves outside the Docker host worktree");
+  }
+  return hostPath;
 }
 
 function sameRecord(left: Readonly<Record<string, string>>, right: Readonly<Record<string, string>>): boolean {
@@ -568,6 +660,16 @@ export function createDockerEnvironmentBackend(
       const existing = await inspectVerified(identity);
       if (existing) return existing.record;
       const resolved = await resolveDevContainerConfiguration(identity, config);
+      if (resolved.build) {
+        if (!client.buildImage) {
+          throw new DockerEnvironmentError("DEV_CONTAINER_BUILD_UNAVAILABLE", "Docker client does not support manager-owned Dev Container image builds");
+        }
+        try {
+          await client.buildImage(resolved.build);
+        } catch (cause) {
+          throw new DockerEnvironmentError("DEV_CONTAINER_BUILD_FAILED", "Dev Container Dockerfile build failed", { cause });
+        }
+      }
       const options = await createOptions(identity, resolved);
       let createdId: string;
       try {

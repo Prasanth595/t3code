@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createDockerEngineClient } from "../src/docker-engine.ts";
-import type { DockerContainerCreateOptions, DockerContainerProcessRequest } from "../src/docker.ts";
+import type { DockerContainerCreateOptions, DockerContainerProcessRequest, DockerImageBuildRequest } from "../src/docker.ts";
 
 function engineFixture(
   handler: (request: { method: string; url: string; body: string }) => { status: number; body?: unknown },
@@ -126,6 +126,24 @@ test("routes container process requests through the worker runner", async () => 
   });
   expect(seen).toEqual({ id: "container-9", request });
   expect(output).toEqual(["stderr:warning"]);
+});
+
+test("routes Dev Container image builds through the injected manager runner", async () => {
+  const seen: DockerImageBuildRequest[] = [];
+  const client = createDockerEngineClient({
+    socketPath: "/var/run/docker.sock",
+    transport: async () => ({ statusCode: 200, body: new Uint8Array() }),
+    imageBuildRunner: async (request) => { seen.push(request); },
+  });
+  const request: DockerImageBuildRequest = {
+    contextPath: "/host/worktree/.devcontainer",
+    dockerfilePath: "/host/worktree/.devcontainer/Dockerfile",
+    image: "subpolar-devcontainer:0123456789abcdef0123456789abcdef",
+  };
+
+  await client.buildImage!(request);
+
+  expect(seen).toEqual([request]);
 });
 
 test("routes interactive sessions through the TTY runner and Docker resize API", async () => {

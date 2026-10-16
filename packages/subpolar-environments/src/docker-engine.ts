@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
+import path from "node:path";
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
-import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest, DockerContainerManagedSessionRequest } from "./docker.ts";
+import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest, DockerContainerManagedSessionRequest, DockerImageBuildRequest } from "./docker.ts";
 import type { EnvironmentInteractiveSession, EnvironmentManagedProcessSession, EnvironmentProcessOutput, EnvironmentProcessResult } from "./index.ts";
 
 export interface DockerEngineClientOptions {
@@ -16,6 +17,7 @@ export interface DockerEngineClientOptions {
   readonly processRunner?: DockerContainerProcessRunner;
   readonly interactiveRunner?: DockerContainerInteractiveRunner;
   readonly managedSessionRunner?: DockerContainerManagedSessionRunner;
+  readonly imageBuildRunner?: (request: DockerImageBuildRequest) => Promise<void>;
 }
 
 export type DockerContainerProcessRunner = (
@@ -35,6 +37,27 @@ export type DockerContainerManagedSessionRunner = (
   request: DockerContainerManagedSessionRequest,
   terminate: (containerId: string, controlToken: string) => Promise<void>,
 ) => Promise<EnvironmentManagedProcessSession>;
+
+async function runDockerImageBuild(dockerBinary: string, request: DockerImageBuildRequest): Promise<void> {
+  if (!path.isAbsolute(request.contextPath) || !path.isAbsolute(request.dockerfilePath) ||
+      !/^subpolar-devcontainer:[a-f0-9]{32}$/.test(request.image)) {
+    throw new DockerEngineClientError(undefined, "Dev Container image build request is invalid");
+  }
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(dockerBinary, ["build", "--file", request.dockerfilePath, "--tag", request.image, request.contextPath], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    let spawnError: Error | undefined;
+    child.once("error", (error) => { spawnError = error; });
+    child.once("close", (code) => {
+      if (spawnError) reject(new DockerEngineClientError(undefined, "Docker image build could not start", { cause: spawnError }));
+      else if (code !== 0) reject(new DockerEngineClientError(undefined, `Docker image build failed with exit code ${code ?? "unknown"}`));
+      else resolve();
+    });
+  });
+}
 
 export interface DockerEngineTransportRequest {
   readonly method: string;
@@ -538,6 +561,7 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
     throw new Error("Docker worker command configuration is invalid");
   }
   const processRunner = options.processRunner ?? ((containerId, request) => runDockerWorker(dockerBinary, workerCommand, containerId, request));
+  const imageBuildRunner = options.imageBuildRunner ?? ((request) => runDockerImageBuild(dockerBinary, request));
   const terminateSupervisor = async (containerId: string, controlToken: string) => {
     const created = await request("POST", `/containers/${encodeURIComponent(containerId)}/exec`, {
       Cmd: [...terminalSupervisorCommand, "--terminate", controlToken],
@@ -626,6 +650,9 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
       const created = record(decodeJson(response.body));
       if (typeof created.Id !== "string" || !created.Id) throw new DockerEngineClientError(undefined, "Docker Engine did not return a container ID");
       return { id: created.Id };
+    },
+    async buildImage(buildRequest) {
+      return imageBuildRunner(buildRequest);
     },
     async startContainer(id) {
       await request("POST", `${idPath(id)}/start`, undefined, [204, 304]);
