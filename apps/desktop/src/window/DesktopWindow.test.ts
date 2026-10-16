@@ -15,6 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as Electron from "electron";
 import * as NodeEvents from "node:events";
+import * as NodeVM from "node:vm";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", async (importOriginal) => ({
@@ -27,6 +28,11 @@ vi.mock("electron", async (importOriginal) => ({
     })),
   },
   screen: {
+    getCursorScreenPoint: vi.fn(() => ({ x: 2500, y: 500 })),
+    getDisplayNearestPoint: vi.fn(() => ({
+      workArea: { x: 1920, y: 40, width: 1600, height: 860 },
+      scaleFactor: 1.6,
+    })),
     getAllDisplays: vi.fn(() => [
       {
         bounds: { x: 0, y: 0, width: 1920, height: 1080 },
@@ -75,6 +81,7 @@ function makeFakeBrowserWindow() {
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
   const webContents = {
+    executeJavaScript: vi.fn<(script: string) => Promise<unknown>>(() => Promise.resolve()),
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -144,6 +151,7 @@ function makeFakeBrowserWindow() {
     reloadIgnoringCache: webContents.reloadIgnoringCache,
     toggleDevTools: webContents.toggleDevTools,
     send: webContents.send,
+    executeJavaScript: webContents.executeJavaScript,
     setZoomLevel: webContents.setZoomLevel,
     setWindowButtonPosition: window.setWindowButtonPosition,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
@@ -200,17 +208,22 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
-const layerDesktopEnvironment = DesktopEnvironment.layer(environmentInput).pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      NodeServices.layer,
-      DesktopConfig.layerTest({
-        T3CODE_PORT: "3773",
-        VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
-      }),
+const makeDesktopEnvironmentLayer = (
+  platform: DesktopEnvironment.MakeDesktopEnvironmentInput["platform"] = environmentInput.platform,
+) =>
+  DesktopEnvironment.layer({ ...environmentInput, platform }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest({
+          T3CODE_PORT: "3773",
+          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+        }),
+      ),
     ),
-  ),
-);
+  );
+
+const layerDesktopEnvironment = makeDesktopEnvironmentLayer();
 
 const desktopWindowBoundsEquivalence = Schema.toEquivalence(
   DesktopAppSettings.DesktopWindowBoundsSchema,
@@ -347,7 +360,10 @@ function layerTest(input: {
   );
 }
 
-const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | null)[]) =>
+const makeSplashScenario = (
+  createOutcomes: readonly (Electron.BrowserWindow | null)[],
+  platform: DesktopEnvironment.MakeDesktopEnvironmentInput["platform"] = environmentInput.platform,
+) =>
   Effect.gen(function* () {
     const createdWindows = yield* Ref.make<Electron.BrowserWindow[]>([]);
     const createCalls = yield* Ref.make(0);
@@ -421,7 +437,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
             recordMetrics: () => Effect.void,
             shutdown: Effect.void,
           }),
-          layerDesktopEnvironment,
+          makeDesktopEnvironmentLayer(platform),
           DesktopAppSettings.layerTest(),
           layerDesktopClientSettings,
           layerDesktopServerExposure,
@@ -1492,6 +1508,56 @@ describe("DesktopWindow", () => {
           assert.deepEqual(yield* Ref.get(scenario.revealedWindows), [splash.window]);
         }).pipe(Effect.provide(scenario.layer));
       }),
+  );
+
+  it.effect("shows startup status before opening the main renderer", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const main = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([splash.window, main.window], "linux");
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash;
+        yield* desktopWindow.createMainIfBackendReady;
+        assert.equal(yield* Ref.get(scenario.createCalls), 1);
+        assert.equal(splash.loadURL.mock.calls[0]?.[0], "t3code-dev://app/#desktop-startup");
+        assert.equal(main.loadURL.mock.calls.length, 0);
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(main.loadURL.mock.calls[0]?.[0], "t3code-dev://app/");
+      }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
+  it.effect("centers the splash within visible pixels at fractional scale", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const style = { width: "", height: "" };
+      splash.executeJavaScript.mockImplementation(async (script: string) => {
+        NodeVM.runInNewContext(script, {
+          window: { devicePixelRatio: 1.9 },
+          document: { getElementById: () => ({ style }) },
+        });
+      });
+      const scenario = yield* makeSplashScenario([splash.window], "linux");
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash;
+        yield* Effect.promise(async () => {
+          await splash.windowListeners.get("ready-to-show")?.();
+        });
+        assert.approximately(
+          ((((380 / 1) * Number.parseFloat(style.width)) / 100) * 1.9) / 2,
+          304,
+          0.01,
+        );
+        assert.approximately(
+          ((((240 / 1) * Number.parseFloat(style.height)) / 100) * 1.9) / 2,
+          192,
+          0.01,
+        );
+        assert.equal(splash.setZoomLevel.mock.calls.length, 0);
+      }).pipe(Effect.provide(scenario.layer));
+    }),
   );
 
   it.effect("does not dispatch menu actions to the splash before the backend is ready", () =>

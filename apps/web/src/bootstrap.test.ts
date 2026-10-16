@@ -32,10 +32,20 @@ describe("app startup failures", () => {
     vi.resetModules();
     bootShell = new BootElement("div");
     vi.stubGlobal("document", {
+      documentElement: { dataset: {} },
       getElementById: () => bootShell,
       createElement: (tagName: string) => new BootElement(tagName),
     });
     vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  it("keeps the desktop splash independent of React startup", async () => {
+    document.documentElement.dataset.desktopStartup = "local";
+    const loadMain = vi.fn(() => ({ startup: Promise.resolve() }));
+    vi.doMock("./main", loadMain);
+    await import("./bootstrap");
+    await vi.dynamicImportSettled();
+    expect(loadMain).not.toHaveBeenCalled();
   });
 
   it("shows failures from asynchronous app startup", async () => {

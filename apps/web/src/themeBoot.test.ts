@@ -29,6 +29,7 @@ const bootScript = (() => {
 
 type BootResult = {
   isDark: boolean;
+  desktopStartup: string | undefined;
   themeId: string | undefined;
   themeSelected: string | undefined;
   backgroundColor: string;
@@ -38,6 +39,7 @@ type BootResult = {
 
 function runBootScript(options: {
   storage?: Record<string, string>;
+  location?: { protocol: string; hash: string };
   storageThrows?: boolean;
   prefersDark: boolean;
 }): BootResult {
@@ -73,6 +75,7 @@ function runBootScript(options: {
     querySelectorAll: (selector: string) => (selector === 'meta[name="theme-color"]' ? [meta] : []),
   };
   const fakeWindow = {
+    location: options.location ?? { protocol: "https:", hash: "" },
     localStorage: {
       getItem: (key: string): string | null => {
         if (options.storageThrows) throw new Error("storage blocked");
@@ -91,6 +94,7 @@ function runBootScript(options: {
 
   return {
     isDark: classes.has("dark"),
+    desktopStartup: documentElement.dataset.desktopStartup,
     themeId: documentElement.dataset.themeId,
     themeSelected: documentElement.dataset.themeSelected,
     backgroundColor: documentElement.style.backgroundColor,
@@ -507,5 +511,39 @@ describe("index.html boot script", () => {
 
     const dark = runBootScript({ storageThrows: true, prefersDark: true });
     expect(dark.isDark).toBe(true);
+  });
+});
+
+describe("native startup theme", () => {
+  it.each(["t3code:", "t3code-dev:"])(
+    "uses the saved theme for the %s startup surface",
+    (protocol) => {
+      const boot = runBootScript({
+        location: { protocol, hash: "#desktop-startup" },
+        storage: { [THEME_STORAGE_KEY]: "t3-chat", [THEME_APPEARANCE_MODE_STORAGE_KEY]: "dark" },
+        prefersDark: false,
+      });
+      expect(boot.desktopStartup).toBe("local");
+      expect(boot.isDark).toBe(true);
+      expect(boot.themeId).toBe("t3-chat");
+      expect(boot.bootVariables["--boot-accent"]).toBe(T3_CHAT_THEME.variants!.dark!.accent);
+    },
+  );
+
+  it("keeps startup-only behavior out of web and ordinary desktop windows", () => {
+    for (const location of [
+      { protocol: "https:", hash: "#desktop-startup" },
+      { protocol: "t3code:", hash: "" },
+    ])
+      expect(runBootScript({ location, prefersDark: false }).desktopStartup).toBeUndefined();
+  });
+
+  it("selects the WSL startup copy without changing the theme", () => {
+    expect(
+      runBootScript({
+        location: { protocol: "t3code:", hash: "#desktop-startup-wsl" },
+        prefersDark: true,
+      }).desktopStartup,
+    ).toBe("wsl");
   });
 });

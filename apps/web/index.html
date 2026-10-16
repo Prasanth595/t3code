@@ -12,6 +12,15 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <script>
       (() => {
+        const startupLocation = window.location;
+        if (
+          (startupLocation.protocol === "t3code:" || startupLocation.protocol === "t3code-dev:") &&
+          (startupLocation.hash === "#desktop-startup" ||
+            startupLocation.hash === "#desktop-startup-wsl")
+        ) {
+          document.documentElement.dataset.desktopStartup =
+            startupLocation.hash === "#desktop-startup-wsl" ? "wsl" : "local";
+        }
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#0a0a0a";
         const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
@@ -453,6 +462,118 @@
         object-fit: contain;
       }
 
+      .desktop-startup-content {
+        display: none;
+      }
+
+      html[data-desktop-startup] #boot-shell {
+        position: fixed;
+        inset: 0;
+        min-height: 0;
+        box-sizing: border-box;
+        padding: 24px;
+        display: grid;
+        place-items: center;
+        -webkit-app-region: drag;
+        user-select: none;
+      }
+
+      html[data-desktop-startup] #boot-shell-card {
+        width: auto;
+        height: auto;
+        max-width: 100%;
+        flex-direction: column;
+        gap: 8px;
+        text-align: center;
+      }
+
+      html[data-desktop-startup] #boot-shell-logo {
+        width: 40px;
+        height: 40px;
+        margin-bottom: 4px;
+      }
+
+      html[data-desktop-startup] .desktop-startup-content {
+        display: block;
+      }
+
+      .desktop-startup-title {
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .desktop-startup-status {
+        font-size: 12px;
+        opacity: 0.7;
+      }
+
+      .desktop-startup-wsl {
+        display: none;
+      }
+
+      html[data-desktop-startup="wsl"] .desktop-startup-local {
+        display: none;
+      }
+
+      html[data-desktop-startup="wsl"] .desktop-startup-wsl {
+        display: inline;
+      }
+
+      .desktop-startup-track {
+        width: 112px;
+        height: 3px;
+        margin: 8px auto;
+        overflow: hidden;
+        border-radius: 4px;
+        background: color-mix(in srgb, currentColor 12%, transparent);
+      }
+
+      .desktop-startup-indicator {
+        width: 32px;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--boot-accent, currentColor);
+      }
+
+      .desktop-startup-hint {
+        font-size: 10px;
+        opacity: 0.6;
+      }
+
+      @media (max-height: 180px), (max-width: 240px) {
+        html[data-desktop-startup] #boot-shell {
+          padding: 12px;
+        }
+
+        html[data-desktop-startup] #boot-shell-card {
+          gap: 4px;
+        }
+
+        html[data-desktop-startup] #boot-shell-logo {
+          width: 28px;
+          height: 28px;
+          margin-bottom: 0;
+        }
+
+        html[data-desktop-startup] .desktop-startup-title {
+          font-size: 12px;
+        }
+
+        html[data-desktop-startup] .desktop-startup-status {
+          font-size: 11px;
+        }
+
+        html[data-desktop-startup] .desktop-startup-track {
+          height: 2px;
+          margin: 4px auto;
+        }
+
+        html[data-desktop-startup] .desktop-startup-hint {
+          display: none;
+        }
+      }
+
       #boot-error {
         display: grid;
         justify-items: center;
@@ -484,6 +605,17 @@
       <div id="boot-shell">
         <div id="boot-shell-card" aria-label="T3 Code splash screen">
           <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+          <strong class="desktop-startup-content desktop-startup-title">T3 Code</strong>
+          <span class="desktop-startup-content desktop-startup-status" role="status">
+            <span class="desktop-startup-local">Starting your workspace…</span>
+            <span class="desktop-startup-wsl">Connecting to WSL…</span>
+          </span>
+          <div class="desktop-startup-content desktop-startup-track" aria-hidden="true">
+            <div class="desktop-startup-indicator"></div>
+          </div>
+          <span class="desktop-startup-content desktop-startup-hint"
+            >Preparing history and connections.</span
+          >
         </div>
       </div>
     </div>

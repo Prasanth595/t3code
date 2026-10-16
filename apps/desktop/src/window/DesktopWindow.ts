@@ -95,6 +95,7 @@ export class DesktopWindow extends Context.Service<
     readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly activate: Effect.Effect<void, DesktopWindowError>;
     readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
+    // Show startup status before the primary backend is ready.
     readonly showConnectingSplash: Effect.Effect<void>;
     readonly handleBackendReady: (httpBaseUrl: URL) => Effect.Effect<void, DesktopWindowError>;
     readonly handleBackendNotReady: Effect.Effect<void>;
@@ -172,15 +173,6 @@ export function resolveInitialMainWindowBounds(
     return persistedBounds;
   }
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
-}
-
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
-  const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
-  const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
-  const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
-  const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
-  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
 export function isSameOriginRendererNavigation(input: {
@@ -848,21 +840,43 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const showConnectingSplash = Effect.gen(function* () {
+    // Only when nothing is shown yet: no real window, no existing splash.
     const existingSplash = yield* Ref.get(splashWindowRef);
     if (Option.isSome(existingSplash)) return;
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(existingWindow)) return;
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const settings = yield* desktopSettings.get;
+    const width = 360;
+    const height = 220;
+    const placement = yield* Effect.sync(() => {
+      try {
+        const { workArea, scaleFactor } = Electron.screen.getDisplayNearestPoint(
+          Electron.screen.getCursorScreenPoint(),
+        );
+        return {
+          bounds: {
+            x: Math.round(workArea.x + (workArea.width - width) / 2),
+            y: Math.round(workArea.y + (workArea.height - height) / 2),
+          },
+          scaleFactor,
+        };
+      } catch {
+        return { bounds: { center: true }, scaleFactor: undefined };
+      }
+    });
     const splash = yield* electronWindow.create({
-      width: 360,
-      height: 220,
+      width,
+      height,
+      useContentSize: true,
+      ...placement.bounds,
+      ...(environment.platform === "linux" ? { type: "splash" } : {}),
       resizable: false,
       minimizable: false,
       maximizable: false,
       fullscreenable: false,
       frame: false,
-      center: true,
       show: false,
       skipTaskbar: false,
       backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
@@ -878,14 +892,51 @@ export const make = Effect.gen(function* () {
     splash.once("closed", () => {
       void runPromise(Ref.set(splashWindowRef, Option.none()));
     });
-    splash.once("ready-to-show", () => {
-      if (!splash.isDestroyed()) {
-        splash.show();
-      }
+    const syncSplashViewport = () =>
+      runPromise(
+        Effect.promise(async () => {
+          if (
+            environment.platform !== "linux" ||
+            splash.isDestroyed() ||
+            placement.scaleFactor === undefined
+          )
+            return;
+          // Wayland text scaling can inflate the renderer's pixel ratio without
+          // enlarging its surface. Center within the actual visible pixels,
+          // preserving the shared origin's zoom and the desktop's text settings.
+          // Keep the chosen display: Wayland reports window coordinates as zero,
+          // and the cursor may have moved to another monitor before first paint.
+          const { scaleFactor } = placement;
+          const pixelRatio = scaleFactor * splash.webContents.getZoomFactor();
+          await splash.webContents.executeJavaScript(`{
+            const shell = document.getElementById("boot-shell");
+            if (shell) {
+              const scale = ${pixelRatio} / window.devicePixelRatio;
+              shell.style.width = (100 * scale) + "%";
+              shell.style.height = (100 * scale) + "%";
+            }
+          }`);
+        }).pipe(
+          Effect.timeout("1 second"),
+          Effect.catchCause((cause) =>
+            logWindowWarning("failed to size startup viewport", { cause }),
+          ),
+        ),
+      );
+    splash.on("resize", () => {
+      void syncSplashViewport();
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
+    splash.once("ready-to-show", () =>
+      syncSplashViewport().then(() => {
+        if (!splash.isDestroyed()) splash.show();
+      }),
+    );
+    const startupUrl = new URL(getDesktopUrl(environment.isDevelopment));
+    startupUrl.hash = settings.wslOnly ? "desktop-startup-wsl" : "desktop-startup";
+    void splash.loadURL(startupUrl.href);
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
+    // Startup feedback is best-effort; a failure must not block the backend.
     Effect.catch((error) =>
       logWindowWarning("failed to show connecting splash", { message: error.message }),
     ),
