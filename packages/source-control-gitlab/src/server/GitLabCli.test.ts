@@ -203,11 +203,21 @@ layer("GitLabCli.layer", (it) => {
       path: "group/project",
       endpoint: "projects/group%2Fproject",
     },
+    {
+      repository: "git@example.com:gitlab/team/app.git",
+      host: "example.com/gitlab",
+      path: "gitlab/team/app",
+      endpoint: "projects/gitlab%2Fteam%2Fapp",
+    },
   ])("looks up the pasted address $repository by its project path", (row) =>
     Effect.gen(function* () {
-      mockedRun
-        .mockReturnValueOnce(Effect.succeed(processOutput(`${row.host}\n`)))
-        .mockReturnValueOnce(Effect.succeed(processOutput(projectJson(row.host, row.path))));
+      mockedRun.mockImplementation((input) =>
+        Effect.succeed(
+          processOutput(
+            input.args[0] === "config" ? `${row.host}\n` : projectJson(row.host, row.path),
+          ),
+        ),
+      );
 
       const glab = yield* GitLabCli.GitLabCli;
       yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository: row.repository });

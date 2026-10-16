@@ -547,17 +547,20 @@ export const make = Effect.gen(function* () {
         ),
       ),
     getRepositoryCloneUrls: (input) => {
+      const pastedUrl = URL.parse(input.repository.trim());
       const requestedHost =
-        URL.parse(input.repository.trim())?.hostname ??
+        pastedUrl?.hostname ??
         /^[^@/\s]+@([^:/\s]+):/u.exec(input.repository.trim())?.[1]?.toLowerCase();
       const urlPath = SourceControlProvider.repositoryPathFromRemoteUrl(input.repository);
       const projectPath =
         !requestedHost || urlPath === null
           ? Effect.succeed(input.repository)
-          : execute({ cwd: input.cwd, args: ["config", "get", "host"] }).pipe(
-              Effect.map((result) => withoutInstallRoot(urlPath, result.stdout, requestedHost)),
-              Effect.orElseSucceed(() => urlPath),
-            );
+          : pastedUrl === null
+            ? Effect.succeed(urlPath)
+            : execute({ cwd: input.cwd, args: ["config", "get", "host"] }).pipe(
+                Effect.map((result) => withoutInstallRoot(urlPath, result.stdout, requestedHost)),
+                Effect.orElseSucceed(() => urlPath),
+              );
       return projectPath.pipe(
         Effect.flatMap((path) =>
           execute({ cwd: input.cwd, args: ["api", `projects/${encodeURIComponent(path)}`] }),
