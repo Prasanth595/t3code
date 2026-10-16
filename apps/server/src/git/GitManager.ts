@@ -1464,7 +1464,8 @@ export const make = Effect.gen(function* () {
     );
 
     // With no origin to compare against, the only remote is the repository gh targets,
-    // so a branch on it is not a fork. With several remotes, it may still be a fork.
+    // so a branch on it is not a fork. With several remotes, or when `gh repo set-default`
+    // points gh at another repository (gh-resolved), it may still be a fork.
     const isOnlyRemote =
       remoteName !== null &&
       remoteName !== "origin" &&
@@ -1481,7 +1482,9 @@ export const make = Effect.gen(function* () {
             (result) => result.stdout.split("\n").filter((name) => name.trim().length > 0).length,
           ),
           Effect.orElseSucceed(() => 0),
-        )) === 1;
+        )) === 1 &&
+      ((yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`)) ?? "base") ===
+        "base";
     const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
 
     const isCrossRepository =
