@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import { transition } from "../domain/lifecycle.ts";
 import {
   WorkspaceUnexpectedError,
+  commandCode,
   gateResultsComment,
   type CommandResult,
   type FactoryGate,
@@ -46,6 +47,7 @@ import {
   END_WITH_DONE,
   THREAD_GONE,
   failureMessage,
+  howItEnded,
   mergeConflictMessage,
   prepareOutputTail,
 } from "./messages.ts";
@@ -489,15 +491,16 @@ const gateAttempts = (
       const since = attemptsSincePass(seen, attempt);
       if (since > ctx.project.limits.gateRetries) {
         const failedAfter = `the gate failed after ${attempts(since)}`;
-        const stop: Stop = conflict
-          ? {
-              // The conflicted paths are text from the session's repo and may be private: the
-              // public comment gets the factory's fixed line and nothing else.
-              reason: `${failedAfter}: the branch conflicts with the base branch ${sanitize(ctx.project.base, false)}`,
-              detail: `${failedAfter}\n\n${prepareOutputTail(text)}`,
-            }
-          : // Command output ends with the error, so a long one is cut from the front.
-            { reason: failedAfter, sessionText: prepareOutputTail(text) };
+        // The conflicted paths and the command output are text from the session's repo, and
+        // output can hold what a command printed from its environment: the public comment gets
+        // the factory's fixed line, and the ledger and the caller the whole message. Command
+        // output ends with the error, so a long one is cut from the front.
+        const stop: Stop = {
+          reason: conflict
+            ? `${failedAfter}: the branch conflicts with the base branch ${sanitize(ctx.project.base, false)}`
+            : `${failedAfter}: ${commandCode(ran.failure.command)} failed (${howItEnded(ran.failure)})`,
+          detail: `${failedAfter}\n\n${prepareOutputTail(text)}`,
+        };
         return yield* stuck("gate-retries-used-up", stop);
       }
       // The step comes first: with it a later call knows which run this attempt was gated on.

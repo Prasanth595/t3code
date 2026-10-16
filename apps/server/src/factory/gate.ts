@@ -138,8 +138,13 @@ export type GateError = WorkspaceError | GateCommandSpawnError | GateRecordError
  * `command` as one line in a code span for a table cell: the span's backticks are longer than any
  * run in the command, and `|` is escaped so it does not end the cell.
  */
-const tableCode = (command: string): string => {
-  const line = commandLine(command).replaceAll("|", "\\|");
+const tableCode = (command: string): string =>
+  codeSpan(commandLine(command).replaceAll("|", "\\|"));
+
+/** A command as {@link commandLine} cleans it, in a code span nothing can leave. For prose outside a table. */
+export const commandCode = (command: string): string => codeSpan(commandLine(command));
+
+const codeSpan = (line: string): string => {
   const longest = Math.max(0, ...(line.match(/`+/g) ?? []).map((run) => run.length));
   const ticks = "`".repeat(longest + 1);
   // A span may not start or end with a backtick of its own, so a space goes in between.

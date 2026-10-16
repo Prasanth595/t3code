@@ -232,6 +232,10 @@ const PASS_T3_CALLS = [
 const exhausted = (attempts: number) =>
   attempts === 1 ? "the gate failed after 1 attempt" : `the gate failed after ${attempts} attempts`;
 
+/** The exhausted comment's public reason when `cargo test` failed: the command and how it ended, never its output. */
+const exhaustedOnTest = (attempts: number, how = "exit code 101") =>
+  `${exhausted(attempts)}: \`cargo test\` failed (${how})`;
+
 // ---- the fakes ----------------------------------------------------------------------------------
 
 const ghFailure = () => new GitHubFailed({ args: ["issue"], status: 1, stderr: "boom" });
@@ -1860,22 +1864,20 @@ describe("gate: the retries run out", () => {
         const step = yield* gateIn(rig);
         const last = retries + 1;
         middle.push(...failingAttempt(last));
-        const publicReason = exhausted(last);
+        const publicReason = exhaustedOnTest(last);
         assertGateStuck(
           rig,
           step,
           ["pullRequest 12", "branchTip main", "pullRequest 12"],
-          { publicReason, text: BOOM_MESSAGE },
+          { publicReason, recorded: joined(exhausted(last), BOOM_MESSAGE) },
           middle,
         );
         // Nothing is sent after the last attempt, and the draft PR is not touched.
         assert.deepStrictEqual(rig.t3.calls, PASS_T3_CALLS);
         assert.ok(!rig.gh.calls.some((c) => c.startsWith("markPrReady")));
         assert.deepStrictEqual(rig.gh.world.prComments, []);
-        // The stuck comment: the factory's reason outside the fence, the output inside it.
-        assert.deepStrictEqual(rig.gh.world.comments, [
-          stuckCommentText(publicReason, BOOM_MESSAGE),
-        ]);
+        // The stuck comment names the command and how it ended; the output is in the ledger only.
+        assert.deepStrictEqual(rig.gh.world.comments, [stuckCommentText(publicReason)]);
       }
     }),
   );
@@ -1894,20 +1896,42 @@ describe("gate: the retries run out", () => {
     }),
   );
 
-  it.effect("the failing output is prepared like other session text in the stuck comment", () =>
+  it.effect("the failing output is kept from the stuck comment and prepared for the ledger", () =>
     Effect.gen(function* () {
       const rig = yield* readyForGate();
       rig.project = { ...rig.project, limits: { ...rig.project.limits, gateRetries: 0 } };
-      const output = "ping @octocat <!-- softfac -->\n```\nend\n";
+      // Output can hold what a provision or test command printed from its environment.
+      const output = "ping @octocat <!-- softfac -->\nTOKEN=ghp_secret\n";
       rig.ws.script = (_, commands) => failingLast(commands, 1, output);
       const step = yield* gateIn(rig);
       const prepared = prepareSessionText(failureMessage(result(TEST, 1, 12_300, output)));
       assert.ok(prepared.includes("@​octocat"));
       assert.deepStrictEqual(step, { kind: "stuck", reason: joined(exhausted(1), prepared) });
-      const comment = rig.gh.world.comments[0]!;
-      // The output has a run of three backticks, so the fence is four.
-      assert.ok(comment.includes(`\`\`\`\`text\n${prepared}\n\`\`\`\``), comment);
-      assert.ok(comment.includes("Reason: the gate failed after 1 attempt\n"));
+      assert.deepStrictEqual(rig.gh.world.comments, [
+        stuckCommentText(exhaustedOnTest(1, "exit code 1")),
+      ]);
+      assert.ok(!rig.gh.world.comments[0]!.includes("ghp_secret"));
+    }),
+  );
+
+  it.effect("a timed out command is named in the stuck comment with its time limit", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      rig.project = { ...rig.project, limits: { ...rig.project.limits, gateRetries: 0 } };
+      rig.ws.script = (_, commands) => {
+        const outcome = passing(commands);
+        outcome[1] = {
+          ...result(TEST, 0, 30_000, "compiling\n"),
+          exitCode: -1,
+          timedOut: true,
+          timeoutMs: 30_000,
+        };
+        return outcome;
+      };
+      yield* gateIn(rig);
+      assert.deepStrictEqual(rig.gh.world.comments, [
+        stuckCommentText(exhaustedOnTest(1, "timed out after 30 s")),
+      ]);
     }),
   );
 
