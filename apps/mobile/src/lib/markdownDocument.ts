@@ -141,6 +141,39 @@ export function markdownWithHtml(markdown: string): string {
   return markdown;
 }
 
+const TABLE_DELIMITER_ROW = /^[ \t>]*[|:-][ \t|:-]*\|[ \t|:-]*$/m;
+
+/**
+ * Put a blank line before every GFM table that interrupts a paragraph. md4c, which renders
+ * native Markdown, only starts a table when its header row is the paragraph's first line, so
+ * `Lead-in\n| a | b |\n|---|---|` would otherwise render as one run-on paragraph.
+ */
+export function markdownWithTableBreaks(markdown: string): string {
+  if (!TABLE_DELIMITER_ROW.test(markdown)) return markdown;
+  const breaks: number[] = [];
+  const visit = (node: MarkdownNode) => {
+    if (node.type === "table") {
+      const start = node.position?.start.offset;
+      if (start === undefined) return;
+      const lineStart = markdown.lastIndexOf("\n", start - 1) + 1;
+      if (lineStart === 0) return;
+      const previousLine = markdown.slice(markdown.lastIndexOf("\n", lineStart - 2) + 1, lineStart);
+      if (/^[ \t>]*$/.test(markdown.slice(lineStart, start)) && !/^[\s>]*$/.test(previousLine))
+        breaks.push(lineStart);
+    } else if ("children" in node) node.children.forEach(visit);
+  };
+  visit(parser.parse(markdown));
+  for (const lineStart of breaks.reverse()) {
+    // Repeat the blockquote markers so the blank line stays inside the quote.
+    const containerPrefix = markdown
+      .slice(lineStart)
+      .match(/^[ \t>]*/)![0]
+      .trimEnd();
+    markdown = `${markdown.slice(0, lineStart)}${containerPrefix}\n${markdown.slice(lineStart)}`;
+  }
+  return markdown;
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownWithHtml(markdown));
 }
