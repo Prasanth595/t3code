@@ -415,6 +415,25 @@ describe("liveWorld", () => {
     }),
   );
 
+  it.effect("a cut-short comment made in the label's own second is said again", () =>
+    Effect.gen(function* () {
+      const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, LABEL_AT);
+      yield* worldOf(process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(calls), ["comments", "history", "comment", "view", "edit"]);
+    }),
+  );
+
+  it.effect(
+    "a comment time that is not GitHub's UTC-second form never counts, history unread",
+    () =>
+      Effect.gen(function* () {
+        // Text-sorts after LABEL_AT, so only the form check keeps it from counting.
+        const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, "2026-10-08T09:00:00+10:00");
+        yield* worldOf(process).releaseClaim(repo, 9, "triage");
+        assert.deepStrictEqual(steps(calls), ["comments", "comment", "view", "edit"]);
+      }),
+  );
+
   /** gh answers for `.dw/config.yml` on a default branch `main` whose config names `base`. */
   const baseConfigGh = (base: string) => {
     const sha = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
